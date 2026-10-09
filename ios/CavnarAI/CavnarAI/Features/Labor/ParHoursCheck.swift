@@ -26,10 +26,7 @@ struct ParHoursCheck: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("PAR HOURS CHECK")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .tracking(1)
-                        .foregroundStyle(Color.cavnarEmber2)
+                    CavnarKicker("Hours against the budget")
                     HomeMixedText.make("Hourly budget \(budget.commaFormatted)h"
                                        + (dollars.flatMap { $0 > 0 ? " (\(SetupWords.dollars($0)))" : nil } ?? "")
                                        + " for the week", size: 14, color: .cavnarInk2)

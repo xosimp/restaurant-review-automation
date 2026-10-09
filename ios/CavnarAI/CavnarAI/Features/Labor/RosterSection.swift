@@ -16,9 +16,8 @@ struct RosterSection: View {
 
     @State private var selected: RosterMember?
     @State private var showingPairEditor = false
-    @State private var showingRules = false
     @State private var showingClosers = false
-    @State private var showingFamilies = false
+    @State private var showingSectionNames = false
     /// Each pair row's measured height — see CavnarFittedList.
     @State private var pairRowHeights: [StaffPair.ID: CGFloat] = [:]
 
@@ -36,15 +35,12 @@ struct RosterSection: View {
                     await viewModel.loadLearnedPatterns()
                     // "Trained up" chips on the detail sheet read from intel.
                     if viewModel.intel == nil { await viewModel.loadIntel() }
+                    // The closed days and the section cap edit here.
+                    if !viewModel.rulesLoaded { await viewModel.loadRules() }
                 }
             }
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Who the generator may schedule, and how. Tap a person to set hours, days and status.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 if !viewModel.canEditRoster {
                     Text("Read-only on this login — an owner or manager can change these.")
                         .font(.cavnarBody(13))
@@ -73,16 +69,25 @@ struct RosterSection: View {
                     }
                     VStack(spacing: 0) {
                         ForEach(viewModel.roster) { member in
-                            memberRow(member)
-                                .contextMenu {
-                                    // Only a hand-entered name comes off here;
-                                    // shift history keeps everyone else on.
-                                    if member.isManual == true && viewModel.canEditRoster {
+                            HStack(spacing: 0) {
+                                memberRow(member)
+                                // Only a hand-entered name comes off here —
+                                // shift history keeps everyone else on — with
+                                // a visible ⋯, never a long press to learn.
+                                if member.isManual == true && viewModel.canEditRoster {
+                                    Menu {
                                         Button(role: .destructive) {
                                             removingPerson = member
                                         } label: { Label("Remove from the roster", systemImage: "person.badge.minus") }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.cavnar(.body))
+                                            .foregroundStyle(Color.cavnarEmber2)
+                                            .cavnarHitTarget()
                                     }
+                                    .accessibilityLabel("More for \(member.name)")
                                 }
+                            }
                             if member.id != viewModel.roster.last?.id {
                                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                             }
@@ -98,26 +103,30 @@ struct RosterSection: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
-                    if viewModel.roster.contains(where: { $0.isManual == true }) {
-                        Text("Someone you added by hand comes off with a long press on their row.")
-                            .font(.cavnarBody(12.5))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
                 }
                 if let error = viewModel.teamError {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                rulesLink
-
-                // The one-time closer cleanup and the roles each job code
-                // belongs to (schedule audit 10/3/26 D-9, D-13).
-                setupLink(icon: "lock.fill", title: "Closers",
-                          detail: closersDetail) { showingClosers = true }
-                setupLink(icon: "square.stack.3d.up", title: "Roles and job codes",
-                          detail: "Which job codes are one role \u{2014} Server AM and Server PM are Server") {
-                    showingFamilies = true
+                // The two rules an owner changes from the floor stay here —
+                // the days you don't open, and the most front-of-house
+                // people at once; the rest of the rules, the closer cleanup
+                // and the roles each job code belongs to are set on the web
+                // (iOS readability round, 10/8/26).
+                if viewModel.rulesLoaded {
+                    RulesClosedDaysSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
+                    RulesDiningSectionsSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules) {
+                        showingSectionNames = true
+                    }
+                }
+                VStack(spacing: 0) {
+                    CavnarWebLinkRow(title: "Schedule rules",
+                                     subtitle: "Rest, shift length, minors, floors, arrivals, certifications",
+                                     path: "labor/team")
+                    CavnarWebLinkRow(title: "Closers", subtitle: closersDetail, path: "labor/closers")
+                    CavnarWebLinkRow(title: "Roles and job codes",
+                                     subtitle: "Which job codes are one role", path: "labor/team")
                 }
 
                 pairsBlock
@@ -160,14 +169,14 @@ struct RosterSection: View {
         .sheet(isPresented: $showingPairEditor) {
             PairEditorSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $showingRules) {
-            ScheduleRulesSheet(viewModel: viewModel)
-        }
+        // A labor/closers link (a push, the review's link) still opens the
+        // cleanup here; the row for it is on the web.
         .sheet(isPresented: $showingClosers, onDismiss: { Task { await viewModel.loadRoster() } }) {
             CloserCleanupSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $showingFamilies) {
-            RoleFamiliesSheet(store: viewModel.teamSetup)
+        .sheet(isPresented: $showingSectionNames) {
+            FloorSectionsSheet()
+                .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $addingPerson) { AddTeamMemberSheet(viewModel: viewModel) }
         .confirmationDialog(removingPerson.map { "Remove \($0.name) from your team?" } ?? "",
@@ -197,41 +206,10 @@ struct RosterSection: View {
         return s
     }
 
-    private func setupLink(icon: String, title: String, detail: String, action: @escaping () -> Void) -> some View {
-        Button {
-            Haptic.light()
-            action()
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber)
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.cavnarBody(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(detail, size: 13, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.cavnarEmber2)
-            }
-            .padding(12)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
-                    .fill(Color.cavnarPaper2.opacity(0.5)))
-        }
-        .buttonStyle(.plain)
-    }
-
     private var subtitle: String {
         let active = viewModel.activeRoster.count
         let total = viewModel.roster.count
-        if total == 0 { return "Everyone the generator can schedule" }
+        if total == 0 { return "Everyone Cavnar AI can schedule" }
         if active == total { return "\(total) on the roster" }
         return "\(active) of \(total) on the roster"
     }
@@ -250,33 +228,15 @@ struct RosterSection: View {
                             .font(.cavnarBody(15, weight: 600))
                             .foregroundStyle(member.isActive ? Color.cavnarInk : Color.cavnarInk3)
                         if let type = member.settings?.employmentType, type == "part" {
-                            Text("PT")
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarInk3)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.white.opacity(0.06)))
+                            ScheduleRowTag(text: "PT", tone: .cavnarInk2)
                         }
                         if member.settings?.isMinor == true {
-                            Text("MINOR")
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarBlue)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.cavnarBlue.opacity(0.14)))
+                            ScheduleRowTag(text: "Minor", tone: .cavnarBlue)
                         }
                         // In training for a role (schedule audit 10/3/26
                         // D-16): those shifts are not coverage.
                         if member.isTraining {
-                            Text("TRAINING")
-                                .font(.cavnarBody(10, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarInk2)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                            ScheduleRowTag(text: "Training", tone: .cavnarInk2)
                         }
                     }
                     if member.isDormant {
@@ -327,39 +287,6 @@ struct RosterSection: View {
             parts.append("\(Int(lo))–\(Int(hi))h")
         }
         return parts.isEmpty ? "No role on file" : parts.joined(separator: " · ")
-    }
-
-    // MARK: Rules link
-
-    private var rulesLink: some View {
-        Button {
-            Haptic.light()
-            showingRules = true
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "checklist")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Schedule rules")
-                        .font(.cavnarBody(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                    Text("Rest, shift length, minors, floors, jurisdiction, arrivals, certifications, reservations")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.cavnarEmber2)
-            }
-            .padding(12)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
-                    .fill(Color.cavnarPaper2.opacity(0.5)))
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: Pairs
@@ -1096,7 +1023,7 @@ struct RosterDetailSheet: View {
     private var statusSection: some View {
         AccountSection(kicker: "Status") {
             AccountSwitchRow(label: "On the roster",
-                             detail: active ? "The generator may schedule them." : "Not on the roster — skipped by every draft.",
+                             detail: active ? "Cavnar AI may schedule them." : "Not on the roster — skipped by every draft.",
                              isOn: Binding(get: { active }, set: { newValue in
                                 active = newValue
                                 Task { await viewModel.updateSettings(.init(employeeName: name, active: newValue)) }

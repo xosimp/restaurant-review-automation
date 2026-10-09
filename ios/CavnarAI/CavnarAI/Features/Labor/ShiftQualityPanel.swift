@@ -127,7 +127,7 @@ struct ShiftQualityPanel: View {
         HStack(alignment: .center, spacing: 16) {
             QualityDial(score: quality.score ?? 0, tone: tone, muted: isRescoring)
             VStack(alignment: .leading, spacing: 5) {
-                Text("SHIFT QUALITY")
+                Text("How it scored")
                     .font(.cavnarBody(12.5, weight: 700))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarInk3)
@@ -136,13 +136,8 @@ struct ShiftQualityPanel: View {
                         .font(.cavnarHeadline(23))
                         .foregroundStyle(Color.cavnarInk)
                     if quality.isProvisional {
-                        Text("PROVISIONAL")
-                            .font(.cavnarBody(12, weight: 700))
-                            .tracking(0.8)
-                            .foregroundStyle(Color.cavnarAmber)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.cavnarAmber.opacity(0.14)))
+                        // Provisional: built on too little to stand on.
+                        ScheduleRowTag(text: "Early read", tone: .cavnarAmber)
                     }
                     if let delta = viewModel?.scoreDelta {
                         ScoreDeltaChip(delta: delta)
@@ -173,7 +168,7 @@ struct ShiftQualityPanel: View {
             HomeMixedText.make(confidence.completenessLabel, size: 14, weight: 600, color: .cavnarInk2)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Read completeness \(max(0, min(100, confidence.score))) percent")
+        .accessibilityLabel("Scored on \(max(0, min(100, confidence.score))) percent of what it needs")
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background(Capsule().fill(Color.cavnarPaper3.opacity(0.7)))
@@ -525,7 +520,7 @@ struct ShiftQualityPanel: View {
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(on ? tone : tone.opacity(0.12)))
                 .overlay(Circle().strokeBorder(tone.opacity(on ? 0 : 0.35), lineWidth: 1))
-                .contentShape(Circle())
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -726,9 +721,11 @@ struct ShiftQualityPanel: View {
                 HomeMixedText.make(held, size: 13.5, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let capped = shift.cappedBy {
-                Text("Capped by \(capped.replacingOccurrences(of: "_", with: " ")) — a shift is never better than its weakest critical part.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                // The dimension's own label, never its key.
+                let name = (shift.dimensions ?? []).first { $0.key == capped }?.label
+                Text((name.map { "Held down by \($0.lowercased())" } ?? "Held down by its weakest part")
+                     + " \u{2014} a shift is never better than its weakest critical part.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Self.shiftFactLines(shift), id: \.self) { line in
@@ -960,11 +957,10 @@ struct ShiftQualityPanel: View {
                     }
                     group("Across the week", quality.strengths, limit: 3, color: .cavnarGreen)
                     group("Worth a look", quality.weaknesses, limit: 3, color: .cavnarAmber)
-                    Text("Every line here is measured from the finished schedule, not written by the AI. It explains why each shift scored what it did. It does not record why the AI chose one person over another.")
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                    // P2-6: what this explanation is not — said once, here.
+                    Text("It explains each shift\u{2019}s score. It does not record why Cavnar AI chose one person over another.")
+                        .cavnarText(.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
                     if let confidence = quality.confidence, !confidence.reasons.isEmpty {
                         Text(confidence.summary)
                             .font(.cavnarBody(14, weight: 600))

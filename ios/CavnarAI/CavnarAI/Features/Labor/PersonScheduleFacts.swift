@@ -103,7 +103,7 @@ struct RosterDormantNotice: View {
                 HomeMixedText.make(text, size: 14.5, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Left off every draft until you answer \u{2014} the generator never chooses them, and open-shift notices skip them.")
+            Text("Left off every draft until you answer \u{2014} Cavnar AI never chooses them, and open-shift notices skip them.")
                 .font(.cavnarBody(13))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)

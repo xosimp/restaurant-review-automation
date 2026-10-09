@@ -50,30 +50,20 @@ struct DemandSignalsSection: View {
                     }
                 }
 
-                HStack(spacing: 10) {
-                    Button {
-                        Haptic.light()
-                        showingAdd = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                            Text("Add one")
-                        }
-                        .frame(maxWidth: .infinity)
+                Button {
+                    Haptic.light()
+                    showingAdd = true
+                } label: {
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "plus").font(.cavnar(.secondary))
+                        Text("Add a party")
                     }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    Button {
-                        Haptic.light()
-                        showingPaste = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "doc.on.clipboard").font(.system(size: 11, weight: .bold))
-                            Text("Paste a list")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                // A whole list of reservations — a CSV or a pasted table —
+                // is imported on the web (iOS readability round, 10/8/26).
+                CavnarWebLinkRow(title: "Import a list of events", path: "labor/team")
 
                 if let outcome = viewModel.signalOutcome {
                     HomeMixedText.make(outcome, size: 13.5, weight: 600, color: .cavnarGreen)

@@ -107,7 +107,8 @@ def test_low_confidence_reads_provisional_with_its_top_reason():
     # The history list carries it beside the score too.
     assert "r.confidence==='low'?' · provisional'" in html
     panel = _swift("ShiftQualityPanel.swift")
-    assert "PROVISIONAL" in panel and "confidence.reasons.first" in panel
+    # iOS says provisional as "Early read" (readability round, 10/8/26).
+    assert '"Early read"' in panel and "confidence.reasons.first" in panel
 
 
 # ── 5. The capping dimension first ─────────────────────────────────────────

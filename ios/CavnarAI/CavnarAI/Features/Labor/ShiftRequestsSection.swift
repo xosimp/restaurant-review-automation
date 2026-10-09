@@ -1,15 +1,14 @@
 import SwiftUI
 
-/// Shifts staff have asked to hand back, decided here — the same
-/// decide-in-place row as Time off (name, when, Deny / Approve), with
-/// one more move: approving can name who covers it. Below, the open
-/// shifts nobody has claimed yet.
+/// Shift requests already answered, the open board and Post a shift (iOS
+/// readability round, 10/8/26). A pending request is decided in Waiting on
+/// you — the one list of what staff are waiting on — where Approve can name
+/// who covers it (ReplacementPickerSheet); this dropdown is the history,
+/// the open shifts nobody has claimed yet, and posting a new one.
 struct ShiftRequestsSection: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     var onExpand: (() -> Void)? = nil
 
-    // The request an Approve is choosing a replacement for.
-    @State private var choosingFor: ShiftRequest?
     /// Post a shift, offer one, take one off, a swap agreed in person
     /// (iOS parity #25) — each outward move confirmed.
     @State private var posting = false
@@ -21,26 +20,18 @@ struct ShiftRequestsSection: View {
         CavnarDropdown(
             title: "Shift requests",
             subtitle: subtitle,
-            badge: viewModel.pendingRequests.isEmpty ? nil : viewModel.pendingRequests.count,
             isExpanded: $viewModel.requestsExpanded,
             onExpand: { onExpand?(); Task { await viewModel.loadShiftRequests() } }
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Asked for in the staff portal. Approving opens the shift for anyone to claim; name a replacement to cover it outright.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
                 if viewModel.isLoadingRequests && viewModel.shiftRequests.isEmpty && viewModel.openShifts.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.7])
-                } else if viewModel.shiftRequests.isEmpty && viewModel.openShifts.isEmpty {
-                    Text("No requests yet.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .italic()
+                } else if answered.isEmpty && viewModel.openShifts.isEmpty {
+                    Text("Nothing answered yet.")
+                        .cavnarText(.secondary)
                 } else {
-                    VStack(spacing: 8) {
-                        ForEach(viewModel.shiftRequests) { req in
+                    VStack(spacing: CavnarSpace.xs) {
+                        ForEach(answered) { req in
                             row(req)
                         }
                     }
@@ -75,9 +66,6 @@ struct ShiftRequestsSection: View {
                 }
             }
         }
-        .sheet(item: $choosingFor) { req in
-            ReplacementPickerSheet(viewModel: viewModel, request: req)
-        }
         .sheet(isPresented: $posting) { OpenShiftPostSheet(viewModel: viewModel) }
         .sheet(item: $offering) { shift in OpenShiftOfferSheet(viewModel: viewModel, shift: shift) }
         .confirmationDialog(cancelling.map { "Take \($0.whenLabel) off the open board?" } ?? "",
@@ -104,43 +92,41 @@ struct ShiftRequestsSection: View {
         }
     }
 
+    /// Everything but the pending ones, which Waiting on you decides.
+    private var answered: [ShiftRequest] { viewModel.shiftRequests.filter { $0.status != "pending" } }
+
     private var subtitle: String {
         let pending = viewModel.pendingRequests.count
         let open = viewModel.openShifts.count
-        if pending > 0 { return "\(pending) waiting for an answer" }
-        if open > 0 { return "\(open) open \(open == 1 ? "shift" : "shifts") unclaimed" }
-        return viewModel.shiftRequests.isEmpty ? "Asked for in the staff portal" : "Nothing waiting"
+        var parts: [String] = []
+        if open > 0 { parts.append("\(open) open \(open == 1 ? "shift" : "shifts") unclaimed") }
+        if pending > 0 { parts.append("\(pending) waiting \u{2014} under Needs you") }
+        if parts.isEmpty { return answered.isEmpty ? "Post a shift, or see what was answered" : "\(answered.count) answered" }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private func row(_ req: ShiftRequest) -> some View {
-        let busy = viewModel.requestBusyId == req.id
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .top, spacing: CavnarSpace.s) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: CavnarSpace.xs) {
                         Text(req.employeeName ?? "Open shift")
-                            .font(.cavnarBody(15, weight: 700))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                         kindPill(req)
                     }
                     if let swap = req.swapLabel {
                         // "Ana ↔ Bob: Mon 4:00pm for Wed 4:00pm"
-                        HomeMixedText.make(swap, size: 14, weight: 600, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(swap, role: .secondary, color: .cavnarInk)
                     }
-                    HomeMixedText.make(req.whenLabel + (req.reason.map { " · \($0)" } ?? ""),
-                                       size: 13.5, weight: 500, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(req.whenLabel + (req.reason.map { " · \($0)" } ?? ""), role: .secondary)
                 }
-                Spacer(minLength: 6)
+                Spacer(minLength: CavnarSpace.xs)
                 if req.isSwap && req.status == "approved" {
                     Text("Waiting on \(req.targetName ?? "the colleague")")
-                        .font(.cavnarBody(12.5, weight: 700))
-                        .foregroundStyle(Color.cavnarAmber)
+                        .cavnarText(.label, color: .cavnarAmber)
                 } else if req.status != "pending" {
                     Text(statusLabel(req.status))
-                        .font(.cavnarBody(12.5, weight: 700))
-                        .foregroundStyle(statusTone(req.status))
+                        .cavnarText(.label, color: statusTone(req.status))
                 }
             }
             if req.isSwap && req.status == "approved" && viewModel.canDecideShifts {
@@ -149,39 +135,11 @@ struct ShiftRequestsSection: View {
                     agreeing = req
                 } label: {
                     Text("They agreed in person")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .frame(minHeight: 36)
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.requestBusyId == req.id)
-            }
-            if req.status == "pending" && viewModel.canDecideShifts {
-                HStack(spacing: 10) {
-                    Button {
-                        Haptic.light()
-                        Task { await viewModel.decideShiftRequest(req.id, approve: false) }
-                    } label: { Text("Deny").frame(maxWidth: .infinity) }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                    .disabled(busy)
-                    Button {
-                        Haptic.light()
-                        // A swap moves both shifts as asked — there is no
-                        // replacement to name. The picker is for drops.
-                        if req.isSwap || viewModel.activeNames.filter({ $0 != req.employeeName }).isEmpty {
-                            Task { await viewModel.decideShiftRequest(req.id, approve: true) }
-                        } else {
-                            choosingFor = req
-                        }
-                    } label: {
-                        Group {
-                            if busy { CavnarShimmerText(text: "Deciding…") } else { Text("Approve") }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
-                    .disabled(busy)
-                }
             }
         }
         .padding(12)
@@ -214,57 +172,44 @@ struct ShiftRequestsSection: View {
         switch status {
         case "approved", "covered", "claimed": return .cavnarGreen
         case "open": return .cavnarAmber
-        default: return .cavnarInk3
+        default: return .cavnarInk2
         }
     }
 
     private var openBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.cavnarAmber)
-                Text("OPEN SHIFTS")
-                    .font(.cavnarBody(11, weight: 700))
-                    .tracking(1.1)
-                    .foregroundStyle(Color.cavnarAmber)
-            }
-            Text("On the open board in the Cavnar AI app until somebody picks it up.")
-                .font(.cavnarBody(13))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Open shifts", icon: "person.crop.circle.badge.questionmark", tint: .cavnarAmber)
+            VStack(spacing: CavnarSpace.xs) {
                 ForEach(viewModel.openShifts) { shift in
                     let asked = viewModel.shiftOffers.filter { $0.requestId == shift.id }.map(\.name)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        HStack(spacing: CavnarSpace.s) {
                             VStack(alignment: .leading, spacing: 2) {
-                                HomeMixedText.make(shift.whenLabel, size: 14.5, weight: 600, color: .cavnarInk)
+                                CavnarMixedText(shift.whenLabel, role: .label)
                                 Text(((shift.employeeName ?? "").isEmpty ? "extra shift" : "was \(shift.employeeName ?? "")\u{2019}s")
                                      + " \u{00B7} " + (asked.isEmpty ? "nobody has claimed it yet"
                                                        : "offered to \(asked.joined(separator: ", ")) \u{00B7} waiting on an answer"))
-                                    .font(.cavnarBody(13))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .cavnarText(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
                         }
                         if viewModel.canDecideShifts {
-                            HStack(spacing: 16) {
+                            HStack(spacing: CavnarSpace.m) {
                                 Button {
                                     Haptic.light()
                                     offering = shift
                                 } label: {
-                                    Text("Offer it").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                                        .frame(minHeight: 36)
+                                    Text("Offer it").cavnarText(.label, color: .cavnarEmber2)
+                                        .cavnarHitTarget()
                                 }
                                 .buttonStyle(.plain)
                                 Button {
                                     Haptic.light()
                                     cancelling = shift
                                 } label: {
-                                    Text("Take it off").font(.cavnarBody(13.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
-                                        .frame(minHeight: 36)
+                                    Text("Take it off").cavnarText(.label, color: .cavnarInk2)
+                                        .cavnarHitTarget()
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(viewModel.requestBusyId == shift.id)
@@ -289,8 +234,9 @@ struct ShiftRequestsSection: View {
     }
 }
 
-/// Approve, and say who covers it — or leave it open for anyone.
-private struct ReplacementPickerSheet: View {
+/// Approve, and say who covers it — or leave it open for anyone. Opened
+/// from Waiting on you's "Name who covers".
+struct ReplacementPickerSheet: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     let request: ShiftRequest
     @Environment(\.dismiss) private var dismiss
@@ -306,20 +252,15 @@ private struct ReplacementPickerSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                         Text(request.employeeName ?? "Open shift")
-                            .font(.cavnarHeadline(22))
-                            .foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make(request.whenLabel, size: 14.5, color: .cavnarInk3)
+                            .cavnarText(.headline)
+                        CavnarMixedText(request.whenLabel, role: .secondary)
                     }
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("WHO COVERS IT")
-                            .font(.cavnarBody(11.5, weight: 700))
-                            .tracking(0.8)
-                            .foregroundStyle(Color.cavnarInk3)
-                        Text("Same rules as the generator: the server refuses anyone this would put over a limit, and says why.")
-                            .font(.cavnarBody(13))
-                            .foregroundStyle(Color.cavnarInk3)
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                        CavnarKicker("Who covers it")
+                        Text("The same rules as Cavnar AI's drafts: anyone this would put over a limit is refused, with why.")
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         AccountFlowLayout(spacing: 6) {
                             ForEach(candidates, id: \.self) { person in
@@ -354,7 +295,7 @@ private struct ReplacementPickerSheet: View {
                             }
                             .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
+                        .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy))
                         .disabled(busy)
                         Button { dismiss() } label: { Text("Cancel").frame(maxWidth: .infinity) }
                             .buttonStyle(CavnarSecondaryButtonStyle())

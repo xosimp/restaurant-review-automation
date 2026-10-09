@@ -37,9 +37,8 @@ struct TeamStrengthSection: View {
             }
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Rate each person 1 to 5. The scheduler uses this to avoid putting your weakest people together on your busiest shifts.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("Rate each person 1 to 5. Cavnar AI keeps your weakest people from sharing your busiest shifts.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if viewModel.isLoadingTeam && viewModel.team.isEmpty {
@@ -84,6 +83,12 @@ struct TeamStrengthSection: View {
                         .font(.cavnarBody(13.5))
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // A score per role (someone can be a 5 behind the bar and
+                // a 3 on the floor) is a wide grid — set on the web.
+                if !viewModel.team.isEmpty {
+                    CavnarWebLinkRow(title: "Ratings by role", path: "labor/team")
                 }
 
                 // Who changed a rating or a target, and when (memory round).
@@ -228,10 +233,9 @@ struct TeamStrengthSection: View {
             if member.ratingDue == true, member.score != nil {
                 rerateRow(member)
             }
-            let roles = roleOptions(member)
-            if roles.count > 1 || !(member.roleScores ?? [:]).isEmpty {
-                roleScoreRows(member, roles: roles)
-            }
+            // Per-role ratings are set on the web (iOS readability round,
+            // 10/8/26: "Ratings by role · Edit on the web" under the list);
+            // roleScoreRows stays for a later cleanup.
             closerToggle(member)
             if member.canClosePending == true {
                 Text("Marked to close through Cavnar AI support \u{2014} counts once you count it as yours.")

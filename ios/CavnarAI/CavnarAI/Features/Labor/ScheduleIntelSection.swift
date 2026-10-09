@@ -16,11 +16,44 @@ struct ScheduleIntelSection: View {
     /// projections have held up here, read beside the projected week.
     var demandAccuracy: DemandAccuracy? = nil
     var weekProjectionAccuracy: ForecastAccuracy? = nil
+    /// The Labor Overview's form (iOS readability round, 10/8/26): the
+    /// record itself is read on the web ("What the record says · See it on
+    /// the web"); only what the owner can act on stays on the phone — the
+    /// auto-publish offer and the pairs the record suggests.
+    var actionsOnly: Bool = false
 
     private static let dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     private static let dayparts = ["morning", "night"]
 
     var body: some View {
+        if actionsOnly {
+            actionsBody
+        } else {
+            fullBody
+        }
+    }
+
+    /// The offer and the pairs, each only when there is one, then the row
+    /// to the full record on the web.
+    private var actionsBody: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            if let intel = viewModel.intel {
+                if let offer = intel.autoPublishOffer, offer.eligible { autoPublishOfferCard(offer) }
+                if let pairs = intel.suggestedPairs,
+                   pairs.contains(where: { !viewModel.ignoredSuggestions.contains($0.id) }) {
+                    pairsBlock(pairs)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cavnarCard()
+                }
+            }
+            CavnarWebLinkRow(title: "What the record says",
+                             subtitle: "Outcomes, sales per labor hour, rotation and what staff keep doing",
+                             path: "labor/schedule", actionLabel: "See it on the web")
+        }
+        .task { if viewModel.intel == nil { await viewModel.loadIntel() } }
+    }
+
+    private var fullBody: some View {
         CavnarDropdown(
             title: "What the record says",
             subtitle: subtitle,
@@ -71,10 +104,6 @@ struct ScheduleIntelSection: View {
                     } else if let hidden = intel.suppressedRecommendationKinds, !hidden.isEmpty {
                         hiddenKindsLine(hidden)
                     }
-                    Text("Measured from published weeks and the shift ledger — not written by the model.")
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("Nothing recorded yet — the first published week writes the first row.")
                         .font(.cavnarBody(14))
@@ -233,13 +262,11 @@ struct ScheduleIntelSection: View {
                 // its own shifts did (schedule audit 10/3/26 SQ-22).
                 profileCalibration(c)
                 if !c.leftOut.isEmpty {
-                    HomeMixedText.make("Left out of this fit: " + c.leftOut.map { $0.replacingOccurrences(of: "_", with: " ") }
-                                        .joined(separator: ", ")
-                                       + " \u{2014} one dimension per ten shifts, the better-observed first.",
-                                       size: 12.5, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // A count, never the dimensions' keys.
+                    CavnarMixedText("\(c.leftOut.count) more \(c.leftOut.count == 1 ? "measure" : "measures") left out "
+                                    + "until there are more shifts to read them by.", role: .caption)
                 }
-                Text(c.note ?? "Suggestions only — the engine keeps its current weights until someone changes them.")
+                Text(c.note ?? "Suggestions only \u{2014} Cavnar AI keeps its current weights until someone changes them.")
                     .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -443,13 +470,7 @@ struct ScheduleIntelSection: View {
                             .font(.cavnarBody(14.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                         if troubled {
-                            Text("TROUBLED")
-                                .font(.cavnarBody(9, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarAmber)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.cavnarAmber.opacity(0.16)))
+                            ScheduleRowTag(text: "Troubled", tone: .cavnarAmber)
                         }
                     }
                     HomeMixedText.make(outcomeDetail(o), size: 12.5, color: .cavnarInk3)
@@ -463,8 +484,7 @@ struct ScheduleIntelSection: View {
                             .cavnarSensitive()
                         Text(o.splhBasis == "worked" ? "per worked hour"
                              : o.splhBasis == "scheduled" ? "per scheduled hour" : "per labor hour")
-                            .font(.cavnarBody(10.5))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption)
                     }
                 }
             }

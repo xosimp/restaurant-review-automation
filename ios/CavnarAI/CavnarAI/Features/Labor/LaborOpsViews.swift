@@ -191,7 +191,7 @@ struct AddTeamMemberSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Someone new, before their first shift is in the POS. The generator can schedule them from now on; once they have shift history, that record takes over.")
+                    Text("Someone new, before their first shift is in the POS. Cavnar AI can schedule them from now on; once they have shift history, that record takes over.")
                         .font(.cavnarBody(13.5))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)

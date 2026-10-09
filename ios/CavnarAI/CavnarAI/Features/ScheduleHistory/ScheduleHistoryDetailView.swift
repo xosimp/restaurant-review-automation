@@ -14,6 +14,8 @@ struct ScheduleHistoryDetailView: View {
     /// The day the week's pager shows (#48), and the PDF drawn for it.
     @State private var pagerDay: String?
     @State private var pdfURL: URL?
+    /// Cavnar AI's note past its first three lines.
+    @State private var showingFullNarrative = false
 
     // Custom init so the view model can be constructed with historyId
     // already known — see ScheduleHistoryDetailViewModel.init's own
@@ -105,31 +107,24 @@ struct ScheduleHistoryDetailView: View {
                         }
 
                         if let summary = detail.summary, !summary.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("WHAT CHANGED & WHY")
-                                    .font(.cavnarBody(14, weight: 700))
-                                    .tracking(1.2)
-                                    .foregroundStyle(Color.cavnarGreen)
-                                ForEach(summary, id: \.self) { line in
-                                    Text("• \(line)")
-                                        .font(.cavnarBody(14))
-                                        .foregroundStyle(Color.cavnarInk2)
-                                        .lineSpacing(5)
+                            // The same words as Labor's own draft (iOS
+                            // readability round, 10/8/26): the diff against
+                            // the last published week, three then "+N more".
+                            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                                CavnarKicker("What changed vs last published week")
+                                ForEach(Array(summary.prefix(3).enumerated()), id: \.offset) { _, line in
+                                    CavnarMixedText("\u{2022} \(line)", role: .body)
+                                }
+                                if summary.count > 3 {
+                                    CavnarMoreDisclosure(hiddenCount: summary.count - 3) {
+                                        ForEach(Array(summary.dropFirst(3).enumerated()), id: \.offset) { _, line in
+                                            CavnarMixedText("\u{2022} \(line)", role: .body)
+                                        }
+                                    }
                                 }
                             }
-                            // Without this, the card's width is purely
-                            // content-driven — a VStack with no Spacer
-                            // anywhere sizes itself to its widest text
-                            // line, so a short AI-generated summary made
-                            // the whole card narrower than the PAR banner
-                            // below it (that one is full-width "for free"
-                            // only because its HStack has its own internal
-                            // Spacer forcing it to claim all available
-                            // width — siblings in a VStack are never
-                            // forced to match each other's width). This is
-                            // exactly why it was inconsistent: it tracked
-                            // how long that week's summary text happened
-                            // to be, not the screen width.
+                            // Full width, whatever the summary's length —
+                            // a VStack otherwise sizes to its widest line.
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .cavnarCard()
                         }
@@ -141,16 +136,24 @@ struct ScheduleHistoryDetailView: View {
                         }
                         if let narrative = detail.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
                            !narrative.isEmpty {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text("CAVNAR AI'S NOTE")
-                                    .font(.cavnarBody(12, weight: 700))
-                                    .tracking(1.2)
-                                    .foregroundStyle(Color.cavnarInk3)
+                            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                                CavnarKicker("Cavnar AI's note")
+                                // Three lines, then More (as on Labor).
                                 Text(narrative)
-                                    .font(.cavnarBody(14))
-                                    .foregroundStyle(Color.cavnarInk3)
-                                    .lineSpacing(4)
+                                    .cavnarText(.body)
+                                    .lineLimit(showingFullNarrative ? nil : 3)
                                     .fixedSize(horizontal: false, vertical: true)
+                                if narrative.count > 160 {
+                                    Button {
+                                        Haptic.light()
+                                        showingFullNarrative.toggle()
+                                    } label: {
+                                        Text(showingFullNarrative ? "Less" : "More")
+                                            .cavnarText(.label, color: .cavnarEmber2)
+                                            .cavnarHitTarget()
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .cavnarCard()

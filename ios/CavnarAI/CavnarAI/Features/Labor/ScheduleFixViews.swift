@@ -57,7 +57,7 @@ struct ScheduleRowTag: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            if let symbol { Image(systemName: symbol).font(.system(size: 8, weight: .bold)) }
+            if let symbol { Image(systemName: symbol).font(.cavnar(.tag)) }
             Text(text.uppercased())
                 .font(.cavnarBody(CavnarType.tag, weight: 700))
                 .tracking(0.5)
@@ -110,7 +110,9 @@ struct GenerateWeekNotes: View {
                 }
                 .accessibilityLabel("Anything for this week")
         }
-        .task(id: viewModel.generateWeek) { await viewModel.loadGenerateForecast() }
+        // The picked week's forecast is read by the Labor hero
+        // (`.task(id: viewModel.generateWeek)`), which stays up under this
+        // sheet — its button names the week and refuses a stale one.
     }
 }
 
@@ -123,6 +125,12 @@ struct GenerateWeekNotes: View {
 struct DraftNotices: View {
     @Bindable var viewModel: LaborViewModel
     let result: GeneratedSchedule
+    /// Which notices (iOS readability round, 10/8/26): `.urgent` — what
+    /// could not be written or staffed, in red/amber, leads the draft;
+    /// `.info` — a starting point, how current the sales were — sits under
+    /// the draft's Details; `.all` both.
+    enum Part { case all, urgent, info }
+    var part: Part = .all
     var onOpenAvailability: () -> Void = {}
     var onOpenClosures: () -> Void = {}
 
@@ -130,18 +138,19 @@ struct DraftNotices: View {
         (result.review?.lines ?? []).first { $0.hasPrefix("A starting point") }
     }
 
+    private var urgent: Bool { part != .info }
+    private var info: Bool { part != .urgent }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if result.startingPoint?.noHistory == true {
-                HStack(alignment: .top, spacing: 8) {
+            if info, result.startingPoint?.noHistory == true {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     ScheduleRowTag(text: "Starting point", tone: .cavnarInk2, symbol: "flag.fill")
-                        .padding(.top, 2)
-                    HomeMixedText.make(startingLine ?? "A first draft with no shift history of its own \u{2014} drafted from your team, your floors and similar restaurants.",
-                                       size: 13, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(startingLine ?? "A first draft with no shift history of its own \u{2014} drafted from your team, your floors and similar restaurants.",
+                                    role: .secondary)
                 }
             }
-            if let line = result.partialLine {
+            if urgent, let line = result.partialLine {
                 ScheduleNotice(text: line) {
                     Button {
                         Haptic.medium()
@@ -153,7 +162,7 @@ struct DraftNotices: View {
                     .disabled(viewModel.isGeneratingSchedule || result.historyId == nil)
                 }
             }
-            if let line = result.unstaffableLine {
+            if urgent, let line = result.unstaffableLine {
                 ScheduleNotice(text: line, detail: result.unstaffable.compactMap { d in
                     d.reasons.isEmpty ? nil
                         : CavnarDate.dayDate(d.day, d.date) + ": " + d.reasons.joined(separator: "; ")
@@ -162,29 +171,79 @@ struct DraftNotices: View {
                         Button("Availability") { onOpenAvailability() }
                         Button("Closures") { onOpenClosures() }
                     }
-                    .font(.cavnarBody(13.5, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarEmber2)
                     .buttonStyle(.plain)
                     .frame(minHeight: 44)
                 }
             }
-            if result.plan?.failed == true {
+            if urgent, result.plan?.failed == true {
                 ScheduleNotice(text: "Cavnar AI couldn\u{2019}t plan the managers\u{2019} shifts before writing this draft \u{2014} check every day has a manager on from open to close.",
                                tone: .cavnarRed)
             }
-            if let text = result.coverage?.shortfall?.text {
+            if urgent, let text = result.coverage?.shortfall?.text {
                 ScheduleNotice(text: text, tone: .cavnarRed, symbol: "person.crop.circle.badge.exclamationmark")
             }
-            if let through = result.demandDataThrough, let line = through.line {
-                HomeMixedText.make(line, size: 12.5, weight: 600,
-                                   color: through.stale == true || through.blind == true ? .cavnarAmber : .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+            if info, let through = result.demandDataThrough, let line = through.line {
+                CavnarMixedText(line, role: .caption,
+                                color: through.stale == true || through.blind == true ? .cavnarAmber : .cavnarInk2)
             }
         }
     }
 }
 
 // MARK: - The owner's question about the managers' days (M-1)
+
+/// The question as ONE row in the draft (iOS readability round, 10/8/26):
+/// "Set 4 managers' usual days ›", opening the per-name editor as a sheet —
+/// the inline multi-picker pushed the week several screens down.
+struct ManagerQuestionRow: View {
+    @Bindable var viewModel: LaborViewModel
+    let question: String
+    let names: [String]
+    @State private var open = false
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            open = true
+        } label: {
+            HStack(spacing: CavnarSpace.s) {
+                Image(systemName: "person.badge.clock")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    CavnarMixedText(names.count == 1 ? "Set \(names[0])\u{2019}s usual days"
+                                                     : "Set \(names.count) managers\u{2019} usual days",
+                                    role: .label)
+                    Text("This week is an even split until you do.")
+                        .cavnarText(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard(.ai)
+        .sheet(isPresented: $open) {
+            NavigationStack {
+                ScrollView {
+                    ManagerQuestionCard(viewModel: viewModel, question: question, names: names)
+                        .padding(CavnarSpace.gutter)
+                }
+                .accountSheetChrome("The managers\u{2019} days")
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+}
 
 /// "Which days and hours do Erik, Jim, Anthony and Andrew work?" — shown
 /// while the plan asks it. Per name, the days they always work (weekday,
@@ -204,17 +263,11 @@ struct ManagerQuestionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("THE MANAGERS\u{2019} DAYS")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarEmber2)
             Text(question)
-                .font(.cavnarHeadline(19))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Cavnar AI plans your managers\u{2019} shifts first so every minute on the floor has a manager. It had no standing shifts or past schedules for these managers, so this week is an even split. Tell it their real days and every draft will keep them.")
-                .font(.cavnarBody(13.5))
-                .foregroundStyle(Color.cavnarInk3)
+            Text("Cavnar AI plans managers first, so every minute on the floor has one. With no usual days on file, this week is an even split \u{2014} set their real days and every draft keeps them.")
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(names, id: \.self) { name in
                 personBlock(name)
@@ -294,7 +347,7 @@ struct ManagerQuestionCard: View {
                 drafts[name]?.removeAll { $0.id == row.id }
             } label: {
                 Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.cavnarInk3)
-                    .frame(width: 32, height: 44)
+                    .cavnarHitTarget()
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Remove this day")
@@ -318,7 +371,7 @@ struct ManagerQuestionCard: View {
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.cavnarEmber2)
             }
             .padding(.horizontal, 8)
-            .frame(minHeight: 36)
+            .frame(minHeight: 44)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.cavnarPaper3.opacity(0.5)))
         }
     }
@@ -368,7 +421,7 @@ struct DayManagerNotes: View {
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(Color.cavnarRed)
                         .padding(.top, 3)
-                    HomeMixedText.make(breach.detail ?? (breach.kind ?? "").replacingOccurrences(of: "_", with: " "),
+                    HomeMixedText.make(breach.detail ?? "A rule this week breaks on this day",
                                        size: 13, weight: 600, color: .cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -486,7 +539,7 @@ struct ScheduleRowBadges: View {
                         Text(viewModel.sectionBusy == row.id ? "Assigning" : "Assign")
                             .font(.cavnarBody(12.5, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 32)
+                            .frame(minHeight: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -600,7 +653,7 @@ struct ScheduleReviewExtras: View {
     // Repair stages that did not run (P-3, P-17): a blocking one leads with ⚠.
     private func stageBlock(_ failures: [ReviewStageFailure]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            kicker("Checks that didn\u{2019}t run", .cavnarRed)
+            kicker("Checks Cavnar AI couldn\u{2019}t finish", .cavnarRedText)
             ForEach(Array(failures.enumerated()), id: \.offset) { _, f in
                 if let text = f.text {
                     HStack(alignment: .top, spacing: 7) {
@@ -783,7 +836,7 @@ struct ScheduleReviewExtras: View {
                             .font(.cavnarBody(13, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .buttonStyle(.plain)
-                            .frame(minHeight: 36)
+                            .frame(minHeight: 44)
                     }
                 }
             }

@@ -67,7 +67,7 @@ struct ScheduleRulesSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("Hard rules the generator will not break, and what it flags for you. Leave a field blank to keep the default shown. Everything here saves with the one button at the bottom.")
+                    Text("Rules Cavnar AI will not break, and what it flags for you. A blank field keeps the default shown. Everything saves with the button at the bottom.")
                         .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)

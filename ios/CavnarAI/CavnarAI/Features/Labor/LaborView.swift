@@ -24,8 +24,13 @@ struct LaborView: View {
     @State private var showDataInfo = false
     // The schedule row whose "why this person" is open.
     @State private var explainingRow: ScheduleRow?
-    // "How it scored" inside the generated schedule (density #29).
+    // "How it scored" — a tile under Details that opens the panel as a
+    // sheet (density #29; iOS readability round).
     @State private var showingHowItScored = false
+    /// The generated week's one "Details" disclosure, and Cavnar AI's note
+    /// past its first three lines.
+    @State private var showingScheduleDetails = false
+    @State private var showingFullNarrative = false
     // The Scheduling setup sheet — roster, availability, demand signals,
     // team strength and shift targets (density #28) — and the person a
     // "person/<key>" link opens over it.
@@ -64,7 +69,9 @@ struct LaborView: View {
     /// #46): the labor target, the build notes and their rules, the
     /// weekly automation.
     @State private var buildSettings = ScheduleBuildSettings()
-    @State private var showingNotesSheet = false
+    /// The Generate sheet: the week, the owner's words, the target, the
+    /// build notes and the weekly automation (iOS readability round).
+    @State private var showingGenerateSheet = false
     /// Tonight's covers (iOS parity #69).
     @State private var covers = CoversModel()
     /// The day the week's pager shows (iOS parity #48).
@@ -110,18 +117,18 @@ struct LaborView: View {
                                 // background/border) — see heroCard's own
                                 // comment.
                                 heroCard(stats)
-                                // Three groups, not thirteen equal rows
-                                // (density #28): NEEDS YOU — what staff are
-                                // waiting on, the drafted week, time off,
-                                // shift requests and overtime, each decided
-                                // in place; WHY — the diagnosis and what
-                                // drove the hours; SCHEDULING SETUP — one row
-                                // that opens a sheet with the roster,
-                                // availability, demand signals, team
-                                // strength and targets.
+                                // Groups, not thirteen equal rows (density
+                                // #28; iOS readability round 10/8/26):
+                                // NEEDS YOU — every request staff are waiting
+                                // on, in ONE list, and the drafted week; WHY —
+                                // the diagnosis and what drove the hours;
+                                // REQUESTS & COVERS — what was decided and
+                                // tonight's covers; SCHEDULING SETUP — one row
+                                // that opens a sheet.
                                 laborGroupHeader("Needs you")
                                 // What staff are waiting on, answered in
-                                // place, before any chart (Friction #18).
+                                // place, before any chart (Friction #18) —
+                                // the only place a pending request shows.
                                 LaborWaitingOnYou(viewModel: viewModel, setupViewModel: setupViewModel,
                                                   onOpenRequests: {
                                                       setupViewModel.requestsExpanded = true
@@ -132,21 +139,21 @@ struct LaborView: View {
                                 .id(Self.waitingID)
                                 if let id = viewModel.openingWeekId {
                                     CavnarShimmerText(text: "Opening the week\u{2026}")
-                                        .font(.cavnarBody(13.5, weight: 600))
+                                        .font(.cavnar(.label))
                                         .accessibilityLabel("Opening week \(id)")
                                 }
                                 if let error = viewModel.openWeekError {
                                     Text(error)
-                                        .font(.cavnarBody(14))
-                                        .foregroundStyle(Color.cavnarRed)
+                                        .cavnarText(.secondary, color: .cavnarRedText)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 // What the team memory asks the owner — stale
                                 // notes, a person listed twice, a guest naming
                                 // someone — answered in Scheduling setup.
                                 TeamMemoryNudge(viewModel: teamMemory) { showingSetup = true }
-                                // Tonight's lineup brief, the Team inbox and
-                                // how shifts felt (parity #10, #26, #67).
+                                // Tonight's lineup brief while it waits on an
+                                // approval or a read, and the Team inbox
+                                // (parity #10, #26, #67).
                                 LaborTeamSection(openInbox: { inboxTarget = TeamInboxTarget(threadId: $0) },
                                                  inboxOpen: inboxTarget != nil)
                                     .id(Self.teamOpsID)
@@ -156,22 +163,9 @@ struct LaborView: View {
                                 }
                                 if let error = viewModel.scheduleError {
                                     Text(error)
-                                        .font(.cavnarBody(14))
-                                        .foregroundStyle(Color.cavnarRed)
+                                        .cavnarText(.secondary, color: .cavnarRedText)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
-                                TimeOffSection(viewModel: viewModel) {
-                                    scrollToReveal(Self.timeOffID, proxy: proxy)
-                                }
-                                .id(Self.timeOffID)
-                                // Shifts handed back sit next to time off:
-                                // both are the staff asking, both are
-                                // decided in place.
-                                ShiftRequestsSection(viewModel: setupViewModel) {
-                                    scrollToReveal(Self.requestsID, proxy: proxy)
-                                }
-                                .id(Self.requestsID)
-                                // Tonight's covers, entered at close (#69).
-                                CoversTile(model: covers)
                                 // "Where the money went" was removed (owner,
                                 // 9/26/26), as on the web: the Staffing board
                                 // below carries the same days.
@@ -200,26 +194,40 @@ struct LaborView: View {
                                     isExpanded: $viewModel.staffingBoardExpanded,
                                     onExpand: { scrollToReveal(Self.boardID, proxy: proxy) })
                                 .id(Self.boardID)
-                                // The measured layer behind the draft:
-                                // outcomes, rotation, what staff keep doing.
-                                ScheduleIntelSection(viewModel: setupViewModel, onExpand: {
-                                    scrollToReveal(Self.intelID, proxy: proxy)
-                                }, onAddPair: { pair in
+                                // The measured layer behind the draft is read
+                                // on the web; what the owner can act on — the
+                                // auto-publish offer, the suggested pairs —
+                                // stays here (iOS readability round).
+                                ScheduleIntelSection(viewModel: setupViewModel, onAddPair: { pair in
                                     Task { await setupViewModel.addSuggestedPair(pair) }
-                                }, demandAccuracy: viewModel.stats?.demandAccuracy,
-                                   weekProjectionAccuracy: viewModel.stats?.weekProjectionAccuracy)
+                                }, actionsOnly: true)
                                 .id(Self.intelID)
                                 // What the draft has learned, and the
                                 // servers' measured ratings (account holder
                                 // only) — H2-1, H2-3.
                                 learningRow("What the schedule has learned",
-                                            detail: "Habits, teams and patterns the draft keeps \u{2014} keep, let go or make a rule",
+                                            detail: "Habits and teams the draft keeps \u{2014} keep, let go or make a rule",
                                             symbol: "brain") { showingMemory = true }
                                 if sessionStore.currentUser?.isOwner == true {
                                     learningRow("Measured ratings",
-                                                detail: "What each server sells a guest, offered as a rating to confirm",
+                                                detail: "What each server sells a guest, to confirm as a rating",
                                                 symbol: "chart.bar.xaxis") { showingMeasuredRatings = true }
                                 }
+
+                                // What was decided — the pending ones are in
+                                // Needs you — with Post a shift and the open
+                                // board, and tonight's covers (#69).
+                                laborGroupHeader("Requests & covers")
+                                    .padding(.top, 14)
+                                TimeOffSection(viewModel: viewModel) {
+                                    scrollToReveal(Self.timeOffID, proxy: proxy)
+                                }
+                                .id(Self.timeOffID)
+                                ShiftRequestsSection(viewModel: setupViewModel) {
+                                    scrollToReveal(Self.requestsID, proxy: proxy)
+                                }
+                                .id(Self.requestsID)
+                                CoversTile(model: covers)
 
                                 laborGroupHeader("Scheduling setup")
                                     .padding(.top, 14)
@@ -229,7 +237,7 @@ struct LaborView: View {
                                 CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                             } else if let error = viewModel.errorMessage {
                                 VStack(spacing: 8) {
-                                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                    Text(error).cavnarText(.secondary)
                                     Button("Retry") { Task { await viewModel.load() } }
                                 }
                                 .padding(.top, 60)
@@ -485,7 +493,10 @@ struct LaborView: View {
         .sheet(isPresented: $editingSectionNames, onDismiss: { Task { await viewModel.loadSections() } }) {
             FloorSectionsSheet().presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $showingNotesSheet) { ScheduleNotesSheet(settings: buildSettings) }
+        .sheet(isPresented: $showingGenerateSheet) {
+            GenerateScheduleSheet(viewModel: viewModel, settings: buildSettings,
+                                  title: generateTitle, onGenerate: startGeneration)
+        }
         .sheet(isPresented: $viewModel.showingDraftSummary) {
             if let result = viewModel.scheduleResult {
                 ScheduleSummarySheet(
@@ -567,34 +578,32 @@ struct LaborView: View {
         }
     }
 
+    /// The Overview's five-second answer (iOS readability round, 10/8/26):
+    /// the % against target, the gap in dollars (an opportunity, never
+    /// savings), the most likely cause from the diagnosis, ONE Generate
+    /// button and Cavnar AI's read as one line. Everything that shapes the
+    /// draft — the week, the owner's words, the target, the build notes and
+    /// the weekly automation — lives in the Generate sheet the button opens.
     @ViewBuilder
     private func heroCard(_ stats: LaborStats) -> some View {
         // Neither "on track" nor "over target" is a claim you can make about
         // a number you couldn't measure. A failed analysis used to default
         // every figure to zero, and 0% read as comfortably under target.
         let tone: CavnarTone = stats.figuresAreTrustworthy ? (stats.onTrack ? .good : .bad) : .neutral
-        VStack(alignment: .leading, spacing: 12) {
-            // Sample data is not this restaurant's data. This used to be a
-            // tap-to-open popover behind an icon that rendered DIM AND PLAIN
-            // for the sample case — the same "nothing to see here" icon a
-            // healthy live restaurant gets — because `stale` was defined as
-            // isLive && daysOld > 21, so sample data could never be stale.
-            // The one state with the most to disclose got the most
-            // reassuring affordance. It is a banner now.
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // Sample data is not this restaurant's data — a banner, never a
+            // dim icon (the one state with the most to disclose).
             if !stats.isLive {
                 sampleDataBanner
             }
             // Figures from this phone's cache, or a refresh that failed
-            // over them, say how old they are (#37) — the cache never
-            // expires, so without this a week-old read looked current.
+            // over them, say how old they are (#37).
             if let notice = viewModel.cachedNotice {
-                HomeMixedText.make(notice, size: 12.5, weight: 600, color: .cavnarAmber)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(notice, role: .caption, color: .cavnarAmber)
             }
-            HStack(spacing: 6) {
-                Label("Labor cost", systemImage: "person.2.fill")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarInk3)
+            HStack(spacing: CavnarSpace.xxs) {
+                Text("Labor cost")
+                    .cavnarText(.label, color: .cavnarInk2)
                 dataFreshnessInfoButton(stats)
                 Spacer()
                 if stats.isLive {
@@ -604,92 +613,67 @@ struct LaborView: View {
                              tone: tone)
                 }
             }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                // Colored to the same on-track/over-target read the card's
-                // own tint, progress bar, and pill already carry, and lit
-                // from within so it isn't flat green-on-green (or red-on-
-                // red) — see LaborHeroPercent.
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                // Colored to the same on-track/over-target read the pill and
+                // bar carry, lit from within (see LaborHeroPercent).
                 LaborHeroPercent(value: stats.overallLaborPct, tone: tone)
-                (Text("/ ") + Text("\(Int(stats.target))%").font(.cavnarNumber(14, weight: 600)) + Text(" target"))
-                    .font(.cavnarBody(14.5))
-                    .foregroundStyle(Color.cavnarInk3)
+                (Text("/ ") + Text("\(Int(stats.target))%").font(.cavnar(.figureS)) + Text(" target"))
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarInk2)
             }
             StatProgressBar(progress: stats.overallLaborPct / max(stats.target, 1), tone: tone)
-            // How current the sources behind labor are, from data health.
-            if stats.isLive {
-                DataHealthModuleBadge(module: "labor")
-            }
             if let caveat = stats.caveat {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarAmber)
-                        .padding(.top, 2)
-                    Text(caveat)
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                CavnarMixedText(caveat, role: .caption, color: .cavnarInk2)
             }
-            // The whole window's gap above target, said as what it is — an
-            // opportunity over a named number of days, never "savings"
-            // (NS3 labor #11) — and never on sample data.
+            // The window's gap above target, said as what it is — an
+            // opportunity over named days, never "savings" (NS3 labor #11)
+            // — and never on sample data.
             if stats.isLive && stats.potentialSavings > 0 && stats.figuresAreTrustworthy {
-                HomeMixedText.make("About $\(Int(stats.potentialSavings)) above your target"
-                                   + (stats.periodDays.map { " over these \($0) days" } ?? " over this window")
-                                   + " \u{2014} a gap to close, not money saved.",
-                                   size: 14, weight: 600, color: .cavnarAmber)
+                CavnarMixedText("About $\(Int(stats.potentialSavings)) over target"
+                                + (stats.periodDays.map { " in \($0) days" } ?? "")
+                                + " \u{2014} a gap to close, not money saved.",
+                                role: .secondary, color: .cavnarAmber)
+            }
+            // Why, in one line: the diagnosis's most likely cause (the card
+            // under Why carries the check and the reasoning).
+            if let diagnosis = analyticsViewModel.diagnosis, diagnosis.hasCause, let cause = diagnosis.cause {
+                (Text("Most likely: ").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
+                 + HomeMixedText.make(cause, role: .body))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if stats.isLive {
                 ScheduleGenerateButton(
                     tone: tone,
+                    title: generateTitle,
                     isGenerating: viewModel.isGeneratingSchedule,
-                    action: {
-                        if viewModel.hasLocalEdits {
-                            confirmingGenerateOverEdits = true
-                        } else {
-                            Task { await viewModel.generateSchedule() }
-                        }
-                    }
+                    action: { showingGenerateSheet = true }
                 )
-                .padding(.top, 2)
-                // A week whose sales are too old is refused (D-33): the
-                // button is off and the line under the picker says why.
-                .disabled(viewModel.generateBlocked)
-                .opacity(viewModel.generateBlocked ? 0.5 : 1)
-                // Which week: next (the default), the one after, or a date.
-                GenerateWeekPicker(viewModel: viewModel)
-                // How current the sales are, the budget's caveat, and the
-                // owner's words for this draft (E, C2-3).
-                GenerateWeekNotes(viewModel: viewModel)
+                .padding(.top, CavnarSpace.xxs)
                 // Another week is being built (a 409): that week, and a way
                 // to follow it (iOS parity #15).
                 if let busy = viewModel.busyRun {
                     GenerationBusyCard(busy: busy, onFollow: { Task { await viewModel.followBusyRun() } },
                                        onDismiss: { viewModel.busyRun = nil })
                 }
-                // The target, the notes the draft reads and the weekly
-                // automation, where the draft is made (#46).
-                GenerateBuildRows(settings: buildSettings, onOpenNotes: { showingNotesSheet = true })
             }
 
             // "Building the Week" — shifts fill a 7-day grid while an ember
-            // dash travels the header, for the ~minute the generator runs
+            // dash travels the header, for the ~minute Cavnar AI takes
             // (see CavnarMotion). Sits right under the button that started it.
             if viewModel.isGeneratingSchedule {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: CavnarSpace.s) {
                     CavnarWeekBuilder(caption: viewModel.joinedRunningGeneration
-                                      ? "Joining the generation already running…"
+                                      ? "Joining the week already being built\u{2026}"
                                       : (!viewModel.regeneratingDates.isEmpty
-                                         ? "Redoing \(viewModel.regeneratingDates.count) \(viewModel.regeneratingDates.count == 1 ? "day" : "days") — the rest are kept"
+                                         ? "Redoing \(viewModel.regeneratingDates.count) \(viewModel.regeneratingDates.count == 1 ? "day" : "days") \u{2014} the rest are kept"
                                          : (viewModel.generateWeek == .next ? "Building next week's schedule"
                                             : "Building the schedule for \(viewModel.generateWeek.label)")))
                     if viewModel.joinedRunningGeneration {
-                        Text("Somebody else started this week's draft moments ago — from the web, or another phone. You'll get the same result when it lands.")
-                            .font(.cavnarBody(13.5))
-                            .foregroundStyle(Color.cavnarInk3)
+                        Text("Someone else started this week moments ago, on the web or another phone. You'll get the same week when it lands.")
+                            .cavnarText(.caption, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     // What it is actually doing, rather than sixty seconds
@@ -701,10 +685,10 @@ struct LaborView: View {
                     // its answer has finished (schedule-status `progress`,
                     // AI cost audit 10/7/26 #36) — the web says the same.
                     if let p = viewModel.generationProgress, let line = p.line {
-                        (Text("\(min(p.daysDrafted, p.daysTotal))").font(.cavnarNumber(13.5, weight: 600))
-                         + Text(" of ").font(.cavnarBody(13.5))
-                         + Text("\(p.daysTotal)").font(.cavnarNumber(13.5, weight: 600))
-                         + Text(p.daysTotal == 1 ? " day drafted" : " days drafted").font(.cavnarBody(13.5)))
+                        (Text("\(min(p.daysDrafted, p.daysTotal))").font(.cavnar(.figureS))
+                         + Text(" of ").font(.cavnar(.secondary))
+                         + Text("\(p.daysTotal)").font(.cavnar(.figureS))
+                         + Text(p.daysTotal == 1 ? " day drafted" : " days drafted").font(.cavnar(.secondary)))
                             .foregroundStyle(Color.cavnarInk2)
                             .accessibilityLabel(line)
                             .transition(.opacity)
@@ -714,48 +698,52 @@ struct LaborView: View {
                     // that the owner can leave (the web's renderScheduleEta).
                     if let started = viewModel.generationStartedAt {
                         TimelineView(.periodic(from: .now, by: 1)) { tl in
-                            HomeMixedText.make(GenerationCopy.etaLine(elapsed: tl.date.timeIntervalSince(started),
-                                                                      typical: viewModel.generationTypical,
-                                                                      until: viewModel.generationUntil),
-                                               size: 13, color: .cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(GenerationCopy.etaLine(elapsed: tl.date.timeIntervalSince(started),
+                                                                   typical: viewModel.generationTypical,
+                                                                   until: viewModel.generationUntil),
+                                            role: .caption, color: .cavnarInk2)
                         }
                     }
                 }
-                .padding(.top, 10)
+                .padding(.top, CavnarSpace.xs)
                 .transition(.opacity)
             }
 
-            // The AI strip lives inside this SAME card, as its own footer
-            // row, instead of a separate card placed underneath it — reads
-            // as this hero's own follow-up commentary.
+            // Cavnar AI's read, as one line with a chevron, inside this SAME
+            // card as its own footer row.
             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                .padding(.top, 4)
+                .padding(.top, CavnarSpace.xxs)
             AIConsultantEmbeddedStrip(
                 title: "Cavnar AI Labor Consultant",
                 insight: analyticsViewModel.insight,
                 isLoading: analyticsViewModel.isLoadingInsight,
                 // The read's lines are keyed (insight_rec_keys) and
                 // presented on `labor` — Done / Not for us / Track (#25).
-                recSurface: "labor"
+                recSurface: "labor",
+                readable: false
             )
+            // A figure or a cause the read could not trace to the data it
+            // was given is said on the hero, as it is under the read itself.
+            if let insight = analyticsViewModel.insight {
+                if insight.figuresVerified == false {
+                    CavnarCaveat.unverifiedFigures(insight.unsupportedFigures ?? [])
+                }
+                if insight.causesVerified == false {
+                    CavnarCaveat.unverifiedCauses(insight.unsupportedCauses ?? [])
+                }
+            }
             // A cached read served because the latest failed says how old
             // it is, on the phone as on the web (B6#12).
             if let note = analyticsViewModel.insight?.olderReadNote ?? analyticsViewModel.insightFallbackNote {
                 CavnarCaveat.olderRead(note)
-                    .padding(.top, 6)
             }
             // A read the server could not write, in its own words
             // (InsightRefresh.follow, re-audit 10/8/26 #3).
             if let message = analyticsViewModel.insightError {
                 CavnarCaveat.readUnavailable(message)
-                    .padding(.top, 6)
             }
-            // The forecast ribbon straddles this card's bottom edge (see
-            // cavnarRibbonHeroAnchor below) — cavnarGlassCard's own 16pt
-            // padding alone left the ribbon's ~34pt-tall pill touching the
-            // AI strip text right above it. A bit of extra clearance here
-            // pushes the strip up off that edge instead.
+            // Clearance for the forecast ribbon that straddles this card's
+            // bottom edge (cavnarRibbonHeroAnchor below).
             Color.clear.frame(height: 10)
         }
         .animation(.easeOut(duration: 0.3), value: viewModel.isGeneratingSchedule)
@@ -764,25 +752,53 @@ struct LaborView: View {
         // see CavnarRibbonAnchorKey's doc comment for why the ribbon
         // itself is no longer rendered here directly.
         .cavnarRibbonHeroAnchor()
+        // The picked week's freshness and budget caveat, read before the
+        // owner presses Generate (the button's label and refusal use it).
+        .task(id: viewModel.generateWeek) { await viewModel.loadGenerateForecast() }
+    }
+
+    /// "Generate the week of 10/19/26" — the week the sheet will build,
+    /// from the server's own week start once the picked week is read.
+    private var generateTitle: String {
+        let picked = viewModel.generateWeek.weekStart ?? ""
+        if viewModel.generateForecastFor == picked, let start = viewModel.generateForecast?.weekStart, !start.isEmpty {
+            return "Generate the week of \(CavnarDate.mdy(start))"
+        }
+        switch viewModel.generateWeek {
+        case .next: return "Generate next week"
+        case .weekAfter: return "Generate the week after"
+        case .date: return "Generate the week of \(viewModel.generateWeek.label)"
+        }
+    }
+
+    /// The Generate sheet's own button: the sheet goes first, then the
+    /// week on screen is asked about when it holds unsaved edits.
+    private func startGeneration() {
+        showingGenerateSheet = false
+        after {
+            if viewModel.hasLocalEdits {
+                confirmingGenerateOverEdits = true
+            } else {
+                Task { await viewModel.generateSchedule() }
+            }
+        }
     }
 
     private var sampleDataBanner: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarAmber)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                 Text("Sample data")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarAmber)
-                Text("These are example figures, not your restaurant's. Connect your POS, or upload a shifts CSV on the web (Labor \u{2192} Schedule Studio), to see your own numbers.")
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarText(.label, color: .cavnarAmber)
+                Text("Example figures, not yours. Connect your POS or upload shifts on the web to see your own.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(11)
+        .padding(CavnarSpace.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -834,16 +850,12 @@ struct LaborView: View {
         return daysOld > 21
     }
 
-    /// Was an always-visible amber text row under the hero numbers — moved
-    /// behind a tap so the card's headline stat isn't sharing the spotlight
-    /// with a line about data provenance every time you glance at it. The
-    /// icon itself still tells you at a glance whether there's something to
-    /// check (a brighter fill + exclamation shape when the underlying shift
-    /// data is stale, dim + plain "i" otherwise) without spelling it out
-    /// until asked. Was amber for the stale case — amber sits close in hue
-    /// to the card's own green tint and outright clashes with its red one,
-    /// since this button lives directly on the tinted glass hero card. Ink
-    /// tones stay neutral against either.
+    /// How current the shift data is, behind a tap so the hero's figure
+    /// isn't sharing the spotlight with provenance. The icon still says at a
+    /// glance whether there's something to check (a filled exclamation when
+    /// stale, a plain "i" otherwise), in ink so it reads on either tint. The
+    /// data-health badge lives in the popover with it (it repeated this
+    /// icon on the hero).
     @ViewBuilder
     private func dataFreshnessInfoButton(_ stats: LaborStats) -> some View {
         if let info = freshnessInfo(stats) {
@@ -852,56 +864,50 @@ struct LaborView: View {
                 showDataInfo = true
             } label: {
                 Image(systemName: info.stale ? "exclamationmark.circle.fill" : "info.circle")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(info.stale ? Color.cavnarInk : Color.cavnarInk3)
+                    .cavnarHitTarget()
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("How current the shift data is")
             .popover(isPresented: $showDataInfo, arrowEdge: .bottom) {
                 dataFreshnessPopoverContent(info)
                     .presentationCompactAdaptation(.popover)
-                    // The content's own .background() doesn't get clipped to
-                    // the popover's actual (rounded) presentation shape, so
-                    // its square corners peeked out past — or fell short
-                    // of — the system's rounded chrome, reading as a
-                    // mismatched border. presentationBackground draws at the
-                    // right layer, clipped to the real shape.
+                    // presentationBackground draws at the popover's own
+                    // (rounded) layer, so no square corners peek out.
                     .presentationBackground(Color.cavnarPaper2)
             }
         }
     }
 
     private func dataFreshnessPopoverContent(_ info: DataFreshness) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             Text(info.isLive ? "Shift data window" : "Sample data")
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarEmber)
+                .cavnarText(.label, color: .cavnarEmber2)
             Group {
                 if !info.isLive {
-                    Text("Showing sample data for illustration \u{2014} connect your POS, or upload a shifts CSV on the web, for real numbers.")
+                    Text("Sample figures for illustration \u{2014} connect your POS, or upload shifts on the web, for real numbers.")
                 } else if info.stale {
-                    Text("Shift data is from \(info.rangeText) \u{2014} \(info.daysOld) days old. Upload a fresher shifts CSV on the web for current numbers.")
+                    Text("Shift data is from \(info.rangeText) \u{2014} \(info.daysOld) days old. Upload fresher shifts on the web for current numbers.")
                 } else {
                     Text("Based on shift data from \(info.rangeText).")
                 }
             }
-            .font(.cavnarBody(14))
-            .foregroundStyle(Color.cavnarInk2)
-            // Without this the popover sized itself to the text's
-            // unconstrained ideal (single-line) width first and only then
-            // applied the frame below, clipping everything past ~7-8 words
-            // instead of wrapping. This forces wrap-not-clip within
-            // whatever width it's actually given.
+            .cavnarText(.secondary)
+            // Wrap, never clip, within the popover's fixed width.
             .fixedSize(horizontal: false, vertical: true)
             if info.isLive, let basis = info.basis, !basis.isEmpty {
-                HomeMixedText.make(basis, size: 12.5, weight: 500, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(basis, role: .caption)
+            }
+            // How current every source behind labor is, from data health.
+            if info.isLive {
+                DataHealthModuleBadge(module: "labor")
             }
         }
-        .padding(14)
-        // A fixed width (not maxWidth) gives the popover's own auto-sizing
-        // an unambiguous number to lay out against, rather than an upper
-        // bound it could compute around inconsistently.
-        .frame(width: 240, alignment: .leading)
+        .padding(CavnarSpace.m)
+        // A fixed width gives the popover's auto-sizing an unambiguous
+        // number to lay out against.
+        .frame(width: 260, alignment: .leading)
     }
 
     @State private var rowReplacements: [String: [ScheduleReplacement]] = [:]
@@ -998,12 +1004,22 @@ struct LaborView: View {
             let pending = LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.shiftRequests,
                                                   draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
             scrollToReveal(pending > 0 ? Self.waitingID : Self.requestsID, proxy: proxy)
+        // A pending request is decided in Waiting on you (the one list);
+        // with nothing pending, the decided ones are in their sections.
         case .requests:
-            setupViewModel.requestsExpanded = true
-            scrollToReveal(Self.requestsID, proxy: proxy)
+            if setupViewModel.pendingRequests.isEmpty {
+                setupViewModel.requestsExpanded = true
+                scrollToReveal(Self.requestsID, proxy: proxy)
+            } else {
+                scrollToReveal(Self.waitingID, proxy: proxy)
+            }
         case .timeOff:
-            viewModel.timeOffExpanded = true
-            scrollToReveal(Self.timeOffID, proxy: proxy)
+            if viewModel.timeOffPending == 0 {
+                viewModel.timeOffExpanded = true
+                scrollToReveal(Self.timeOffID, proxy: proxy)
+            } else {
+                scrollToReveal(Self.waitingID, proxy: proxy)
+            }
         case .team:
             // The roster lives in Scheduling setup now (density #28): the
             // sheet opens on it, and person/<key> opens that person's sheet
@@ -1120,16 +1136,15 @@ struct LaborView: View {
         }
     }
 
-    /// Wrapped in a dropdown that starts CLOSED (density #29) — the full
-    /// schedule, its scoring model and the day-by-day table used to open
-    /// under the hero and push every decision on Labor several screens
-    /// down. Closed, its subtitle is the summary an owner needs: "9/28–
-    /// 10/4/26 drafted · Quality 82/100 · 2 still need you". A fresh
-    /// generation still opens it (the owner just asked for it). Inside,
-    /// what needs a decision (the review panel) comes first, then what
-    /// changed, then "How it scored" behind a tap, then the rows. Send is
-    /// the pinned bar (LaborSendBar) — always on screen once a draft is
-    /// saved, open or closed, so it is never under the table.
+    /// Wrapped in a dropdown that starts CLOSED (density #29); closed, its
+    /// subtitle is the summary an owner needs: "9/28–10/4/26 drafted ·
+    /// Quality 82/100 · 2 still need you". A fresh generation still opens
+    /// it. Inside, in the order a manager decides it (iOS readability round,
+    /// 10/8/26): what the generation could not do (red), the managers' days
+    /// to set, the rules check's top three with Apply fixes, then THE WEEK —
+    /// and one "Details" disclosure for everything that explains it (what
+    /// changed, Cavnar AI's note, the budget, the week's notes, how it
+    /// scored, the starting point). Send is the pinned bar (LaborSendBar).
     @ViewBuilder
     private func scheduleResultSection(_ result: GeneratedSchedule) -> some View {
         CavnarDropdown(
@@ -1138,7 +1153,7 @@ struct LaborView: View {
             tone: (result.review?.hardCount ?? 0) > 0 ? .warning : .good,
             isExpanded: $viewModel.scheduleResultExpanded
         ) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: CavnarSpace.m) {
                 // A copy of the week a newer one replaced is read-only, and
                 // says so before anything else (schedule re-audit 10/4/26
                 // UI-3); a week re-read from the server says when it changed.
@@ -1147,107 +1162,97 @@ struct LaborView: View {
                 }
                 if let note = viewModel.weekNotice {
                     ScheduleNotice(text: note, tone: .cavnarInk2, symbol: "arrow.triangle.2.circlepath") {
-                        Button("Got it") { viewModel.weekNotice = nil }
-                            .font(.cavnarBody(13.5, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .buttonStyle(.plain)
-                            .frame(minHeight: 44)
+                        Button {
+                            viewModel.weekNotice = nil
+                        } label: {
+                            Text("Got it")
+                                .cavnarText(.label, color: .cavnarEmber2)
+                                .cavnarHitTarget()
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 // What the generation could not do leads the draft: days it
-                // could not write, days nobody can work, a starting point,
-                // the managers' plan (schedule audit 10/3/26 B2, M, E).
-                DraftNotices(viewModel: viewModel, result: result,
+                // could not write, days nobody can work, the managers' plan
+                // (schedule audit 10/3/26 B2, M, E). The informational
+                // notes (a starting point, how current the sales were) are
+                // under Details.
+                DraftNotices(viewModel: viewModel, result: result, part: .urgent,
                              onOpenAvailability: openAvailability, onOpenClosures: openHours)
                 if let plan = result.plan, let question = plan.question, !plan.unknownPattern.isEmpty {
-                    ManagerQuestionCard(viewModel: viewModel, question: question, names: plan.unknownPattern)
+                    ManagerQuestionRow(viewModel: viewModel, question: question, names: plan.unknownPattern)
                 }
-                // The rules check comes first: a hard violation is decided
-                // on before anything is admired. Shown whenever the server
-                // sent one, or there is pending time off to say.
-                if result.review != nil || !(result.pendingTimeOff ?? [:]).isEmpty {
+                // The rules check: what must be fixed, top three, with the
+                // one Apply fixes — decided before anything is admired.
+                if result.review != nil {
                     ScheduleReviewPanel(viewModel: viewModel, result: result,
                                         onOpenPerson: { reviewPerson = PersonSheetTarget(key: nil, name: $0) },
                                         onOpenHours: openHours)
                         .id(Self.reviewID)
                 }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    if let summary = result.summary, !summary.isEmpty {
-                        // `summary` is the deterministic diff against the
-                        // last published week — hours moved, who swapped —
-                        // computed from the rows, never written by the
-                        // model. The model's own note follows separately.
-                        Text("WHAT CHANGED VS LAST PUBLISHED WEEK")
-                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                            .tracking(1.2)
-                            .foregroundStyle(Color.cavnarGreen)
-                        ForEach(Array(summary.enumerated()), id: \.offset) { _, line in
-                            HStack(alignment: .top, spacing: 6) {
-                                Text("•").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
-                                HomeMixedText.make(line, size: 14, color: .cavnarInk2)
-                                    .lineSpacing(5)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
+                // THE WEEK.
+                if let rows = result.previewRows, !rows.isEmpty {
+                    fullScheduleTable(rows, csv: result.scheduleCsv)
+                    // Tick days on their headers; only those are redone.
+                    if result.historyId != nil {
+                        RedoSelectedDaysRow(viewModel: viewModel)
                     }
-                    if let narrative = result.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !narrative.isEmpty {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("CAVNAR AI'S NOTE")
-                                .font(.cavnarBody(12, weight: 700))
-                                .tracking(1.2)
-                                .foregroundStyle(Color.cavnarInk3)
-                            Text(narrative)
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .lineSpacing(4)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.top, 2)
-                    }
-                    if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
-                        // The hourly crew's budget against the hourly hours
-                        // (schedule audit 10/3/26 D-1, E-7/P-6, E-24).
-                        ParHoursCheck(budget: budget, scheduled: scheduled, hourly: result.hoursHourly,
-                                      salaried: result.hoursSalaried, dollars: result.laborBudgetDollars,
-                                      basis: result.budgetBasis?.value)
-                    }
-                    // Cost, the budget trim, staggered starts, and what the
-                    // forecast could not see — each only when the payload
-                    // carried it.
-                    ScheduleWeekNotes(result: result, demandAccuracy: viewModel.stats?.demandAccuracy)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cavnarCard()
 
-                // The Shift Quality Engine's verdict, behind "How it
-                // scored" — the score is in the closed subtitle; the
-                // dimensions, optimizer, ratings and every shift are the
-                // 300-second layer.
-                if let quality = result.quality, quality.checked {
-                    Button {
-                        Haptic.light()
-                        withAnimation(.easeOut(duration: 0.2)) { showingHowItScored.toggle() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text("How it scored")
-                                .font(.cavnarBody(CavnarType.body, weight: 700))
-                            if let score = quality.score {
-                                Text("\(score)/100")
-                                    .font(.cavnarNumber(CavnarType.secondary, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk3)
+                // Publishing sends the STORED week, so Send waits for Save,
+                // as it does on the web. A saved draft's Send lives in the
+                // pinned bar (LaborSendBar) — one primary on the screen, in
+                // thumb reach (Friction #19). A result with no history id
+                // can't be sent from the bar, so it keeps its Send here.
+                let unsaved = viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved
+                HStack(spacing: CavnarSpace.s) {
+                    if result.historyId == nil {
+                        Button {
+                            Haptic.light()
+                            showingPublishSchedule = true
+                        } label: {
+                            HStack(spacing: CavnarSpace.xs) {
+                                Image(systemName: "paperplane.fill").font(.cavnar(.secondary))
+                                Text("Send to staff")
                             }
-                            Spacer(minLength: 0)
-                            Image(systemName: showingHowItScored ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 11, weight: .bold))
+                            .frame(maxWidth: .infinity)
                         }
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .contentShape(Rectangle())
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: unsaved))
+                        .disabled(unsaved)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint(showingHowItScored ? "Hides the scoring detail" : "Shows the scoring detail")
-                    if showingHowItScored {
+                    // A PDF to post on the wall or print (the web's Print);
+                    // the CSV is the share icon over the week.
+                    if let pdf = schedulePDF {
+                        ShareLink(item: pdf, preview: SharePreview("Schedule PDF", image: Image(systemName: "doc.richtext"))) {
+                            Label("PDF", systemImage: "printer")
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
+                    }
+                    if result.historyId != nil {
+                        Button {
+                            Haptic.light()
+                            viewModel.showingDraftSummary = true
+                        } label: {
+                            Label("At a glance", systemImage: "square.grid.2x2")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                }
+
+                scheduleDetails(result)
+            }
+        }
+        .task(id: Self.pdfKey(result)) {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            schedulePDF = SchedulePDF.file(for: result)
+        }
+        .sheet(isPresented: $showingHowItScored) {
+            if let quality = result.quality, quality.checked {
+                NavigationStack {
+                    ScrollView {
                         ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
                                           isRescoring: viewModel.isRescoringQuality,
                                           overrideState: viewModel.overrideState,
@@ -1263,81 +1268,156 @@ struct LaborView: View {
                                               ? (quality.suppressedRecommendationKinds ?? [])
                                               : viewModel.suppressedRecommendationKinds,
                                           viewModel: viewModel)
+                            .padding(CavnarSpace.gutter)
                     }
+                    .accountSheetChrome("How it scored")
                 }
-                // The requirements the week was written and scored to (E).
-                if let reqs = result.requirements?.items, !reqs.isEmpty {
-                    ScheduleRequirementsView(rows: reqs)
-                }
-                if let rows = result.previewRows, !rows.isEmpty {
-                    fullScheduleTable(rows, csv: result.scheduleCsv)
-                    // Tick days on their headers; only those are redone.
-                    if result.historyId != nil {
-                        RedoSelectedDaysRow(viewModel: viewModel)
-                    }
-                }
-
-                // The schedule used to end at a CSV download — the people
-                // who actually work the shifts never saw it. Send is the
-                // main act; the CSV rides along for the office.
-                // Publishing sends the STORED week, so Send waits for Save,
-                // as it does on the web. A saved draft's Send lives in the
-                // pinned bar (LaborSendBar) — one primary on the screen, in
-                // thumb reach, never under the whole table (Friction #19).
-                // A result with no history id can't be sent from the bar,
-                // so it keeps its Send here.
-                let unsaved = viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved
-                HStack(spacing: 10) {
-                    if result.historyId == nil {
-                        Button {
-                            Haptic.light()
-                            showingPublishSchedule = true
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
-                                Text("Send to staff")
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: unsaved))
-                        .disabled(unsaved)
-                    }
-
-                    if let csvURL = Self.csvFile(for: result) {
-                        ShareLink(item: csvURL, preview: SharePreview("Schedule CSV", image: Image(systemName: "tablecells"))) {
-                            Label("CSV", systemImage: "square.and.arrow.down")
-                        }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
-                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
-                    }
-                    // A PDF to post on the wall or print (the web's Print).
-                    if let pdf = schedulePDF {
-                        ShareLink(item: pdf, preview: SharePreview("Schedule PDF", image: Image(systemName: "doc.richtext"))) {
-                            Label("PDF", systemImage: "printer")
-                        }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
-                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
-                    }
-                }
-                if result.historyId != nil {
-                    Button {
-                        Haptic.light()
-                        viewModel.showingDraftSummary = true
-                    } label: {
-                        Label("The week at a glance", systemImage: "square.grid.2x2")
-                            .font(.cavnarBody(13.5, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
-                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
-        .task(id: Self.pdfKey(result)) {
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            schedulePDF = SchedulePDF.file(for: result)
+    }
+
+    /// Everything that explains the week, behind one "Details" — what
+    /// changed against the last published week (three, then "+N more"),
+    /// Cavnar AI's note (three lines, then More), the hourly budget, the
+    /// week's notes, How it scored as one tile, what each shift was asked
+    /// for (on the web) and the informational notices.
+    @ViewBuilder
+    private func scheduleDetails(_ result: GeneratedSchedule) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) { showingScheduleDetails.toggle() }
+            } label: {
+                HStack(spacing: CavnarSpace.xxs + 2) {
+                    Text(showingScheduleDetails ? "Hide details" : "Details")
+                        .cavnarText(.label, color: .cavnarEmber2)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showingScheduleDetails ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showingScheduleDetails ? "Expanded" : "Collapsed")
+
+            if showingScheduleDetails {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    DraftNotices(viewModel: viewModel, result: result, part: .info,
+                                 onOpenAvailability: openAvailability, onOpenClosures: openHours)
+                    if let summary = result.summary, !summary.isEmpty {
+                        // `summary` is the deterministic diff against the
+                        // last published week, computed from the rows.
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            CavnarKicker("What changed vs last published week")
+                            ForEach(Array(summary.prefix(3).enumerated()), id: \.offset) { _, line in
+                                changeLine(line)
+                            }
+                            if summary.count > 3 {
+                                CavnarMoreDisclosure(hiddenCount: summary.count - 3) {
+                                    ForEach(Array(summary.dropFirst(3).enumerated()), id: \.offset) { _, line in
+                                        changeLine(line)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let narrative = result.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !narrative.isEmpty {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            CavnarKicker("Cavnar AI's note")
+                            Text(narrative)
+                                .cavnarText(.body)
+                                .lineLimit(showingFullNarrative ? nil : 3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if narrative.count > 160 {
+                                Button {
+                                    Haptic.light()
+                                    showingFullNarrative.toggle()
+                                } label: {
+                                    Text(showingFullNarrative ? "Less" : "More")
+                                        .cavnarText(.label, color: .cavnarEmber2)
+                                        .cavnarHitTarget()
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
+                        // The hourly crew's budget against the hourly hours
+                        // (schedule audit 10/3/26 D-1, E-7/P-6, E-24).
+                        ParHoursCheck(budget: budget, scheduled: scheduled, hourly: result.hoursHourly,
+                                      salaried: result.hoursSalaried, dollars: result.laborBudgetDollars,
+                                      basis: result.budgetBasis?.value)
+                    }
+                    // Cost, the budget trim, staggered starts, and what the
+                    // forecast could not see — each only when the payload
+                    // carried it.
+                    ScheduleWeekNotes(result: result, demandAccuracy: viewModel.stats?.demandAccuracy)
+                    if let quality = result.quality, quality.checked {
+                        howItScoredTile(quality)
+                    }
+                    // The requirements the week was written and scored to
+                    // (E) — a wide table, read on the web.
+                    if let reqs = result.requirements?.items, !reqs.isEmpty {
+                        CavnarWebLinkRow(title: "What each shift was asked for", path: "labor/schedule",
+                                         actionLabel: "See it on the web")
+                    }
+                }
+                .transition(.opacity)
+            }
         }
+    }
+
+    private func changeLine(_ line: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+            Text("\u{2022}").cavnarText(.body)
+            CavnarMixedText(line, role: .body)
+        }
+    }
+
+    /// The Shift Quality verdict as one tile — the score, its band and the
+    /// top recommendation; every dimension, the optimizer and each shift
+    /// are in the sheet it opens.
+    private func howItScoredTile(_ quality: ScheduleQuality) -> some View {
+        Button {
+            Haptic.light()
+            showingHowItScored = true
+        } label: {
+            HStack(alignment: .center, spacing: CavnarSpace.m) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("How it scored")
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        if let score = quality.score {
+                            (Text("\(score)").font(.cavnar(.figureM)) + Text("/100").font(.cavnar(.figureS)))
+                                .foregroundStyle(Color.cavnarInk)
+                        }
+                        if let band = quality.band, !band.isEmpty {
+                            Text(band.prefix(1).uppercased() + band.dropFirst().replacingOccurrences(of: "_", with: " "))
+                                .cavnarText(.secondary)
+                        }
+                    }
+                    if let top = quality.recommendations?.first, !top.isEmpty {
+                        CavnarMixedText(top, role: .secondary)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard()
+        .accessibilityHint("Opens how the week scored")
     }
 
     /// Changes whenever the rows do, so the PDF is redrawn after an edit.
@@ -1372,9 +1452,11 @@ struct LaborView: View {
 
     /// The schedule as a real .csv file on disk, so the share sheet offers
     /// Files/Mail/AirDrop with a filename instead of a blob of text.
-    private static func csvFile(for result: GeneratedSchedule) -> URL? {
-        guard let csv = result.scheduleCsv, !csv.isEmpty else { return nil }
-        let week = result.weekDates?.first ?? "week"
+    /// The share icon over the week uses it (the separate CSV button went:
+    /// one way to export, iOS readability round).
+    private static func csvFile(_ csv: String?, week: String?) -> URL? {
+        guard let csv, !csv.isEmpty else { return nil }
+        let week = week ?? "week"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("schedule-\(week).csv")
         do {
             try csv.write(to: url, atomically: true, encoding: .utf8)
@@ -1506,15 +1588,11 @@ struct LaborView: View {
         }, uniquingKeysWith: { a, _ in a })
         let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil || unwritten[$0] != nil }
 
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Full schedule")
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            HStack(spacing: CavnarSpace.xs) {
+                Text("The week")
+                    .cavnarText(.headline)
                 Spacer()
-                // Moved here from the summary card above — sitting next to
-                // the table it actually exports reads far more directly
-                // than floating next to an unrelated "hours scheduled" line.
                 // The web editor's "+ Add a shift" (web parity, 9/25/26);
                 // none on a replaced copy (UI-3).
                 if viewModel.weekReadOnlyReason == nil {
@@ -1522,23 +1600,24 @@ struct LaborView: View {
                         Haptic.light()
                         editingShift = .add
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                            Text("Add a shift").font(.cavnarBody(13, weight: 700))
+                        HStack(spacing: CavnarSpace.xxs) {
+                            Image(systemName: "plus").font(.cavnar(.caption))
+                            Text("Add a shift").cavnarText(.label, color: .cavnarEmber2)
                         }
                         .foregroundStyle(Color.cavnarEmber2)
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
+                        .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
-                    .padding(.trailing, 8)
                 }
-                if let csv {
-                    ShareLink(item: csv, preview: SharePreview("Schedule.csv", image: Image("LaunchSeal"))) {
+                // The week as a .csv file to share — the one export button.
+                if let url = Self.csvFile(csv, week: viewModel.scheduleResult?.weekDates?.first) {
+                    ShareLink(item: url, preview: SharePreview("Schedule CSV", image: Image(systemName: "tablecells"))) {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.cavnarEmber)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarHitTarget()
                     }
+                    .accessibilityLabel("Share the week as a spreadsheet")
                 }
             }
             // A page per day under a strip of day chips, or everyone's week
@@ -1563,142 +1642,145 @@ struct LaborView: View {
         }
     }
 
-    /// One shift: tap for why this person, long-press to put somebody else
-    /// on it, change its times or take it off the week.
-    ///
-    /// A `Menu` with a primary action gives both without a visible edit
-    /// control: the table's job is to be read, and a pencil on every one of
-    /// eighty rows would bury that. Picking a replacement re-scores the week
-    /// immediately, so the manager sees what the change bought before they
-    /// look away. A row the rules check flagged is tinted amber with its
-    /// reason under the name.
+    /// One shift: tap for why this person; the visible "⋯" beside it puts
+    /// somebody else on it, changes its times or section, or takes it off
+    /// the week (iOS readability round — no hidden long-press to learn).
+    /// Picking a replacement re-scores the week immediately, so the manager
+    /// sees what the change bought before they look away. A row the rules
+    /// check flagged is tinted amber with its reason under the name.
     private func shiftRowWithOverride(_ row: ScheduleRow) -> some View {
         let wasChanged = viewModel.overriddenRows.contains(row.id)
-        let candidates = rowReplacements[row.id]
         let flagged = row.needsReview == true && !(row.reviewReason ?? "").isEmpty
-        return Menu {
-            if viewModel.weekReadOnlyReason == nil {
-                if let candidates {
-                    if candidates.isEmpty {
-                        Text("Nobody else can take this shift")
-                    } else {
+        return HStack(alignment: .top, spacing: CavnarSpace.xxs) {
+            Button {
+                Haptic.light()
+                explainingRow = row
+                // Warm the replacement list on a tap, so the ⋯ menu that
+                // usually follows a look at the reason has names ready.
+                if rowReplacements[row.id] == nil {
+                    Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
+                }
+            } label: {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: CavnarSpace.xxs + 1) {
+                            Text(row.employee ?? "")
+                                .cavnarText(.label)
+                            if fixedRowIds.contains(row.rowId ?? "\u{0}") && !wasChanged {
+                                ScheduleRowTag(text: "Fixed", tone: .cavnarBlue)
+                            }
+                            if wasChanged {
+                                ScheduleRowTag(text: "Changed", tone: .cavnarBlue)
+                            }
+                            if flagged {
+                                ScheduleRowTag(text: "Review", tone: .cavnarAmber)
+                            }
+                        }
+                        if let role = row.role, !role.isEmpty {
+                            Text(role).cavnarText(.secondary)
+                        }
+                        // The manager plan's chip, the clock change, the section
+                        // or the usual one to assign (M-2, A2-6, H2-2).
+                        ScheduleRowBadges(viewModel: viewModel, row: row)
+                        if flagged, let reason = row.reviewReason {
+                            CavnarMixedText(reason, role: .secondary, color: .cavnarAmber)
+                        }
+                    }
+                    Spacer()
+                    Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
+                        .font(.cavnar(.figureS))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .minimumScaleFactor(0.85)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows why this person is on the shift")
+            Menu {
+                shiftRowMenu(row)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarHitTarget()
+            }
+            .accessibilityLabel("Change \(row.employee ?? "this")\u{2019}s shift")
+        }
+        .padding(.vertical, CavnarSpace.xxs)
+        .padding(.horizontal, flagged ? CavnarSpace.xs : 0)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(flagged ? Color.cavnarAmber.opacity(0.09) : Color.clear))
+    }
+
+    /// The ⋯ menu on a shift: a replacement (the server's answer to who is
+    /// eligible), why this person, the times, the section, remove.
+    @ViewBuilder
+    private func shiftRowMenu(_ row: ScheduleRow) -> some View {
+        if viewModel.weekReadOnlyReason == nil {
+            if let candidates = rowReplacements[row.id] {
+                if candidates.isEmpty {
+                    Text("Nobody else can take this shift")
+                } else {
+                    Section("Swap in") {
                         ForEach(candidates) { member in
                             Button {
                                 Task { await viewModel.overrideEmployee(rowId: row.id, to: member.name) }
                             } label: { Text(member.label) }
                         }
                     }
-                } else {
-                    // Eligibility is the server's answer, not a guess made
-                    // here — the same check the what-if pass uses, so
-                    // availability, staff notes, double booking and the
-                    // forty-hour ceiling all apply.
-                    Button {
-                        Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
-                    } label: { Label("Find a replacement", systemImage: "person.2") }
                 }
-                Button {
-                    Haptic.light()
-                    explainingRow = row
-                } label: { Label("Why this person?", systemImage: "questionmark.circle") }
-                // The web editor's pencil and ✕ (web parity, 9/25/26): saved
-                // like a swap — re-scored and stored at once.
-                Button {
-                    Haptic.light()
-                    editingShift = .edit(row)
-                } label: { Label("Change the times", systemImage: "pencil") }
-                if !viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role) {
-                    Menu {
-                        ForEach(viewModel.sections.sections, id: \.self) { name in
-                            Button(name) { Task { await viewModel.assignSection(row, section: name) } }
-                        }
-                        if viewModel.sections.section(for: row) != nil {
-                            Button("No section") { Task { await viewModel.assignSection(row, section: "") } }
-                        }
-                        // The names themselves (the web's "Edit sections").
-                        if viewModel.sections.canEdit != false {
-                            Divider()
-                            Button { editingSectionNames = true } label: { Label("Edit sections", systemImage: "pencil") }
-                        }
-                    } label: { Label("Section", systemImage: "square.grid.2x2") }
-                } else if viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role),
-                          viewModel.sections.canEdit == true {
-                    // No sections named yet: a front-of-house shift offers
-                    // to name them, as the web's shift pane does.
-                    Button { editingSectionNames = true } label: {
-                        Label("Name floor sections", systemImage: "square.grid.2x2")
-                    }
-                }
-                Button(role: .destructive) {
-                    removingRow = row
-                } label: { Label("Remove this shift", systemImage: "trash") }
             } else {
+                // Eligibility is the server's answer, not a guess made
+                // here — the same check the what-if pass uses, so
+                // availability, staff notes, double booking and the
+                // forty-hour ceiling all apply.
                 Button {
-                    Haptic.light()
-                    explainingRow = row
-                } label: { Label("Why this person?", systemImage: "questionmark.circle") }
+                    Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
+                } label: { Label("Find a swap", systemImage: "person.2") }
             }
-        } label: {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text(row.employee ?? "")
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
-                        if fixedRowIds.contains(row.rowId ?? "\u{0}") && !wasChanged {
-                            ScheduleRowTag(text: "Fixed", tone: .cavnarBlue)
-                        }
-                        if wasChanged {
-                            Text("CHANGED")
-                                .font(.cavnarBody(9, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarBlue)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.cavnarBlue.opacity(0.15)))
-                        }
-                        if flagged {
-                            Text("REVIEW")
-                                .font(.cavnarBody(9, weight: 700))
-                                .tracking(0.5)
-                                .foregroundStyle(Color.cavnarAmber)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.cavnarAmber.opacity(0.16)))
-                        }
+            Button {
+                Haptic.light()
+                explainingRow = row
+            } label: { Label("Why this person?", systemImage: "questionmark.circle") }
+            // The web editor's pencil and ✕ (web parity, 9/25/26): saved
+            // like a swap — re-scored and stored at once.
+            Button {
+                Haptic.light()
+                editingShift = .edit(row)
+            } label: { Label("Change the times", systemImage: "pencil") }
+            if !viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role) {
+                Menu {
+                    ForEach(viewModel.sections.sections, id: \.self) { name in
+                        Button(name) { Task { await viewModel.assignSection(row, section: name) } }
                     }
-                    if let role = row.role, !role.isEmpty {
-                        Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    if viewModel.sections.section(for: row) != nil {
+                        Button("No section") { Task { await viewModel.assignSection(row, section: "") } }
                     }
-                    // The manager plan's chip, the clock change, the section
-                    // or the usual one to assign (M-2, A2-6, H2-2).
-                    ScheduleRowBadges(viewModel: viewModel, row: row)
-                    if flagged, let reason = row.reviewReason {
-                        HomeMixedText.make(reason, size: 13, weight: 600, color: .cavnarAmber)
-                            .fixedSize(horizontal: false, vertical: true)
+                    // The names themselves (the web's "Edit sections").
+                    if viewModel.sections.canEdit != false {
+                        Divider()
+                        Button { editingSectionNames = true } label: { Label("Edit sections", systemImage: "pencil") }
                     }
+                } label: { Label("Section", systemImage: "square.grid.2x2") }
+            } else if viewModel.sections.sections.isEmpty, viewModel.sections.isFrontOfHouse(row.role),
+                      viewModel.sections.canEdit == true {
+                // No sections named yet: a front-of-house shift offers
+                // to name them, as the web's shift pane does.
+                Button { editingSectionNames = true } label: {
+                    Label("Name floor sections", systemImage: "square.grid.2x2")
                 }
-                Spacer()
-                Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                    .font(.cavnarNumber(14))
-                    .foregroundStyle(Color.cavnarInk2)
             }
-            .contentShape(Rectangle())
-            .padding(.vertical, 4)
-            .padding(.horizontal, flagged ? 8 : 0)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(flagged ? Color.cavnarAmber.opacity(0.09) : Color.clear))
-        } primaryAction: {
-            Haptic.light()
-            explainingRow = row
-            // Warm the replacement list on a tap, so the long-press that
-            // usually follows a look at the reason has names ready.
-            if rowReplacements[row.id] == nil {
-                Task { rowReplacements[row.id] = await viewModel.loadReplacements(for: row) }
-            }
+            Button(role: .destructive) {
+                removingRow = row
+            } label: { Label("Remove this shift", systemImage: "trash") }
+        } else {
+            Button {
+                Haptic.light()
+                explainingRow = row
+            } label: { Label("Why this person?", systemImage: "questionmark.circle") }
         }
-        .buttonStyle(.plain)
     }
 
     /// Rows a generation's fix lines name by their stable id (B1-1).
@@ -1818,12 +1900,12 @@ struct LaborView: View {
         let ticked = date.map { viewModel.selectedRedoDates.contains($0) } ?? false
         let canRedo = viewModel.scheduleResult?.historyId != nil && date != nil
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(day.uppercased())
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(1)
-                    .foregroundStyle(Color.cavnarEmber)
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(spacing: CavnarSpace.xs) {
+                Text(day)
+                    .font(.cavnar(.label))
+                    .textCase(.uppercase)
+                    .foregroundStyle(Color.cavnarEmber2)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Color.cavnarEmber.opacity(0.16))
@@ -1832,15 +1914,14 @@ struct LaborView: View {
                     ScheduleRowTag(text: "Not written", tone: .cavnarAmber, symbol: "exclamationmark.triangle.fill")
                 } else {
                     Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                 }
                 // A holiday inside the week, with the lift when the record
                 // has one — an owner should never be surprised by the date.
                 if let holiday {
-                    HStack(spacing: 4) {
-                        Image(systemName: "star.fill").font(.system(size: 9, weight: .bold))
-                        HomeMixedText.make(holiday.label, size: 12, weight: 700, color: .cavnarAmber)
+                    HStack(spacing: CavnarSpace.xxs) {
+                        Image(systemName: "star.fill").font(.cavnar(.tag))
+                        HomeMixedText.make(holiday.label, role: .caption, color: .cavnarAmber)
                     }
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.horizontal, 8)
@@ -1848,20 +1929,20 @@ struct LaborView: View {
                     .background(Capsule().fill(Color.cavnarAmber.opacity(0.14)))
                     .accessibilityLabel(holiday.basedOn.map { "\(holiday.label), based on \($0)" } ?? holiday.label)
                 }
-                Spacer(minLength: 4)
+                Spacer(minLength: CavnarSpace.xxs)
                 if canRedo, let date {
                     Button {
                         viewModel.toggleRedoDate(date)
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: CavnarSpace.xxs + 1) {
                             Image(systemName: ticked ? "checkmark.square.fill" : "square")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(ticked ? Color.cavnarEmber : Color.cavnarInk3)
+                                .font(.cavnar(.body))
+                                .foregroundStyle(ticked ? Color.cavnarEmber2 : Color.cavnarInk2)
                             Text("Redo")
-                                .font(.cavnarBody(12.5, weight: ticked ? 700 : 500))
-                                .foregroundStyle(ticked ? Color.cavnarEmber : Color.cavnarInk3)
+                                .font(ticked ? .cavnar(.label) : .cavnar(.secondary))
+                                .foregroundStyle(ticked ? Color.cavnarEmber2 : Color.cavnarInk2)
                         }
-                        .contentShape(Rectangle())
+                        .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(ticked ? "Redo \(day), ticked" : "Redo \(day)")
@@ -1875,18 +1956,17 @@ struct LaborView: View {
                 DayManagerNotes(viewModel: viewModel, date: date, result: result,
                                 onChangeAvailability: openAvailability)
             }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
                 if notWritten {
                     Text("This day wasn\u{2019}t written. Tick Redo and redo it, or add its shifts by hand.")
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !morning.isEmpty {
-                    daypartRows(label: "MORNING", count: morning.count, rows: morning)
+                    daypartRows(label: "Morning", count: morning.count, rows: morning)
                 }
                 if !night.isEmpty {
-                    daypartRows(label: "NIGHT", count: night.count, rows: night)
+                    daypartRows(label: "Night", count: night.count, rows: night)
                 }
             }
             .cavnarCard()
@@ -1894,15 +1974,8 @@ struct LaborView: View {
     }
 
     private func daypartRows(label: String, count: Int, rows: [ScheduleRow]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: label == "MORNING" ? "sun.max.fill" : "moon.stars.fill")
-                    .font(.system(size: 10, weight: .bold))
-                Text("\(label) · \(count)")
-                    .font(.cavnarBody(14, weight: 800))
-                    .tracking(1.1)
-            }
-            .foregroundStyle(Color.cavnarEmber)
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            CavnarKicker("\(label) \u{00B7} \(count)", icon: label == "Morning" ? "sun.max.fill" : "moon.stars.fill")
             ForEach(Self.groupedByRole(rows)) { row in
                 shiftRowWithOverride(row)
             }
@@ -1941,7 +2014,7 @@ private struct LaborHeroPercent: View {
             let t = timeline.date.timeIntervalSince(start)
             let glow = reduceMotion ? 0.6 : 0.4 + 0.4 * (0.5 + 0.5 * sin(t * 2 * .pi / 2.6))
             CavnarAnimatableNumber(value: animatedValue, format: { String(format: "%.1f%%", $0) })
-                .font(.cavnarNumber(40, weight: 700))
+                .font(.cavnar(.figureXL))
                 .foregroundStyle(
                     LinearGradient(colors: [lightenedTone, tone.foreground], startPoint: .top, endPoint: .bottom)
                 )
@@ -1978,6 +2051,8 @@ private struct LaborHeroPercent: View {
 /// status rather than an unrelated CTA dropped on top of it.
 private struct ScheduleGenerateButton: View {
     let tone: CavnarTone
+    /// "Generate the week of 10/19/26" — the picked week, named.
+    let title: String
     let isGenerating: Bool
     let action: () -> Void
 
@@ -1986,14 +2061,14 @@ private struct ScheduleGenerateButton: View {
             Haptic.light()
             action()
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: CavnarSpace.s) {
                 ZStack {
                     Circle().fill(tone.foreground.opacity(0.16))
                     if isGenerating {
                         PulsingSparkleIcon(color: tone.foreground)
                     } else {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.cavnar(.body))
                             .foregroundStyle(tone.foreground)
                     }
                 }
@@ -2002,30 +2077,26 @@ private struct ScheduleGenerateButton: View {
                 if isGenerating {
                     ScheduleLoadingText(color: tone.foreground)
                 } else {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Generate next week's schedule")
-                            .font(.cavnarBody(15, weight: 700))
-                            .foregroundStyle(tone.foreground)
-                        Text("A draft from your sales & shift history")
-                            .font(.cavnarBody(14, weight: 500))
-                            .foregroundStyle(Color.cavnarInk3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        CavnarMixedText(title, role: .label, color: tone.foreground)
+                        Text("Pick the week and how it's built")
+                            .cavnarText(.caption, color: .cavnarInk2)
                     }
                 }
 
-                Spacer(minLength: 4)
+                Spacer(minLength: CavnarSpace.xxs)
 
                 if !isGenerating {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 13, weight: .bold))
+                    Image(systemName: "chevron.right")
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(tone.foreground.opacity(0.85))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.horizontal, CavnarSpace.m)
+            .padding(.vertical, CavnarSpace.s + 2)
+            .frame(minHeight: 44)
             // Same background token TonePill uses for its "On track"/"Over
-            // target" pill (a low-opacity tint of the tone color) — so the
-            // button reads as the exact same surface, not a separately
-            // chosen dark that happens to be similar.
+            // target" pill, so the button reads as the card's own surface.
             .background(tone.background)
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.control)
@@ -2033,6 +2104,7 @@ private struct ScheduleGenerateButton: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .shadow(color: tone.foreground.opacity(0.3), radius: 14, x: 0, y: 6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isGenerating)
@@ -2236,23 +2308,34 @@ private struct LaborSetupSheet: View {
                         TeamMemorySection(viewModel: teamMemory,
                                           names: setupViewModel.roster.map(\.name)) { reveal(Self.notesID, proxy) }
                             .id(Self.notesID)
-                        AvailabilityManagerSection(viewModel: viewModel) { reveal(Self.availabilityID, proxy) }
+                        AvailabilityManagerSection(viewModel: viewModel,
+                                                   names: setupViewModel.activeRoster.map(\.name)) {
+                            reveal(Self.availabilityID, proxy)
+                        }
                             .id(Self.availabilityID)
                         DemandSignalsSection(viewModel: setupViewModel) { reveal(Self.demandID, proxy) }
                             .id(Self.demandID)
-                        // Next week as the draft will be handed it, and the
-                        // work per person-hour the requirements are sized
-                        // by (schedule audit 10/3/26 D-1, D-24, D-25).
-                        ForecastPreviewSection(store: setupViewModel.teamSetup)
-                        LaborStandardsSection(store: setupViewModel.teamSetup)
-                        // Rating the team, then the targets those ratings
-                        // feed — a target means nothing before anyone is
-                        // rated, and the targets editor says so.
+                        // Rating the team (1–5) stays on the phone.
                         TeamStrengthSection(viewModel: viewModel, setup: setupViewModel.teamSetup,
                                             rolesFor: rolesByName) { reveal(Self.teamID, proxy) }
                             .id(Self.teamID)
-                        ShiftTargetsSection(viewModel: viewModel) { reveal(Self.targetsID, proxy) }
-                            .id(Self.targetsID)
+                        // Configuration that is a wide table or a
+                        // multi-field form is set on the web (iOS
+                        // readability round, 10/8/26): next week's forecast
+                        // as the draft will be handed it, the work per
+                        // person-hour (D-1, D-24, D-25), and the shift
+                        // targets the ratings feed.
+                        VStack(spacing: 0) {
+                            CavnarWebLinkRow(title: "Shift targets",
+                                             subtitle: "How strong each shift should be", path: "labor/team")
+                            CavnarWebLinkRow(title: "Labor standards",
+                                             subtitle: "The work one person carries an hour", path: "labor/team")
+                            CavnarWebLinkRow(title: "Next week's forecast",
+                                             subtitle: "Sales and hours, day by day", path: "labor/schedule",
+                                             actionLabel: "See it on the web")
+                        }
+                        .cavnarCard()
+                        .id(Self.targetsID)
                     }
                     .padding(20)
                 }

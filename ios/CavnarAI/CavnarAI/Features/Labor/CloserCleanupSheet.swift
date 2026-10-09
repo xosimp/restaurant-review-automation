@@ -158,7 +158,7 @@ struct CloserCleanupSheet: View {
                         Text("Go by my punches instead")
                             .font(.cavnarBody(13.5, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 32)
+                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
                 }

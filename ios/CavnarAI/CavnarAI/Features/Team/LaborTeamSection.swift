@@ -186,6 +186,11 @@ final class LaborTeamModel {
 /// Account → Notifications: the lines every working teammate sees, the
 /// AI draft waiting for approval (nothing the AI wrote reaches staff until
 /// someone who publishes the schedule approves it), and tonight's focus.
+///
+/// At rest (iOS readability round, 10/8/26) it is the brief's words, its
+/// status and Approve; writing, drafting, withdrawing and tonight's focus
+/// are in a sheet. Under Needs you it is a card only while it waits on an
+/// approval — once approved it folds to one row that opens the same sheet.
 struct LineupBriefCard: View {
     let model: LaborTeamModel
 
@@ -196,61 +201,20 @@ struct LineupBriefCard: View {
     @State private var showingAllLines = false
     @State private var confirmApprove = false
     @State private var confirmWithdraw = false
+    @State private var editing = false
 
     var body: some View {
         if let b = model.brief {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("BEFORE SERVICE")
-                            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                            .tracking(1.6)
-                            .foregroundStyle(Color.cavnarEmber2)
-                        HStack(spacing: 6) {
-                            Text("Lineup brief")
-                                .font(.cavnarHeadline(CavnarType.section))
-                                .foregroundStyle(Color.cavnarInk)
-                            HomeMixedText.make("\(b.weekday) \(CavnarDate.mdy(b.day))", size: CavnarType.secondary,
-                                               weight: 600, color: .cavnarInk3)
-                        }
-                    }
-                    Spacer(minLength: 6)
-                    AccountChip(text: b.isApproved ? "Approved" : (b.isWaiting ? "Draft waiting" : "Lines only"),
-                                muted: !b.isApproved && !b.isWaiting,
-                                tint: b.isApproved ? .cavnarGreen : nil)
-                }
-                Text("What your team reads in the app before service. Nothing the AI writes reaches them until you approve it.")
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                lines(b)
-
-                if model.canEditBrief {
-                    editor(b)
-                    focusEditor(b)
+            Group {
+                if b.isApproved {
+                    approvedRow(b)
                 } else {
-                    if let approved = b.approvedText, !approved.isEmpty {
-                        Text(approved)
-                            .font(.cavnarBody(CavnarType.body))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    HomeMixedText.make(b.focus.map { "Tonight\u{2019}s focus: \($0.item)" + (($0.line ?? "").isEmpty ? "" : " \u{2014} \($0.line!)") }
-                                       ?? "No focus item tonight.", size: CavnarType.secondary, color: .cavnarInk3)
-                }
-
-                if let m = model.briefMessage {
-                    Text(m).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
-                }
-                if let e = model.briefError {
-                    Text(e).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
-                        .fixedSize(horizontal: false, vertical: true)
+                    restingCard(b)
                 }
             }
-            .cavnarCard()
             .onAppear { seed(b) }
             .onChange(of: b) { _, nb in seed(nb) }
+            .sheet(isPresented: $editing) { editSheet }
             .confirmationDialog("Approve this brief for the team?", isPresented: $confirmApprove,
                                 titleVisibility: .visible) {
                 Button(b.isApproved ? "Save the brief" : "Approve for the team") {
@@ -268,6 +232,138 @@ struct LineupBriefCard: View {
         }
     }
 
+    /// The brief's words (the draft, else the first lines), its status and
+    /// one Approve — secondary, as every approve on Labor is.
+    private func restingCard(_ b: LineupBrief) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline) {
+                CavnarKicker("Lineup brief \u{00B7} \(b.weekday) \(CavnarDate.mdy(b.day))")
+                Spacer(minLength: CavnarSpace.xs)
+                AccountChip(text: b.isWaiting ? "Draft waiting" : "Lines only", muted: !b.isWaiting)
+            }
+            if let draft = b.draftText?.trimmingCharacters(in: .whitespacesAndNewlines), !draft.isEmpty {
+                CavnarMixedText(draft, role: .body, color: .cavnarInk)
+                    .lineLimit(4)
+            } else {
+                lines(b, cap: 2)
+            }
+            if let m = model.briefMessage {
+                Text(m).cavnarText(.secondary, color: .cavnarGreen)
+            }
+            if let e = model.briefError {
+                Text(e).cavnarText(.secondary, color: .cavnarRedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.canEditBrief {
+                HStack(spacing: CavnarSpace.s) {
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button {
+                            Haptic.light()
+                            confirmApprove = true
+                        } label: {
+                            Group {
+                                if model.briefBusy { CavnarShimmerText(text: "Saving\u{2026}") } else { Text("Approve") }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: model.briefBusy))
+                        .disabled(model.briefBusy)
+                    }
+                    Button {
+                        Haptic.light()
+                        editing = true
+                    } label: {
+                        Text(b.isWaiting ? "Edit" : "Write it").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: model.briefBusy))
+                    .disabled(model.briefBusy)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard()
+    }
+
+    /// Approved: nothing waits on the owner, so one row — the sheet keeps
+    /// Save, Withdraw and tonight's focus a tap away.
+    private func approvedRow(_ b: LineupBrief) -> some View {
+        Button {
+            Haptic.light()
+            editing = true
+        } label: {
+            HStack(spacing: CavnarSpace.s) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarGreen)
+                    .accessibilityHidden(true)
+                CavnarMixedText("Lineup brief approved for \(b.weekday) \(CavnarDate.mdy(b.day))", role: .label)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, CavnarSpace.xxs)
+        .accessibilityHint("Opens the brief and tonight's focus")
+    }
+
+    /// Everything that writes the brief: the lines, the words, Approve /
+    /// Withdraw / Draft it for me, and tonight's focus.
+    private var editSheet: some View {
+        NavigationStack {
+            ScrollView {
+                if let b = model.brief {
+                    VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            HStack {
+                                CavnarMixedText("\(b.weekday) \(CavnarDate.mdy(b.day))", role: .label)
+                                Spacer()
+                                AccountChip(text: b.isApproved ? "Approved" : (b.isWaiting ? "Draft waiting" : "Lines only"),
+                                            muted: !b.isApproved && !b.isWaiting,
+                                            tint: b.isApproved ? .cavnarGreen : nil)
+                            }
+                            Text("What your team reads before service. Nothing Cavnar AI writes reaches them until you approve it.")
+                                .cavnarText(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                            CavnarKicker("The lines")
+                            lines(b, cap: 3)
+                        }
+                        if model.canEditBrief {
+                            editor(b)
+                            focusEditor(b)
+                        } else {
+                            if let approved = b.approvedText, !approved.isEmpty {
+                                Text(approved)
+                                    .cavnarText(.body)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            CavnarMixedText(b.focus.map { "Tonight\u{2019}s focus: \($0.item)" + (($0.line ?? "").isEmpty ? "" : " \u{2014} \($0.line!)") }
+                                            ?? "No focus item tonight.", role: .secondary)
+                        }
+                        if let m = model.briefMessage {
+                            Text(m).cavnarText(.secondary, color: .cavnarGreen)
+                        }
+                        if let e = model.briefError {
+                            Text(e).cavnarText(.secondary, color: .cavnarRedText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(CavnarSpace.gutter)
+                }
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .accountSheetChrome("Lineup brief")
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
     /// The text box starts on the approved words, else the draft; refilled
     /// whenever the server answers with a new brief.
     private func seed(_ b: LineupBrief) {
@@ -280,32 +376,23 @@ struct LineupBriefCard: View {
     }
 
     @ViewBuilder
-    private func lines(_ b: LineupBrief) -> some View {
+    private func lines(_ b: LineupBrief, cap: Int) -> some View {
         if b.items.isEmpty {
             Text("Nothing to tell the team yet today.")
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
         } else {
-            let shown = showingAllLines ? b.items : Array(b.items.prefix(3))
-            VStack(alignment: .leading, spacing: 8) {
+            let shown = showingAllLines ? b.items : Array(b.items.prefix(cap))
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                         Circle().fill(Color.cavnarEmber2).frame(width: 5, height: 5).offset(y: -2)
-                        HomeMixedText.make(item.text, size: CavnarType.body, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityHidden(true)
+                        CavnarMixedText(item.text, role: .body)
                     }
                 }
-                if b.items.count > 3 {
-                    Button {
-                        Haptic.selection()
-                        withAnimation(.easeOut(duration: 0.2)) { showingAllLines.toggle() }
-                    } label: {
-                        Text(showingAllLines ? "Show fewer" : "Show all \(b.items.count) lines")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
+                if b.items.count > cap {
+                    CavnarMoreToggle(hiddenCount: b.items.count - cap, total: b.items.count,
+                                     isExpanded: $showingAllLines)
                 }
             }
         }
@@ -313,19 +400,16 @@ struct LineupBriefCard: View {
 
     @ViewBuilder
     private func editor(_ b: LineupBrief) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Brief for the team")
-                .font(.cavnarBody(13, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Brief for the team")
             TextField("Write a short brief, or leave it and the team reads the lines above.", text: $text, axis: .vertical)
                 .lineLimit(3...8)
                 .cavnarTextFieldStyle()
                 .onChange(of: text) { _, v in if v.count > 600 { text = String(v.prefix(600)) } }
             Text(b.draftSaid + (b.draftItemsChanged ? " The lines changed since it was drafted." : ""))
-                .font(.cavnarBody(CavnarType.caption))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
+            HStack(spacing: CavnarSpace.s) {
                 Button {
                     Haptic.light()
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -339,7 +423,7 @@ struct LineupBriefCard: View {
                         else { Text(b.isApproved ? "Save the brief" : "Approve") }
                     }
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: model.briefBusy))
+                .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: model.briefBusy))
                 .disabled(model.briefBusy)
                 if b.isApproved {
                     Button {
@@ -363,14 +447,11 @@ struct LineupBriefCard: View {
 
     @ViewBuilder
     private func focusEditor(_ b: LineupBrief) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tonight\u{2019}s focus")
-                .font(.cavnarBody(13, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Tonight\u{2019}s focus")
             Text("The team sees the item and your line, never why it was suggested.")
-                .font(.cavnarBody(CavnarType.caption))
-                .foregroundStyle(Color.cavnarInk3)
-            HStack(spacing: 8) {
+                .cavnarText(.secondary)
+            HStack(spacing: CavnarSpace.xs) {
                 TextField("Item (Fall old fashioned)", text: $focusItem)
                     .cavnarTextFieldStyle()
                     .onChange(of: focusItem) { _, v in if v.count > 80 { focusItem = String(v.prefix(80)) } }
@@ -389,7 +470,7 @@ struct LineupBriefCard: View {
                         }
                     } label: {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(width: 44, height: 44)
                             .background(Color.cavnarEmber.opacity(0.14), in: Circle())
@@ -401,7 +482,7 @@ struct LineupBriefCard: View {
                 .lineLimit(1...3)
                 .cavnarTextFieldStyle()
                 .onChange(of: focusLine) { _, v in if v.count > 160 { focusLine = String(v.prefix(160)) } }
-            HStack(spacing: 10) {
+            HStack(spacing: CavnarSpace.s) {
                 Button {
                     Haptic.light()
                     Task { await model.setFocus(item: focusItem, line: focusLine) }
@@ -414,9 +495,8 @@ struct LineupBriefCard: View {
                         Task { await model.setFocus(item: "", line: "") }
                     } label: {
                         Text("Clear")
-                            .font(.cavnarBody(15, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .frame(minHeight: 44)
+                            .cavnarText(.label, color: .cavnarInk2)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                     .disabled(model.briefBusy)

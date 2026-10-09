@@ -1692,7 +1692,8 @@ def test_both_surfaces_say_what_the_explanation_is_not():
     say why the AI chose one person over another, and should not imply it."""
     for text in (_source("ios/CavnarAI/CavnarAI/Features/Labor/ShiftQualityPanel.swift"),
                  _source("templates", "dashboard.html")):
-        assert "does not record why the AI" in text
+        # iOS names the AI as Cavnar AI (readability round, 10/8/26).
+        assert "does not record why the AI" in text or "does not record why Cavnar AI" in text
 
 
 def test_a_manager_edit_parses_the_shift_history_once():

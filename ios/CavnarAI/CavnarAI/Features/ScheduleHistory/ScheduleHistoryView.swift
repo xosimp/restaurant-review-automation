@@ -162,7 +162,7 @@ struct ScheduleHistoryView: View {
     private func statePill(_ entry: ScheduleHistoryEntry) -> some View {
         let tone: Color = entry.state == "Sent" ? .cavnarGreen : (entry.state == "Draft" ? .cavnarEmber2 : .cavnarInk3)
         let text = entry.state == "Sent" ? "Sent " + CavnarDate.mdyTimeLocal(entry.publishedAt ?? "", in: RestaurantClock.timeZone) : entry.state
-        return HomeMixedText.make(text, size: 11.5, weight: 700, color: tone)
+        return HomeMixedText.make(text, role: .caption, color: tone)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
             .background(Capsule().fill(tone.opacity(0.12)))
@@ -190,7 +190,7 @@ struct ScheduleHistoryView: View {
                     Text("\(Int(q.rounded()))")
                         .font(.cavnarNumber(17, weight: 700))
                         .foregroundStyle(entry.qualityBand == "excellent" ? Color.cavnarGreen : Color.cavnarInk)
-                    Text("quality").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    Text("quality").cavnarText(.caption)
                 } else if let scheduled = entry.hoursScheduled {
                     Text("\(scheduled.commaFormatted)h")
                         .font(.cavnarNumber(14, weight: 700))

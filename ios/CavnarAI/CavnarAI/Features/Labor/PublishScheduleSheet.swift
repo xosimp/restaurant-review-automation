@@ -559,6 +559,10 @@ final class PublishScheduleViewModel {
 struct PublishScheduleSheet: View {
     @State private var viewModel = PublishScheduleViewModel()
     @State private var confirmingResend = false
+    /// The whole staff list (closed: only who it can't reach), and the
+    /// publish check's notes worth a look (iOS readability round).
+    @State private var showingAllStaff = false
+    @State private var showingWorthALook = false
     @Environment(\.dismiss) private var dismiss
 
     /// The schedule_history row to send — required by the server now; the
@@ -581,36 +585,41 @@ struct PublishScheduleSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
                     if viewModel.isLoading && viewModel.contacts.isEmpty {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.6, 0.45])
                     } else if let error = viewModel.errorMessage, viewModel.contacts.isEmpty {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                        Text(error).cavnarText(.body)
                     } else if viewModel.contacts.isEmpty {
                         emptyState
                     } else {
                         if let result = viewModel.lastResult, result.ok {
                             resultCard(result)
                         }
+                        // A copy a newer one replaced is never sent (UI-3):
+                        // why, in place of Send.
+                        if let why = viewModel.replacedReason {
+                            ScheduleNotice(text: why, symbol: "lock.fill")
+                        }
                         staffCard
                         if !viewModel.blockers.isEmpty {
                             blockersCard
                         }
-                        // Worth a look — never a block, nothing to acknowledge.
+                        // Worth a look and likely to change — never a block,
+                        // nothing to acknowledge — behind one tap.
                         let notes = viewModel.gateNotes.isEmpty ? (viewModel.check?.notes ?? []) : viewModel.gateNotes
-                        if viewModel.check?.publishedAt == nil,
-                           !notes.isEmpty || viewModel.check?.hours?.hourly != nil {
-                            PublishWorthALookCard(notes: notes, hours: viewModel.check?.hours, budget: hoursBudget)
+                        let showsWorth = viewModel.check?.publishedAt == nil
+                            && (!notes.isEmpty || viewModel.check?.hours?.hourly != nil)
+                        let likely = viewModel.check?.likelyToChange
+                        let showsLikely = likely?.ready == true && !(likely?.rows.isEmpty ?? true)
+                            && viewModel.check?.publishedAt == nil
+                        if showsWorth || showsLikely {
+                            worthALookDisclosure(notes: notes, showsWorth: showsWorth,
+                                                 likely: showsLikely ? likely : nil)
                         }
-                        if let likely = viewModel.check?.likelyToChange, likely.ready, !likely.rows.isEmpty,
-                           viewModel.check?.publishedAt == nil {
-                            PublishLikelyToChangeCard(likely: likely)
-                        }
-                        publishButton
                         if let error = viewModel.publishError {
                             Text(error)
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarRed)
+                                .cavnarText(.secondary, color: .cavnarRedText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if !viewModel.status.isEmpty {
@@ -618,7 +627,14 @@ struct PublishScheduleSheet: View {
                         }
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
+            }
+            // Send pinned in thumb reach, like Labor's own send bar — the
+            // one primary on the sheet, never under the staff list.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !viewModel.contacts.isEmpty && viewModel.replacedReason == nil {
+                    CavnarPinnedBar { publishButton }
+                }
             }
             .cavnarModuleBackground()
             .navigationTitle("Send to staff")
@@ -630,7 +646,7 @@ struct PublishScheduleSheet: View {
                         Haptic.light()
                         dismiss()
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -642,64 +658,130 @@ struct PublishScheduleSheet: View {
         }
     }
 
+    /// "2 notes worth a look · 3 rows likely to change" — the publish
+    /// check's notes and the rows the owner usually edits, one tap away.
+    private func worthALookDisclosure(notes: [PublishNote], showsWorth: Bool, likely: LikelyToChange?) -> some View {
+        var parts: [String] = []
+        if showsWorth { parts.append(notes.isEmpty ? "The week's hours" : "\(notes.count) worth a look") }
+        if let likely { parts.append("\(likely.rows.count) likely to change") }
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) { showingWorthALook.toggle() }
+            } label: {
+                HStack(spacing: CavnarSpace.xxs + 2) {
+                    CavnarMixedText(parts.joined(separator: " \u{00B7} "), role: .label, color: .cavnarEmber2)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showingWorthALook ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showingWorthALook ? "Expanded" : "Collapsed")
+            if showingWorthALook {
+                if showsWorth {
+                    PublishWorthALookCard(notes: notes, hours: viewModel.check?.hours, budget: hoursBudget)
+                }
+                if let likely {
+                    PublishLikelyToChangeCard(likely: likely)
+                }
+            }
+        }
+    }
+
+    /// Who it reaches, said once: "11 of 14 reachable", the reach line by
+    /// channel, and only the people it can't reach (each opens their
+    /// contact); "All 14 people" lists everyone.
     private var staffCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .lastTextBaseline) {
-                Text("THIS WEEK'S STAFF")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+        let unreachable = viewModel.contacts.filter { !$0.isReachable }
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline) {
+                CavnarKicker("This week's staff")
                 Spacer()
-                HomeMixedText.make("\(viewModel.reachableCount) of \(viewModel.contacts.count) reachable",
-                                   size: 12.5, weight: 700, color: .cavnarInk3)
+                CavnarMixedText("\(viewModel.reachableCount) of \(viewModel.contacts.count) reachable",
+                                role: .secondary)
             }
             if let week = viewModel.weekLabel {
-                Text(week).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                Text(week).cavnarText(.secondary)
             }
             // By channel, as the web's reach line: the app, a text they
             // asked for, email — and who only has the portal.
             if let reach = viewModel.reach, reach.total > 0 {
-                HomeMixedText.make(reach.line, size: 13.5, weight: 600, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(reach.line, role: .body)
             }
-            VStack(spacing: 0) {
-                ForEach(Array(viewModel.contacts.enumerated()), id: \.element.id) { index, contact in
-                    Button {
-                        Haptic.light()
-                        viewModel.editingContact = contact
-                    } label: {
-                        HStack(spacing: 10) {
-                            Circle()
-                                .fill(contact.isReachable ? Color.cavnarGreen : Color.cavnarAmber)
-                                .frame(width: 7, height: 7)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(contact.employeeName)
-                                    .font(.cavnarBody(15, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk)
-                                Text(contact.reachLine)
-                                    .font(.cavnarBody(13))
-                                    .foregroundStyle(contact.isReachable ? Color.cavnarInk3 : Color.cavnarAmber)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(Color.cavnarEmber2)
+            if !unreachable.isEmpty && !showingAllStaff {
+                VStack(spacing: 0) {
+                    ForEach(Array(unreachable.enumerated()), id: \.element.id) { index, contact in
+                        contactRow(contact)
+                        if index < unreachable.count - 1 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                         }
-                        .padding(.vertical, 11)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    if index < viewModel.contacts.count - 1 {
-                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                     }
                 }
             }
-            Text("Each person gets only their own shifts \u{2014} a notification in the app, a text if they asked for one in the staff portal, or an email with a private link. Anyone can also sign in to the staff portal with their PIN.")
-                .font(.cavnarBody(13))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            if showingAllStaff {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.contacts.enumerated()), id: \.element.id) { index, contact in
+                        contactRow(contact)
+                        if index < viewModel.contacts.count - 1 {
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        }
+                    }
+                }
+            }
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) { showingAllStaff.toggle() }
+            } label: {
+                HStack(spacing: CavnarSpace.xxs + 2) {
+                    CavnarMixedText(showingAllStaff ? "Show less" : "All \(viewModel.contacts.count) people",
+                                    role: .label, color: .cavnarEmber2)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showingAllStaff ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showingAllStaff ? "Expanded" : "Collapsed")
         }
         .cavnarCard()
+    }
+
+    private func contactRow(_ contact: StaffContact) -> some View {
+        Button {
+            Haptic.light()
+            viewModel.editingContact = contact
+        } label: {
+            HStack(spacing: CavnarSpace.s) {
+                Circle()
+                    .fill(contact.isReachable ? Color.cavnarGreen : Color.cavnarAmber)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(contact.employeeName)
+                        .cavnarText(.label)
+                    Text(contact.reachLine)
+                        .cavnarText(.secondary, color: contact.isReachable ? .cavnarInk2 : .cavnarAmber)
+                }
+                Spacer(minLength: CavnarSpace.xs)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .padding(.vertical, CavnarSpace.xs)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Disabled while blockers stand unacknowledged: the gate said read
@@ -712,10 +794,9 @@ struct PublishScheduleSheet: View {
 
     @ViewBuilder
     private var publishButton: some View {
-        if let why = viewModel.replacedReason {
-            // A copy a newer one replaced is never sent (UI-3): why, in place
-            // of Send.
-            ScheduleNotice(text: why, symbol: "lock.fill")
+        if viewModel.replacedReason != nil {
+            // Said in the sheet (ScheduleNotice above); nothing to send.
+            EmptyView()
         } else if !viewModel.unsentChanges.isEmpty {
             // A week staff already have, changed since: Send tells only
             // the people whose shifts moved.
@@ -736,7 +817,7 @@ struct PublishScheduleSheet: View {
             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isPublishing))
             .disabled(viewModel.isPublishing)
         } else if viewModel.hasSent {
-            // Sent. Another send re-emails everyone, so it is a separate,
+            // Sent. Another send re-sends to everyone, so it is a separate,
             // quieter action that asks first (CLIENT-36).
             Button {
                 confirmingResend = true
@@ -752,18 +833,17 @@ struct PublishScheduleSheet: View {
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
             .disabled(viewModel.isPublishing)
-            .confirmationDialog("Email this week to all \(viewModel.reachableCount) staff again?",
+            .confirmationDialog("Send this week to all \(viewModel.reachableCount) again?",
                                 isPresented: $confirmingResend, titleVisibility: .visible) {
                 Button("Send again") { Task { await viewModel.publish(resend: true) } }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Everyone gets the email a second time, even if nothing changed.")
+                Text("Everyone hears about their shifts a second time, even if nothing changed.")
             }
         } else {
             firstSendButton
         }
     }
-
     private var firstSendButton: some View {
         Button {
             Task { await viewModel.publish() }
@@ -815,7 +895,7 @@ struct PublishScheduleSheet: View {
                 }
             }
             AccountSwitchRow(label: "I've read these — send anyway",
-                             detail: "The week goes out as it is. The result will say it was sent with these acknowledged.",
+                             detail: "The week goes out as it is.",
                              isOn: $viewModel.acknowledgeBlockers, showsDivider: false)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -843,7 +923,7 @@ struct PublishScheduleSheet: View {
                     Image(systemName: "hand.raised.fill")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarAmber)
-                    Text("Sent with acknowledged blockers")
+                    Text("Sent after you read the notes")
                         .font(.cavnarBody(14, weight: 700))
                         .foregroundStyle(Color.cavnarAmber)
                 }

@@ -10,6 +10,10 @@ import SwiftUI
 /// above it.
 struct AvailabilityManagerSection: View {
     @Bindable var viewModel: LaborViewModel
+    /// The roster's names (iOS readability round, 10/8/26): the person is
+    /// picked, not typed — a typo filed availability under nobody. Empty
+    /// (no roster yet) falls back to the text field.
+    var names: [String] = []
     var onExpand: (() -> Void)? = nil
 
     @State private var name = ""
@@ -32,7 +36,7 @@ struct AvailabilityManagerSection: View {
             onExpand: onExpand
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("The AI scheduler will never schedule someone on a day marked unavailable here.")
+                Text("Cavnar AI never schedules someone on a day marked unavailable here.")
                     .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
 
@@ -124,6 +128,8 @@ struct AvailabilityManagerSection: View {
     /// load finishing) — harmless if both fire close together, since
     /// setting focusedField to a value it's already set to is a no-op.
     private func scheduleAutoFocus() {
+        // A picked name needs no keyboard.
+        guard names.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             guard viewModel.availabilityExpanded, !viewModel.isLoadingAvailability else { return }
             focusedField = .name
@@ -132,9 +138,34 @@ struct AvailabilityManagerSection: View {
 
     private var addForm: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Employee name", text: $name)
-                .cavnarTextFieldStyle()
-                .focused($focusedField, equals: .name)
+            if names.isEmpty {
+                TextField("Employee name", text: $name)
+                    .cavnarTextFieldStyle()
+                    .focused($focusedField, equals: .name)
+            } else {
+                Menu {
+                    ForEach(names, id: \.self) { n in
+                        Button(n) { name = n }
+                    }
+                } label: {
+                    HStack(spacing: CavnarSpace.xs) {
+                        Text(name.isEmpty ? "Pick a person" : name)
+                            .cavnarText(.body, color: name.isEmpty ? .cavnarInk2 : .cavnarInk)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, CavnarSpace.s)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                        .fill(Color.cavnarPaper2))
+                    .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                        .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                }
+                .accessibilityLabel(name.isEmpty ? "Pick a person" : "Person: \(name)")
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Available days")
@@ -200,8 +231,7 @@ struct AvailabilityManagerSection: View {
             Text(short)
                 .font(.cavnarBody(14, weight: 600))
                 .foregroundStyle(isOn ? Color.cavnarInk : Color.cavnarInk3)
-                .frame(width: 38, height: 30)
-                .frame(minWidth: 44, minHeight: 44)   // HIG tap target (audit 7.3)
+                .frame(maxWidth: .infinity, minHeight: 44)   // 44pt tall, the week shares the width
                 .contentShape(Rectangle())
                 .background(isOn ? Color.cavnarEmber.opacity(0.55) : Color.cavnarPaper3.opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -236,10 +266,12 @@ struct AvailabilityManagerSection: View {
                 Task { await viewModel.deleteAvailability(employeeName: entry.employeeName) }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarHitTarget()
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Remove \(entry.employeeName)'s availability")
         }
         .padding(10)
         .background(Color.cavnarPaper2.opacity(0.5))

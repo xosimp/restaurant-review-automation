@@ -165,7 +165,7 @@ struct ShiftTargetsSection: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Color.cavnarInk3)
-                            .frame(width: 26, height: 26)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }

@@ -347,7 +347,7 @@ struct GenerateBuildRows: View {
                 .frame(width: 34, height: 34)
                 .background(Circle().fill(Color.cavnarPaper2))
                 .overlay(Circle().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-                .contentShape(Circle())
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -427,6 +427,67 @@ struct GenerateBuildRows: View {
             .font(.cavnarBody(14, weight: 700))
             .foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk3)
             .accessibilityLabel(on ? "On \u{2014} your login can\u{2019}t change it" : "Off \u{2014} your login can\u{2019}t change it")
+    }
+}
+
+// MARK: - The Generate sheet
+
+/// Everything that shapes the next draft, one tap off the Labor hero (iOS
+/// readability round, 10/8/26): which week, "Anything for this week?", the
+/// labor target, how the owner likes the week built and the weekly
+/// automation — with Generate pinned under them, named for the picked week.
+/// The hero keeps one button; the choices live here.
+struct GenerateScheduleSheet: View {
+    @Bindable var viewModel: LaborViewModel
+    @Bindable var settings: ScheduleBuildSettings
+    /// "Generate the week of 10/19/26".
+    let title: String
+    /// Dismisses this sheet, then generates (asking first over unsaved edits).
+    let onGenerate: () -> Void
+    @State private var showingNotes = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                        CavnarKicker("Which week")
+                        GenerateWeekPicker(viewModel: viewModel)
+                        // How current the sales are, the budget's caveat, and
+                        // the owner's words for this draft (E, C2-3).
+                        GenerateWeekNotes(viewModel: viewModel)
+                    }
+                    VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                        CavnarKicker("How it's built")
+                        // The target, the notes the draft reads and the
+                        // weekly automation, where the draft is made (#46).
+                        GenerateBuildRows(settings: settings, onOpenNotes: { showingNotes = true })
+                    }
+                }
+                .padding(CavnarSpace.gutter)
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .cavnarPinnedBar(note: viewModel.generateBlocked
+                             ? "Off for this week until newer sales arrive." : nil) {
+                Button {
+                    Haptic.medium()
+                    onGenerate()
+                } label: {
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "sparkles").font(.cavnar(.secondary))
+                        Text(title)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.generateBlocked
+                                                      || viewModel.isGeneratingSchedule))
+                .disabled(viewModel.generateBlocked || viewModel.isGeneratingSchedule)
+            }
+            .accountSheetChrome("Generate a week")
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showingNotes) { ScheduleNotesSheet(settings: settings) }
     }
 }
 

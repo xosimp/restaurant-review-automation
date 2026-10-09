@@ -28,7 +28,7 @@ struct ScheduleWeekNotes: View {
                 }
             }
             if let source = result.projectedRevenueSource, !source.isEmpty {
-                caption("Revenue basis: \(source).")
+                caption("Projected sales: \(source).")
             }
             // Which labor target the budget was built against — the owner's
             // goal ("your goal of 26% by 12/31/26") or the setting.
@@ -36,23 +36,21 @@ struct ScheduleWeekNotes: View {
                                            source: result.laborTargetSource?.value) {
                 caption(label)
             }
-            // How the demand forecast behind that basis has held up (K8).
-            if let record = (result.demandAccuracy ?? demandAccuracy)?.sentence {
-                caption(record + ".")
-            }
+            // How the demand forecast has held up (K8) is said once, in the
+            // Scheduling forecast panel — not again under every draft.
             if result.hourlyProfileReady == false {
-                notice("No intraday sales captured yet — starts are not staggered by the sales curve.", tone: .cavnarInk3)
+                notice("No sales by the hour yet, so start times aren't staggered to the rush.", tone: .cavnarInk2)
             }
             if let through = result.demandDataThrough, through.blind == true {
-                notice(through.date.map { "Demand blind since \(CavnarDate.mdy($0)): the forecast has no sales newer than that." }
-                       ?? "Demand blind: the forecast has no recent sales to read.", tone: .cavnarAmber)
+                notice(through.date.map { "No sales since \(CavnarDate.mdy($0)) \u{2014} the forecast is guessing." }
+                       ?? "No recent sales \u{2014} the forecast is guessing.", tone: .cavnarAmber)
             }
             if let conflicts = result.patternConflicts?.items, !conflicts.isEmpty { conflictsBlock(conflicts) }
             if let reqs = result.softRequirements?.items, !reqs.isEmpty { softRequirementsBlock(reqs) }
             if !result.trimmedShifts.isEmpty { trimmedBlock }
             if !result.staggeredStarts.isEmpty { staggeredBlock }
             if let departments = result.departments, !departments.isEmpty {
-                caption("Generated per department — \(departments.joined(separator: ", ")) — then stitched.")
+                caption("Built team by team: \(departments.joined(separator: ", ")).")
             }
             if let dates = result.regeneratedDates, !dates.isEmpty {
                 caption("Redone: \(dates.map(CavnarDate.mdy).joined(separator: ", ")). The other days were kept.")
@@ -286,18 +284,16 @@ struct ScheduleWeekNotes: View {
     // MARK: Small lines
 
     private func caption(_ text: String) -> some View {
-        HomeMixedText.make(text, size: 12.5, color: .cavnarInk3)
-            .fixedSize(horizontal: false, vertical: true)
+        CavnarMixedText(text, role: .caption)
     }
 
     private func notice(_ text: String, tone: Color) -> some View {
-        HStack(alignment: .top, spacing: 7) {
+        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
             Image(systemName: tone == .cavnarAmber ? "exclamationmark.triangle.fill" : "info.circle")
-                .font(.system(size: 11, weight: .bold))
+                .font(.cavnar(.caption))
                 .foregroundStyle(tone)
-                .padding(.top, 2)
-            HomeMixedText.make(text, size: 13.5, weight: 600, color: tone)
-                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityHidden(true)
+            CavnarMixedText(text, role: .secondary, color: tone)
         }
     }
 }
@@ -346,16 +342,10 @@ struct SaveConflictSheet: View {
                             conflict.error ?? "This week changed after you opened it. Your edits are still here \u{2014} keep yours, or reload theirs.",
                             size: 14.5, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
-                        if let v = conflict.latestVersion {
-                            HomeMixedText.make("Now at v\(v)", size: 13, weight: 600, color: .cavnarInk3)
-                        }
                     }
                     if let lines = conflict.lines, !lines.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("WHAT THEY CHANGED")
-                                .font(.cavnarBody(11.5, weight: 700))
-                                .tracking(1.1)
-                                .foregroundStyle(Color.cavnarBlue)
+                            CavnarKicker("What they changed", tint: .cavnarBlue)
                             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                                 HStack(alignment: .top, spacing: 7) {
                                     Circle().fill(Color.cavnarBlue).frame(width: 4, height: 4).padding(.top, 7)
@@ -472,11 +462,12 @@ struct GenerateWeekPicker: View {
             if label != dateLabel { showingDate = false }
         } label: {
             Text(label)
-                .font(.cavnarBody(13, weight: on ? 700 : 500))
+                .font(on ? .cavnarBody(CavnarType.secondary, weight: 700) : .cavnar(.secondary))
                 .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
                 .padding(.horizontal, 10)
-                .frame(minHeight: 30)
+                .frame(minHeight: 44)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(on ? Color.cavnarEmber : Color.cavnarPaper2))

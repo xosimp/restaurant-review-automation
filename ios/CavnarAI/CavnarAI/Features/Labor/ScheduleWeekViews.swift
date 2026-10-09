@@ -201,19 +201,21 @@ struct ScheduleWeekPager<DayContent: View>: View {
                             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { selectedDay = page.day }
                         } label: {
                             VStack(spacing: 2) {
-                                Text(page.short.uppercased())
-                                    .font(.cavnarBody(11, weight: 700))
-                                    .tracking(0.8)
+                                Text(page.short)
+                                    .font(.cavnar(.kicker))
+                                    .textCase(.uppercase)
                                 Text(page.dateLabel)
-                                    .font(.cavnarNumber(14, weight: 700))
+                                    .font(.cavnar(.figureS))
+                                    .minimumScaleFactor(0.85)
+                                    .lineLimit(1)
                                 Group {
                                     if page.notWritten {
                                         Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.system(size: 9, weight: .bold))
+                                            .font(.cavnar(.caption))
                                             .foregroundStyle(Color.cavnarAmber)
                                     } else {
                                         Text("\(page.count)")
-                                            .font(.cavnarNumber(11, weight: 600))
+                                            .font(.cavnarNumber(CavnarType.caption, weight: 600))
                                     }
                                 }
                                 .opacity(on ? 1 : 0.75)
@@ -537,8 +539,8 @@ struct ScheduleSummaryTiles {
         let score = q?.checked == true ? q?.score : nil
         let band = (q?.band ?? "").isEmpty ? nil : q?.band
         out.append(Tile(key: "quality", label: "Shift quality", value: score.map(String.init), unit: "",
-                        sub: band.map { $0.prefix(1).uppercased() + $0.dropFirst() + " \u{00B7} graded from the finished week, out of 100" }
-                            ?? "Graded from the finished week",
+                        sub: band.map { $0.prefix(1).uppercased() + $0.dropFirst() + " \u{00B7} out of 100" }
+                            ?? "Not graded yet",
                         tone: score.map { $0 >= 80 ? .good : ($0 >= 60 ? .warn : .bad) } ?? .neutral))
         let lv = r.laborView
         let basis = lv.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
@@ -553,12 +555,12 @@ struct ScheduleSummaryTiles {
                             tone: over ? .bad : .good))
         } else {
             out.append(Tile(key: "labor", label: "Labor", value: nil, unit: "",
-                            sub: "Needs the forecast this draft was built on \u{2014} generate a new draft to see it",
+                            sub: "Generate a new draft to see it",
                             tone: .neutral))
         }
         let cov = q?.dimensions?.first { $0.key == "coverage" }?.score
         out.append(Tile(key: "coverage", label: "Coverage", value: cov.map(String.init), unit: cov == nil ? "" : "%",
-                        sub: "of the people each shift needs, on it",
+                        sub: "of each shift\u{2019}s needs met",
                         tone: cov.map { $0 >= 90 ? .good : ($0 >= 75 ? .warn : .bad) } ?? .neutral))
         // Overtime only from a figure the server priced: no projection, or
         // one without overtime hours, is "—", never a green "Nobody past
@@ -570,18 +572,18 @@ struct ScheduleSummaryTiles {
                             tone: ot > 0 ? .bad : .good))
         } else {
             out.append(Tile(key: "overtime", label: "Overtime", value: nil, unit: "",
-                            sub: r.projectedCost == nil ? "Priced once the draft is saved"
-                                : "Overtime wasn\u{2019}t priced for this week",
+                            sub: r.projectedCost == nil ? "Priced once saved"
+                                : "Not priced this week",
                             tone: .neutral))
         }
         out.append(warningsTile(r, source))
         if let sav = lv?.savings, let rec = lv?.recentPct, let rev = r.forecastSales, rev > 0 {
             out.append(Tile(key: "savings", label: "Under your recent labor", value: money(sav), unit: "",
-                            sub: "this week vs your last \(lv?.recentDays ?? 14) days at \(ScheduleBuildSettings.pct(rec))% labor (\(basis)), on \(money(rev)) forecast sales",
+                            sub: "vs your last \(lv?.recentDays ?? 14) days at \(ScheduleBuildSettings.pct(rec))% (\(basis)), on \(money(rev)) forecast sales",
                             tone: .hero))
         } else {
             out.append(Tile(key: "savings", label: "Under your recent labor", value: nil, unit: "",
-                            sub: "Needs a measured labor % for your recent weeks and this draft\u{2019}s forecast",
+                            sub: "Needs your recent labor % and a forecast",
                             tone: .hero))
         }
         return out
@@ -594,7 +596,7 @@ struct ScheduleSummaryTiles {
         case .review:
             guard let review = r.review, review.hard != nil || review.soft != nil else {
                 return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
-                            sub: "The rules check didn\u{2019}t come back with this draft \u{2014} review it before sending",
+                            sub: "No rules check came back \u{2014} review before sending",
                             tone: .neutral)
             }
             let hard = review.hardCount, soft = review.softCount
@@ -613,8 +615,8 @@ struct ScheduleSummaryTiles {
             }
             let blockers = check.shown.lines.count, notes = check.notes.count
             return Tile(key: "warnings", label: "Warnings", value: String(blockers + notes), unit: "",
-                        sub: blockers > 0 ? "\(blockers) to read before it goes to staff, as the rules stand now"
-                            : (notes > 0 ? "Notes only \u{00B7} worth a look" : "Nothing to read first, as the rules stand now"),
+                        sub: blockers > 0 ? "\(blockers) to read before sending"
+                            : (notes > 0 ? "Notes only \u{00B7} worth a look" : "Nothing to read first"),
                         tone: blockers > 0 ? .bad : (notes > 0 ? .warn : .good))
         }
     }
@@ -766,13 +768,7 @@ struct ScheduleTileCard: View {
             HomeMixedText.make(tile.sub, size: 12, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if tile.key == "savings" {
-                Text("PROJECTION \u{00B7} NOT YET EARNED")
-                    .font(.cavnarBody(9.5, weight: 700))
-                    .tracking(0.6)
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.cavnarEmber.opacity(0.12)))
+                ScheduleRowTag(text: "Projection \u{00B7} not yet earned", tone: .cavnarEmber2)
             }
             if showsGo {
                 HStack(spacing: 3) {

@@ -168,10 +168,13 @@ struct TSReportResponse: Decodable {
 
 /// Task sheets (task_sheets.py) for the owner: the day — every sheet, every
 /// line, who ticked it and when, read-only (owners do not tick) — the
-/// consistency report with the managers side by side, and the editor.
+/// consistency report with the managers side by side. Writing the sheets —
+/// lines, order, job codes — is done on the web (iOS readability round,
+/// 10/8/26: "Edit task sheets · Edit on the web"); TSEditorList stays for a
+/// later cleanup.
 struct TaskSheetsScreen: View {
     @Environment(\.dismiss) private var dismiss
-    enum View3: String, CaseIterable { case day = "The day", report = "Consistency", edit = "Edit sheets" }
+    enum View3: String, CaseIterable { case day = "The day", report = "Consistency" }
     @State private var view: View3 = .day
 
     var body: some View {
@@ -179,11 +182,12 @@ struct TaskSheetsScreen: View {
             VStack(spacing: 0) {
                 CavnarSegmentedControl(selection: $view, options: View3.allCases) { $0.rawValue }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+                .padding(.top, 10)
+                CavnarWebLinkRow(title: "Edit task sheets", path: "labor/tasks")
+                    .padding(.horizontal, 20)
                 switch view {
                 case .day: TSDayView()
                 case .report: TSReportView()
-                case .edit: TSEditorList()
                 }
             }
             .background(Color.cavnarPaper.ignoresSafeArea())
@@ -232,7 +236,7 @@ private struct TSDayView: View {
     @ViewBuilder
     private func content(_ d: TSDayResponse) -> some View {
         if d.hasSheets != true {
-            note("No task sheets yet. Write one for each job code and shift under Edit sheets — each person sees theirs when they sign in to the staff app.")
+            note("No task sheets yet. Write one for each job code and shift on the web — each person sees theirs when they sign in to the staff app.")
         } else if (d.sheets ?? []).isEmpty {
             note("No sheets went out this day — nobody on the published schedule worked a job code that has a sheet.")
         } else if let s = d.summary {

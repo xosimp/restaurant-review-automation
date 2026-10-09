@@ -23,6 +23,8 @@ struct LaborWaitingOnYou: View {
     @State private var person: PersonSheetTarget?
     /// The one-tap send, asked first (an outward send is never one tap).
     @State private var confirmingSend: (id: Int, label: String)?
+    /// A dropped shift whose cover is being named (ReplacementPickerSheet).
+    @State private var choosingCover: ShiftRequest?
 
     private var pendingTimeOff: [TimeOffRequest] { viewModel.timeOff.filter { $0.status == "pending" } }
     private var pendingShifts: [ShiftRequest] { setupViewModel.pendingRequests }
@@ -77,6 +79,9 @@ struct LaborWaitingOnYou: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard()
             .sheet(item: $person) { target in PersonSheet(target: target) }
+            .sheet(item: $choosingCover) { req in
+                ReplacementPickerSheet(viewModel: setupViewModel, request: req)
+            }
         }
     }
 
@@ -269,20 +274,20 @@ struct LaborWaitingOnYou: View {
                               deny: { await setupViewModel.decideShiftRequest(req.id, approve: false) },
                               approve: { await setupViewModel.decideShiftRequest(req.id, approve: true) })
             }
-            if !req.isSwap && setupViewModel.canDecideShifts {
-                // Approving a drop opens it for anyone to claim; naming who
-                // covers it outright is the full section's picker.
+            if !req.isSwap && setupViewModel.canDecideShifts
+                && !setupViewModel.activeNames.filter({ $0 != req.employeeName }).isEmpty {
+                // Approve opens a drop for anyone to claim; this names who
+                // covers it outright (the replacement picker).
                 Button {
                     Haptic.light()
-                    onOpenRequests()
+                    choosingCover = req
                 } label: {
-                    Text("Approve opens it for anyone to claim · Name who covers")
-                        .font(.cavnarBody(12.5, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .multilineTextAlignment(.leading)
-                        .frame(minHeight: 44, alignment: .leading)
+                    Text("Name who covers")
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
+                .disabled(busy)
             }
         }
         .padding(12)
