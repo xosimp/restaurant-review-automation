@@ -1478,14 +1478,14 @@ details[open]>summary~*{animation:askIn .3s ease both}
    darker underside, a hairline rim, a long ember shadow and a slow halo —
    carrying the orb in cream ink (it 'works' at rest and 'searches' under
    the cursor). The brand colour's one large surface on the page. */
-.ask-fab{position:fixed;bottom:24px;right:24px;width:62px;height:62px;border-radius:50%;border:none;padding:0;cursor:pointer;z-index:998;display:flex;align-items:center;justify-content:center;background-color:var(--ember);background-image:radial-gradient(circle at 32% 26%,rgba(255,255,255,.42),rgba(255,255,255,0) 48%),radial-gradient(circle at 50% 115%,rgba(0,0,0,.38),rgba(0,0,0,0) 58%),linear-gradient(160deg,var(--ember2),var(--ember) 62%);box-shadow:inset 0 1px 0 rgba(255,255,255,.38),inset 0 -1px 0 rgba(0,0,0,.25),0 1px 2px rgba(0,0,0,.28),0 16px 34px -10px color-mix(in srgb,var(--ember) 75%,transparent),0 0 0 6px color-mix(in srgb,var(--ember) 10%,transparent);transition:transform .18s ease,box-shadow .18s ease}
+.ask-fab{position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;border:none;padding:0;cursor:pointer;z-index:998;display:flex;align-items:center;justify-content:center;background-color:var(--ember);background-image:radial-gradient(circle at 32% 26%,rgba(255,255,255,.42),rgba(255,255,255,0) 48%),radial-gradient(circle at 50% 115%,rgba(0,0,0,.38),rgba(0,0,0,0) 58%),linear-gradient(160deg,var(--ember2),var(--ember) 62%);box-shadow:inset 0 1px 0 rgba(255,255,255,.38),inset 0 -1px 0 rgba(0,0,0,.25),0 1px 2px rgba(0,0,0,.28),0 16px 34px -10px color-mix(in srgb,var(--ember) 75%,transparent),0 0 0 6px color-mix(in srgb,var(--ember) 10%,transparent);transition:transform .18s ease,box-shadow .18s ease}
 .ask-fab:before{content:'';position:absolute;inset:-7px;border-radius:50%;border:1.5px solid var(--ember2);opacity:0;animation:askFabHalo 3.4s ease-out infinite;pointer-events:none}
 .ask-fab:after{content:'';position:absolute;inset:2px;border-radius:50%;border:1px solid rgba(255,255,255,.18);pointer-events:none}
 @keyframes askFabHalo{0%{transform:scale(.86);opacity:.7}70%{opacity:0}100%{transform:scale(1.3);opacity:0}}
 .ask-fab:hover{transform:translateY(-2px) scale(1.04);box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 -1px 0 rgba(0,0,0,.25),0 2px 4px rgba(0,0,0,.3),0 22px 44px -10px color-mix(in srgb,var(--ember) 85%,transparent),0 0 0 9px color-mix(in srgb,var(--ember) 14%,transparent)}
 .ask-fab:active{transform:scale(.94);box-shadow:inset 0 2px 6px rgba(0,0,0,.4),0 6px 14px -6px color-mix(in srgb,var(--ember) 60%,transparent),0 0 0 6px color-mix(in srgb,var(--ember) 10%,transparent)}
 .ask-fab.open:before,.ask-fab.seen:before{animation:none}
-.ask-fab canvas{position:relative;display:block;width:38px;height:38px;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}
+.ask-fab canvas{position:relative;display:block;width:32px;height:32px;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}
 @media (prefers-reduced-motion:reduce){.ask-fab:before{animation:none}}
 .ask-fab-l{position:absolute;right:calc(100% + 12px);top:50%;transform:translateY(-50%) translateX(6px);white-space:nowrap;font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0;background:#161618;border:1px solid rgba(232,149,106,.3);border-radius:999px;padding:7px 13px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
 .ask-fab:hover .ask-fab-l{opacity:1;transform:translateY(-50%)}
@@ -2179,6 +2179,7 @@ function loadFailed(el, d){
 </script>
 <script src="/static/cavnar-orb.js"></script>
 <script src="/static/ember-core.js" defer></script>
+<script src="/static/cavnar-grain.js" defer></script>
 <script src="/static/cavnar-phone.js"></script>
 
 <!-- Branded upload loading overlay -->
@@ -12196,7 +12197,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="lb2-actions">
               {% if labor.is_live %}<!-- Which week: next week by default, the week after, or any date
                    inside the wanted week. Sent as week_start. -->
-              <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="next">Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
+              <span class="lb2-weekpick"><select class="ac-select" id="sched-week-pick" aria-label="Which week" onchange="document.getElementById('sched-week-date').style.display=this.value==='date'?'':'none'"><option value="this">This week</option><option value="next" selected>Next week</option><option value="after">The week after</option><option value="date">A date…</option></select><input type="date" class="ac-input" id="sched-week-date" aria-label="A date in the week you want" style="display:none"></span>{% endif %}
           {% if not restaurant.toast_restaurant_guid %}
           <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
           {% endif %}
@@ -23708,6 +23709,12 @@ function _schedWeekStart() {
   var pick = document.getElementById('sched-week-pick'), dt = document.getElementById('sched-week-date');
   if (!pick) return null;
   if (pick.value === 'date') return (dt && dt.value) ? dt.value : null;
+  // This week (owner, 10/9/26: a draft of the week under way, to set beside
+  // the one in use) - the server accepts it until the week has passed.
+  if (pick.value === 'this') {
+    var n = new Date();
+    return n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2) + '-' + ('0' + n.getDate()).slice(-2);
+  }
   if (pick.value === 'after') {
     var d = new Date(); d.setDate(d.getDate() + 14);
     return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
@@ -40284,7 +40291,7 @@ table[data-sortable] th.r .cbtn.csort-btn{flex-direction:row-reverse}
   html,body{background:var(--paper)!important;color:var(--ink)!important;min-height:0!important}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact;animation:none!important;transition:none!important}
   .hb-rise,.hb-fade,.scroll-reveal{opacity:1!important;transform:none!important}
-  .hdr,.tabs,#toast,.toast,.cpal,#notif-panel,#team-msg-wrap,#ask-cavnar-fab,.ask-fab,#ai-feed,#ai-strip,#ask-cavnar-panel,
+  .hdr,.tabs,#toast,.toast,.cpal,#notif-panel,#team-msg-wrap,#ask-cavnar-fab,.ask-fab,#ai-feed,#ai-strip,#ask-cavnar-panel,#cav-grain,
   #upload-loading-overlay,#tmpl-picker,[role="dialog"],.cbtn,.cav-print-hide,
   #dr-bud,#dr-imp,.dr-imp-link,#sched-edit-bar,#publish-sched-panel,#ps-blockers,#ps-reach,#sched-toggle-bar,#sched-table-foot,#rv-selbar{display:none!important}
   /* A button that IS the value (a day, a week, a header) prints as its text. */

@@ -142,6 +142,17 @@ canvas: see the long comment above `:root` in `dashboard.html` for why.
 
 ---
 
+### No banding (10/9/26)
+
+Every web page (dashboard and sign-in) carries one grain over everything:
+`static/cavnar-grain.js` draws a 128px tile at the screen's own pixel
+density — each pixel white or black at 0–6 of 255 alpha, so about ±1–2
+levels and no overall shift — and fixes it over the page (`#cav-grain`,
+`pointer-events:none`, hidden in print). It scatters the 8-bit steps every
+glow, shadow and gradient falls into. A new glow needs nothing of its own;
+a large hero wash that still rings in Safari is painted with per-pixel
+dither instead (`cavGlowPaint`, the report's score card).
+
 ## 2. Typography
 
 Three faces, one job each. Clash Display and Apfel Grotezk are self-hosted on
