@@ -785,3 +785,18 @@ def test_a_redo_plans_its_days_against_the_kept_ones_and_keeps_their_rows(db, mo
     tue = [r for r in rows if r["date"] == "2026-10-06" and r.get("_pinned") == "manager_plan"]
     assert [r["employee"] for r in tue] == ["Erik"]
     assert not [v for v in done["result"]["rule_violations"] if v["kind"] in ("rest_gap", "overlap", "no_manager")]
+
+
+def test_the_question_shows_availability_already_on_file_and_never_counts_it_as_a_pattern():
+    # Owner, 10/9/26: Gabriel's availability was saved (every day but
+    # Wednesday) and the card still read as if nothing were on file. It is
+    # when he CAN work, not which days he DOES, so he is still asked, but
+    # the card now carries what is saved and greys out the day he is off.
+    c = _c()
+    c.daypart_avail = {"erik": {"Monday": "any", "Wednesday": "off", "Friday": "night"}}
+    plan = sk.plan_manager_coverage(c, WEEK)
+    assert "Erik" in plan["unknown_pattern"]
+    av = plan["unknown_availability"]["Erik"]
+    assert av["Wednesday"] == "off" and av["Friday"] == "night" and av["Tuesday"] == "any"
+    assert "Jim" not in plan["unknown_availability"]          # nothing on file, nothing said
+    assert sk.payload(plan)["unknown_availability"] == plan["unknown_availability"]

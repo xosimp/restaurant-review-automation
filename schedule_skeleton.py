@@ -807,6 +807,21 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     known = {k for k in managers if (usual.get(k) or {}).get("days")}
     standing = {k for k in managers if (getattr(c, "standing_shifts", None) or {}).get(k)}
     unknown = [name_of(k) for k in managers if k not in known and k not in standing]
+    # Availability is not a pattern (when they CAN work, not which days they
+    # DO), but the question shows it so an owner who saved it isn't asked as
+    # if nothing were on file (owner, 10/9/26): each unknown manager's week,
+    # "off" on a blocked day, else the daypart they gave ("any" when unset).
+    unknown_availability = {}
+    for k in managers:
+        if k in known or k in standing:
+            continue
+        blocked = (getattr(c, "unavailable_days", None) or {}).get(k) or set()
+        parts = (getattr(c, "daypart_avail", None) or {}).get(k) or {}
+        if not blocked and not parts:
+            continue
+        unknown_availability[name_of(k)] = {
+            d: ("off" if d in blocked or parts.get(d) == "off" else (parts.get(d) or "any"))
+            for d in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")}
     return {
         "rows": plan,
         "dates": dates,
@@ -822,6 +837,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                      for k in managers],
         "acting": [{"name": name_of(k), "dates": sorted(v)} for k, v in sorted(acting.items())],
         "unknown_pattern": unknown,
+        "unknown_availability": unknown_availability,
         "question": (f"Which days and hours do {_names(unknown)} work?" if unknown else None),
     }
 
@@ -1200,5 +1216,6 @@ def payload(plan) -> dict:
         "managers": list(plan.get("managers") or []),
         "acting": list(plan.get("acting") or []),
         "unknown_pattern": list(plan.get("unknown_pattern") or []),
+        "unknown_availability": dict(plan.get("unknown_availability") or {}),
         "question": plan.get("question"),
     }

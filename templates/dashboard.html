@@ -36848,6 +36848,8 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
 .sfw1-q .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
 .sfw1-q h3{font-family:'Clash Display',sans-serif;font-size:21px;font-weight:500;color:var(--ink);margin:6px 0 6px;text-wrap:balance}
 .sfw1-q p{margin:0 0 10px;font-size:15px;line-height:1.55;color:var(--ink2)}
+.sfw1-av{margin:4px 0 10px;font-size:14px;line-height:1.5;color:var(--ink2)}
+.sfw1-wk .d.off{opacity:.6}
 .sfw1-wk{margin-top:12px;padding-top:12px;border-top:1px solid var(--sf-ai-line)}
 .sfw1-wk .nm{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
 .sfw1-wk .grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
@@ -37363,10 +37365,18 @@ function sfw1RatingLine(s) {
     h += '<div class="sfw1-q" id="sfw1-q"><div class="k">A question for you</div><h3>' + e(p.question) + '</h3>'
       + '<p>Cavnar AI plans your managers’ shifts first so every minute on the floor has a manager. It had no standing shifts or past schedules for these managers, so this week is an even split. Tell it their real days and every draft will keep them.</p>';
     if (!canEdit()) return h + '<p>Only the account owner or a manager who drafts schedules can set these.</p></div>';
+    var av = p.unknown_availability || {};
     for (i = 0; i < names.length; i++) {
-      h += '<div class="sfw1-wk" data-sfw1-wk="' + e(names[i]) + '"><div class="nm">' + e(names[i]) + '</div><div class="grid">';
+      var mine = av[names[i]] || null, offs = [];
+      if (mine) for (j = 0; j < SFW1_DAYS.length; j++) if (mine[SFW1_DAYS[j]] === 'off') offs.push(SFW1_DAYS[j].slice(0, 3));
+      h += '<div class="sfw1-wk" data-sfw1-wk="' + e(names[i]) + '"><div class="nm">' + e(names[i]) + '</div>'
+        // Availability already saved is said, not asked again (owner,
+        // 10/9/26): it says when they CAN work; this asks which days they DO.
+        + (mine ? '<p class="sfw1-av">Availability is on file: ' + (offs.length ? 'every day but ' + e(offs.join(', ')) : 'any day') + '. That’s when ' + e(names[i].split(' ')[0]) + ' can work — tick the days they actually work and their hours, and every draft keeps them.</p>' : '')
+        + '<div class="grid">';
       for (j = 0; j < SFW1_DAYS.length; j++) {
-        h += '<div class="d" data-day="' + SFW1_DAYS[j] + '"><label><input type="checkbox" data-sfw1-wk-on="1"> ' + SFW1_DAYS[j].slice(0, 3) + '</label>'
+        var off = mine && mine[SFW1_DAYS[j]] === 'off';
+        h += '<div class="d' + (off ? ' off' : '') + '" data-day="' + SFW1_DAYS[j] + '"><label><input type="checkbox" data-sfw1-wk-on="1"' + (off ? ' disabled' : '') + '> ' + SFW1_DAYS[j].slice(0, 3) + (off ? ' · off' : '') + '</label>'
           + '<select class="ac-select" data-f="start" aria-label="' + e(names[i] + ' starts ' + SFW1_DAYS[j]) + '">' + (window.cavTimeOptions ? cavTimeOptions('') : '') + '</select>'
           + '<select class="ac-select" data-f="end" aria-label="' + e(names[i] + ' ends ' + SFW1_DAYS[j]) + '">' + (window.cavTimeOptions ? cavTimeOptions('') : '') + '</select></div>';
       }
