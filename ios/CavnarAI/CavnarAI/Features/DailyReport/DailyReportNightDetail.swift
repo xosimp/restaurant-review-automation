@@ -441,21 +441,35 @@ final class DSRScrubState {
 
 /// What the "The night in detail" card shows when opened (10/8/26, "Web
 /// explains. iPhone decides."): the hour story and its chart, the top three
-/// servers, what was given away and how many punches were edited. The rest
-/// — the money split, where the labor went, every server, given away by
-/// reason and approver, each edited punch, cash and cards — is behind
-/// "Full detail", and the web has it all side by side. Each part only when
-/// the payload carries it.
+/// servers, what was given away, voided and how many punches were edited.
+/// The rest — the money split, where the labor went, every server, given
+/// away by reason and approver, each edited punch, cash and cards — is the
+/// web's, one link to this night (re-audit D12). Each part only when the
+/// payload carries it.
 struct DSRNightDetail: View {
     let service: DSRBlock
     let blocks: [String: DSRBlock]
     var businessDate: String?
     @State private var openServer: DSRBlock.Server?
-    @State private var showingFull = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Servers shown before "Full detail".
+    /// Servers shown on the phone; every one is on the web.
     static let serversShown = 3
+
+    /// What the web link holds, in an owner's words — only what this
+    /// night's payload carries.
+    static func webSubtitle(service: DSRBlock, blocks: [String: DSRBlock]) -> String? {
+        var parts: [String] = []
+        if !(service.showsDayparts ? service.dayparts : []).isEmpty || !service.rooms.isEmpty {
+            parts.append("sales by meal period and room")
+        }
+        if let labor = blocks["labor"], labor.isReady, !labor.departments.isEmpty { parts.append("where the labor went") }
+        if service.servers.count > serversShown { parts.append("all \(service.servers.count) servers") }
+        if service.lossGiven != nil { parts.append("given away by reason and approver") }
+        if !(service.punchEdits ?? []).isEmpty { parts.append("each edited punch") }
+        if service.register != nil { parts.append("cash and cards") }
+        guard !parts.isEmpty else { return nil }
+        return cap(DSRText.list(parts))
+    }
 
     static func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
@@ -478,6 +492,14 @@ struct DSRNightDetail: View {
             || service.register != nil
     }
 
+    /// The web's address for THIS night (re-audit D2): "dsr" alone opens the
+    /// latest night, so a past night's link names its date (nav.py
+    /// "dsr/night/<date>"; dashboard.html's 'dsr' handler reads it).
+    static func webPath(_ businessDate: String?) -> String {
+        guard let d = businessDate, DSRFormat.isISODate(d) else { return "dsr" }
+        return "dsr/night/" + d
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.l) {
             if let story = DSRHourStory(sales: blocks["sales"], labor: blocks["labor"]) {
@@ -485,23 +507,13 @@ struct DSRNightDetail: View {
             }
             servers(Array(service.servers.prefix(Self.serversShown)), header: true)
             glance
+            // The audit view — the money split, where the labor went, every
+            // server, given away by reason and approver, each edited punch,
+            // cash and cards — is the web's (re-audit D12, "Web explains.
+            // iPhone decides."): one link to this night there.
             if hasFullDetail {
-                fullDetailToggle
-                if showingFull {
-                    VStack(alignment: .leading, spacing: CavnarSpace.l) {
-                        moneySplit
-                        if let labor = blocks["labor"], labor.isReady, !labor.departments.isEmpty {
-                            DSRLaborDepartments(labor: labor, salesNet: blocks["sales"]?.metric("net"))
-                        }
-                        let rest = Array(service.servers.dropFirst(Self.serversShown))
-                        if !rest.isEmpty { servers(rest, header: false) }
-                        DSRLossSection(given: service.lossGiven, voids: service.lossVoids)
-                        if let edits = service.punchEdits, !edits.isEmpty { DSRPunchEdits(edits: edits) }
-                        if let reg = service.register { DSRRegisterSection(register: reg) }
-                        CavnarWebLinkRow(title: "The night in detail", path: "dsr", actionLabel: "See it on the web")
-                    }
-                    .transition(reduceMotion ? .identity : .opacity)
-                }
+                CavnarWebLinkRow(title: "Every detail of the night", subtitle: Self.webSubtitle(service: service, blocks: blocks),
+                                 path: Self.webPath(businessDate), actionLabel: "See it on the web")
             }
         }
         .sheet(item: $openServer) { s in
@@ -511,12 +523,22 @@ struct DSRNightDetail: View {
         }
     }
 
-    /// The given-away total and the punch-edit count, a line each.
+    /// "4 lines voided · $86" — voids are apart from what was given away,
+    /// and said whether or not anything was (re-audit D27). Nil when none.
+    static func voidLine(_ voids: DSRBlock.LossGroup?) -> String? {
+        guard let v = voids, let n = v.lines, n > 0 else { return nil }
+        let count = DSRFormat.count(n)
+        return "\(count) line\(n == 1 ? "" : "s") voided" + (v.total.map { " \u{00B7} \(DSRFormat.money($0))" } ?? "")
+    }
+
+    /// The given-away total, the voided lines and the punch-edit count, a
+    /// line each.
     @ViewBuilder
     private var glance: some View {
         let given = service.lossGiven
+        let voided = Self.voidLine(service.lossVoids)
         let punches = Self.punchSummary(service.punchEdits)
-        if given != nil || punches != nil {
+        if given != nil || voided != nil || punches != nil {
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 if let given {
                     HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
@@ -528,49 +550,13 @@ struct DSRNightDetail: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
+                if let voided {
+                    HomeMixedText.make(voided, role: .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let punches {
                     HomeMixedText.make(punches, role: .secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var fullDetailToggle: some View {
-        Button {
-            Haptic.light()
-            if reduceMotion { showingFull.toggle() } else {
-                withAnimation(.easeOut(duration: 0.22)) { showingFull.toggle() }
-            }
-        } label: {
-            HStack(spacing: CavnarSpace.xxs + 2) {
-                Text(showingFull ? "Less detail" : "Full detail")
-                    .font(.cavnarBody(CavnarType.body, weight: 700))
-                Image(systemName: "chevron.down")
-                    .font(.cavnar(.caption))
-                    .rotationEffect(.degrees(showingFull ? 180 : 0))
-                    .accessibilityHidden(true)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(Color.cavnarEmber2)
-            .cavnarHitTarget()
-        }
-        .buttonStyle(.plain)
-        .accessibilityValue(showingFull ? "Expanded" : "Collapsed")
-    }
-
-    @ViewBuilder
-    private var moneySplit: some View {
-        let dp = service.showsDayparts ? service.dayparts : []
-        let rm = service.rooms
-        if !dp.isEmpty || !rm.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                CavnarKicker("Where the money came from")
-                if !dp.isEmpty { DSRSplitBars(title: "By meal period", rows: dp) }
-                if !rm.isEmpty { DSRSplitBars(title: "By room", rows: rm) }
-                if let dg = service.metric("drinks_per_guest") {
-                    HomeMixedText.make("\(String(format: "%.2f", dg)) drinks a guest across the night.",
-                                       role: .caption, color: .cavnarInk2)
                 }
             }
         }
@@ -863,7 +849,7 @@ struct DSRSplitBars: View {
                         Spacer(minLength: 8)
                         Text(DSRFormat.money(r.net)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
                         Text(DSRFormat.pct(r.sharePct)).font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
-                            .frame(width: 52, alignment: .trailing)
+                            .fixedSize().frame(minWidth: 52, alignment: .trailing).layoutPriority(1)
                     }
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
@@ -928,10 +914,10 @@ struct DSRLaborDepartments: View {
                         }
                         Text(DSRFormat.money(d.cost)).font(.cavnarNumber(CavnarType.secondary, weight: 600))
                             .foregroundStyle(d.cost == nil ? Color.cavnarInk3 : Color.cavnarInk)
-                            .frame(width: 70, alignment: .trailing)
+                            .fixedSize().frame(minWidth: 70, alignment: .trailing).layoutPriority(1)
                         Text(pctOfSales(d).map { DSRFormat.pct($0) } ?? "")
                             .font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
-                            .frame(width: 48, alignment: .trailing)
+                            .fixedSize().frame(minWidth: 48, alignment: .trailing).layoutPriority(1)
                     }
                     .padding(.vertical, 7)
                     .accessibilityElement(children: .combine)
@@ -967,14 +953,21 @@ struct DSRLossSection: View {
     let given: DSRBlock.LossGroup?
     let voids: DSRBlock.LossGroup?
 
+    /// Voids render on their own, whether or not anything was given away
+    /// (re-audit D27: they sat inside `if let given`).
+    private var hasVoids: Bool { (voids?.lines ?? 0) > 0 }
+
     var body: some View {
-        if let given {
+        if given != nil || hasVoids {
             VStack(alignment: .leading, spacing: 12) {
-                CavnarKicker("Given away")
-                if !given.byReason.isEmpty { DSRLossLines(title: "By reason", lines: given.byReason) }
-                if !given.byApprover.isEmpty { DSRLossLines(title: "Approved by", lines: given.byApprover) }
-                if let voids, (voids.lines ?? 0) > 0 {
-                    DSRLossLines(title: "Voided", lines: voids.byReason)
+                if let given {
+                    CavnarKicker("Given away")
+                    if !given.byReason.isEmpty { DSRLossLines(title: "By reason", lines: given.byReason) }
+                    if !given.byApprover.isEmpty { DSRLossLines(title: "Approved by", lines: given.byApprover) }
+                }
+                if let voids, hasVoids {
+                    if given == nil { CavnarKicker("Voided") }
+                    DSRLossLines(title: given == nil ? "By reason" : "Voided", lines: voids.byReason)
                 }
             }
         }
@@ -995,7 +988,7 @@ struct DSRLossLines: View {
                     Spacer(minLength: 8)
                     Text(DSRFormat.count(l.lines)).font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
                     Text(DSRFormat.money(l.amount)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
-                        .frame(width: 76, alignment: .trailing)
+                        .fixedSize().frame(minWidth: 76, alignment: .trailing).layoutPriority(1)
                 }
                 .padding(.vertical, 3)
                 .accessibilityElement(children: .combine)
@@ -1075,7 +1068,7 @@ struct DSRRegisterSection: View {
                             Spacer(minLength: 8)
                             Text(DSRFormat.count(t.payments)).font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
                             Text(DSRFormat.money(t.amount)).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                .frame(width: 80, alignment: .trailing)
+                                .fixedSize().frame(minWidth: 80, alignment: .trailing).layoutPriority(1)
                         }
                         .accessibilityElement(children: .combine)
                     }
@@ -1219,21 +1212,43 @@ struct DSRTomorrowLaborCard: View {
                                    + ((o.extraCost ?? 0) > 0 ? " \u{00B7} about \(DSRFormat.money(o.extraCost)) extra" : ""),
                                    role: .label)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(o.people) { p in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(p.employee).cavnarText(.label)
-                            if let r = p.role { Text(r).cavnarText(.caption, color: .cavnarInk2) }
-                        }
-                        HomeMixedText.make("\(DSRFormat.count(p.projectedHours))h scheduled \u{00B7} \(DSRFormat.count(p.overtimeHours))h over"
-                                           + (p.extraCost.map { " \u{00B7} \(DSRFormat.money($0)) extra" } ?? ""),
-                                           role: .secondary)
-                        if !p.room.isEmpty {
-                            HomeMixedText.make("Room: " + p.room.joined(separator: ", "), role: .secondary, color: .cavnarGreen)
-                        }
+                // One action, the people behind a tap (re-audit D17): the
+                // fix is in the schedule, not in reading the list.
+                Button {
+                    Haptic.light()
+                    if let nav = NavPath("labor/schedule") {
+                        NotificationCenter.default.post(name: .cavnarOpenNav, object: nav)
                     }
-                    .accessibilityElement(children: .combine)
+                } label: {
+                    Text("Fix in schedule")
+                        .frame(maxWidth: .infinity)
+                        .cavnarHitTarget()
                 }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .accessibilityHint("Opens the schedule in Labor")
+                CavnarMoreDisclosure(hiddenCount: o.people.count, total: o.people.count) {
+                    overtimePeople(o)
+                }
+            }
+        }
+    }
+
+    private func overtimePeople(_ o: DSRTomorrow.Overtime) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(o.people) { p in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(p.employee).cavnarText(.label)
+                        if let r = p.role { Text(r).cavnarText(.caption, color: .cavnarInk2) }
+                    }
+                    HomeMixedText.make("\(DSRFormat.count(p.projectedHours))h scheduled \u{00B7} \(DSRFormat.count(p.overtimeHours))h over"
+                                       + (p.extraCost.map { " \u{00B7} \(DSRFormat.money($0)) extra" } ?? ""),
+                                       role: .secondary)
+                    if !p.room.isEmpty {
+                        HomeMixedText.make("Room: " + p.room.joined(separator: ", "), role: .secondary, color: .cavnarGreen)
+                    }
+                }
+                .accessibilityElement(children: .combine)
             }
         }
     }

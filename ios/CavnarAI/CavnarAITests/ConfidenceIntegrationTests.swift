@@ -290,10 +290,10 @@ final class ConfidenceIntegrationTests: XCTestCase {
         // the web keeps its longer sentence.
         XCTAssertEqual(a.urgencyAdjustedLine,
                        "Moved to This week \u{2014} the numbers don\u{2019}t show it\u{2019}s urgent")
-        XCTAssertEqual(a.dollarsLine, "$1,240/mo · adjusted from 6 measured results")
+        XCTAssertEqual(a.dollarsLine, "$1,240/mo at stake · adjusted from 6 measured results")
         let plain = try decode(DSRAction.self, #"{"text": "x", "dollars_monthly": 1500, "dollars_adjusted": null, "urgency_adjusted": null}"#)
         XCTAssertNil(plain.urgencyAdjustedLine)
-        XCTAssertEqual(plain.dollarsLine, "$1,500/mo")
+        XCTAssertEqual(plain.dollarsLine, "$1,500/mo at stake")
         XCTAssertNil(try decode(DSRAction.self, #"{"text": "x"}"#).dollarsLine)
     }
 

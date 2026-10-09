@@ -105,9 +105,10 @@ struct DSRTileRow: View {
 
 // MARK: - Kicker
 
-/// The report's old kicker. Every Daily Report screen now uses
-/// `CavnarKicker` (10/8/26); this stays until a trace confirms nothing else
-/// draws it — candidate for future cleanup after additional verification.
+/// The report's old kicker, a thin wrapper on `CavnarKicker`. The report
+/// screens use `CavnarKicker` directly (10/8/26); `DSRCategoryMapSheet`
+/// (DailyReportSettings.swift, "POS department") still draws this one.
+/// Candidate for future cleanup after additional verification.
 struct DSRKicker: View {
     let text: String
     var tone: Color = .cavnarEmber2
@@ -229,7 +230,9 @@ struct DSRBlockStatus: View {
         case "unavailable": return ("Unavailable", .warning)
         case "not_connected": return ("Not connected", .neutral)
         case nil: return ("Not started", .neutral)
-        case .some(let s): return (s.replacingOccurrences(of: "_", with: " ").capitalized, .warning)
+        // A status this build doesn't know is "Not ready" — never the raw
+        // server key capitalised ("Item Missing", re-audit D24).
+        case .some: return ("Not ready", .warning)
         }
     }
 }
@@ -339,7 +342,7 @@ struct DSRCategoryBars: View {
                     Text(DSRFormat.money(cat.net))
                         .font(.cavnarNumber(CavnarType.secondary, weight: 600))
                         .foregroundStyle(cat.net == nil ? Color.cavnarInk3 : Color.cavnarInk)
-                        .frame(width: 70, alignment: .trailing)
+                        .fixedSize().frame(minWidth: 70, alignment: .trailing).layoutPriority(1)
                 }
                 .accessibilityElement(children: .combine)
             }

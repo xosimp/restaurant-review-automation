@@ -16,7 +16,6 @@ struct DailyReportWeekView: View {
     @State private var date: String?
     @State private var kind: GridKind
     @State private var viewModel = DailyReportWeekViewModel()
-    @State private var editingBudget = false
     /// Every column (categories, gross, budget, notes) instead of the four
     /// the phone shows by default.
     @State private var allColumns = false
@@ -51,9 +50,9 @@ struct DailyReportWeekView: View {
                         Text(viewModel.errorMessage ?? "Set your fiscal calendar to see periods.")
                             .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Set your calendar on the web: Account \u{2192} Daily report. Weeks read here in the meantime.")
-                            .cavnarText(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // A link, not directions (re-audit D23).
+                        CavnarWebLinkRow(title: "Set your fiscal calendar",
+                                         subtitle: "Weeks read here in the meantime.", path: "account/report")
                         Button("See the week") {
                             Haptic.light()
                             kind = .week
@@ -72,7 +71,8 @@ struct DailyReportWeekView: View {
                     // Net, vs last year, vs budget and Labor % by default
                     // (10/8/26); every column one tap away.
                     let full = DSRWeekTable(grid: grid)
-                    DSRWeekGrid(table: allColumns ? full : full.compact()) { day in
+                    DSRWeekGrid(table: allColumns ? full : full.compact(),
+                                labelTitle: DSRWeekGrid.labelTitle(kind: grid.kind)) { day in
                         if grid.kind == "period" {
                             // A period's row is a week: open it here.
                             date = day
@@ -109,11 +109,11 @@ struct DailyReportWeekView: View {
                     }
                     if viewModel.canEditBudget, grid.kind != "period", !grid.days.isEmpty,
                        grid.days.allSatisfy({ $0.lastYearNet == nil }) {
-                        // The import stays on the web (re-audit 10/8/26 #10):
-                        // say where, rather than leave the column empty.
-                        Text("No last year here yet. Import last year\u{2019}s nights from your old workbooks on the web: Daily report \u{2192} The week \u{2192} Import last year.")
-                            .cavnarText(.caption, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // The import stays on the web (re-audit 10/8/26 #10)
+                        // — a link to this week there (re-audit D23).
+                        CavnarWebLinkRow(title: "Import last year",
+                                         subtitle: "No last year here yet \u{2014} bring in your old workbooks.",
+                                         path: Self.webPath(grid.start), actionLabel: "On the web")
                     }
                     weekActions(grid)
                 }
@@ -129,35 +129,32 @@ struct DailyReportWeekView: View {
         .toolbar { cavnarTitleToolbar(isPeriod ? "The period" : "The week") }
         .cavnarEmberBackButton()
         .task(id: loadKey) { await viewModel.load(date: date, period: isPeriod) }
-        .sheet(isPresented: $editingBudget) {
-            if let grid = viewModel.grid {
-                DSRBudgetSheet(days: grid.days) {
-                    Task { await viewModel.load(date: date, period: isPeriod) }
-                }
-            }
-        }
     }
 
-    /// The week's own actions: the budget (owner) and the week as the
-    /// server's .xlsx, shared (parity audit #63, #79).
+    /// The web's address for this week (nav.py "dsr/week/<date>";
+    /// dashboard.html's 'dsr' handler reads it).
+    static func webPath(_ start: String?) -> String {
+        guard let s = start, DSRFormat.isISODate(s) else { return "dsr/week" }
+        return "dsr/week/" + s
+    }
+
+    /// The week's own actions: the week as the server's .xlsx, shared
+    /// (parity audit #79), and — for the owner — the budget, which is
+    /// entered on the web (re-audit D15: seven nights of gross and net is
+    /// a desk job; the phone reads the week).
     @ViewBuilder
     private func weekActions(_ grid: DSRGrid) -> some View {
         if grid.kind != "period" {
-            HStack(spacing: 10) {
-                if viewModel.canEditBudget {
-                    Button {
-                        Haptic.light()
-                        editingBudget = true
-                    } label: {
-                        Label("Budget", systemImage: "dollarsign.circle").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                }
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
                 ShareLink(item: DSRWeekWorkbook(date: grid.start, filename: DSRWeekWorkbook.filename(start: grid.start)),
                           preview: SharePreview("Daily sales \u{00B7} \(CavnarDate.mdyRange(grid.start, grid.end))")) {
                     Label("Export to Excel", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
+                if viewModel.canEditBudget {
+                    CavnarWebLinkRow(title: "Budget for the week", subtitle: "Gross and net for each night",
+                                     path: Self.webPath(grid.start))
+                }
             }
         }
     }
@@ -344,16 +341,25 @@ struct DSRWeekTable {
 /// numbers right-aligned in the number face (DESIGN_SYSTEM.md §8).
 struct DSRWeekGrid: View {
     let table: DSRWeekTable
+    /// The pinned column's title: "Day" for a week, "Week" for a period,
+    /// whose rows are weeks (re-audit D25).
+    var labelTitle: String = "Day"
     var onOpen: (String) -> Void
 
-    private let rowHeight: CGFloat = 46
-    private let headerHeight: CGFloat = 32
-    private let labelWidth: CGFloat = 116
+    static func labelTitle(kind: String?) -> String { kind == "period" ? "Week" : "Day" }
+
+    /// Rows and columns grow with the text size (re-audit D16): the pinned
+    /// column and the scrolling figures share one scale, so their rows stay
+    /// level; one-line figures no longer clip at a large size.
+    @ScaledMetric(relativeTo: .caption) private var scale: CGFloat = 1
+    private var rowHeight: CGFloat { 46 * scale }
+    private var headerHeight: CGFloat { 32 * scale }
+    private var labelWidth: CGFloat { 116 * scale }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(spacing: 0) {
-                headerCell("Day", width: labelWidth, numeric: false)
+                headerCell(labelTitle, width: labelWidth, numeric: false)
                 ForEach(table.rows) { row in
                     labelCell(row)
                 }
@@ -367,7 +373,7 @@ struct DSRWeekGrid: View {
             ScrollView(.horizontal, showsIndicators: true) {
                 VStack(spacing: 0) {
                     HStack(spacing: 0) {
-                        ForEach(table.columns, id: \.self) { c in headerCell(c.title, width: c.width, numeric: c.numeric) }
+                        ForEach(table.columns, id: \.self) { c in headerCell(c.title, width: c.width * scale, numeric: c.numeric) }
                     }
                     ForEach(table.rows) { row in
                         HStack(spacing: 0) {
@@ -449,7 +455,7 @@ struct DSRWeekGrid: View {
             .lineLimit(column.numeric ? 1 : 2)
             .minimumScaleFactor(column.numeric ? 0.85 : 1)
             .padding(.horizontal, 10)
-            .frame(width: column.width, height: rowHeight, alignment: column.numeric ? .trailing : .leading)
+            .frame(width: column.width * scale, height: rowHeight, alignment: column.numeric ? .trailing : .leading)
     }
 
     private func color(_ tone: DSRWeekTable.Tone) -> Color {

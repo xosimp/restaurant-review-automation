@@ -15,7 +15,13 @@ import UniformTypeIdentifiers
 //   GET  /dsr/budget/prefill    ?start&from&pct&days — fills, never saves
 //   POST /dsr/budget            {days: [{date, gross, net}]}
 //
-// The fiscal calendar stays on the web: the phone says where to set it.
+// The fiscal calendar stays on the web: the phone links to it.
+//
+// Re-audit 10/8/26 (D13, D15): the report links to the web's settings
+// (account/report) and the week to the web's budget (dsr/week/<date>), so
+// nothing presents DSRSettingsSheet or DSRBudgetSheet any more; "Map it"
+// (DSRCategoryMapSheet) is still the report's. Both sheets are candidates
+// for future cleanup after additional verification.
 
 // MARK: - Models
 
@@ -263,6 +269,7 @@ struct DSRSettingsSheet: View {
     @State private var otherFor: String?
     @State private var otherText = ""
     @State private var mapNote: String?
+    @State private var confirmingOff = false
 
     /// The web's deadline hours: 1am to 10am.
     static let deadlineHours = Array(1...10)
@@ -301,6 +308,16 @@ struct DSRSettingsSheet: View {
             }
             .accountSheetChrome("Daily report settings")
             .task { await viewModel.load() }
+            .confirmationDialog("Stop building the daily report?", isPresented: $confirmingOff,
+                                titleVisibility: .visible) {
+                Button("Stop the report", role: .destructive) {
+                    viewModel.enabled = false
+                    Task { await viewModel.save("dsr_enabled", .bool(false)) }
+                }
+                Button("Keep it", role: .cancel) {}
+            } message: {
+                Text(DSRAvailability.offLine)
+            }
             .alert("Another category", isPresented: Binding(get: { otherFor != nil }, set: { if !$0 { otherFor = nil } })) {
                 TextField("Your category", text: $otherText)
                 Button("Save") {
@@ -321,6 +338,9 @@ struct DSRSettingsSheet: View {
             AccountSwitchRow(label: "Build the report every night",
                              detail: viewModel.enabled ? nil : DSRAvailability.offLine,
                              isOn: Binding(get: { viewModel.enabled }, set: { v in
+                                 // Switching it off stops every night's
+                                 // report: asked first (re-audit D14).
+                                 guard v else { confirmingOff = true; return }
                                  viewModel.enabled = v
                                  Task { await viewModel.save("dsr_enabled", .bool(v)) }
                              }),
@@ -385,9 +405,8 @@ struct DSRSettingsSheet: View {
                         .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Set your calendar on the web: Account \u{2192} Daily report.")
-                    .cavnarText(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // A link, not a sentence about where to go (re-audit D23).
+                CavnarWebLinkRow(title: "Your fiscal calendar", path: "account/report")
             }
             .padding(.vertical, 10)
         }
@@ -610,6 +629,10 @@ final class DSRBudgetViewModel {
     }
 
     var rows: [Row]
+    /// The boxes as the sheet opened — an edit (typed or filled) against
+    /// them asks "Discard changes?" on a swipe down (re-audit D3).
+    private let openedRows: [Row]
+    var isDirty: Bool { !saved && rows != openedRows }
     var lastYearPct = 0
     var isFilling = false
     var isSaving = false
@@ -621,10 +644,12 @@ final class DSRBudgetViewModel {
 
     init(days: [DSRGridDay], client: APIClient = .shared) {
         self.client = client
-        rows = days.map { d in
+        let opened = days.map { d in
             Row(date: d.date, weekday: d.weekday ?? DSRFormat.weekday(d.date),
                 gross: Self.text(d.budgetGross), net: Self.text(d.budgetNet))
         }
+        rows = opened
+        openedRows = opened
     }
 
     static func text(_ v: Double?) -> String {
@@ -790,7 +815,7 @@ struct DSRBudgetSheet: View {
                 .padding(20)
             }
             .scrollDismissesKeyboard(.interactively)
-            .accountSheetChrome("Budget for the week")
+            .accountSheetChrome("Budget for the week", isDirty: viewModel.isDirty)
         }
     }
 

@@ -429,8 +429,10 @@ struct DSRShiftCard: View {
             if let verdict = shift.verdict, !verdict.isEmpty {
                 CavnarMixedText(verdict, role: .lead)
             }
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10),
-                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            // Two columns (re-audit D21): a FigureM in a third of a phone's
+            // width truncated.
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top),
+                                GridItem(.flexible(), spacing: 10, alignment: .top)], spacing: 10) {
                 ForEach(shift.rows) { r in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(r.valueText).cavnarText(.figureM, color: toneColor(r.tone) ?? .cavnarInk)

@@ -75,6 +75,8 @@ struct DSRScorecardCard: View {
     /// ready, draws neither; a view without the budget (a manager) has no
     /// `budget_net` and so no budget line.
     var sales: DSRBlock? = nil
+    @State private var showingBasis = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Net minus budget, in dollars — only when both were measured.
     static func vsBudget(_ sales: DSRBlock?) -> Double? {
@@ -124,9 +126,33 @@ struct DSRScorecardCard: View {
                                 GridItem(.flexible(), spacing: 10, alignment: .top)], spacing: 10) {
                 ForEach(card.components) { c in component(c) }
             }
+            // How the score is built, behind a tap (re-audit D20): the
+            // hero says the verdict, not its method.
             if let basis = card.basis, !basis.isEmpty {
-                Text(basis).cavnarText(.caption, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Haptic.light()
+                    if reduceMotion { showingBasis.toggle() } else {
+                        withAnimation(.easeOut(duration: 0.2)) { showingBasis.toggle() }
+                    }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs + 2) {
+                        Text("How the score works").font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .rotationEffect(.degrees(showingBasis ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showingBasis ? "Expanded" : "Collapsed")
+                if showingBasis {
+                    Text(basis).cavnarText(.caption, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(reduceMotion ? .identity : .opacity)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -142,7 +168,9 @@ struct DSRScorecardCard: View {
                 .minimumScaleFactor(0.85)
             if c.measured, let value = c.value {
                 if c.key == "guests" {
-                    Text(value).font(.body).foregroundStyle(Color.cavnarEmber)
+                    // The stars at the Label role in the component's tone,
+                    // like the other three (re-audit D10).
+                    Text(value).cavnarText(.label, color: DSRScorecard.color(c.tone) ?? .cavnarInk)
                         .accessibilityLabel(c.detail ?? value)
                 } else {
                     HomeMixedText.make(value, role: .label, color: DSRScorecard.color(c.tone) ?? .cavnarInk)

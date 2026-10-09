@@ -294,19 +294,30 @@ struct DSRReport: Decodable {
     /// Both views (9/25/26): numbers with direction, the manager's shift and
     /// operations, AI insights, tomorrow and yesterday's predictions graded.
     let kpis: [DSRKPI]
-    /// The owner's Top KPIs without the score's four components (the score
-    /// card above already carries them) — nil on an older server, and the
-    /// report falls back to `kpis`. See `topKPIs`.
-    var kpisHeadline: [DSRKPI]? = nil
+    /// The KEYS of the KPIs the report shows up front (dsr.kpis.headline,
+    /// ID1-16): the owner's skip every score component the score card
+    /// already states. Keys into `kpis`, so every surface draws the same
+    /// few. Nil on an older server, and the report falls back to `kpis`.
+    /// See `topKPIs`.
+    var kpisHeadline: [String]? = nil
     let operations: [DSRKPI]
     let shift: DSRShift?
     let insights: [DSRInsight]
     let tomorrow: DSRTomorrow?
     let yesterday: DSRYesterday?
 
-    /// What "Top KPIs" draws: `kpis_headline` when the server sent it,
-    /// else `kpis` (density #2).
-    var topKPIs: [DSRKPI] { kpisHeadline ?? kpis }
+    /// What "Key numbers" draws: the `kpis_headline` keys looked up in
+    /// `kpis`, in the headline's order, when the server sent them (an empty
+    /// list is honoured — every top KPI is on the score card); else `kpis`
+    /// (density #2). Re-audit D1 (10/8/26): the keys were decoded as KPI
+    /// objects, failed, and the fallback repeated the score card's four.
+    var topKPIs: [DSRKPI] { Self.headlineKPIs(keys: kpisHeadline, kpis: kpis) }
+
+    static func headlineKPIs(keys: [String]?, kpis: [DSRKPI]) -> [DSRKPI] {
+        guard let keys else { return kpis }
+        let byKey = Dictionary(kpis.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        return keys.compactMap { byKey[$0] }
+    }
 
     enum CodingKeys: String, CodingKey {
         case view, label, fiscal, version, status, provisional, trigger, facts, narrative, checklist, versions, scorecard
@@ -335,7 +346,15 @@ struct DSRReport: Decodable {
         versions = (try? c.decodeIfPresent([DSRVersion].self, forKey: .versions)) ?? []
         scorecard = try? c.decodeIfPresent(DSRScorecard.self, forKey: .scorecard)
         kpis = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpis)) ?? []
-        kpisHeadline = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpisHeadline)) ?? nil
+        // Keys (dsr/access.py); an older shape of whole KPI objects is
+        // read as their keys.
+        if let keys = (try? c.decodeIfPresent([String].self, forKey: .kpisHeadline)) ?? nil {
+            kpisHeadline = keys
+        } else if let objects = (try? c.decodeIfPresent([DSRKPI].self, forKey: .kpisHeadline)) ?? nil {
+            kpisHeadline = objects.map(\.key)
+        } else {
+            kpisHeadline = nil
+        }
         operations = (try? c.decodeIfPresent([DSRKPI].self, forKey: .operations)) ?? []
         shift = try? c.decodeIfPresent(DSRShift.self, forKey: .shift)
         insights = (try? c.decodeIfPresent([DSRInsight].self, forKey: .insights)) ?? []
@@ -515,6 +534,9 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     var dollarsAdjusted: Double? = nil
     var calibrationN: Int? = nil
     var calibrationNote: String? = nil
+    /// What the dollar figure covers (dollars_basis, B4 H7), when the server
+    /// sends it — "covers …", said beside the figure (re-audit D11).
+    var dollarsBasis: String? = nil
     /// What another module knows against the action — a trim on a night
     /// guests complained about service (staffing_signals.trim_guard, M3) —
     /// and advice it pulls against, for the owner to settle (M1
@@ -538,6 +560,7 @@ struct DSRAction: Decodable, Hashable, Identifiable {
         case dollarsAdjusted = "dollars_adjusted"
         case calibrationN = "calibration_n"
         case calibrationNote = "calibration_note"
+        case dollarsBasis = "dollars_basis"
         case effortSource = "effort_source"
     }
 
@@ -566,10 +589,14 @@ struct DSRAction: Decodable, Hashable, Identifiable {
         return "Moved to \(to) \u{2014} the numbers don\u{2019}t show it\u{2019}s urgent"
     }
 
-    /// The dollars to show and what corrected them — the adjusted figure
-    /// and its note when the server calibrated it, else the raw figure.
-    var dollarsLine: String? { RecDollarCalibration.line(raw: dollarsMonthly, adjusted: dollarsAdjusted,
-                                                          n: calibrationN, note: calibrationNote) }
+    /// The dollars to show, said as at stake (an opportunity, never money
+    /// saved — re-audit D11), what corrected them and what they cover —
+    /// "$1,240/mo at stake · adjusted from 6 measured results · covers …".
+    var dollarsLine: String? {
+        guard let line = RecDollarCalibration.line(raw: dollarsMonthly, adjusted: dollarsAdjusted,
+                                                   n: calibrationN, note: calibrationNote) else { return nil }
+        return dollarsBasis.map { line + " \u{00B7} " + $0 } ?? line
+    }
 
     /// The key the answer row posts — rec_key, else the action's own key.
     var answerKey: String? {
@@ -642,6 +669,7 @@ extension DSRAction {
         dollarsAdjusted = num(.dollarsAdjusted)
         calibrationN = (try? c.decodeIfPresent(Int.self, forKey: .calibrationN)) ?? nil
         calibrationNote = str(.calibrationNote)
+        dollarsBasis = RecDollarCalibration.basis(str(.dollarsBasis))
         caution = str(.caution)
         conflict = (try? c.decodeIfPresent(RecConflict.self, forKey: .conflict)) ?? nil
     }
