@@ -1128,6 +1128,93 @@ extension GeneratedSchedule {
             + "Mark \(days.count == 1 ? "it" : "them") closed or fix availability, then redo "
             + "\(days.count == 1 ? "that day" : "those days")."
     }
+
+    // MARK: What the closed draft must say (re-audit 10/8/26 H3, H4)
+
+    /// One stretch of a day with no manager on the floor — the backstop's
+    /// own stretches when it ran, the plan's otherwise (as DayManagerNotes
+    /// reads them, per day).
+    struct ManagerGap: Hashable {
+        var date: String
+        var day: String?
+        var from: String?
+        var to: String?
+
+        /// "No manager Tue 3:00pm–5:00pm" — or the whole day when the
+        /// stretch has no times.
+        var shortLine: String {
+            let d = String((day ?? LaborViewModel.weekdayName(date) ?? "").prefix(3))
+            let span = [from, to].compactMap { $0 }.joined(separator: "\u{2013}")
+            return "No manager \(d)" + (span.isEmpty ? "" : " \(span)")
+        }
+
+        /// "No manager can be on Tuesday 10/13/26 from 3:00pm to 5:00pm".
+        var line: String {
+            let span = [from, to].compactMap { $0 }.joined(separator: " to ")
+            return "No manager can be on \(CavnarDate.dayDate(day ?? LaborViewModel.weekdayName(date), date))"
+                + (span.isEmpty ? "" : " from \(span)")
+        }
+    }
+
+    /// Every manager gap the draft carries, in date order. The manager on
+    /// the floor every minute is the highest rule: a gap is said at the
+    /// week's level, never only inside the day page that holds it.
+    var managerGaps: [ManagerGap] {
+        let left = coverage?.left ?? []
+        if !left.isEmpty {
+            return left.compactMap { l in
+                guard let date = l.date, !date.isEmpty else { return nil }
+                return ManagerGap(date: String(date.prefix(10)), day: l.day, from: l.from, to: l.to)
+            }.sorted { $0.date < $1.date }
+        }
+        return (plan?.uncovered ?? []).compactMap { u in
+            guard let date = u.date, !date.isEmpty else { return nil }
+            return ManagerGap(date: String(date.prefix(10)), day: u.day, from: u.from, to: u.to)
+        }.sorted { $0.date < $1.date }
+    }
+
+    /// The dates (YYYY-MM-DD) with a manager gap — the day chips' red dot.
+    var managerGapDates: Set<String> { Set(managerGaps.map(\.date)) }
+
+    /// What the generation could not do, in a few words each, for the
+    /// closed draft's subtitle (H3): manager gaps, days not written, days
+    /// nobody can work, the managers' plan that failed, the shortfall.
+    /// The rules check's counts (hard/soft) are said beside these; a gap
+    /// the check already counts as a hard rule is still named here, since
+    /// the count alone never says which day.
+    var attentionParts: [String] {
+        var out: [String] = []
+        let gaps = managerGaps
+        if let first = gaps.first {
+            out.append(gaps.count == 1 ? first.shortLine : first.shortLine + " +\(gaps.count - 1) more")
+        }
+        let notWritten = unwritten
+        if !notWritten.isEmpty {
+            let names = notWritten.map { String(($0.day ?? LaborViewModel.weekdayName($0.date) ?? "").prefix(3)) }
+            out.append(CavnarDate.dayList(names) + " not written")
+        }
+        let nobody = unstaffable
+        if !nobody.isEmpty {
+            let names = nobody.map { String(($0.day ?? LaborViewModel.weekdayName($0.date) ?? "").prefix(3)) }
+            out.append("Nobody can work " + CavnarDate.dayList(names))
+        }
+        if plan?.failed == true { out.append("Managers\u{2019} shifts not planned") }
+        if gaps.isEmpty, coverage?.shortfall?.text != nil { out.append("Manager shortfall") }
+        return out
+    }
+
+    /// What the send bar's "Review N" counts beyond the rules check (H3):
+    /// days not written, days nobody can work, a failed managers' plan, and
+    /// manager gaps the rules check did not already count as hard rules.
+    var attentionExtraCount: Int {
+        var n = unwritten.count + unstaffable.count + (plan?.failed == true ? 1 : 0)
+        if (review?.hardCount ?? 0) == 0 { n += managerGaps.count }
+        return n
+    }
+
+    /// True when the draft has something red to read: a hard rule, a gap
+    /// with no manager, a day not written or nobody can work.
+    var needsAttention: Bool { (review?.hardCount ?? 0) > 0 || !attentionParts.isEmpty }
 }
 
 

@@ -48,7 +48,7 @@ struct ScheduleIntelSection: View {
             }
             CavnarWebLinkRow(title: "What the record says",
                              subtitle: "Outcomes, sales per labor hour, rotation and what staff keep doing",
-                             path: "labor/schedule", actionLabel: "See it on the web")
+                             path: "labor/intel", actionLabel: "See it on the web")
         }
         .task { if viewModel.intel == nil { await viewModel.loadIntel() } }
     }
@@ -65,7 +65,7 @@ struct ScheduleIntelSection: View {
                 if viewModel.isLoadingIntel && viewModel.intel == nil {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.9, 0.6])
                 } else if let error = viewModel.intelError, viewModel.intel == nil {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 } else if let intel = viewModel.intel, !intel.isEmpty {
                     // What the engine is learning: the auto-publish offer,
                     // how much of each draft survives, and whether the
@@ -159,7 +159,7 @@ struct ScheduleIntelSection: View {
             if let error = viewModel.autoPublishError {
                 Text(error)
                     .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarRed)
+                    .foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

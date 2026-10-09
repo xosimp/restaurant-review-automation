@@ -20,10 +20,26 @@ struct WeekRadarChart: View {
         return present.max { $0.1 < $1.1 }
     }
 
+    /// "Sat 34% · 6 pts over target" — the worst day and what it means.
+    private var verdict: (line: String, tone: Color)? {
+        guard let worst else { return nil }
+        let delta = worst.pct - target
+        let head = "\(Self.short[worst.index]) \(Int(worst.pct.rounded()))%"
+        if delta > 0 { return (head + String(format: " \u{00B7} %.0f pts over target", delta), .cavnarRedText) }
+        return positiveAllowed ? (head + " \u{00B7} every day on target", .cavnarGreen)
+                               : (head + " \u{00B7} no day over target, data incomplete", .cavnarInk2)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             CavnarChartHeader(kicker: "By weekday · \(subtitle)", title: "Week Radar",
                               detail: "The week's rhythm as a shape — a spike on Saturday reads as a spike.")
+            // The verdict as text, not 10pt drawn into the canvas (re-audit
+            // 10/8/26 M23): readable, and scaled with Dynamic Type.
+            if let v = verdict {
+                CavnarMixedText(v.line, role: .label, color: v.tone)
+                    .accessibilityHidden(true)
+            }
             CavnarAnimatedCanvas(duration: 1.5, height: 260, replayKey: values.map { "\($0)" }.joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
@@ -107,15 +123,6 @@ struct WeekRadarChart: View {
             let lp = CGPoint(x: center.x + CGFloat(cos(a)) * (R + 18), y: center.y + CGFloat(sin(a)) * (R + 18))
             CavnarChart.text(&ctx, CavnarChart.label(Self.short[i], size: 11, weight: 700, color: over ? .cavnarRed : .cavnarInk3), at: lp)
         }
-        if let worst {
-            CavnarChart.text(&ctx, CavnarChart.number("\(Self.short[worst.index]) \(Int(worst.pct.rounded()))%", size: 13, weight: 700),
-                             at: CGPoint(x: 14, y: 20), anchor: .leading)
-            let delta = worst.pct - target
-            let line = delta > 0 ? String(format: "%.0f pts over target", delta)
-                : (positiveAllowed ? "Every day on target" : "No day over target \u{00B7} data incomplete")
-            CavnarChart.text(&ctx, CavnarChart.label(line, size: 10, weight: 700,
-                                                     color: delta > 0 ? .cavnarRed : (positiveAllowed ? .cavnarGreen : .cavnarInk3)),
-                             at: CGPoint(x: 14, y: 38), anchor: .leading)
-        }
+        // The worst day's verdict is the Text above the canvas (M23).
     }
 }

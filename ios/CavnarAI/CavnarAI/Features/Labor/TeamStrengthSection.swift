@@ -81,7 +81,7 @@ struct TeamStrengthSection: View {
                 if let error = viewModel.teamError {
                     Text(error)
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -140,7 +140,7 @@ struct TeamStrengthSection: View {
             if let error = viewModel.matchError {
                 Text(error)
                     .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarRed)
+                    .foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -269,19 +269,17 @@ struct TeamStrengthSection: View {
     /// the overall score.
     private func roleScoreRows(_ member: RatedEmployee, roles: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("BY ROLE")
-                .font(.cavnar(.kicker))
-                .tracking(1)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker("By role")
             ForEach(roles, id: \.self) { role in
                 let current = (member.roleScores ?? [:]).first { $0.key.caseInsensitiveCompare(role) == .orderedSame }?.value
                 let busy = viewModel.savingRoleFor == member.name + "|" + role
                 HStack(spacing: 8) {
+                    // Wraps rather than truncating in a fixed 96pt (L12).
                     Text(role)
                         .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                        .foregroundStyle(current == nil ? Color.cavnarInk3 : Color.cavnarInk2)
-                        .lineLimit(1)
-                        .frame(width: 96, alignment: .leading)
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: 72, maxWidth: 120, alignment: .leading)
                     ForEach(1...5, id: \.self) { value in
                         Button {
                             Haptic.light()
@@ -292,7 +290,7 @@ struct TeamStrengthSection: View {
                         } label: {
                             Text("\(value)")
                                 .font(.cavnarNumber(CavnarType.caption, weight: 700))
-                                .frame(maxWidth: .infinity, minHeight: 28)
+                                .frame(maxWidth: .infinity, minHeight: 44)
                                 .foregroundStyle(current == value ? Color.cavnarPaper : Color.cavnarInk2)
                                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .fill(current == value ? tone(value) : Color.cavnarPaper2))
@@ -307,7 +305,7 @@ struct TeamStrengthSection: View {
             }
             Text("A role left blank uses the overall score.")
                 .font(.cavnar(.caption))
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
         }
         .padding(.top, 2)
     }
@@ -364,7 +362,7 @@ struct TeamStrengthSection: View {
                 .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: setup.isAdopting))
                 .disabled(setup.isAdopting)
                 if let error = setup.adoptError {
-                    Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let message = setup.adoptMessage {
@@ -422,7 +420,7 @@ struct TeamStrengthSection: View {
                 } label: {
                     Text("\(value)")
                         .font(.cavnarNumber(CavnarType.body, weight: 700))
-                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                         .foregroundStyle(member.score == value ? Color.cavnarPaper : Color.cavnarInk2)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)

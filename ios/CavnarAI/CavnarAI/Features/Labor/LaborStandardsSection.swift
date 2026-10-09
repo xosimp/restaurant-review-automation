@@ -46,7 +46,7 @@ struct LaborStandardsSection: View {
                         .padding(.vertical, 8)
                         .accessibilityLabel("Loading the labor standards")
                 } else if let error = store.standardsError, payload == nil {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if payload != nil {
                     if shown.isEmpty {
@@ -66,7 +66,7 @@ struct LaborStandardsSection: View {
                         }
                     }
                     if let error = store.standardsError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if payload?.canEdit != true {

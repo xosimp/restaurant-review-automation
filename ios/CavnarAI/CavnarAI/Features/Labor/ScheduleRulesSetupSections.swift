@@ -57,7 +57,7 @@ struct RulesManagersSection: View {
                         .padding(.vertical, 10)
                     }
                     if let error = store.managerError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 8)
                     }
@@ -374,7 +374,7 @@ struct RulesSalariedSection: View {
                     .padding(.vertical, 10)
                 }
                 if let error = store.salariedError {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 9)
                 }

@@ -21,6 +21,8 @@ struct ScheduleReviewPanel: View {
     /// The overtime move whose "Pass" is asking why.
     @State private var decliningMove: OvertimeMove?
     @State private var showingDeclineWhy = false
+    /// "Ask X" emails a teammate: asked first (re-audit 10/8/26 M10).
+    @State private var confirmingStandby: StandbyDay?
 
     private var review: ScheduleReview? { result.review }
 
@@ -77,6 +79,19 @@ struct ScheduleReviewPanel: View {
             guard let move = decliningMove else { return }
             decliningMove = nil
             Task { await viewModel.declineOvertimeMove(move, reason: reason) }
+        }
+        .confirmationDialog(confirmingStandby?.standby.map { "Ask \($0.employee) to be on call?" } ?? "Ask them to be on call?",
+                            isPresented: Binding(get: { confirmingStandby != nil },
+                                                 set: { if !$0 { confirmingStandby = nil } }),
+                            titleVisibility: .visible) {
+            Button(confirmingStandby?.standby.map { "Ask \($0.employee)" } ?? "Ask") {
+                guard let day = confirmingStandby else { return }
+                confirmingStandby = nil
+                Task { await viewModel.askStandby(day) }
+            }
+            Button("Not now", role: .cancel) { confirmingStandby = nil }
+        } message: {
+            Text(confirmingStandby.map { "They get a message asking whether they can be on call \(CavnarDate.mdy($0.date))." } ?? "")
         }
     }
 
@@ -250,6 +265,27 @@ struct ScheduleReviewPanel: View {
         }
     }
 
+    /// The last "Move to X", undoable (M10): the move swaps and saves at
+    /// once, so its Undo puts the first person back the same way.
+    @ViewBuilder
+    private var undoMoveRow: some View {
+        if let undo = viewModel.lastOvertimeMove {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                CavnarMixedText("Moved \(undo.from)\u{2019}s \(undo.dayLabel) shift to \(undo.to)", role: .secondary,
+                                color: .cavnarGreen)
+                Spacer(minLength: 0)
+                Button {
+                    Haptic.light()
+                    Task { await viewModel.undoOvertimeMove() }
+                } label: {
+                    Text("Undo").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isRescoringQuality)
+            }
+        }
+    }
+
     // MARK: Behind "Show all"
 
     private func linesBlock(_ lines: [String]) -> some View {
@@ -313,8 +349,10 @@ struct ScheduleReviewPanel: View {
                         if let said = viewModel.standbyAsked[day.date] {
                             Text(said).cavnarText(.secondary)
                         } else {
+                            // An outward ask is confirmed first (M10).
                             Button("Ask \(person.employee)") {
-                                Task { await viewModel.askStandby(day) }
+                                Haptic.light()
+                                confirmingStandby = day
                             }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                         }
@@ -400,13 +438,14 @@ struct ScheduleReviewPanel: View {
     @ViewBuilder
     private var actions: some View {
         let canFix = (review?.hardCount ?? 0) > 0 && !viewModel.hasUnsavedFixes
-        // What the edits on screen cost against the draft — shown by the
-        // Save button whenever anything has moved.
+        undoMoveRow
+        // What the edits on screen cost against the draft — shown whenever
+        // anything has moved.
         if let cost = viewModel.editCost, cost.summary != nil,
            viewModel.hasUnsavedFixes || !viewModel.overriddenRows.isEmpty {
             EditCostReadout(cost: cost)
         }
-        if canFix || viewModel.hasUnsavedFixes {
+        if canFix || (viewModel.hasUnsavedFixes && result.historyId == nil) {
             HStack(spacing: CavnarSpace.s) {
                 if canFix {
                     Button {
@@ -422,10 +461,15 @@ struct ScheduleReviewPanel: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isApplyingFixes))
+                    // Secondary (M16): the screen's one primary is the
+                    // pinned bar's — Send, or Save while edits wait.
+                    .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: viewModel.isApplyingFixes))
                     .disabled(viewModel.isApplyingFixes || viewModel.isRescoringQuality)
                 }
-                if viewModel.hasUnsavedFixes {
+                // A saved draft saves from the pinned bar (LaborSendBar,
+                // M16); a week with no history id has no bar, so its Save
+                // stays here.
+                if viewModel.hasUnsavedFixes && result.historyId == nil {
                     Button {
                         Haptic.medium()
                         Task { await viewModel.rescoreQuality(save: true) }
@@ -495,20 +539,13 @@ struct ScheduleReviewPanel: View {
 
     // MARK: How the week was made
 
-    /// How long it took and how many people it drew from.
+    /// Who it drew from, in the owner's words (L11 — the build time was a
+    /// developer's figure).
     @ViewBuilder
     private var provenance: some View {
-        let parts: [String] = {
-            var out: [String] = []
-            if let s = result.generationSeconds, s > 0 {
-                out.append(s < 60 ? "Built in \(Int(s.rounded()))s"
-                                  : "Built in \(Int((s / 60).rounded(.down)))m \(Int(s.truncatingRemainder(dividingBy: 60)))s")
-            }
-            if let roster = result.roster, !roster.isEmpty { out.append("\(roster.count) on the roster") }
-            return out
-        }()
-        if !parts.isEmpty {
-            CavnarMixedText(parts.joined(separator: " · "), role: .caption)
+        if let roster = result.roster, !roster.isEmpty {
+            CavnarMixedText("Drafted from the \(roster.count) \(roster.count == 1 ? "person" : "people") on your roster",
+                            role: .caption, color: .cavnarInk2)
         }
     }
 }

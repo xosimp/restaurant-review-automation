@@ -9,12 +9,19 @@ import SwiftUI
 struct LaborAnalyticsSection: View {
     @Bindable var viewModel: LaborAnalyticsViewModel
     let laborStats: LaborStats?
+    /// By role (moved from Overview's Why, L3), drawn inside More analysis.
+    var roleBreakdown: AnyView? = nil
 
+    @State private var showingMore = false
+
+    /// Analytics on the iPhone (re-audit 10/8/26 M29): ONE answer line and
+    /// the ribbon; the money tiles, the benchmark bar, the week radar, by
+    /// role and How you compare behind "More analysis", the full read on
+    /// the web.
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let stats = laborStats {
-                moneyTiles(stats)
-                benchmarkBar(stats)
+                CavnarMixedText(Self.answerLine(stats), role: .lead)
                 LaborRibbonChart(points: ribbonPoints, target: stats.target,
                                  subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
                 // What the dashed line means here (memory round): the margin
@@ -22,19 +29,69 @@ struct LaborAnalyticsSection: View {
                 // still in progress named as partial.
                 ForEach(Self.ribbonNotes(stats: stats, trend: viewModel.daily.isEmpty ? viewModel.trend : []),
                         id: \.self) { note in
-                    HomeMixedText.make(note, size: CavnarType.caption, color: .cavnarInk3)
+                    HomeMixedText.make(note, size: CavnarType.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, -10)
                 }
-                WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
-                               subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "),
-                               positiveAllowed: Self.positiveAllowed(stats))
-                // How you compare — the Benchmark Engine's card (#23) —
-                // after the restaurant's own read and charts (density #34).
-                HowYouCompareCard(module: "labor")
+                moreAnalysis(stats)
             } else if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 20)
             }
+        }
+    }
+
+    /// "Labor ran 31.2% over the last 28 days, against a 28% target." —
+    /// the figure and the target, never a verdict on data that is not
+    /// complete (`figuresAreTrustworthy`).
+    static func answerLine(_ stats: LaborStats) -> String {
+        let pct = String(format: "%.1f", stats.overallLaborPct)
+        let target = ScheduleBuildSettings.pct(stats.target)
+        let window = stats.periodDays.map { " over the last \($0) days" } ?? ""
+        guard stats.figuresAreTrustworthy else {
+            return "Labor read \(pct)%\(window) on incomplete data \u{2014} the target is \(target)%."
+        }
+        let gap = stats.overallLaborPct - stats.target
+        if gap > 0.05 {
+            return "Labor ran \(pct)%\(window), \(String(format: "%.1f", gap)) points over your \(target)% target."
+        }
+        return "Labor ran \(pct)%\(window), at or under your \(target)% target."
+    }
+
+    /// The rest of the read behind one tap, the web for the full page.
+    private func moreAnalysis(_ stats: LaborStats) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.l) {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.22)) { showingMore.toggle() }
+            } label: {
+                HStack(spacing: CavnarSpace.xs) {
+                    Text(showingMore ? "Less analysis" : "More analysis").cavnarText(.label, color: .cavnarEmber2)
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .rotationEffect(.degrees(showingMore ? 180 : 0))
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 0)
+                }
+                .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showingMore ? "Expanded" : "Collapsed")
+            if showingMore {
+                VStack(alignment: .leading, spacing: 20) {
+                    moneyTiles(stats)
+                    benchmarkBar(stats)
+                    WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
+                                   subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "),
+                                   positiveAllowed: Self.positiveAllowed(stats))
+                    if let roleBreakdown { roleBreakdown }
+                    // How you compare — the Benchmark Engine's card (#23).
+                    HowYouCompareCard(module: "labor")
+                }
+                .transition(.opacity)
+            }
+            CavnarWebLinkRow(title: "The full labor read", subtitle: "Every day, role and comparison",
+                             path: "labor", actionLabel: "Open on the web")
         }
     }
 
@@ -277,10 +334,10 @@ private struct LaborStatTile: View {
                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(0.6)
                 .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
             Text(sublabel)
-                .font(.cavnarBody(CavnarType.kicker))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption, color: .cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)

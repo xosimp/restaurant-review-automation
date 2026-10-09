@@ -84,9 +84,9 @@ struct LaborRibbonChart: View {
         ctx.stroke(dash, with: .color(Color.cavnarInk3.opacity(0.5 * bt)), style: StrokeStyle(lineWidth: 1, dash: [4, 5]))
         ctx.drawLayer { layer in
             layer.opacity = bt
-            CavnarChart.text(&layer, CavnarChart.number("\(Int(target))%", size: 10.5), at: CGPoint(x: plot.minX - 6, y: y(target)), anchor: .trailing)
-            CavnarChart.text(&layer, CavnarChart.number("\(Int(hi))%", size: 10.5), at: CGPoint(x: plot.minX - 6, y: plot.minY + 4), anchor: .trailing)
-            CavnarChart.text(&layer, CavnarChart.number("\(Int(lo))%", size: 10.5), at: CGPoint(x: plot.minX - 6, y: plot.maxY - 4), anchor: .trailing)
+            CavnarChart.text(&layer, CavnarChart.number("\(Int(target))%", size: 11), at: CGPoint(x: plot.minX - 6, y: y(target)), anchor: .trailing)
+            CavnarChart.text(&layer, CavnarChart.number("\(Int(hi))%", size: 11), at: CGPoint(x: plot.minX - 6, y: plot.minY + 4), anchor: .trailing)
+            CavnarChart.text(&layer, CavnarChart.number("\(Int(lo))%", size: 11), at: CGPoint(x: plot.minX - 6, y: plot.maxY - 4), anchor: .trailing)
         }
 
         let lt = CavnarChart.window(t, from: 0.3, length: 0.7)
@@ -114,7 +114,7 @@ struct LaborRibbonChart: View {
         }
         let step = n > 8 ? 2 : 1
         for i in stride(from: 0, to: n, by: step) {
-            CavnarChart.text(&ctx, CavnarChart.label(points[i].label, size: 10), at: CGPoint(x: x(i), y: size.height - 12))
+            CavnarChart.text(&ctx, CavnarChart.label(points[i].label, size: 11), at: CGPoint(x: x(i), y: size.height - 12))
         }
     }
 }

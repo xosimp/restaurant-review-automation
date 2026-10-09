@@ -101,7 +101,7 @@ struct ScheduleMemoryScreen: View {
                     if viewModel.isLoading {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.6, 0.9, 0.5])
                     } else if let error = viewModel.error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         Button("Try again") { Task { await viewModel.load() } }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     } else if viewModel.groups.isEmpty {
@@ -170,7 +170,7 @@ struct ScheduleMemoryScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
             if let note = viewModel.notes[item.key] {
                 HomeMixedText.make(note, size: CavnarType.caption, weight: 600,
-                                   color: viewModel.saved.contains(item.key) ? .cavnarGreen : .cavnarRed)
+                                   color: viewModel.saved.contains(item.key) ? .cavnarGreen : .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if canAnswer, item.canKeep || item.canLetGo || item.canBeRule {
@@ -264,7 +264,7 @@ struct MeasuredRatingsScreen: View {
                     if viewModel.isLoading {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.6, 0.9])
                     } else if let error = viewModel.error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let data = viewModel.data {
                         if let note = data.note {
@@ -316,21 +316,25 @@ struct MeasuredRatingsScreen: View {
                             .buttonStyle(RecAnswerPillStyle(selected: false))
                     }
                     ForEach(1...5, id: \.self) { v in
-                        Button("\(v)") { Task { await viewModel.confirm(s, score: v) } }
-                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .frame(width: 34, height: 34)
-                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.cavnarPaper2))
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Rate \(s.name) \(v)")
+                        // 44pt on the label, the tile drawn inside it (M24).
+                        Button { Task { await viewModel.confirm(s, score: v) } } label: {
+                            Text("\(v)")
+                                .font(.cavnarNumber(CavnarType.secondary, weight: 700))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.cavnarPaper2))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Rate \(s.name) \(v)")
                     }
                 }
                 .disabled(viewModel.busy != nil)
             }
             if let e = viewModel.rowError[s.name] {
-                Text(e).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                Text(e).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
             }
         }
         .padding(.vertical, 10)

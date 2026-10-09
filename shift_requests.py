@@ -810,6 +810,42 @@ def _locate(rows, row):
     return rows, _find(rows, row["employee_name"], row["date"], row["shift_start"])
 
 
+COVER_CANDIDATES_LIMIT = 60
+
+
+def cover_candidates(restaurant_id, request_id, names, db_path=DB_PATH):
+    """Who may cover a pending drop when the manager names them — the SAME
+    check a named Approve runs (`_cover` → `_judge`, check_role=False), read
+    before the press so the picker offers only people the Approve will take
+    (re-audit 10/8/26 M21: it listed every name and refused after the tap).
+    Read-only: nothing changes. [{name, ok, why}] in the order given, at
+    most COVER_CANDIDATES_LIMIT; None when the request is not a pending drop
+    of this restaurant's."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM shift_change_requests WHERE id=? AND restaurant_id=? AND status='pending'",
+                           (int(request_id), restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not row or (dict(row).get("kind") or "drop") == "swap":
+        return None
+    row = dict(row)
+    out, seen = [], set()
+    for raw in names or []:
+        name = (raw or "").strip() if isinstance(raw, str) else ""
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        if len(out) >= COVER_CANDIDATES_LIMIT:
+            break
+        try:
+            _judge(restaurant_id, row, name, check_role=False, db_path=db_path)
+            out.append({"name": name, "ok": True, "why": None})
+        except ShiftRequestError as e:
+            out.append({"name": name, "ok": False, "why": str(e)})
+    return out
+
+
 def _judge(restaurant_id, row, name, check_role, db_path, constraints=None):
     """(hist, rows, idx): raise unless `name` may take this request's shift
     on the live week — the claim's own check, shared by the offer, the open

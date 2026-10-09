@@ -20,9 +20,18 @@ struct ParHoursCheck: View {
     /// them, else every hour (a week saved before the split).
     private var judged: Double { hourly ?? scheduled }
 
+    /// The verdict, with the PAR budget read as a CEILING (re-audit 10/8/26
+    /// H2): any hour over it is "over" in amber — a 5% band used to read a
+    /// week up to 15h over as a green "On budget". At or under it is on
+    /// budget. Rounding to a tenth keeps 312.04 against 312 from reading over.
+    static func verdict(judged: Double, budget: Double) -> (text: String, over: Bool) {
+        let diff = ((judged - budget) * 10).rounded() / 10
+        if diff > 0 { return ("+\(diff.commaFormatted)h over", true) }
+        return ("On budget", false)
+    }
+
     var body: some View {
-        let diff = judged - budget
-        let withinRange = abs(diff) <= max(budget * 0.05, 1)
+        let verdict = Self.verdict(judged: judged, budget: budget)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -33,22 +42,24 @@ struct ParHoursCheck: View {
                     if let hourly {
                         HomeMixedText.make("\(hourly.commaFormatted)h hourly of \(budget.commaFormatted)h budget"
                                            + ((salaried ?? 0) > 0 ? " \u{00B7} \(salaried!.commaFormatted)h salaried" : ""),
-                                           size: CavnarType.caption, color: .cavnarInk3)
+                                           size: CavnarType.caption, color: .cavnarInk2)
                     }
                 }
                 Spacer()
-                Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                    .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
+                HomeMixedText.make(verdict.text, size: CavnarType.secondary, weight: 700,
+                                   color: verdict.over ? .cavnarAmber : .cavnarGreen)
             }
             if let text = basis?.text {
                 HomeMixedText.make(text, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let caveat = basis?.caveat {
-                HomeMixedText.make(caveat + " Pay rates are set on the web, in Account \u{2192} Targets & pay rates.",
-                                   size: CavnarType.caption, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(caveat, size: CavnarType.caption, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
+                // Account → Targets & pay rates sits in the web's
+                // Restaurant section (M6).
+                CavnarWebLinkRow(title: "Pay rates", subtitle: "Account \u{2192} Targets & pay rates",
+                                 path: "account/restaurant")
             }
         }
         .padding(10)

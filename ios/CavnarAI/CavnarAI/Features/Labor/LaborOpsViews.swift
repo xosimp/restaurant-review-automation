@@ -73,7 +73,7 @@ struct OpenShiftPostSheet: View {
                     TextField("Note (e.g. Bears game, all hands)", text: $note)
                         .cavnarTextFieldStyle()
                     if let error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -144,7 +144,7 @@ struct OpenShiftOfferSheet: View {
                         }
                     }
                     if let error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -209,7 +209,7 @@ struct AddTeamMemberSheet: View {
                         }
                     }
                     if let error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -261,6 +261,15 @@ final class CoversModel {
 
     /// The count on file for the picked night, if any.
     var onFile: CoversDay? { payload?.days.first { $0.date == date } }
+
+    /// Tonight's (the business date's) count is missing, so the Labor page
+    /// asks for it; with it on file the entry form lives in Scheduling
+    /// setup (re-audit 10/8/26 L1). False until loaded.
+    var needsTonight: Bool {
+        guard let payload else { return false }
+        let tonight = payload.businessDate ?? RestaurantClock.businessDate()
+        return !payload.days.contains { $0.date == tonight }
+    }
 
     func load() async {
         if let r: CoversPayload = try? await client.send("/mobile/api/labor/covers", hapticOnError: false), r.ok {
@@ -351,7 +360,7 @@ struct CoversTile: View {
                 .disabled(model.count.isEmpty || model.saving)
             }
             if let error = model.error {
-                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
             } else if let saved = model.saved {
                 HomeMixedText.make(saved, size: CavnarType.caption, weight: 600, color: .cavnarGreen)
             }

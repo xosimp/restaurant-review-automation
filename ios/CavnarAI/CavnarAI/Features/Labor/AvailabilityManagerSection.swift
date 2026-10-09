@@ -22,6 +22,9 @@ struct AvailabilityManagerSection: View {
     // Flipped on a save that came back clean — the posted check plays
     // under the button, then clears itself.
     @State private var savedFlash = false
+    /// The ✕ removes someone's availability: asked first (re-audit
+    /// 10/8/26 M7) — the next draft may then schedule them any day.
+    @State private var removing: StaffAvailabilityEntry?
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable, CaseIterable {
@@ -38,7 +41,7 @@ struct AvailabilityManagerSection: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Cavnar AI never schedules someone on a day marked unavailable here.")
                     .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
 
                 addForm
 
@@ -213,7 +216,7 @@ struct AvailabilityManagerSection: View {
             }
 
             if let error = viewModel.availabilityError {
-                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
             }
         }
         .animation(.easeOut(duration: 0.3), value: savedFlash)
@@ -253,17 +256,18 @@ struct AvailabilityManagerSection: View {
                 if !entry.unavailableDays.isEmpty {
                     Text("✗ Not available: \(entry.unavailableDays.map { String($0.prefix(3)) }.joined(separator: ", "))")
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(Color.cavnarRedText)
                 }
                 if let notes = entry.notes, !notes.isEmpty {
                     Text(notes)
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                 }
             }
             Spacer()
             Button {
-                Task { await viewModel.deleteAvailability(employeeName: entry.employeeName) }
+                Haptic.light()
+                removing = entry
             } label: {
                 Image(systemName: "xmark")
                     .font(.cavnar(.caption))
@@ -276,5 +280,17 @@ struct AvailabilityManagerSection: View {
         .padding(10)
         .background(Color.cavnarPaper2.opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .confirmationDialog("Remove \(entry.employeeName)\u{2019}s availability?",
+                            isPresented: Binding(get: { removing?.employeeName == entry.employeeName },
+                                                 set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
+                removing = nil
+                Task { await viewModel.deleteAvailability(employeeName: entry.employeeName) }
+            }
+            Button("Keep it", role: .cancel) { removing = nil }
+        } message: {
+            Text("The next draft can put them on any day.")
+        }
     }
 }

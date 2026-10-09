@@ -3703,6 +3703,23 @@ def _do_shift_request_decide(u, request_id):
     return out, 200
 
 
+def _do_shift_request_candidates(u, request_id):
+    """{names: [...]} → who of them a named Approve would take, with why
+    not (shift_requests.cover_candidates — the decide route's own check,
+    re-audit 10/8/26 M21). Read-only, so it changes nothing; POST only to
+    carry the list."""
+    if not _may_draft(u):
+        return _forbidden("Your login can view labor but not decide shift requests.")
+    import shift_requests as _sq_req
+    names = _body().get("names")
+    if not isinstance(names, list):
+        return {"ok": False, "error": "names must be a list."}, 400
+    out = _sq_req.cover_candidates(_rid(u), request_id, names)
+    if out is None:
+        return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
+    return {"ok": True, "candidates": out}, 200
+
+
 def _shift_label(row):
     from time_utils import mdy
     who = (row.get("employee_name") or "").strip() or "extra"
@@ -7057,6 +7074,8 @@ _ROUTES = [
     ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
+    ("/labor/shift-requests/<int:request_id>/candidates", ["POST"], _do_shift_request_candidates,
+     "shift_request_candidates"),
     ("/labor/open-shifts", ["POST"], _do_open_shift_post, "open_shift_post"),
     ("/labor/shift-requests/<int:request_id>/offer", ["POST"], _do_shift_request_offer, "shift_request_offer"),
     ("/labor/shift-requests/<int:request_id>/colleague-agreed", ["POST"], _do_shift_request_colleague_agreed,

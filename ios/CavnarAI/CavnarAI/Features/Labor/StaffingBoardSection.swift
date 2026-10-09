@@ -370,48 +370,41 @@ struct StaffingBoardSection: View {
             } else {
                 Text("Staffing cards show once your own shifts are in \u{2014} sample data is never scored here.")
                     .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    // The executive strip: at stake, costliest, fastest win.
+    // The strip on the iPhone (re-audit 10/8/26 M18): the fastest win, and
+    // what the cards price — labelled as the cards' own figure, so it never
+    // reads as the hero's "over target" dollars (a different measure: the
+    // window's whole gap, not the priced days and the overtime premium).
     @ViewBuilder
     private func summaryStrip(_ s: StaffingSummary?) -> some View {
-        VStack(spacing: 10) {
-            tile(kicker: "At stake in this window", hero: true) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                CavnarKicker("Priced on these cards")
+                Spacer(minLength: 0)
                 Text(s?.atStakeText ?? "$0")
-                    .font(.cavnarNumber(CavnarText.figureL.size, weight: 600))
-                    .foregroundStyle(Color.cavnarEmber)
-                    .cavnarNumberGlow()
-                // The two parts do not overlap and add up to the total; on
-                // the assumed wage the dollars above target are withheld.
-                HomeMixedText.make(summaryLine(s), size: CavnarType.secondary, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.cavnar(.figureS))
+                    .foregroundStyle(Color.cavnarInk)
             }
+            // The two parts do not overlap and add up to the total; on
+            // the assumed wage the dollars above target are withheld.
+            HomeMixedText.make(summaryLine(s), size: CavnarType.caption, color: .cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 10) {
-                tile(kicker: "Costliest") {
-                    if let b = s?.biggest {
-                        Text(b.title).font(.cavnarHeadline(CavnarType.emphasis)).foregroundStyle(Color.cavnarInk)
-                            .lineLimit(2).minimumScaleFactor(0.8)
-                        HomeMixedText.make("\(b.dollarsText) \(b.label)", size: CavnarType.secondary, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text("—").font(.cavnarHeadline(CavnarType.emphasis)).foregroundStyle(Color.cavnarInk)
-                        Text("Nothing priced in this window").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
-                    }
-                }
                 tile(kicker: "Fastest win") {
                     if let q = s?.quick {
                         HomeMixedText.make(q.why.prefix(1).uppercased() + q.why.dropFirst(), size: CavnarType.body, weight: 600,
                                            color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Text((q.kind == "overtime" ? "from " : "") + q.title)
-                            .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     } else {
                         Text("—").font(.cavnarHeadline(CavnarType.emphasis)).foregroundStyle(Color.cavnarInk)
-                        Text("Nothing to fix here").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
+                        Text("Nothing to fix here").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     }
                 }
             }
@@ -429,10 +422,7 @@ struct StaffingBoardSection: View {
     private func tile<Content: View>(kicker: String, hero: Bool = false,
                                      @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(kicker.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(kicker)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -463,7 +453,7 @@ struct StaffingBoardSection: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(lane.title).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                     Text(lane.subtitle(targetLabel: targetLabel))
-                        .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 4)
@@ -488,21 +478,23 @@ struct StaffingBoardSection: View {
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Color.cavnarPaper3, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             } else {
-                let shown = showAll.contains(lane) ? items : Array(items.prefix(6))
-                ForEach(Array(shown.enumerated()), id: \.element.id) { index, card in
-                    StaffingDecisionCard(card: card, lane: lane, worst: index == 0 && items.count > 1,
-                                         targetLabel: targetLabel, blendedRate: blendedRate)
-                }
-                if items.count > 6 && !showAll.contains(lane) {
-                    Button {
-                        Haptic.light()
-                        withAnimation(.easeOut(duration: 0.25)) { _ = showAll.insert(lane) }
-                    } label: {
-                        HomeMixedText.make("Show all \(items.count) \u{2192}", size: CavnarType.secondary, weight: 700, color: .cavnarEmber2)
-                            .frame(minHeight: 44, alignment: .leading)
+                // The top card per lane on the phone (M18); the next five
+                // behind one tap, and the whole board on the web.
+                StaffingDecisionCard(card: items[0], lane: lane, worst: items.count > 1,
+                                     targetLabel: targetLabel, blendedRate: blendedRate)
+                if items.count > 1 {
+                    CavnarMoreDisclosure(hiddenCount: min(items.count, 6) - 1) {
+                        ForEach(Array(items.dropFirst().prefix(5)), id: \.id) { card in
+                            StaffingDecisionCard(card: card, lane: lane, worst: false,
+                                                 targetLabel: targetLabel, blendedRate: blendedRate)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
+                if items.count > 6 {
+                    CavnarWebLinkRow(title: "All \(items.count) on the web", path: "labor/overtime",
+                                     actionLabel: "See them")
+                }
+
             }
         }
     }

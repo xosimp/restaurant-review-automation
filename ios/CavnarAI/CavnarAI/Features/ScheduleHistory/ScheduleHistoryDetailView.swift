@@ -59,14 +59,22 @@ struct ScheduleHistoryDetailView: View {
                             }
                             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
                         }
-                        if !replaced {
+                        // A week staff already have offers only telling the
+                        // people whose shifts changed since, when some did
+                        // (re-audit 10/8/26 L6); "Sent M/D/YY" is said
+                        // below. An unsent week keeps Send to staff.
+                        let sent = !(detail.publishedAt ?? "").isEmpty
+                        let changed = viewModel.publishCheck?.unsentChanges ?? []
+                        if !replaced && (!sent || !changed.isEmpty) {
                             Button {
                                 Haptic.light()
                                 showingPublish = true
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
-                                    Text("Send to staff")
+                                    Text(!sent ? "Send to staff"
+                                         : (changed.count == 1 ? "Tell \(changed[0]) about the change"
+                                                               : "Tell the \(changed.count) people whose shifts changed"))
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -136,14 +144,13 @@ struct ScheduleHistoryDetailView: View {
                         }
                         if let narrative = detail.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
                            !narrative.isEmpty {
-                            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                                CavnarKicker("Cavnar AI's note")
-                                // Three lines, then More (as on Labor).
-                                Text(narrative)
-                                    .cavnarText(.body)
-                                    .lineLimit(showingFullNarrative ? nil : 3)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                if narrative.count > 160 {
+                            // The answer card's anatomy, as on Labor (L13):
+                            // the first sentence the headline, the rest
+                            // behind More.
+                            let split = LaborView.firstSentence(narrative)
+                            CavnarAnswerCard(kicker: "Cavnar AI\u{2019}s note", headline: split.head,
+                                             summary: showingFullNarrative ? split.rest : nil) {
+                                if split.rest != nil {
                                     Button {
                                         Haptic.light()
                                         showingFullNarrative.toggle()
@@ -155,12 +162,16 @@ struct ScheduleHistoryDetailView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .cavnarCard()
                         }
-                        versionsSection
-                        if let whatIf = detail.storedWhatIf, whatIf.ran {
-                            whatIfBlock(whatIf)
+                        // Every version, the draft-vs-published diff and the
+                        // stored what-if are read on the web (M32);
+                        // versionsSection and whatIfBlock stay for a later
+                        // cleanup.
+                        if !viewModel.versions.isEmpty || detail.storedWhatIf?.ran == true
+                            || viewModel.draftVsPublished?.available == true {
+                            CavnarWebLinkRow(title: "Versions and what-ifs",
+                                             subtitle: "Every change to this week, and what else was tried",
+                                             path: "labor/schedule", actionLabel: "See them on the web")
                         }
                         if let rows = detail.previewRows, !rows.isEmpty {
                             scheduleByDay(rows)
@@ -219,7 +230,8 @@ struct ScheduleHistoryDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(weekLabel) }
         .sheet(isPresented: $showingPublish) {
-            PublishScheduleSheet(scheduleId: historyId)
+            PublishScheduleSheet(scheduleId: historyId,
+                                 unsentChanges: viewModel.publishCheck?.unsentChanges ?? [])
         }
         // This screen never adopted the app-wide ember back chevron — it
         // was still showing the system's default back button, the one
@@ -336,7 +348,7 @@ struct ScheduleHistoryDetailView: View {
             // (UI-3); never the row's internal id.
             HomeMixedText.make((viewModel.detail?.replacedReason).flatMap { $0.isEmpty ? nil : $0 }
                                ?? "Replaced by a newer draft of this week \u{2014} kept for the record, and it can't be sent.",
-                               size: CavnarType.secondary, weight: 600, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
@@ -349,20 +361,15 @@ struct ScheduleHistoryDetailView: View {
     /// what it would have bought. Same headcount, only who works which.
     private func whatIfBlock(_ whatIf: ScheduleWhatIf) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("WHAT IF")
-                .font(.cavnar(.kicker))
-                .tracking(1.4)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker("What if")
             if let verdict = whatIf.verdict, !verdict.isEmpty {
                 HomeMixedText.make(verdict, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HomeMixedText.make(
-                [whatIf.evaluated.map { "\($0) arrangements tried" },
-                 whatIf.baselineScore.flatMap { b in whatIf.bestScore.map { "\(b) → \($0)" } },
-                 whatIf.improvement.map { $0 > 0 ? "+\($0) available" : "nothing better found" }]
-                    .compactMap { $0 }.joined(separator: " · "),
-                size: CavnarType.caption, color: .cavnarInk3)
+                // Owner words (L11): "Could have scored 78, up from 72".
+                Self.whatIfLine(whatIf),
+                size: CavnarType.caption, color: .cavnarInk2)
             ForEach(whatIf.swaps ?? []) { swap in
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "arrow.left.arrow.right")
@@ -386,6 +393,13 @@ struct ScheduleHistoryDetailView: View {
         .cavnarCard()
     }
 
+    /// "Could have scored 78, up from 72" — or "Nothing better found".
+    static func whatIfLine(_ w: ScheduleWhatIf) -> String {
+        if let b = w.baselineScore, let best = w.bestScore, best > b { return "Could have scored \(best), up from \(b)" }
+        if let gain = w.improvement, gain <= 0 { return "Nothing better found" }
+        return ""
+    }
+
     // MARK: Versions
 
     /// Every version this week has been through — generated, edited,
@@ -395,10 +409,7 @@ struct ScheduleHistoryDetailView: View {
     private var versionsSection: some View {
         if !viewModel.versions.isEmpty || viewModel.draftVsPublished?.available == true {
             VStack(alignment: .leading, spacing: 14) {
-                Text("VERSIONS")
-                    .font(.cavnar(.kicker))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarKicker("Versions")
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(viewModel.versions.enumerated()), id: \.element.id) { index, version in
                         versionRow(version, isLast: index == viewModel.versions.count - 1)
@@ -433,7 +444,8 @@ struct ScheduleHistoryDetailView: View {
             .padding(.top, 5)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text("v\(version.version)")
+                    // "Version 3", not a developer's "v3" (L11).
+                    Text("Version \(version.version)")
                         .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(version.isPublished ? Color.cavnarEmber : Color.cavnarInk)
                     Text(version.title)

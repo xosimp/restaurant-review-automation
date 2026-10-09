@@ -46,7 +46,9 @@ def test_web_shows_what_cavnar_changed_and_what_still_needs_the_owner():
 
 def test_ios_shows_what_cavnar_changed_and_what_still_needs_the_owner():
     panel = _swift("ShiftQualityPanel.swift")
-    assert "optimizerBlock(" in panel and "STILL NEEDS YOU" in panel
+    # The kicker is CavnarKicker now (re-audit 10/8/26 L10); the optimizer
+    # sits behind "Show the full read" (M28).
+    assert "optimizerBlock(" in panel and 'CavnarKicker("Still needs you"' in panel
     assert "optimizerSummary" in panel and "gate?.reason" in panel
     model = _swift("LaborViewModel.swift")
     assert "struct ScheduleOptimizer" in model and 'case beforeScore = "before_score"' in model

@@ -43,7 +43,7 @@ struct RoleFamiliesSheet: View {
                             .padding(.vertical, 10)
                             .accessibilityLabel("Loading the roles")
                     } else if let error = store.familiesError, families == nil {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     } else if families != nil {
                         HStack(spacing: 6) {
                             AccountChip(text: isOwners ? "Yours" : "Suggested from the job names", muted: true)
@@ -76,7 +76,7 @@ struct RoleFamiliesSheet: View {
                             newRoleCard(code)
                         }
                         if let error = store.familiesError {
-                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if canEdit {

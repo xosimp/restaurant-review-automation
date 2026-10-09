@@ -17,6 +17,25 @@ struct ShiftRequestsSection: View {
     @State private var agreeing: ShiftRequest?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // Post a shift is an action, not history: a visible row above
+            // the dropdown (re-audit 10/8/26 M20), not inside it.
+            if viewModel.canDecideShifts {
+                Button {
+                    Haptic.light()
+                    posting = true
+                } label: {
+                    Label("Post a shift", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+            }
+            dropdown
+        }
+        .sheet(isPresented: $posting) { OpenShiftPostSheet(viewModel: viewModel) }
+    }
+
+    private var dropdown: some View {
         CavnarDropdown(
             title: "Shift requests",
             subtitle: subtitle,
@@ -39,16 +58,6 @@ struct ShiftRequestsSection: View {
                         openBlock
                     }
                 }
-                if viewModel.canDecideShifts {
-                    Button {
-                        Haptic.light()
-                        posting = true
-                    } label: {
-                        Label("Post a shift", systemImage: "plus")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarSecondaryButtonStyle())
-                }
                 if let notice = viewModel.openShiftNotice {
                     HomeMixedText.make(notice, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
                         .fixedSize(horizontal: false, vertical: true)
@@ -57,7 +66,7 @@ struct ShiftRequestsSection: View {
                 if let error = viewModel.requestError {
                     Text(error)
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let warning = viewModel.requestWarning {
@@ -66,7 +75,6 @@ struct ShiftRequestsSection: View {
                 }
             }
         }
-        .sheet(isPresented: $posting) { OpenShiftPostSheet(viewModel: viewModel) }
         .sheet(item: $offering) { shift in OpenShiftOfferSheet(viewModel: viewModel, shift: shift) }
         .confirmationDialog(cancelling.map { "Take \($0.whenLabel) off the open board?" } ?? "",
                             isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }),
@@ -101,7 +109,7 @@ struct ShiftRequestsSection: View {
         var parts: [String] = []
         if open > 0 { parts.append("\(open) open \(open == 1 ? "shift" : "shifts") unclaimed") }
         if pending > 0 { parts.append("\(pending) waiting \u{2014} under Needs you") }
-        if parts.isEmpty { return answered.isEmpty ? "Post a shift, or see what was answered" : "\(answered.count) answered" }
+        if parts.isEmpty { return answered.isEmpty ? "What was answered shows here" : "\(answered.count) answered" }
         return parts.joined(separator: " \u{00B7} ")
     }
 
@@ -151,7 +159,7 @@ struct ShiftRequestsSection: View {
         Text(req.kindLabel.uppercased())
             .font(.cavnarBody(CavnarType.tag, weight: 700))
             .tracking(0.5)
-            .foregroundStyle(req.isSwap ? Color.cavnarBlue : Color.cavnarInk3)
+            .foregroundStyle(req.isSwap ? Color.cavnarBlue : Color.cavnarInk2)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(Capsule().fill(req.isSwap ? Color.cavnarBlue.opacity(0.14) : Color.white.opacity(0.06)))
@@ -242,10 +250,20 @@ struct ReplacementPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var replacement: String?
+    /// The server's answer for each name (M21); nil until read, or when the
+    /// server could not say — then every name is offered, as before.
+    @State private var judged: [ScheduleSetupViewModel.CoverCandidate]?
+    @State private var loadingJudged = true
 
-    private var candidates: [String] {
+    private var allNames: [String] {
         viewModel.activeNames.filter { $0 != request.employeeName }
     }
+    /// Only the people a named Approve would take.
+    private var candidates: [String] {
+        guard let judged else { return allNames }
+        return judged.filter(\.ok).map(\.name)
+    }
+    private var refused: [ScheduleSetupViewModel.CoverCandidate] { (judged ?? []).filter { !$0.ok } }
     private var busy: Bool { viewModel.requestBusyId == request.id }
 
     var body: some View {
@@ -259,23 +277,43 @@ struct ReplacementPickerSheet: View {
                     }
                     VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                         CavnarKicker("Who covers it")
-                        Text("The same rules as Cavnar AI's drafts: anyone this would put over a limit is refused, with why.")
+                        Text(judged == nil
+                             ? "The same rules as Cavnar AI\u{2019}s drafts: anyone this would put over a limit is refused, with why."
+                             : "Only the people who can legally take it \u{2014} the same rules as Cavnar AI\u{2019}s drafts.")
                             .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        AccountFlowLayout(spacing: 6) {
-                            ForEach(candidates, id: \.self) { person in
-                                Button {
-                                    Haptic.selection()
-                                    replacement = replacement == person ? nil : person
-                                } label: {
-                                    AccountChip(text: person, muted: replacement != person)
+                        if loadingJudged {
+                            CavnarSkeletonLines(widths: [0.9, 0.6])
+                        } else if candidates.isEmpty {
+                            Text("Nobody on the roster can legally take it. Approve to leave it open on the board.")
+                                .cavnarText(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            AccountFlowLayout(spacing: 6) {
+                                ForEach(candidates, id: \.self) { person in
+                                    Button {
+                                        Haptic.selection()
+                                        replacement = replacement == person ? nil : person
+                                    } label: {
+                                        AccountChip(text: person, muted: replacement != person)
+                                            .cavnarHitTarget()
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
+                            }
+                        }
+                        if !refused.isEmpty {
+                            CavnarMoreDisclosure(hiddenCount: refused.count) {
+                                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                                    ForEach(refused) { c in
+                                        CavnarMixedText(c.name + (c.why.map { " \u{2014} \($0)" } ?? ""), role: .secondary)
+                                    }
+                                }
                             }
                         }
                     }
                     if let error = viewModel.requestError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 10) {
@@ -295,8 +333,9 @@ struct ReplacementPickerSheet: View {
                             }
                             .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy))
-                        .disabled(busy)
+                        // The sheet's one primary (M8).
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy || loadingJudged))
+                        .disabled(busy || loadingJudged)
                         Button { dismiss() } label: { Text("Cancel").frame(maxWidth: .infinity) }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     }
@@ -307,5 +346,9 @@ struct ReplacementPickerSheet: View {
         }
         .presentationDetents([.medium, .large])
         .onAppear { viewModel.requestError = nil }
+        .task {
+            judged = await viewModel.loadCoverCandidates(requestId: request.id, names: allNames)
+            loadingJudged = false
+        }
     }
 }

@@ -393,7 +393,7 @@ struct RulesClosedDaysSection: View {
                 CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
             }
             if let error = store.closedDaysError {
-                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("A closed date \u{2014} a holiday, a private event \u{2014} is set in Account \u{2192} Profile \u{2192} Hours & closures.")
@@ -451,7 +451,7 @@ struct RulesDiningSectionsSection: View {
             if store.sectionCountSaving {
                 CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
             } else if let error = store.sectionCountError {
-                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let note = store.sectionCountNote {
                 Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
@@ -789,7 +789,7 @@ struct KitchenStationsSheet: View {
         if store.stationBusy {
             CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
         } else if let error = store.stationError {
-            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let note = store.stationNote {
             Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)

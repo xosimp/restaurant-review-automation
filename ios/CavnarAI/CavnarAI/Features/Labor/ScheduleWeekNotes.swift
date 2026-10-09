@@ -400,7 +400,7 @@ struct SaveConflictSheet: View {
                     }
                     if case .failed(let message) = viewModel.overrideState, viewModel.isReloadingAfterConflict == false,
                        message != conflict.error {
-                        Text(message).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(message).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

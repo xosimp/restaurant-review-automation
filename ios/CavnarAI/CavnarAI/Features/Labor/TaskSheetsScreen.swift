@@ -174,21 +174,22 @@ struct TSReportResponse: Decodable {
 /// later cleanup.
 struct TaskSheetsScreen: View {
     @Environment(\.dismiss) private var dismiss
-    enum View3: String, CaseIterable { case day = "The day", report = "Consistency" }
-    @State private var view: View3 = .day
 
+    /// The day, led by what needs someone (re-audit 10/8/26 M31); the
+    /// consistency report — managers side by side, by person, by job code —
+    /// is read on the web, beside the editor. TSReportView stays for a later
+    /// cleanup (candidate after verification).
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                CavnarSegmentedControl(selection: $view, options: View3.allCases) { $0.rawValue }
-                .padding(.horizontal, 20)
-                .padding(.top, 10)
-                CavnarWebLinkRow(title: "Edit task sheets", path: "labor/tasks")
-                    .padding(.horizontal, 20)
-                switch view {
-                case .day: TSDayView()
-                case .report: TSReportView()
+                VStack(spacing: 0) {
+                    CavnarWebLinkRow(title: "Consistency report", subtitle: "Your managers side by side, by person, by job code",
+                                     path: "labor/tasks", actionLabel: "See it on the web")
+                    CavnarWebLinkRow(title: "Edit task sheets", path: "labor/tasks")
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 6)
+                TSDayView()
             }
             .background(Color.cavnarPaper.ignoresSafeArea())
             .navigationTitle("Task sheets")
@@ -211,18 +212,20 @@ private struct TSDayView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 if let d = data {
-                    HStack(spacing: 12) {
-                        Button { shift(-1) } label: { Image(systemName: "chevron.left") }
+                    HStack(spacing: 4) {
+                        Button { shift(-1) } label: { Image(systemName: "chevron.left").cavnarHitTarget() }
+                            .accessibilityLabel("The day before")
                         Text((d.isToday == true ? "Today · " : "") + (d.dateLabel ?? ""))
                             .font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
-                        Button { shift(1) } label: { Image(systemName: "chevron.right") }
+                        Button { shift(1) } label: { Image(systemName: "chevron.right").cavnarHitTarget() }
                             .disabled(d.isToday == true)
+                            .accessibilityLabel("The day after")
                         Spacer()
                     }
                     .tint(Color.cavnarEmber2)
                     content(d)
                 } else if let failed {
-                    Text(failed).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(failed).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 } else {
                     CavnarSkeletonBar(height: 3).frame(width: 180)
                 }
@@ -240,6 +243,9 @@ private struct TSDayView: View {
         } else if (d.sheets ?? []).isEmpty {
             note("No sheets went out this day — nobody on the published schedule worked a job code that has a sheet.")
         } else if let s = d.summary {
+            // The day's answer first (M31): what needs someone, by sheet.
+            CavnarMixedText(Self.headline(d), role: .lead,
+                            color: Self.criticalOverdue(d).isEmpty ? .cavnarInk : .cavnarRedText)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 tile("SHEETS FINISHED", "\(s.complete)", "of \(s.sheets)", s.complete == s.sheets ? .cavnarGreen : .cavnarInk)
                 tile("LINES DONE", "\(s.done)", "of \(s.lines)", .cavnarInk)
@@ -259,15 +265,48 @@ private struct TSDayView: View {
             ForEach((d.signoffNeeded ?? []).filter { !signed.contains($0) }, id: \.self) { k in
                 note("The \(StaffSheetFormat.kind(k).lowercased()) shift isn't signed off yet.", warn: true)
             }
-            ForEach(d.sheets ?? []) { sheet in TSReadOnlySheet(sheet: sheet) }
+            // Sheets still open lead; the finished ones fold (M31).
+            let sheets = d.sheets ?? []
+            let open = sheets.filter { $0.status != "done" }
+            let finished = sheets.filter { $0.status == "done" }
+            ForEach(open) { sheet in TSReadOnlySheet(sheet: sheet) }
+            if !finished.isEmpty {
+                CavnarMoreDisclosure(hiddenCount: finished.count) {
+                    ForEach(finished) { sheet in TSReadOnlySheet(sheet: sheet) }
+                }
+            }
         }
+    }
+
+    /// Critical lines still open past their due time, with their sheet.
+    static func criticalOverdue(_ d: TSDayResponse) -> [(sheet: String, line: String)] {
+        (d.sheets ?? []).flatMap { sheet in
+            sheet.lines.filter { $0.critical == true && $0.overdue == true && !$0.done }.map { (sheet.title, $0.label) }
+        }
+    }
+
+    /// "2 critical lines overdue — Closing cook" · "All 6 sheets finished" ·
+    /// "4 of 6 sheets finished · 3 lines overdue".
+    static func headline(_ d: TSDayResponse) -> String {
+        let crit = criticalOverdue(d)
+        if !crit.isEmpty {
+            var sheets: [String] = []
+            for c in crit where !sheets.contains(c.sheet) { sheets.append(c.sheet) }
+            return "\(crit.count) critical \(crit.count == 1 ? "line" : "lines") overdue \u{2014} "
+                + sheets.prefix(2).joined(separator: ", ") + (sheets.count > 2 ? " and \(sheets.count - 2) more" : "")
+        }
+        guard let s = d.summary else { return "" }
+        if s.sheets > 0 && s.complete == s.sheets { return "All \(s.sheets) sheets finished" }
+        var line = "\(s.complete) of \(s.sheets) sheets finished"
+        if d.isToday == true && s.overdue > 0 { line += " \u{00B7} \(s.overdue) \(s.overdue == 1 ? "line" : "lines") overdue" }
+        return line
     }
 
     private func tile(_ k: String, _ v: String, _ sub: String, _ tone: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(k).font(.cavnarBody(CavnarType.caption, weight: 700)).kerning(1.1).foregroundStyle(Color.cavnarInk3)
+            CavnarKicker(k.capitalized, tint: .cavnarInk2)
             Text(v).font(.cavnarNumber(CavnarText.figureM.size, weight: 600)).foregroundStyle(tone)
-            if !sub.isEmpty { Text(sub).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3) }
+            if !sub.isEmpty { Text(sub).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -315,7 +354,7 @@ private struct TSReadOnlySheet: View {
                 Spacer()
                 Text("\(sheet.done)/\(sheet.total)").font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk2)
             }
-            Text(meta).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3).padding(.top, 3)
+            Text(meta).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2).padding(.top, 3)
             // The web's .ts-bar: ember, red when missed, partial or overdue
             // — never a system ProgressView.
             TSProgressBar(done: sheet.done, total: sheet.total, bad: bad)
@@ -331,7 +370,7 @@ private struct TSReadOnlySheet: View {
                         if !tags.isEmpty {
                             Text(tags.joined(separator: " · ").uppercased())
                                 .font(.cavnarBody(CavnarType.caption, weight: 700)).kerning(0.8)
-                                .foregroundStyle(l.overdue == true || l.flagged == true ? Color.cavnarRed : Color.cavnarEmber2)
+                                .foregroundStyle(l.overdue == true || l.flagged == true ? Color.cavnarRedText : Color.cavnarEmber2)
                         }
                         if l.done {
                             Text("\(l.completedBy ?? "Someone") · \(StaffSheetFormat.clock(l.completedAt))"
@@ -406,7 +445,7 @@ private struct TSReportView: View {
                             .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                 } else if let failed {
-                    Text(failed).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(failed).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 } else {
                     CavnarSkeletonBar(height: 3).frame(width: 180)
                 }
@@ -425,7 +464,7 @@ private struct TSReportView: View {
             Text(r.name).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarInk3)
             Text(r.enough ? (r.completionPct.map { "\($0)%" } ?? "—") : "\(r.sheets) sheets")
                 .font(.cavnarNumber(CavnarText.figureM.size, weight: 600))
-                .foregroundStyle(!r.enough ? Color.cavnarInk : ((r.completionPct ?? 0) >= 90 ? Color.cavnarGreen : ((r.completionPct ?? 0) < 70 ? Color.cavnarRed : Color.cavnarAmber)))
+                .foregroundStyle(!r.enough ? Color.cavnarInk : ((r.completionPct ?? 0) >= 90 ? Color.cavnarGreen : ((r.completionPct ?? 0) < 70 ? Color.cavnarRedText : Color.cavnarAmber)))
             Text(r.enough ? "\(r.onTimePct.map { "\($0)% on time" } ?? "no timed lines") · \(r.criticalMissed) critical missed"
                           : "rates after \(min) sheets · \(r.criticalMissed) critical missed")
                 .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
@@ -497,7 +536,7 @@ private struct TSEditorList: View {
                     }
                 }
             } else if let failed {
-                Text(failed).foregroundStyle(Color.cavnarRed)
+                Text(failed).foregroundStyle(Color.cavnarRedText)
             } else {
                 CavnarSkeletonBar(height: 3).frame(width: 180)
             }
@@ -546,7 +585,7 @@ private struct TSNewSheet: View {
                 } footer: {
                     Text("Opening goes to whoever the published schedule has starting first on that job code; closing to whoever finishes last; all day to everyone on it.")
                 }
-                if let error { Text(error).foregroundStyle(Color.cavnarRed) }
+                if let error { Text(error).foregroundStyle(Color.cavnarRedText) }
             }
             .navigationTitle("New sheet")
             .navigationBarTitleDisplayMode(.inline)
@@ -887,7 +926,7 @@ private struct TSLineForm: View {
                 Section {
                     Toggle("Critical", isOn: $critical).tint(Color.cavnarEmber)
                 } footer: { Text("A critical line not done by its due time texts the manager.") }
-                if let error { Text(error).foregroundStyle(Color.cavnarRed) }
+                if let error { Text(error).foregroundStyle(Color.cavnarRedText) }
             }
             .navigationTitle(line == nil ? "Add a line" : "Edit line")
             .navigationBarTitleDisplayMode(.inline)

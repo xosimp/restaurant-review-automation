@@ -276,6 +276,31 @@ def test_approving_with_a_legal_replacement_covers_it_in_one_step(db):
     assert out["status"] == "covered" and _csv_rows(db, hid)[0]["employee"] == "Cara"
 
 
+def test_cover_candidates_answer_as_the_named_approve_would_and_change_nothing(db):
+    """Re-audit 10/8/26 M21: the cover picker offers only who the Approve
+    will take — the same check (_judge), read before the press, read-only."""
+    rid = _restaurant(db, SERVERS)
+    _publish(db, rid, [(W1[2], "Ana", "Server", "11:00am", "3:00pm", 4)])
+    ss.upsert(rid, "Dev", active=False)
+    req = srq.request_drop(rid, "Ana", W1[2], "11:00am", today=TODAY)
+    out = {c["name"]: c for c in srq.cover_candidates(rid, req["id"], ["Cara", "Dev", "Ana", "cara"])}
+    assert set(out) == {"Cara", "Dev", "Ana"}
+    assert out["Cara"]["ok"] is True and out["Cara"]["why"] is None
+    assert out["Dev"]["ok"] is False and out["Dev"]["why"]
+    assert out["Ana"]["ok"] is False           # the person giving it up
+    assert srq.for_manager(rid)[0]["status"] == "pending" and srq.open_shifts(rid) == []
+    # What the picker refused, the Approve refuses too.
+    with pytest.raises(srq.ShiftRequestError):
+        srq.decide(rid, req["id"], True, decided_by="mgr", replacement="Dev")
+    assert srq.cover_candidates(rid, 999999, ["Cara"]) is None
+
+
+def test_cover_candidates_route_is_registered_on_web_and_phone():
+    import strategy_routes
+    paths = {p for p, _m, _f, _e in strategy_routes._ROUTES}
+    assert "/labor/shift-requests/<int:request_id>/candidates" in paths
+
+
 # ── SCHED-21: consent and notification ────────────────────────────────────
 
 @pytest.fixture
