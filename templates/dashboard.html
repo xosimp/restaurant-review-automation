@@ -26358,6 +26358,10 @@ function studioGo(stage) {
   var has = _ssHasDraft();
   if (stage === 'build' && !_ssGenerating) stage = has ? 'schedule' : 'setup';
   if ((stage === 'summary' || stage === 'schedule' || stage === 'publish') && !has) stage = _ssGenerating ? 'build' : 'setup';
+  // While a week is being built, Setup is the Building animation (owner,
+  // 10/9/26): coming back mid-generation showed Setup's button counting
+  // "Generating… 255s" instead of the week filling in.
+  if (stage === 'setup' && _ssGenerating) stage = 'build';
   _ssStage = stage; st.setAttribute('data-stage', stage);
   var secs = st.querySelectorAll('.ss-stage'), i;
   for (i = 0; i < secs.length; i++) secs[i].className = 'ss-stage' + (secs[i].getAttribute('data-stage') === stage ? ' on' : '');
