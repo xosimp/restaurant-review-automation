@@ -218,6 +218,20 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     return out
 
 
+def requirement_adjustments(dplan) -> list:
+    """[{date, daypart, role, delta: 1, reason, firm: True}] — each placed
+    row as one more of its role on its shift (schedule_requirements
+    `adjustments`): the position sits on top of the usual crew."""
+    out = []
+    for r in (dplan or {}).get("rows") or []:
+        part = _part_of(r)
+        if part:
+            out.append({"date": r["date"], "daypart": part, "role": r.get("role"), "delta": 1,
+                        "reason": f"{r.get('_pin_reason') or 'standing position'} (one more, every such shift)",
+                        "firm": True})
+    return out
+
+
 def prompt_block(dplan, dates=None) -> str:
     """STANDING POSITIONS — ALREADY SCHEDULED: what code adds, so the model
     neither writes it nor writes another shift for that person that day."""
@@ -235,8 +249,8 @@ def prompt_block(dplan, dates=None) -> str:
     return ("\n\nSTANDING POSITIONS — ALREADY SCHEDULED. The restaurant staffs these on every listed shift "
             "whatever the forecast says (" + "; ".join(dplan.get("rules") or []) + "). Code adds these rows to your "
             "answer exactly as listed: do NOT write them, and never write another shift for these people on these "
-            "dates. They count toward SHIFT REQUIREMENTS for their role — the history those numbers come from "
-            "already staffs this position.\n" + "\n".join(lines))
+            "dates. Each is one MORE of its role on top of the usual crew, and SHIFT REQUIREMENTS already count it "
+            "(the +1 marked with its name): write the rest of the role's number as usual.\n" + "\n".join(lines))
 
 
 def review_lines(dplan) -> list:

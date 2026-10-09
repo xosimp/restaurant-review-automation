@@ -105,3 +105,16 @@ def test_clock_in_times_become_quarter_hours():
     hist = [{"date": "2026-10-05", "employee": "X", "role": "Bartender PM", "shift_start": "3:56pm",
              "shift_end": "11:17pm"}]
     assert ded._usual(hist, "bartender", "Monday", "night") == ("Bartender PM", 16 * 60, 23 * 60 + 15)
+
+
+def test_the_position_is_one_more_on_top_of_the_usual_crew():
+    import schedule_requirements as req
+    p = ded.plan(_c(), WEEK, ded.rules_of(_R()), history=_history(), roster_roles=ROSTER)
+    adj = ded.requirement_adjustments(p)
+    assert len(adj) == 9 and all(a["delta"] == 1 and a["firm"] for a in adj)
+    typical = {("Wednesday", "night"): {"Bartender PM": 2}}
+    rows = req.shift_requirements(["2026-10-14"], typical_headcount=typical, adjustments=adj)
+    night = next(r for r in rows if r["daypart"] == "night")
+    bar = next(e for e in night["roles"] if e["role"] == "Bartender PM")
+    assert bar["required"] == 3, "the usual 2 plus the bar-tables bartender"
+    assert "one more" in ded.prompt_block(p) and "MORE of its role on top of the usual crew" in ded.prompt_block(p)

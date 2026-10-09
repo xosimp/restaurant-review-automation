@@ -5241,6 +5241,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if borrowed_headcount:
         from intelligence.staffing import merge_into_typical
         _req_typical, _borrowed_marks = merge_into_typical(_patterns.get("typical_headcount") or {}, borrowed_headcount)
+    # A standing position is one more of its role on top of the usual crew
+    # (schedule_dedicated; Simple EJ's bar-tables bartender): +1 firm on each
+    # shift it covers, so the model writes the bar's own crew as usual and no
+    # pass trims a bartender because the pinned one is on.
+    try:
+        import schedule_dedicated as _ded_req
+        _ded_adj = _ded_req.requirement_adjustments((manager_plan or {}).get("dedicated"))
+    except Exception:
+        _ded_adj = []
+    if _ded_adj:
+        requirement_adjustments = list(requirement_adjustments or []) + _ded_adj
     _req_inputs = dict(
         typical_headcount=_req_typical,
         borrowed=_borrowed_marks or None,
