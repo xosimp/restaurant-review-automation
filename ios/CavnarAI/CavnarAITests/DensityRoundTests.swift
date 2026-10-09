@@ -127,12 +127,12 @@ final class DensityRoundTests: XCTestCase {
 
     func testTheServerWhyLineLeadsAndANullDeltaIsNeverFlat() throws {
         let full = try decode(ReviewsWhyPayload.self, """
-            {"ok": true, "rating_delta": -0.1, "recent_n": 20, "prior_n": 18, "window_days": 56,
+            {"ok": true, "rating_delta": -0.1, "recent_avg": 4.5, "prior_avg": 4.6, "recent_n": 20, "prior_n": 18, "window_days": 56,
              "complaint": {"category": "food", "label": "Cold food", "mentions": 6, "window_days": 56,
                            "stale": false, "as_of": "9/24/26"}}
             """)
         XCTAssertEqual(ReviewsWhyLine.make(urgent: 0, server: full),
-                       "Rating \u{25BC}0.1 over 8 weeks \u{00B7} top complaint: cold food (6 mentions)")
+                       "New reviews averaged 4.5\u{2605} over 8 weeks \u{25BC}0.1 vs 4.6\u{2605} before \u{00B7} top complaint: cold food (6 mentions)")
         let floor = try decode(ReviewsWhyPayload.self,
                                #"{"ok": true, "rating_delta": null, "window_days": 56, "complaint": null}"#)
         XCTAssertNil(ReviewsWhyLine.make(urgent: 0, server: floor), "below the floor says nothing, not 'level'")

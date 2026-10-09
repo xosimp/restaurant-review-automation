@@ -125,12 +125,16 @@ enum ReviewsWhyLine {
         guard let s = server else { return nil }
         var parts: [String] = []
         if urgent > 0 { parts.append("\(urgent) urgent") }
-        if let delta = s.ratingDelta {
+        // The new reviews' average against the window before - never "rating
+        // ▼0.2", which read as the all-time Google rating having dropped
+        // (owner, 10/9/26).
+        if let delta = s.ratingDelta, let now = s.recentAvg, let before = s.priorAvg {
             let weeks = (s.windowDays ?? 0) >= 14 ? "\((s.windowDays ?? 0) / 7) weeks" : "\(s.windowDays ?? 0) days"
+            let n = String(format: "%.1f", now), b = String(format: "%.1f", before)
             if abs(delta) < 0.05 {
-                parts.append("rating level over \(weeks)")
+                parts.append("new reviews averaged \(n)\u{2605} over \(weeks), level with the \(weeks) before")
             } else {
-                parts.append("rating \(delta > 0 ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f", abs(delta))) over \(weeks)")
+                parts.append("new reviews averaged \(n)\u{2605} over \(weeks) \(delta > 0 ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f", abs(delta))) vs \(b)\u{2605} before")
             }
         }
         if let c = s.complaint, c.stale != true, let label = c.label, !label.isEmpty {
@@ -215,6 +219,8 @@ struct ReviewsWhyPayload: Decodable, Equatable {
     }
 
     let ratingDelta: Double?
+    let recentAvg: Double?
+    let priorAvg: Double?
     let recentN: Int?
     let priorN: Int?
     let windowDays: Int?
@@ -223,6 +229,8 @@ struct ReviewsWhyPayload: Decodable, Equatable {
     enum CodingKeys: String, CodingKey {
         case complaint
         case ratingDelta = "rating_delta"
+        case recentAvg = "recent_avg"
+        case priorAvg = "prior_avg"
         case recentN = "recent_n"
         case priorN = "prior_n"
         case windowDays = "window_days"
@@ -231,6 +239,8 @@ struct ReviewsWhyPayload: Decodable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try? decoder.container(keyedBy: CodingKeys.self)
         ratingDelta = (try? c?.decodeIfPresent(Double.self, forKey: .ratingDelta)) ?? nil
+        recentAvg = (try? c?.decodeIfPresent(Double.self, forKey: .recentAvg)) ?? nil
+        priorAvg = (try? c?.decodeIfPresent(Double.self, forKey: .priorAvg)) ?? nil
         recentN = (try? c?.decodeIfPresent(Int.self, forKey: .recentN)) ?? nil
         priorN = (try? c?.decodeIfPresent(Int.self, forKey: .priorN)) ?? nil
         windowDays = (try? c?.decodeIfPresent(Int.self, forKey: .windowDays)) ?? nil
