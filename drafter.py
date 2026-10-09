@@ -739,6 +739,19 @@ def draft_response(review_id: int, rating: int, text: str,
 
     # Never say
     opener_ban = "\nNever open with 'Thank you for your review', 'Thank you for your feedback', or any variation — start with something specific to what they actually said."
+    # A star rating with no words (owner, 10/9/26: a 1-star draft opened "This
+    # one's tough to respond to since the review didn't actually include any
+    # specific details"). Answer the rating; never remark on the missing words.
+    import analyser
+    rating_only = analyser.is_rating_only(text)
+    if rating_only:
+        opener_ban = ("\nRATING ONLY: the guest left " + str(rating) + " stars and wrote nothing. Reply to the rating in "
+                      "1-2 sentences. Never mention, hint at or apologise for the review having no words or details, "
+                      "and never say it is hard to respond to. "
+                      + ("Thank them warmly and invite them back." if (rating or 0) >= 4 else
+                         "Say briefly that you are sorry the visit fell short and invite them to reach out directly so "
+                         "you can hear what happened — never guess what went wrong." if (rating or 0) <= 2 else
+                         "Thank them for coming in and invite them to share what would make the next visit a five."))
     never_note = opener_ban + (f" Also never use: {never_say}." if never_say else "")
 
     # Sign off
@@ -768,7 +781,7 @@ CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wro
 FACTS: State only what the restaurant has told you above (Voice{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.
 
 Review ({rating}/5 stars, {sentiment}):
-{wrap_untrusted(text)}
+{"(a star rating only — the guest wrote nothing)" if rating_only else wrap_untrusted(text)}
 
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 

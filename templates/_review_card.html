@@ -42,7 +42,8 @@
         {% if r.entities.daypart %}{% set _ = _ents.append(('when', r.entities.daypart.replace('_',' '))) %}{% endif %}
         {% if r.entities.service_mode %}{% set _ = _ents.append(('when', r.entities.service_mode.replace('_',' '))) %}{% endif %}
       {% endif %}
-      {% if r.summary %}<div class="rv2-read"><div class="rv2-read-s">{{ r.summary|e }}</div></div>{% endif %}
+      {# A star rating with no words says so plainly, never a model's summary of nothing (owner, 10/9/26). #}
+      {% if (r.text or '')|trim|length < 3 %}<div class="rv2-read"><div class="rv2-read-s">Rating only — the guest didn’t write a review.</div></div>{% elif r.summary %}<div class="rv2-read"><div class="rv2-read-s">{{ r.summary|e }}</div></div>{% endif %}
       <div class="rv2-read-m rv2-pills">
         {% if r.specific_complaint %}<span class="rv2-what">{{ r.specific_complaint|e }}</span>{% endif %}
         {% for k, v in _ents[:2] %}<span class="rv2-ent {{ k }}">{{ v|e }}</span>{% endfor %}

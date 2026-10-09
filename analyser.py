@@ -305,7 +305,31 @@ def _escalate_urgency(rating, urgency, severity, text=None):
     return urgency, None
 
 
+RATING_ONLY_MIN_CHARS = 3     # shorter than this is a star rating with no review ("." or "ok" aside)
+
+
+def is_rating_only(text) -> bool:
+    """A star rating the guest left with no words."""
+    return len(str(text or "").strip()) < RATING_ONLY_MIN_CHARS
+
+
+def rating_only_analysis(rating) -> dict:
+    """The reading of a star rating with no words, from the stars alone and
+    with no model call (owner, 10/9/26: the model filed most of Simple EJ's
+    five-star ratings as "neutral" and wrote "No review text provided to
+    analyse" as their summary, five ways). Nothing to tag, no summary."""
+    r = int(rating or 0)
+    return {"sentiment": "positive" if r >= 4 else ("negative" if 1 <= r <= 2 else "neutral"),
+            "categories": [], "summary": None, "urgency": "normal", "entities": None,
+            "specific_complaint": None, "severity": "minor", "rating_only": True}
+
+
 def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = None) -> dict:
+    if is_rating_only(text):
+        result = rating_only_analysis(rating)
+        update_analysis(review_id, result["sentiment"], result["categories"], result["summary"], result["urgency"],
+                        severity=result["severity"])
+        return result
     prompt = ANALYSE_PROMPT.format(
         rating=rating,
         # Fenced and labelled: this is text a stranger wrote, and it used to
