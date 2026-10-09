@@ -450,7 +450,10 @@ body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--i
 .hdr-left{display:flex;align-items:center;gap:16px;min-width:0;flex:1 1 auto}
 /* Viewing as client: a small amber chip by the restaurant's name; tap for
    the notice and Back to admin (owner, 10/9/26 - replaces the banner). */
-.vac{position:relative;flex:0 0 auto}
+.vac{position:relative;flex:0 0 auto;display:flex;align-items:center;transform:translateY(-.85px)}
+/* The <details> is a flex box so it is exactly the pill's height, and the
+   0.85px lift puts the pill's centre on the centre of the name's capitals
+   (measured against Clash Display 15px, 10/9/26). */
 .vac-pill{list-style:none;cursor:pointer;display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:999px;font:700 10.5px/1 'Space Grotesk',sans-serif;letter-spacing:.12em;color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent);border:1px solid color-mix(in srgb,var(--amber) 45%,transparent)}
 .vac-pill::-webkit-details-marker{display:none}
 .vac-pill:hover,.vac[open] .vac-pill{background:color-mix(in srgb,var(--amber) 24%,transparent)}
@@ -2237,6 +2240,15 @@ function loadFailed(el, d){
         </form>
       </div>
     </details>
+    <script>
+    /* A click anywhere outside the VAC chip and its notice, or Escape, closes it. */
+    (function(){
+      var v=document.getElementById('view-as-banner');
+      if(!v)return;
+      document.addEventListener('click',function(e){if(v.open&&!v.contains(e.target))v.open=false;});
+      document.addEventListener('keydown',function(e){if(v.open&&(e.key==='Escape'||e.keyCode===27)){v.open=false;var s=v.querySelector('summary');if(s)s.focus();}});
+    })();
+    </script>
     {% endif %}
   </div>
   <div class="hdr-right">
