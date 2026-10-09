@@ -175,12 +175,12 @@ struct ScheduleHistoryView: View {
                 Text(weekLabel(entry))
                     .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 if let line = entry.summaryLine, !line.isEmpty {
-                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk3)
+                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
                         .lineLimit(2)
                 } else if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
                     Text("Generated \(CavnarDate.mdyTime(generated, in: RestaurantClock.timeZone))")
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                 }
                 statePill(entry)
             }
@@ -225,10 +225,17 @@ struct ScheduleHistoryView: View {
         // zero over an already-cavnarPaper-colored base, there's no seam
         // left to be jarring.
         .padding(15)
+        // Tinted by state (re-audit 10/8/26 L14): a draft still to send
+        // carries the ember fade; a sent week is a plain card; a replaced
+        // copy is muted — every row used to wear the same ember.
         .background(
             ZStack {
                 Color.cavnarPaper
-                CavnarEmberFade.horizontal
+                if entry.state == "Draft" {
+                    CavnarEmberFade.horizontal
+                } else if entry.state == "Sent" {
+                    Color.cavnarPaper2
+                }
             }
         )
         // Inset (not a plain strokeBorder at the true edge) so this reads
@@ -242,9 +249,11 @@ struct ScheduleHistoryView: View {
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
                 .inset(by: 1)
-                .strokeBorder(CavnarEmberFade.horizontal, lineWidth: 1)
+                .strokeBorder(entry.state == "Draft" ? AnyShapeStyle(CavnarEmberFade.horizontal)
+                                                      : AnyShapeStyle(Color.cavnarPaper3.opacity(0.7)), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        .opacity(entry.state == "Sent" || entry.state == "Draft" ? 1 : 0.75)
         // Dark shadow biased downward so it reads as peeking out from
         // under the card rather than a diffuse glow all the way around —
         // y-offset roughly matches the blur radius so most of the shadow

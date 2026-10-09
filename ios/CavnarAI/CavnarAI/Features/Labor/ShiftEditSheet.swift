@@ -156,7 +156,7 @@ struct ShiftEditSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     }
                     VStack(spacing: 10) {
                         Button {

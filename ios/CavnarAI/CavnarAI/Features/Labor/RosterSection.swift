@@ -18,6 +18,9 @@ struct RosterSection: View {
     @State private var showingPairEditor = false
     @State private var showingClosers = false
     @State private var showingSectionNames = false
+    /// The habits the draft learned and the standing patterns — reachable,
+    /// folded (re-audit 10/8/26, web-only extras).
+    @State private var showingPatterns = false
     /// Each pair row's measured height — see CavnarFittedList.
     @State private var pairRowHeights: [StaffPair.ID: CGFloat] = [:]
 
@@ -51,7 +54,7 @@ struct RosterSection: View {
                 if viewModel.isLoadingRoster && viewModel.roster.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.85, 0.7])
                 } else if let error = viewModel.rosterError, viewModel.roster.isEmpty {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 } else if viewModel.roster.isEmpty {
                     Text("The roster fills from your shift history \u{2014} upload a shifts CSV on the web (Labor \u{2192} Schedule Studio) or connect your POS, and everyone appears here. Add someone new by hand below.")
                         .font(.cavnar(.secondary))
@@ -123,20 +126,23 @@ struct RosterSection: View {
                 VStack(spacing: 0) {
                     CavnarWebLinkRow(title: "Schedule rules",
                                      subtitle: "Rest, shift length, minors, floors, arrivals, certifications",
-                                     path: "labor/team")
+                                     path: "labor/rules")
                     CavnarWebLinkRow(title: "Closers", subtitle: closersDetail, path: "labor/closers")
+                    // Roles and job codes are part of the web's Scheduling
+                    // rules (sfw2RulesFamilies).
                     CavnarWebLinkRow(title: "Roles and job codes",
-                                     subtitle: "Which job codes are one role", path: "labor/team")
+                                     subtitle: "Which job codes are one role", path: "labor/rules")
                 }
 
                 pairsBlock
 
                 if let error = viewModel.pairError {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if !viewModel.openSuggestions.isEmpty { suggestedPairsBlock }
+                // Suggested pairs have one home (L2): the Labor page's
+                // ScheduleIntelSection, where they are added in one tap.
 
                 // Edits made through Cavnar AI support teach the draft
                 // nothing until the account holder counts them as theirs
@@ -145,10 +151,33 @@ struct RosterSection: View {
                     adminSavesBanner(saves)
                 }
 
-                if !viewModel.learnedPatterns.isEmpty { learnedPatternsBlock }
-
-                if !viewModel.standingPatterns.isEmpty || !viewModel.patternConflicts.isEmpty {
-                    standingPatternsBlock
+                let hasPatterns = !viewModel.learnedPatterns.isEmpty || !viewModel.standingPatterns.isEmpty
+                    || !viewModel.patternConflicts.isEmpty
+                if hasPatterns {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.22)) { showingPatterns.toggle() }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs + 2) {
+                            Text(showingPatterns ? "Hide learned habits" : "Habits the draft learned")
+                                .cavnarText(.label, color: .cavnarEmber2)
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .rotationEffect(.degrees(showingPatterns ? 180 : 0))
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(showingPatterns ? "Expanded" : "Collapsed")
+                }
+                if showingPatterns {
+                    if !viewModel.learnedPatterns.isEmpty { learnedPatternsBlock }
+                    if !viewModel.standingPatterns.isEmpty || !viewModel.patternConflicts.isEmpty {
+                        standingPatternsBlock
+                    }
                 }
 
                 // What the last answer about a pattern did, said once under
@@ -158,7 +187,7 @@ struct RosterSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = viewModel.patternError {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -226,7 +255,7 @@ struct RosterSection: View {
                     HStack(spacing: 6) {
                         Text(member.name)
                             .font(.cavnar(.label))
-                            .foregroundStyle(member.isActive ? Color.cavnarInk : Color.cavnarInk3)
+                            .foregroundStyle(member.isActive ? Color.cavnarInk : Color.cavnarInk2)
                         if let type = member.settings?.employmentType, type == "part" {
                             ScheduleRowTag(text: "PT", tone: .cavnarInk2)
                         }
@@ -246,16 +275,16 @@ struct RosterSection: View {
                                 .font(.system(size: 10, weight: .semibold))
                             HomeMixedText.make(member.dormantText ?? "Not worked in six weeks \u{2014} deactivate?",
                                                size: CavnarType.secondary, color: .cavnarAmber)
-                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .foregroundStyle(Color.cavnarAmber)
                     } else if member.isActive {
-                        HomeMixedText.make(detailLine(member), size: CavnarType.secondary, color: .cavnarInk3)
-                            .lineLimit(1)
+                        HomeMixedText.make(detailLine(member), size: CavnarType.secondary, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text("Not on the roster")
                             .font(.cavnar(.secondary))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(Color.cavnarInk2)
                     }
                 }
                 Spacer(minLength: 8)
@@ -272,7 +301,8 @@ struct RosterSection: View {
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
-            .opacity(member.isActive ? 1 : 0.55)
+            // Never under 0.6 (M26): an inactive row is muted by its ink.
+            .opacity(member.isActive ? 1 : 0.75)
         }
         .buttonStyle(.plain)
     }
@@ -308,13 +338,14 @@ struct RosterSection: View {
                             Text("Add").font(.cavnarBody(CavnarType.secondary, weight: 600))
                         }
                         .foregroundStyle(Color.cavnarEmber)
+                        .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
             }
             Text("Two people to keep on the same shift, or apart.")
                 .font(.cavnar(.caption))
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
             if viewModel.pairs.isEmpty {
                 Text("No pairs yet.")
                     .font(.cavnar(.secondary))
@@ -683,6 +714,11 @@ struct RosterDetailSheet: View {
     @State private var certifications: [String] = []
     @State private var toast: String?
     @State private var showingPerson = false
+    /// Pay basis, training, hours, dayparts, windows, certifications,
+    /// closing roles, attendance, preferences — behind one tap (re-audit
+    /// 10/8/26 M30); active, who runs the floor, acting manager and standing
+    /// shifts stay in view.
+    @State private var showingMoreSettings = false
     @FocusState private var focused: Field?
 
     private enum Field: Hashable, CaseIterable { case minHours, maxHours }
@@ -748,14 +784,33 @@ struct RosterDetailSheet: View {
                         canEdit: viewModel.canEditOwnerFacts, busy: busy) { next in
                         Task { await viewModel.updateSettings(.init(employeeName: name, actingManager: next)) }
                     }
-                    if isOwnerRole {
-                        paidHourlySection
-                    }
                     StandingShiftsSection(
                         shifts: member?.settings?.standingShifts ?? [],
                         roles: viewModel.roleChoices(for: name),
                         canEdit: editable, busy: busy) { next in
                         Task { await viewModel.updateSettings(.init(employeeName: name, standingShifts: next)) }
+                    }
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.22)) { showingMoreSettings.toggle() }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs + 2) {
+                            Text(showingMoreSettings ? "Fewer settings" : "More settings")
+                                .cavnarText(.label, color: .cavnarEmber2)
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .rotationEffect(.degrees(showingMoreSettings ? 180 : 0))
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(showingMoreSettings ? "Expanded" : "Collapsed")
+                    if showingMoreSettings {
+                    if isOwnerRole {
+                        paidHourlySection
                     }
                     TraineeSection(
                         trainee: member?.settings?.trainee, name: name,
@@ -780,10 +835,13 @@ struct RosterDetailSheet: View {
                     PersonAttendanceSection(reliability: member?.reliability)
                     preferencesSection
                     trainedUpSection
+                    }
+                    CavnarWebLinkRow(title: "Everything about \(name)", subtitle: "Hours, dayparts, windows, certifications",
+                                     path: "labor/team")
                     if let toast {
                         Text(toast)
                             .font(.cavnar(.secondary))
-                            .foregroundStyle(Color.cavnarRed)
+                            .foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1208,7 +1266,7 @@ private struct PairEditorSheet: View {
                     CavnarFloatingField(icon: "text.alignleft", placeholder: "Note (optional)", text: $note,
                                         focus: $focused, field: .note)
                     if let error = viewModel.pairError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     }
                     VStack(spacing: 10) {
                         Button {

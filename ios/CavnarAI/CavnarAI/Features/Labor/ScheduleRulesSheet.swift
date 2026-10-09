@@ -144,7 +144,7 @@ struct ScheduleRulesSheet: View {
                     if let error = viewModel.rulesError {
                         Text(error)
                             .font(.cavnar(.secondary))
-                            .foregroundStyle(Color.cavnarRed)
+                            .foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 

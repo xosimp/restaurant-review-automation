@@ -2388,6 +2388,34 @@ final class ScheduleSetupViewModel {
         }
     }
 
+    /// One name the cover picker may offer, with why not when it can't
+    /// (POST labor/shift-requests/<id>/candidates — the decide route's own
+    /// check, re-audit 10/8/26 M21).
+    struct CoverCandidate: Decodable, Hashable, Identifiable {
+        let name: String
+        let ok: Bool
+        var why: String? = nil
+        var id: String { name }
+    }
+
+    private struct CoverCandidatesBody: Encodable { let names: [String] }
+    private struct CoverCandidatesResponse: Decodable {
+        let ok: Bool
+        var candidates: [CoverCandidate]? = nil
+        var error: String? = nil
+    }
+
+    /// Who of `names` a named Approve would take. Nil when the server could
+    /// not say (an older server, or offline): the picker then offers every
+    /// name and the Approve's own check answers, as before.
+    func loadCoverCandidates(requestId: Int, names: [String]) async -> [CoverCandidate]? {
+        guard !names.isEmpty else { return [] }
+        guard let r: CoverCandidatesResponse = try? await client.send(
+            "/mobile/api/labor/shift-requests/\(requestId)/candidates", method: .post,
+            body: CoverCandidatesBody(names: names), hapticOnError: false), r.ok else { return nil }
+        return r.candidates
+    }
+
     /// Approve or deny a hand-back. Naming a replacement on approve covers
     /// the shift outright; the server checks that person is legal for it
     /// and answers 400 with the reason when they are not.

@@ -3,16 +3,19 @@ import UniformTypeIdentifiers
 
 /// Events and reservations — dated reasons to expect more covers than
 /// the history alone would say. The generator reads them as a lift on
-/// that day; the owner feeds them here, one at a time or as a pasted
-/// `date,covers` list from the reservations system.
+/// that day; the owner adds them here one at a time — a whole list from the
+/// reservations system is imported on the web (Events & reservations).
 struct DemandSignalsSection: View {
     @Bindable var viewModel: ScheduleSetupViewModel
     var onExpand: (() -> Void)? = nil
 
     @State private var showingAdd = false
-    @State private var showingPaste = false
     /// Each signal row's measured height — see CavnarFittedList.
     @State private var signalRowHeights: [DemandSignal.ID: CGFloat] = [:]
+    /// What the nights taught, the calendars followed and the games taken
+    /// off — reachable, folded under the list (re-audit 10/8/26, web-only
+    /// extras).
+    @State private var showingLearned = false
 
     var body: some View {
         CavnarDropdown(
@@ -63,7 +66,7 @@ struct DemandSignalsSection: View {
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 // A whole list of reservations — a CSV or a pasted table —
                 // is imported on the web (iOS readability round, 10/8/26).
-                CavnarWebLinkRow(title: "Import a list of events", path: "labor/team")
+                CavnarWebLinkRow(title: "Import a list of events", path: "labor/events")
 
                 if let outcome = viewModel.signalOutcome {
                     HomeMixedText.make(outcome, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
@@ -71,20 +74,18 @@ struct DemandSignalsSection: View {
                 if let error = viewModel.signalError {
                     Text(error)
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarRed)
+                        .foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if !viewModel.nightLessons.isEmpty { nightsTaughtCard }
 
-                if !viewModel.eventFollows.isEmpty { followsCard }
 
                 if viewModel.isLoadingSignals && viewModel.signals.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
                 } else if viewModel.signals.isEmpty {
-                    Text("Nothing on the books for the next 60 days. Add a party or paste your reservations and the next draft will staff for them.")
+                    Text("Nothing on the books for the next 60 days. Add a party here, or import a list on the web, and the next draft will staff for them.")
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     List {
@@ -107,14 +108,37 @@ struct DemandSignalsSection: View {
                                                            measured: signalRowHeights, verticalInsets: 12))
                 }
 
-                if !viewModel.removedGames.isEmpty { removedGamesCard }
+                let extras = (viewModel.nightLessons.isEmpty ? 0 : 1) + (viewModel.eventFollows.isEmpty ? 0 : 1)
+                    + (viewModel.removedGames.isEmpty ? 0 : 1)
+                if extras > 0 {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.22)) { showingLearned.toggle() }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs + 2) {
+                            Text(showingLearned ? "Hide calendars and lessons" : "Calendars, games and what the nights taught")
+                                .cavnarText(.label, color: .cavnarEmber2)
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .rotationEffect(.degrees(showingLearned ? 180 : 0))
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(showingLearned ? "Expanded" : "Collapsed")
+                    if showingLearned {
+                        if !viewModel.nightLessons.isEmpty { nightsTaughtCard }
+                        if !viewModel.eventFollows.isEmpty { followsCard }
+                        if !viewModel.removedGames.isEmpty { removedGamesCard }
+                    }
+                }
             }
         }
         .sheet(isPresented: $showingAdd) {
             DemandSignalEditor(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showingPaste) {
-            DemandSignalPasteSheet(viewModel: viewModel)
         }
     }
 
@@ -322,7 +346,7 @@ private struct DemandSignalEditor: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     if let error = viewModel.signalError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 10) {
@@ -430,7 +454,7 @@ private struct DemandSignalPasteSheet: View {
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
                     if let fileError {
-                        Text(fileError).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(fileError).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -471,7 +495,7 @@ private struct DemandSignalPasteSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = viewModel.signalError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 

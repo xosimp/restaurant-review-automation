@@ -27,7 +27,7 @@ struct ForecastPreviewSection: View {
                         .padding(.vertical, 8)
                         .accessibilityLabel("Loading next week\u{2019}s forecast")
                 } else if let error = store.forecastError, forecast == nil {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let f = forecast {
                     if !f.available {

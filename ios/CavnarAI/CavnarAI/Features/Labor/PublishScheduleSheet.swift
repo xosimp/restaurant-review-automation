@@ -211,11 +211,22 @@ struct PublishResult: Decodable {
     /// The version the Send wrote: the Labor screen keeps it with its rows,
     /// so the owner's next save names it (schedule re-audit 10/4/26 UI-4).
     var version: Int? = nil
+    /// The restaurant's send window (send_delay_minutes > 0): nothing went
+    /// out yet — the send is a delayed action that leaves in `undoMinutes`
+    /// and `actionId` stops it (/mobile/api/actions/<id>/cancel). `sent` is
+    /// empty because nobody has been told (re-audit 10/8/26 H1).
+    var queued = false
+    var actionId: Int? = nil
+    var executeAt: String? = nil
+    var undoMinutes: Int? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, sent, unreachable, failed, error, status, acknowledged, note, version
+        case ok, sent, unreachable, failed, error, status, acknowledged, note, version, queued
         case alreadyPublished = "already_published"
         case changesSent = "changes_sent"
+        case actionId = "action_id"
+        case executeAt = "execute_at"
+        case undoMinutes = "undo_minutes"
     }
 
     // Lenient: a changes-only send may answer without every list.
@@ -232,6 +243,10 @@ struct PublishResult: Decodable {
         note = try? c.decodeIfPresent(String.self, forKey: .note)
         changesSent = try? c.decodeIfPresent(Bool.self, forKey: .changesSent)
         version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
+        queued = ((try? c.decodeIfPresent(Bool.self, forKey: .queued)) ?? nil) ?? false
+        actionId = (try? c.decodeIfPresent(Int.self, forKey: .actionId)) ?? nil
+        executeAt = (try? c.decodeIfPresent(String.self, forKey: .executeAt)) ?? nil
+        undoMinutes = (try? c.decodeIfPresent(Int.self, forKey: .undoMinutes)) ?? nil
     }
 
     struct Sent: Decodable, Identifiable {
@@ -363,8 +378,10 @@ final class PublishScheduleViewModel {
                 // M/D/YY, not the ISO dates the route sends (CLIENT-45).
                 weekLabel = r.weekEnd.map { CavnarDate.mdyRange(start, $0) } ?? CavnarDate.mdy(start)
             }
+            // Who opened THIS week — without the id the route answers for
+            // the newest week, whichever one the sheet is sending (M2).
             let s: StatusResponse? = try? await client.send(
-                "/mobile/api/labor/schedule-share-status", hapticOnError: false)
+                "/mobile/api/labor/schedule-share-status", query: query, hapticOnError: false)
             status = s?.status ?? []
             await loadCheck()
         } catch let error as APIClient.APIError {
@@ -496,8 +513,49 @@ final class PublishScheduleViewModel {
         }
     }
 
-    /// True once this sheet has sent the week.
-    var hasSent: Bool { lastResult?.ok == true }
+    /// True once this sheet has sent the week — a send waiting out the
+    /// restaurant's window is not sent yet (`queuedSend`).
+    var hasSent: Bool { lastResult?.ok == true && lastResult?.queued != true }
+    /// A send waiting out the send window, still undoable here (H1).
+    var queuedSend: PublishResult? { lastResult?.ok == true && lastResult?.queued == true ? lastResult : nil }
+    var isUndoing = false
+    /// Said once an Undo stopped the queued send.
+    var undoneNote: String?
+
+    /// "Goes to staff in 10 min" — from execute_at when it parses, the
+    /// window's length otherwise.
+    func queuedLine(_ r: PublishResult, now: Date = Date()) -> String {
+        if let at = CavnarISODate.parse(r.executeAt) {
+            let mins = max(1, Int((at.timeIntervalSince(now) / 60).rounded(.up)))
+            return at > now ? "Goes to staff in \(mins) min" : "Going to staff now"
+        }
+        if let m = r.undoMinutes, m > 0 { return "Goes to staff in \(m) min" }
+        return "Queued to go to staff"
+    }
+
+    /// Stops the queued send before its window ends. On success the week is
+    /// back to unsent, exactly as before the press.
+    func undoQueued() async {
+        guard let r = queuedSend, let id = r.actionId, !isUndoing else { return }
+        isUndoing = true
+        publishError = nil
+        defer { isUndoing = false }
+        do {
+            let u = try await client.undoQueuedAction(id)
+            if u.ok {
+                Haptic.success()
+                lastResult = nil
+                undoneNote = u.message ?? "Stopped \u{2014} nothing went to staff."
+            } else {
+                publishError = u.error ?? "That already went out, or was already undone."
+            }
+            await load()
+        } catch let error as APIClient.APIError {
+            publishError = error.message
+        } catch {
+            publishError = "Couldn\u{2019}t reach Cavnar AI."
+        }
+    }
 
     /// `resend` is the owner's explicit "send it to everyone again", behind
     /// its own confirmation. Without it a second call after a successful
@@ -509,19 +567,27 @@ final class PublishScheduleViewModel {
         // explicit resend — or when shifts changed since, and Send tells
         // just those people.
         guard resend || !hasSent || !unsentChanges.isEmpty else { return }
+        // A send already waiting out the window is undone, never stacked.
+        guard queuedSend == nil else { return }
         guard let scheduleId else {
             publishError = "Open the week you want to send first."
             return
         }
         isPublishing = true
         publishError = nil
+        undoneNote = nil
         defer { isPublishing = false }
         do {
             let result: PublishResult = try await client.send(
                 "/mobile/api/labor/publish-schedule", method: .post,
                 body: PublishBody(scheduleId: scheduleId, acknowledge: acknowledgeBlockers, keys: blockerKeys))
             lastResult = result
-            if result.ok {
+            if result.ok && result.queued {
+                // Waiting out the send window: nothing reached staff, so the
+                // unsent changes stand (Labor keeps its list) until it goes.
+                Haptic.success()
+                acknowledgeBlockers = false
+            } else if result.ok {
                 Haptic.success()
                 blockers = []
                 blockerKeys = []
@@ -593,8 +659,12 @@ struct PublishScheduleSheet: View {
                     } else if viewModel.contacts.isEmpty {
                         emptyState
                     } else {
-                        if let result = viewModel.lastResult, result.ok {
+                        if let queued = viewModel.queuedSend {
+                            queuedCard(queued)
+                        } else if let result = viewModel.lastResult, result.ok {
                             resultCard(result)
+                        } else if let note = viewModel.undoneNote {
+                            ScheduleNotice(text: note, symbol: "arrow.uturn.backward")
                         }
                         // A copy a newer one replaced is never sent (UI-3):
                         // why, in place of Send.
@@ -797,6 +867,23 @@ struct PublishScheduleSheet: View {
         if viewModel.replacedReason != nil {
             // Said in the sheet (ScheduleNotice above); nothing to send.
             EmptyView()
+        } else if let queued = viewModel.queuedSend {
+            // Waiting out the send window (H1): the one action is Undo.
+            Button {
+                Task { await viewModel.undoQueued() }
+            } label: {
+                Group {
+                    if viewModel.isUndoing {
+                        CavnarShimmerText(text: "Stopping\u{2026}")
+                    } else {
+                        Text(queued.actionId == nil ? viewModel.queuedLine(queued)
+                                                    : "Undo \u{00B7} \(viewModel.queuedLine(queued))")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(viewModel.isUndoing || queued.actionId == nil)
         } else if !viewModel.unsentChanges.isEmpty {
             // A week staff already have, changed since: Send tells only
             // the people whose shifts moved.
@@ -906,6 +993,20 @@ struct PublishScheduleSheet: View {
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
                 .strokeBorder(Color.cavnarAmber.opacity(0.35), lineWidth: 1))
+    }
+
+    /// A send waiting out the restaurant's window: nothing has reached
+    /// staff, and Undo (the pinned bar) stops it.
+    private func queuedCard(_ result: PublishResult) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Queued", icon: "clock")
+            CavnarMixedText(viewModel.queuedLine(result), role: .lead)
+            Text("Nothing has reached staff yet. Undo stops it; when the window ends, everyone it reaches gets their shifts.")
+                .cavnarText(.secondary, color: .cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard()
     }
 
     private func resultCard(_ result: PublishResult) -> some View {
@@ -1040,7 +1141,7 @@ private struct StaffContactSheet: View {
                     )
 
                     if let error = viewModel.contactError {
-                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     VStack(spacing: 10) {

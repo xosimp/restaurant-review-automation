@@ -25,6 +25,15 @@ struct LaborWaitingOnYou: View {
     @State private var confirmingSend: (id: Int, label: String)?
     /// A dropped shift whose cover is being named (ReplacementPickerSheet).
     @State private var choosingCover: ShiftRequest?
+    /// A Deny, asked first: the person is told, and there is no undo
+    /// (re-audit 10/8/26 M8).
+    @State private var confirmingDeny: PendingDeny?
+
+    struct PendingDeny: Identifiable {
+        let id: String
+        let title: String
+        let run: () async -> Void
+    }
 
     private var pendingTimeOff: [TimeOffRequest] { viewModel.timeOff.filter { $0.status == "pending" } }
     private var pendingShifts: [ShiftRequest] { setupViewModel.pendingRequests }
@@ -39,36 +48,48 @@ struct LaborWaitingOnYou: View {
         let total = Self.count(timeOff: viewModel.timeOff, shifts: setupViewModel.pendingRequests,
                                draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
         if total > 0 || viewModel.draftSendNote != nil {
+            // No kicker of its own: the screen's NEEDS YOU header names the
+            // group and carries the count (M14 — it said it twice).
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("WAITING ON YOU")
-                        .font(.cavnar(.kicker))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
-                    Spacer()
-                    Text("\(total)")
-                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
                 if let offer = viewModel.redoOffer { redoRow(offer) }
                 if let draft = viewModel.draftCheck, let id = draft.scheduleId { draftRow(draft, id: id) }
                 if let note = viewModel.draftSendNote {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: "checkmark")
+                        Image(systemName: viewModel.draftQueuedActionId != nil ? "clock" : "checkmark")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Color.cavnarGreen)
                         HomeMixedText.make(note, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        // The send window's Undo, in place (L7) — the note
+                        // used to send the owner to Home's strip for it.
+                        if viewModel.draftQueuedActionId != nil {
+                            Button {
+                                Haptic.light()
+                                Task { await viewModel.undoDraftSend() }
+                            } label: {
+                                Group {
+                                    if viewModel.isUndoingDraftSend {
+                                        CavnarShimmerText(text: "Stopping\u{2026}")
+                                    } else {
+                                        Text("Undo").cavnarText(.label, color: .cavnarEmber2)
+                                    }
+                                }
+                                .cavnarHitTarget()
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(viewModel.isUndoingDraftSend)
+                        }
                     }
                 }
                 ForEach(pendingTimeOff) { req in timeOffRow(req) }
                 ForEach(pendingShifts) { req in shiftRow(req) }
                 if let error = viewModel.draftSendError {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = viewModel.timeOffError ?? setupViewModel.requestError {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let warning = viewModel.timeOffWarning ?? setupViewModel.requestWarning {
@@ -81,6 +102,19 @@ struct LaborWaitingOnYou: View {
             .sheet(item: $person) { target in PersonSheet(target: target) }
             .sheet(item: $choosingCover) { req in
                 ReplacementPickerSheet(viewModel: setupViewModel, request: req)
+            }
+            .confirmationDialog(confirmingDeny?.title ?? "Deny this request?",
+                                isPresented: Binding(get: { confirmingDeny != nil },
+                                                     set: { if !$0 { confirmingDeny = nil } }),
+                                titleVisibility: .visible) {
+                Button("Deny", role: .destructive) {
+                    guard let deny = confirmingDeny else { return }
+                    confirmingDeny = nil
+                    Task { await deny.run() }
+                }
+                Button("Keep it pending", role: .cancel) { confirmingDeny = nil }
+            } message: {
+                Text("They\u{2019}re told it was denied. There\u{2019}s no undo.")
             }
         }
     }
@@ -109,7 +143,7 @@ struct LaborWaitingOnYou: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HomeMixedText.make(offer.dates.map(Self.dayLabel).joined(separator: ", "),
-                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 Haptic.light()
@@ -148,7 +182,7 @@ struct LaborWaitingOnYou: View {
                                    size: CavnarType.body, weight: 700, color: .cavnarInk)
                 tag("Schedule")
             }
-            HomeMixedText.make(detail, size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make(detail, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Button {
@@ -240,9 +274,9 @@ struct LaborWaitingOnYou: View {
                 tag("Time off")
             }
             HomeMixedText.make(req.dateLabel + (req.reason.map { " · \($0)" } ?? ""),
-                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
-            decideButtons(busy: busy,
+            decideButtons(busy: busy, denyTitle: "Deny \(req.employeeName)\u{2019}s time off?",
                           deny: { await viewModel.decideTimeOff(req.id, approve: false) },
                           approve: { await viewModel.decideTimeOff(req.id, approve: true) })
         }
@@ -265,12 +299,13 @@ struct LaborWaitingOnYou: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HomeMixedText.make(req.whenLabel + (req.reason.map { " · \($0)" } ?? ""),
-                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
             // Only a login the decide route allows (SCHEDULE_DRAFT, the
             // list's can_decide) is offered the buttons.
             if setupViewModel.canDecideShifts {
                 decideButtons(busy: busy,
+                              denyTitle: "Deny \(req.employeeName.map { "\($0)\u{2019}s" } ?? "this") \(req.kindLabel.lowercased())?",
                               deny: { await setupViewModel.decideShiftRequest(req.id, approve: false) },
                               approve: { await setupViewModel.decideShiftRequest(req.id, approve: true) })
             }
@@ -299,23 +334,29 @@ struct LaborWaitingOnYou: View {
         Text(text.uppercased())
             .font(.cavnarBody(CavnarType.tag, weight: 700))
             .tracking(0.5)
-            .foregroundStyle(Color.cavnarInk3)
+            .foregroundStyle(Color.cavnarInk2)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(Capsule().fill(Color.white.opacity(0.06)))
     }
 
-    /// The decide-in-place pair (DESIGN_SYSTEM §12): Deny secondary,
-    /// Approve beside it. Secondary here too — the one primary on the
-    /// Labor screen stays Send to staff.
-    private func decideButtons(busy: Bool, deny: @escaping () async -> Void,
+    /// The decide-in-place pair (re-audit 10/8/26 M8): Approve is the
+    /// row's filled primary — the answer the request is asking for — and
+    /// Deny is the quiet text action beside it, asked first: the person is
+    /// told, and a denial has no undo.
+    private func decideButtons(busy: Bool, denyTitle: String, deny: @escaping () async -> Void,
                                approve: @escaping () async -> Void) -> some View {
         HStack(spacing: 10) {
             Button {
                 Haptic.light()
-                Task { await deny() }
-            } label: { Text("Deny").frame(maxWidth: .infinity) }
-            .buttonStyle(CavnarSecondaryButtonStyle())
+                confirmingDeny = PendingDeny(id: denyTitle, title: denyTitle, run: deny)
+            } label: {
+                Text("Deny")
+                    .cavnarText(.label, color: .cavnarInk2)
+                    .padding(.horizontal, CavnarSpace.xs)
+                    .cavnarHitTarget()
+            }
+            .buttonStyle(.plain)
             .disabled(busy)
             Button {
                 Haptic.light()
@@ -326,7 +367,7 @@ struct LaborWaitingOnYou: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
             .disabled(busy)
         }
     }
@@ -339,6 +380,12 @@ struct LaborWaitingOnYou: View {
 struct LaborSendBar: View {
     let issues: Int
     let unsaved: Bool
+    /// One primary per state (re-audit 10/8/26 M16): with edits no save has
+    /// stored, the bar's primary is Save — Send waits for it, as staff get
+    /// the saved week — and the review panel's own Save is gone.
+    var isSaving = false
+    var saveLabel = "Save changes"
+    var onSave: () -> Void = {}
     var onReview: () -> Void
     var onSend: () -> Void
 
@@ -347,7 +394,7 @@ struct LaborSendBar: View {
             if unsaved {
                 Text("Save your changes before sending — staff get the saved week.")
                     .font(.cavnar(.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 10) {
@@ -364,19 +411,33 @@ struct LaborSendBar: View {
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
                 }
-                Button {
-                    Haptic.light()
-                    onSend()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
-                        Text("Send to staff")
+                if unsaved {
+                    Button {
+                        Haptic.medium()
+                        onSave()
+                    } label: {
+                        Group {
+                            if isSaving { CavnarShimmerText(text: "Saving\u{2026}") } else { Text(saveLabel) }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: isSaving))
+                    .disabled(isSaving)
+                    .layoutPriority(1)
+                } else {
+                    Button {
+                        Haptic.light()
+                        onSend()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                            Text("Send to staff")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle())
+                    .layoutPriority(1)
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: unsaved))
-                .disabled(unsaved)
-                .layoutPriority(1)
             }
         }
         .padding(.horizontal, 20)

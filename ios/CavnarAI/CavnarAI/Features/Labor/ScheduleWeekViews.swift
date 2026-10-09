@@ -14,6 +14,9 @@ struct ScheduleDayPage: Identifiable, Hashable {
     let date: String?
     let count: Int
     var notWritten = false
+    /// A stretch of this day has no manager on the floor — a red dot on
+    /// its chip (re-audit 10/8/26 H4).
+    var managerGap = false
     var id: String { day }
 
     /// "Mon" and "10/12" for the chip.
@@ -26,6 +29,21 @@ struct ScheduleDayPage: Identifiable, Hashable {
     }
 }
 
+/// Who on the week is salaried (lowercased names), from the managers'
+/// status the rules carry — the ">40h · overtime at 1.5×" mark is for
+/// hourly pay only (re-audit 10/8/26 L8). Empty when unknown: the mark
+/// then falls back to every person past 40h, as before.
+private struct ScheduleSalariedNamesKey: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
+extension EnvironmentValues {
+    var scheduleSalariedNames: Set<String> {
+        get { self[ScheduleSalariedNamesKey.self] }
+        set { self[ScheduleSalariedNamesKey.self] = newValue }
+    }
+}
+
 /// One person's week, from the rows on screen.
 struct PersonWeek: Identifiable, Hashable {
     let name: String
@@ -35,6 +53,12 @@ struct PersonWeek: Identifiable, Hashable {
 
     var hours: Double { rows.reduce(0) { $0 + ScheduleWeekMath.hours(of: $1) } }
     var days: Int { Set(rows.compactMap(\.date)).count }
+
+    /// Past 40 hours on hourly pay — overtime at 1.5×. A salaried person's
+    /// long week costs no overtime, so it is never marked (L8).
+    func overtime(salaried: Set<String>) -> Bool {
+        hours > 40 && !salaried.contains(name.lowercased())
+    }
 
     static func == (a: PersonWeek, b: PersonWeek) -> Bool { a.name == b.name && a.rows.map(\.id) == b.rows.map(\.id) }
     func hash(into h: inout Hasher) { h.combine(name); h.combine(rows.map(\.id)) }
@@ -126,6 +150,7 @@ struct ScheduleWeekPager<DayContent: View>: View {
     @State private var person: PersonWeek?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scheduleSalariedNames) private var salariedNames
 
     private var wide: Bool { CavnarLayout.isWide(sizeClass) }
     private var mode: Mode { Self.resolvedMode(chosenMode, wide: wide) }
@@ -221,7 +246,20 @@ struct ScheduleWeekPager<DayContent: View>: View {
                                 .opacity(on ? 1 : 0.75)
                             }
                             .foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk2)
-                            .frame(width: 54, height: 62)
+                            // Grows with Dynamic Type (M25): a floor, never
+                            // a fixed box that clips the date.
+                            .padding(.horizontal, CavnarSpace.xs)
+                            .padding(.vertical, CavnarSpace.xxs + 2)
+                            .frame(minWidth: 54, minHeight: 62)
+                            .overlay(alignment: .topTrailing) {
+                                if page.managerGap {
+                                    Circle()
+                                        .fill(Color.cavnarRed)
+                                        .frame(width: 8, height: 8)
+                                        .padding(5)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                                     .fill(on ? Color.cavnarEmber.opacity(0.22) : Color.cavnarPaper2.opacity(0.6)))
@@ -234,7 +272,8 @@ struct ScheduleWeekPager<DayContent: View>: View {
                         .buttonStyle(.plain)
                         .id(page.id)
                         .accessibilityLabel("\(page.day) \(page.date.map(CavnarDate.mdy) ?? ""), "
-                                            + (page.notWritten ? "not written" : "\(page.count) shifts"))
+                                            + (page.notWritten ? "not written" : "\(page.count) shifts")
+                                            + (page.managerGap ? ", no manager for part of the day" : ""))
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
@@ -273,7 +312,7 @@ struct ScheduleWeekPager<DayContent: View>: View {
                         VStack(alignment: .trailing, spacing: 2) {
                             (Text(ScheduleWeekMath.hoursText(p.hours)).font(.cavnarNumber(CavnarType.body, weight: 700))
                              + Text("h").font(.cavnarNumber(CavnarType.caption, weight: 600)))
-                                .foregroundStyle(p.hours > 40 ? Color.cavnarRed : Color.cavnarInk)
+                                .foregroundStyle(p.overtime(salaried: salariedNames) ? Color.cavnarRedText : Color.cavnarInk)
                             Text("\(p.days) \(p.days == 1 ? "day" : "days")")
                                 .font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
                         }
@@ -306,6 +345,7 @@ struct ScheduleWeekGrid: View {
     let days: [ScheduleDayPage]
     let rows: [ScheduleRow]
     var onTap: (ScheduleRow) -> Void
+    @Environment(\.scheduleSalariedNames) private var salariedNames
 
     static let nameWidth: CGFloat = 150
     static let dayWidth: CGFloat = 112
@@ -382,7 +422,7 @@ struct ScheduleWeekGrid: View {
                 .lineLimit(2)
             (Text(ScheduleWeekMath.hoursText(person.hours)).font(.cavnarNumber(CavnarType.caption, weight: 700))
              + Text("h").font(.cavnarNumber(CavnarType.tag, weight: 600)))
-                .foregroundStyle(person.hours > 40 ? Color.cavnarRed : Color.cavnarInk3)
+                .foregroundStyle(person.overtime(salaried: salariedNames) ? Color.cavnarRedText : Color.cavnarInk2)
         }
         .frame(width: Self.nameWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -437,6 +477,7 @@ struct PersonWeekSheet: View {
     let person: PersonWeek
     var onPick: ((ScheduleRow) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scheduleSalariedNames) private var salariedNames
 
     var body: some View {
         NavigationStack {
@@ -444,13 +485,13 @@ struct PersonWeekSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 18) {
                         stat(ScheduleWeekMath.hoursText(person.hours) + "h", "this week",
-                             tone: person.hours > 40 ? .cavnarRed : .cavnarInk)
+                             tone: person.overtime(salaried: salariedNames) ? .cavnarRedText : .cavnarInk)
                         stat("\(person.days)", person.days == 1 ? "day on" : "days on", tone: .cavnarInk)
                         stat("\(person.rows.count)", person.rows.count == 1 ? "shift" : "shifts", tone: .cavnarInk)
                     }
-                    if person.hours > 40 {
+                    if person.overtime(salaried: salariedNames) {
                         HomeMixedText.make("Past 40h \u{2014} overtime at 1.5\u{00D7} on the hours over.",
-                                           size: CavnarType.secondary, weight: 600, color: .cavnarRed)
+                                           size: CavnarType.secondary, weight: 600, color: .cavnarRedText)
                     }
                     VStack(spacing: 0) {
                         ForEach(person.rows) { row in
@@ -550,7 +591,8 @@ struct ScheduleSummaryTiles {
                 sub += (lv?.targetBasis == "hourly" ? " \u{00B7} the hourly budget is " : " \u{00B7} your target is ")
                     + "\(ScheduleBuildSettings.pct(t))%"
             }
-            let over = (lv?.targetPct).map { pct > $0 + 0.5 } ?? false
+            // Any amount above the target is over — it is a ceiling (M1).
+            let over = (lv?.targetPct).map { (pct * 10).rounded() / 10 > $0 } ?? false
             out.append(Tile(key: "labor", label: "Labor", value: String(format: "%.1f", pct), unit: "%", sub: sub,
                             tone: over ? .bad : .good))
         } else {

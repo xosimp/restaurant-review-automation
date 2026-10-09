@@ -44,6 +44,10 @@ struct ShiftQualityPanel: View {
     @State private var expandedShift: String?
     @State private var showingReasoning = false
     @State private var showingChanges = false
+    /// Everything past the verdict and the top recommendation (re-audit
+    /// 10/8/26 M28): the dimensions, the week's measures, the optimizer,
+    /// every recommendation, each shift's what-if and the reasoning.
+    @State private var showingFullRead = false
     // Per-shift what-if: who, in place of which row (nil = added), and the
     // answer the score endpoint gave, by shift id.
     @State private var whatIfWho: [String: String] = [:]
@@ -75,33 +79,45 @@ struct ShiftQualityPanel: View {
                     try? await Task.sleep(for: .seconds(4))
                     showingSaved = false
                 }
-            if let optimizer = viewModel?.scheduleResult?.optimizerSummary, optimizer.hasContent {
-                optimizerBlock(optimizer)
-            }
-            if let reason = viewModel?.scheduleResult?.gate?.reason, viewModel?.scheduleResult?.gate?.ran == true {
-                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let viewModel, !viewModel.unratedByHours.isEmpty {
-                ratePrompt(viewModel)
-            }
-            if let dimensions = customerDimensions, !dimensions.isEmpty {
-                dimensionGrid(dimensions)
-            }
-            if let week = quality.weekDimensions, !week.isEmpty {
-                weekMeasures(week)
-            }
             // A broken hard rule holds the whole week under fair (schedule
             // re-audit 10/4/26 SQ-2): said first, in the engine's words.
             if let held = quality.heldBy?.text {
                 HomeMixedText.make(held, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !warnings.isEmpty { warningBlock }
-            if onRecommendation != nil, let recs = quality.recommendations, !recs.isEmpty { recommendationsBlock(recs) }
-            if !suppressedKinds.isEmpty { hiddenKindsNote }
-            shiftStrip
-            reasoningBlock
+            // The verdict's one next move: the top recommendation, and the
+            // ratings that would sharpen the score (Improve).
+            if onRecommendation != nil, let recs = quality.recommendations, !recs.isEmpty {
+                recommendationsBlock(Array(recs.prefix(1)))
+            }
+            if let viewModel, !viewModel.unratedByHours.isEmpty {
+                ratePrompt(viewModel)
+            }
+            fullReadToggle
+            if showingFullRead {
+                if let optimizer = viewModel?.scheduleResult?.optimizerSummary, optimizer.hasContent {
+                    optimizerBlock(optimizer)
+                }
+                if let reason = viewModel?.scheduleResult?.gate?.reason, viewModel?.scheduleResult?.gate?.ran == true {
+                    HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let dimensions = customerDimensions, !dimensions.isEmpty {
+                    dimensionGrid(dimensions)
+                }
+                if let week = quality.weekDimensions, !week.isEmpty {
+                    weekMeasures(week)
+                }
+                if !warnings.isEmpty { warningBlock }
+                if onRecommendation != nil, let recs = quality.recommendations, recs.count > 1 {
+                    recommendationsBlock(Array(recs.dropFirst()))
+                }
+                if !suppressedKinds.isEmpty { hiddenKindsNote }
+                shiftStrip
+                reasoningBlock
+            }
+            CavnarWebLinkRow(title: "Every shift, scored", subtitle: "Dimensions, what-ifs and the reasoning",
+                             path: "labor/schedule", actionLabel: "See it on the web")
         }
         .padding(18)
         .background(
@@ -121,16 +137,35 @@ struct ShiftQualityPanel: View {
         }
     }
 
+    /// "Show the full read" — the rest of the scoring behind one tap (M28).
+    private var fullReadToggle: some View {
+        Button {
+            Haptic.light()
+            withAnimation(.easeOut(duration: 0.22)) { showingFullRead.toggle() }
+        } label: {
+            HStack(spacing: CavnarSpace.xxs + 2) {
+                Text(showingFullRead ? "Hide the full read" : "Show the full read")
+                    .cavnarText(.label, color: .cavnarEmber2)
+                Image(systemName: "chevron.down")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .rotationEffect(.degrees(showingFullRead ? 180 : 0))
+                    .accessibilityHidden(true)
+                Spacer(minLength: 0)
+            }
+            .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(showingFullRead ? "Expanded" : "Collapsed")
+    }
+
     // MARK: The number
 
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
             QualityDial(score: quality.score ?? 0, tone: tone, muted: isRescoring)
             VStack(alignment: .leading, spacing: 5) {
-                Text("How it scored")
-                    .font(.cavnar(.kicker))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarKicker("How it scored")
                 HStack(spacing: 8) {
                     Text(bandLabel)
                         .font(.cavnarHeadline(CavnarType.section))
@@ -192,7 +227,7 @@ struct ShiftQualityPanel: View {
         case .failed(let message):
             Text("\(message) The score above is out of date.")
                 .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                .foregroundStyle(Color.cavnarRed)
+                .foregroundStyle(Color.cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -212,7 +247,9 @@ struct ShiftQualityPanel: View {
                         Text(dimension.label)
                             .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
-                            .frame(width: 132, alignment: .leading)
+                            // Wraps instead of clipping at a fixed 132pt (L12).
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(minWidth: 96, maxWidth: 150, alignment: .leading)
                         QualityBar(score: dimension.score, tone: toneFor(dimension.score))
                         Text("\(dimension.score)%")
                             .font(.cavnarNumber(CavnarType.secondary, weight: 700))
@@ -241,7 +278,9 @@ struct ShiftQualityPanel: View {
                         Text(dim.label)
                             .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
-                            .frame(width: 132, alignment: .leading)
+                            // Wraps instead of clipping at a fixed 132pt (L12).
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(minWidth: 96, maxWidth: 150, alignment: .leading)
                         QualityBar(score: dim.score, tone: toneFor(dim.score))
                         Text("\(dim.score)%")
                             .font(.cavnarNumber(CavnarType.secondary, weight: 700))
@@ -279,10 +318,7 @@ struct ShiftQualityPanel: View {
                     HomeMixedText.make(headline, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel?.optimizerUnsaved == true {
-                        Text("NOT SAVED")
-                            .font(.cavnar(.kicker))
-                            .tracking(0.8)
-                            .foregroundStyle(Color.cavnarEmber)
+                        CavnarKicker("Not saved")
                     }
                 }
                 Button {
@@ -298,7 +334,7 @@ struct ShiftQualityPanel: View {
                             .foregroundStyle(Color.cavnarEmber)
                             .rotationEffect(.degrees(showingChanges ? 180 : 0))
                     }
-                    .contentShape(Rectangle())
+                    .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
                 if showingChanges {
@@ -342,10 +378,7 @@ struct ShiftQualityPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let unresolved = o.unresolved, !unresolved.isEmpty {
-                Text("STILL NEEDS YOU")
-                    .font(.cavnar(.kicker))
-                    .tracking(1.1)
-                    .foregroundStyle(Color.cavnarRed)
+                CavnarKicker("Still needs you", tint: .cavnarRedText)
                     .padding(.top, 2)
                 ForEach(unresolved) { item in
                     detailLine(item.text, symbol: "circle.fill", color: .cavnarRed)
@@ -383,7 +416,7 @@ struct ShiftQualityPanel: View {
                             } label: {
                                 Text("\(value)")
                                     .font(.cavnarNumber(CavnarType.secondary, weight: 700))
-                                    .frame(maxWidth: .infinity, minHeight: 30)
+                                    .frame(maxWidth: .infinity, minHeight: 44)
                                     .foregroundStyle(on ? Color.cavnarPaper : Color.cavnarInk2)
                                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .fill(on ? Color.cavnarEmber : Color.cavnarPaper2))
@@ -448,10 +481,7 @@ struct ShiftQualityPanel: View {
             return pa == pb ? a.offset < b.offset : pa > pb
         }.map(\.element)
         return VStack(alignment: .leading, spacing: 8) {
-            Text("RECOMMENDATIONS")
-                .font(.cavnar(.kicker))
-                .tracking(1.3)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker("Recommendations")
             ForEach(recs, id: \.self) { rec in
                 let decision = recommendationDecisions[rec]
                 HStack(alignment: .top, spacing: 8) {
@@ -538,7 +568,7 @@ struct ShiftQualityPanel: View {
                     .padding(.top, 2)
                 HomeMixedText.make(
                     "\(suppressedKinds.count) recommendation \(suppressedKinds.count == 1 ? "kind" : "kinds") hidden — you set them aside. Coverage, leadership, fatigue and hard rules are never hidden.",
-                    size: CavnarType.caption, color: .cavnarInk3)
+                    size: CavnarType.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let vm = viewModel {
@@ -549,6 +579,7 @@ struct ShiftQualityPanel: View {
                         Text("Show \(kind) again")
                             .font(.cavnarBody(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarEmber)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -583,10 +614,7 @@ struct ShiftQualityPanel: View {
 
     private var shiftStrip: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("EVERY SHIFT")
-                .font(.cavnar(.kicker))
-                .tracking(1.3)
-                .foregroundStyle(Color.cavnarInk3)
+            CavnarKicker("Every shift")
             ForEach(quality.scoredShifts) { shift in
                 shiftRow(shift)
             }
@@ -603,7 +631,7 @@ struct ShiftQualityPanel: View {
                     Text(shift.title)
                         .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                         .layoutPriority(1)
                     if shift.profile.demand == "peak" || shift.profile.demand == "high" {
                         Text(shift.profile.demand == "peak" ? "PEAK" : "BUSY")
@@ -788,10 +816,7 @@ struct ShiftQualityPanel: View {
         let forRow = whatIfFor[shift.id]
         let forName = onShift.first { $0.id == forRow }?.employee
         return VStack(alignment: .leading, spacing: 8) {
-            Text("WHAT IF")
-                .font(.cavnar(.kicker))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("What if")
             HStack(spacing: 8) {
                 Menu {
                     ForEach(candidates, id: \.self) { name in

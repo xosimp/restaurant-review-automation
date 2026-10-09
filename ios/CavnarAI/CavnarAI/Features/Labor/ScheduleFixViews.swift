@@ -27,7 +27,7 @@ struct ScheduleNotice<Actions: View>: View {
                     HomeMixedText.make(text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(detail, id: \.self) { line in
-                        HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
+                        HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -202,6 +202,9 @@ struct ManagerQuestionRow: View {
     let question: String
     let names: [String]
     @State private var open = false
+    /// The days typed but not saved, kept here so a swipe-down over them
+    /// asks first instead of losing them (re-audit 10/8/26 M12).
+    @State private var drafts: [String: [LaborViewModel.StandingDraft]] = [:]
 
     var body: some View {
         Button {
@@ -234,10 +237,10 @@ struct ManagerQuestionRow: View {
         .sheet(isPresented: $open) {
             NavigationStack {
                 ScrollView {
-                    ManagerQuestionCard(viewModel: viewModel, question: question, names: names)
+                    ManagerQuestionCard(viewModel: viewModel, question: question, names: names, drafts: $drafts)
                         .padding(CavnarSpace.gutter)
                 }
-                .accountSheetChrome("The managers\u{2019} days")
+                .accountSheetChrome("The managers\u{2019} days", isDirty: drafts.values.contains { !$0.isEmpty })
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -253,7 +256,8 @@ struct ManagerQuestionCard: View {
     let question: String
     let names: [String]
 
-    @State private var drafts: [String: [LaborViewModel.StandingDraft]] = [:]
+    /// Unsaved days per name — owned by the sheet's row (M12).
+    @Binding var drafts: [String: [LaborViewModel.StandingDraft]]
     @State private var open: String?
 
     private static let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -301,7 +305,7 @@ struct ManagerQuestionCard: View {
             if let saved {
                 Text(saved)
                     .font(.cavnarBody(CavnarType.caption, weight: 600))
-                    .foregroundStyle(saved.hasPrefix("Saved") ? Color.cavnarGreen : Color.cavnarRed)
+                    .foregroundStyle(saved.hasPrefix("Saved") ? Color.cavnarGreen : Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if open == name {
@@ -321,7 +325,10 @@ struct ManagerQuestionCard: View {
                     Spacer()
                     Button {
                         Task {
-                            if await viewModel.saveStandingShifts(name: name, rows: drafts[name] ?? []) { open = nil }
+                            if await viewModel.saveStandingShifts(name: name, rows: drafts[name] ?? []) {
+                                open = nil
+                                drafts[name] = nil
+                            }
                         }
                     } label: {
                         Group {
@@ -388,6 +395,9 @@ struct DayManagerNotes: View {
     let date: String
     let result: GeneratedSchedule
     var onChangeAvailability: () -> Void = {}
+    /// "Make X acting manager" writes a staff setting: asked first
+    /// (re-audit 10/8/26 M11).
+    @State private var confirmingActing: String?
 
     private var hardDays: [ReviewHardDay] {
         (result.review?.hardDays?.items ?? []).filter { ($0.date ?? "").prefix(10) == date.prefix(10) }
@@ -422,7 +432,7 @@ struct DayManagerNotes: View {
                         .foregroundStyle(Color.cavnarRed)
                         .padding(.top, 3)
                     HomeMixedText.make(breach.detail ?? "A rule this week breaks on this day",
-                                       size: CavnarType.caption, weight: 600, color: .cavnarRed)
+                                       size: CavnarType.caption, weight: 600, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -450,11 +460,12 @@ struct DayManagerNotes: View {
                     let key = name + "|" + date
                     if let note = viewModel.managerNotes[key] {
                         HomeMixedText.make(note, size: CavnarType.caption, weight: 600,
-                                           color: note.contains("acting manager on") ? .cavnarGreen : .cavnarRed)
+                                           color: note.contains("acting manager on") ? .cavnarGreen : .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Button {
-                            Task { await viewModel.makeActingManager(name, on: date) }
+                            Haptic.light()
+                            confirmingActing = name
                         } label: {
                             Group {
                                 if viewModel.managerBusy == key {
@@ -481,6 +492,19 @@ struct DayManagerNotes: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .confirmationDialog(confirmingActing.map { "Make \($0) acting manager on \(CavnarDate.mdy(date))?" } ?? "",
+                            isPresented: Binding(get: { confirmingActing != nil },
+                                                 set: { if !$0 { confirmingActing = nil } }),
+                            titleVisibility: .visible) {
+            Button(confirmingActing.map { "Make \($0) acting manager" } ?? "Confirm") {
+                guard let name = confirmingActing else { return }
+                confirmingActing = nil
+                Task { await viewModel.makeActingManager(name, on: date) }
+            }
+            Button("Cancel", role: .cancel) { confirmingActing = nil }
+        } message: {
+            Text("They count as the manager on the floor for that day, and the draft is checked again with them.")
         }
     }
 }
@@ -643,11 +667,10 @@ struct ScheduleReviewExtras: View {
         }
     }
 
-    private func kicker(_ text: String, _ color: Color = .cavnarInk3) -> some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.1)
-            .foregroundStyle(color)
+    /// The one kicker (L10); a tint only where the colour is the meaning
+    /// (red for a check that didn't run, amber for a warning).
+    private func kicker(_ text: String, _ color: Color = .cavnarEmber2) -> some View {
+        CavnarKicker(text, tint: color)
     }
 
     // Repair stages that did not run (P-3, P-17): a blocking one leads with ⚠.
@@ -662,7 +685,7 @@ struct ScheduleReviewExtras: View {
                             .foregroundStyle(f.blocksPublish ? Color.cavnarRed : Color.cavnarInk3)
                             .padding(.top, 3)
                         HomeMixedText.make(text, size: CavnarType.secondary, weight: f.blocksPublish ? 600 : 400,
-                                           color: f.blocksPublish ? .cavnarRed : .cavnarInk2)
+                                           color: f.blocksPublish ? .cavnarRedText : .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -769,10 +792,11 @@ struct ScheduleReviewExtras: View {
                 HomeMixedText.make(c.line, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Your floors or a rule held these over the section count. Lower a floor or raise the section count in Schedule rules.")
+            Text("Your floors or a rule held these over the section count. Lower a floor or raise the section count.")
                 .font(.cavnar(.caption))
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
+            CavnarWebLinkRow(title: "Scheduling rules", subtitle: "Floors and the section count", path: "labor/rules")
         }
     }
 
@@ -961,7 +985,7 @@ struct EditWhySheet: View {
                         .cavnarCard()
                     }
                     if let error = viewModel.whyError {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     }
                     Button("Done") { dismiss() }
                         .buttonStyle(CavnarSecondaryButtonStyle())

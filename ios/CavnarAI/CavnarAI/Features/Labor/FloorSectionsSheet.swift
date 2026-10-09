@@ -253,7 +253,7 @@ struct FloorSectionsSheet: View {
         if store.busy != nil {
             CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
         } else if let error = store.error {
-            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let note = store.note {
             Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)

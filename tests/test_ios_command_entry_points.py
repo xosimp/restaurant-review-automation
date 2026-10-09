@@ -215,7 +215,12 @@ def test_send_is_pinned_once_a_week_is_drafted():
     inline = labor.split("let unsaved = viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved\n", 1)[1][:600]
     assert "if result.historyId == nil" in inline
     bar = _read(APP, "Features", "Labor", "LaborWaitingOnYou.swift").split("struct LaborSendBar", 1)[1]
-    assert "CavnarPrimaryButtonStyle(isDisabled: unsaved)" in bar and ".disabled(unsaved)" in bar
+    # Staff get the SAVED week: while edits wait the bar's one primary is
+    # Save, and Send is offered only once nothing is unsaved (re-audit
+    # 10/8/26 M16 — it used to sit disabled beside an inline Save).
+    assert "if unsaved {" in bar and "onSave()" in bar
+    assert bar.index("onSave()") < bar.index("onSend()")
+    assert "} else {" in bar.split("onSave()", 1)[1].split("onSend()", 1)[0]
 
 
 # ── #28: Food Cost ───────────────────────────────────────────────────────────

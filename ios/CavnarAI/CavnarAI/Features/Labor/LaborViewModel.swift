@@ -2934,6 +2934,21 @@ final class LaborViewModel {
 
     /// One tap: the shift goes to the same-role person with room and the
     /// week is re-scored and saved, like any other override.
+    /// The last "Move to X" from the rules check — the move swaps and saves
+    /// in one tap, so the panel offers its Undo (re-audit 10/8/26 M10).
+    struct OvertimeMoveUndo: Equatable {
+        let date: String?
+        let shiftStart: String?
+        let from: String
+        let to: String
+        /// "Tue" — the shift's day, for "Moved Ana's Tue shift to Bob".
+        var dayLabel: String {
+            guard let date, let name = LaborViewModel.weekdayName(date) else { return "" }
+            return String(name.prefix(3))
+        }
+    }
+    var lastOvertimeMove: OvertimeMoveUndo?
+
     func applyOvertimeMove(_ move: OvertimeMove) async {
         guard let rows = scheduleResult?.previewRows,
               let row = rows.first(where: {
@@ -2942,12 +2957,29 @@ final class LaborViewModel {
                       && ($0.shiftStart ?? "") == (move.candidate.shiftStart ?? "")
               }) else { return }
         await overrideEmployee(rowId: row.id, to: move.candidate.employee)
+        lastOvertimeMove = OvertimeMoveUndo(date: row.date, shiftStart: row.shiftStart,
+                                            from: row.employee ?? move.employee, to: move.candidate.employee)
         if let key = move.recKey {
             let _: RecordResponse? = try? await client.send(
                 "/mobile/api/recs/event", method: .post,
                 body: RecEventBody(key: key, event: "accepted", surface: "schedule_review", module: "schedule"),
                 hapticOnError: false)
         }
+    }
+
+    /// Puts the first person back on the shift the last move changed — the
+    /// same swap-and-save, the other way.
+    func undoOvertimeMove() async {
+        guard let undo = lastOvertimeMove, let rows = scheduleResult?.previewRows,
+              let row = rows.first(where: {
+                  $0.date == undo.date && ($0.shiftStart ?? "") == (undo.shiftStart ?? "")
+                      && ($0.employee ?? "").lowercased() == undo.to.lowercased()
+              }) else {
+            lastOvertimeMove = nil
+            return
+        }
+        lastOvertimeMove = nil
+        await overrideEmployee(rowId: row.id, to: undo.from)
     }
 
     private struct RecordResponse: Decodable { let ok: Bool }
@@ -3136,6 +3168,34 @@ final class LaborViewModel {
     var isSendingDraft = false
     var draftSendNote: String?
     var draftSendError: String?
+    /// A one-tap send waiting out the restaurant's send window: Waiting on
+    /// you offers its Undo in place (re-audit 10/8/26 L7).
+    var draftQueuedActionId: Int?
+    var isUndoingDraftSend = false
+
+    /// Stops the queued one-tap send before its window ends.
+    func undoDraftSend() async {
+        guard let id = draftQueuedActionId, !isUndoingDraftSend else { return }
+        isUndoingDraftSend = true
+        draftSendError = nil
+        defer { isUndoingDraftSend = false }
+        do {
+            let r = try await client.undoQueuedAction(id)
+            if r.ok {
+                Haptic.success()
+                draftQueuedActionId = nil
+                draftSendNote = r.message ?? "Stopped \u{2014} nothing went to staff."
+            } else {
+                draftQueuedActionId = nil
+                draftSendError = r.error ?? "That already went out, or was already undone."
+            }
+            await loadDraftCheck()
+        } catch let error as APIClient.APIError {
+            draftSendError = error.message
+        } catch {
+            draftSendError = "Couldn\u{2019}t reach Cavnar AI."
+        }
+    }
 
     func loadDraftCheck() async {
         do {
@@ -3154,8 +3214,10 @@ final class LaborViewModel {
         let alreadyPublished: Bool?
         let portalOnly: Bool?
         let note: String?
+        var actionId: Int? = nil
         enum CodingKeys: String, CodingKey {
             case ok, error, queued, note
+            case actionId = "action_id"
             case undoMinutes = "undo_minutes"
             case alreadyPublished = "already_published"
             case portalOnly = "portal_only"
@@ -3171,6 +3233,7 @@ final class LaborViewModel {
         isSendingDraft = true
         draftSendError = nil
         draftSendNote = nil
+        draftQueuedActionId = nil
         defer { isSendingDraft = false }
         do {
             let r: DraftSendResponse = try await client.send(
@@ -3179,8 +3242,10 @@ final class LaborViewModel {
             if r.ok {
                 Haptic.success()
                 // What actually happened, in the web's words (F2-17).
+                // A queued send's Undo sits beside this note (L7).
+                draftQueuedActionId = r.queued == true ? r.actionId : nil
                 draftSendNote = r.queued == true
-                    ? "Goes to staff in \(r.undoMinutes ?? 0) min \u{2014} undo from the Cavnar AI strip"
+                    ? "Goes to staff in \(r.undoMinutes ?? 0) min"
                     : r.alreadyPublished == true ? "Already sent \u{2014} nothing went out twice"
                     : r.portalOnly == true ? (r.note ?? "Published to the staff portal \u{2014} nobody was notified")
                     : "Schedule sent"

@@ -251,7 +251,7 @@ struct GenerateBuildRows: View {
                         Text("How you like the week built")
                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make(settings.notesLine, size: CavnarType.caption, color: .cavnarInk3)
+                        HomeMixedText.make(settings.notesLine, size: CavnarType.caption, color: .cavnarInk2)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
@@ -274,7 +274,7 @@ struct GenerateBuildRows: View {
                 }
             }
             if let error = settings.error {
-                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 6)
             } else if let status = settings.status {
@@ -301,40 +301,34 @@ struct GenerateBuildRows: View {
         Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
     }
 
+    /// The restaurant-wide labor target, read here (re-audit 10/8/26 M13):
+    /// "Built to 30%". It is Home's, the alerts' and every draft's ceiling,
+    /// so it is changed in Account on the web — a stepper here autosaved a
+    /// restaurant-wide number from inside "Generate a week".
     private var targetRow: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Labor target")
                     .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
-                Text("A ceiling, not a quota \u{2014} the draft keeps labor at or under it")
-                    .font(.cavnar(.caption))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 6)
-            if let target = settings.laborTarget {
-                HStack(spacing: 4) {
-                    if settings.canEditTargets {
-                        stepButton("minus", delta: -ScheduleBuildSettings.targetStep,
-                                   disabled: target <= ScheduleBuildSettings.targetRange.lowerBound)
-                    }
-                    (Text(ScheduleBuildSettings.pct(target)).font(.cavnarNumber(CavnarType.body, weight: 700))
-                     + Text("%").font(.cavnarNumber(CavnarType.caption, weight: 600)))
-                        .foregroundStyle(Color.cavnarInk)
-                        .frame(minWidth: 46)
-                        .opacity(settings.saving == "target" ? 0.6 : 1)
-                        .accessibilityLabel("Labor target \(ScheduleBuildSettings.pct(target)) percent")
-                    if settings.canEditTargets {
-                        stepButton("plus", delta: ScheduleBuildSettings.targetStep,
-                                   disabled: target >= ScheduleBuildSettings.targetRange.upperBound)
-                    }
+                Spacer(minLength: 6)
+                if let target = settings.laborTarget {
+                    CavnarMixedText("Built to \(ScheduleBuildSettings.pct(target))%", role: .label)
+                        .accessibilityLabel("Built to a labor target of \(ScheduleBuildSettings.pct(target)) percent")
+                } else {
+                    Text("\u{2014}").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk2)
                 }
-            } else {
-                Text("\u{2014}").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            }
+            Text("A ceiling, not a quota \u{2014} the draft keeps labor at or under it")
+                .font(.cavnar(.caption))
+                .foregroundStyle(Color.cavnarInk2)
+                .fixedSize(horizontal: false, vertical: true)
+            if settings.canEditTargets {
+                CavnarWebLinkRow(title: "Change the target", subtitle: "Account \u{2192} Targets & pay rates",
+                                 path: "account/restaurant")
             }
         }
-        .frame(minHeight: 52)
+        .padding(.vertical, CavnarSpace.xs)
     }
 
     private func stepButton(_ symbol: String, delta: Double, disabled: Bool) -> some View {
@@ -373,6 +367,7 @@ struct GenerateBuildRows: View {
                                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
                             }
                             .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarHitTarget()
                         }
                         .disabled(settings.saving == "auto_draft_day")
                     } else {
@@ -381,7 +376,7 @@ struct GenerateBuildRows: View {
                 }
                 Text("A draft only \u{2014} nothing goes to staff until you send it")
                     .font(.cavnar(.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -406,7 +401,7 @@ struct GenerateBuildRows: View {
                     .foregroundStyle(Color.cavnarInk)
                 HomeMixedText.make(p.armed ? "Armed \u{2014} \(p.trust) schedules went out unedited in a row"
                                            : "Your record: \(p.trust) of \(p.needed) unedited schedules in a row",
-                                   size: CavnarType.caption, color: .cavnarInk3)
+                                   size: CavnarType.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -550,7 +545,7 @@ struct ScheduleNotesSheet: View {
                     }
                     readings
                     if let error = settings.error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let status = settings.status {
                         HomeMixedText.make(status, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
@@ -560,7 +555,8 @@ struct ScheduleNotesSheet: View {
                 .padding(20)
             }
             .scrollDismissesKeyboard(.interactively)
-            .accountSheetChrome("Scheduling notes")
+            // A swipe-down over an unsaved note asks first (M12).
+            .accountSheetChrome("Scheduling notes", isDirty: editable && seeded && changed)
         }
         .onAppear {
             guard !seeded else { return }
@@ -632,7 +628,7 @@ struct ScheduleNotesSheet: View {
                 HomeMixedText.make("\u{201C}\(s.text)\u{201D}", size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 (Text(head + " ").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(tone)
-                 + Text(body).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3))
+                 + Text(body).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2))
                     .fixedSize(horizontal: false, vertical: true)
                 if canEdit, s.kind == "rule" || s.kind == "unchecked" {
                     Button {
@@ -643,7 +639,7 @@ struct ScheduleNotesSheet: View {
                         Text(s.kind == "rule" ? "Make it a rule" : "Make a minimum from it")
                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 36)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                 }
@@ -674,8 +670,8 @@ struct ScheduleNotesSheet: View {
                 } label: {
                     Text(settings.saving == "rule:\(rule.id)" ? "Removing\u{2026}" : "Remove the rule")
                         .font(.cavnarBody(CavnarType.caption, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .frame(minHeight: 36)
+                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
                 .disabled(settings.saving != nil)
@@ -753,7 +749,7 @@ private struct NoteRuleForm: View {
                         Text("None picked is every day.").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                     if let error {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 10) {

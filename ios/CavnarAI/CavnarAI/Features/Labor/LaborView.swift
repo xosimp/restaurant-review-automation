@@ -20,6 +20,9 @@ struct LaborView: View {
     // Scheduling notes, who-is-who questions and guest mentions (memory
     // round, 9/29/26): answered in Scheduling setup, nudged from Needs you.
     @State private var teamMemory = TeamMemoryViewModel()
+    /// The Team inbox, tonight's lineup brief and how shifts felt — one
+    /// load, read under Needs you (what waits) and Why (the pulse), M14.
+    @State private var teamModel = LaborTeamModel()
     @State private var subTab: LaborSubTab = .overview
     @State private var showDataInfo = false
     // The schedule row whose "why this person" is open.
@@ -87,6 +90,8 @@ struct LaborView: View {
     /// Scheduling setup opened on a section a link named (#49).
     @State private var setupFocusNotes = false
     @State private var setupOpenClosers = false
+    /// Scheduling setup opened on availability (L5) — spent once used.
+    @State private var setupFocusAvailability = false
     /// The week as a PDF to post or print, drawn once the rows settle.
     @State private var schedulePDF: URL?
 
@@ -125,7 +130,9 @@ struct LaborView: View {
                                 // REQUESTS & COVERS — what was decided and
                                 // tonight's covers; SCHEDULING SETUP — one row
                                 // that opens a sheet.
-                                laborGroupHeader("Needs you")
+                                if needsYouVisible {
+                                    laborGroupHeader("Needs you", count: needsYouCount)
+                                }
                                 // What staff are waiting on, answered in
                                 // place, before any chart (Friction #18) —
                                 // the only place a pending request shows.
@@ -150,11 +157,17 @@ struct LaborView: View {
                                 // What the team memory asks the owner — stale
                                 // notes, a person listed twice, a guest naming
                                 // someone — answered in Scheduling setup.
-                                TeamMemoryNudge(viewModel: teamMemory) { showingSetup = true }
-                                // Tonight's lineup brief while it waits on an
-                                // approval or a read, and the Team inbox
-                                // (parity #10, #26, #67).
-                                LaborTeamSection(openInbox: { inboxTarget = TeamInboxTarget(threadId: $0) },
+                                TeamMemoryNudge(viewModel: teamMemory) {
+                                    // Opens setup on the notes, not its top (L5).
+                                    setupFocusNotes = true
+                                    showingSetup = true
+                                }
+                                // Tonight's lineup brief while its draft waits
+                                // on an approval, and the Team inbox while
+                                // something in it is unread (parity #10, #26;
+                                // M14). How shifts felt is under Why.
+                                LaborTeamSection(model: teamModel,
+                                                 openInbox: { inboxTarget = TeamInboxTarget(threadId: $0) },
                                                  inboxOpen: inboxTarget != nil)
                                     .id(Self.teamOpsID)
                                 if let result = viewModel.scheduleResult, result.ok {
@@ -176,12 +189,10 @@ struct LaborView: View {
                                 // would confirm it — answerable (#25).
                                 if let diagnosis = analyticsViewModel.diagnosis {
                                     LaborDiagnosisCard(diagnosis: diagnosis)
+                                        .id(Self.diagnosisID)
                                 }
-                                // By role sits directly above Overstaffed /
-                                // Understaffed so they read as one group.
-                                if !stats.roleSummary.isEmpty {
-                                    roleSection(stats.roleSummary, dateRange: stats.dateRange)
-                                }
+                                // By role is a reading, not a decision: it is
+                                // on Analytics (L3).
                                 // Staffing review: the staffing board
                                 // (labor.staffing_board) — the web's
                                 // executive strip and decision cards,
@@ -202,17 +213,9 @@ struct LaborView: View {
                                     Task { await setupViewModel.addSuggestedPair(pair) }
                                 }, actionsOnly: true)
                                 .id(Self.intelID)
-                                // What the draft has learned, and the
-                                // servers' measured ratings (account holder
-                                // only) — H2-1, H2-3.
-                                learningRow("What the schedule has learned",
-                                            detail: "Habits and teams the draft keeps \u{2014} keep, let go or make a rule",
-                                            symbol: "brain") { showingMemory = true }
-                                if sessionStore.currentUser?.isOwner == true {
-                                    learningRow("Measured ratings",
-                                                detail: "What each server sells a guest, to confirm as a rating",
-                                                symbol: "chart.bar.xaxis") { showingMeasuredRatings = true }
-                                }
+                                // How shifts felt to staff over 14 days
+                                // (#67) — a reading, so under Why (M14).
+                                StaffPulseTile(summary: teamModel.pulse)
 
                                 // What was decided — the pending ones are in
                                 // Needs you — with Post a shift and the open
@@ -227,12 +230,29 @@ struct LaborView: View {
                                     scrollToReveal(Self.requestsID, proxy: proxy)
                                 }
                                 .id(Self.requestsID)
-                                CoversTile(model: covers)
+                                // Tonight's covers ask only while tonight's
+                                // count is missing; otherwise the entry form
+                                // is in Scheduling setup (L1).
+                                if covers.needsTonight {
+                                    CoversTile(model: covers)
+                                }
 
                                 laborGroupHeader("Scheduling setup")
                                     .padding(.top, 14)
                                 setupRow
                                     .id(Self.setupID)
+                                // What the draft has learned, and the
+                                // servers' measured ratings (account holder
+                                // only) — H2-1, H2-3; configuration around
+                                // the draft, so beside setup (L3).
+                                learningRow("What the schedule has learned",
+                                            detail: "Habits and teams the draft keeps \u{2014} keep, let go or make a rule",
+                                            symbol: "brain") { showingMemory = true }
+                                if sessionStore.currentUser?.isOwner == true {
+                                    learningRow("Measured ratings",
+                                                detail: "What each server sells a guest, to confirm as a rating",
+                                                symbol: "chart.bar.xaxis") { showingMeasuredRatings = true }
+                                }
                             } else if viewModel.isLoading {
                                 CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                             } else if let error = viewModel.errorMessage {
@@ -244,7 +264,14 @@ struct LaborView: View {
                                 .frame(maxWidth: .infinity)
                             }
                         } else {
-                            LaborAnalyticsSection(viewModel: analyticsViewModel, laborStats: viewModel.stats)
+                            // By role, moved from Overview's Why (L3) — inside
+                            // Analytics' More analysis (M29).
+                            LaborAnalyticsSection(
+                                viewModel: analyticsViewModel, laborStats: viewModel.stats,
+                                roleBreakdown: viewModel.stats.flatMap { stats in
+                                    stats.roleSummary.isEmpty ? nil
+                                        : AnyView(roleSection(stats.roleSummary, dateRange: stats.dateRange))
+                                })
                         }
                     }
                     .padding(20)
@@ -258,8 +285,12 @@ struct LaborView: View {
                 .safeAreaInset(edge: .bottom) {
                     if subTab == .overview, let result = viewModel.scheduleResult, result.ok,
                        result.historyId != nil, viewModel.weekReadOnlyReason == nil {
-                        LaborSendBar(issues: (result.review?.hardCount ?? 0) + (result.review?.softCount ?? 0),
+                        LaborSendBar(issues: (result.review?.hardCount ?? 0) + (result.review?.softCount ?? 0)
+                                        + result.attentionExtraCount,
                                      unsaved: viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved,
+                                     isSaving: viewModel.isRescoringQuality,
+                                     saveLabel: viewModel.optimizerUnsaved ? "Save Cavnar AI\u{2019}s changes" : "Save changes",
+                                     onSave: { Task { await viewModel.rescoreQuality(save: true) } },
                                      onReview: {
                                          withAnimation(.easeOut(duration: 0.3)) {
                                              proxy.scrollTo(Self.reviewID, anchor: .top)
@@ -295,10 +326,14 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
+        .environment(\.scheduleSalariedNames,
+                     Set((setupViewModel.teamSetup.managers?.salaried ?? []).map { $0.name.lowercased() }))
         .sheet(item: $focusPerson) { target in PersonSheet(target: target) }
         .sheet(isPresented: $showingSetup, onDismiss: { setupFocusPerson = nil }) {
             LaborSetupSheet(viewModel: viewModel, setupViewModel: setupViewModel, teamMemory: teamMemory,
+                            covers: covers,
                             focusPerson: $setupFocusPerson, focusNotes: $setupFocusNotes,
+                            focusAvailability: $setupFocusAvailability,
                             openClosers: $setupOpenClosers)
         }
         // The ribbon itself always shows once there's a hero card, even
@@ -457,6 +492,9 @@ struct LaborView: View {
             await setupViewModel.loadShiftRequests()
             await setupViewModel.loadRoster()
             await setupViewModel.loadSignals()
+            // Who is salaried, so the week's ">40h · overtime" mark skips
+            // them (L8) — read with the rules.
+            if !setupViewModel.rulesLoaded { await setupViewModel.loadRules() }
         }
         .task { await teamMemory.load() }
         .task { await buildSettings.load(weekStart: viewModel.generateWeek.weekStart) }
@@ -634,17 +672,48 @@ struct LaborView: View {
                                 + " \u{2014} a gap to close, not money saved.",
                                 role: .secondary, color: .cavnarAmber)
             }
-            // Why, in one line: the diagnosis's most likely cause (the card
-            // under Why carries the check and the reasoning).
-            if let diagnosis = analyticsViewModel.diagnosis, diagnosis.hasCause, let cause = diagnosis.cause {
-                (Text("Most likely: ").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
-                 + HomeMixedText.make(cause, role: .body))
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
+            // Why: the cause is said once, on the diagnosis card under Why
+            // (M17) — the hero's line takes the owner there.
+            if let diagnosis = analyticsViewModel.diagnosis, diagnosis.hasCause {
+                Button {
+                    Haptic.light()
+                    scrollTarget = Self.diagnosisID
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs) {
+                        Text("Why it ran over")
+                            .cavnarText(.label, color: .cavnarEmber2)
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Scrolls to the most likely cause")
             }
 
             if stats.isLive {
+                // A drafted week staff don't have yet is the decision: Review
+                // & send is the primary, Generate the quieter row (M15).
+                if let draft = viewModel.draftCheck, let id = draft.scheduleId, !viewModel.isGeneratingSchedule {
+                    Button {
+                        Haptic.light()
+                        if viewModel.scheduleResult?.historyId == id {
+                            viewModel.scheduleResultExpanded = true
+                            scrollTarget = Self.scheduleID
+                        } else {
+                            requestOpenWeek(id)
+                        }
+                    } label: {
+                        Text(draft.weekStart.map { "Review & send the week of \(CavnarDate.mdy($0))" }
+                             ?? "Review & send the drafted week")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle())
+                    .padding(.top, CavnarSpace.xxs)
+                }
                 ScheduleGenerateButton(
                     tone: tone,
                     title: generateTitle,
@@ -810,8 +879,11 @@ struct LaborView: View {
         )
     }
 
+    /// The ribbon's tint is the hero's own tone (L4): neutral when the
+    /// figures can't be trusted, never red or green on a number it
+    /// couldn't measure.
     private var heroTone: CavnarTone? {
-        viewModel.stats.map { $0.onTrack ? .good : .bad }
+        viewModel.stats.map { $0.figuresAreTrustworthy ? ($0.onTrack ? .good : .bad) : .neutral }
     }
 
     private struct DataFreshness {
@@ -926,18 +998,41 @@ struct LaborView: View {
     private static let reviewID = "labor-schedule-review"
     private static let setupID = "labor-setup"
     private static let teamOpsID = "labor-team-ops"
+    private static let diagnosisID = "labor-diagnosis"
+
+    /// Whether NEEDS YOU has anything under it (M14): a request, the
+    /// drafted week, the team's notes, a brief or message waiting, the
+    /// week on screen — never a header over nothing.
+    private var needsYouVisible: Bool {
+        needsYouCount > 0 || viewModel.draftSendNote != nil || teamMemory.nudgeLine != nil
+            || viewModel.scheduleResult?.ok == true || viewModel.scheduleError != nil
+            || viewModel.openingWeekId != nil || viewModel.openWeekError != nil
+    }
+
+    /// What waits on the owner, counted once (the header carries it; the
+    /// Waiting on you card no longer repeats a kicker of its own).
+    private var needsYouCount: Int {
+        LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.pendingRequests,
+                                draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
+            + (teamModel.needsYou ? 1 : 0)
+    }
 
     /// A group's small header on the Overview (density #28): three of
     /// them — Needs you, Why, Scheduling setup — so a decision never looks
     /// like a settings row.
-    private func laborGroupHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.6)
-            .foregroundStyle(Color.cavnarEmber2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, -8)
-            .accessibilityAddTraits(.isHeader)
+    private func laborGroupHeader(_ title: String, count: Int? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            CavnarKicker(title)
+            Spacer(minLength: 0)
+            if let count, count > 0 {
+                Text("\(count)")
+                    .font(.cavnar(.figureS))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityLabel("\(count) waiting")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, -8)
     }
 
     /// The one row that opens Scheduling setup — configuration the
@@ -956,9 +1051,9 @@ struct LaborView: View {
                     Text("Team, availability & targets")
                         .font(.cavnarBody(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
-                    Text("Roster, availability, demand signals, team strength, shift targets")
+                    Text("Roster, availability, events, team strength, covers")
                         .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
@@ -1036,6 +1131,7 @@ struct LaborView: View {
             scrollToReveal(Self.boardID, proxy: proxy)
         case .availability:
             viewModel.availabilityExpanded = true
+            setupFocusAvailability = true
             scrollToReveal(Self.setupID, proxy: proxy)
             showingSetup = true
         case .schedule:
@@ -1150,7 +1246,11 @@ struct LaborView: View {
         CavnarDropdown(
             title: "Generated schedule",
             subtitle: Self.scheduleSubtitle(result),
-            tone: (result.review?.hardCount ?? 0) > 0 ? .warning : .good,
+            // Red while something the generation could not do stands — a
+            // stretch with no manager, a day not written (H3); amber for a
+            // rule the check counts.
+            tone: !result.attentionParts.isEmpty ? .bad
+                : ((result.review?.hardCount ?? 0) > 0 ? .warning : .good),
             isExpanded: $viewModel.scheduleResultExpanded
         ) {
             VStack(alignment: .leading, spacing: CavnarSpace.m) {
@@ -1177,6 +1277,20 @@ struct LaborView: View {
                 // (schedule audit 10/3/26 B2, M, E). The informational
                 // notes (a starting point, how current the sales were) are
                 // under Details.
+                // Every stretch with no manager on the floor, at the week's
+                // level (H4) — the day pages carry the why and who could
+                // act; a red dot marks those days on the strip.
+                let gaps = result.managerGaps
+                if !gaps.isEmpty {
+                    ScheduleNotice(text: gaps.count == 1 ? "Manager gap: \(gaps[0].line)"
+                                                         : "\(gaps.count) manager gaps this week",
+                                   tone: .cavnarRed, symbol: "person.crop.circle.badge.exclamationmark",
+                                   detail: gaps.count == 1 ? [] : gaps.map(\.line)) {
+                        Text("Open the day below for why, and who could act as manager.")
+                            .cavnarText(.caption, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 DraftNotices(viewModel: viewModel, result: result, part: .urgent,
                              onOpenAvailability: openAvailability, onOpenClosures: openHours)
                 if let plan = result.plan, let question = plan.question, !plan.unknownPattern.isEmpty {
@@ -1253,6 +1367,8 @@ struct LaborView: View {
             if let quality = result.quality, quality.checked {
                 NavigationStack {
                     ScrollView {
+                        VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                        weekExplanation(result)
                         ShiftQualityPanel(quality: quality, whatIf: result.whatIf,
                                           isRescoring: viewModel.isRescoringQuality,
                                           overrideState: viewModel.overrideState,
@@ -1268,6 +1384,7 @@ struct LaborView: View {
                                               ? (quality.suppressedRecommendationKinds ?? [])
                                               : viewModel.suppressedRecommendationKinds,
                                           viewModel: viewModel)
+                        }
                             .padding(CavnarSpace.gutter)
                     }
                     .accountSheetChrome("How it scored")
@@ -1326,40 +1443,22 @@ struct LaborView: View {
                             }
                         }
                     }
-                    if let narrative = result.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !narrative.isEmpty {
-                        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-                            CavnarKicker("Cavnar AI's note")
-                            Text(narrative)
-                                .cavnarText(.body)
-                                .lineLimit(showingFullNarrative ? nil : 3)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if narrative.count > 160 {
-                                Button {
-                                    Haptic.light()
-                                    showingFullNarrative.toggle()
-                                } label: {
-                                    Text(showingFullNarrative ? "Less" : "More")
-                                        .cavnarText(.label, color: .cavnarEmber2)
-                                        .cavnarHitTarget()
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
-                        // The hourly crew's budget against the hourly hours
-                        // (schedule audit 10/3/26 D-1, E-7/P-6, E-24).
+                        // The ONE budget line (M19): the hourly crew's
+                        // budget against the hourly hours (schedule audit
+                        // 10/3/26 D-1, E-7/P-6, E-24).
                         ParHoursCheck(budget: budget, scheduled: scheduled, hourly: result.hoursHourly,
                                       salaried: result.hoursSalaried, dollars: result.laborBudgetDollars,
                                       basis: result.budgetBasis?.value)
                     }
-                    // Cost, the budget trim, staggered starts, and what the
-                    // forecast could not see — each only when the payload
-                    // carried it.
-                    ScheduleWeekNotes(result: result, demandAccuracy: viewModel.stats?.demandAccuracy)
                     if let quality = result.quality, quality.checked {
+                        // Cavnar AI's note and the week's notes (cost, the
+                        // budget trim, staggered starts, what the forecast
+                        // could not see) are read behind How it scored
+                        // (M19) — the week's labor was said three ways here.
                         howItScoredTile(quality)
+                    } else {
+                        weekExplanation(result)
                     }
                     // The requirements the week was written and scored to
                     // (E) — a wide table, read on the web.
@@ -1371,6 +1470,50 @@ struct LaborView: View {
                 .transition(.opacity)
             }
         }
+    }
+
+    /// Cavnar AI's note on the week in the answer card's anatomy (L13): its
+    /// first sentence the headline, the rest the summary behind "More";
+    /// then the week's notes — cost, the budget trim, staggered starts,
+    /// what the forecast could not see — each only when carried.
+    @ViewBuilder
+    private func weekExplanation(_ result: GeneratedSchedule) -> some View {
+        if let narrative = result.narrative?.trimmingCharacters(in: .whitespacesAndNewlines), !narrative.isEmpty {
+            let split = Self.firstSentence(narrative)
+            CavnarAnswerCard(kicker: "Cavnar AI\u{2019}s note", headline: split.head,
+                             summary: showingFullNarrative ? split.rest : nil) {
+                if split.rest != nil {
+                    Button {
+                        Haptic.light()
+                        showingFullNarrative.toggle()
+                    } label: {
+                        Text(showingFullNarrative ? "Less" : "More")
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        ScheduleWeekNotes(result: result, demandAccuracy: viewModel.stats?.demandAccuracy)
+    }
+
+    /// "Labor lands at 29%. Two closers…" → ("Labor lands at 29%.", "Two closers…").
+    static func firstSentence(_ text: String) -> (head: String, rest: String?) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var idx = t.startIndex
+        while idx < t.endIndex {
+            let c = t[idx]
+            let next = t.index(after: idx)
+            if (c == "." || c == "!" || c == "?"), next == t.endIndex || t[next] == " " || t[next] == "\n" {
+                // Not a decimal point: "29.5%" keeps going.
+                let head = String(t[...idx])
+                let rest = String(t[next...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return (head, rest.isEmpty ? nil : rest)
+            }
+            idx = next
+        }
+        return (t, nil)
     }
 
     private func changeLine(_ line: String) -> some View {
@@ -1397,7 +1540,7 @@ struct LaborView: View {
                                 .foregroundStyle(Color.cavnarInk)
                         }
                         if let band = quality.band, !band.isEmpty {
-                            Text(band.prefix(1).uppercased() + band.dropFirst().replacingOccurrences(of: "_", with: " "))
+                            Text(Self.bandWords(band))
                                 .cavnarText(.secondary)
                         }
                     }
@@ -1418,6 +1561,12 @@ struct LaborView: View {
         .buttonStyle(.plain)
         .cavnarCard()
         .accessibilityHint("Opens how the week scored")
+    }
+
+    /// A quality band in owner words: "needs_work" → "Needs work".
+    static func bandWords(_ band: String) -> String {
+        let words = band.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
     }
 
     /// Changes whenever the rows do, so the PDF is redrawn after an edit.
@@ -1484,9 +1633,17 @@ struct LaborView: View {
         if let q = result.quality, q.checked, let score = q.score {
             parts.append("Quality \(score)/100")
         }
+        // What the generation could not do, named (H3): "No manager Tue
+        // 3:00pm–5:00pm", "Sat not written" — never folded into a count.
+        let attention = result.attentionParts
+        parts.append(contentsOf: attention)
         if let review = result.review {
             let open = review.hardCount + review.softCount
-            parts.append(open > 0 ? "\(open) still need\(open == 1 ? "s" : "") you" : "ready to send")
+            if open > 0 {
+                parts.append("\(open) still need\(open == 1 ? "s" : "") you")
+            } else if attention.isEmpty {
+                parts.append("ready to send")
+            }
         }
         return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
@@ -1587,6 +1744,8 @@ struct LaborView: View {
             ($0.day ?? LaborViewModel.weekdayName($0.date) ?? $0.date, $0.date)
         }, uniquingKeysWith: { a, _ in a })
         let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil || unwritten[$0] != nil }
+        // Days with a stretch nobody manages — a red dot on their chip (H4).
+        let gapDates = viewModel.scheduleResult?.managerGapDates ?? []
 
         VStack(alignment: .leading, spacing: CavnarSpace.m) {
             HStack(spacing: CavnarSpace.xs) {
@@ -1624,9 +1783,11 @@ struct LaborView: View {
             // (iOS parity #48) — the web's grid and list, phone-shaped.
             ScheduleWeekPager(
                 days: orderedDays.map { day in
-                    ScheduleDayPage(day: day, date: grouped[day]?.first?.date ?? unwritten[day],
+                    let date = grouped[day]?.first?.date ?? unwritten[day]
+                    return ScheduleDayPage(day: day, date: date,
                                     count: grouped[day]?.count ?? 0,
-                                    notWritten: (grouped[day] ?? []).isEmpty && unwritten[day] != nil)
+                                    notWritten: (grouped[day] ?? []).isEmpty && unwritten[day] != nil,
+                                    managerGap: date.map { gapDates.contains(String($0.prefix(10))) } ?? false)
                 },
                 rows: recognized,
                 selectedDay: $pagerDay,
@@ -1791,6 +1952,7 @@ struct LaborView: View {
     /// Scheduling setup, opened on availability.
     private func openAvailability() {
         viewModel.availabilityExpanded = true
+        setupFocusAvailability = true
         showingSetup = true
     }
 
@@ -1817,7 +1979,7 @@ struct LaborView: View {
                         .foregroundStyle(Color.cavnarInk)
                     Text(detail)
                         .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
@@ -2283,10 +2445,14 @@ private struct LaborSetupSheet: View {
     let viewModel: LaborViewModel
     let setupViewModel: ScheduleSetupViewModel
     let teamMemory: TeamMemoryViewModel
+    /// Tonight's covers entry, when the Labor page isn't asking for it (L1).
+    let covers: CoversModel
     /// A "person/<key>" link's person, opened over the roster.
     @Binding var focusPerson: PersonSheetTarget?
     /// labor/notes and labor/closers (#49): scrolled to, or opened, once.
     @Binding var focusNotes: Bool
+    /// Availability — a "Change availability" or labor/availability (L5).
+    @Binding var focusAvailability: Bool
     @Binding var openClosers: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -2319,6 +2485,11 @@ private struct LaborSetupSheet: View {
                         TeamStrengthSection(viewModel: viewModel, setup: setupViewModel.teamSetup,
                                             rolesFor: rolesByName) { reveal(Self.teamID, proxy) }
                             .id(Self.teamID)
+                        // Covers by night — on the Labor page only while
+                        // tonight's count is missing (L1).
+                        if !covers.needsTonight {
+                            CoversTile(model: covers)
+                        }
                         // Configuration that is a wide table or a
                         // multi-field form is set on the web (iOS
                         // readability round, 10/8/26): next week's forecast
@@ -2328,8 +2499,10 @@ private struct LaborSetupSheet: View {
                         VStack(spacing: 0) {
                             CavnarWebLinkRow(title: "Shift targets",
                                              subtitle: "How strong each shift should be", path: "labor/team")
+                            // The standards are part of the web's Scheduling
+                            // rules (sfw2RulesStandards).
                             CavnarWebLinkRow(title: "Labor standards",
-                                             subtitle: "The work one person carries an hour", path: "labor/team")
+                                             subtitle: "The work one person carries an hour", path: "labor/rules")
                             CavnarWebLinkRow(title: "Next week's forecast",
                                              subtitle: "Sales and hours, day by day", path: "labor/schedule",
                                              actionLabel: "See it on the web")
@@ -2341,9 +2514,13 @@ private struct LaborSetupSheet: View {
                 }
                 .scrollDismissesKeyboard(.immediately)
                 .onAppear {
-                    guard focusNotes else { return }
-                    focusNotes = false
-                    reveal(Self.notesID, proxy)
+                    if focusNotes {
+                        focusNotes = false
+                        reveal(Self.notesID, proxy)
+                    } else if focusAvailability {
+                        focusAvailability = false
+                        reveal(Self.availabilityID, proxy)
+                    }
                 }
             }
             .cavnarModuleBackground()

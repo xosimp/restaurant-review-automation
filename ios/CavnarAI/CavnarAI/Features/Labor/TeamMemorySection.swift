@@ -126,6 +126,53 @@ final class TeamMemoryViewModel {
 
     /// "Still true" (confirm), "It's over" (ends today) or "Remove" — one
     /// constraint at a time, saved at once.
+    // MARK: Remove / "It's over", with Undo (re-audit 10/8/26 M9)
+
+    /// A Remove or "It's over" held for the Undo window: the part leaves
+    /// the list at once and the request that makes it final is sent only if
+    /// nobody taps Undo in 7 seconds — the server has no inverse
+    /// (DESIGN_SYSTEM §10 tier 1, `cavUndoable`). Leaving the screen inside
+    /// the window keeps the note (the safe side).
+    struct PendingNoteAnswer: Equatable {
+        let note: StaffNote
+        let part: StaffNotePart
+        let action: String
+        var key: String { "note:\(note.id):\(part.index)" }
+        var line: String {
+            action == "expire" ? "Ended \(note.employeeName)\u{2019}s note" : "Removed \(note.employeeName)\u{2019}s note"
+        }
+    }
+    private(set) var pendingNote: PendingNoteAnswer?
+    private var pendingTask: Task<Void, Never>?
+
+    /// Hidden while its Remove / It's over waits out the Undo window.
+    func isPending(_ note: StaffNote, _ part: StaffNotePart) -> Bool {
+        pendingNote?.key == "note:\(note.id):\(part.index)"
+    }
+
+    func answerWithUndo(_ note: StaffNote, part: StaffNotePart, action: String) {
+        // A second one commits the first at once.
+        if let earlier = pendingNote {
+            pendingTask?.cancel()
+            Task { await answer(earlier.note, part: earlier.part, action: earlier.action) }
+        }
+        let pending = PendingNoteAnswer(note: note, part: part, action: action)
+        pendingNote = pending
+        message = nil
+        pendingTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(7))
+            guard !Task.isCancelled, let self, self.pendingNote == pending else { return }
+            self.pendingNote = nil
+            await self.answer(pending.note, part: pending.part, action: pending.action)
+        }
+    }
+
+    func undoPendingNote() {
+        pendingTask?.cancel()
+        pendingTask = nil
+        pendingNote = nil
+    }
+
     func answer(_ note: StaffNote, part: StaffNotePart, action: String) async {
         busyKey = "note:\(note.id):\(part.index)"
         errorMessage = nil
@@ -309,6 +356,8 @@ struct TeamMemorySection: View {
     var names: [String] = []
     var onExpand: (() -> Void)? = nil
     @State private var person: PersonSheetTarget?
+    /// "Same person" merges two records: asked first (M9).
+    @State private var confirmingSame: IdentityQuestion?
 
     var body: some View {
         CavnarDropdown(
@@ -330,17 +379,49 @@ struct TeamMemorySection: View {
                     notesBlock
                     if !viewModel.mentions.isEmpty { mentionsBlock }
                 }
-                if let message = viewModel.message {
+                if let pending = viewModel.pendingNote {
+                    HStack(spacing: CavnarSpace.s) {
+                        Text(pending.line)
+                            .cavnarText(.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button {
+                            Haptic.light()
+                            viewModel.undoPendingNote()
+                        } label: {
+                            Text("Undo").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, CavnarSpace.s)
+                    .background(Capsule().fill(Color.cavnarPaper2))
+                    .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                } else if let message = viewModel.message {
                     Text(message).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = viewModel.errorMessage {
-                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .sheet(item: $person) { target in PersonSheet(target: target) }
+        // Leaving inside the Undo window keeps the note (the safe side).
+        .onDisappear { viewModel.undoPendingNote() }
+        .confirmationDialog(confirmingSame.map { "Merge \($0.a.name) and \($0.b.name)?" } ?? "",
+                            isPresented: Binding(get: { confirmingSame != nil },
+                                                 set: { if !$0 { confirmingSame = nil } }),
+                            titleVisibility: .visible) {
+            Button("Same person \u{2014} merge them") {
+                guard let q = confirmingSame else { return }
+                confirmingSame = nil
+                Task { await viewModel.answer(q, same: true) }
+            }
+            Button("Cancel", role: .cancel) { confirmingSame = nil }
+        } message: {
+            Text("Every rating, setting, note and shift moves under one name.")
+        }
     }
 
     private var subtitle: String {
@@ -408,7 +489,7 @@ struct TeamMemorySection: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens \(note.employeeName)\u{2019}s record")
-            ForEach(note.parts) { part in partRow(note, part) }
+            ForEach(note.parts.filter { !viewModel.isPending(note, $0) }) { part in partRow(note, part) }
         }
         .padding(.vertical, 10)
     }
@@ -446,11 +527,12 @@ struct TeamMemorySection: View {
                             .disabled(busy)
                         Button {
                             Haptic.light()
-                            Task { await viewModel.answer(note, part: part, action: "expire") }
+                            viewModel.answerWithUndo(note, part: part, action: "expire")
                         } label: {
                             Text("It\u{2019}s over")
                                 .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .foregroundStyle(Color.cavnarInk2)
+                                .cavnarHitTarget()
                         }
                         .buttonStyle(.plain)
                         .disabled(busy)
@@ -460,11 +542,12 @@ struct TeamMemorySection: View {
             } else if viewModel.canEditNotes && !part.ended {
                 Button {
                     Haptic.light()
-                    Task { await viewModel.answer(note, part: part, action: "remove") }
+                    viewModel.answerWithUndo(note, part: part, action: "remove")
                 } label: {
                     Text("Remove")
                         .font(.cavnarBody(CavnarType.caption, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
                 .disabled(busy)
@@ -560,7 +643,7 @@ struct TeamMemorySection: View {
                 HStack(spacing: 8) {
                     Button {
                         Haptic.light()
-                        Task { await viewModel.answer(q, same: true) }
+                        confirmingSame = q
                     } label: { busyLabel(busy, "Same person").frame(maxWidth: .infinity) }
                         .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: busy))
                         .disabled(busy)
@@ -799,7 +882,7 @@ struct CoverAnswerRow: View {
                 }
             }
             if let error {
-                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRedText)
             }
         }
         .onAppear {

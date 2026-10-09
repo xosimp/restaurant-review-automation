@@ -54,7 +54,7 @@ struct CloserCleanupSheet: View {
                             .padding(.vertical, 10)
                             .accessibilityLabel("Loading the closers")
                     } else if let error = store.closerError, review == nil {
-                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let review {
                         if let warning = review.warning {
@@ -196,7 +196,7 @@ struct CloserCleanupSheet: View {
                     SetupHelp(text: "Also counts the ratings entered through support as yours.")
                 }
                 if let m = store.adoptMessage { Text(m).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen) }
-                if let e = store.adoptError { Text(e).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed) }
+                if let e = store.adoptError { Text(e).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText) }
             }
             .padding(.vertical, 10)
         }
@@ -284,7 +284,7 @@ struct CloserCleanupSheet: View {
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: store.isApplyingClosers || (n == 0 && !rolesChanged)))
                 .disabled(store.isApplyingClosers || (n == 0 && !rolesChanged))
                 if let m = store.closerMessage { Text(m).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen) }
-                if let e = store.closerError { Text(e).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
+                if let e = store.closerError { Text(e).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true) }
             }
         } else {

@@ -3,17 +3,22 @@ import Observation
 import Charts
 
 /// What the team says and reads, on Labor's page (parity audit 10/7/26):
-/// the Team inbox's way in with its unread count (#10), tonight's lineup
-/// brief waiting for approval (#26), and how shifts felt to staff over the
-/// last 14 days (#67). Each part shows only for a login the server answers
-/// for — a 403 hides it rather than showing an empty card.
+/// the Team inbox's way in with its unread count (#10) and tonight's lineup
+/// brief waiting for approval (#26). Each part shows only for a login the
+/// server answers for — a 403 hides it rather than showing an empty card.
+///
+/// Under Needs you only what waits on the owner shows (re-audit 10/8/26
+/// M14): the brief while its draft waits for approval, the inbox while
+/// something in it is unread or somebody is running late. How shifts felt
+/// (#67) is a reading, not a decision — it sits under Why
+/// (`StaffPulseTile(summary: model.pulse)`), fed by the same model, which
+/// the Labor screen owns so both places read one load.
 struct LaborTeamSection: View {
+    let model: LaborTeamModel
     /// Opens the Team inbox, on a thread when one is named.
     var openInbox: (Int?) -> Void
     /// Whether the inbox sheet is up — its counts re-read when it closes.
     var inboxOpen: Bool
-
-    @State private var model = LaborTeamModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,9 +27,8 @@ struct LaborTeamSection: View {
             Color.clear.frame(height: 0)
                 .task { await model.load() }
             VStack(alignment: .leading, spacing: 14) {
-                LineupBriefCard(model: model)
-                if model.inboxAvailable { inboxRow }
-                StaffPulseTile(summary: model.pulse)
+                if model.briefWaits { LineupBriefCard(model: model) }
+                if model.inboxWaits { inboxRow }
             }
         }
         .onChange(of: inboxOpen) { _, open in
@@ -46,7 +50,7 @@ struct LaborTeamSection: View {
                     Text("Team inbox")
                         .font(.cavnarBody(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(model.inboxLine, size: CavnarType.caption, color: .cavnarInk3)
+                    HomeMixedText.make(model.inboxLine, size: CavnarType.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
@@ -89,6 +93,14 @@ final class LaborTeamModel {
 
     static let briefPath = "/mobile/api/staff-brief"
     static let pulsePath = "/mobile/api/labor/staff-pulse"
+
+    /// Something in the inbox waits on the owner: an unread message or a
+    /// teammate running late today (M14).
+    var inboxWaits: Bool { inboxAvailable && (unread > 0 || lateCount > 0) }
+    /// Tonight's brief has a draft waiting for approval (M14).
+    var briefWaits: Bool { brief?.isWaiting == true }
+    /// Anything of the team's under Needs you.
+    var needsYou: Bool { inboxWaits || briefWaits }
 
     /// "2 unread messages · 1 running late today" — the web's summary line.
     var inboxLine: String {
@@ -520,13 +532,10 @@ struct StaffPulseTile: View {
         if let s = summary {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("HOW SHIFTS FELT")
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.6)
-                        .foregroundStyle(Color.cavnarEmber2)
+                    CavnarKicker("How shifts felt")
                     Spacer()
                     HomeMixedText.make(s.window?.label ?? "Last \(s.days) days", size: CavnarType.caption,
-                                       weight: 600, color: .cavnarInk3)
+                                       weight: 600, color: .cavnarInk2)
                 }
                 if s.enough {
                     HStack(alignment: .bottom, spacing: 18) {
@@ -548,7 +557,7 @@ struct StaffPulseTile: View {
                     }
                     if !s.byDay.isEmpty || !s.notes.isEmpty { details(s) }
                 } else {
-                    HomeMixedText.make(s.floorLine, size: CavnarType.body, color: .cavnarInk3)
+                    HomeMixedText.make(s.floorLine, size: CavnarType.body, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
