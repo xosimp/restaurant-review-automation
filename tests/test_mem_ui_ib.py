@@ -209,7 +209,11 @@ def test_marketing_sends_the_draft_back():
 
 
 def test_intel_and_what_connects_show_their_history():
-    assert "IntelHistorySection(movement: movement)" in _swift("Features/Intel/IntelView.swift")
+    # iOS readability round (10/8/26): the phone keeps "What changed" and
+    # links to the history chart on the web ("Web explains. iPhone decides.").
+    intel = _swift("Features/Intel/IntelView.swift")
+    assert "movementSection(movement)" in intel
+    assert 'CavnarWebLinkRow(title: "Ratings over time"' in intel
     sheet = _swift("Features/Home/HomeOneThingCard.swift")
     assert "link.memory" in sheet and "memory.badge" in sheet
 

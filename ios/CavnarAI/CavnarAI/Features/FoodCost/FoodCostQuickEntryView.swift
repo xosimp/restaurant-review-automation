@@ -13,6 +13,8 @@ struct FoodCostQuickEntryView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = FoodCostQuickEntryViewModel()
     @State private var analyticsViewModel = FoodCostAnalyticsViewModel()
+    /// Orders sent and not yet received — the action row's Receive chip.
+    @State private var deliveries = DeliveriesViewModel()
     @State private var subTab: FoodCostSubTab = .analytics
     @State private var showSuccessToast = false
     @State private var showingTrackerHelp = false
@@ -23,6 +25,14 @@ struct FoodCostQuickEntryView: View {
     /// (ModuleRoute.navPath). Opened once, on first appear (F3-7).
     var focus: NavPath? = nil
     @State private var focusSpent = false
+    /// The tracker's save, waiting out its Undo window.
+    @State private var pendingSave: Task<Void, Never>?
+    @FocusState private var trackerFocus: TrackerField?
+
+    /// How long Save waits before it sends, so Undo can stop it. The save
+    /// overwrites this week's prices, which the 3-second press-and-hold
+    /// used to guard; a plain tap with a short Undo is the iPhone way.
+    private static let undoSeconds: UInt64 = 4
 
     init(focus: NavPath? = nil) {
         self.focus = focus
@@ -43,16 +53,16 @@ struct FoodCostQuickEntryView: View {
         // Modules tab's stack now, not a tab root.
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: FoodCostSubTab.allCases) { $0.rawValue }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
+                .padding(.horizontal, CavnarSpace.m)
+                .padding(.top, CavnarSpace.xs)
+                .padding(.bottom, CavnarSpace.s)
                 .cavnarRibbonHeaderAnchor()
 
             // The daily jobs first, on both sub-tabs — they used to sit
             // under ~10 charts on Analytics (Friction audit #28, U3-7).
-            FoodCostActionRow(open: { openSheet($0) })
-                .padding(.horizontal, 16)
-                .padding(.bottom, 14)
+            FoodCostActionRow(receiveCount: deliveries.waiting.count, open: { openSheet($0) })
+                .padding(.horizontal, CavnarSpace.m)
+                .padding(.bottom, CavnarSpace.s)
 
             if subTab == .tracker {
                 tracker
@@ -84,23 +94,23 @@ struct FoodCostQuickEntryView: View {
                 title: "Food cost forecast", tone: Color.cavnarEmber, icon: "calendar",
                 isExpanded: $analyticsViewModel.forecastExpanded
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                     Text(analyticsViewModel.analytics?.insight?.forecast ?? "No forecast yet — check back once this week's numbers are in.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .lineSpacing(3)
+                        .cavnarText(.secondary)
                     // How the waste forecasts have held up here (K8) — so
                     // the owner can weigh this one, with its lean; when the
                     // record withholds the next forecast, the server's why.
                     if let record = analyticsViewModel.cfo?.brief?.forecastAccuracy?.line {
-                        HomeMixedText.make(record + ".", size: 12.5, weight: 500, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(record + ".", role: .caption)
                     }
                 }
             }
         }
         .overlay(alignment: .top) { successToast }
-        .sheet(item: $actionSheet) { action in
+        .sheet(item: $actionSheet, onDismiss: {
+            // A send, a receive or a count can change what is waiting.
+            Task { await deliveries.load() }
+        }) { action in
             switch action {
             case .scan(let camera): InvoiceScanSheet(startWithCamera: camera)
             case .invoice(let id): InvoiceScanSheet(invoiceId: id)
@@ -112,6 +122,7 @@ struct FoodCostQuickEntryView: View {
             case .menu(let dish): MenuMarginsSheet(focusDish: dish)
             case .dishes: DishScorecardSheet()
             case .suppliers: SupplierOverviewSheet()
+            case .receive: ReceiveDeliveriesSheet(viewModel: deliveries)
             case .pars: EmptyView()
             }
         }
@@ -134,6 +145,8 @@ struct FoodCostQuickEntryView: View {
         // The Tracker's rows: this week's saved prices, the pantry, or the
         // defaults plus custom items — the same rows the web opens on.
         .task { await viewModel.load() }
+        // What is waiting at the back door — the Receive chip.
+        .task { await deliveries.load() }
         // Analytics loads the first time its tab is shown, not on opening
         // Food Cost: loading it records its recommendations (the read's
         // lines, the diagnosis, the reprice cards) as shown, and on the
@@ -154,16 +167,14 @@ struct FoodCostQuickEntryView: View {
     @ViewBuilder
     private var successToast: some View {
         if showSuccessToast {
-            HStack(spacing: 10) {
+            HStack(spacing: CavnarSpace.xs) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.cavnarGreen)
-                Text("This week's prices submitted")
-                    .font(.cavnarBody(14.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
+                    .accessibilityHidden(true)
+                Text("This week's prices saved").cavnarText(.label)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 13)
+            .padding(.horizontal, CavnarSpace.m)
+            .padding(.vertical, CavnarSpace.s)
             .background(Color.cavnarGreenBg)
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.control)
@@ -171,7 +182,7 @@ struct FoodCostQuickEntryView: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 6)
-            .padding(.top, 8)
+            .padding(.top, CavnarSpace.xs)
             .transition(.asymmetric(
                 insertion: .move(edge: .top).combined(with: .opacity),
                 removal: .opacity
@@ -179,122 +190,49 @@ struct FoodCostQuickEntryView: View {
         }
     }
 
+    // MARK: - Tracker
+
+    /// A plain list of this week's key ingredient prices (iOS readability
+    /// round, 10/8/26): it was a fixed-height three-card carousel inside
+    /// the page's own scroll, padded 300pt at the bottom for the keyboard,
+    /// with a 3-second press-and-hold to submit.
     private var tracker: some View {
-        // Owns its own ScrollViewReader, separate from the carousel's
-        // inner one — scrolling the target card to the top of the
-        // carousel's own small window (see IngredientCarousel) only
-        // guarantees clearance WITHIN that fixed-height window; it says
-        // nothing about where that window itself sits on the full page.
-        // Also scrolling this outer page so the section right above the
-        // carousel sits at the very top of the screen pushes the whole
-        // carousel as high as the page allows, which is what actually
-        // guarantees clearance from the keyboard below it.
-        ScrollViewReader { outerProxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    // A kicker and ONE line (density #45) — the how-to
-                    // (enter the price per unit right after an invoice)
-                    // is behind the "?". 8-10 is the standard food-cost-
-                    // consulting sweet spot for a WEEKLY quick price check
-                    // (not a full count): enough of the highest-dollar,
-                    // most volatile items to catch a real supplier swing.
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Text("KEY INGREDIENT PRICES")
-                                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                                .tracking(1.2)
-                                .foregroundStyle(Color.cavnarEmber2)
-                            Button {
-                                Haptic.light()
-                                showingTrackerHelp = true
-                            } label: {
-                                Image(systemName: "questionmark.circle")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Color.cavnarInk3)
-                                    .frame(width: 28, height: 28)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("How this works")
-                            .popover(isPresented: $showingTrackerHelp) {
-                                Text("Fill in each price per unit right after an invoice arrives. Your top 8\u{2013}10 highest-cost ingredients are enough to catch a real supplier swing without turning this into busywork.")
-                                    .font(.cavnarBody(CavnarType.secondary))
-                                    .foregroundStyle(Color.cavnarInk2)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(width: 280)
-                                    .padding(16)
-                                    .presentationCompactAdaptation(.popover)
-                            }
-                        }
-                        (Text("This week\u{2019}s prices for your top ")
-                            + Text("8–10").font(.cavnarNumber(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2)
-                            + Text(" ingredients"))
-                            .font(.cavnarBody(CavnarType.secondary))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                        // Where these rows came from, as the web's tracker
-                        // says it: the inventory system, the ledger, or the
-                        // last typed submission.
-                        if let source = viewModel.source, source.synced {
-                            HomeMixedText.make(source.line("Prices") + ". Change them there.",
-                                               size: 13.5, weight: 500, color: .cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else if viewModel.fromPantry {
-                            HStack(spacing: 10) {
-                                Text("Kept current by scanned invoices; edit only to override.")
-                                    .font(.cavnarBody(13.5))
-                                    .foregroundStyle(Color.cavnarInk3)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Spacer(minLength: 6)
-                                if !viewModel.isEditing {
-                                    Button {
-                                        Haptic.light()
-                                        viewModel.isEditing = true
-                                    } label: {
-                                        Text("Edit prices")
-                                            .font(.cavnarBody(14, weight: 700))
-                                            .foregroundStyle(Color.cavnarEmber2)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            if let typed = viewModel.typedAt {
-                                HomeMixedText.make("Last typed \(CavnarDate.mdy(String(typed.prefix(10))))",
-                                                   size: 13, weight: 500, color: .cavnarInk3)
-                            }
-                        } else if let submitted = viewModel.submittedAt {
-                            HomeMixedText.make("Last submitted \(CavnarDate.mdy(String(submitted.prefix(10))))",
-                                               size: 13, weight: 500, color: .cavnarInk3)
+        ScrollView {
+            VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                trackerIntro
+
+                VStack(spacing: 0) {
+                    ForEach($viewModel.items) { $item in
+                        if item.id != viewModel.items.first?.id { AccountRowDivider() }
+                        TrackerRow(item: $item, readOnly: viewModel.isReadOnly, focus: $trackerFocus) {
+                            Haptic.selection()
+                            let removed = item
+                            withAnimation(.easeOut(duration: 0.22)) { viewModel.remove(removed) }
                         }
                     }
+                }
+                .cavnarCard()
 
-                    // Scroll target is the CAROUSEL's own top, not the intro
-                    // text above it — anchoring the intro block to .top (the
-                    // previous target) still left its own ~3 lines of text
-                    // sitting above the carousel, eating into exactly the
-                    // headroom this scroll exists to reclaim from the
-                    // keyboard. Scrolling the carousel itself to .top pushes
-                    // the intro text fully off-screen instead, so the
-                    // carousel's fixed-height window gets the maximum
-                    // available clearance.
-                    IngredientCarousel(
-                        items: $viewModel.items,
-                        readOnly: viewModel.isReadOnly,
-                        onAddRow: { viewModel.addCustomRow() },
-                        onDelete: { viewModel.remove($0) },
-                        scrollOuterToTop: {
-                            withAnimation(.cavnarEase(0.45)) {
-                                outerProxy.scrollTo("foodCostCarousel", anchor: .top)
-                            }
+                if !viewModel.isReadOnly {
+                    Button {
+                        Haptic.light()
+                        let newItem = viewModel.addCustomRow()
+                        // The new row exists on the next render pass.
+                        DispatchQueue.main.async { trackerFocus = .name(newItem.id) }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xxs) {
+                            Image(systemName: "plus.circle.fill").accessibilityHidden(true)
+                            Text("Add ingredient")
                         }
-                    )
-                    .id("foodCostCarousel")
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 if let error = viewModel.errorMessage {
-                    Text(error)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.body, color: .cavnarRedText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 // Named, not dropped. A row with no price used to be sent as
@@ -303,53 +241,139 @@ struct FoodCostQuickEntryView: View {
                     Text(viewModel.rowsMissingAPrice.count == 1
                          ? "\(viewModel.rowsMissingAPrice[0]) has no price yet — it won't be saved."
                          : "\(viewModel.rowsMissingAPrice.count) rows have no price yet and won't be saved.")
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarAmber)
+                        .cavnarText(.secondary, color: .cavnarAmber)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                // A ledger account submits only after Edit prices, as the
-                // web hides its submit until then.
-                if !viewModel.isReadOnly {
-                HoldToSubmitButton(
-                    isSubmitting: viewModel.isSubmitting,
-                    didSubmit: viewModel.didSubmit,
-                    canSubmit: viewModel.canSubmit
-                ) {
-                    Task {
-                        await viewModel.submit()
-                        guard viewModel.didSubmit else { return }
-                        withAnimation(.cavnarEase(0.4)) {
-                            showSuccessToast = true
-                        }
-                        try? await Task.sleep(nanoseconds: 2_800_000_000)
-                        withAnimation(.easeOut(duration: 0.4)) {
-                            showSuccessToast = false
-                        }
-                    }
-                }
-                }
-
                 if viewModel.didSubmit {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("THIS WEEK'S RESULT")
-                            .font(.cavnarBody(14, weight: 700))
-                            .tracking(1.2)
-                            .foregroundStyle(Color.cavnarGreen)
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                        CavnarKicker("This week\u{2019}s result", tint: .cavnarGreen)
                         resultSummary
                     }
                     .cavnarCard()
                 }
-                }
-                .padding(20)
-                // Extra bottom breathing room — belt-and-suspenders
-                // alongside the explicit outer scrollTo above: gives the
-                // outer ScrollView's own automatic keyboard-avoidance
-                // somewhere to push TO if it kicks in as well, instead of
-                // running out of scrollable content near the bottom of
-                // the page.
-                .padding(.bottom, 300)
             }
+            .padding(CavnarSpace.gutter)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            cavnarKeyboardTrailing {
+                keyboardIconButton(systemName: "checkmark", enabled: true) { trackerFocus = nil }
+            }
+        }
+        // A ledger account submits only after Edit prices, as the web hides
+        // its submit until then.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !viewModel.isReadOnly {
+                CavnarPinnedBar { saveBar }
+            }
+        }
+    }
+
+    private var trackerIntro: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(spacing: CavnarSpace.xxs) {
+                Text("This week\u{2019}s prices").cavnarText(.headline)
+                Button {
+                    Haptic.light()
+                    showingTrackerHelp = true
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("How this works")
+                .popover(isPresented: $showingTrackerHelp) {
+                    Text("Fill in each price per unit right after an invoice arrives. Your top 8\u{2013}10 highest-cost ingredients are enough to catch a real supplier swing without turning this into busywork.")
+                        .cavnarText(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 280)
+                        .padding(CavnarSpace.m)
+                        .presentationCompactAdaptation(.popover)
+                }
+            }
+            // Where these rows came from, as the web's tracker says it: the
+            // inventory system, the ledger, or the last typed submission.
+            if let source = viewModel.source, source.synced {
+                CavnarMixedText(source.line("Prices") + ". Change them there.", role: .secondary)
+            } else if viewModel.fromPantry {
+                Text("Prices update from scanned invoices.")
+                    .cavnarText(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !viewModel.isEditing {
+                    Button {
+                        Haptic.light()
+                        viewModel.isEditing = true
+                    } label: {
+                        Text("Override a price").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let typed = viewModel.typedAt {
+                    CavnarMixedText("Last typed \(CavnarDate.mdy(String(typed.prefix(10))))", role: .caption)
+                }
+            } else {
+                CavnarMixedText("Your top 8\u{2013}10 ingredients, per unit.", role: .secondary)
+                if let submitted = viewModel.submittedAt {
+                    CavnarMixedText("Last saved \(CavnarDate.mdy(String(submitted.prefix(10))))", role: .caption)
+                }
+            }
+        }
+    }
+
+    /// Save, then a short Undo window before it sends; Saved once it has.
+    @ViewBuilder
+    private var saveBar: some View {
+        if viewModel.didSubmit && pendingSave == nil && !viewModel.isSubmitting {
+            Label("Saved", systemImage: "checkmark.circle.fill")
+                .cavnarText(.label, color: .cavnarGreen)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        } else if pendingSave != nil || viewModel.isSubmitting {
+            HStack(spacing: CavnarSpace.s) {
+                if viewModel.isSubmitting {
+                    CavnarShimmerText(text: "Saving\u{2026}", color: Color.cavnarInk)
+                } else {
+                    Text("Saving this week\u{2019}s prices\u{2026}").cavnarText(.label)
+                }
+                Spacer(minLength: CavnarSpace.xs)
+                if pendingSave != nil && !viewModel.isSubmitting {
+                    Button {
+                        Haptic.light()
+                        pendingSave?.cancel()
+                        pendingSave = nil
+                    } label: {
+                        Text("Undo").frame(minWidth: 88)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
+            }
+            .frame(minHeight: 44)
+        } else {
+            Button {
+                Haptic.light()
+                trackerFocus = nil
+                startSave()
+            } label: {
+                Text("Save this week\u{2019}s prices").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
+            .disabled(!viewModel.canSubmit)
+        }
+    }
+
+    private func startSave() {
+        pendingSave = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.undoSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            await viewModel.submit()
+            pendingSave = nil
+            guard viewModel.didSubmit else { return }
+            Haptic.success()
+            withAnimation(.cavnarEase(0.4)) { showSuccessToast = true }
+            try? await Task.sleep(nanoseconds: 2_800_000_000)
+            withAnimation(.easeOut(duration: 0.4)) { showSuccessToast = false }
         }
     }
 
@@ -357,474 +381,125 @@ struct FoodCostQuickEntryView: View {
     private var resultSummary: some View {
         if viewModel.drift.isEmpty {
             Label("Prices stable vs. last submission", systemImage: "checkmark.circle.fill")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarGreen)
+                .cavnarText(.body, color: .cavnarGreen)
         } else {
             ForEach(viewModel.drift) { drift in
                 HStack {
-                    Text(drift.name)
-                        .font(.cavnarBody(14.5, weight: 600))
+                    Text(drift.name).cavnarText(.label)
                     Spacer()
                     Text(String(format: "%@%.1f%%", drift.direction == "up" ? "↑ " : "↓ ", abs(drift.pctChange)))
-                        .font(.cavnarNumber(14.5))
-                        .foregroundStyle(drift.direction == "up" ? Color.cavnarRed : Color.cavnarGreen)
+                        .cavnarText(.figureS, color: drift.direction == "up" ? Color.cavnarRedText : Color.cavnarGreen)
                 }
             }
             if let total = viewModel.totalWeeklyImpact, total > 0 {
-                (Text("Est. ") + Text("+$\(Int(total))/week").font(.cavnarNumber(14, weight: 600)) + Text(" from price increases"))
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(Color.cavnarAmber)
+                CavnarMixedText("Est. +$\(Int(total))/week from price increases", role: .label, color: .cavnarAmber)
             }
         }
     }
 }
 
-/// A press-and-hold confirm button, not a plain tap — submitting overwrites
-/// last week's prices, and a plain-tap "Submit" was one careless thumb away
-/// from doing that by accident. Holding fills the button with a progress
-/// sweep timed to exactly 3 seconds; releasing early cancels and resets it.
-/// Once actually submitted, the button itself becomes the "done" indicator
-/// (green, checkmark, no longer interactive) rather than silently returning
-/// to its normal state as if nothing happened.
-private struct HoldToSubmitButton: View {
-    let isSubmitting: Bool
-    let didSubmit: Bool
-    let canSubmit: Bool
-    let onConfirm: () -> Void
-
-    private let holdDuration: Double = 3.0
-
-    @State private var isHolding = false
-    @State private var holdProgress: CGFloat = 0
-    @State private var holdTask: Task<Void, Never>?
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .fill(didSubmit ? Color.cavnarGreen.opacity(0.16) : Color.cavnarEmber.opacity(0.28))
-
-            if !didSubmit {
-                GeometryReader { geo in
-                    RoundedRectangle(cornerRadius: CavnarRadius.control)
-                        .fill(Color.cavnarEmber.opacity(0.92))
-                        .frame(width: geo.size.width * holdProgress)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                if didSubmit {
-                    Image(systemName: "checkmark.circle.fill")
-                    Text("Submitted")
-                } else if isSubmitting {
-                    CavnarShimmerText(text: "Submitting…", color: Color.cavnarInk)
-                } else {
-                    Text("Hold for 3 seconds to submit")
-                }
-                Spacer(minLength: 0)
-            }
-            .font(.cavnarBody(15, weight: 600))
-            .foregroundStyle(didSubmit ? Color.cavnarGreen : Color.cavnarInk)
-            .padding(.vertical, 14)
-        }
-        .frame(height: 52)
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .strokeBorder(didSubmit ? Color.cavnarGreen.opacity(0.5) : Color.cavnarEmber.opacity(0.6), lineWidth: 1.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-        .opacity(canSubmit || didSubmit ? 1 : 0.5)
-        .scaleEffect(isHolding ? 0.98 : 1)
-        .animation(.easeOut(duration: 0.15), value: isHolding)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    guard canSubmit, !didSubmit, !isSubmitting, !isHolding else { return }
-                    startHold()
-                }
-                .onEnded { _ in cancelHold() }
-        )
-    }
-
-    private func startHold() {
-        Haptic.light()
-        isHolding = true
-        withAnimation(.linear(duration: holdDuration)) {
-            holdProgress = 1
-        }
-        holdTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(holdDuration * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            isHolding = false
-            Haptic.success()
-            onConfirm()
-        }
-    }
-
-    private func cancelHold() {
-        guard isHolding else { return }
-        holdTask?.cancel()
-        holdTask = nil
-        isHolding = false
-        withAnimation(.easeOut(duration: 0.25)) {
-            holdProgress = 0
-        }
-    }
-}
-
-/// Which field, on which card, currently has focus — lives here (not
-/// inside IngredientCard) so "Add ingredient" can drive focus onto a
-/// specific new card's name field from outside it, and so one shared
-/// keyboard-dismiss toolbar covers every card instead of each row needing
-/// its own.
-private enum CarouselField: Hashable {
+/// Which field, on which row, has focus — owned by the tracker so "Add
+/// ingredient" can move focus onto a new row's name.
+private enum TrackerField: Hashable {
     case name(UUID), unit(UUID), price(UUID), usage(UUID)
 }
 
-/// A fixed-height window showing 3 ingredient cards at a time, scrolling
-/// through the rest — not a plain full-length list. Cards crossing the
-/// window's top edge fade/scale/blur away as they exit; cards rising into
-/// view from the bottom (from behind "Add ingredient", pinned directly
-/// under the window) fade and settle into place the same way in reverse.
-/// .scrollTransition(.interactive) ties every bit of that motion directly
-/// to the user's finger — no separate re-triggered animation chasing the
-/// scroll position — which is what makes it read as smooth rather than a
-/// canned effect layered on top of a plain scroll.
-private struct IngredientCarousel: View {
-    @Binding var items: [FoodCostItem]
-    /// A ledger account's rows before Edit prices: shown, not typed in.
-    var readOnly: Bool = false
-    var onAddRow: () -> FoodCostItem
-    var onDelete: (FoodCostItem) -> Void
-    // Called alongside this view's own inner scrollTo when a new card is
-    // added — see FoodCostQuickEntryView.tracker's own comment for why
-    // scrolling THIS window's target card to its own top isn't enough on
-    // its own: it says nothing about where this fixed-height window sits
-    // on the full page, which is what actually determines keyboard
-    // clearance.
-    var scrollOuterToTop: () -> Void
-
-    private let cardHeight: CGFloat = 108
-    private let cardSpacing: CGFloat = 12
-    private let visibleCardCount: CGFloat = 3
-    private let verticalInset: CGFloat = 14
-
-    @FocusState private var focusedField: CarouselField?
-
-    private var windowHeight: CGFloat {
-        cardHeight * visibleCardCount + cardSpacing * (visibleCardCount - 1) + verticalInset * 2
-    }
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            VStack(spacing: 10) {
-                // A visible hint that this window scrolls — same SWIPE +
-                // arrow language as Home's pulse strip, rotated
-                // to point down since this carousel is vertical. Its own
-                // row above the window (not an overlay on top of it) so it
-                // sits in genuinely empty space instead of drawing over
-                // the first card — an overlay here only cleared the card
-                // by a few points no matter how much top padding it got,
-                // since the card itself starts rendering right at the
-                // window's edge.
-                // Hidden while a field is focused — not just tidiness:
-                // this is real vertical space, and freeing it is what
-                // lets the outer page push the carousel that much higher
-                // above the keyboard for the exact card someone's
-                // actively editing. The hint's whole job is discoverability
-                // before interacting; it has nothing left to say once
-                // someone's already mid-edit.
-                if items.count > Int(visibleCardCount), focusedField == nil {
-                    HStack(spacing: 4) {
-                        Spacer()
-                        Text("SWIPE")
-                            .font(.cavnarBody(13.5, weight: 700))
-                            .tracking(1.5)
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 10, weight: .bold))
-                    }
-                    .foregroundStyle(Color.cavnarEmber2.opacity(0.8))
-                    .padding(.trailing, 4)
-                    .transition(.opacity)
-                }
-
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: cardSpacing) {
-                        ForEach($items) { $item in
-                            IngredientCard(item: $item, height: cardHeight, readOnly: readOnly,
-                                           focusedField: $focusedField) {
-                                Haptic.selection()
-                                let removed = item
-                                withAnimation(.easeOut(duration: 0.22)) {
-                                    onDelete(removed)
-                                }
-                            }
-                            .id(item.id)
-                            .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                            // Toned down from the first pass — opacity/blur
-                            // dropping too far at the edges, on top of each
-                            // card's own gradient already fading toward
-                            // transparent there, read as the cards
-                            // smearing into a dark blur rather than gently
-                            // dissolving.
-                            .scrollTransition(.interactive(timingCurve: .easeInOut), axis: .vertical) { content, phase in
-                                let d = min(abs(phase.value), 1)
-                                return content
-                                    .opacity(1 - d * 0.55)
-                                    .scaleEffect(1 - d * 0.06)
-                                    .blur(radius: d * 1.2)
-                                    .offset(y: phase.value * 16)
-                            }
-                        }
-                    }
-                    .padding(.vertical, verticalInset)
-                }
-                .frame(height: windowHeight)
-                // Soft top/bottom dissolve instead of a hard clip edge —
-                // reinforces the scrollTransition fade rather than cutting
-                // cards off mid-fade right at the window boundary. Floored
-                // at 0.5 alpha (not fully clear) and a wider stable zone
-                // (22%–78%, was 10%–88%) so edge cards stay legibly dimmed
-                // instead of nearly vanishing — same "too much" fix as the
-                // scrollTransition above.
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(0.5), location: 0),
-                            .init(color: .black, location: 0.22),
-                            .init(color: .black, location: 0.78),
-                            .init(color: .black.opacity(0.5), location: 1),
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                )
-
-                if !readOnly {
-                Button {
-                    Haptic.light()
-                    let newItem = onAddRow()
-                    // onAddRow() appends to the parent's @Binding array —
-                    // that mutation doesn't take effect in this view's own
-                    // ForEach/LazyVStack until SwiftUI processes it on the
-                    // NEXT render pass. Calling proxy.scrollTo for the new
-                    // item's id synchronously, in the same run-loop tick,
-                    // was scrolling to an id that didn't exist in the
-                    // hierarchy yet — a silent no-op, which is why nothing
-                    // visibly moved until the user scrolled it into view
-                    // themselves. Dispatching to the next tick lets that
-                    // render happen first, so the id actually resolves.
-                    DispatchQueue.main.async {
-                        // .top, not .center — the carousel's own window is
-                        // a fixed height that knows nothing about the
-                        // keyboard, so centering the card within THAT
-                        // window doesn't guarantee clearance from the
-                        // keyboard covering the BOTTOM of the actual
-                        // screen. Anchoring to the window's top instead
-                        // leaves the other ~2 card-heights of window below
-                        // it as buffer, and the outer page ScrollView's
-                        // own bottom padding (below) gives the system's
-                        // keyboard-avoidance room to push the whole
-                        // carousel further up still. scrollOuterToTop()
-                        // does the heavier lifting: it pushes the whole
-                        // carousel section to the top of the OUTER page,
-                        // which is what actually determines clearance from
-                        // the keyboard — this window's own scrollTo only
-                        // ever controlled where the card sits WITHIN itself.
-                        scrollOuterToTop()
-                        withAnimation(.cavnarEase(0.45)) {
-                            proxy.scrollTo(newItem.id, anchor: .top)
-                        }
-                        // Same reasoning as the scroll above for why this
-                        // is a fixed delay rather than an animation
-                        // completion callback — scrollTo isn't a tracked
-                        // animatable value withAnimation's completion can
-                        // wait on. Comfortably past the spring's settle
-                        // time; once focus lands, iOS's own keyboard
-                        // avoidance keeps the field clear of the keyboard.
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 450_000_000)
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                focusedField = .name(newItem.id)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add ingredient")
-                    }
-                    .font(.cavnarBody(14.5, weight: 600))
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: CavnarRadius.card)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                        .foregroundStyle(Color.cavnarEmber2.opacity(0.4))
-                )
-                }
-            }
-        }
-        // decimalPad has no built-in Done key — without this there was no
-        // way to dismiss the keyboard short of navigating away entirely.
-        // One shared bar covers every card's price/usage/name/unit field
-        // since focusedField lives here, not per-card.
-        //
-        // Two confirmed, documented iOS 26 causes, not two guesses:
-        // 1. cavnarToolbarItemGroup's .sharedBackgroundVisibility(.hidden)
-        //    (see ViewModifiers.swift's cavnarToolbarItem doc comment) —
-        //    the automatic SHARED glass wrapper at the toolbar-group level.
-        // 2. The "D"-only clipping specifically: a documented iOS 26
-        //    regression where the toolbar's own layout pass mis-measures
-        //    a CUSTOM-styled button's content (anything routed through a
-        //    modifier chain like cavnarToolbarPillGlass, rather than a
-        //    bare Text) and allocates far less width than the content
-        //    actually needs — https://developer.apple.com/forums/thread/797070.
-        //    .fixedSize() forces this button to report its own real
-        //    intrinsic size instead of accepting whatever the toolbar's
-        //    layout guesses. Separately, a bare Spacer() as its own
-        //    top-level item inside a .keyboard ToolbarItemGroup is
-        //    independently reported to trigger the same class of bug —
-        //    https://developer.apple.com/forums/thread/797250 — so the
-        //    Spacer now lives inside a plain HStack instead, a single
-        //    well-understood layout child rather than two separate
-        //    top-level toolbar items.
-        .toolbar {
-            // Checkmark, not chevrons — CarouselField's cases carry a
-            // per-card UUID (.name(UUID), not a fixed CaseIterable set), so
-            // it doesn't fit keyboardNavToolbar's up/down stepping the way a
-            // static form's fields do. Still the same keyboardIconButton
-            // every other keyboard toolbar in the app uses, at the trailing
-            // edge (cavnarKeyboardTrailing).
-            cavnarKeyboardTrailing {
-                keyboardIconButton(systemName: "checkmark", enabled: true) { focusedField = nil }
-            }
-        }
-    }
-}
-
-/// One ingredient's editable card — the same ember-fade gradient, inset
-/// border, and drop shadow as Schedule History's rows (via CavnarEmberFade,
-/// shared so the two can't visually drift apart), restyled as a data-entry
-/// surface: name and unit stay tappable/editable exactly like the old
-/// Form's text fields did, just no longer inside a plain gray Form row.
-private struct IngredientCard: View {
+/// One ingredient's row: the name and unit, then this week's price and
+/// how much is used a week. Read-only rows (a ledger account before Edit
+/// prices, a synced account) take no input.
+private struct TrackerRow: View {
     @Binding var item: FoodCostItem
-    let height: CGFloat
-    var readOnly: Bool = false
-    var focusedField: FocusState<CarouselField?>.Binding
+    var readOnly: Bool
+    var focus: FocusState<TrackerField?>.Binding
     var onDelete: () -> Void
 
-    private var isNameFocused: Bool { focusedField.wrappedValue == .name(item.id) }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .bottom, spacing: 8) {
-                // A hairline underline that lights up ember on focus —
-                // same convention as CavnarFloatingField everywhere else
-                // in the app — is what actually signals "this is editable"
-                // at a glance; a plain TextField with no chrome reads
-                // identically to static Text until someone happens to tap it.
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        TextField("Ingredient name", text: $item.name)
-                            .font(.cavnarHeadline(17))
-                            .foregroundStyle(Color.cavnarInk)
-                            .lineLimit(1)
-                            .focused(focusedField, equals: .name(item.id))
-                        // The industry-standard "this is editable" cue —
-                        // the underline alone still reads as decorative to
-                        // a first-time user; a pencil next to the name is
-                        // the unambiguous signal.
-                        Image(systemName: "pencil")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.cavnarInk.opacity(0.45))
-                    }
-                    Rectangle()
-                        .fill(isNameFocused ? Color.cavnarEmber2 : Color.cavnarInk.opacity(0.3))
-                        .frame(height: isNameFocused ? 1.5 : 1)
-                }
-                TextField("unit", text: $item.unit)
-                    .font(.cavnarBody(14, weight: 700))
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                TextField("Ingredient name", text: $item.name)
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
-                    .tracking(0.4)
-                    .multilineTextAlignment(.center)
-                    // Widened alongside the text growing from 10pt to
-                    // 14pt — the old 38pt frame fit a 10pt unit like
-                    // "each"/"lbs" but clipped it at the bumped size.
-                    .frame(width: 50)
-                    .focused(focusedField, equals: .unit(item.id))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.35))
-                    .overlay(Capsule().strokeBorder(Color.cavnarInk.opacity(0.18), lineWidth: 1))
-                    .clipShape(Capsule())
-                    .padding(.bottom, 2)
+                    .focused(focus, equals: .name(item.id))
+                TextField("unit", text: $item.unit)
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 56)
+                    .focused(focus, equals: .unit(item.id))
                 if !readOnly {
-                Button(action: onDelete) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                        .frame(width: 22, height: 22)
-                        .background(Color.black.opacity(0.3), in: Circle())
-                        // Visual stays 22pt (the carousel's density depends on
-                        // it) but the hit region meets the 44pt HIG minimum.
-                        // This is a DELETE with no undo, on the screen used
-                        // mid-service with wet or gloved hands — at 22pt a
-                        // miss either frustrates or destroys an entry
-                        // (audit 7.3).
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("Delete entry")
-                .padding(.bottom, 1)
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark.circle")
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Remove \(item.name.isEmpty ? "this row" : item.name)")
                 }
             }
-            HStack(spacing: 24) {
-                statField(label: "PRICE", prefix: "$", text: $item.priceText, field: .price(item.id))
-                statField(label: "USED / WK", prefix: nil, text: $item.usageText, field: .usage(item.id))
-                Spacer(minLength: 0)
+            HStack(spacing: CavnarSpace.m) {
+                field("Price", prefix: "$", text: $item.priceText, field: .price(item.id))
+                field("Used a week", prefix: nil, text: $item.usageText, field: .usage(item.id))
             }
         }
-        .padding(15)
-        .frame(height: height)
-        // Read-only rows (a ledger account before Edit prices) take no input.
+        .padding(.vertical, CavnarSpace.s)
         .disabled(readOnly)
-        .background(
-            ZStack {
-                Color.cavnarPaper
-                CavnarEmberFade.horizontal
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .inset(by: 1)
-                .strokeBorder(CavnarEmberFade.horizontal, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
-        .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 5)
     }
 
-    private func statField(label: String, prefix: String?, text: Binding<String>, field: CarouselField) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(0.6)
-                .foregroundStyle(Color.cavnarInk.opacity(0.65))
+    private func field(_ label: String, prefix: String?, text: Binding<String>, field: TrackerField) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).cavnarText(.caption)
             HStack(spacing: 2) {
                 if let prefix {
-                    Text(prefix)
-                        .font(.cavnarNumber(14.5, weight: 500))
-                        .foregroundStyle(Color.cavnarInk.opacity(0.8))
+                    Text(prefix).cavnarText(.figureS, color: .cavnarInk2)
                 }
                 TextField("0", text: text)
                     .keyboardType(.decimalPad)
-                    .font(.cavnarNumber(17, weight: 600))
+                    .font(.cavnar(.figureS))
                     .foregroundStyle(Color.cavnarInk)
-                    .focused(focusedField, equals: field)
-                    .fixedSize()
+                    .focused(focus, equals: field)
             }
+            .padding(.horizontal, CavnarSpace.xs)
+            .frame(minHeight: 44)
+            .background(Color.cavnarPaper3.opacity(readOnly ? 0.15 : 0.35),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Orders waiting to arrive, each received in place — the action row's
+/// Receive chip opens this directly (iOS readability round, 10/8/26: it
+/// lived only at the bottom of Send order). The same view model as the
+/// chip, so the count it shows falls as each order comes in.
+struct ReceiveDeliveriesSheet: View {
+    let viewModel: DeliveriesViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                DeliveriesSection(viewModel: viewModel, title: "Waiting to arrive", waitingOnly: true)
+                    .padding(CavnarSpace.gutter)
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .cavnarModuleBackground()
+            .navigationTitle("Receive")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                cavnarTitleToolbar("Receive")
+                cavnarToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Haptic.light()
+                        dismiss()
+                    } label: {
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .cavnarEmberRefreshable { await viewModel.load() }
+            .task { await viewModel.load() }
         }
     }
 }

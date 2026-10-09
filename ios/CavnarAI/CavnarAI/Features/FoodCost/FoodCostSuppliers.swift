@@ -119,10 +119,12 @@ final class SupplierOverviewViewModel {
     }
 }
 
+/// Who you order from (iOS readability round, 10/8/26): the suppliers and
+/// how many items each fills, the ingredients with no supplier yet — each
+/// one picked here, so its order has somewhere to go — and every
+/// ingredient's supplier, with bulk assign, on the web.
 struct SupplierOverviewSheet: View {
     @State private var viewModel = SupplierOverviewViewModel()
-    @State private var bulkTarget: SupplierRef?
-    @State private var confirmingBulk = false
     @State private var newFor: String?
     @State private var newName = ""
     @State private var newEmail = ""
@@ -130,46 +132,39 @@ struct SupplierOverviewSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: CavnarSpace.l) {
                     let items = viewModel.sheet.items
                     let sups = SupplierOverviewViewModel.suppliers(items)
                     let un = SupplierOverviewViewModel.unassigned(items)
                     header(sups: sups, unassigned: un.count)
                     if let line = viewModel.doneLine {
-                        HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarGreen)
+                        CavnarMixedText(line, role: .body, color: .cavnarGreen)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if viewModel.sheet.isLoading && items.isEmpty {
                         CavnarSkeletonLines(widths: [1, 0.8, 0.9, 0.6]).cavnarCard()
                     } else if items.isEmpty {
-                        Text("No ingredients on file yet.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).cavnarCard()
+                        Text("No ingredients on file yet.").cavnarText(.body).cavnarCard()
                     } else {
-                        if !un.isEmpty, !sups.isEmpty, !viewModel.sheet.isSynced {
-                            bulk(sups: sups, count: un.count)
-                        }
-                        AccountSection(kicker: "Every ingredient") {
-                            ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
-                                ingredientRow(it, sups: sups, showsDivider: i < items.count - 1)
+                        if !un.isEmpty {
+                            AccountSection(kicker: "Without a supplier") {
+                                ForEach(Array(un.enumerated()), id: \.element.id) { i, it in
+                                    ingredientRow(it, sups: sups, showsDivider: i < un.count - 1)
+                                }
                             }
                         }
+                        CavnarWebLinkRow(title: "Every ingredient\u{2019}s supplier",
+                                         subtitle: "Change any of them, or assign many at once",
+                                         path: "inventory/order")
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .accountSheetChrome("Suppliers")
             .task { await viewModel.load() }
-            .confirmationDialog(bulkTarget.map { "Put every ingredient without a supplier on \($0.name)?" } ?? "",
-                                isPresented: $confirmingBulk, titleVisibility: .visible, presenting: bulkTarget) { s in
-                Button("Assign \(SupplierOverviewViewModel.unassigned(viewModel.sheet.items).count) to \(s.name)") {
-                    Task { await viewModel.assignAllUnassigned(to: s) }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: { s in
-                Text("Their orders then go to \(s.email).")
-            }
             .alert("New supplier", isPresented: Binding(get: { newFor != nil }, set: { if !$0 { newFor = nil } })) {
                 TextField("Supplier name", text: $newName)
                 TextField("orders@supplier.com", text: $newEmail)
@@ -194,27 +189,24 @@ struct SupplierOverviewSheet: View {
     }
 
     private func header(sups: [SupplierRef], unassigned: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            DSRKicker(text: "Who you order from")
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Who you order from")
             if let source = viewModel.sheet.source, source.synced {
-                HomeMixedText.make(source.line("Suppliers") + ". The weekly order groups itself by these.",
-                                   size: 14, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(source.line("Suppliers") + ". The weekly order groups itself by these.", role: .secondary)
             } else {
                 Text("The weekly order groups itself by these; each needs an order email.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !sups.isEmpty || unassigned > 0 {
-                AccountFlowLayout(spacing: 8) {
+                AccountFlowLayout(spacing: CavnarSpace.xs) {
                     ForEach(sups) { s in
-                        HomeMixedText.make("\(s.name) \u{00B7} \(s.count) item\(s.count == 1 ? "" : "s")", size: 13, weight: 600,
-                                           color: .cavnarInk2)
+                        CavnarMixedText("\(s.name) \u{00B7} \(s.count) item\(s.count == 1 ? "" : "s")", role: .secondary)
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(Color.cavnarPaper3.opacity(0.45), in: Capsule())
                     }
                     if unassigned > 0 {
-                        HomeMixedText.make("\(unassigned) without a supplier", size: 13, weight: 600, color: .cavnarAmber)
+                        CavnarMixedText("\(unassigned) without a supplier", role: .secondary, color: .cavnarAmber)
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(Color.cavnarAmber.opacity(0.14), in: Capsule())
                     }
@@ -225,44 +217,17 @@ struct SupplierOverviewSheet: View {
         .cavnarCard()
     }
 
-    private func bulk(sups: [SupplierRef], count: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Put every ingredient without a supplier on").font(.cavnarBody(14.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk2)
-            HStack(spacing: 10) {
-                Picker("Supplier", selection: Binding(get: { bulkTarget ?? sups.first }, set: { bulkTarget = $0 })) {
-                    ForEach(sups) { s in Text(s.name).tag(Optional(s)) }
-                }
-                .pickerStyle(.menu)
-                .tint(Color.cavnarEmber2)
-                Spacer(minLength: 6)
-                Button {
-                    Haptic.light()
-                    if bulkTarget == nil { bulkTarget = sups.first }
-                    confirmingBulk = true
-                } label: {
-                    Group {
-                        if viewModel.bulkBusy { CavnarShimmerText(text: "Assigning", color: .cavnarInk) } else { Text("Assign \(count)") }
-                    }
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-                .disabled(viewModel.bulkBusy)
-            }
-        }
-        .cavnarCard()
-    }
-
     private func ingredientRow(_ it: CountSheetItem, sups: [SupplierRef], showsDivider: Bool) -> some View {
         let current = sups.first { $0.email.lowercased() == (it.supplierEmail ?? "").lowercased() }
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(it.name).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk)
-                    if let u = it.unit, !u.isEmpty { Text(u).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3) }
+                    Text(it.name).cavnarText(.body, color: .cavnarInk)
+                    if let u = it.unit, !u.isEmpty { Text(u).cavnarText(.caption) }
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: CavnarSpace.xs)
                 if viewModel.sheet.isSynced {
-                    Text(current?.name ?? DSRFormat.dash).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                    Text(current?.name ?? DSRFormat.dash).cavnarText(.secondary)
                 } else if viewModel.busy.contains(it.name) {
                     CavnarShimmerText(text: "Saving", color: .cavnarInk)
                 } else {
@@ -284,9 +249,9 @@ struct SupplierOverviewSheet: View {
                             Button("No supplier", role: .destructive) { Task { await viewModel.assign(it.name, to: nil) } }
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Text(current?.name ?? "Pick").font(.cavnarBody(14, weight: 700))
-                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .bold))
+                        HStack(spacing: CavnarSpace.xxs) {
+                            Text(current?.name ?? "Pick").font(.cavnar(.label))
+                            Image(systemName: "chevron.up.chevron.down").font(.cavnar(.caption))
                         }
                         .foregroundStyle(current == nil ? Color.cavnarAmber : Color.cavnarEmber2)
                         .frame(minHeight: 44)
@@ -345,27 +310,27 @@ struct GameWeekCard: View {
     let game: FoodCostGameWeek.Game
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DSRKicker(text: "Game this week")
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Game this week")
             if let d = game.describe {
-                HomeMixedText.make(d, size: 15.5, weight: 700, color: .cavnarInk).fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(d, role: .label)
             }
             if let t = game.text {
-                HomeMixedText.make(t, size: 13.5, color: .cavnarInk2).fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(t, role: .secondary)
             }
             if !game.lines.isEmpty {
                 AccountFlowLayout(spacing: 8) {
                     ForEach(Array(game.lines.prefix(6)), id: \.self) { l in
-                        HomeMixedText.make("+\(l.extra.map { CountSheetViewModel.expectedString($0) } ?? DSRFormat.dash)"
-                                           + (l.unit.map { $0.isEmpty ? "" : " \($0)" } ?? "") + " \(l.ingredient)",
-                                           size: 12.5, weight: 600, color: .cavnarInk2)
+                        CavnarMixedText("+\(l.extra.map { CountSheetViewModel.expectedString($0) } ?? DSRFormat.dash)"
+                                        + (l.unit.map { $0.isEmpty ? "" : " \($0)" } ?? "") + " \(l.ingredient)",
+                                        role: .caption, color: .cavnarInk2)
                             .padding(.horizontal, 9).padding(.vertical, 4)
                             .background(Color.cavnarEmber.opacity(0.12), in: Capsule())
                     }
                 }
             }
             if let b = game.basis {
-                Text(b.prefix(1).uppercased() + b.dropFirst() + ".").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                Text(b.prefix(1).uppercased() + b.dropFirst() + ".").cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

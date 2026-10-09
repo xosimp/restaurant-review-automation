@@ -34,6 +34,12 @@ final class FoodCostAnalyticsViewModel {
     var repriceDismissed: Set<String> = []
     var repriceBusy: Set<String> = []
     var repriceErrors: [String: String] = [:]
+    /// Dishes the scorecard's move says to reprice that carry no suggested
+    /// price (no ingredient rise behind them) — the rest of the one "Dishes
+    /// to reprice" list, each opening its price in Menu margins (iOS
+    /// readability round, 10/8/26). Best-effort; the scorecard read has no
+    /// side effects (strategy_routes._do_dish_scorecard).
+    var scorecardReprice: [DishScorecard.Dish] = []
     /// Items the close-out 86'd on 2+ nights in 4 weeks, each with a
     /// higher par to accept (memory round, 9/29/26: GET
     /// /food-cost/par-suggestions). Answered in place: Raise par posts to
@@ -144,6 +150,8 @@ final class FoodCostAnalyticsViewModel {
             "/mobile/api/food-cost/reprice", hapticOnError: false)
         async let parResult: ParSuggestionsResponse? = try? client.send(
             "/mobile/api/food-cost/par-suggestions", hapticOnError: false)
+        async let scorecardResult: DishScorecard? = try? client.send(
+            "/mobile/api/food-cost/dish-scorecard", hapticOnError: false)
         var freshBody: Data?
         do {
             let fresh: (value: FoodCostAnalytics, body: Data) = try await client.sendKeepingBody(
@@ -192,6 +200,10 @@ final class FoodCostAnalyticsViewModel {
         repriceTracking = repriceTracking.filter { live.contains($0.key) }
         repriceDismissed = repriceDismissed.intersection(live)
         repriceErrors = [:]
+        let suggested = Set(repriceSuggestions.map { $0.dish.lowercased() })
+        scorecardReprice = ((await scorecardResult)?.dishes ?? []).filter {
+            $0.action == "reprice" && !$0.waitsOnUnits && !suggested.contains($0.name.lowercased())
+        }
         if let pars = await parResult, pars.ok {
             parSuggestions = pars.suggestions
             let liveItems = Set(pars.suggestions.map(\.ingredientId))

@@ -15,10 +15,7 @@ struct IntelHistorySection: View {
         let events = movement.marketHistory
         if own?.available == true || !events.isEmpty || own?.reason != nil {
             VStack(alignment: .leading, spacing: 10) {
-                Text("OVER TIME")
-                    .font(.cavnarBody(13, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber)
+                CavnarKicker("Over time")
                     .padding(.top, 10)
                 if let own { ownRating(own) }
                 if !events.isEmpty { marketList(events) }
@@ -32,19 +29,18 @@ struct IntelHistorySection: View {
     private func ownRating(_ own: OwnRatingHistory) -> some View {
         if own.available, let line = own.line {
             VStack(alignment: .leading, spacing: 6) {
-                HomeMixedText.make("Your Google rating: " + line, size: 14.5, weight: 600, color: .cavnarInk)
+                HomeMixedText.make("Your Google rating: " + line, role: .label, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if own.series.count >= 3 {
                     OwnRatingTrace(points: own.series)
                 }
-                HomeMixedText.make("One reading a week, \(own.weeks ?? own.series.count) weeks on file \u{2014} measured, kept forever.",
-                                   size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make("Read from Google once a week \u{2014} \(own.weeks ?? own.series.count) weeks so far.", role: .caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
         } else if let reason = own.reason {
             Text("Your rating over time: " + reason + ".")
-                .font(.cavnarBody(13.5))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary))
+                .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -55,7 +51,7 @@ struct IntelHistorySection: View {
         let shown = showingAll ? events : Array(events.prefix(5))
         return VStack(alignment: .leading, spacing: 0) {
             Text("What the market did")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnar(.label))
                 .foregroundStyle(Color.cavnarInk)
                 .padding(.top, 4)
                 .padding(.bottom, 2)
@@ -68,13 +64,13 @@ struct IntelHistorySection: View {
                         .frame(width: 6, height: 6)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(e.name)
-                            .font(.cavnarBody(15, weight: 600))
+                            .font(.cavnar(.label))
                             .foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make(e.what, size: 13, color: .cavnarInk2)
+                        HomeMixedText.make(e.what, role: .caption, color: .cavnarInk2)
                     }
                     Spacer(minLength: 4)
                     if let d = e.dateLabel {
-                        Text(d).font(.cavnarNumber(12.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                        Text(d).font(.cavnarNumber(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 .padding(.vertical, 6)
@@ -85,11 +81,10 @@ struct IntelHistorySection: View {
                     withAnimation(.easeOut(duration: 0.2)) { showingAll.toggle() }
                 } label: {
                     Text(showingAll ? "Show fewer" : "Show all \(events.count)")
-                        .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarText(.label, color: .cavnarEmber2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 4)
             }
         }
     }
@@ -139,12 +134,12 @@ private struct OwnRatingTrace: View {
         if reveal >= 0.98, let last = pts.last {
             CavnarChart.hotDot(&ctx, at: last, radius: 3.5, halo: 9)
         }
-        CavnarChart.text(&ctx, CavnarChart.number(String(format: "%.1f", values.first ?? 0), size: 10.5,
+        CavnarChart.text(&ctx, CavnarChart.number(String(format: "%.1f", values.first ?? 0), size: CavnarType.tag,
                                                   color: .cavnarInk3),
                          at: CGPoint(x: plot.minX - 6, y: pts.first?.y ?? plot.midY), anchor: .trailing)
-        CavnarChart.text(&ctx, CavnarChart.label(points.first?.weekLabel ?? "", size: 10),
+        CavnarChart.text(&ctx, CavnarChart.label(points.first?.weekLabel ?? "", size: CavnarType.tag),
                          at: CGPoint(x: plot.minX, y: size.height - 6), anchor: .leading)
-        CavnarChart.text(&ctx, CavnarChart.label("now", size: 10),
+        CavnarChart.text(&ctx, CavnarChart.label("now", size: CavnarType.tag),
                          at: CGPoint(x: plot.maxX, y: size.height - 6), anchor: .trailing)
     }
 }

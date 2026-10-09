@@ -232,10 +232,10 @@ struct DishScorecardSheet: View {
                 } else if let card = viewModel.card {
                     if card.dishes.isEmpty {
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(DSRFormat.dash).font(.cavnarNumber(34, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                                Text(DSRFormat.dash).cavnarText(.figureL, color: .cavnarInk3)
                                 Text((card.reason.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "No dishes to score yet") + ".")
-                                    .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                                    .cavnarText(.body)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -247,7 +247,7 @@ struct DishScorecardSheet: View {
                     }
                 } else if let error = viewModel.errorMessage {
                     ScrollView {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3).cavnarCard().padding(20)
+                        Text(error).cavnarText(.body).cavnarCard().padding(CavnarSpace.gutter)
                     }
                 }
             }
@@ -287,21 +287,25 @@ struct DishScorecardSheet: View {
     private func list(_ card: DishScorecard) -> some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Every dish with a recipe and a price: what it costs to make, what it sold, what guests said about it, and the move it calls for. Swipe a dish to reprice it, or to pass on its reprice.")
-                        .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    Text("Every dish with a recipe and a price, grouped by the move it calls for.")
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let note = card.note {
-                        Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                        Text(note).cavnarText(.caption)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let line = viewModel.doneLine {
-                        HomeMixedText.make(line, size: 13.5, weight: 600, color: .cavnarGreen)
+                        CavnarMixedText(line, role: .secondary, color: .cavnarGreen)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // What each dish sold and what guests said — the
+                    // numbers behind the moves — are a table for the web.
+                    CavnarWebLinkRow(title: "Every dish\u{2019}s numbers", subtitle: "Cost, sales and guest mentions for each",
+                                     path: "inventory/margins", actionLabel: "Open on the web")
                 }
                 .listRowBackground(Color.clear)
             }
@@ -325,9 +329,7 @@ struct DishScorecardSheet: View {
                             }
                     }
                 } header: {
-                    Text(group.title.uppercased())
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.2)
-                        .foregroundStyle(group.title == "Check units first" ? Color.cavnarAmber : Color.cavnarEmber2)
+                    CavnarKicker(group.title, tint: group.title == "Check units first" ? Color.cavnarAmber : Color.cavnarEmber2)
                 }
             }
         }
@@ -349,48 +351,82 @@ struct DishScorecardSheet: View {
         }
     }
 
+    /// One dish: its name and move, why, its price and food cost on one
+    /// line, and — for a dish to reprice — a visible Reprice button and
+    /// Pass (the swipe and the long-press menu still work; they used to be
+    /// the only way, iOS readability round 10/8/26).
     private func row(_ dish: DishScorecard.Dish) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(dish.name).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                Spacer(minLength: 8)
+        let canPass = viewModel.suggestion(for: dish)?.recKey != nil && !viewModel.passed.contains(dish.name)
+        let showsReprice = dish.action == "reprice" || viewModel.suggestion(for: dish) != nil
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Text(dish.name).cavnarText(.label)
+                Spacer(minLength: CavnarSpace.xs)
                 if viewModel.busy.contains(dish.name) {
                     CavnarShimmerText(text: "Saving", color: .cavnarInk)
                 } else if let move = dish.moveLabel {
-                    Text(move).font(.cavnarBody(11.5, weight: 700))
-                        .foregroundStyle(dish.waitsOnUnits ? Color.cavnarAmber : Color.cavnarEmber2)
+                    Text(move).cavnarText(.tag, color: dish.waitsOnUnits ? Color.cavnarAmber : Color.cavnarEmber2)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background((dish.waitsOnUnits ? Color.cavnarAmber : Color.cavnarEmber).opacity(0.14), in: Capsule())
                 }
             }
             if let why = dish.why {
-                Text(why).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3).fixedSize(horizontal: false, vertical: true)
+                Text(why).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if let w = dish.unitWarning {
-                Text(w).font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarAmber)
+                Text(w).cavnarText(.secondary, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 14) {
-                stat("Price", DSRFormat.money(dish.sellPrice))
-                stat("Food cost", dish.foodCostPct.map { String(format: "%.1f%%", $0) + (dish.unitWarning != nil ? " ?" : "") }
-                     ?? DSRFormat.dash, tone: dish.unitWarning != nil ? .cavnarAmber : .cavnarInk)
-                stat("Sold", dish.unitsSold.map { DSRFormat.count($0) } ?? DSRFormat.dash)
-                stat("Guests", dish.positiveMentions + dish.negativeMentions > 0
-                     ? "+\(dish.positiveMentions) / \u{2212}\(dish.negativeMentions)" : DSRFormat.dash)
-            }
+            CavnarMixedText(Self.priceLine(dish), role: .caption,
+                            color: dish.unitWarning != nil ? .cavnarAmber : nil)
             if viewModel.passed.contains(dish.name) {
-                Text(RecAnswer.notForUs.confirmation).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                Text(RecAnswer.notForUs.confirmation).cavnarText(.caption)
+            } else if showsReprice || canPass {
+                HStack(spacing: CavnarSpace.m) {
+                    if showsReprice {
+                        Button {
+                            Haptic.light()
+                            reprice(dish)
+                        } label: {
+                            Text(dish.unitWarning != nil ? "Check units first" : "Reprice")
+                                .cavnarText(.label, color: dish.unitWarning != nil ? .cavnarAmber : .cavnarEmber2)
+                                .cavnarHitTarget()
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    if canPass {
+                        Button {
+                            Haptic.light()
+                            passing = dish
+                        } label: {
+                            Text(RecAnswer.notForUs.label).cavnarText(.label, color: .cavnarInk2).cavnarHitTarget()
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .disabled(viewModel.busy.contains(dish.name))
             }
         }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(dish.unitWarning == nil ? "Swipe right to reprice" : "Its units need checking first")
+        .padding(.vertical, CavnarSpace.xxs)
+        .accessibilityElement(children: .contain)
     }
 
-    private func stat(_ label: String, _ value: String, tone: Color = .cavnarInk) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label.uppercased()).font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
-            Text(value).font(.cavnarNumber(13.5, weight: 600)).foregroundStyle(value == DSRFormat.dash ? Color.cavnarInk3 : tone)
+    /// "$14.00 · 34.2% food cost" — "?" on a food cost whose units failed
+    /// the check.
+    static func priceLine(_ dish: DishScorecard.Dish) -> String {
+        let pct = dish.foodCostPct.map { String(format: "%.1f%% food cost", $0) + (dish.unitWarning != nil ? " ?" : "") }
+        return [DSRFormat.money(dish.sellPrice), pct].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// The Reprice button and the swipe do the same: a unit warning first,
+    /// then the suggested price to confirm, or a price to type.
+    private func reprice(_ dish: DishScorecard.Dish) {
+        if dish.unitWarning != nil {
+            unitsFor = dish
+        } else if viewModel.suggestion(for: dish)?.suggestedPrice != nil {
+            confirming = dish
+        } else {
+            pricing = dish
         }
     }
 }
@@ -412,12 +448,12 @@ struct DishPriceSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                HomeMixedText.make("Now \(DSRFormat.money(dish.sellPrice))"
-                                   + (dish.foodCostPct.map { String(format: " \u{00B7} %.1f%% food cost", $0) } ?? ""),
-                                   size: 14, color: .cavnarInk3)
+                CavnarMixedText("Now \(DSRFormat.money(dish.sellPrice))"
+                                + (dish.foodCostPct.map { String(format: " \u{00B7} %.1f%% food cost", $0) } ?? ""),
+                                role: .secondary)
                 TextField("New menu price", text: $text)
                     .keyboardType(.decimalPad)
-                    .font(.cavnarNumber(22, weight: 600))
+                    .font(.cavnar(.figureM))
                     .cavnarTextFieldStyle()
                     .focused($focused)
                 Button {
@@ -437,7 +473,7 @@ struct DishPriceSheet: View {
                 .disabled(price == nil || saving)
                 Spacer()
             }
-            .padding(20)
+            .padding(CavnarSpace.gutter)
             .accountSheetChrome(dish.name)
             .onAppear {
                 if let p = dish.sellPrice { text = String(format: "%.2f", p) }

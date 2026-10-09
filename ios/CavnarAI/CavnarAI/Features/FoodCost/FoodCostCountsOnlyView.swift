@@ -27,18 +27,14 @@ struct FoodCostCountsOnlyView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("FOOD COST · STOCK")
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
                     Text("Counts & deliveries")
-                        .font(.cavnarHeadline(22))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(statusLine, size: 14, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(statusLine, role: .secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("Count what\u{2019}s on hand, log what was thrown out, and receive what arrived. Costs and margins stay with the owner.")
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .cavnarCard()
@@ -60,7 +56,7 @@ struct FoodCostCountsOnlyView: View {
                     .buttonStyle(CavnarSecondaryButtonStyle())
                 }
 
-                DeliveriesSection(viewModel: deliveries, showMoney: false, title: "WAITING TO ARRIVE")
+                DeliveriesSection(viewModel: deliveries, showMoney: false, title: "Waiting to arrive")
             }
             .padding(20)
         }

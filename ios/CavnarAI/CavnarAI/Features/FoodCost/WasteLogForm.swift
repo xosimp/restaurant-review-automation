@@ -134,59 +134,86 @@ final class WasteLogViewModel {
     }
 }
 
-/// The form itself — on the count sheet, as on the web, and in its own
-/// sheet from Food Cost's action row.
+/// What this phone logs as waste most, and last — the "Your usual" rows
+/// the form leads with, so a line of waste is three taps, not a scroll
+/// through the whole ingredient list. Kept on the phone (UserDefaults):
+/// a convenience, never a record.
+enum WasteLogHistory {
+    private static let key = "foodcost.wasteLog.history"
+
+    private struct Entry: Codable { var count: Int; var last: Date }
+
+    private static func read() -> [Int: Entry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let map = try? JSONDecoder().decode([Int: Entry].self, from: data) else { return [:] }
+        return map
+    }
+
+    static func record(_ ingredientId: Int) {
+        var map = read()
+        var e = map[ingredientId] ?? Entry(count: 0, last: Date())
+        e.count += 1
+        e.last = Date()
+        map[ingredientId] = e
+        if let data = try? JSONEncoder().encode(map) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    /// Ingredient ids, most logged first, then most recent.
+    static func usual(limit: Int = 5) -> [Int] {
+        read().sorted { a, b in
+            a.value.count != b.value.count ? a.value.count > b.value.count : a.value.last > b.value.last
+        }
+        .prefix(limit).map(\.key)
+    }
+}
+
+/// Log waste in ten seconds (iOS readability round, 10/8/26): pick what —
+/// "Your usual" first, or search — how much with a stepper, why with one
+/// tap, then Log it. It used to be a menu picker over the whole ingredient
+/// list with no search, and a secondary "Log it". Opened from Food Cost's
+/// Waste button; it no longer rides inside the count sheet.
 struct WasteLogForm: View {
     let items: [CountSheetItem]
     var onLogged: () -> Void = {}
     @State private var viewModel = WasteLogViewModel()
+    @State private var search = ""
+    @State private var usual: [Int] = []
     @FocusState private var qtyFocused: Bool
+    @FocusState private var searchFocused: Bool
+
+    private static let listShown = 8
+
+    private var picked: CountSheetItem? {
+        viewModel.ingredientId.flatMap { id in items.first { $0.ingredientId == id } }
+    }
+
+    private var usualItems: [CountSheetItem] {
+        usual.compactMap { id in items.first { $0.ingredientId == id } }
+    }
+
+    private var matches: [CountSheetItem] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return items }
+        return items.filter { $0.name.lowercased().contains(q) || ($0.category ?? "").lowercased().contains(q) }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("LOG WASTE")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
-            Text("What was thrown out, how much, and why.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-            Picker("What", selection: $viewModel.ingredientId) {
-                Text("Pick an ingredient").tag(Int?.none)
-                ForEach(items) { it in
-                    Text(it.unit.map { $0.isEmpty ? it.name : "\(it.name) (\($0))" } ?? it.name).tag(Int?.some(it.ingredientId))
-                }
-            }
-            .pickerStyle(.menu)
-            .tint(Color.cavnarEmber2)
-            HStack(spacing: 12) {
-                TextField("How much", text: $viewModel.qtyText)
-                    .keyboardType(.decimalPad)
-                    .font(.cavnarNumber(16, weight: 600))
-                    .focused($qtyFocused)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 10)
-                    .background(RoundedRectangle(cornerRadius: 8).stroke(Color.cavnarPaper3, lineWidth: 1))
-                    .frame(maxWidth: 120)
-                Picker("Why", selection: $viewModel.reason) {
-                    ForEach(WasteLogViewModel.reasons, id: \.key) { Text($0.label).tag($0.key) }
-                }
-                .pickerStyle(.menu)
-                .tint(Color.cavnarEmber2)
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: CavnarSpace.l) {
+            whatStep
+            if picked != nil {
+                howMuchStep
+                whyStep
             }
             if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.body, color: .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let line = viewModel.loggedLine {
-                HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarGreen)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(line, role: .body, color: .cavnarGreen)
             }
             if let line = viewModel.queuedLine {
                 Label {
-                    HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(line, role: .body)
                 } icon: {
                     Image(systemName: "clock.arrow.circlepath").foregroundStyle(Color.cavnarInk3)
                 }
@@ -197,7 +224,17 @@ struct WasteLogForm: View {
             Button {
                 Haptic.light()
                 qtyFocused = false
-                Task { if await viewModel.log() { onLogged() } }
+                let id = viewModel.ingredientId
+                Task {
+                    let logged = await viewModel.log()
+                    // Logged, or kept on the phone to send: either way the
+                    // owner logged it — it joins "Your usual".
+                    if let id, logged || viewModel.queuedLine != nil {
+                        WasteLogHistory.record(id)
+                        usual = WasteLogHistory.usual()
+                    }
+                    if logged { onLogged() }
+                }
             } label: {
                 Group {
                     if viewModel.isLogging {
@@ -208,25 +245,179 @@ struct WasteLogForm: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canLog))
             .disabled(!viewModel.canLog)
         }
-        .cavnarCard()
-        .task { await viewModel.refreshParked() }
+        .task {
+            usual = WasteLogHistory.usual()
+            await viewModel.refreshParked()
+        }
         .onReceive(NotificationCenter.default.publisher(for: PendingWriteQueue.didChange)) { _ in
             Task { await viewModel.refreshParked() }
+        }
+    }
+
+    // MARK: What
+
+    @ViewBuilder
+    private var whatStep: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("What was thrown out")
+            if let picked {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    Text(picked.name).cavnarText(.lead)
+                    if let u = picked.unit, !u.isEmpty { Text(u).cavnarText(.secondary) }
+                    Spacer(minLength: CavnarSpace.xs)
+                    Button {
+                        Haptic.light()
+                        viewModel.ingredientId = nil
+                        searchFocused = true
+                    } label: {
+                        Text("Change").cavnarText(.label, color: .cavnarEmber2).cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                }
+                .cavnarCard()
+            } else {
+                HStack(spacing: CavnarSpace.xs) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(Color.cavnarInk3).accessibilityHidden(true)
+                    TextField("Find an ingredient", text: $search)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk)
+                        .focused($searchFocused)
+                        .submitLabel(.search)
+                }
+                .padding(.horizontal, CavnarSpace.s)
+                .frame(minHeight: 44)
+                .background(Color.cavnarPaper3.opacity(0.35), in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                if search.trimmingCharacters(in: .whitespaces).isEmpty, !usualItems.isEmpty {
+                    Text("Your usual").cavnarText(.label, color: .cavnarInk2)
+                        .padding(.top, CavnarSpace.xxs)
+                    pickList(usualItems)
+                    Text("Everything").cavnarText(.label, color: .cavnarInk2)
+                        .padding(.top, CavnarSpace.xxs)
+                }
+                let rows = matches
+                if rows.isEmpty {
+                    Text("Nothing matches \u{201C}\(search)\u{201D}.").cavnarText(.secondary)
+                } else {
+                    pickList(Array(rows.prefix(Self.listShown)))
+                    if rows.count > Self.listShown {
+                        CavnarMoreDisclosure(hiddenCount: rows.count - Self.listShown) {
+                            pickList(Array(rows.dropFirst(Self.listShown)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func pickList(_ rows: [CountSheetItem]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, it in
+                if index > 0 { AccountRowDivider() }
+                Button {
+                    Haptic.selection()
+                    viewModel.ingredientId = it.ingredientId
+                    searchFocused = false
+                    qtyFocused = true
+                } label: {
+                    HStack(spacing: CavnarSpace.xs) {
+                        Text(it.name).cavnarText(.body, color: .cavnarInk)
+                        Spacer(minLength: CavnarSpace.xs)
+                        if let u = it.unit, !u.isEmpty { Text(u).cavnarText(.caption) }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, CavnarSpace.s)
+        .background(Color.cavnarPaper2.opacity(0.6), in: RoundedRectangle(cornerRadius: CavnarRadius.card))
+    }
+
+    // MARK: How much
+
+    private var howMuchStep: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("How much")
+            HStack(spacing: CavnarSpace.s) {
+                stepButton("minus", label: "Less") { step(-1) }
+                TextField("0", text: $viewModel.qtyText)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.center)
+                    .font(.cavnar(.figureM))
+                    .foregroundStyle(Color.cavnarInk)
+                    .focused($qtyFocused)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(Color.cavnarPaper3.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityLabel("How much")
+                stepButton("plus", label: "More") { step(1) }
+            }
+            if let u = picked?.unit, !u.isEmpty {
+                Text("In \(u)").cavnarText(.caption)
+            }
+        }
+    }
+
+    private func step(_ by: Double) {
+        let now = FoodCostQuickEntryViewModel.parsedPrice(viewModel.qtyText) ?? 0
+        let next = max(0, now + by)
+        viewModel.qtyText = next == 0 ? "" : CountSheetViewModel.expectedString(next)
+    }
+
+    private func stepButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.selection()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.cavnar(.figureS))
+                .foregroundStyle(Color.cavnarEmber2)
+                .frame(width: 56, height: 56)
+                .background(Color.cavnarEmber.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    // MARK: Why
+
+    private var whyStep: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Why")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: CavnarSpace.xs) {
+                    ForEach(WasteLogViewModel.reasons, id: \.key) { r in
+                        let on = viewModel.reason == r.key
+                        Button {
+                            Haptic.selection()
+                            viewModel.reason = r.key
+                        } label: {
+                            Text(r.label)
+                                .cavnarText(.label, color: on ? .cavnarInk : .cavnarInk2)
+                                .padding(.horizontal, CavnarSpace.s)
+                                .frame(minHeight: 44)
+                                .background(on ? Color.cavnarEmber.opacity(0.28) : Color.cavnarPaper3.opacity(0.35),
+                                            in: Capsule())
+                                .overlay(Capsule().strokeBorder(on ? Color.cavnarEmber2 : Color.clear, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
         }
     }
 
     /// Lines kept on the phone, still waiting for a connection — already
     /// logged as far as the owner is concerned.
     private var parkedList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Waiting to send")
-                .font(.cavnarBody(12.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            Text("Waiting to send").cavnarText(.label, color: .cavnarInk2)
             ForEach(Array(viewModel.parked.enumerated()), id: \.offset) { _, line in
-                HomeMixedText.make(Self.parkedLine(line, items: items), size: 13.5, weight: 500, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(Self.parkedLine(line, items: items), role: .secondary)
             }
         }
     }
@@ -240,7 +431,7 @@ struct WasteLogForm: View {
     }
 }
 
-/// Log waste on its own, from Food Cost's action row ("inventory/waste").
+/// Log waste on its own, from Food Cost's Waste button ("inventory/waste").
 /// Reads the count sheet for the ingredient list — the same list the web's
 /// form offers.
 struct WasteLogSheet: View {
@@ -250,23 +441,23 @@ struct WasteLogSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: CavnarSpace.m) {
                     if let error = countSheet.errorMessage {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.body, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if countSheet.isLoading && countSheet.items.isEmpty {
                         CavnarWorkingLine().padding(.vertical, 12)
                     } else if countSheet.items.isEmpty {
                         Text("No ingredients on file yet — waste is logged against an ingredient.")
-                            .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                             .cavnarCard()
                     } else {
                         WasteLogForm(items: countSheet.items)
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .scrollDismissesKeyboard(.immediately)
             .cavnarModuleBackground()
@@ -279,7 +470,7 @@ struct WasteLogSheet: View {
                         Haptic.light()
                         dismiss()
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }

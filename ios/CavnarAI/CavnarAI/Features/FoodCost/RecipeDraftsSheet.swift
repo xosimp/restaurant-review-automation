@@ -331,7 +331,7 @@ struct RecipeDraftsSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: CavnarSpace.m) {
                     if viewModel.isSynced {
                         syncedRecipes
                     } else {
@@ -344,29 +344,36 @@ struct RecipeDraftsSheet: View {
                         .cavnarCard()
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.body, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let m = viewModel.lastMessage {
-                        Text(m).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarGreen)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(m, role: .body, color: .cavnarGreen)
                     }
                     if viewModel.isLoading && viewModel.drafts.isEmpty {
-                        CavnarWorkingLine().padding(.vertical, 12)
+                        CavnarWorkingLine().padding(.vertical, CavnarSpace.s)
                     } else if viewModel.drafts.isEmpty {
                         Text("Every dish on your POS has a recipe, or drafts arrive Tuesday mornings for any that don't.")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                             .cavnarCard()
                     } else {
                         ForEach(viewModel.drafts) { draft in
-                            draftCard(draft)
+                            draftCard(draft, pinned: draft.id == viewModel.drafts.first?.id)
                         }
                     }
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
+            }
+            // The first draft's answer in thumb reach (iOS readability
+            // round, 10/8/26); any others keep theirs on their cards.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !viewModel.isSynced, let first = viewModel.drafts.first {
+                    CavnarPinnedBar(note: viewModel.drafts.count > 1 ? (first.menuItemName ?? "The first draft") : nil) {
+                        answerButtons(first)
+                    }
+                }
             }
             .cavnarModuleBackground()
             .navigationTitle("Recipes")
@@ -378,7 +385,7 @@ struct RecipeDraftsSheet: View {
                         Haptic.light()
                         dismiss()
                     } label: {
-                        Text("Done").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Done").cavnarText(.label, color: .cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -402,58 +409,32 @@ struct RecipeDraftsSheet: View {
         }
     }
 
-    /// The inventory system's recipes, read-only (parity audit #78) — the
-    /// web's "Your recipes" block.
+    /// The inventory system's recipes, read-only (parity audit #78). The
+    /// phone says where they come from and how many; the list itself is a
+    /// table for the web (iOS readability round, 10/8/26).
     private var syncedRecipes: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("YOUR RECIPES")
-                    .font(.cavnarBody(13.5, weight: 700)).tracking(1.2).foregroundStyle(Color.cavnarEmber2)
-                if let source = viewModel.source {
-                    HomeMixedText.make("From \(source.name)" + (source.syncedOn.map { " \u{00B7} \($0)" } ?? "")
-                                       + ". Every plate cost and depletion reads these.", size: 14, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            let n = viewModel.recipes.count
+            Text(n == 0 ? "No recipes came over with the last sync."
+                 : "\(n) recipe\(n == 1 ? "" : "s") from your inventory system")
+                .cavnarText(.lead)
+                .fixedSize(horizontal: false, vertical: true)
+            if let source = viewModel.source {
+                CavnarMixedText("From \(source.name)" + (source.syncedOn.map { " \u{00B7} \($0)" } ?? "")
+                                + ". Every plate cost and depletion reads these; change them there.", role: .secondary)
             }
-            .cavnarCard()
-            if viewModel.recipes.isEmpty {
-                Text("No recipes came over with the last sync.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                    .cavnarCard()
-            }
-            ForEach(viewModel.recipes) { r in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(r.name).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        Spacer(minLength: 8)
-                        if let p = r.sellPrice {
-                            Text(String(format: "$%.2f", p)).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk3)
-                        }
-                    }
-                    AccountFlowLayout(spacing: 6) {
-                        ForEach(Array(r.lines.enumerated()), id: \.offset) { _, l in
-                            HomeMixedText.make("\(l.name ?? "") \(l.qty.map { RecipeDraftLine.format($0) } ?? DSRFormat.dash)"
-                                               + (l.unit.map { $0.isEmpty ? "" : " \($0)" } ?? ""),
-                                               size: 12.5, color: .cavnarInk2)
-                                .padding(.horizontal, 9).padding(.vertical, 4)
-                                .background(Color.cavnarPaper3.opacity(0.4), in: Capsule())
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cavnarCard()
+            if n > 0 {
+                CavnarWebLinkRow(title: "Your recipes", subtitle: "Every dish and its ingredients",
+                                 path: "inventory/menu", actionLabel: "Open on the web")
             }
         }
+        .cavnarCard()
     }
 
     private var intro: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("RECIPES TO CONFIRM")
-                .font(.cavnarBody(13.5, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             Text("Scan a recipe card and it becomes a draft here, using only ingredients already on your list. Accept writes the recipe; nothing changes until you do.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
             // The document camera first — flattened, squared and without the
             // card landing in the photo library (parity audit #92); the
@@ -463,8 +444,8 @@ struct RecipeDraftsSheet: View {
                     Haptic.light()
                     showingCamera = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.viewfinder").font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "doc.viewfinder").accessibilityHidden(true)
                         Text("Scan a recipe card")
                     }
                     .frame(maxWidth: .infinity)
@@ -472,8 +453,8 @@ struct RecipeDraftsSheet: View {
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isScanning))
                 .disabled(viewModel.isScanning)
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "photo.on.rectangle").font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "photo.on.rectangle").accessibilityHidden(true)
                         Text("Choose a photo instead")
                     }
                     .frame(maxWidth: .infinity)
@@ -482,8 +463,8 @@ struct RecipeDraftsSheet: View {
                 .disabled(viewModel.isScanning)
             } else {
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "camera.viewfinder").font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: CavnarSpace.xs) {
+                        Image(systemName: "camera.viewfinder").accessibilityHidden(true)
                         Text("Photograph a recipe card")
                     }
                     .frame(maxWidth: .infinity)
@@ -495,14 +476,12 @@ struct RecipeDraftsSheet: View {
         .cavnarCard()
     }
 
-    private func draftCard(_ draft: RecipeDraft) -> some View {
-        let typedYield = Self.parsedYield(yieldText[draft.id])
-        let blockedOnYield = draft.requiresYield && typedYield == nil
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+    /// `pinned`: this draft's answer is in the pinned bar, not on the card.
+    private func draftCard(_ draft: RecipeDraft, pinned: Bool) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                 Text(draft.menuItemName ?? "Dish #\(draft.menuItemId ?? 0)")
-                    .font(.cavnarBody(16, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.lead)
                 // Drafted from your ingredient list, not read off a card —
                 // an estimate until you accept it (H6).
                 if draft.isEstimate == true {
@@ -510,7 +489,7 @@ struct RecipeDraftsSheet: View {
                 }
             }
             if let note = draft.note, !note.isEmpty {
-                Text(note).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                Text(note).cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             // Lines whose units didn't convert are skipped on Accept (H6) —
@@ -525,24 +504,23 @@ struct RecipeDraftsSheet: View {
                 ForEach(draft.lines) { line in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 8) {
-                            Text(line.name).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk2)
+                            Text(line.name).cavnarText(.secondary)
                             if line.isBatch {
-                                Text("per batch").font(.cavnarBody(11.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                                Text("per batch").cavnarText(.caption)
                             }
-                            Spacer(minLength: 6)
+                            Spacer(minLength: CavnarSpace.xxs)
                             Text(Self.qty(line.qty) + (line.unit.map { " \($0)" } ?? ""))
-                                .font(.cavnarNumber(14, weight: 600))
-                                .foregroundStyle(line.mark == .doubt || line.unitUnconverted ? Color.cavnarAmber : Color.cavnarInk)
+                                .cavnarText(.figureS, color: line.mark == .doubt || line.unitUnconverted ? Color.cavnarAmber : Color.cavnarInk)
                             if line.unitUnconverted {
-                                Text("unit?").font(.cavnarBody(11.5, weight: 700)).foregroundStyle(Color.cavnarAmber)
+                                Text("unit?").cavnarText(.caption, color: .cavnarAmber)
                                     .accessibilityLabel("The unit didn't convert — skipped on accept")
                             } else {
                                 switch line.mark {
                                 case .doubt:
-                                    Text("?").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarAmber)
+                                    Text("?").cavnarText(.caption, color: .cavnarAmber)
                                         .accessibilityLabel("Unsure — check this amount")
                                 case .check:
-                                    Text("check").font(.cavnarBody(11.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                                    Text("check").cavnarText(.caption)
                                         .accessibilityLabel("Worth a check")
                                 case nil:
                                     EmptyView()
@@ -551,7 +529,7 @@ struct RecipeDraftsSheet: View {
                         }
                         // What the card itself said, when conversion changed it.
                         if let card = line.cardLine {
-                            HomeMixedText.make(card, size: 12, color: .cavnarInk3)
+                            CavnarMixedText(card, role: .caption)
                         }
                     }
                 }
@@ -561,39 +539,48 @@ struct RecipeDraftsSheet: View {
             if draft.requiresYield {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("This card is a batch. How many plates does it make?")
-                        .font(.cavnarBody(13.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.label, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     TextField("Plates", text: Binding(
                         get: { yieldText[draft.id] ?? "" },
                         set: { yieldText[draft.id] = $0 }))
                         .keyboardType(.decimalPad)
                         .cavnarTextFieldStyle()
-                        .font(.cavnarNumber(15, weight: 600))
+                        .font(.cavnar(.figureS))
                         .frame(maxWidth: 140, alignment: .leading)
                         .accessibilityLabel("Plates this card makes")
                 }
             }
-            HStack(spacing: 10) {
-                Button {
-                    Haptic.light()
-                    Task { await viewModel.answer(draft, accept: false) }
-                } label: {
-                    Text("Not right").frame(maxWidth: .infinity)
+            if !pinned {
+                HStack(spacing: CavnarSpace.s) {
+                    answerButtons(draft)
                 }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-                .disabled(viewModel.busyId == draft.id)
-                Button {
-                    Haptic.light()
-                    Task { await viewModel.answer(draft, accept: true, yield: draft.requiresYield ? typedYield : nil) }
-                } label: {
-                    Text(viewModel.busyId == draft.id ? "Writing…" : "Accept recipe").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.busyId == draft.id || blockedOnYield))
-                .disabled(viewModel.busyId == draft.id || blockedOnYield)
             }
         }
         .cavnarCard(.ai)
+    }
+
+    /// Not right · Accept recipe — on the card, or pinned for the first.
+    @ViewBuilder
+    private func answerButtons(_ draft: RecipeDraft) -> some View {
+        let typedYield = Self.parsedYield(yieldText[draft.id])
+        let blockedOnYield = draft.requiresYield && typedYield == nil
+        Button {
+            Haptic.light()
+            Task { await viewModel.answer(draft, accept: false) }
+        } label: {
+            Text("Not right").frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarSecondaryButtonStyle())
+        .disabled(viewModel.busyId == draft.id)
+        Button {
+            Haptic.light()
+            Task { await viewModel.answer(draft, accept: true, yield: draft.requiresYield ? typedYield : nil) }
+        } label: {
+            Text(viewModel.busyId == draft.id ? "Writing…" : "Accept recipe").frame(maxWidth: .infinity)
+        }
+        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.busyId == draft.id || blockedOnYield))
+        .disabled(viewModel.busyId == draft.id || blockedOnYield)
     }
 
     private static func qty(_ q: Double) -> String {

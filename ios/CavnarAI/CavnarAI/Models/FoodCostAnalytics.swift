@@ -300,6 +300,10 @@ struct FoodCostAnalytics: Decodable {
     /// regardless of when anything was counted.
     let windowFromCounts: Bool?
     let windowAgeDays: Int?
+    /// The newest count date behind the stock figures ("2026-10-05",
+    /// inventory.counted_to) — the date an owner means by "my count", not
+    /// `last_updated`, which is when the analysis ran.
+    var countedTo: String? = nil
     let projectionBasis: String?
     let purchasesBasis: String?
     let totalPurchased: Double?
@@ -373,6 +377,7 @@ struct FoodCostAnalytics: Decodable {
         case wasteSplit = "waste_split"
         case windowFromCounts = "window_from_counts"
         case windowAgeDays = "window_age_days"
+        case countedTo = "counted_to"
         case projectionBasis = "projection_basis"
         case purchasesBasis = "purchases_basis"
         case totalPurchased = "total_purchased"
