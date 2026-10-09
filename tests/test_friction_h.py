@@ -176,10 +176,13 @@ def test_opening_the_editor_records_no_skip():
 
 # ── #20: inbox first; search asks the server; new reviews without reload ──
 
-def test_the_reviews_panel_leads_with_the_inbox_and_collapses_the_analytics():
+def test_the_reviews_panel_leads_with_the_inbox_and_the_trends_start_open():
+    """The inbox leads; Trends sits under it, open (owner, 10/9/26: "too
+    hidden opening closed for owners"), loading only while Reviews is shown."""
     panel = SRC[SRC.index('id="panel-reviews"'):SRC.index("<!-- /panel-reviews -->")]
     assert panel.index('id="rv-inbox-reviews"') < panel.index('id="rv-panel-analytics"')
-    assert '<details id="rv-panel-analytics"' in panel
+    assert '<details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics" open>' in panel
+    assert "if(d.open&&(!p||p.offsetParent!==null))_rvLoadAnalytics();" in SRC
     assert 'data-nav="reviews/inbox"' in panel
     banner = re.search(r'<div id="new-reviews-banner"[^>]*>', panel).group(0)
     assert "location.reload" not in banner

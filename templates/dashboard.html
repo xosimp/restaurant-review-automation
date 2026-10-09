@@ -10266,10 +10266,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   </div>
 
   {# The inbox leads (friction #20): opening Reviews is almost always to
-     answer something. The analytics sit under it, collapsed, and load
-     on first open (rvOpenAnalytics); the header pills that point at a
-     chart open it first. #}
-  <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics">
+     answer something. The analytics sit under it, OPEN (owner, 10/9/26:
+     "too hidden opening closed for owners"), and load when Reviews is
+     shown (switchTab 'reviews'); the reads are stored, so a visit is not a
+     model call. Closing it still works. #}
+  <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics" open>
     <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating trend, Cavnar AI's read, how replies were approved, topics</span></summary>
 
     <section class="rv2-hero" aria-label="Rating trend">
@@ -19386,7 +19387,9 @@ function _rvLoadAnalytics(){
 }
 document.addEventListener('DOMContentLoaded',function(){
   var d=document.getElementById('rv-panel-analytics');
-  if(d)d.addEventListener('toggle',function(){if(d.open)_rvLoadAnalytics();});
+  // Only while Reviews is on screen: it now starts open, and the toggle an
+  // open <details> fires at load must not fetch the charts from Home.
+  if(d)d.addEventListener('toggle',function(){var p=document.getElementById('panel-reviews');if(d.open&&(!p||p.offsetParent!==null))_rvLoadAnalytics();});
   // Nav heads this module owns (nav.py): "review/<id>" focuses one review;
   // "reviews?filter=urgent|pending|…&search=…" and "reviews/analytics" set
   // the inbox up; anything else falls back to the router's default.
