@@ -10952,7 +10952,14 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 /* Schedule: settings rail, the living calendar, insights */
 .ss .sw{--sw-w:auto;width:auto;margin:0;padding:16px 20px 28px}
 .ss .sw-grid{grid-template-columns:minmax(0,1fr) 400px;margin-top:0;gap:18px}
-.ss .sw-side{top:16px;max-height:calc(100vh - 60px - 32px)}
+.ss .sw-side{top:16px;max-height:calc(var(--ss-main-h, calc(100vh - 92px)) - 32px);overscroll-behavior:contain}
+/* The right column is exactly the Studio's visible scroll height (ssDock
+   measures .ss-main into --ss-main-h, owner 10/9/26): it used 100vh, so its
+   end sat below the window and only the middle column's scroll reached it.
+   Its tab bar covers the full width from the very top, so nothing scrolling
+   under it shows above or beside it. */
+.ss .sw-right{padding-top:0}
+.ss .sw-right .ss-rtabs{margin:0 -18px;padding:12px 18px 8px;top:0}
 .ss .sw-idle{margin-top:24px}
 .ss .lb2-preview{border-radius:18px}
 .ss-weekhead{display:flex;align-items:flex-start;gap:14px;padding:16px 20px 4px}
@@ -26362,6 +26369,8 @@ function ssDock() {
   if (!window._ssOpen) { st.style.top = ''; return; }
   var b = t ? Math.round(t.getBoundingClientRect().bottom) : 0;
   st.style.top = b > 0 ? b + 'px' : '';
+  var m = st.querySelector('.ss-main');
+  if (m && m.clientHeight) st.style.setProperty('--ss-main-h', m.clientHeight + 'px');
 }
 // A resize re-measures and re-points the indicator; it never re-runs
 // ssTabOn(true), which would forget the tab to return to.
