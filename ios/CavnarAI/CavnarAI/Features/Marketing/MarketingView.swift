@@ -85,13 +85,18 @@ struct MarketingView: View {
                         if viewModel.stats != nil {
                             CachedDataNotice(text: viewModel.stalenessNotice)
                             outcomeRow
+                            // The posts a teammate wrote that wait on the
+                            // owner, approvable here (readability #19) — the
+                            // Drafts screen was the only place to do it.
+                            waitingPostsRow
                             MarketingOpportunitySection(viewModel: opportunities, draftingKey: nil) { card in
                                 draftFromCard(card)
                             }
                             .id(Self.opportunitiesAnchor)
-                            // How current the post metrics are (DH4-8),
-                            // amber when the nightly pull is stale or failing.
-                            if let sync = viewModel.metricsSync {
+                            // How current the post metrics are (DH4-8) —
+                            // only when it is news: the nightly pull stale
+                            // or failing (amber/red).
+                            if let sync = viewModel.metricsSync, sync.tone == "warn" || sync.tone == "bad" {
                                 ServerStatusCaption(status: sync)
                             }
                             shelfTiles
@@ -101,17 +106,33 @@ struct MarketingView: View {
                             CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                                Text(error).cavnarText(.body)
                                 Button("Retry") { Task { await viewModel.load() } }
+                                    .frame(minHeight: 44)
                             }
                             .padding(.top, 60)
                             .frame(maxWidth: .infinity)
                         }
                     } else {
-                        MarketingAnalyticsSection(viewModel: analyticsViewModel, counts: viewModel.stats)
+                        MarketingAnalyticsSection(viewModel: analyticsViewModel)
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
+            }
+            // Post / Schedule pinned in thumb reach once there is a draft to
+            // send (readability round #56) — they sat at the end of a dozen
+            // blocks. Only on Content, only where a channel is connected.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if subTab == .content && viewModel.hasDraft && viewModel.canPostSomewhere {
+                    CavnarPinnedBar {
+                        composeActions
+                        if viewModel.isGooglePost {
+                            googlePublish
+                        } else {
+                            socialPublish
+                        }
+                    }
+                }
             }
             // Refreshes whichever tab is actually on screen. This always
             // reloaded the CONTENT view model regardless, so pulling on
@@ -265,63 +286,123 @@ struct MarketingView: View {
     @ViewBuilder
     private var outcomeRow: some View {
         let outcome = Self.outcome(analyticsViewModel.window)
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("LAST \(header?.days ?? analyticsViewModel.window?.days ?? 30) DAYS")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarInk3)
+        HStack(alignment: .top, spacing: CavnarSpace.m) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                CavnarKicker("Last \(header?.days ?? analyticsViewModel.window?.days ?? 30) days")
                 if let status = header?.status, !status.isEmpty {
                     // The server's one sentence, the same the web h1 reads.
-                    HomeMixedText.make(status, size: CavnarType.emphasis, weight: 700,
-                                       color: header?.toneColor ?? .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(status, role: .lead, color: header?.toneColor ?? .cavnarInk)
                     if analyticsViewModel.window?.posts ?? 0 > 0, let reach = analyticsViewModel.window?.reach {
-                        HomeMixedText.make("\(reach.formatted()) reached", size: CavnarType.secondary,
-                                           weight: 600, color: .cavnarInk3)
+                        HomeMixedText.make("\(reach.formatted()) reached", role: .secondary)
                     }
                 } else {
-                    HomeMixedText.make(outcome.headline, size: CavnarType.tileNumber, weight: 700,
-                                       color: .cavnarInk, numberColor: .cavnarInk)
+                    HomeMixedText.make(outcome.headline, role: .figureM, color: .cavnarInk, numberColor: .cavnarInk)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.85)
                     if let change = outcome.change {
-                        HomeMixedText.make(change, size: CavnarType.secondary, weight: 700, color: outcome.tone)
+                        CavnarMixedText(change, role: .secondary, color: outcome.tone)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            // NEXT POST opens "Scheduled & sent" — what is coming and what
+            // went out (readability round #58).
+            Button {
+                Haptic.light()
+                shelfDestination = .scheduled
+            } label: {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("Next post")
+                    if let next = header?.nextScheduled, let when = next.whenLabel {
+                        HomeMixedText.make(when, role: .label)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let platform = next.platform {
+                            Text(platform.capitalized).cavnarText(.caption)
+                        }
+                    } else if let next = Self.nextScheduled(compose.scheduled) {
+                        HomeMixedText.make(next.whenLabel, role: .label)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(next.platform.capitalized).cavnarText(.caption)
+                    } else {
+                        Text("Nothing scheduled")
+                            .cavnarText(.label, color: .cavnarAmber)
                     }
+                    Text("Scheduled & sent \u{203A}")
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
                 }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("NEXT POST")
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarInk3)
-                if let next = header?.nextScheduled, let when = next.whenLabel {
-                    HomeMixedText.make(when, size: CavnarType.body, weight: 700, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let platform = next.platform {
-                        Text(platform.capitalized)
-                            .font(.cavnarBody(CavnarType.caption))
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
-                } else if let next = Self.nextScheduled(compose.scheduled) {
-                    HomeMixedText.make(next.whenLabel, size: CavnarType.body, weight: 700, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(next.platform.capitalized)
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
-                } else {
-                    Text("Nothing scheduled")
-                        .font(.cavnarBody(CavnarType.body, weight: 700))
-                        .foregroundStyle(Color.cavnarAmber)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityHint("Opens what is scheduled and what went out")
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, CavnarSpace.xxs)
         .padding(.bottom, 2)
-        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Waiting on you
+
+    /// The saved posts still waiting on an approve — the oldest one with its
+    /// words and an Approve right here, the rest a tap away in Drafts
+    /// (readability round 10/8/26 #19). Approve is the server's draft
+    /// approve (the same call the Drafts screen makes); nothing is posted.
+    @ViewBuilder
+    private var waitingPostsRow: some View {
+        let waiting = compose.drafts.filter(\.canApprove)
+        if let first = waiting.first {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                HStack(alignment: .firstTextBaseline) {
+                    CavnarKicker(waiting.count == 1 ? "A post waiting for you" : "\(waiting.count) posts waiting for you")
+                    Spacer(minLength: 0)
+                    if waiting.count > 1 {
+                        Button {
+                            Haptic.light()
+                            shelfDestination = .drafts
+                        } label: {
+                            Text("See all \u{203A}")
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .cavnarHitTarget()
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                if let topic = first.topic, !topic.isEmpty {
+                    Text(topic).cavnarText(.label)
+                }
+                Text(first.body)
+                    .cavnarText(.secondary)
+                    .lineLimit(2)
+                if let who = first.createdByName {
+                    Text("Written by \(who)").cavnarText(.caption)
+                }
+                HStack(spacing: CavnarSpace.s) {
+                    Button {
+                        Haptic.light()
+                        Task { await compose.approve(first) }
+                    } label: {
+                        Text("Approve").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle())
+                    Button {
+                        Haptic.light()
+                        openDraft(first)
+                        scrollToDraft = UUID()
+                    } label: {
+                        Text("Open").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                }
+                if let error = compose.draftError {
+                    Text(error).cavnarText(.caption, color: .cavnarRedText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
+        }
     }
 
     /// The outcome line from the 30-day window: reach and its change
@@ -359,17 +440,21 @@ struct MarketingView: View {
 
     // MARK: - Shelf
 
-    /// Text Club / Scheduled / Drafts as three compact tiles with their
-    /// counts, instead of three full-width rows stacked under the stats.
+    /// Scheduled & sent / Drafts as two compact tiles, each saying what it
+    /// holds in words ("2 upcoming", "3 to approve"). The Text Club lives
+    /// under Campaigns now (readability round #57), with the rest of guest
+    /// texting.
     private var shelfTiles: some View {
-        HStack(spacing: 8) {
-            shelfTile("Text Club", icon: "message.fill", count: viewModel.guestTextable) {
-                shelfDestination = .guestTextClub
-            }
-            shelfTile("Scheduled", icon: "calendar.badge.clock", count: compose.pendingCount) {
+        let toApprove = compose.drafts.filter(\.canApprove).count
+        return HStack(spacing: CavnarSpace.xs) {
+            shelfTile("Scheduled & sent", icon: "calendar.badge.clock",
+                      status: compose.pendingCount > 0 ? "\(compose.pendingCount) upcoming" : "Nothing upcoming") {
                 shelfDestination = .scheduled
             }
-            shelfTile("Drafts", icon: "square.and.pencil", count: compose.drafts.count) {
+            shelfTile("Drafts", icon: "square.and.pencil",
+                      status: toApprove > 0 ? "\(toApprove) to approve"
+                          : (compose.drafts.isEmpty ? "None saved" : "\(compose.drafts.count) saved"),
+                      highlight: toApprove > 0) {
                 shelfDestination = .drafts
             }
         }
@@ -380,28 +465,26 @@ struct MarketingView: View {
         // happen together.
     }
 
-    private func shelfTile(_ title: String, icon: String, count: Int, action: @escaping () -> Void) -> some View {
+    private func shelfTile(_ title: String, icon: String, status: String, highlight: Bool = false,
+                           action: @escaping () -> Void) -> some View {
         Button {
             Haptic.light()
             action()
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs + 2) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.cavnar(.body))
                     .foregroundStyle(Color.cavnarEmber2)
                 Text(title)
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.label)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
-                Text("\(count)")
-                    .font(.cavnarNumber(18, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber2)
+                HomeMixedText.make(status, role: .secondary, color: highlight ? .cavnarEmber2 : .cavnarInk2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 12)
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            .padding(CavnarSpace.s)
             .background(Color.cavnarPaper2)
             .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
@@ -413,10 +496,9 @@ struct MarketingView: View {
 
     @ViewBuilder
     private var composerCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Write something")
-                .font(.cavnarBody(16, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            Text("Write a post")
+                .cavnarText(.label)
 
             TextField("Topic — optional, e.g. fall truffle menu", text: $viewModel.topic)
                 .cavnarTextFieldStyle()
@@ -449,11 +531,8 @@ struct MarketingView: View {
             }
 
             // Content is social-only (web d0ef5a85): a text or an email is
-            // written in the Campaign Studio, which sends it to an audience.
-            HStack(spacing: 10) {
-                guestChannelButton("Write a text", systemImage: "message", channel: .text)
-                guestChannelButton("Write an email", systemImage: "envelope", channel: .email)
-            }
+            // written in the Campaign Studio, under Campaigns → Create — one
+            // "write" door per screen (readability round 10/8/26).
 
             if viewModel.isGenerating {
                 // Skeleton lines say "content is streaming in", and nothing
@@ -465,18 +544,18 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.generateError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
 
             if viewModel.hasDraft {
                 draftEditor
+                draftActions
                 // Instagram needs a photo; every other destination is better
                 // with one, so it lives with the draft rather than being
                 // buried under the Instagram button the way the old URL
                 // field was.
                 MarketingPhotoPicker(viewModel: compose)
-                draftActions
-                composeActions
+                // Where it goes; Post and Schedule are pinned at the bottom.
                 publishSection
             }
         }
@@ -499,7 +578,7 @@ struct MarketingView: View {
             // a compact box and a long one gets the room it needs, and the
             // page — not the box — is what scrolls.
             TextEditor(text: $viewModel.draft)
-                .font(.cavnarBody(16.5))
+                .font(.cavnar(.lead))
                 .lineSpacing(5)
                 .foregroundStyle(Color.cavnarInk)
                 .scrollContentBackground(.hidden)
@@ -518,24 +597,25 @@ struct MarketingView: View {
             // knows and can rewrite the topic if it guessed wrong.
             if let label = viewModel.draftTags?.label, !label.isEmpty {
                 HStack(spacing: 8) {
-                    Text("About").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    Text("About").cavnarText(.caption)
                     AccountChip(text: label, muted: true)
                 }
             }
 
+            // The count, always; "Trim it" only when it is over the limit —
+            // it used to say so under the limit too.
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Trim it before it goes out")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                if viewModel.isOverLimit {
+                    Text("Trim it before it goes out")
+                        .cavnarText(.secondary, color: .cavnarRedText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer(minLength: 8)
                 if let limit = viewModel.characterLimit, let type = viewModel.selectedContentType {
-                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(14, weight: 700))
-                        + Text(" / ")
-                        + Text(limit.formatted()).font(.cavnarNumber(14))
-                        + Text(viewModel.isOverLimit ? " over \(type.limitLabel)" : ""))
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarInk3)
+                    HomeMixedText.make("\(viewModel.draft.count) / \(limit.formatted())"
+                                       + (viewModel.isOverLimit ? " over \(type.limitLabel)" : ""),
+                                       role: .caption,
+                                       color: viewModel.isOverLimit ? .cavnarRedText : .cavnarInk3)
                         .layoutPriority(1)
                 }
             }
@@ -549,36 +629,48 @@ struct MarketingView: View {
     /// screen. Now the tap carries the reader up to it.
     static let draftEditorAnchor = "marketing-draft-editor"
 
-    /// Copy, Regenerate, Preview, Save draft — four cells of one grid, so
-    /// they are the same size whatever their labels say. They were two
-    /// HStacks, and an HStack hands each child its ideal width first: when
-    /// Copy became "Copied ✓" it measured wider, the row re-split, and the
-    /// button visibly grew and shrank back. A grid's .flexible() columns are
-    /// equal by definition, and a fixed cell height keeps a two-line label
-    /// from ever changing the row.
+    /// Preview and Regenerate as two equal cells, and Copy / Save draft
+    /// behind "More" (readability round #56) — four buttons of one weight
+    /// sat between the words and Post. A grid's .flexible() columns are
+    /// equal by definition, so a label that changes never re-splits the row.
     private var draftActions: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
-                  spacing: 10) {
-            actionCell(viewModel.didCopyDraft ? "Copied" : "Copy",
-                       systemImage: viewModel.didCopyDraft ? "checkmark" : "doc.on.doc",
-                       tint: viewModel.didCopyDraft ? Color.cavnarGreen : nil) {
-                viewModel.copyDraft()
+        HStack(spacing: CavnarSpace.xs) {
+            actionCell("Preview", systemImage: "eye") {
+                showingPreview = true
             }
             actionCell("Regenerate", systemImage: "arrow.triangle.2.circlepath",
                        disabled: viewModel.isGenerating) {
                 Task { await viewModel.generate() }
             }
-            actionCell("Preview", systemImage: "eye") {
-                showingPreview = true
-            }
-            actionCell(compose.isSavingDraft ? "Saving…" : "Save draft",
-                       systemImage: "tray.and.arrow.down", disabled: compose.isSavingDraft) {
-                Task {
-                    await compose.saveDraft(body: viewModel.draft, topic: viewModel.topic,
-                                            contentType: viewModel.selectedType,
-                                            draftRef: viewModel.draftRef, contentLogId: viewModel.contentLogId)
+            Menu {
+                Button {
+                    viewModel.copyDraft()
+                } label: {
+                    Label(viewModel.didCopyDraft ? "Copied" : "Copy the caption",
+                          systemImage: viewModel.didCopyDraft ? "checkmark" : "doc.on.doc")
                 }
+                Button {
+                    Task {
+                        await compose.saveDraft(body: viewModel.draft, topic: viewModel.topic,
+                                                contentType: viewModel.selectedType,
+                                                draftRef: viewModel.draftRef, contentLogId: viewModel.contentLogId)
+                    }
+                } label: {
+                    Label(compose.isSavingDraft ? "Saving\u{2026}" : "Save draft", systemImage: "tray.and.arrow.down")
+                }
+                .disabled(compose.isSavingDraft)
+            } label: {
+                Image(systemName: viewModel.didCopyDraft ? "checkmark" : "ellipsis")
+                    .font(.cavnar(.label))
+                    .foregroundStyle(viewModel.didCopyDraft ? Color.cavnarGreen : Color.cavnarEmber)
+                    .frame(width: 50, height: 50)
+                    .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                        .fill(Color.white.opacity(0.05)))
+                    .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                        .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                    .contentShape(Rectangle())
             }
+            .accessibilityLabel("More: copy or save the draft")
         }
         .animation(.easeOut(duration: 0.2), value: viewModel.didCopyDraft)
     }
@@ -598,8 +690,8 @@ struct MarketingView: View {
         .disabled(disabled)
     }
 
-    /// Queue it — kept apart from the four editing actions above because it
-    /// publishes, and only appears once a destination is connected.
+    /// Queue it — beside Post in the pinned bar; only once a destination is
+    /// connected.
     @ViewBuilder
     private var composeActions: some View {
         if viewModel.canPostSomewhere {
@@ -608,7 +700,9 @@ struct MarketingView: View {
                     ? "google" : (viewModel.channels.instagram ? "instagram" : "facebook")
                 showingSchedule = true
             } label: {
-                Label("Schedule", systemImage: "calendar.badge.clock").frame(maxWidth: .infinity)
+                Text("Schedule")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
         }
@@ -616,14 +710,17 @@ struct MarketingView: View {
 
     // MARK: - Publish
 
+    /// Where the post goes — the channel switches, or Google's button — in
+    /// the card; the Post itself is pinned (`socialPublish`,
+    /// `googlePublish`).
     @ViewBuilder
     private var publishSection: some View {
         if !viewModel.canPostSomewhere {
             notConnectedNotice
         } else if viewModel.isGooglePost {
-            googlePublish
+            googleOptions
         } else {
-            socialPublish
+            socialChannels
         }
 
         if let posted = viewModel.postedPlatform {
@@ -632,7 +729,7 @@ struct MarketingView: View {
                 .padding(.top, 6)
         }
         if let error = viewModel.postError {
-            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+            Text(error).cavnarText(.secondary, color: .cavnarRedText)
         }
     }
 
@@ -646,34 +743,29 @@ struct MarketingView: View {
             Text(viewModel.isGooglePost
                  ? "Connect Google Business under Account → Connections to publish this to your listing."
                  : "Connect Instagram or Facebook under Account → Connections to publish from here. You can still copy the caption and post it yourself.")
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(CavnarSpace.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
-    /// ONE primary — "Post to Instagram and Facebook" — with a switch per
-    /// connected channel, on by default (Friction audit #41, U3-16). It
-    /// posts outside the restaurant, so it confirms first, naming where
-    /// the caption goes (DESIGN_SYSTEM §10's confirm/undo policy).
+    /// A switch per connected channel, on by default (Friction audit #41,
+    /// U3-16) — in the card, above the pinned Post.
     @ViewBuilder
-    private var socialPublish: some View {
+    private var socialChannels: some View {
         let hasMedia = compose.media != nil
-        let targets = viewModel.socialTargets(hasMedia: hasMedia)
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             if viewModel.channels.instagram {
                 Toggle(isOn: $viewModel.instagramSelected) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Instagram").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text("Instagram").cavnarText(.label)
                         if !hasMedia {
-                            Text("Needs a photo — add one above.")
-                                .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            Text("Needs a photo — add one above.").cavnarText(.caption)
                         } else if viewModel.alreadyPosted(to: "Instagram") {
-                            Text("Posted").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarGreen)
+                            Text("Posted").cavnarText(.caption, color: .cavnarGreen)
                         }
                     }
                 }
@@ -683,15 +775,26 @@ struct MarketingView: View {
             if viewModel.channels.facebook {
                 Toggle(isOn: $viewModel.facebookSelected) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Facebook").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text("Facebook").cavnarText(.label)
                         if viewModel.alreadyPosted(to: "Facebook") {
-                            Text("Posted").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarGreen)
+                            Text("Posted").cavnarText(.caption, color: .cavnarGreen)
                         }
                     }
                 }
                 .tint(Color.cavnarEmber)
                 .disabled(viewModel.alreadyPosted(to: "Facebook"))
             }
+        }
+    }
+
+    /// ONE primary — "Post to Instagram and Facebook" — pinned in thumb
+    /// reach. It posts outside the restaurant, so it confirms first, naming
+    /// where the caption goes (DESIGN_SYSTEM §10's confirm/undo policy).
+    @ViewBuilder
+    private var socialPublish: some View {
+        let hasMedia = compose.media != nil
+        let targets = viewModel.socialTargets(hasMedia: hasMedia)
+        Group {
             Button {
                 Haptic.light()
                 confirmingPostAll = true
@@ -701,6 +804,8 @@ struct MarketingView: View {
                         CavnarShimmerText(text: "Posting…", color: .white)
                     } else {
                         Text(targets.isEmpty ? "Post" : "Post to \(MarketingViewModel.channelList(targets))")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -720,9 +825,10 @@ struct MarketingView: View {
         }
     }
 
+    /// The Google post's button and its link, in the card.
     @ViewBuilder
-    private var googlePublish: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var googleOptions: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             // The action button is the half of a Google post that converts,
             // and create_local_post has always accepted one.
             Picker("Button", selection: $viewModel.googleCTA) {
@@ -740,9 +846,14 @@ struct MarketingView: View {
                     .textInputAutocapitalization(.never)
                     .focused($focusedField, equals: .ctaLink)
             }
+        }
+    }
 
-            // It goes live on the listing at once, with the photo above —
-            // confirmed first, like every other publish.
+    /// "Post to Google", pinned. It goes live on the listing at once, with
+    /// the photo above — confirmed first, like every other publish.
+    @ViewBuilder
+    private var googlePublish: some View {
+        Group {
             Button {
                 Haptic.light()
                 confirmingGoogle = true
@@ -781,11 +892,10 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("This week")
-                    .font(.cavnarBody(16, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.label)
                 Spacer()
                 if let range = weekRangeLabel {
-                    Text(range).font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
+                    Text(range).font(.cavnarNumber(CavnarType.caption, weight: 500)).foregroundStyle(Color.cavnarInk3)
                 }
                 if !viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
                     Button {
@@ -793,15 +903,18 @@ struct MarketingView: View {
                         Task { await viewModel.generateCalendar() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarEmber)
+                            .cavnarHitTarget()
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Plan a new week")
                     ShareLink(item: viewModel.calendarCSV,
                               preview: SharePreview("Content calendar")) {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarEmber)
+                            .cavnarHitTarget()
                     }
                 }
             }
@@ -818,8 +931,7 @@ struct MarketingView: View {
             } else if viewModel.calendar.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
                         Haptic.light()
@@ -838,7 +950,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.calendarError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
         }
         .animation(.easeOut(duration: 0.3), value: viewModel.isGeneratingCalendar)
@@ -894,20 +1006,17 @@ struct MarketingView: View {
     private func dayChip(_ idea: ContentCalendarIdea, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 2) {
-                Text(idea.dayAbbrev.uppercased())
-                    .font(.cavnarBody(11))
-                    .tracking(0.6)
-                    .foregroundStyle(Color.cavnarInk3)
+                Text(idea.dayAbbrev)
+                    .cavnarText(.tag, color: .cavnarInk2)
                 Text(idea.dayNumber)
-                    .font(.cavnarNumber(18, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .cavnarText(.figureS)
                 // Email gets a symbol: a "✉" character renders as the color
                 // emoji, which ignores foregroundStyle and can't go green.
                 Group {
                     if idea.platformGlyph == "✉" {
-                        Image(systemName: "envelope.fill").font(.system(size: 10, weight: .bold))
+                        Image(systemName: "envelope.fill").font(.cavnar(.tag))
                     } else {
-                        Text(idea.platformGlyph).font(.cavnarBody(10, weight: 700))
+                        Text(idea.platformGlyph).font(.cavnar(.tag))
                     }
                 }
                 .foregroundStyle(idea.written ? Color.cavnarGreen : Color.cavnarEmber2)
@@ -936,22 +1045,15 @@ struct MarketingView: View {
     private func focusCard(_ idea: ContentCalendarIdea) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text(idea.platform.uppercased())
-                    .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cavnarEmber2)
+                CavnarKicker(idea.platform)
                     .contentTransition(.opacity)
                 Spacer()
-                Text(focusDateLabel(idea))
-                    .font(.cavnarNumber(12))
-                    .foregroundStyle(Color.cavnarInk3)
+                HomeMixedText.make(focusDateLabel(idea), role: .caption)
                     .contentTransition(.opacity)
             }
 
             Text(idea.angle)
-                .font(.cavnarHeadline(21))
-                .foregroundStyle(Color.cavnarInk)
-                .lineSpacing(3)
+                .cavnarText(.headline)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentTransition(.opacity)
@@ -972,7 +1074,7 @@ struct MarketingView: View {
                             Text("Write this")
                         }
                     }
-                    .font(.cavnarBody(16, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
@@ -1060,24 +1162,6 @@ extension MarketingView: MarketingFocusTarget {
     static let opportunitiesAnchor = "marketing-opportunities"
 
     var isOwner: Bool { sessionStore.currentUser?.isOwner ?? false }
-
-    /// "Write a text" / "Write an email" — the Studio on that channel, the
-    /// topic typed so far as its goal.
-    fileprivate func guestChannelButton(_ title: String, systemImage: String, channel: StudioChannel) -> some View {
-        Button {
-            Haptic.light()
-            let goal = viewModel.topic.trimmingCharacters(in: .whitespacesAndNewlines)
-            studioSeed = StudioSeed(prompt: goal, channels: [channel], autoCreate: !goal.isEmpty)
-        } label: {
-            Label(title, systemImage: systemImage)
-                .font(.cavnarBody(14, weight: 600))
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(CavnarSecondaryButtonStyle())
-        .accessibilityHint("Opens the Campaign Studio, which sends it to an audience you pick")
-    }
 
     /// "Draft it" on a feed card: the Studio, the goal typed and only the
     /// card's channels that can reach someone on; the card's key rides on

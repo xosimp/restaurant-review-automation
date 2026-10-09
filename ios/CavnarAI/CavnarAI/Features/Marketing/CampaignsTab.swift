@@ -240,21 +240,23 @@ struct CampaignsTabSection: View {
     @State private var retrying: GuestNewsletter?
     @State private var askingWinbackReason = false
     @State private var showingDisclosure = false
+    /// "Rules & consent" — the rules every campaign follows and the invite
+    /// switch, one tap away rather than seven rows on the tab.
+    @State private var showingRules = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: CavnarSpace.l) {
             if let error = viewModel.loadError, viewModel.overview == nil {
-                Text(error).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.body, color: .cavnarRedText)
             }
             if viewModel.overview == nil && viewModel.isLoading {
                 CavnarSkeletonLines(widths: [1.0, 0.8, 0.9, 0.6]).padding(.vertical, 12)
             }
-            kpiStrip
-            growthCard
+            headlineRow
             insights
             createCard
             historySection
-            settingsCard
+            rulesAndClubRows
         }
         .confirmationDialog(stopping.map { "Stop sending? \(mktPlural($0.pending, "text")) won\u{2019}t go out." } ?? "",
                             isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
@@ -274,122 +276,63 @@ struct CampaignsTabSection: View {
         } message: { _ in
             Text("Nobody it already reached is emailed twice.")
         }
-        .sheet(isPresented: $showingDisclosure) { disclosureSheet }
+        .sheet(isPresented: $showingRules) { rulesSheet }
     }
 
     // MARK: - Who's listening
 
-    private var kpiStrip: some View {
+    /// One headline row (readability round 10/8/26): who is listening and
+    /// how that moved in 30 days, and what the last campaign did. The tap
+    /// and came-back rates ride each campaign below; the twelve-week opt-in
+    /// chart is the web's. A figure the server didn't send is "—", never 0.
+    private var headlineRow: some View {
         let o = viewModel.overview
-        let rateMin = o?.rateMin ?? 2
-        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-            kpi("Subscribers", value: o?.subscribers.map { "\($0)" },
-                sub: o.map { "+\($0.today ?? 0) today" + (($0.emailSubscribers ?? 0) > 0 ? " \u{00B7} \($0.emailSubscribers ?? 0) by email" : "") })
-            kpi("Growth", value: o?.last30.map { $0 > 0 ? "+\($0)" : "0" }, sub: "new opt-ins, 30 days")
-            kpi("Last campaign", value: o?.lastCampaign?.date.map { CavnarDate.mdy($0) },
-                sub: o?.lastCampaign.map { "\($0.sent) " + ($0.channel == "email" ? "emailed" : "texted") } ?? "nothing sent yet")
-            kpi("Tap rate", value: o?.tapRate?.label,
-                sub: o?.tapRate.map { "\(mktPlural($0.campaigns, "campaign")) with a link" }
-                    ?? "after \(rateMin) campaigns with a link")
-            kpi("Came back", value: o?.backRate?.label,
-                sub: o?.backRate.map { "\(mktPlural($0.campaigns, "campaign")), matched in your POS" } ?? "within 14 days")
-        }
-    }
-
-    private func kpi(_ label: String, value: String?, sub: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.1)
-                .foregroundStyle(Color.cavnarEmber2)
-            Text(value ?? "\u{2014}")
-                .font(.cavnarNumber(CavnarType.tileNumber, weight: 700))
-                .foregroundStyle(value == nil ? Color.cavnarInk3 : Color.cavnarInk)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            if let sub {
-                HomeMixedText.make(sub, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Who\u{2019}s listening")
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Text(o?.subscribers.map { "\($0)" } ?? "\u{2014}")
+                    .cavnarText(.figureL, color: o?.subscribers == nil ? .cavnarInk3 : .cavnarInk)
+                Text(o?.subscribers == 1 ? "subscriber" : "subscribers")
+                    .cavnarText(.body)
+                Spacer(minLength: CavnarSpace.xs)
+                if let last30 = o?.last30 {
+                    HomeMixedText.make(last30 > 0 ? "+\(last30) in 30 days" : "No new opt-ins in 30 days",
+                                       role: .secondary,
+                                       color: last30 > 0 ? .cavnarGreen : .cavnarInk2,
+                                       numberColor: last30 > 0 ? .cavnarGreen : .cavnarInk2)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            if let o, let email = o.emailSubscribers, email > 0 {
+                HomeMixedText.make("\(email) by email \u{00B7} +\(o.today ?? 0) today", role: .caption)
+            }
+            if let last = o?.lastCampaign {
+                HomeMixedText.make("Last campaign"
+                                   + (last.date.map { " \(CavnarDate.mdy($0))" } ?? "")
+                                   + " \u{00B7} \(last.sent) " + (last.channel == "email" ? "emailed" : "texted"),
+                                   role: .secondary)
+            } else if o != nil {
+                Text("Nothing sent yet").cavnarText(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-        .padding(12)
-        .background(Color.cavnarPaper2)
-        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-    }
-
-    /// Opt-ins per week, the last 12 weeks: ember bars, this week lit. A
-    /// week with no opt-ins is a measured 0; no data at all is the frame
-    /// with a sentence, never a row of zeros.
-    @ViewBuilder
-    private var growthCard: some View {
-        let weeks = viewModel.overview?.weekly ?? []
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                CampaignKicker(text: "Opt-ins per week")
-                Spacer()
-                if let last30 = viewModel.overview?.last30 {
-                    HomeMixedText.make("+\(last30) in 30 days", size: CavnarType.caption, weight: 700, color: .cavnarGreen)
-                }
-            }
-            if weeks.isEmpty {
-                Text(viewModel.overview == nil ? "\u{2014}" : "Opt-ins show here week by week once guests start joining.")
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            } else {
-                Chart {
-                    ForEach(Array(weeks.enumerated()), id: \.element.id) { i, w in
-                        BarMark(x: .value("Week", w.shortLabel), y: .value("Joined", w.joined))
-                            .foregroundStyle(LinearGradient(
-                                colors: [Color.cavnarEmber.opacity(i == weeks.count - 1 ? 1 : 0.85),
-                                         Color.cavnarEmber2.opacity(i == weeks.count - 1 ? 0.9 : 0.35)],
-                                startPoint: .top, endPoint: .bottom))
-                            .cornerRadius(4)
-                            .annotation(position: .top, spacing: 2) {
-                                if w.joined > 0 {
-                                    Text("\(w.joined)").font(.cavnarNumber(10, weight: 700)).foregroundStyle(Color.cavnarInk3)
-                                }
-                            }
-                    }
-                }
-                .chartYAxis(.hidden)
-                .chartXAxis {
-                    AxisMarks(values: [weeks.first?.shortLabel ?? "", weeks.last?.shortLabel ?? ""]) { _ in
-                        AxisValueLabel().font(.cavnarNumber(10.5)).foregroundStyle(Color.cavnarInk3)
-                    }
-                }
-                .frame(height: 140)
-                .shadow(color: Color.cavnarEmber.opacity(0.25), radius: 8, y: 2)
-                .accessibilityLabel("Opt-ins per week, last 12 weeks")
-                if let first = weeks.first?.weekStart, let last = weeks.last?.weekStart {
-                    Text("Weeks of \(CavnarDate.mdy(first)) to \(CavnarDate.mdy(last))")
-                        .font(.cavnarNumber(11))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-            }
-        }
-        .cavnarCard()
     }
 
     @ViewBuilder
     private var insights: some View {
         let list = viewModel.overview?.insights ?? []
         if !list.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
                 ForEach(list) { it in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
                         Text(it.figure)
-                            .font(.cavnarNumber(22, weight: 700))
-                            .foregroundStyle(it.tone == "good" ? Color.cavnarGreen : Color.cavnarInk)
+                            .cavnarText(.figureM, color: it.tone == "good" ? .cavnarGreen : .cavnarInk)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(it.text).font(.cavnarBody(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(it.text).cavnarText(.label)
                             if let basis = it.basis {
-                                HomeMixedText.make(basis, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                CavnarMixedText(basis, role: .caption)
                             }
                         }
                     }
@@ -402,15 +345,16 @@ struct CampaignsTabSection: View {
 
     // MARK: - Create
 
+    /// The one "write" door for guest texts and emails on the phone — the
+    /// Content tab writes posts only, the Text Club no longer has its own
+    /// composer (readability round 10/8/26 #57).
     private var createCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            CampaignKicker(text: "Create")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Create")
             Text("What should this campaign do?")
-                .font(.cavnarHeadline(CavnarType.section))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
             Text("One goal drafts the text, the email and the post at once. Nothing goes out until you send it.")
-                .font(.cavnarBody(CavnarType.secondary))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
                 Haptic.light()
@@ -425,12 +369,12 @@ struct CampaignsTabSection: View {
                     onOpenStudio(StudioSeed(prompt: idea.prompt, autoCreate: true))
                 } label: {
                     HStack {
-                        Text(idea.label).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(idea.label).cavnarText(.label)
                         Spacer()
-                        Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "arrow.up.right").font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, CavnarSpace.s)
                     .frame(minHeight: 44)
                     .background(RoundedRectangle(cornerRadius: CavnarRadius.control).fill(Color.white.opacity(0.04)))
                     .contentShape(Rectangle())
@@ -445,15 +389,14 @@ struct CampaignsTabSection: View {
     }
 
     private func winbackRow(_ w: GuestWinback.Draft) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            CampaignKicker(text: "Cavnar AI suggests")
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Cavnar AI suggests")
             if viewModel.winbackDismissed {
                 Text("Noted \u{2014} no win-back suggestion for this group.")
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
             } else {
                 HomeMixedText.make("Bring back \(mktPlural(w.segmentSize ?? 0, "guest")) \((w.segmentLabel ?? "").lowercased())",
-                                   size: CavnarType.body, weight: 700, color: .cavnarInk)
+                                   role: .label)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 16) {
                     Button {
@@ -466,9 +409,10 @@ struct CampaignsTabSection: View {
                         askingWinbackReason = true
                     } label: {
                         Text(RecAnswer.notForUs.label)
-                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                            .foregroundStyle(Color.cavnarInk2)
                             .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .recReasonDialog(isPresented: $askingWinbackReason, skipLabel: "Skip",
@@ -486,23 +430,24 @@ struct CampaignsTabSection: View {
     @ViewBuilder
     private var historySection: some View {
         let items = Array(viewModel.history.prefix(9))
-        VStack(alignment: .leading, spacing: 10) {
-            HomeSectionHeader(kicker: "Performance", title: "Campaigns sent")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                CavnarKicker("What went out")
+                Text("Campaigns sent").cavnarText(.headline)
+            }
             if let line = viewModel.monthLine {
-                HomeMixedText.make(line, size: CavnarType.caption, weight: 600, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(line, role: .caption)
             }
             if let notice = viewModel.notice {
                 CampaignCheckLine(ok: true, text: notice)
             }
             if let error = viewModel.actionError {
-                Text(error).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if items.isEmpty {
                 Text(viewModel.isLoading ? "" : "Your first campaign lands here, with what it did.")
-                    .font(.cavnarBody(CavnarType.body))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.body)
             } else {
                 List {
                     ForEach(items) { item in
@@ -576,28 +521,38 @@ struct CampaignsTabSection: View {
         }
     }
 
+    /// The channel as a capsule tag — TEXT or EMAIL.
+    private func channelTag(_ label: String) -> some View {
+        Text(label)
+            .cavnarText(.tag, color: .cavnarEmber2)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.cavnarEmber.opacity(0.14)))
+    }
+
+    /// A text campaign: when, to whom, the words (two lines), what it did,
+    /// and Stop sending while it is still going out.
     private func textRow(_ c: GuestCampaign) -> some View {
         let busy = viewModel.busyIDs.contains("t\(c.id)")
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack(spacing: 8) {
-                Text("TEXT").font(.cavnarBody(11, weight: 800)).tracking(1).foregroundStyle(Color.cavnarEmber2)
-                Text(c.whenLabel).font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                channelTag("Text")
+                HomeMixedText.make(c.whenLabel, role: .caption)
                 if c.id == viewModel.bestTextID {
                     AccountChip(text: "Best", tint: .cavnarGreen)
                 }
                 Spacer()
                 AccountChip(text: c.statusLabel, tint: statusTint(c))
             }
-            if let label = c.segmentLabel {
-                Text(label).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
-            }
             Text(c.message)
-                .font(.cavnarBody(CavnarType.body))
-                .foregroundStyle(Color.cavnarInk)
-                .lineLimit(3)
+                .cavnarText(.body)
+                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-            metricRow([("Texted", "\(c.sentCount)", Color.cavnarInk2),
-                       c.failedCount > 0 ? ("Failed", "\(c.failedCount)", Color.cavnarRed) : nil,
+            if let label = c.segmentLabel {
+                Text(label).cavnarText(.caption)
+            }
+            metricRow([("Texted", "\(c.sentCount)", Color.cavnarInk),
+                       c.failedCount > 0 ? ("Failed", "\(c.failedCount)", Color.cavnarRedText) : nil,
                        ("Tapped", c.linkToken != nil ? "\(c.clicks)" : "no link", Color.cavnarEmber2),
                        ("Came back", c.visitsMatched.map { "\($0)" } ?? (c.attributionThrough != nil ? "0" : "\u{2026}"),
                         Color.cavnarGreen)])
@@ -606,47 +561,50 @@ struct CampaignsTabSection: View {
                     Haptic.light()
                     stopping = c
                 } label: {
-                    if busy { CavnarShimmerText(text: "Stopping\u{2026}", color: .cavnarRed) }
-                    else { Text("Stop sending").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarRed) }
+                    Group {
+                        if busy { CavnarShimmerText(text: "Stopping\u{2026}", color: .cavnarRedText) }
+                        else {
+                            Text("Stop sending").font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                .foregroundStyle(Color.cavnarRedText)
+                        }
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .frame(minHeight: 32)
                 .disabled(busy)
             }
         }
-        .padding(14)
+        .padding(CavnarSpace.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
+    /// A newsletter: when, the subject, what it did ("opens recorded" — a
+    /// floor that includes Apple Mail's auto-opens), and Retry for failures.
     private func emailRow(_ n: GuestNewsletter) -> some View {
         let busy = viewModel.busyIDs.contains("e\(n.id)")
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack(spacing: 8) {
-                Text("EMAIL").font(.cavnarBody(11, weight: 800)).tracking(1).foregroundStyle(Color.cavnarEmber2)
-                Text(n.whenLabel).font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                channelTag("Email")
+                HomeMixedText.make(n.whenLabel, role: .caption)
                 Spacer()
                 if let label = n.segmentLabel { AccountChip(text: label, muted: true) }
             }
             Text(n.subject.isEmpty ? "Newsletter" : n.subject)
-                .font(.cavnarBody(CavnarType.body, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.label)
                 .lineLimit(2)
-            metricRow([("Emailed", "\(n.sent)", Color.cavnarInk2),
-                       n.failed > 0 ? ("Failed", "\(n.failed)", Color.cavnarRed) : nil,
+            metricRow([("Emailed", "\(n.sent)", Color.cavnarInk),
+                       n.failed > 0 ? ("Failed", "\(n.failed)", Color.cavnarRedText) : nil,
                        n.pending > 0 ? ("Queued", "\(n.pending)", Color.cavnarInk2) : nil,
                        ("Opens recorded", n.opened.map { "\($0)" } ?? "not tracked", Color.cavnarEmber2),
                        ("Clicks recorded", n.clicked.map { "\($0)" } ?? "not tracked", Color.cavnarGreen)])
-            if n.opened != nil {
-                Text("Opens include Apple Mail auto-opens.")
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
-            }
-            if let asOf = n.resultsAsOf {
-                Text("Figures as of \(CampaignDates.label(asOf)).")
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+            if n.opened != nil || n.resultsAsOf != nil {
+                Text((n.opened != nil ? "Opens include Apple Mail auto-opens." : "")
+                     + (n.resultsAsOf.map { (n.opened != nil ? " " : "") + "Figures as of \(CampaignDates.label($0))." } ?? ""))
+                    .cavnarText(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if canPublish, n.retryable > 0 {
                 HStack(spacing: 16) {
@@ -656,15 +614,16 @@ struct CampaignsTabSection: View {
                     } label: {
                         Text("Retry \(n.retryable) failed").font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .frame(minHeight: 32)
                     if busy { CavnarShimmerText(text: "Sending\u{2026}", color: .cavnarEmber2) }
                 }
                 .disabled(busy)
             }
         }
-        .padding(14)
+        .padding(CavnarSpace.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.cavnarPaper2)
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
@@ -672,70 +631,104 @@ struct CampaignsTabSection: View {
 
     private func metricRow(_ maybe: [(String, String, Color)?]) -> some View {
         let items = maybe.compactMap { $0 }
-        return HStack(alignment: .top, spacing: 14) {
+        return HStack(alignment: .top, spacing: CavnarSpace.m) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.1)
-                        .font(Int(item.1) != nil ? .cavnarNumber(15, weight: 700) : .cavnarBody(12.5, weight: 600))
-                        .foregroundStyle(Int(item.1) != nil ? item.2 : Color.cavnarInk3)
-                    Text(item.0).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    if Int(item.1) != nil {
+                        Text(item.1).cavnarText(.figureS, color: item.2)
+                    } else {
+                        Text(item.1).cavnarText(.caption, color: .cavnarInk2)
+                    }
+                    Text(item.0).cavnarText(.caption)
                 }
             }
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
     }
 
-    // MARK: - Settings
+    // MARK: - Rules, consent and the Text Club
 
-    private var settingsCard: some View {
-        let o = viewModel.overview
-        return VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Settings", title: "The rules every campaign follows")
-            settingRow("clock", "Sending hours",
-                       SMSWindow.range(o?.window).map { "\($0), your time" } ?? "\u{2014}", always: true)
-            settingRow("arrow.triangle.2.circlepath", "Spacing",
-                       "One text per guest every \(mktPlural(o?.minDaysBetween ?? viewModel.ledger?.minDaysBetween ?? 3, "day"))",
-                       always: true)
-            settingRow("hand.raised", "Opt-outs", "STOP and HELP are handled for you", always: true)
-            if let l = viewModel.ledger {
-                settingRow("checkmark.shield", "Consent",
-                           "\(l.textable) opted in \u{00B7} \(l.noConsent) without consent \u{00B7} \(l.unsubscribed) unsubscribed")
+    /// Two rows where the rules card stood: the rules every campaign
+    /// follows (with the invite switch) in a sheet, and the Text Club —
+    /// contacts, the QR code and the join link (readability round #57).
+    private var rulesAndClubRows: some View {
+        VStack(spacing: 0) {
+            navRow(icon: "checkmark.shield", title: "Rules & consent",
+                   subtitle: viewModel.ledger.map { "\($0.textable) opted in \u{00B7} sending hours, spacing, opt-outs" }
+                       ?? "Sending hours, spacing, opt-outs and invites") {
+                showingRules = true
             }
-            invitesRow
-            settingRow("envelope", "Email", "Unsubscribe link on every email", always: true)
-            settingRow("mappin.and.ellipse", "Mailing address",
-                       (o?.mailingAddressSet ?? false) ? "On file \u{2014} printed on every email" : "Asked for on your first email")
-            Button {
-                Haptic.light()
+            Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
+            navRow(icon: "person.2", title: "Contacts, QR code and join link",
+                   subtitle: "The Guest Text Club") {
                 onOpenTextClub()
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.2").frame(width: 22).foregroundStyle(Color.cavnarEmber2)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Contacts, QR code and join link").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        Text("The Guest Text Club").font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
-                }
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
         }
         .cavnarCard()
+    }
+
+    private func navRow(icon: String, title: String, subtitle: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            HStack(spacing: CavnarSpace.s) {
+                Image(systemName: icon).frame(width: 22).foregroundStyle(Color.cavnarEmber2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).cavnarText(.label)
+                    CavnarMixedText(subtitle, role: .caption)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
+            }
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The rules every campaign follows, said rather than assumed, and the
+    /// review-link invite switch with its disclosure.
+    private var rulesSheet: some View {
+        let o = viewModel.overview
+        return NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: CavnarSpace.m) {
+                    Text("The rules every campaign follows").cavnarText(.headline)
+                    settingRow("clock", "Sending hours",
+                               SMSWindow.range(o?.window).map { "\($0), your time" } ?? "\u{2014}", always: true)
+                    settingRow("arrow.triangle.2.circlepath", "Spacing",
+                               "One text per guest every \(mktPlural(o?.minDaysBetween ?? viewModel.ledger?.minDaysBetween ?? 3, "day"))",
+                               always: true)
+                    settingRow("hand.raised", "Opt-outs", "STOP and HELP are handled for you", always: true)
+                    if let l = viewModel.ledger {
+                        settingRow("checkmark.shield", "Consent",
+                                   "\(l.textable) opted in \u{00B7} \(l.noConsent) without consent \u{00B7} \(l.unsubscribed) unsubscribed")
+                    }
+                    invitesRow
+                    settingRow("envelope", "Email", "Unsubscribe link on every email", always: true)
+                    settingRow("mappin.and.ellipse", "Mailing address",
+                               (o?.mailingAddressSet ?? false) ? "On file \u{2014} printed on every email" : "Asked for on your first email")
+                }
+                .padding(CavnarSpace.gutter)
+            }
+            .accountSheetChrome("Rules & consent")
+            .sheet(isPresented: $showingDisclosure) { disclosureSheet }
+        }
+        .presentationDetents([.large])
     }
 
     private func settingRow(_ icon: String, _ title: String, _ value: String, always: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: icon).frame(width: 22).foregroundStyle(Color.cavnarEmber2)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
-                HomeMixedText.make(value, size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(title).cavnarText(.label)
+                CavnarMixedText(value, role: .secondary)
             }
             Spacer(minLength: 6)
             if always {
-                Text("Always on").font(.cavnarBody(11.5, weight: 700)).foregroundStyle(Color.cavnarGreen)
+                Text("Always on").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarGreen)
             }
         }
         .accessibilityElement(children: .combine)
@@ -750,10 +743,9 @@ struct CampaignsTabSection: View {
                 HStack(alignment: .center, spacing: 10) {
                     Image(systemName: "phone.bubble").frame(width: 22).foregroundStyle(Color.cavnarEmber2)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Review-link invites").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text("Review-link invites").cavnarText(.label)
                         Text(inv.enabled ? "On \u{2014} one invite each afternoon to guests from your last service" : "Off")
-                            .font(.cavnarBody(CavnarType.secondary))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
@@ -769,11 +761,10 @@ struct CampaignsTabSection: View {
                 }
                 if !(inv.canChange ?? canChangeInvites) {
                     Text("Only the account owner can turn invite texts on or off.")
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
                 }
                 if let error = viewModel.invitesError {
-                    Text(error).font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarRed)
+                    Text(error).cavnarText(.caption, color: .cavnarRedText)
                 }
             }
         }
@@ -783,17 +774,14 @@ struct CampaignsTabSection: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    CampaignKicker(text: "Review-link invites")
+                    CavnarKicker("Review-link invites")
                     Text("Before you turn this on")
-                        .font(.cavnarHeadline(CavnarType.section))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.headline)
                     Text(viewModel.invites?.disclosure ?? "")
-                        .font(.cavnarBody(CavnarType.emphasis))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.lead)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("Turning it on records that you agreed to this, with who and when.")
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
                         Haptic.light()

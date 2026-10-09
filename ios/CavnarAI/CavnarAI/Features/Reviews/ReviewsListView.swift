@@ -83,7 +83,7 @@ struct ReviewsListView: View {
                         }
                     } label: {
                         Text(isSelecting ? "Done" : "Select")
-                            .font(.cavnarBody(15, weight: 600))
+                            .font(.cavnar(.label))
                             .foregroundStyle(Color.cavnarEmber)
                             .frame(minHeight: 44)
                     }
@@ -197,7 +197,7 @@ struct ReviewsListView: View {
                 // A failed load is not an empty inbox (CLIENT-30): it used to
                 // hide the empty state and then render nothing at all.
                 VStack(spacing: 8) {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    Text(error).cavnarText(.secondary)
                         .multilineTextAlignment(.center)
                     Button("Retry") { Task { await viewModel.reload() } }
                 }
@@ -224,30 +224,13 @@ struct ReviewsListView: View {
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
                         }
-                        // The reputation summary. ReviewStats was modelled
-                        // in full and then called from nowhere, so the
-                        // phone's Reviews tab opened with no rating, no
-                        // response rate and no urgent count while the web
-                        // showed all four — the "understand my reputation
-                        // in ten seconds" test failed here and passed there.
+                        // One set of inbox counts (readability round 10/8/26
+                        // #55): the why line leads — what the reviews are
+                        // about, in one sentence — then the rating and how
+                        // much is answered. The "to approve" and "urgent"
+                        // counts ride the chips below, and the "N new this
+                        // month · avg reply" line is the web's.
                         if let stats = viewModel.stats {
-                            ReviewsStatStrip(stats: stats)
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
-                            // What came in and how fast it's answered — the
-                            // web header's "6 new this month · avg reply 5h".
-                            HStack(spacing: 10) {
-                                HomeMixedText.make(stats.receivedLine, size: CavnarType.secondary, weight: 500,
-                                                   color: .cavnarInk3)
-                                Spacer(minLength: 0)
-                                if let ready = stats.publishable, ready > 0, !isSelecting {
-                                    publishReadyPill(ready)
-                                }
-                            }
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
                             // What the reviews are about, in one line
                             // (density #32) — the server's why line (the
                             // rating's move, the stored top complaint) on
@@ -263,21 +246,39 @@ struct ReviewsListView: View {
                                         if stats.urgent > 0 { viewModel.filter = .urgent } else { subTab = .analytics }
                                     }
                                 } label: {
-                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                        HomeMixedText.make(why, size: CavnarType.secondary, weight: 600,
-                                                           color: stats.urgent > 0 ? .cavnarRed : .cavnarInk2)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                        Text(stats.urgent > 0 ? "Open \u{2192}" : "See why \u{2192}")
+                                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                                        CavnarMixedText(why, role: .lead,
+                                                        color: stats.urgent > 0 ? .cavnarRedText : .cavnarInk)
+                                        Text(stats.urgent > 0 ? "Open the urgent ones \u{2192}" : "See why \u{2192}")
                                             .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                             .foregroundStyle(Color.cavnarEmber2)
-                                        Spacer(minLength: 0)
                                     }
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: CavnarSpace.s, trailing: 16))
+                            }
+                            // The reputation summary. ReviewStats was modelled
+                            // in full and then called from nowhere, so the
+                            // phone's Reviews tab opened with no rating and no
+                            // response rate while the web showed them.
+                            ReviewsStatStrip(stats: stats)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: CavnarSpace.xs, trailing: 16))
+                            // The inbox's one bulk action, behind Home's own
+                            // confirm card.
+                            if let ready = stats.publishable, ready > 0, !isSelecting {
+                                HStack {
+                                    Spacer(minLength: 0)
+                                    publishReadyPill(ready)
+                                }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: CavnarSpace.xs, trailing: 16))
                             }
                         }
                     }
@@ -293,17 +294,16 @@ struct ReviewsListView: View {
                     // What the last bulk approve or skip did, in counts.
                     if let note = viewModel.bulkNote {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            HomeMixedText.make(note.text, size: 14, weight: 600,
-                                               color: note.failed ? .cavnarRed : .cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(note.text, role: .secondary,
+                                            color: note.failed ? .cavnarRedText : .cavnarInk2)
                             Spacer(minLength: 8)
                             Button {
                                 Haptic.light()
                                 viewModel.bulkNote = nil
                             } label: {
                                 Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .font(.cavnar(.caption))
+                                    .foregroundStyle(Color.cavnarInk2)
                                     .frame(width: 44, height: 44)
                             }
                             .buttonStyle(.plain)
@@ -317,19 +317,18 @@ struct ReviewsListView: View {
                     if let error = viewModel.errorMessage {
                         HStack(spacing: 10) {
                             Text(error)
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarRed)
+                                .cavnarText(.secondary, color: .cavnarRedText)
                             Spacer(minLength: 8)
                             Button("Retry") { Task { await viewModel.reload() } }
-                                .font(.cavnarBody(14, weight: 600))
+                                .font(.cavnar(.label))
+                                .frame(minHeight: 44)
                         }
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     }
                     if viewModel.filteredReviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
                         Text(viewModel.searchText.isEmpty ? "No \(viewModel.filter.rawValue.lowercased()) reviews" : "Nothing matches \u{201C}\(viewModel.searchText)\u{201D}")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.body)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 30)
                             .listRowBackground(Color.clear)
@@ -365,8 +364,7 @@ struct ReviewsListView: View {
                             }
                             if let rowError, rowError.id == review.id {
                                 Text(rowError.message)
-                                    .font(.cavnarBody(13))
-                                    .foregroundStyle(Color.cavnarRed)
+                                    .cavnarText(.caption, color: .cavnarRedText)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -470,8 +468,7 @@ struct ReviewsListView: View {
         let sk = viewModel.bulkSkippable.count
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HomeMixedText.make(n == 0 ? "Tap the reviews to act on" : "\(n) selected",
-                                   size: 15, weight: 700, color: .cavnarInk)
+                HomeMixedText.make(n == 0 ? "Tap the reviews to act on" : "\(n) selected", role: .label)
                 Spacer(minLength: 0)
                 if viewModel.isBulkWorking {
                     CavnarWorkingLine(width: 60)
@@ -481,7 +478,7 @@ struct ReviewsListView: View {
                 HomeMixedText.make(viewModel.bulkHeld > 0
                                    ? "\(viewModel.bulkHeld) \(viewModel.bulkHeld == 1 ? "isn\u{2019}t" : "aren\u{2019}t") ready to post in bulk \u{2014} read \(viewModel.bulkHeld == 1 ? "it" : "them") one at a time."
                                    : "Every selected reply is ready to post.",
-                                   size: 13, weight: 500, color: .cavnarInk3)
+                                   role: .caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
@@ -491,7 +488,7 @@ struct ReviewsListView: View {
                     bulkConfirmHeld = viewModel.bulkHeld
                     confirmingBulkApprove = true
                 } label: {
-                    HomeMixedText.make("Approve \(ap)", size: 15, weight: 700, color: .white, numberColor: .white)
+                    HomeMixedText.make("Approve \(ap)", role: .label, color: .white, numberColor: .white)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: ap == 0 || viewModel.isBulkWorking))
@@ -500,17 +497,17 @@ struct ReviewsListView: View {
                     Haptic.light()
                     confirmingBulkSkip = true
                 } label: {
-                    HomeMixedText.make("Skip \(sk)", size: 15, weight: 700, color: .cavnarInk)
+                    HomeMixedText.make("Skip \(sk)", role: .label)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(sk == 0 || viewModel.isBulkWorking)
-                .opacity(sk == 0 ? 0.5 : 1)
+                .opacity(sk == 0 ? 0.6 : 1)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.horizontal, CavnarSpace.gutter)
+        .padding(.top, CavnarSpace.s)
+        .padding(.bottom, CavnarSpace.xs)
         .background(Color.cavnarPaper2.opacity(0.97))
         .overlay(alignment: .top) { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
     }
@@ -522,9 +519,9 @@ struct ReviewsListView: View {
             Haptic.light()
             showingPublishReady = true
         } label: {
-            HomeMixedText.make("Publish \(ready) ready", size: 13.5, weight: 700, color: .cavnarEmber2,
-                               numberWeight: 700, numberColor: .cavnarEmber2)
-                .padding(.horizontal, 14)
+            HomeMixedText.make("Publish \(ready) ready", role: .label, color: .cavnarEmber2,
+                               numberColor: .cavnarEmber2)
+                .padding(.horizontal, CavnarSpace.m)
                 .frame(minHeight: 44)
                 .background(Color.cavnarPaper2.opacity(0.85), in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
@@ -539,7 +536,7 @@ struct ReviewsListView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(Color.cavnarInk3)
                 TextField("Search reviews", text: Binding(
                     get: { viewModel.searchText }, set: { viewModel.searchText = $0 }))
-                    .font(.cavnarBody(16))
+                    .font(.cavnar(.body))
                     .autocorrectionDisabled()
                 if !viewModel.searchText.isEmpty {
                     Button {
@@ -547,8 +544,10 @@ struct ReviewsListView: View {
                         viewModel.searchText = ""
                     } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(Color.cavnarInk3)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
             }
             .padding(.horizontal, 12)
@@ -567,11 +566,13 @@ struct ReviewsListView: View {
                             Haptic.light()
                             withAnimation(.easeOut(duration: 0.2)) { viewModel.filter = f }
                         } label: {
+                            // The chips carry the inbox's counts — "To approve
+                            // 3", "Urgent 1" — said once, here (#55).
                             HStack(spacing: 5) {
-                                Text(f.rawValue).font(.cavnarBody(14.5, weight: 600))
+                                Text(f.rawValue).font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 if let n, n > 0 {
-                                    Text("\(n)").font(.cavnarNumber(13, weight: 700))
-                                        .foregroundStyle(on ? Color.white.opacity(0.85) : Color.cavnarEmber2)
+                                    Text("\(n)").font(.cavnarNumber(CavnarType.secondary, weight: 700))
+                                        .foregroundStyle(on ? Color.white.opacity(0.9) : Color.cavnarEmber2)
                                 }
                             }
                             .foregroundStyle(on ? Color.white : Color.cavnarInk2)
@@ -665,14 +666,15 @@ struct ReviewRow: View {
         HStack(alignment: .center, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
                 StarRatingView(rating: review.rating ?? 0)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
+                    .padding(.top, 3)
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs + 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(review.author ?? "Anonymous")
-                            .font(.cavnarBody(14.5, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
+                            .lineLimit(1)
                         if let date = review.formattedDate {
                             Text(date)
-                                .font(.cavnarNumber(14.5))
+                                .font(.cavnarNumber(CavnarType.caption, weight: 500))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         // Urgent only while it waits on someone: an
@@ -681,7 +683,7 @@ struct ReviewRow: View {
                         if review.isUrgent && !review.isHandled {
                             Image(systemName: "exclamationmark.circle.fill")
                                 .foregroundStyle(Color.cavnarRed)
-                                .font(.system(size: 12))
+                                .font(.cavnar(.caption))
                         }
                         // The severity tier, for the two tiers an owner must
                         // not scroll past. A tap says why — this review's
@@ -699,16 +701,14 @@ struct ReviewRow: View {
                         StatusPill(label: pill.label, tone: pill.tone)
                     }
                     Text(review.text ?? "")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .lineLimit(review.isHandled ? 3 : 4)
+                        .cavnarText(.body)
+                        .lineLimit(3)
                     // Cavnar's one-line read, which the analyser has written
                     // on every review since the product existed and which
                     // nothing on either platform ever showed.
                     if let complaint = review.specificComplaint, !complaint.isEmpty {
                         Text(complaint)
-                            .font(.cavnarBody(11.5, weight: 600))
-                            .foregroundStyle(Color.cavnarEmber)
+                            .cavnarText(.caption, color: .cavnarEmber2)
                             .lineLimit(1)
                     }
                     if !review.isAnalysed {
@@ -716,9 +716,23 @@ struct ReviewRow: View {
                         // beats showing the "neutral" sentiment they were
                         // never actually assigned.
                         Text("Analysis pending")
-                            .font(.cavnarBody(11.5, weight: 600))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .italic()
+                            .cavnarText(.caption)
+                    }
+                    // The reply Cavnar AI drafted, two lines of it, so the
+                    // owner can approve from the list (swipe) without
+                    // opening the review (readability round 10/8/26 #17).
+                    // Only for a draft that may go out unread: a flagged
+                    // draft keeps the read-first rule and shows none.
+                    if let draft = Self.draftPreview(review) {
+                        Text(draft)
+                            .cavnarText(.secondary)
+                            .lineLimit(2)
+                            .padding(.leading, CavnarSpace.s)
+                            .overlay(alignment: .leading) {
+                                Rectangle().fill(Color.cavnarEmber.opacity(0.7)).frame(width: 2)
+                            }
+                            .padding(.top, 2)
+                            .accessibilityLabel("Drafted reply: \(draft)")
                     }
                 }
             }
@@ -730,31 +744,37 @@ struct ReviewRow: View {
             // content beside it grows.
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, CavnarSpace.xxs)
         // Handled reviews sit back (owner, 10/6/26: "replied ones look the
-        // same as the ones not replied to") — the web card's 0.6.
-        .opacity(review.isHandled ? 0.6 : 1)
+        // same as the ones not replied to") — at 0.7, so their words still
+        // read (the readability floor).
+        .opacity(review.isHandled ? 0.7 : 1)
         // One element with a sentence, rather than six unlabelled pieces.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityHint("Opens the review and its reply")
     }
 
+    /// The drafted reply a row previews: drafted, with words, and not
+    /// flagged for a read (a flagged draft is read on its own screen).
+    static func draftPreview(_ review: Review) -> String? {
+        guard review.responseStatus == "drafted", !review.draftIsFlagged else { return nil }
+        let draft = (review.draftResponse ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return draft.isEmpty ? nil : draft
+    }
+
     private func severityChip(_ label: String) -> some View {
-        let tone = review.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber
+        let tone = review.severity == "safety" ? Color.cavnarRedText : Color.cavnarAmber
         return Button {
             Haptic.selection()
             showingSeverityReason = true
         } label: {
             Text(label)
-                .font(.cavnarBody(CavnarType.tag, weight: 700))
-                .tracking(0.6)
-                .textCase(.uppercase)
-                .foregroundStyle(tone)
+                .cavnarText(.tag, color: tone)
                 .padding(.horizontal, 7).padding(.vertical, 2)
                 .background(tone.opacity(0.13), in: Capsule())
                 .contentShape(Rectangle())
@@ -763,8 +783,7 @@ struct ReviewRow: View {
         .disabled(review.severityReason == nil)
         .popover(isPresented: $showingSeverityReason) {
             Text(review.severityReason ?? label)
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.secondary, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 280, alignment: .leading)
                 .padding(14)
@@ -785,13 +804,15 @@ struct ReviewRow: View {
         if let complaint = review.specificComplaint, !complaint.isEmpty { parts.append(complaint) }
         if let date = review.formattedDate { parts.append(date) }
         if let text = review.text, !text.isEmpty { parts.append(text) }
+        if let draft = Self.draftPreview(review) { parts.append("Drafted reply: \(draft)") }
         return parts.joined(separator: ", ")
     }
 }
 
 struct StarRatingView: View {
     let rating: Int
-    var size: CGFloat = 10
+    /// 12 in a list row (readability round: 10 was under the floor).
+    var size: CGFloat = 12
     // Review Detail only: the filled stars light up left to right on
     // first appearance, each with a brief amber glow. Off in list rows,
     // where twenty of them animating at once would just be noise.
@@ -850,9 +871,7 @@ struct StatusPill: View {
 
     var body: some View {
         Text(label)
-            .font(.cavnarBody(CavnarType.tag, weight: 700))
-            .tracking(0.8)
-            .textCase(.uppercase)
+            .cavnarText(.tag, color: color)
             .lineLimit(1)
             .padding(.horizontal, 9)
             .padding(.vertical, 3)
@@ -865,7 +884,7 @@ struct StatusPill: View {
         switch tone {
         case .good: return .cavnarGreen
         case .warning: return .cavnarAmber
-        case .bad: return .cavnarRed
+        case .bad: return .cavnarRedText
         case .neutral: return .cavnarInk3
         }
     }

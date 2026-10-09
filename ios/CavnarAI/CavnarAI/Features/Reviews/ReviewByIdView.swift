@@ -168,16 +168,16 @@ struct ReviewByIdView: View {
                         VStack(spacing: 10) {
                             Text(viewModel.notFound
                                  ? (viewModel.notFoundMessage
-                                    ?? "Review #\(viewModel.reviewID) is further back \u{2014} search for it in the inbox.")
+                                    ?? "That review is further back \u{2014} search for it in the inbox.")
                                  : (viewModel.errorMessage ?? "Couldn\u{2019}t load that review."))
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(viewModel.notFound ? Color.cavnarInk3 : Color.cavnarRed)
+                                .cavnarText(.body, color: viewModel.notFound ? .cavnarInk2 : .cavnarRedText)
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                             if !viewModel.notFound {
                                 Button("Try again") { Task { await viewModel.load() } }
-                                    .font(.cavnarBody(15, weight: 600))
+                                    .font(.cavnar(.label))
                                     .foregroundStyle(Color.cavnarEmber)
+                                    .frame(minHeight: 44)
                             }
                         }
                         .padding(.horizontal, 28)

@@ -28,8 +28,7 @@ struct ReviewRetagSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("Cavnar AI tags every review so its trends group like with like. Fix one here and the next reads follow how you tag.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     AccountSection(kicker: "What it\u{2019}s about \u{00B7} up to three") {
@@ -66,8 +65,7 @@ struct ReviewRetagSheet: View {
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                             Text("Up to three, separated by commas \u{2014} the guest\u{2019}s own words are kept beside them.")
-                                .font(.cavnarBody(12.5))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.caption)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.vertical, 12)
@@ -75,8 +73,7 @@ struct ReviewRetagSheet: View {
 
                     if let error {
                         Text(error)
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarRed)
+                            .cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -125,7 +122,7 @@ struct ReviewRetagSheet: View {
             action()
         } label: {
             Text(label)
-                .font(.cavnarBody(14, weight: on ? 700 : 500))
+                .font(.cavnarBody(CavnarType.secondary, weight: on ? 700 : 400))
                 .foregroundStyle(on ? Color.cavnarEmber2 : Color.cavnarInk2)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)

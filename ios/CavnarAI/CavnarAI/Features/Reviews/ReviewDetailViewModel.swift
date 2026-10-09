@@ -62,6 +62,49 @@ final class ReviewDetailViewModel {
     private let client: APIClient
     private var saveDraftTask: Task<Void, Never>?
 
+    // MARK: - Which way the approve goes (readability round 10/8/26 #54)
+
+    /// Whether the account's Google Business Profile is connected — nil
+    /// until read. An approve posts only a Google review's reply, and only
+    /// once Google is connected; everywhere else it approves.
+    var googleConnected: Bool?
+
+    /// The approve button's word: "Approve & post" only when this approve
+    /// would go out (a Google review, Google connected), else "Approve".
+    /// Unknown reads as "Approve" — never a claim it posts.
+    var approveLabel: String {
+        Self.approveLabel(platform: review.platform, googleConnected: googleConnected)
+    }
+
+    static func approveLabel(platform: String, googleConnected: Bool?) -> String {
+        platform == "google" && googleConnected == true ? "Approve & post" : "Approve"
+    }
+
+    /// The account's connections, read once per ten minutes for every
+    /// review opened in that time (a queue moves through many).
+    private static var googleConnectedCache: (value: Bool, at: Date)?
+
+    private struct AccountConnectionsProbe: Decodable {
+        struct Status: Decodable { let connected: Bool? }
+        struct Connections: Decodable {
+            let googleBusiness: Status?
+            enum CodingKeys: String, CodingKey { case googleBusiness = "google_business" }
+        }
+        let connections: Connections?
+    }
+
+    func loadGoogleConnection() async {
+        guard review.platform == "google" else { return }
+        if let cached = Self.googleConnectedCache, Date().timeIntervalSince(cached.at) < 600 {
+            googleConnected = cached.value
+            return
+        }
+        guard let probe: AccountConnectionsProbe = try? await client.send("/mobile/api/account", hapticOnError: false),
+              let connected = probe.connections?.googleBusiness?.connected else { return }
+        Self.googleConnectedCache = (connected, Date())
+        googleConnected = connected
+    }
+
     init(review: Review, client: APIClient = .shared) {
         self.review = review
         self.currentStatus = review.responseStatus

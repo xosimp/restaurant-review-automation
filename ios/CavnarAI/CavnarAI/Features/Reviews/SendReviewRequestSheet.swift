@@ -158,19 +158,16 @@ struct SendReviewRequestSheet: View {
                         focus: $focusedField, field: .message
                     )
                     Text("Sent along with the review link. Leave it blank to use the default message.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .padding(.top, -14)
 
                     if !phone.trimmingCharacters(in: .whitespaces).isEmpty {
                         Toggle(isOn: $smsConsent) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("This guest agreed to be texted")
-                                    .font(.cavnarBody(15, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk)
+                                    .cavnarText(.label)
                                 Text("Required before we send a review request by SMS.")
-                                    .font(.cavnarBody(13.5))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .cavnarText(.caption)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -179,17 +176,16 @@ struct SendReviewRequestSheet: View {
 
                     if let stats = viewModel.stats {
                         HomeMixedText.make("Sent this month: \(stats.sentThisMonth) · All time: \(stats.totalSent)",
-                                           size: 14, color: .cavnarInk3)
+                                           role: .secondary)
                         // "3 of 10 guests you asked left a review within 14
                         // days (30%)" — matched request to review.
                         if let conversion = stats.conversion, conversion.asked > 0 {
-                            HomeMixedText.make(conversion.line, size: 14, weight: 600, color: .cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
+                            CavnarMixedText(conversion.line, role: .secondary)
                         }
                     }
 
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                     }
 
                     // Plain full-width buttons, not a width-matched pair —

@@ -100,17 +100,23 @@ struct PublishReadySheet: View {
         }
     }
 
+    /// Where a bulk publish sends each reply, by platform.
+    static let whereTheyGo = "Replies to Google reviews go live on Google under your name, once Google is connected. "
+        + "Replies to Yelp and other sites are approved for you to post there. Newest first; a flagged or urgent "
+        + "reply is never in a bulk publish."
+
     /// The count-only confirm — an older server without /command/propose.
     private var countConfirm: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HomeMixedText.make("Post \(count) \(count == 1 ? "reply" : "replies") to Google?",
-                               size: 19, weight: 700, color: .cavnarInk)
-            Text("They go out publicly under your name, newest first. Each was drafted in your voice; a flagged or urgent reply is never in a bulk publish.")
-                .font(.cavnarBody(14.5))
-                .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            // Named by where each goes (readability round 10/8/26 #54): a
+            // Google review's reply posts to Google once it is connected;
+            // any other site's reply is approved for the owner to post.
+            CavnarMixedText("Approve and post \(count) \(count == 1 ? "reply" : "replies")?", role: .headline)
+            Text(Self.whereTheyGo)
+                .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
             if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
             Button {
                 Task {
@@ -125,8 +131,8 @@ struct PublishReadySheet: View {
                     if viewModel.isPublishing {
                         CavnarShimmerText(text: "Publishing\u{2026}", color: Color.white)
                     } else {
-                        HomeMixedText.make("Post \(count) \(count == 1 ? "reply" : "replies")", size: 16,
-                                           weight: 600, color: .white, numberColor: .white)
+                        HomeMixedText.make("Approve \(count) \(count == 1 ? "reply" : "replies")", role: .label,
+                                           color: .white, numberColor: .white)
                     }
                 }
                 .frame(maxWidth: .infinity)

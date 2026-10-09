@@ -20,6 +20,9 @@ struct CampaignStudioView: View {
     @State private var vm = CampaignStudioViewModel()
     @State private var reviewing = false
     @State private var started = false
+    /// The channels whose editors are open (readability round 10/8/26
+    /// #61): a channel shows as guests will get it; "Edit" opens its fields.
+    @State private var editing: Set<StudioChannel> = []
     @FocusState private var focused: StudioField?
 
     /// The web's four idea chips, word for word.
@@ -34,21 +37,31 @@ struct CampaignStudioView: View {
         NavigationStack {
             ScrollViewReader { scroll in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    // Review first (readability round 10/8/26 #61): the goal,
+                    // then what would go and to whom — the send's own summary
+                    // — then each channel as guests get it, its editor behind
+                    // "Edit"; Review and send is pinned.
+                    VStack(alignment: .leading, spacing: CavnarSpace.m) {
                         goalCard
                         if vm.builderOpen {
+                            reviewSummary
                             planCards
                             ForEach(vm.shownChannels) { k in
                                 channelCard(k).id(k)
                             }
-                            sendBar
                         }
                     }
-                    .padding(20)
+                    .padding(CavnarSpace.gutter)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if vm.builderOpen {
+                        sendBar
+                    }
+                }
                 .onChange(of: focusTarget) { _, target in
                     guard let target else { return }
+                    editing.insert(target)
                     withAnimation(.easeOut(duration: 0.35)) { scroll.scrollTo(target, anchor: .top) }
                     focusTarget = nil
                 }
@@ -78,11 +91,10 @@ struct CampaignStudioView: View {
     // MARK: - Goal
 
     private var goalCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            CampaignKicker(text: "Create")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CampaignKicker(text: "Create", tag: vm.builderOpen && !vm.goal.isEmpty ? vm.goal : nil)
             Text("What should this campaign do?")
-                .font(.cavnarHeadline(CavnarType.section))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.headline)
             TextField("Bring back guests who haven\u{2019}t visited in 30 days", text: $vm.prompt, axis: .vertical)
                 .lineLimit(1...3)
                 .cavnarTextFieldStyle()
@@ -93,12 +105,12 @@ struct CampaignStudioView: View {
                     if text.count > 280 { vm.prompt = String(text.prefix(280)) }
                 }
             if let error = vm.promptError {
-                Text(error).font(.cavnarBody(CavnarType.secondary)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
             // The channels the campaign is drafted for and sent on, each
             // with its reach.
             VStack(alignment: .leading, spacing: 6) {
-                Text("Draft for").font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                Text("Draft for").cavnarText(.caption)
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         CampaignToggleChip(label: "Text", count: vm.overview?.subscribers, isOn: vm.isOn(.text)) {
@@ -140,11 +152,11 @@ struct CampaignStudioView: View {
                             Task { await vm.create() }
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: "sparkle").font(.system(size: 11, weight: .bold))
+                                Image(systemName: "sparkle").font(.cavnar(.caption))
                                     .foregroundStyle(Color.cavnarEmber2)
-                                Text(idea.label).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text(idea.label).cavnarText(.label)
                                 Spacer(minLength: 0)
-                                Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .semibold))
+                                Image(systemName: "arrow.up.right").font(.cavnar(.caption))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                             .padding(.horizontal, 14)
@@ -160,41 +172,58 @@ struct CampaignStudioView: View {
             }
             if let line = vm.seedError ?? vm.loadError {
                 Text(line)
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(vm.seedError != nil ? Color.cavnarRed : Color.cavnarAmber)
+                    .cavnarText(.secondary, color: vm.seedError != nil ? .cavnarRedText : .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .cavnarCard(.ai)
     }
 
+    // MARK: - Review
+
+    /// What would go, with real head counts, to whom, and the checks — the
+    /// send's own summary (CampaignReviewSheet's lines), up front. The
+    /// review sheet is still the confirm: nothing goes from here.
+    private var reviewSummary: some View {
+        let state = vm.checks
+        let snap = vm.snapshot()
+        return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("What would go")
+            if snap.lines.isEmpty {
+                Text(vm.isBusy ? "Drafting\u{2026}" : "Nothing is ready to send yet.")
+                    .cavnarText(.body)
+            }
+            ForEach(snap.lines, id: \.self) { l in
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    Image(systemName: "arrow.up.right.circle.fill")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .accessibilityHidden(true)
+                    CavnarMixedText(l, role: .label)
+                }
+            }
+            if let label = vm.selectedSegment?.label {
+                Text("Audience: \(label)").cavnarText(.secondary)
+            }
+            ForEach(state.lines) { c in CampaignCheckLine(ok: c.ok, text: c.text) }
+            if !vm.results.isEmpty {
+                CampaignResultList(vm: vm)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard(.hero)
+    }
+
     // MARK: - Plan
 
     private var planCards: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                CampaignKicker(text: "Goal", tag: vm.goal.isEmpty ? nil : vm.goal)
-                HomeMixedText.make("\u{201C}\(vm.prompt.trimmingCharacters(in: .whitespacesAndNewlines))\u{201D}",
-                                   size: CavnarType.emphasis, weight: 600, color: .cavnarInk)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Change") {
-                    Haptic.light()
-                    focused = .prompt
-                }
-                .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                .foregroundStyle(Color.cavnarEmber2)
-                .frame(minHeight: 32)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cavnarCard()
-
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             audienceCard
 
-            VStack(alignment: .leading, spacing: 8) {
-                CampaignKicker(text: "Photo")
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker("Photo")
                 Text("One photo for the email\u{2019}s header and the post.")
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
                 MarketingPhotoPicker(viewModel: vm.photos)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,8 +236,7 @@ struct CampaignStudioView: View {
             CampaignKicker(text: "Audience", tag: vm.pickedByAI ? "Picked by Cavnar AI" : "Your pick", tagIsAI: vm.pickedByAI)
             if vm.segments.isEmpty {
                 Text(vm.loadError == nil ? "Reading who\u{2019}s listening\u{2026}" : "Couldn\u{2019}t load the audiences.")
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
             } else {
                 Menu {
                     ForEach(vm.segments) { s in
@@ -227,14 +255,12 @@ struct CampaignStudioView: View {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(vm.selectedSegment?.label ?? "Everyone consented")
-                                .font(.cavnarBody(16, weight: 700))
-                                .foregroundStyle(Color.cavnarInk)
-                            HomeMixedText.make("\(vm.textReach) text \u{00B7} \(vm.emailReach) email",
-                                               size: CavnarType.secondary, weight: 600, color: .cavnarInk3)
+                                .cavnarText(.label)
+                            HomeMixedText.make("\(vm.textReach) text \u{00B7} \(vm.emailReach) email", role: .secondary)
                         }
                         Spacer()
                         Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .padding(12)
@@ -245,18 +271,14 @@ struct CampaignStudioView: View {
                 .disabled(vm.sending)
                 if let help = vm.selectedSegment?.help, !help.isEmpty {
                     Text(help)
-                        .font(.cavnarBody(CavnarType.caption))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let back = vm.overview?.backBySegment[vm.segment] {
-                    HomeMixedText.make("\(back.label) came back within 14 days", size: CavnarType.caption,
-                                       weight: 600, color: .cavnarGreen)
+                    HomeMixedText.make("\(back.label) came back within 14 days", role: .caption, color: .cavnarGreen)
                 }
                 if let ret = vm.selectedReturn {
-                    HomeMixedText.make(ret.line + " \u{2014} before and after, not proof.", size: CavnarType.caption,
-                                       weight: 500, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarMixedText(ret.line + " \u{2014} before and after, not proof.", role: .caption, color: .cavnarInk2)
                 }
             }
         }
@@ -274,12 +296,13 @@ struct CampaignStudioView: View {
 
     @ViewBuilder
     private func channelCard(_ k: StudioChannel) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(k.label).font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
+        let isEditing = editing.contains(k)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Text(k.label).cavnarText(.headline)
                 switch k {
-                case .text: HomeMixedText.make(mktPlural(vm.textReach, "guest"), size: CavnarType.caption, weight: 600, color: .cavnarInk3)
-                case .email: HomeMixedText.make(mktPlural(vm.emailReach, "subscriber"), size: CavnarType.caption, weight: 600, color: .cavnarInk3)
+                case .text: HomeMixedText.make(mktPlural(vm.textReach, "guest"), role: .caption)
+                case .email: HomeMixedText.make(mktPlural(vm.emailReach, "subscriber"), role: .caption)
                 case .social: EmptyView()
                 }
                 Spacer()
@@ -287,13 +310,28 @@ struct CampaignStudioView: View {
                     Haptic.light()
                     Task { await vm.rewrite(k) }
                 } label: {
-                    Label("Rewrite", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarEmber2)
-                        .frame(minHeight: 32)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
                 .disabled(vm.isBusy(k) || vm.sending)
+                .accessibilityLabel("Rewrite the \(k.label.lowercased())")
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        if isEditing { editing.remove(k) } else { editing.insert(k) }
+                    }
+                } label: {
+                    Text(isEditing ? "Done" : "Edit")
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarHitTarget()
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.sending)
+                .accessibilityLabel(isEditing ? "Done editing the \(k.label.lowercased())" : "Edit the \(k.label.lowercased())")
             }
             if vm.isBusy(k) {
                 CavnarWorkingOrb(state: .composing, label: k == .email ? "Writing the email\u{2026}"
@@ -302,20 +340,20 @@ struct CampaignStudioView: View {
                     .padding(.vertical, 8)
             }
             switch k {
-            case .text: textChannel
-            case .email: emailChannel
-            case .social: socialChannel
+            case .text: textChannel(editing: isEditing)
+            case .email: emailChannel(editing: isEditing)
+            case .social: socialChannel(editing: isEditing)
             }
             if let error = vm.error(k) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(error)
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     Button("Draft it again") { Task { await vm.rewrite(k) } }
                         .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: 44)
                 }
             }
         }
@@ -326,23 +364,24 @@ struct CampaignStudioView: View {
 
     // Text: the phone a guest holds — the number it comes from (never the
     // restaurant's name), the bubble opening with "{Name}: ", the link
-    // and the STOP line — then the words, the counter and the link switch.
-    private var textChannel: some View {
+    // and the STOP line — and the counter; the words, the link switch and
+    // its address behind "Edit".
+    private func textChannel(editing: Bool) -> some View {
         let meter = vm.meter
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Circle().fill(Color.cavnarInk3.opacity(0.35)).frame(width: 26, height: 26)
-                        .overlay(Image(systemName: "person.fill").font(.system(size: 12)).foregroundStyle(Color.cavnarInk2))
+                        .overlay(Image(systemName: "person.fill").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2))
                     VStack(alignment: .leading, spacing: 1) {
                         Text(vm.sms.sender.isEmpty ? "Your texting number" : vm.sms.sender)
-                            .font(.cavnarNumber(13, weight: 700))
+                            .font(.cavnarNumber(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarInk)
-                        Text("Text message").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                        Text("Text message").cavnarText(.caption)
                     }
                     Spacer()
                 }
-                Text("Today").font(.cavnarBody(11, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                Text("Today").cavnarText(.caption)
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
                         if vm.message.isEmpty {
@@ -358,7 +397,7 @@ struct CampaignStudioView: View {
                         }
                         Text("Reply STOP to unsubscribe.").foregroundStyle(Color.cavnarInk2)
                     }
-                    .font(.cavnarBody(14.5))
+                    .font(.cavnar(.secondary))
                     .padding(.horizontal, 13)
                     .padding(.vertical, 10)
                     .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.cavnarPaper3))
@@ -366,41 +405,44 @@ struct CampaignStudioView: View {
                     Spacer(minLength: 0)
                 }
             }
-            .padding(14)
+            .padding(CavnarSpace.m)
             .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.cavnarPaper))
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("What your guests see")
 
-            TextEditor(text: $vm.message)
-                .font(.cavnarBody(16))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 96)
-                .padding(10)
-                .background(Color.cavnarPaper2)
-                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(meter.tooLong ? Color.cavnarRed : Color.clear, lineWidth: 1))
-                .focused($focused, equals: .message)
-                .disabled(vm.sending)
+            if editing {
+                TextEditor(text: $vm.message)
+                    .font(.cavnar(.body))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 96)
+                    .padding(10)
+                    .background(Color.cavnarPaper2)
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
+                        .strokeBorder(meter.tooLong ? Color.cavnarRed : Color.clear, lineWidth: 1))
+                    .focused($focused, equals: .message)
+                    .disabled(vm.sending)
+            }
 
             HStack(spacing: 8) {
                 meterChip("\(meter.counted) / \(meter.max)", warn: meter.tooLong, number: true)
                 meterChip(meter.parts == 1 ? "Fits one text" : "\(meter.parts) texts per guest", warn: meter.parts > 1)
                 Spacer()
-                Toggle(isOn: $vm.linkOn) {
-                    Text("Track taps").font(.cavnarBody(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                if editing {
+                    Toggle(isOn: $vm.linkOn) {
+                        Text("Track taps").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk2)
+                    }
+                    .toggleStyle(.switch)
+                    .tint(Color.cavnarEmber)
+                    .fixedSize()
                 }
-                .toggleStyle(.switch)
-                .tint(Color.cavnarEmber)
-                .fixedSize()
             }
             if meter.unicode {
                 Text("A dash, curly quote or emoji sends this as Unicode: 70 characters a text.")
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.caption)
             }
-            if vm.linkOn {
+            if editing && vm.linkOn {
                 TextField("Your menu or booking page", text: $vm.linkURL)
                     .cavnarTextFieldStyle()
                     .keyboardType(.URL)
@@ -409,66 +451,79 @@ struct CampaignStudioView: View {
                     .focused($focused, equals: .link)
             }
             if vm.error(.text) == nil, let forecast = vm.textForecast {
-                HomeMixedText.make(forecast, size: CavnarType.caption, weight: 600, color: .cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(forecast, role: .caption, color: .cavnarInk2)
             }
         }
     }
 
     private func meterChip(_ text: String, warn: Bool, number: Bool = false) -> some View {
         Text(text)
-            .font(number ? .cavnarNumber(12.5, weight: 700) : .cavnarBody(12.5, weight: 700))
+            .font(number ? .cavnarNumber(CavnarType.caption, weight: 700) : .cavnarBody(CavnarType.caption, weight: 700))
             .foregroundStyle(warn ? Color.cavnarAmber : Color.cavnarInk2)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(Capsule().fill(warn ? Color.cavnarAmber.opacity(0.12) : Color.white.opacity(0.05)))
     }
 
-    // Email: the subject, the server's render at phone width, and the
-    // fields behind "Edit the email".
-    private var emailChannel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            labeledField("Subject", text: $vm.subject, field: .subject, limit: 140)
-            Group {
-                if let html = vm.previewHTML {
-                    NewsletterWebPreview(html: html)
-                        .frame(height: 520)
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                } else if vm.hasDraft(.email) {
-                    CavnarSkeletonLines(widths: [1.0, 0.85, 0.9, 0.6])
-                        .padding(.vertical, 12)
+    // Email: the subject and headline as the inbox shows them; the server's
+    // render at phone width and the six fields behind "Edit".
+    private func emailChannel(editing: Bool) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if !editing {
+                if vm.hasDraft(.email) {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        Text(vm.subject.isEmpty ? "No subject yet" : vm.subject)
+                            .cavnarText(.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !vm.preheader.isEmpty {
+                            Text(vm.preheader).cavnarText(.secondary).lineLimit(2)
+                        }
+                        if !vm.headline.isEmpty {
+                            Text(vm.headline).cavnarText(.body, color: .cavnarInk).lineLimit(2)
+                        }
+                    }
+                    .padding(CavnarSpace.s)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .accessibilityElement(children: .combine)
                 } else {
                     Text("The email shows here as guests get it, once it\u{2019}s drafted.")
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                 }
-            }
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 10) {
-                    labeledField("Headline", text: $vm.headline, field: .headline, limit: 120)
-                    labeledField("Inbox preview line", text: $vm.preheader, field: .preheader, limit: 140)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Letter").font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
-                        TextEditor(text: $vm.letter)
-                            .font(.cavnarBody(15.5))
-                            .scrollContentBackground(.hidden)
-                            .frame(minHeight: 140)
-                            .padding(10)
-                            .background(Color.cavnarPaper2)
+            } else {
+                labeledField("Subject", text: $vm.subject, field: .subject, limit: 140)
+                Group {
+                    if let html = vm.previewHTML {
+                        NewsletterWebPreview(html: html)
+                            .frame(height: 520)
                             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                            .focused($focused, equals: .letter)
-                            .onChange(of: vm.letter) { _, _ in vm.schedulePreview() }
+                    } else if vm.hasDraft(.email) {
+                        CavnarSkeletonLines(widths: [1.0, 0.85, 0.9, 0.6])
+                            .padding(.vertical, 12)
+                    } else {
+                        Text("The email shows here as guests get it, once it\u{2019}s drafted.")
+                            .cavnarText(.secondary)
                     }
-                    labeledField("Button", text: $vm.buttonLabel, field: .button, limit: 40, placeholder: "Book a table")
-                    labeledField("Button link", text: $vm.buttonURL, field: .buttonLink, limit: 500, placeholder: "https://",
-                                 url: true)
                 }
-                .padding(.top, 8)
-            } label: {
-                Text("Edit the email").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                labeledField("Headline", text: $vm.headline, field: .headline, limit: 120)
+                labeledField("Inbox preview line", text: $vm.preheader, field: .preheader, limit: 140)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Letter").cavnarText(.caption)
+                    TextEditor(text: $vm.letter)
+                        .font(.cavnar(.body))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 140)
+                        .padding(10)
+                        .background(Color.cavnarPaper2)
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                        .focused($focused, equals: .letter)
+                        .onChange(of: vm.letter) { _, _ in vm.schedulePreview() }
+                        .disabled(vm.sending)
+                }
+                labeledField("Button", text: $vm.buttonLabel, field: .button, limit: 40, placeholder: "Book a table")
+                labeledField("Button link", text: $vm.buttonURL, field: .buttonLink, limit: 500, placeholder: "https://",
+                             url: true)
             }
-            .tint(Color.cavnarEmber2)
-            .disabled(vm.sending)
         }
         .onChange(of: vm.subject) { _, _ in vm.schedulePreview() }
         .onChange(of: vm.headline) { _, _ in vm.schedulePreview() }
@@ -480,21 +535,23 @@ struct CampaignStudioView: View {
     private func labeledField(_ label: String, text: Binding<String>, field: StudioField, limit: Int,
                               placeholder: String = "", url: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
+            Text(label).cavnarText(.caption)
             TextField(placeholder, text: text)
                 .cavnarTextFieldStyle()
                 .keyboardType(url ? .URL : .default)
                 .textInputAutocapitalization(url ? .never : .sentences)
                 .focused($focused, equals: field)
+                .disabled(vm.sending)
                 .onChange(of: text.wrappedValue) { _, v in
                     if v.count > limit { text.wrappedValue = String(v.prefix(limit)) }
                 }
         }
     }
 
-    // Social: where it goes, then the post as a feed shows it.
-    private var socialChannel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    // Social: where it goes, then the post as a feed shows it; the caption
+    // field behind "Edit".
+    private func socialChannel(editing: Bool) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             HStack(spacing: 8) {
                 ForEach(vm.platforms, id: \.key) { p in
                     CampaignToggleChip(label: p.label, isOn: !vm.platformOff.contains(p.key)) { vm.togglePlatform(p.key) }
@@ -503,9 +560,9 @@ struct CampaignStudioView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
                     Circle().fill(Color.cavnarEmber.opacity(0.35)).frame(width: 26, height: 26)
-                        .overlay(Image(systemName: "fork.knife").font(.system(size: 11, weight: .semibold))
+                        .overlay(Image(systemName: "fork.knife").font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk))
-                    Text("Your page").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                    Text("Your page").cavnarText(.label)
                     Spacer()
                 }
                 .padding(10)
@@ -516,15 +573,15 @@ struct CampaignStudioView: View {
                             image.resizable().aspectRatio(contentMode: .fill)
                         } placeholder: { Color.cavnarPaper3 }
                     } else {
-                        Text("Add a photo above").font(.cavnarBody(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
+                        Text("Add a photo above").cavnarText(.caption)
                     }
                 }
-                .frame(height: 220)
+                .frame(height: editing ? 220 : 160)
                 .clipped()
                 Text(vm.caption.isEmpty ? "Your caption shows here." : vm.caption)
-                    .font(.cavnarBody(14.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(vm.caption.isEmpty ? Color.cavnarInk3 : Color.cavnarInk)
-                    .lineLimit(6)
+                    .lineLimit(editing ? 6 : 3)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -532,33 +589,34 @@ struct CampaignStudioView: View {
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
             .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
 
-            TextEditor(text: $vm.caption)
-                .font(.cavnarBody(16))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 96)
-                .padding(10)
-                .background(Color.cavnarPaper2)
-                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                .focused($focused, equals: .caption)
-                .disabled(vm.sending)
+            if editing {
+                TextEditor(text: $vm.caption)
+                    .font(.cavnar(.body))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 96)
+                    .padding(10)
+                    .background(Color.cavnarPaper2)
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .focused($focused, equals: .caption)
+                    .disabled(vm.sending)
+            }
             if vm.needPhoto {
                 Text(vm.photos.recentMedia.isEmpty ? "Instagram needs a photo: take or add one above."
                      : "Instagram needs a photo: tap one of your photos above to use it.")
-                    .font(.cavnarBody(CavnarType.caption, weight: 600))
-                    .foregroundStyle(Color.cavnarAmber)
+                    .cavnarText(.caption, color: .cavnarAmber)
             }
         }
     }
 
     // MARK: - Send
 
+    /// Review and send, pinned in thumb reach (readability round #61): it
+    /// opens the send's own confirm — the two-press send is unchanged.
     private var sendBar: some View {
         let state = vm.checks
-        return VStack(alignment: .leading, spacing: 10) {
-            ForEach(state.lines) { c in CampaignCheckLine(ok: c.ok, text: c.text) }
-            if !vm.results.isEmpty {
-                CampaignResultList(vm: vm)
-            }
+        return CavnarPinnedBar(note: vm.outcomeUnknown
+                               ? "The answer was lost, so the send stays off \u{2014} check Campaigns sent before sending again."
+                               : nil) {
             Button {
                 focused = nil
                 Haptic.light()
@@ -571,15 +629,7 @@ struct CampaignStudioView: View {
             }
             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: state.ready.isEmpty || vm.sending || vm.outcomeUnknown))
             .disabled(state.ready.isEmpty || vm.sending || vm.outcomeUnknown)
-            if vm.outcomeUnknown {
-                Text("The answer was lost, so the send stays off \u{2014} check Campaigns sent before sending again.")
-                    .font(.cavnarBody(CavnarType.caption))
-                    .foregroundStyle(Color.cavnarAmber)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard(.hero)
     }
 }
 
@@ -629,11 +679,14 @@ struct CampaignResultList: View {
             Haptic.light()
             action()
         } label: {
-            if busy { CavnarShimmerText(text: "Sending\u{2026}", color: .cavnarEmber2) }
-            else { Text(title).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2) }
+            Group {
+                if busy { CavnarShimmerText(text: "Sending\u{2026}", color: .cavnarEmber2) }
+                else { Text(title).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarEmber2) }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(minHeight: 32)
         .disabled(busy)
     }
 }
@@ -657,25 +710,23 @@ struct CampaignReviewSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    CampaignKicker(text: "Review and send")
+                    CavnarKicker("Review and send")
                     Text(didSend ? "What went out" : "Ready to send")
-                        .font(.cavnarHeadline(CavnarType.section))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.headline)
                     if !didSend {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(snap.lines, id: \.self) { l in
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Image(systemName: "arrow.up.right.circle.fill")
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.cavnar(.caption))
                                         .foregroundStyle(Color.cavnarEmber2)
                                         .accessibilityHidden(true)
-                                    HomeMixedText.make(l, size: CavnarType.body, weight: 700, color: .cavnarInk)
+                                    CavnarMixedText(l, role: .label)
                                 }
                             }
                             if let label = vm.selectedSegment?.label {
                                 Text("Audience: \(label)")
-                                    .font(.cavnarBody(CavnarType.secondary))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .cavnarText(.secondary)
                             }
                         }
                         .padding(14)

@@ -24,6 +24,13 @@ struct ReviewDetailView: View {
     @State private var copiedNote: String?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
+    /// "Ask about this" lives in the ••• menu now; it asks through the same
+    /// router HomeAskLink does.
+    @Environment(DeepLinkRouter.self) private var router
+    /// The review is clamped to six lines until "More" (readability #18).
+    @State private var reviewExpanded = false
+    /// Cavnar AI's read is one line until tapped.
+    @State private var readExpanded = false
     var onCompleted: (String) -> Void
     /// Queue mode (friction audit #21): the next reply waiting after this
     /// one, from the list that opened it, and how that list is told this one
@@ -51,9 +58,11 @@ struct ReviewDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            // The review, Cavnar AI's read in one line, then the reply — the
+            // thing the owner decides on sits in the first screen, not under
+            // the analysis (readability round 10/8/26 #18).
+            VStack(alignment: .leading, spacing: CavnarSpace.l) {
                 header
-                Divider()
                 reviewText
                 Divider()
                 // Answered outside Cavnar AI: the reply actually posted —
@@ -65,12 +74,11 @@ struct ReviewDetailView: View {
                 }
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.secondary, color: .cavnarRedText)
                 }
                 actionButtons
             }
-            .padding(20)
+            .padding(CavnarSpace.gutter)
             // A readable column on an iPad (#99); the phone is unchanged.
             .cavnarReadableWidth()
         }
@@ -80,14 +88,7 @@ struct ReviewDetailView: View {
         // they sat at the end of the scroll, under the review and the draft.
         .safeAreaInset(edge: .bottom) {
             if isActive {
-                VStack(spacing: 0) {
-                    Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
-                    activeButtons
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                        .padding(.bottom, 10)
-                }
-                .background(Color.cavnarPaper.opacity(0.94))
+                CavnarPinnedBar { activeButtons }
             }
         }
         .overlay(alignment: .bottom) {
@@ -96,8 +97,7 @@ struct ReviewDetailView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color.cavnarGreen)
                     Text(label)
-                        .font(.cavnarBody(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                        .cavnarText(.label)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 11)
@@ -114,7 +114,34 @@ struct ReviewDetailView: View {
         .toolbar { cavnarTitleToolbar(reviewTitle) }
         .toolbar {
             cavnarToolbarItem(placement: .topBarTrailing) {
+                // The screen's secondary actions, out of the way of the
+                // review and the reply (readability round 10/8/26 #18):
+                // Ask about this, Fix tags, Save as template, Delete.
                 Menu {
+                    Button {
+                        askAboutThis()
+                    } label: {
+                        Label("Ask about this", systemImage: "bubble.left.and.text.bubble.right")
+                    }
+                    // "Fix tags" — the owner corrects how this review was
+                    // tagged (memory round, 9/29/26).
+                    if viewModel.review.isAnalysed {
+                        Button {
+                            Haptic.light()
+                            showingRetag = true
+                        } label: {
+                            Label(retagged == nil ? "Fix tags" : "Fix tags again", systemImage: "tag")
+                        }
+                    }
+                    if !isFinal && !viewModel.editedDraft.isEmpty && !viewModel.isAnsweredElsewhere {
+                        Button("Save as template") {
+                            Haptic.light()
+                            templateName = ""
+                            templateNote = nil
+                            showingSaveTemplate = true
+                        }
+                    }
+                    Divider()
                     Button(role: .destructive) {
                         showingDeleteConfirm = true
                     } label: {
@@ -127,6 +154,7 @@ struct ReviewDetailView: View {
                         .cavnarToolbarIconGlass()
                 }
                 .tint(nil)
+                .accessibilityLabel("More actions")
             }
         }
         .confirmationDialog(
@@ -162,7 +190,10 @@ struct ReviewDetailView: View {
                     onAdvanced?(status, answered)
                     quickCheckLabel = nil
                     viewModel = ReviewDetailViewModel(review: next)
+                    reviewExpanded = false
+                    readExpanded = false
                     await viewModel.loadTemplates()
+                    await viewModel.loadGoogleConnection()
                 }
                 return
             }
@@ -198,6 +229,7 @@ struct ReviewDetailView: View {
         .animation(.easeOut(duration: 0.25), value: postedOverlayLabel != nil)
         .task {
             await viewModel.loadTemplates()
+            await viewModel.loadGoogleConnection()
         }
         // An approve that went through but didn't post keeps the owner here
         // (where Retry is); the list still learns its new state — approved,
@@ -284,26 +316,35 @@ struct ReviewDetailView: View {
         }
     }
 
+    /// The platform, not the author — the author's name heads the screen
+    /// right under it, and said twice it pushed the review down.
     private var reviewTitle: String {
-        guard let author = viewModel.review.author, let firstName = author.split(separator: " ").first else {
-            return "Review"
-        }
-        return "\(firstName)'s Review"
+        "\(viewModel.review.platformDisplayName) review"
+    }
+
+    /// The web's "Ask about this" on each review card, with the same
+    /// question and the review as the screen's subject — from the ••• menu.
+    private func askAboutThis() {
+        Haptic.light()
+        // RootView observes the prompt itself, switches to Ask and sends
+        // (HomeAskLink's door).
+        router.pendingAskScreen = AskScreen(panel: "reviews", entityType: "review", entityId: "\(viewModel.review.id)")
+        router.pendingAskAutoSend = true
+        router.pendingAskPrompt = "About this review: what is the guest really saying, and is my reply right?"
     }
 
     private var header: some View {
         HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 Text(viewModel.review.author ?? "Anonymous")
-                    .font(.cavnarBody(17.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                HStack(spacing: 6) {
-                    StarRatingView(rating: viewModel.review.rating ?? 0, size: 13, animated: true)
-                    Text(viewModel.review.platformDisplayName)
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(0.4)
-                        .textCase(.uppercase)
-                        .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.headline)
+                HStack(spacing: CavnarSpace.xs) {
+                    StarRatingView(rating: viewModel.review.rating ?? 0, size: 14, animated: true)
+                    if let date = viewModel.review.formattedDate {
+                        Text(date)
+                            .font(.cavnarNumber(CavnarType.caption, weight: 500))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
                 }
                 severityLine
             }
@@ -322,7 +363,7 @@ struct ReviewDetailView: View {
     private var severityLine: some View {
         let r = viewModel.review
         if r.isHighSeverity, let label = r.severityLabel {
-            let tone = r.severity == "safety" ? Color.cavnarRed : Color.cavnarAmber
+            let tone = r.severity == "safety" ? Color.cavnarRedText : Color.cavnarAmber
             VStack(alignment: .leading, spacing: 6) {
                 Button {
                     Haptic.selection()
@@ -330,12 +371,10 @@ struct ReviewDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(label)
-                            .font(.cavnarBody(CavnarType.tag, weight: 700))
-                            .tracking(0.6)
-                            .textCase(.uppercase)
+                            .cavnarText(.tag, color: tone)
                         if r.severityReason != nil {
                             Image(systemName: showingSeverityReason ? "chevron.up" : "info.circle")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.cavnar(.tag))
                         }
                     }
                     .foregroundStyle(tone)
@@ -349,8 +388,7 @@ struct ReviewDetailView: View {
                 .accessibilityHint(r.severityReason == nil ? "" : "Says why it is rated this serious")
                 if showingSeverityReason, let why = r.severityReason {
                     Text(why)
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .transition(.opacity)
                 }
@@ -358,104 +396,112 @@ struct ReviewDetailView: View {
         }
     }
 
+    /// The review, clamped to six lines until "More", then Cavnar AI's read
+    /// in one line (readability round 10/8/26 #18) — the reply follows, so
+    /// the decision is on the first screen.
     private var reviewText: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(viewModel.review.text ?? "")
-                .font(.cavnarBody(17))
-                .foregroundStyle(Color.cavnarInk2)
-                .lineSpacing(6)
-            cavnarRead
-            retagRow
-            // The web's "Ask about this" on each review card, with the same
-            // question and the review as the screen's subject.
-            HomeAskLink(
-                question: "About this review: what is the guest really saying, and is my reply right?",
-                screen: AskScreen(panel: "reviews", entityType: "review", entityId: "\(viewModel.review.id)")
-            )
-        }
-    }
-
-    /// "Fix tags" — the owner corrects how this review was tagged, and
-    /// the tags as corrected once saved (memory round, 9/29/26).
-    @ViewBuilder
-    private var retagRow: some View {
-        if viewModel.review.isAnalysed {
-            VStack(alignment: .leading, spacing: 4) {
-                if let retagged {
-                    HomeMixedText.make(retagged.line, size: 13, weight: 500, color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        let text = viewModel.review.text ?? ""
+        return VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            Text(text)
+                .cavnarText(.lead, color: .cavnarInk2)
+                .lineLimit(reviewExpanded ? nil : 6)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            // Six lines hold roughly 300 characters at the default size.
+            if text.count > 280 {
                 Button {
                     Haptic.light()
-                    showingRetag = true
+                    withAnimation(.easeOut(duration: 0.2)) { reviewExpanded.toggle() }
                 } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "tag").font(.system(size: 11, weight: .bold))
-                        Text(retagged == nil ? "Fix tags" : "Fix tags again")
-                    }
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber2)
+                    Text(reviewExpanded ? "Less" : "More")
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarHitTarget()
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Correct the topics, tone, severity and dishes Cavnar AI tagged")
+                .accessibilityHint(reviewExpanded ? "Shows less of the review" : "Shows the whole review")
             }
+            cavnarRead
         }
     }
 
     /// Cavnar's own read of this one review: the one-line summary the
-    /// analyser has always written, the concrete thing that went wrong, and
-    /// the dish / role / daypart the guest named.
+    /// analyser has always written, then — on tap — the concrete thing that
+    /// went wrong, the dish / role / daypart the guest named, and the tags
+    /// as the owner corrected them.
     ///
     /// The summary existed on every review in the database and was rendered
-    /// by nothing on either platform. The rest is new, and it is what makes a
-    /// dish-level or shift-level pattern possible at all downstream — showing
-    /// it here is also the only way the owner can tell whether the extraction
-    /// read their review correctly.
+    /// by nothing on either platform. The rest is what makes a dish-level or
+    /// shift-level pattern possible at all downstream — showing it is also
+    /// the only way the owner can tell whether the extraction read their
+    /// review correctly ("Fix tags" is in the ••• menu).
     @ViewBuilder
     private var cavnarRead: some View {
         let r = viewModel.review
         let chips = r.entities?.chips ?? []
-        if r.summary?.isEmpty == false || r.specificComplaint?.isEmpty == false || !chips.isEmpty {
-            VStack(alignment: .leading, spacing: 7) {
-                if let summary = r.summary, !summary.isEmpty {
-                    Text(summary)
-                        .font(.cavnarBody(14))
-                        .italic()
-                        .foregroundStyle(Color.cavnarInk3)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
+        let summary = (r.summary?.isEmpty == false ? r.summary : nil) ?? r.specificComplaint
+        if let summary, !summary.isEmpty {
+            let hasMore = !chips.isEmpty || (r.specificComplaint?.isEmpty == false && r.summary?.isEmpty == false)
+                || retagged != nil
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                Button {
+                    guard hasMore else { return }
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.2)) { readExpanded.toggle() }
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        Image(systemName: "sparkles")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .accessibilityHidden(true)
+                        Text(summary)
+                            .cavnarText(.secondary)
+                            .lineLimit(readExpanded ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if hasMore {
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .rotationEffect(.degrees(readExpanded ? 180 : 0))
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
-                if !chips.isEmpty || r.specificComplaint?.isEmpty == false {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 5) {
-                            if let what = r.specificComplaint, !what.isEmpty {
-                                Text(what)
-                                    .font(.cavnarBody(11.5, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk2)
-                                    .padding(.horizontal, 9).padding(.vertical, 3)
-                                    .background(Color.cavnarEmber.opacity(0.12), in: Capsule())
-                            }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cavnar AI's read. \(summary)")
+                .accessibilityValue(hasMore ? (readExpanded ? "Expanded" : "Collapsed") : "")
+                if readExpanded {
+                    if let what = r.specificComplaint, !what.isEmpty, r.summary?.isEmpty == false {
+                        Text(what)
+                            .cavnarText(.caption, color: .cavnarEmber2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !chips.isEmpty {
+                        AccountFlowLayout(spacing: 6, lineSpacing: 6) {
                             ForEach(chips, id: \.self) { chip in
                                 Text(chip)
-                                    .font(.cavnarBody(11.5))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .cavnarText(.caption, color: .cavnarInk2)
                                     .padding(.horizontal, 9).padding(.vertical, 3)
-                                    .overlay(Capsule().stroke(Color.cavnarInk3.opacity(0.28), lineWidth: 1))
+                                    .overlay(Capsule().stroke(Color.cavnarInk3.opacity(0.6), lineWidth: 1))
                             }
                         }
-                        .padding(.vertical, 1)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Mentioned: \(chips.joined(separator: ", "))")
                     }
-                    .scrollBounceBehavior(.basedOnSize)
+                    if let retagged {
+                        CavnarMixedText(retagged.line, role: .caption)
+                    }
                 }
             }
-            .padding(.leading, 11)
+            .padding(.leading, CavnarSpace.s)
             .overlay(alignment: .leading) {
-                Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(width: 2)
+                Rectangle().fill(Color.cavnarEmber.opacity(0.6)).frame(width: 2)
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Cavnar AI's read. \(r.summary ?? "")"
-                                + (r.specificComplaint.map { " Issue: \($0)." } ?? "")
-                                + (chips.isEmpty ? "" : " Mentioned: \(chips.joined(separator: ", "))."))
+        } else if let retagged {
+            CavnarMixedText(retagged.line, role: .caption)
         }
     }
 
@@ -467,19 +513,22 @@ struct ReviewDetailView: View {
     }
 
     private var draftEditor: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("AI-drafted response")
-                    .font(.cavnarBody(14.5, weight: 700))
-                    .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // "Your reply" on its own line, the two tools beside it as 44pt
+            // icon buttons — the header used to cram a label, a pencil and
+            // two text buttons into one line (readability round #53).
+            HStack(alignment: .center, spacing: CavnarSpace.xxs) {
+                Text("Your reply")
+                    .cavnarText(.label)
                 if !isFinal {
                     // Same at-rest "this is yours to change" cue Account's
                     // editable fields use (AccountFieldLabel) — nothing else
                     // here told a first-time user the draft below is
                     // actually editable text, not a locked preview.
                     Image(systemName: "pencil")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarEmber.opacity(0.7))
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .accessibilityHidden(true)
                 }
                 Spacer()
                 if !isFinal {
@@ -488,18 +537,26 @@ struct ReviewDetailView: View {
                             Haptic.light()
                             showingTemplates = true
                         } label: {
-                            Label("Templates", systemImage: "doc.on.doc")
-                                .font(.cavnarBody(14, weight: 600))
+                            Image(systemName: "doc.on.doc")
+                                .font(.cavnar(.body))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .cavnarHitTarget()
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Templates")
                     }
                     Button {
                         Haptic.light()
                         Task { await viewModel.regenerateDraft() }
                     } label: {
-                        Label("Regenerate", systemImage: "arrow.clockwise")
-                            .font(.cavnarBody(14, weight: 600))
+                        Image(systemName: "arrow.clockwise")
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarHitTarget()
                     }
+                    .buttonStyle(.plain)
                     .disabled(viewModel.isSubmitting)
+                    .accessibilityLabel("Regenerate the reply")
                 }
             }
             // A draft that generated cleanly but states a specific action the
@@ -510,22 +567,21 @@ struct ReviewDetailView: View {
             // It follows the text on screen: a regenerate or a save that
             // clears or raises the flag updates it here, as on the web.
             if let reason = viewModel.flagReason, !isFinal {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: CavnarSpace.xs) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarAmber)
-                        .padding(.top, 1)
+                        .padding(.top, 2)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Read this one before you post it")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(Color.cavnarAmber)
+                            .cavnarText(.label, color: .cavnarAmber)
                         Text(reason)
-                            .font(.cavnarBody(13.5))
-                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(11)
+                .padding(CavnarSpace.s)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -539,12 +595,8 @@ struct ReviewDetailView: View {
             if viewModel.needsDraft && !viewModel.isGeneratingDraft {
                 // Explicit, like the web's "Draft a reply". Opening a review
                 // no longer spends a Sonnet call on its own.
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("No reply drafted yet")
-                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                        .tracking(0.6)
-                        .textCase(.uppercase)
-                        .foregroundStyle(Color.cavnarEmber)
+                VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    CavnarKicker("No reply drafted yet")
                     Button {
                         Haptic.light()
                         Task { await viewModel.regenerateDraft() }
@@ -557,7 +609,7 @@ struct ReviewDetailView: View {
                     // (CLIENT-55).
                     .disabled(viewModel.isSubmitting)
                 }
-                .padding(14)
+                .padding(CavnarSpace.m)
                 .background(Color.cavnarEmber.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             } else if viewModel.isGeneratingDraft {
@@ -567,7 +619,7 @@ struct ReviewDetailView: View {
                 // both route through regenerateDraft().
                 CavnarComposingLines(widths: [1.0, 0.95, 0.9, 0.97, 0.8, 0.88, 0.5], lineHeight: 12, spacing: 10)
                     .frame(minHeight: 130)
-                    .padding(14)
+                    .padding(CavnarSpace.m)
                     .background(Color.cavnarEmber.opacity(0.20))
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             } else {
@@ -584,7 +636,8 @@ struct ReviewDetailView: View {
                 // primitive, not TextEditor's full rich-text stack, and
                 // doesn't carry the same first-focus cost.
                 TextField("", text: $viewModel.editedDraft, axis: .vertical)
-                    .font(.cavnarBody(17))
+                    .font(.cavnar(.lead))
+                    .foregroundStyle(Color.cavnarInk)
                     .lineSpacing(5)
                     .lineLimit(6...20)
                     // The reply an owner proofreads before it goes public:
@@ -592,29 +645,18 @@ struct ReviewDetailView: View {
                     // that only grows taller.
                     .cavnarReadingSize()
                     .focused($isDraftFocused)
-                    .padding(14)
+                    .padding(CavnarSpace.m)
                     .background(Color.cavnarEmber.opacity(0.20))
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     .disabled(isFinal)
                     .onChange(of: viewModel.editedDraft) { _, _ in
                         viewModel.scheduleDraftSave()
                     }
-                if !isFinal && !viewModel.editedDraft.isEmpty {
-                    HStack(spacing: 10) {
-                        Button("Save as template") {
-                            Haptic.light()
-                            templateName = ""
-                            templateNote = nil
-                            showingSaveTemplate = true
-                        }
-                        .font(.cavnarBody(14, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        if let note = templateNote {
-                            Text(note)
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(note == "Template saved" ? Color.cavnarGreen : Color.cavnarRed)
-                        }
-                    }
+                // "Save as template" is in the ••• menu; what it did is
+                // said here, under the reply it saved.
+                if let note = templateNote {
+                    Text(note)
+                        .cavnarText(.caption, color: note == "Template saved" ? .cavnarGreen : .cavnarRedText)
                 }
             }
         }
@@ -625,32 +667,24 @@ struct ReviewDetailView: View {
     /// and Undo — the web card's "Replied on Google" box.
     private var elsewhereCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Replied on \(viewModel.review.platformDisplayName)")
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(0.6)
-                .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarEmber)
+            CavnarKicker("Replied on \(viewModel.review.platformDisplayName)")
             if let reply = viewModel.review.externalReply?.trimmingCharacters(in: .whitespacesAndNewlines),
                !reply.isEmpty {
                 Text(reply)
-                    .font(.cavnarBody(16))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .lineSpacing(4)
+                    .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             } else {
                 Text("The reply\u{2019}s words weren\u{2019}t sent with the mark \u{2014} it\u{2019}s on \(viewModel.review.platformDisplayName).")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Label("Answered outside Cavnar AI", systemImage: "checkmark.circle.fill")
-                    .font(.cavnarBody(13.5, weight: 700))
-                    .foregroundStyle(Color.cavnarGreen)
+                    .cavnarText(.label, color: .cavnarGreen)
                 Spacer(minLength: 0)
             }
-            HomeMixedText.make(viewModel.review.externalReplyLine, size: 13, weight: 500, color: .cavnarInk3)
+            CavnarMixedText(viewModel.review.externalReplyLine, role: .caption)
             if viewModel.isSubmitting {
                 CavnarWorkingLine(width: 80)
             } else {
@@ -663,9 +697,10 @@ struct ReviewDetailView: View {
                     }
                 } label: {
                     Text("Undo \u{2014} put it back in my queue")
-                        .font(.cavnarBody(14.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -708,11 +743,9 @@ struct ReviewDetailView: View {
                     if viewModel.postFailedOnGoogle, let failure = viewModel.postFailure {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Couldn't post to Google", systemImage: "exclamationmark.triangle.fill")
-                                .font(.cavnarBody(14.5, weight: 700))
-                                .foregroundStyle(Color.cavnarRed)
+                                .cavnarText(.label, color: .cavnarRedText)
                             Text(failure)
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button {
                                 Haptic.light()
@@ -810,15 +843,13 @@ struct ReviewDetailView: View {
                 // Nothing posts it on its own once Google is connected; the
                 // card's Retry posting does then (re-audit 10/8/26).
                 Label("Post it once Google is connected", systemImage: "clock")
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else if !viewModel.isSubmitting {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 Text("Copy and post to \(r.platformDisplayName)")
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                 if r.platform == "yelp" {
                     Button {
                         copyAndOpenYelp()
@@ -830,8 +861,7 @@ struct ReviewDetailView: View {
                     .disabled(viewModel.editedDraft.isEmpty)
                     if let copiedNote {
                         Text(copiedNote)
-                            .font(.cavnarBody(13))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -886,22 +916,27 @@ struct ReviewDetailView: View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                Text(text).font(.cavnarBody(15, weight: 700))
+                Text(text).font(.cavnar(.label))
             }
             .foregroundStyle(color)
             .frame(maxWidth: .infinity)
-            .padding(14)
+            .padding(CavnarSpace.m)
             .background(background)
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
 
             if viewModel.isSubmitting {
                 CavnarWorkingLine(width: 80)
             } else if let undoLabel {
-                Button(undoLabel, role: isDestructiveUndo ? .destructive : nil) {
+                Button(role: isDestructiveUndo ? .destructive : nil) {
                     undo()
+                } label: {
+                    Text(undoLabel)
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        .foregroundStyle(isDestructiveUndo ? Color.cavnarRedText : Color.cavnarInk2)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
-                .font(.cavnarBody(14.5, weight: 600))
-                .foregroundStyle(isDestructiveUndo ? Color.cavnarRed : Color.cavnarInk3)
+                .buttonStyle(.plain)
             }
         }
     }
@@ -923,12 +958,16 @@ struct ReviewDetailView: View {
                 // isApproving, not isSubmitting — regenerate/skip/save also
                 // set isSubmitting, and none of those are "posting."
                 if viewModel.isApproving {
-                    CavnarShimmerText(text: "Posting…", color: Color.cavnarInk)
+                    CavnarShimmerText(text: viewModel.approveLabel == "Approve & post" ? "Posting…" : "Approving…",
+                                      color: Color.cavnarInk)
                 } else if nextReview != nil {
-                    // Posts this one, then opens the next reply waiting.
+                    // Approves this one, then opens the next reply waiting.
                     Text("Approve & next")
                 } else {
-                    Text("Approve & Post")
+                    // Named by where it goes (readability round #54): "Approve
+                    // & post" only for a Google review with Google connected —
+                    // a Yelp or not-yet-connected reply is approved, not posted.
+                    Text(viewModel.approveLabel)
                 }
             }
             .buttonStyle(CavnarGlassButtonStyle(
@@ -943,9 +982,12 @@ struct ReviewDetailView: View {
             Task { await viewModel.markRepliedElsewhere() }
         } label: {
             Text("Mark as replied on \(viewModel.review.platformDisplayName)")
-                .font(.cavnarBody(14.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                .foregroundStyle(Color.cavnarInk2)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .disabled(viewModel.isSubmitting)
         }
     }
@@ -971,8 +1013,8 @@ private struct TemplatePickerSheet: View {
                     onSelect(template)
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(template.title).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                        Text(template.body).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).lineLimit(2)
+                        Text(template.title).cavnarText(.label)
+                        Text(template.body).cavnarText(.secondary).lineLimit(2)
                     }
                 }
                 .swipeActions(edge: .trailing) {

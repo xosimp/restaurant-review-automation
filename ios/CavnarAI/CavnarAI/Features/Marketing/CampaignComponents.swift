@@ -5,7 +5,8 @@ import WebKit
 // share: the send gate's sheet, the email's rendered preview, the chips and
 // the check lines.
 
-/// The ember kicker over a card's content.
+/// The kicker over a card's content — the design system's `CavnarKicker`
+/// with an optional tag capsule beside it ("Picked by Cavnar AI").
 struct CampaignKicker: View {
     let text: String
     var tag: String? = nil
@@ -13,16 +14,13 @@ struct CampaignKicker: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(text.uppercased())
-                .font(.cavnarBody(CavnarType.kicker, weight: 700))
-                .tracking(1.3)
-                .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker(text)
             if let tag, !tag.isEmpty {
                 HStack(spacing: 4) {
                     if tagIsAI {
-                        Image(systemName: "sparkles").font(.system(size: 9, weight: .bold)).accessibilityHidden(true)
+                        Image(systemName: "sparkles").font(.cavnar(.tag)).accessibilityHidden(true)
                     }
-                    Text(tag).font(.cavnarBody(11.5, weight: 700))
+                    Text(tag).cavnarText(.tag, color: tagIsAI ? .cavnarEmber2 : .cavnarInk2)
                 }
                 .foregroundStyle(tagIsAI ? Color.cavnarEmber2 : Color.cavnarInk3)
                 .padding(.horizontal, 8)
@@ -49,17 +47,17 @@ struct CampaignToggleChip: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: isOn ? "checkmark.circle.fill" : (systemImage ?? "circle"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.cavnar(.caption))
                     .accessibilityHidden(true)
-                Text(label).font(.cavnarBody(14, weight: 650))
+                Text(label).font(.cavnarBody(CavnarType.secondary, weight: 700))
                 if let count {
-                    Text("\(count)").font(.cavnarNumber(13.5, weight: 700))
-                        .foregroundStyle(isOn ? Color.cavnarEmber2 : Color.cavnarInk3)
+                    Text("\(count)").font(.cavnarNumber(CavnarType.secondary, weight: 700))
+                        .foregroundStyle(isOn ? Color.cavnarEmber2 : Color.cavnarInk2)
                 }
             }
             .foregroundStyle(isOn ? Color.cavnarInk : Color.cavnarInk2)
             .padding(.horizontal, 12)
-            .frame(minHeight: 40)
+            .frame(minHeight: 44)
             .background(Capsule().fill(isOn ? Color.cavnarEmber.opacity(0.16) : Color.white.opacity(0.04)))
             .overlay(Capsule().strokeBorder(isOn ? Color.cavnarEmber.opacity(0.55) : Color.cavnarPaper3, lineWidth: 1))
             .contentShape(Capsule())
@@ -77,11 +75,10 @@ struct CampaignCheckLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.cavnar(.caption))
                 .foregroundStyle(ok ? Color.cavnarGreen : Color.cavnarAmber)
                 .accessibilityHidden(true)
-            HomeMixedText.make(text, size: CavnarType.secondary, weight: 600, color: ok ? .cavnarInk2 : .cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarMixedText(text, role: .secondary, color: ok ? .cavnarInk2 : .cavnarInk)
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
