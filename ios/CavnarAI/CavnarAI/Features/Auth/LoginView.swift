@@ -176,8 +176,8 @@ struct LoginView: View {
             .shadow(color: Color.cavnarEmber.opacity(0.22), radius: 16)
 
             Text("Sign in to your restaurant")
-                .font(.cavnarBody(15))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.body))
+                .foregroundStyle(Color.cavnarInk2)
                 .loginRise(Cue.subtitle, enabled: introReady)
         }
     }
@@ -228,9 +228,11 @@ struct LoginView: View {
                     Haptic.light()
                     showingStaffSignIn = true
                 } label: {
+                    // Ink2, Label (iOS readability round): staff looking for
+                    // their own door must be able to read it.
                     Text("I'm staff")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.label))
+                        .foregroundStyle(Color.cavnarInk2)
                         .frame(minHeight: LoginMetrics.touch)
                         .padding(.horizontal, LoginMetrics.spaceXS)
                         .contentShape(Rectangle())
@@ -242,7 +244,7 @@ struct LoginView: View {
                     showingForgot = true
                 } label: {
                     Text("Forgot password?")
-                        .font(.cavnarBody(13.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(minHeight: LoginMetrics.touch)
                         .padding(.horizontal, LoginMetrics.spaceXS)
@@ -310,7 +312,7 @@ struct LoginView: View {
             LinearGradient(colors: [.clear, Color.cavnarInk3.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
                 .frame(height: 1)
             Text("or continue with")
-                .font(.cavnarBody(13, weight: 600))
+                .font(.cavnarBody(CavnarType.caption, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize()
             LinearGradient(colors: [.clear, Color.cavnarInk3.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
@@ -365,14 +367,14 @@ struct LoginView: View {
         HStack(spacing: LoginMetrics.spaceXS) {
             if publicSignupOpen {
                 Text("Don't have an account?")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarInk2)
                 Button {
                     Haptic.light()
                     showingRegister = true
                 } label: {
                     Text("Sign up")
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(minHeight: LoginMetrics.touch)
                         .padding(.horizontal, LoginMetrics.spaceXS)
@@ -380,10 +382,14 @@ struct LoginView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Text("Accounts are set up with you directly — email will@cavnar.ai")
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
+                // The address is a mailto: link, not text to copy by hand.
+                (Text("Accounts are set up with you directly \u{2014} email ")
+                    + Text("[will@cavnar.ai](mailto:will@cavnar.ai)").foregroundStyle(Color.cavnarEmber2))
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .tint(Color.cavnarEmber2)
                     .multilineTextAlignment(.center)
+                    .frame(minHeight: LoginMetrics.touch)
             }
         }
         .frame(maxWidth: .infinity)

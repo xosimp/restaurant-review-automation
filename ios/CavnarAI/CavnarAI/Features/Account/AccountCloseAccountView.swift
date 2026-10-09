@@ -46,22 +46,23 @@ struct AccountCloseAccountView: View {
                     // day they come back the brief is current, not a month stale.
                     AccountPauseSection()
 
-                    Text("Getting set up on Cavnar AI includes signing a service agreement, so canceling isn't something this app can do on its own — it needs to go through Will directly so billing and your account can be wound down properly. 30 days' written notice is required; your account stays active through the end of your current billing period plus 30 days after your request.")
-                        .font(.cavnarBody(16))
-                        .foregroundStyle(Color.cavnarInk3)
+                    // Two sentences (iOS readability round — it was 60 words).
+                    Text("Your service agreement needs 30 days' written notice, so canceling goes through Will. Your account stays on through the end of this billing period plus 30 days after you ask.")
+                        .cavnarText(.body)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let requestedAt {
                         AccountSection(kicker: "Status") {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Deletion requested").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                Text("Deletion requested").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                                 Text("Will was notified on \(CavnarDate.mdy(requestedAt)). He'll reach out to confirm and start winding things down.")
-                                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                             }
                             .padding(.vertical, 9)
                         }
                     } else {
                         if let error = viewModel.deletionRequestError {
-                            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                         }
                         Button(role: .destructive) {
                             showingConfirm = true
@@ -106,7 +107,7 @@ struct AccountCloseAccountView: View {
                                 + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber)
                                 + Text(" directly.").foregroundStyle(Color.cavnarInk3)
                         }
-                        .font(.cavnarBody(16))
+                        .font(.cavnar(.body))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -152,7 +153,7 @@ struct AccountDeleteLoginView: View {
                     }
 
                     if let error = viewModel.deleteLoginError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -209,7 +210,7 @@ struct AccountDeleteLoginView: View {
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle().fill(Color.cavnarEmber).frame(width: 5, height: 5)
-            Text(text).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2)
+            Text(text).font(.cavnar(.body)).foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -265,12 +266,12 @@ struct AccountPauseSection: View {
                         }
                         AccountActionRow(
                             label: "Pause the subscription",
-                            detail: "Stripe stops collecting, nothing is invoiced, and it resumes on its own. Your data keeps flowing, so the day you come back the brief is current.",
+                            detail: "Billing stops, nothing is invoiced, and it resumes on its own. Your data keeps flowing, so the day you come back the brief is current.",
                             symbol: "pause.fill", busy: busy, showsDivider: false
                         ) { confirming = true }
                     }
                     if let failure {
-                        Text(failure).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(failure).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .padding(.top, 6)
                     }
                 }

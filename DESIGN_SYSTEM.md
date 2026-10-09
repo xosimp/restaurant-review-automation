@@ -1387,6 +1387,7 @@ remembered on that device; Account → Security can always add one.
 |---|---|
 | Card | `.cavnarCard()` |
 | Sheet | `.accountSheetChrome(title)` + `cavnarTitleToolbar` |
+| Sheet save model (one per sheet) | Switches, pickers and list adds/removes save the moment they change (no Save button). A form that genuinely needs a Save (text fields): a `CavnarPinnedBar` Save that appears only while something is unsaved (Undo beside it), and `.accountSheetChrome(title, isDirty:)` — swipe-down is refused and Back asks "Discard changes?" (Discard changes / Keep editing) while `isDirty`. Never a Save button at the bottom of a scroll that Back silently discards (Account → Restaurant, Restaurant profile; iOS readability round 10/8/26) |
 | Sheet anatomy | `AccountHero` → `AccountSection` → `AccountKVRow` |
 | Pill / chip / tile | `AccountPill`, `AccountChip` (`tint:` a status colour for a chip that states a status — the daily report's urgency chip is amber for today, ink otherwise; never the ember), `AccountStatTile` |
 | Button | `CavnarPrimaryButtonStyle`, `CavnarSecondaryButtonStyle` |

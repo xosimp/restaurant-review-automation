@@ -3,9 +3,12 @@ import Observation
 @preconcurrency import Vision
 
 /// Account → People (parity audit 10/7/26 #62) — the web's People section:
-/// who has access (the owner's two sheets), then what staff can look up in
-/// the app — the house rules their questions are answered from, read-only
-/// docs by job, and certifications with the expiry reminder.
+/// what staff can look up in the app — the house rules their questions are
+/// answered from, read-only docs by job, and certifications with the expiry
+/// reminder. iOS readability round: the phone reads the rules and docs and
+/// adds a certificate on the spot; writing the rules and the docs is the
+/// web's (one row each), and "Who has access" left — it repeated Account's
+/// Team rows.
 /// /mobile/api/house-rules, /staff-docs, /staff-certs (staff_knowledge_routes,
 /// one body per route with the web). Every add, change and removal saves on
 /// its own; anything staff will read asks first.
@@ -150,36 +153,24 @@ struct AccountPeopleRulesView: View {
     let isOwner: Bool
 
     @State private var model = PeopleRulesViewModel()
-    @State private var rulesText = ""
-    @State private var rulesSeeded = false
-    @State private var confirmRules = false
     @State private var editingDoc: StaffDocEditorTarget?
-    @State private var removingDoc: KnowledgeDoc?
     @State private var editingCert: StaffCertEditorTarget?
     @State private var removingCert: KnowledgeCert?
-    @State private var showingTeam = false
-    @State private var showingStaff = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    AccountHero(title: "People") {
+                    AccountHero(title: "House rules & docs") {
                         GlowBadge(systemImage: "person.3", size: 64)
                     } subtitle: {
-                        Text("Access, house rules, docs, certificates")
-                    }
-                    if isOwner {
-                        AccountSection(kicker: "Who has access") {
-                            AccountNavRow(label: "Dashboard logins") { showingTeam = true }
-                            AccountNavRow(label: "Staff accounts", showsDivider: false) { showingStaff = true }
-                        }
+                        Text("What staff can look up in the app")
                     }
                     if let m = model.message {
-                        Text(m).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                        Text(m).cavnarText(.secondary, color: .cavnarGreen)
                     }
                     if let e = model.error {
-                        Text(e).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(e).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     rules
@@ -192,12 +183,6 @@ struct AccountPeopleRulesView: View {
             .accountSheetChrome("People")
         }
         .task { await model.load() }
-        .onChange(of: model.houseRules) { _, hr in
-            rulesText = hr?.body ?? ""
-            rulesSeeded = true
-        }
-        .sheet(isPresented: $showingTeam) { AccountTeamDetailView(viewModel: accountViewModel) }
-        .sheet(isPresented: $showingStaff) { AccountStaffDetailView(viewModel: accountViewModel) }
         .sheet(item: $editingDoc) { target in
             StaffDocEditor(target: target, kinds: model.docKinds) { await model.saveDoc($0) }
                 .presentationDetents([.large])
@@ -206,21 +191,6 @@ struct AccountPeopleRulesView: View {
             StaffCertEditor(target: target, roster: model.roster) { await model.saveCert($0) }
                 .presentationDetents([.large])
         }
-        .confirmationDialog("Save the house rules?", isPresented: $confirmRules, titleVisibility: .visible) {
-            Button("Save \u{2014} staff see them now") { Task { _ = await model.saveRules(rulesText) } }
-            Button("Not yet", role: .cancel) {}
-        } message: {
-            Text("Staff read them in the app, and its answers to their questions come only from these lines, your docs and their task sheets.")
-        }
-        .confirmationDialog(removingDoc.map { "Remove \u{201C}\($0.title)\u{201D}?" } ?? "",
-                            isPresented: Binding(get: { removingDoc != nil }, set: { if !$0 { removingDoc = nil } }),
-                            titleVisibility: .visible) {
-            Button("Remove it", role: .destructive) {
-                if let d = removingDoc { Task { await model.removeDoc(d) } }
-                removingDoc = nil
-            }
-            Button("Keep it", role: .cancel) { removingDoc = nil }
-        } message: { Text("Staff stop seeing it.") }
         .confirmationDialog(removingCert.map { "Remove \($0.employeeName)\u{2019}s \($0.certLabel) certificate?" } ?? "",
                             isPresented: Binding(get: { removingCert != nil }, set: { if !$0 { removingCert = nil } }),
                             titleVisibility: .visible) {
@@ -239,35 +209,24 @@ struct AccountPeopleRulesView: View {
         if model.rulesLoaded {
             AccountSection(kicker: "House rules") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Your rules in your words. Staff read them in the app, and its answers to their questions come only from these lines, your docs and their task sheets \u{2014} never about pay, other people or discipline.")
-                        .font(.cavnarBody(CavnarType.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                    // One line (iOS readability round — it was a paragraph).
+                    Text("Staff\u{2019}s questions in the app are answered from these.")
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if model.canEditRules {
-                        TextField("One rule a line \u{2014} Phones stay in the locker during service.",
-                                  text: $rulesText, axis: .vertical)
-                            .lineLimit(4...14)
-                            .cavnarTextFieldStyle()
-                            .onAppear { if !rulesSeeded { rulesText = model.houseRules?.body ?? ""; rulesSeeded = true } }
-                        HStack {
-                            Button {
-                                Haptic.light()
-                                confirmRules = true
-                            } label: { Text("Save house rules") }
-                            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: model.busy || rulesUnchanged))
-                            .disabled(model.busy || rulesUnchanged)
-                            Spacer()
-                            if let at = model.houseRules?.updatedAt {
-                                HomeMixedText.make("Saved " + CavnarDate.mdy(at), size: CavnarType.caption, color: .cavnarInk3)
-                            }
-                        }
-                    } else if let hr = model.houseRules, !hr.body.isEmpty {
+                    if let hr = model.houseRules, !hr.body.isEmpty {
                         Text(hr.body)
-                            .font(.cavnarBody(CavnarType.body))
-                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let at = hr.updatedAt {
+                            HomeMixedText.make("Saved " + CavnarDate.mdy(at), role: .caption)
+                        }
                     } else {
-                        Text("No house rules yet.").font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk3)
+                        Text("No house rules yet.").cavnarText(.body)
+                    }
+                    // Writing them is the web's: staff read every line the
+                    // moment it saves.
+                    if model.canEditRules {
+                        CavnarWebLinkRow(title: "House rules", path: "account/people")
                     }
                 }
                 .padding(.vertical, 10)
@@ -289,37 +248,29 @@ struct AccountPeopleRulesView: View {
         }
     }
 
-    private var rulesUnchanged: Bool {
-        rulesText.trimmingCharacters(in: .whitespacesAndNewlines)
-            == (model.houseRules?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     // MARK: Docs
 
     @ViewBuilder
     private var docs: some View {
         if model.docsLoaded {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    AccountKicker(text: "Staff docs")
-                    Spacer()
-                    if model.canEditDocs {
-                        addButton("Add a doc") { editingDoc = StaffDocEditorTarget(doc: nil) }
-                    }
-                }
-                Text("Menu specs, allergens and how you do things, read-only in the app. Pick the jobs a doc is for, or leave it for everyone.")
-                    .font(.cavnarBody(CavnarType.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                CavnarKicker("Staff docs")
+                Text("Menu specs, allergens and how you do things \u{2014} read only in the app.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 0) {
                     if model.docs.isEmpty {
                         Text("No docs yet.")
-                            .font(.cavnarBody(CavnarType.body))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.body)
                             .padding(.vertical, 12)
                     }
                     ForEach(Array(model.docs.enumerated()), id: \.element.id) { i, d in
-                        docRow(d, divider: i < model.docs.count - 1)
+                        docRow(d, divider: i < model.docs.count - 1 || model.canEditDocs)
+                    }
+                    // Writing and changing docs is the web's (iOS
+                    // readability round); the phone reads them.
+                    if model.canEditDocs {
+                        CavnarWebLinkRow(title: "Staff docs", path: "account/people")
                     }
                 }
                 .accountCard()
@@ -334,16 +285,15 @@ struct AccountPeopleRulesView: View {
     private func docRow(_ d: KnowledgeDoc, divider: Bool) -> some View {
         Button {
             Haptic.light()
-            editingDoc = StaffDocEditorTarget(doc: d, readOnly: !model.canEditDocs)
+            editingDoc = StaffDocEditorTarget(doc: d, readOnly: true)
         } label: {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(d.title)
-                            .font(.cavnarBody(CavnarType.body, weight: 700))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                             .lineLimit(2)
-                        HomeMixedText.make(d.metaLine, size: CavnarType.caption, color: .cavnarInk3)
+                        HomeMixedText.make(d.metaLine, role: .caption)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 6)
@@ -355,12 +305,6 @@ struct AccountPeopleRulesView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contextMenu {
-            if model.canEditDocs {
-                Button { editingDoc = StaffDocEditorTarget(doc: d) } label: { Label("Edit", systemImage: "pencil") }
-                Button(role: .destructive) { removingDoc = d } label: { Label("Remove", systemImage: "trash") }
-            }
-        }
     }
 
     // MARK: Certifications
@@ -370,7 +314,7 @@ struct AccountPeopleRulesView: View {
         if model.certsLoaded {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    AccountKicker(text: "Certifications")
+                    CavnarKicker("Certifications")
                     Spacer()
                     if model.canEditCerts {
                         addButton("Add a certificate") { editingCert = StaffCertEditorTarget(cert: nil) }
@@ -378,13 +322,12 @@ struct AccountPeopleRulesView: View {
                 }
                 HomeMixedText.make("Who holds which certificate until when. The holder and you are told "
                                    + (model.remindDays.map { "\($0) days" } ?? "a month")
-                                   + " before one expires.", size: CavnarType.secondary, color: .cavnarInk3)
+                                   + " before one expires.", role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 0) {
                     if model.certs.isEmpty {
                         Text("No certificates on file yet.")
-                            .font(.cavnarBody(CavnarType.body))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.body)
                             .padding(.vertical, 12)
                     }
                     ForEach(Array(model.certs.enumerated()), id: \.element.id) { i, c in
@@ -410,12 +353,10 @@ struct AccountPeopleRulesView: View {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(c.employeeName)
-                            .font(.cavnarBody(CavnarType.body, weight: 700))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.label)
                             .lineLimit(1)
                         Text(c.certLabel.capitalized + ((c.note ?? "").isEmpty ? "" : " \u{00B7} \(c.note!)"))
-                            .font(.cavnarBody(CavnarType.caption))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption)
                             .lineLimit(2)
                     }
                     Spacer(minLength: 6)
@@ -443,10 +384,8 @@ struct AccountPeopleRulesView: View {
             action()
         } label: {
             Label("Add", systemImage: "plus")
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarEmber2)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                .cavnarText(.label, color: .cavnarEmber2)
+                .cavnarHitTarget()
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -482,7 +421,7 @@ struct StaffDocEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if target.readOnly, let d = target.doc {
-                        Text(d.title).font(.cavnarHeadline(24)).foregroundStyle(Color.cavnarInk)
+                        Text(d.title).font(.cavnarHeadline(CavnarText.title.size)).foregroundStyle(Color.cavnarInk)
                         HomeMixedText.make(d.metaLine, size: CavnarType.caption, color: .cavnarInk3)
                         Text(d.body).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -510,7 +449,7 @@ struct StaffDocEditor: View {
                             .padding(.vertical, 10)
                         }
                         if let error {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Button {
@@ -657,7 +596,7 @@ struct StaffCertEditor: View {
                             .onChange(of: note) { _, v in if v.count > 200 { note = String(v.prefix(200)) } }
                     }
                     if let error {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {

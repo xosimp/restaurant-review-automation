@@ -2,9 +2,10 @@ import SwiftUI
 
 /// Opened from Account's "Security & devices" row. Option A ("identity
 /// card") from the account-sheet design review: the sheet opens on the
-/// answer to "am I protected?" — a shield tile, a one-word verdict, and
-/// three status tiles (password, two-factor, sign-in alerts) — before any
-/// setting. Then one Sign-in card and one Devices card.
+/// answer to "am I protected?" — a shield tile and a one-word verdict —
+/// before any setting. Then one Sign-in card, this device, and Devices.
+/// (iOS readability round: the three status tiles repeated the Password,
+/// 2FA and Sign-in notification rows right under them, and are gone.)
 struct AccountSecurityDetailView: View {
     let viewModel: AccountViewModel
     let account: AccountInfo
@@ -61,7 +62,6 @@ struct AccountSecurityDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 hero
-                statusStrip
                 signInSection
                 deviceLockSection
                 devicesSection
@@ -142,28 +142,7 @@ struct AccountSecurityDetailView: View {
         AccountHero(title: live.twoFAEnabled ? "Protected" : "Protect your account") {
             GlowBadge(systemImage: "checkmark.shield", size: 64)
         } subtitle: {
-            Text("Signed in as ") + Text(live.username).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk2)
-        }
-    }
-
-    private var statusStrip: some View {
-        HStack(spacing: 8) {
-            AccountStatTile(
-                label: "Password", value: passwordStrengthLabel,
-                tone: passwordStrengthTone,
-                detail: live.passwordChangedAt == nil ? "Never changed" : "Changed " + AccountRelativeTime.describe(live.passwordChangedAt).lowercased()
-            )
-            AccountStatTile(
-                label: "2FA", value: live.twoFAEnabled ? "On" : "Off",
-                tone: live.twoFAEnabled ? .cavnarGreen : .cavnarInk3,
-                detail: live.twoFAEnabled ? "\(twoFAByText ? "Text" : "Email") · \(live.twoFAContactMasked ?? "")" : "Not set up",
-                detailIsNumber: live.twoFAEnabled && twoFAByText
-            )
-            AccountStatTile(
-                label: "Alerts", value: live.loginNotify ? "On" : "Off",
-                tone: live.loginNotify ? .cavnarGreen : .cavnarInk3,
-                detail: "New sign-ins"
-            )
+            Text("Signed in as ") + Text(live.username).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk)
         }
     }
 
@@ -176,17 +155,21 @@ struct AccountSecurityDetailView: View {
             // was still on (audit 2.4).
             if let error = viewModel.securityActionError {
                 Text(error)
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarRed)
+                    .cavnarText(.secondary, color: .cavnarRedText)
                     .padding(.bottom, 4)
             }
             AccountNavRow(label: "Security checkup") { showingCheckup = true }
-            AccountNavRow(label: "Password") { showingChangePassword = true }
+            // The password's strength and age, once (the tile that said it
+            // too is gone).
+            AccountNavRow(label: "Password", value: passwordValue) { showingChangePassword = true }
             // Face ID sign-in, the same passkeys as the web (parity #57).
             AccountNavRow(label: "Passkeys") { showingPasskeys = true }
             if live.twoFAEnabled {
                 AccountNavRow(label: "Backup codes", value: viewModel.backupCodesRemaining.map { "\($0) left" }, valueIsNumber: true) { showingBackupCodes = true }
-                AccountNavRow(label: "Trusted devices") { showingTrustedDevices = true }
+                // "Skip-code devices", not "Trusted devices" — the Devices
+                // card below is every signed-in device; these are the ones
+                // that skip the 2FA code.
+                AccountNavRow(label: "Skip-code devices") { showingTrustedDevices = true }
             }
             // Always an unconditional sibling — only its trailing link
             // branches. This row used to be the whole AccountKVRow wrapped
@@ -202,7 +185,9 @@ struct AccountSecurityDetailView: View {
             // device feedback caught, not a padding value being wrong.
             AccountSwitchRow(
                 label: "Two-factor authentication",
-                detail: live.twoFAEnabled ? "Code by \(twoFAByText ? "text message" : "email") on new devices" : nil,
+                detail: live.twoFAEnabled
+                    ? "Code by \(twoFAByText ? "text message" : "email")\(live.twoFAContactMasked.map { " to \($0)" } ?? "") on new devices"
+                    : nil,
                 isOn: Binding(
                     get: { live.twoFAEnabled },
                     set: { on in
@@ -227,8 +212,9 @@ struct AccountSecurityDetailView: View {
             // which is what made this row read as misaligned against its
             // siblings; every row in this card is now the exact same
             // AccountLink shape, so they can't drift apart again).
-            AccountNavRow(label: "Sign-in activity") { showingSignInHistory = true }
-            AccountNavRow(label: "Account activity") { showingActivity = true }
+            // One "Activity" row: account changes, with the sign-ins a tap
+            // inside it (was two rows, Sign-in activity and Account activity).
+            AccountNavRow(label: "Activity") { showingActivity = true }
             AccountNavRow(label: "Recovery email", value: live.recoveryEmail ?? "Not set") { showingRecoveryEmail = true }
             AccountSwitchRow(
                 label: "Sign-in notifications",
@@ -252,9 +238,16 @@ struct AccountSecurityDetailView: View {
             )
             .disabled(sessionStore.currentUser?.isOwner != true)
             if let error = viewModel.accountToggleError {
-                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
         }
+    }
+
+    /// "Strong · changed 3 days ago" — the strength and when, one value.
+    private var passwordValue: String {
+        let when = live.passwordChangedAt == nil ? "never changed"
+            : "changed " + AccountRelativeTime.describe(live.passwordChangedAt).lowercased()
+        return "\(passwordStrengthLabel) \u{00B7} \(when)"
     }
 
     // MARK: - This device
@@ -266,14 +259,12 @@ struct AccountSecurityDetailView: View {
         AccountSection(kicker: "This device") {
             if sessionStore.biometricsUnavailable {
                 Text("This device has no passcode or Face ID set up, so the app can't lock itself. Set a device passcode in Settings to turn this on.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarAmber)
+                    .cavnarText(.secondary, color: .cavnarAmber)
                     .padding(.bottom, 4)
             }
             if !sessionStore.reentryProtected {
                 Text("Nothing is protecting the app when you reopen it — turn Face ID back on or set an app passcode.")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarAmber)
+                    .cavnarText(.secondary, color: .cavnarAmber)
                     .padding(.bottom, 4)
             }
             AccountSwitchRow(
@@ -285,28 +276,17 @@ struct AccountSecurityDetailView: View {
             )
             // The fallback gate for when Face ID is off — see AppPasscode.
             // Set/Change/Remove all confirm through the same passcode pad
-            // the lock screen uses. One row: tap to set or change, the red
-            // chip removes.
-            Button {
-                Haptic.light()
+            // the lock screen uses. Tap the row to set or change it; Remove
+            // is its own row (it was a chip nested inside this row's button).
+            AccountNavRow(label: sessionStore.appPasscodeSet ? "Change app passcode" : "App passcode",
+                          value: sessionStore.appPasscodeSet ? "On" : "Not set") {
                 passcodeSheet = sessionStore.appPasscodeSet ? .change : .create
-            } label: {
-                AccountKVRow(label: "App passcode") {
-                    HStack(spacing: 10) {
-                        Text(sessionStore.appPasscodeSet ? "On" : "Not set")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk2)
-                        if sessionStore.appPasscodeSet {
-                            AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove passcode") {
-                                passcodeSheet = .remove
-                            }
-                        }
-                        AccountDisclosureChip()
-                    }
-                }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            if sessionStore.appPasscodeSet {
+                AccountActionRow(label: "Remove app passcode", symbol: "xmark", tone: .cavnarRed) {
+                    passcodeSheet = .remove
+                }
+            }
             // How long the app can sit in the background before the lock
             // engages. Immediately is the original behaviour; a short grace
             // means a manager checking the app between tables isn't asked
@@ -420,7 +400,7 @@ private struct ChangePasswordSheet: View {
                     )
 
                     if let error = viewModel.changePasswordError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     // Plain full-width buttons, not a width-matched pair —
@@ -501,8 +481,8 @@ private struct TwoFactorSetupSheet: View {
                         backupCodesStep
                     } else if let masked = viewModel.twoFATestMasked {
                         Text("Code sent to \(masked)")
-                            .font(.cavnarBody(16))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, -14)
 
                         // Six cells, not a bare field — each digit pops
@@ -531,7 +511,7 @@ private struct TwoFactorSetupSheet: View {
                         .onAppear { isCodeFocused = true }
 
                         if let error = viewModel.twoFAError {
-                            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                         }
 
                         // Plain full-width buttons, not a width-matched pair —
@@ -576,13 +556,13 @@ private struct TwoFactorSetupSheet: View {
                         Text(selectedMethod == "sms"
                              ? "We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on."
                              : "We'll email a 6-digit code to the address on file to confirm two-factor sign-in works before turning it on.")
-                            .font(.cavnarBody(16))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
 
                         if hasPhone {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("SEND CODE BY")
-                                    .font(.cavnarBody(13, weight: 700))
+                                    .font(.cavnarBody(CavnarType.caption, weight: 700))
                                     .foregroundStyle(Color.cavnarInk3)
                                     .tracking(0.6)
                                 CavnarSegmentedControl(selection: $selectedMethod, options: ["email", "sms"]) { option in
@@ -593,7 +573,7 @@ private struct TwoFactorSetupSheet: View {
                         }
 
                         if let error = viewModel.twoFAError {
-                            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                         }
 
                         // Plain full-width button — see the identical note
@@ -679,13 +659,13 @@ private struct TwoFactorSetupSheet: View {
     private var backupCodesStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Two-factor is on. Save these backup codes somewhere safe — each works once to sign in if you lose access to email or text.")
-                .font(.cavnarBody(16))
-                .foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.body))
+                .foregroundStyle(Color.cavnarInk2)
 
             VStack(spacing: 0) {
                 ForEach(Array((viewModel.freshBackupCodes ?? []).enumerated()), id: \.offset) { index, code in
                     HStack {
-                        Text(code).font(.cavnarNumber(16, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(code).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
                         Spacer()
                     }
                     .padding(.vertical, 10)

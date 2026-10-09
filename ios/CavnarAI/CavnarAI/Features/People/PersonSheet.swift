@@ -35,7 +35,7 @@ struct PersonRecord: Decodable, Equatable {
     let posId: String?
     /// The rate this person's hours are costed at. Read only here: rates
     /// are per ROLE (people._pay_rate), set in Account → Targets & pay rates
-    /// (/account/targets; AccountTargetsView, opened from the Pay card). The server
+    /// (/account/targets; the web, from the Pay card's row). The server
     /// sends `{role, rate, source}`; a bare number or text is read too.
     /// Decoding only a number left the field blank for everyone (F3-5).
     private(set) var payRate: Double?
@@ -568,8 +568,11 @@ struct PersonSheet: View {
     @State private var mergeInto: PeopleListRow?
     @State private var erasing = false
     @State private var undoing: PeopleMerge?
-    /// Account → Targets & pay rates, opened from the Pay card (parity #27).
-    @State private var showingPayRates = false
+    /// The add-role form and the merges list, opened from the "…" menu
+    /// (iOS readability round [75]: they sat on the record itself).
+    @State private var addingRole = false
+    @State private var showingMerges = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -580,27 +583,62 @@ struct PersonSheet: View {
                         CavnarSkeletonLines(widths: [0.6, 1.0, 0.8, 0.9])
                     case .unavailable(let why):
                         Text(target.name)
-                            .font(.cavnarHeadline(24))
-                            .foregroundStyle(Color.cavnarInk)
+                            .cavnarText(.title)
                         Text(why)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     case .loaded(let person):
                         loaded(person)
-                        if person.canManageLogin { records(person) }
+                        if person.canManageLogin { recordsStatus }
                     }
                 }
-                .padding(20)
+                .padding(CavnarSpace.gutter)
             }
             .accountSheetChrome("Person")
             .toolbar {
-                if case .loaded(let person) = viewModel.state, person.canManageLogin {
+                if case .loaded(let person) = viewModel.state, person.canManageLogin || person.canEdit != false {
                     cavnarToolbarItem(placement: .topBarTrailing) { overflowMenu(person) }
                 }
             }
-            .sheet(isPresented: $showingPayRates, onDismiss: { Task { await viewModel.load(target) } }) {
-                AccountTargetsView()
+            .sheet(isPresented: $addingRole) {
+                if case .loaded(let person) = viewModel.state {
+                    NavigationStack {
+                        ScrollView {
+                            addRoleForm(person)
+                                .padding(CavnarSpace.gutter)
+                        }
+                        .accountSheetChrome("Add a role")
+                    }
+                    .presentationDetents([.medium, .large])
+                }
+            }
+            .sheet(isPresented: $showingMerges) {
+                if case .loaded(let person) = viewModel.state {
+                    NavigationStack {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                                records(person)
+                            }
+                            .padding(CavnarSpace.gutter)
+                        }
+                        .accountSheetChrome("Merged lately")
+                        // Asked here — a dialog on the record underneath
+                        // can't show over this sheet.
+                        .confirmationDialog(undoing.map { "Make \($0.from) and \($0.into) two people again?" } ?? "",
+                                            isPresented: Binding(get: { undoing != nil }, set: { if !$0 { undoing = nil } }),
+                                            titleVisibility: .visible) {
+                            Button("Undo the merge", role: .destructive) {
+                                guard let m = undoing, case .loaded(let person) = viewModel.state else { return }
+                                undoing = nil
+                                Task { await viewModel.undoMerge(m, name: person.name) }
+                            }
+                            Button("Keep them merged", role: .cancel) { undoing = nil }
+                        } message: {
+                            Text("Each gets back the ratings, notes, roles and shifts they had before.")
+                        }
+                    }
+                    .presentationDetents([.medium, .large])
+                }
             }
         }
         .task {
@@ -656,18 +694,6 @@ struct PersonSheet: View {
         } message: {
             Text(mergeConfirmMessage)
         }
-        .confirmationDialog(undoing.map { "Make \($0.from) and \($0.into) two people again?" } ?? "",
-                            isPresented: Binding(get: { undoing != nil }, set: { if !$0 { undoing = nil } }),
-                            titleVisibility: .visible) {
-            Button("Undo the merge", role: .destructive) {
-                guard let m = undoing, case .loaded(let person) = viewModel.state else { return }
-                undoing = nil
-                Task { await viewModel.undoMerge(m, name: person.name) }
-            }
-            Button("Keep them merged", role: .cancel) { undoing = nil }
-        } message: {
-            Text("Each gets back the ratings, notes, roles and shifts they had before.")
-        }
     }
 
     private var mergeConfirmTitle: String {
@@ -681,21 +707,34 @@ struct PersonSheet: View {
             + "another name for them. You can undo it for 30 days."
     }
 
-    /// Rename, "the same person as…" and — for someone who has left and
-    /// holds no staff login — erase. The account holder's alone.
+    /// Add a role (anyone who may change the record); rename, "the same
+    /// person as…", the merges of the last 30 days and — for someone who has
+    /// left and holds no staff login — erase (the account holder's alone).
     private func overflowMenu(_ person: PersonRecord) -> some View {
         Menu {
-            Button {
-                renaming = true
-            } label: { Label("Rename", systemImage: "pencil") }
-            Button {
-                mergePicking = true
-            } label: { Label("Same person as\u{2026}", systemImage: "person.2.badge.gearshape") }
-            if person.mayErase {
-                Button(role: .destructive) {
-                    viewModel.recordsError = nil
-                    erasing = true
-                } label: { Label("Erase their record", systemImage: "trash") }
+            if person.canEdit != false {
+                Button {
+                    addingRole = true
+                } label: { Label("Add a role\u{2026}", systemImage: "person.badge.plus") }
+            }
+            if person.canManageLogin {
+                Button {
+                    renaming = true
+                } label: { Label("Rename", systemImage: "pencil") }
+                Button {
+                    mergePicking = true
+                } label: { Label("Same person as\u{2026}", systemImage: "person.2.badge.gearshape") }
+                if !viewModel.merges.isEmpty {
+                    Button {
+                        showingMerges = true
+                    } label: { Label("Merged lately", systemImage: "arrow.uturn.backward") }
+                }
+                if person.mayErase {
+                    Button(role: .destructive) {
+                        viewModel.recordsError = nil
+                        erasing = true
+                    } label: { Label("Erase their record", systemImage: "trash") }
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -706,18 +745,24 @@ struct PersonSheet: View {
         .accessibilityLabel("Name and records")
     }
 
-    /// The merges of the last 30 days that touch them, with Undo while it
-    /// can still be undone, and the status of the last change.
+    /// The status of the last rename, merge or undo, on the record.
     @ViewBuilder
-    private func records(_ person: PersonRecord) -> some View {
+    private var recordsStatus: some View {
         if let m = viewModel.recordsMessage {
-            Text(m).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+            Text(m).cavnarText(.secondary, color: .cavnarGreen)
                 .fixedSize(horizontal: false, vertical: true)
         }
         if let e = viewModel.recordsError, !erasing {
-            Text(e).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+            Text(e).cavnarText(.secondary, color: .cavnarRedText)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The merges of the last 30 days that touch them, with Undo while it
+    /// can still be undone (in the "…" menu's Merged lately sheet).
+    @ViewBuilder
+    private func records(_ person: PersonRecord) -> some View {
+        recordsStatus
         if !viewModel.merges.isEmpty {
             AccountSection(kicker: "Merged lately") {
                 ForEach(Array(viewModel.merges.enumerated()), id: \.element.id) { i, m in
@@ -725,10 +770,8 @@ struct PersonSheet: View {
                         HStack(alignment: .center, spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("\(m.from) \u{2192} \(m.into)")
-                                    .font(.cavnarBody(CavnarType.body, weight: 700))
-                                    .foregroundStyle(m.undone ? Color.cavnarInk3 : Color.cavnarInk)
-                                HomeMixedText.make(Self.mergeLine(m), size: CavnarType.caption, color: .cavnarInk3)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                    .cavnarText(.label, color: m.undone ? .cavnarInk2 : .cavnarInk)
+                                CavnarMixedText(Self.mergeLine(m), role: .caption)
                             }
                             Spacer(minLength: 6)
                             if viewModel.canUndoMerges && m.undoable {
@@ -737,9 +780,8 @@ struct PersonSheet: View {
                                     undoing = m
                                 } label: {
                                     Text("Undo")
-                                        .font(.cavnarBody(14, weight: 700))
-                                        .foregroundStyle(Color.cavnarEmber2)
-                                        .frame(minWidth: 44, minHeight: 44)
+                                        .cavnarText(.label, color: .cavnarEmber2)
+                                        .cavnarHitTarget()
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(viewModel.recordsBusy)
@@ -765,13 +807,33 @@ struct PersonSheet: View {
 
     @ViewBuilder
     private func loaded(_ person: PersonRecord) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             Text(person.name)
-                .font(.cavnarHeadline(26))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.title)
             HStack(spacing: 6) {
                 if let role = person.role, !role.isEmpty { AccountChip(text: role) }
                 AccountChip(text: person.active == false ? "Not active" : "Active", muted: person.active == false)
+            }
+            // The two things an owner opens a person for most: call them,
+            // text them (iOS readability round [75]).
+            if let phone = person.phone, let digits = Self.dialable(phone) {
+                HStack(spacing: CavnarSpace.s) {
+                    Button {
+                        if let url = URL(string: "tel:\(digits)") { openURL(url) }
+                    } label: {
+                        Label("Call", systemImage: "phone.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .accessibilityLabel("Call \(person.name)")
+                    Button {
+                        if let url = URL(string: "sms:\(digits)") { openURL(url) }
+                    } label: {
+                        Label("Text", systemImage: "message.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .accessibilityLabel("Text \(person.name)")
+                }
+                .padding(.top, CavnarSpace.xxs)
             }
         }
 
@@ -790,11 +852,12 @@ struct PersonSheet: View {
             kv("PIN", last: true, person.pinSet == true ? "Set" : "Not set")
         }
 
-        if !person.mayEdit("pay_rate", fallback: false) {
-            AccountSection(kicker: "Pay") {
-                kv("Pay rate", last: true, person.payRateLine ?? "Not set")
-                AccountNavRow(label: "Targets & pay rates", showsDivider: false) { showingPayRates = true }
-            }
+        // Pay is read here and set on the web (iOS readability round [71]):
+        // rates are per role, in Targets & pay rates.
+        AccountSection(kicker: "Pay") {
+            kv("Pay rate", person.payRateLine ?? "Not set")
+            CavnarWebLinkRow(title: "Pay rates", path: "account/restaurant",
+                             actionLabel: person.mayEdit("pay_rate", fallback: false) ? "Edit on the web" : "On the web")
         }
 
         if person.canEdit == false {
@@ -815,10 +878,9 @@ struct PersonSheet: View {
                     field("Phone", text: $viewModel.phone, keyboard: .phonePad)
                         .onChange(of: viewModel.phone) { _, v in let f = PhoneFormat.typing(v); if f != v { viewModel.phone = f } }
                     field("Email", text: $viewModel.email, keyboard: .emailAddress)
-                    field("POS id", text: $viewModel.posId, keyboard: .asciiCapable)
-                    if person.mayEdit("pay_rate", fallback: false) {
-                        field("Pay rate ($/h)", text: $viewModel.payRate, keyboard: .decimalPad)
-                    }
+                    // The POS id and the pay rate are set on the web (iOS
+                    // readability round [75]); the POS id reads here.
+                    kv("POS id", last: true, person.posId?.isEmpty == false ? person.posId! : "Not set")
                     Button {
                         Haptic.light()
                         Task { await viewModel.save() }
@@ -831,10 +893,10 @@ struct PersonSheet: View {
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSaving))
                     .disabled(viewModel.isSaving)
                     if let message = viewModel.saveMessage {
-                        Text(message).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                        Text(message).cavnarText(.secondary, color: .cavnarGreen)
                     }
                     if let error = viewModel.saveError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -849,25 +911,23 @@ struct PersonSheet: View {
     private func memorySection(_ person: PersonRecord) -> some View {
         AccountSection(kicker: "What Cavnar AI knows") {
             AccountKVRow(label: "Attendance") {
-                HomeMixedText.make((person.attendance ?? PersonAttendance(known: false)).line, size: 14, weight: 600,
+                HomeMixedText.make((person.attendance ?? PersonAttendance(known: false)).line, role: .secondary,
                                    color: person.attendance?.unreliable == true ? .cavnarAmber : .cavnarInk)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
             }
             AccountKVRow(label: "Covers", showsDivider: !person.rolesHeld.isEmpty || !person.guestMentions.isEmpty) {
-                HomeMixedText.make((person.covers ?? PersonCovers(taken: 0, declined: 0)).line, size: 14, weight: 600)
+                HomeMixedText.make((person.covers ?? PersonCovers(taken: 0, declined: 0)).line, role: .secondary, color: .cavnarInk)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !person.rolesHeld.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Roles held")
-                        .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                     ForEach(person.rolesHeld) { role in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            HomeMixedText.make(role.line, size: 14, color: .cavnarInk2)
-                                .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .center, spacing: 8) {
+                            CavnarMixedText(role.line, role: .secondary)
                             Spacer(minLength: 4)
                             if person.canEdit != false && !role.primary {
                                 Button {
@@ -875,9 +935,11 @@ struct PersonSheet: View {
                                     Task { await viewModel.changeRole(role.role, remove: true) }
                                 } label: {
                                     Text("Remove")
-                                        .font(.cavnarBody(12.5, weight: 600))
-                                        .foregroundStyle(Color.cavnarInk3)
+                                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                        .foregroundStyle(Color.cavnarInk2)
+                                        .cavnarHitTarget()
                                 }
+                                .accessibilityLabel("Remove the \(role.role) role")
                                 .buttonStyle(.plain)
                                 .disabled(viewModel.roleBusy)
                             }
@@ -889,24 +951,27 @@ struct PersonSheet: View {
             if !person.guestMentions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("What guests said")
-                        .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.caption, color: .cavnarInk2)
                     ForEach(person.guestMentions) { m in
-                        HomeMixedText.make((m.dateLabel.map { $0 + " \u{00B7} " } ?? "")
-                                           + "\u{201C}" + (m.snippet ?? "named in a review") + "\u{201D}",
-                                           size: 13.5, color: m.isComplaint ? .cavnarAmber : .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText((m.dateLabel.map { $0 + " \u{00B7} " } ?? "")
+                                        + "\u{201C}" + (m.snippet ?? "named in a review") + "\u{201D}",
+                                        role: .secondary, color: m.isComplaint ? .cavnarAmber : .cavnarInk2)
                     }
                 }
                 .padding(.vertical, 10)
             }
         }
+    }
+
+    /// A role they can work beyond their shifts so far — trained on bar, or
+    /// a promotion. Opened from the "…" menu's "Add a role…".
+    @ViewBuilder
+    private func addRoleForm(_ person: PersonRecord) -> some View {
         if person.canEdit != false {
             AccountSection(kicker: "Add a role") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("A role they can work beyond their shifts so far \u{2014} trained on bar, or a promotion.")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     TextField("Role", text: $viewModel.newRole)
                         .cavnarTextFieldStyle()
@@ -920,8 +985,7 @@ struct PersonSheet: View {
                             Image(systemName: viewModel.newRolePrimary ? "checkmark.square.fill" : "square")
                                 .foregroundStyle(viewModel.newRolePrimary ? Color.cavnarEmber2 : Color.cavnarInk3)
                             Text("A promotion \u{2014} make it their role on the roster")
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk2)
+                                .cavnarText(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -929,8 +993,7 @@ struct PersonSheet: View {
                     // 9/1": a candidate for that role's gaps from then.
                     HStack(spacing: 10) {
                         Text("From")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk2)
+                            .cavnarText(.secondary)
                         CavnarDateChip(iso: $viewModel.newRoleSince, accessibilityName: "The day they started in this role")
                         if !viewModel.newRoleSince.isEmpty {
                             Button {
@@ -938,17 +1001,15 @@ struct PersonSheet: View {
                                 viewModel.newRoleSince = ""
                             } label: {
                                 Text("Clear")
-                                    .font(.cavnarBody(13, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk3)
-                                    .frame(minHeight: 44)
-                                    .contentShape(Rectangle())
+                                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                    .cavnarHitTarget()
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Clear the start date")
                         } else {
                             Text("optional")
-                                .font(.cavnarBody(13))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.caption)
                         }
                         Spacer(minLength: 0)
                     }
@@ -968,15 +1029,24 @@ struct PersonSheet: View {
                                                             || viewModel.newRole.trimmingCharacters(in: .whitespaces).isEmpty))
                     .disabled(viewModel.roleBusy || viewModel.newRole.trimmingCharacters(in: .whitespaces).isEmpty)
                     if let message = viewModel.roleMessage {
-                        Text(message).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                        Text(message).cavnarText(.secondary, color: .cavnarGreen)
                     }
                     if let error = viewModel.roleError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
         }
+    }
+
+    /// The digits (and a leading +) a tel:/sms: link takes; nil when there
+    /// aren't enough to dial.
+    static func dialable(_ phone: String) -> String? {
+        let trimmed = phone.trimmingCharacters(in: .whitespaces)
+        let digits = trimmed.filter(\.isNumber)
+        guard digits.count >= 7 else { return nil }
+        return (trimmed.hasPrefix("+") ? "+" : "") + digits
     }
 
     private func kv(_ label: String, last: Bool = false, _ value: String) -> some View {
@@ -988,8 +1058,7 @@ struct PersonSheet: View {
     private func field(_ label: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label)
-                .font(.cavnarBody(13))
-                .foregroundStyle(Color.cavnarInk3)
+                .cavnarText(.caption, color: .cavnarInk2)
             TextField(label, text: text)
                 .cavnarTextFieldStyle()
                 .keyboardType(keyboard)

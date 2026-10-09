@@ -16,13 +16,13 @@ struct AccountBackupCodesView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     if let codes = justGenerated {
                         Text("Save these codes somewhere safe — each works once to sign in if you lose access to email or text. Your old codes no longer work.")
-                            .font(.cavnarBody(16))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                         codesCard(codes)
                     } else {
                         Text("Backup codes let you sign in if you ever lose access to your email or phone during two-factor sign-in. Each code works once.")
-                            .font(.cavnarBody(16))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                         AccountSection(kicker: "Status") {
                             AccountKVRow(label: "Unused codes", showsDivider: false) {
                                 AccountValue(text: viewModel.backupCodesRemaining.map(String.init) ?? "—", isNumber: true)
@@ -31,7 +31,7 @@ struct AccountBackupCodesView: View {
                     }
 
                     if let error = viewModel.backupCodesError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     Button {
@@ -78,7 +78,7 @@ struct AccountBackupCodesView: View {
         VStack(spacing: 0) {
             ForEach(Array(codes.enumerated()), id: \.offset) { index, code in
                 HStack {
-                    Text(code).font(.cavnarNumber(16, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    Text(code).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
                     Spacer()
                 }
                 .padding(.vertical, 10)

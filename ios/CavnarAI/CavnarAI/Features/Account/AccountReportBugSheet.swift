@@ -43,7 +43,7 @@ struct AccountReportBugSheet: View {
                     }
 
                     if let error = viewModel.reportBugError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     Button {

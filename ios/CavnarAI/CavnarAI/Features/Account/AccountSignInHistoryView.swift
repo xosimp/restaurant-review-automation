@@ -25,8 +25,8 @@ struct AccountSignInHistoryView: View {
                         CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                     } else if viewModel.loginHistory.isEmpty {
                         Text("No sign-in activity yet.")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 40)
                             .frame(maxWidth: .infinity)
                     } else {
@@ -40,9 +40,9 @@ struct AccountSignInHistoryView: View {
                                         .background(Color.white.opacity(0.05))
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(entry.label).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                        Text(entry.label).font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                                         Text(AccountRelativeTime.describe(entry.createdAt))
-                                            .font(.cavnarNumber(14))
+                                            .font(.cavnarNumber(CavnarType.secondary))
                                             .foregroundStyle(Color.cavnarInk3)
                                     }
                                     Spacer(minLength: 0)

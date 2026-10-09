@@ -30,11 +30,11 @@ struct AccountRecoveryEmailSheet: View {
                     }
 
                     Text("If you ever lose access to your sign-in email, a password-reset link can go here instead. We'll send a code to confirm it's really yours.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
 
                     if let error = viewModel.recoveryEmailError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     if awaitingCode {

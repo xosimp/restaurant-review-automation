@@ -1846,7 +1846,9 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/outcomes", "surface"): _WEB_TOO + " ('home')",
     ("/mobile/api/outcomes", "window_days"): _WEB_TOO,
     ("/mobile/api/issues/<int:issue_id>/resolve", "note"): _WEB_TOO,
-    ("/mobile/api/issues/routing", "escalate_after_minutes"): _WEB_TOO,
+    # (/mobile/api/issues/routing: the phone no longer writes issue routing —
+    # the restaurant's alert rules are set on the web since the iOS
+    # readability round, 10/8/26.)
     ("/mobile/api/food-cost/invoices/<int:import_id>/apply", "use_checked"): _WEB_TOO + " (Ask's apply_invoice_lines)",
     ("/mobile/api/food-cost/recipe-drafts/<int:draft_id>/accept", "lines"): _WEB_TOO + " (the draft's own lines)",
     ("/mobile/api/labor/labor-standards", "all"): _WEB_TOO + " (both send lunch and dinner)",

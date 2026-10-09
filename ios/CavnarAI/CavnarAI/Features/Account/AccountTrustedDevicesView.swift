@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Opened from Security's "Trusted devices" row (2FA on only). The devices
+/// Opened from Security's "Skip-code devices" row (2FA on only). The devices
 /// that were remembered for 30 days at a 2FA sign-in — distinct from
 /// Devices (live sessions): forgetting one here means that device is asked
 /// for a code again next sign-in, whether or not it's signed in right now.
@@ -23,19 +23,19 @@ struct AccountTrustedDevicesView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    AccountHero(title: "Trusted devices") {
+                    AccountHero(title: "Skip-code devices") {
                         GlowBadge(systemImage: "checkmark.shield", size: 64)
                     } subtitle: {
-                        Text("\(viewModel.trustedDevices.count)").font(.cavnarNumber(15.5, weight: 600))
+                        Text("\(viewModel.trustedDevices.count)").font(.cavnarNumber(CavnarType.body, weight: 600))
                             + Text(viewModel.trustedDevices.count == 1 ? " device skips the 2FA code" : " devices skip the 2FA code")
                     }
 
                     Text("A device on this list was remembered for 30 days at sign-in, so it isn't asked for a code. Forget one and it's asked next time.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.body))
+                        .foregroundStyle(Color.cavnarInk2)
 
                     if let error = viewModel.trustedDevicesError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
 
                     if viewModel.isLoadingTrustedDevices && viewModel.trustedDevices.isEmpty {
@@ -43,8 +43,8 @@ struct AccountTrustedDevicesView: View {
                     } else if viewModel.trustedDevices.isEmpty {
                         AccountSection(kicker: "Remembered") {
                             Text("No remembered devices — every sign-in asks for a code.")
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.body))
+                                .foregroundStyle(Color.cavnarInk2)
                                 .padding(.vertical, 9)
                         }
                     } else {
@@ -58,10 +58,10 @@ struct AccountTrustedDevicesView: View {
                                         .background(Color.white.opacity(0.05))
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(device.label ?? "Device").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                        Text(device.label ?? "Device").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                                         Text("Remembered " + AccountRelativeTime.describe(device.createdAt).lowercased()
                                              + (device.lastUsedAt != nil ? " · used " + AccountRelativeTime.describe(device.lastUsedAt).lowercased() : ""))
-                                            .font(.cavnarNumber(14))
+                                            .font(.cavnarNumber(CavnarType.secondary))
                                             .foregroundStyle(Color.cavnarInk3)
                                     }
                                     Spacer(minLength: 8)
@@ -88,7 +88,7 @@ struct AccountTrustedDevicesView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .accountSheetChrome("Trusted Devices")
+            .accountSheetChrome("Skip-code devices")
             .task { await viewModel.loadTrustedDevices() }
             .cavnarPostedOverlay(postedLabel, tone: .removed) { dismiss() }
             .confirmationDialog("Forget every remembered device?", isPresented: $confirmingForgetAll, titleVisibility: .visible) {

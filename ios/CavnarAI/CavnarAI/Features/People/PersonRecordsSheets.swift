@@ -140,7 +140,7 @@ struct PersonEraseSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Erase \(name)\u{2019}s record for good?")
-                    .font(.cavnarHeadline(22))
+                    .font(.cavnarHeadline(CavnarType.section))
                     .foregroundStyle(Color.cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Every rating, note, setting, shift and learned pattern about them is deleted and cannot be brought back. Schedules already published stay as they were sent.")
@@ -152,7 +152,7 @@ struct PersonEraseSheet: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 if let error {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Button(role: .destructive) {

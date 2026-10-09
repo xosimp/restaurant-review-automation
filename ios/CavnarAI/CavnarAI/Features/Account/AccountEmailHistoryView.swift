@@ -13,8 +13,8 @@ struct AccountEmailHistoryView: View {
                         CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                     } else if viewModel.emailHistory.isEmpty {
                         Text("No email sent yet.")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(Color.cavnarInk2)
                             .padding(.top, 40)
                             .frame(maxWidth: .infinity)
                     } else {
@@ -29,21 +29,17 @@ struct AccountEmailHistoryView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 10))
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(mail.label)
-                                            .font(.cavnarBody(16, weight: 700))
-                                            .foregroundStyle(Color.cavnarInk)
+                                            .cavnarText(.label)
                                         Text(mail.toEmail)
-                                            .font(.cavnarBody(13.5))
-                                            .foregroundStyle(Color.cavnarInk3)
+                                            .cavnarText(.secondary)
                                             .lineLimit(1)
-                                        Text(AccountRelativeTime.describe(mail.sentAt))
-                                            .font(.cavnarNumber(13.5))
-                                            .foregroundStyle(Color.cavnarInk3)
+                                        HomeMixedText.make(AccountRelativeTime.describe(mail.sentAt), role: .caption)
                                     }
                                     Spacer(minLength: 0)
                                     if mail.failed {
-                                        Text(mail.status.capitalized)
-                                            .font(.cavnarBody(12.5, weight: 700))
-                                            .foregroundStyle(Color.cavnarRed)
+                                        Text(Self.statusWord(mail.status))
+                                            .font(.cavnarBody(CavnarType.caption, weight: 700))
+                                            .foregroundStyle(Color.cavnarRedText)
                                     }
                                 }
                                 .padding(.vertical, 10)
@@ -57,6 +53,19 @@ struct AccountEmailHistoryView: View {
             }
             .accountSheetChrome("Email History")
             .task { await viewModel.loadEmailHistory() }
+        }
+    }
+
+    /// A failed send's state in words — never the provider's raw status
+    /// ("bounced", "complained", "delivery_delayed").
+    static func statusWord(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "bounced", "bounce", "hard_bounce", "soft_bounce": return "Bounced"
+        case "complained", "complaint", "spam": return "Marked as spam"
+        case "delivery_delayed", "delayed", "deferred": return "Delayed"
+        case "failed", "error", "send_failed", "rejected", "dropped": return "Didn\u{2019}t send"
+        case "suppressed", "blocked": return "Blocked"
+        default: return "Didn\u{2019}t arrive"
         }
     }
 }
