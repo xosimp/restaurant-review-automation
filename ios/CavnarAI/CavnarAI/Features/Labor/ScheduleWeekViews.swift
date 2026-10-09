@@ -252,7 +252,7 @@ struct ScheduleWeekPager<DayContent: View>: View {
         return VStack(spacing: 0) {
             if people.isEmpty {
                 Text("Nobody is on this week yet.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
             }
@@ -263,19 +263,19 @@ struct ScheduleWeekPager<DayContent: View>: View {
                 } label: {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(p.name).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(p.name).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                             if !p.roles.isEmpty {
                                 Text(p.roles.joined(separator: ", "))
-                                    .font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                    .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                         Spacer(minLength: 8)
                         VStack(alignment: .trailing, spacing: 2) {
-                            (Text(ScheduleWeekMath.hoursText(p.hours)).font(.cavnarNumber(15, weight: 700))
-                             + Text("h").font(.cavnarNumber(12, weight: 600)))
+                            (Text(ScheduleWeekMath.hoursText(p.hours)).font(.cavnarNumber(CavnarType.body, weight: 700))
+                             + Text("h").font(.cavnarNumber(CavnarType.caption, weight: 600)))
                                 .foregroundStyle(p.hours > 40 ? Color.cavnarRed : Color.cavnarInk)
                             Text("\(p.days) \(p.days == 1 ? "day" : "days")")
-                                .font(.cavnarNumber(12)).foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk3)
                         }
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .bold))
@@ -315,7 +315,7 @@ struct ScheduleWeekGrid: View {
         VStack(alignment: .leading, spacing: 0) {
             if people.isEmpty {
                 Text("Nobody is on this week yet.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
             } else {
@@ -323,7 +323,7 @@ struct ScheduleWeekGrid: View {
                     Grid(alignment: .topLeading, horizontalSpacing: 6, verticalSpacing: 8) {
                         GridRow {
                             Text("WHO")
-                                .font(.cavnarBody(11, weight: 700))
+                                .font(.cavnar(.kicker))
                                 .tracking(0.8)
                                 .foregroundStyle(Color.cavnarEmber)
                                 .frame(width: Self.nameWidth, alignment: .leading)
@@ -350,12 +350,12 @@ struct ScheduleWeekGrid: View {
     private func dayHeader(_ page: ScheduleDayPage) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(page.short.uppercased())
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarEmber)
             HStack(spacing: 5) {
                 Text(page.dateLabel)
-                    .font(.cavnarNumber(13, weight: 700))
+                    .font(.cavnarNumber(CavnarType.caption, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 if page.notWritten {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -363,7 +363,7 @@ struct ScheduleWeekGrid: View {
                         .foregroundStyle(Color.cavnarAmber)
                 } else {
                     Text("\(page.count)")
-                        .font(.cavnarNumber(11, weight: 600))
+                        .font(.cavnarNumber(CavnarType.tag, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -377,11 +377,11 @@ struct ScheduleWeekGrid: View {
     private func personCell(_ person: PersonWeek) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(person.name)
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
                 .lineLimit(2)
-            (Text(ScheduleWeekMath.hoursText(person.hours)).font(.cavnarNumber(13, weight: 700))
-             + Text("h").font(.cavnarNumber(11, weight: 600)))
+            (Text(ScheduleWeekMath.hoursText(person.hours)).font(.cavnarNumber(CavnarType.caption, weight: 700))
+             + Text("h").font(.cavnarNumber(CavnarType.tag, weight: 600)))
                 .foregroundStyle(person.hours > 40 ? Color.cavnarRed : Color.cavnarInk3)
         }
         .frame(width: Self.nameWidth, alignment: .leading)
@@ -406,13 +406,13 @@ struct ScheduleWeekGrid: View {
         } label: {
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(row.shiftStart ?? "")\u{2013}\(row.shiftEnd ?? "")")
-                    .font(.cavnarNumber(12.5, weight: 600))
+                    .font(.cavnarNumber(CavnarType.caption, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 if let role = row.role, !role.isEmpty {
                     Text(role)
-                        .font(.cavnarBody(11))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .lineLimit(1)
                 }
@@ -450,7 +450,7 @@ struct PersonWeekSheet: View {
                     }
                     if person.hours > 40 {
                         HomeMixedText.make("Past 40h \u{2014} overtime at 1.5\u{00D7} on the hours over.",
-                                           size: 13.5, weight: 600, color: .cavnarRed)
+                                           size: CavnarType.secondary, weight: 600, color: .cavnarRed)
                     }
                     VStack(spacing: 0) {
                         ForEach(person.rows) { row in
@@ -461,19 +461,19 @@ struct PersonWeekSheet: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(row.day ?? row.date.flatMap(LaborViewModel.weekdayName) ?? "")
-                                            .font(.cavnarBody(14.5, weight: 700))
+                                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                             .foregroundStyle(Color.cavnarInk)
                                         HomeMixedText.make([row.date.map(CavnarDate.mdy), row.role].compactMap { $0 }
                                                             .filter { !$0.isEmpty }.joined(separator: " \u{00B7} "),
-                                                           size: 13, color: .cavnarInk3)
+                                                           size: CavnarType.caption, color: .cavnarInk3)
                                     }
                                     Spacer(minLength: 8)
                                     VStack(alignment: .trailing, spacing: 2) {
                                         Text("\(row.shiftStart ?? "")\u{2013}\(row.shiftEnd ?? "")")
-                                            .font(.cavnarNumber(14.5, weight: 600))
+                                            .font(.cavnarNumber(CavnarType.secondary, weight: 600))
                                             .foregroundStyle(Color.cavnarInk2)
                                         Text(ScheduleWeekMath.hoursText(ScheduleWeekMath.hours(of: row)) + "h")
-                                            .font(.cavnarNumber(12.5))
+                                            .font(.cavnarNumber(CavnarType.caption))
                                             .foregroundStyle(Color.cavnarInk3)
                                     }
                                 }
@@ -489,7 +489,7 @@ struct PersonWeekSheet: View {
                     .cavnarCard()
                     if onPick != nil {
                         Text("Tap a shift to open its day.")
-                            .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 .padding(20)
@@ -502,8 +502,8 @@ struct PersonWeekSheet: View {
 
     private func stat(_ value: String, _ label: String, tone: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.cavnarNumber(24, weight: 700)).foregroundStyle(tone)
-            Text(label).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+            Text(value).font(.cavnarNumber(CavnarText.figureM.size, weight: 700)).foregroundStyle(tone)
+            Text(label).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
         }
     }
 }
@@ -671,9 +671,9 @@ struct ScheduleSummarySheet: View {
                                 .tracking(1.4)
                                 .foregroundStyle(Color.cavnarEmber)
                             Text("The week is built")
-                                .font(.cavnarHeadline(26))
+                                .font(.cavnarHeadline(CavnarText.title.size))
                                 .foregroundStyle(Color.cavnarInk)
-                            HomeMixedText.make(ScheduleSummaryTiles.headline(result), size: 13.5, color: .cavnarInk3)
+                            HomeMixedText.make(ScheduleSummaryTiles.headline(result), size: CavnarType.secondary, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -708,7 +708,7 @@ struct ScheduleSummarySheet: View {
                         }
                     }
                     Text("Optimize again makes legal changes that raise the score and lists each one. Publish shows who it reaches and what to read before anything goes out.")
-                        .font(.cavnarBody(12.5))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -759,20 +759,20 @@ struct ScheduleTileCard: View {
                 .foregroundStyle(Color.cavnarEmber2)
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(tile.value ?? "\u{2014}")
-                    .font(.cavnarNumber(26, weight: 700))
+                    .font(.cavnarNumber(CavnarText.figureM.size, weight: 700))
                     .foregroundStyle(tile.value == nil ? Color.cavnarInk3 : (tile.tone == .neutral ? Color.cavnarInk : tone))
                 if tile.value != nil, !tile.unit.isEmpty {
-                    Text(tile.unit).font(.cavnarNumber(14, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                    Text(tile.unit).font(.cavnarNumber(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk3)
                 }
             }
-            HomeMixedText.make(tile.sub, size: 12, color: .cavnarInk3)
+            HomeMixedText.make(tile.sub, size: CavnarType.caption, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if tile.key == "savings" {
                 ScheduleRowTag(text: "Projection \u{00B7} not yet earned", tone: .cavnarEmber2)
             }
             if showsGo {
                 HStack(spacing: 3) {
-                    Text("See them").font(.cavnarBody(12.5, weight: 700))
+                    Text("See them").font(.cavnarBody(CavnarType.caption, weight: 700))
                     Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold))
                 }
                 .foregroundStyle(Color.cavnarEmber2)

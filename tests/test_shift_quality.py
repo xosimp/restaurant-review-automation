@@ -1341,7 +1341,9 @@ def test_the_ios_quality_panel_reads_at_the_labor_tabs_own_type_scale():
     # Both are sub-labels of a figure the reader has already read.
     assert len(small) <= 2, small
     assert all(size >= 11 for _line, size, _text in small), small
-    assert ".cavnarBody(14))" in src, "detail lines should sit at the module's body size"
+    # Since the iOS readability round (10/8/26) sizes are roles: detail
+    # lines sit at the secondary role (14), never a literal under it.
+    assert ".cavnar(.secondary)" in src, "detail lines should sit at the module's body size"
 
 
 # ── Saying the same thing seven times ─────────────────────────────────────

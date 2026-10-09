@@ -24,10 +24,10 @@ struct ScheduleNotice<Actions: View>: View {
                     .foregroundStyle(tone)
                     .padding(.top, 3)
                 VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(text, size: 14, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(detail, id: \.self) { line in
-                        HomeMixedText.make(line, size: 13, color: .cavnarInk3)
+                        HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -86,16 +86,16 @@ struct GenerateWeekNotes: View {
                                    tone: .cavnarRed, symbol: "hand.raised.fill",
                                    detail: ["Generate is off for this week until newer sales arrive \u{2014} sync your point of sale, then try again."])
                 } else if let line = through.line {
-                    HomeMixedText.make(line, size: 12.5, weight: 600, color: .cavnarInk3)
+                    HomeMixedText.make(line, size: CavnarType.caption, weight: 600, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let caveat = viewModel.generateForecast?.budgetBasis?.caveat {
-                HomeMixedText.make(caveat, size: 12.5, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(caveat, size: CavnarType.caption, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
             TextField("Anything for this week? (optional)", text: $viewModel.generateInstruction, axis: .vertical)
-                .font(.cavnarBody(14))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk)
                 .lineLimit(1...3)
                 .padding(.horizontal, 12)
@@ -288,10 +288,10 @@ struct ManagerQuestionCard: View {
                 if drafts[name] == nil { drafts[name] = [LaborViewModel.StandingDraft()] }
             } label: {
                 HStack {
-                    Text(name).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                    Text(name).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                     Spacer()
                     Text(open == name ? "Close" : "Set their days")
-                        .font(.cavnarBody(13.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                 }
                 .frame(minHeight: 44)
@@ -300,7 +300,7 @@ struct ManagerQuestionCard: View {
             .buttonStyle(.plain)
             if let saved {
                 Text(saved)
-                    .font(.cavnarBody(13, weight: 600))
+                    .font(.cavnarBody(CavnarType.caption, weight: 600))
                     .foregroundStyle(saved.hasPrefix("Saved") ? Color.cavnarGreen : Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -313,7 +313,7 @@ struct ManagerQuestionCard: View {
                         drafts[name, default: []].append(LaborViewModel.StandingDraft())
                     } label: {
                         Label("Add a day", systemImage: "plus")
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)
@@ -366,7 +366,7 @@ struct ManagerQuestionCard: View {
         } label: {
             HStack(spacing: 3) {
                 Text(options.first == "Monday" ? String(value.prefix(3)) : value)
-                    .font(.cavnarNumber(13, weight: 600))
+                    .font(.cavnarNumber(CavnarType.caption, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.cavnarEmber2)
             }
@@ -412,7 +412,7 @@ struct DayManagerNotes: View {
                     Image(systemName: "person.badge.shield.checkmark")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(Color.cavnarEmber2)
-                    HomeMixedText.make(window, size: 12.5, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make(window, size: CavnarType.caption, weight: 600, color: .cavnarInk2)
                 }
             }
             ForEach(Array(hardDays.enumerated()), id: \.offset) { _, breach in
@@ -422,7 +422,7 @@ struct DayManagerNotes: View {
                         .foregroundStyle(Color.cavnarRed)
                         .padding(.top, 3)
                     HomeMixedText.make(breach.detail ?? "A rule this week breaks on this day",
-                                       size: 13, weight: 600, color: .cavnarRed)
+                                       size: CavnarType.caption, weight: 600, color: .cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -433,7 +433,7 @@ struct DayManagerNotes: View {
                 gapBox(from: gap.from, to: gap.to, reasons: gap.why.map { [$0] } ?? [], couldAct: [])
             }
             ForEach(Array(skipped.enumerated()), id: \.offset) { _, s in
-                HomeMixedText.make(s.line, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(s.line, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -449,7 +449,7 @@ struct DayManagerNotes: View {
                 ForEach(couldAct, id: \.self) { name in
                     let key = name + "|" + date
                     if let note = viewModel.managerNotes[key] {
-                        HomeMixedText.make(note, size: 13, weight: 600,
+                        HomeMixedText.make(note, size: CavnarType.caption, weight: 600,
                                            color: note.contains("acting manager on") ? .cavnarGreen : .cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -463,7 +463,7 @@ struct DayManagerNotes: View {
                                     Text("Make \(name) acting manager that day")
                                 }
                             }
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 44, alignment: .leading)
                         }
@@ -475,7 +475,7 @@ struct DayManagerNotes: View {
                     onChangeAvailability()
                 } label: {
                     Text("Change availability")
-                        .font(.cavnarBody(13.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(minHeight: 44, alignment: .leading)
                 }
@@ -521,23 +521,23 @@ struct ScheduleRowBadges: View {
                 }
             }
             if showingWhy, let why = row.pinReason {
-                HomeMixedText.make(why, size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let dst = row.dstHours, dst > 0 {
                 Text("Includes the extra hour when the clocks go back")
-                    .font(.cavnarBody(12))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
             if let usual, let name = usual.section {
                 HStack(spacing: 6) {
                     HomeMixedText.make("Usually \(name) on \(usual.day ?? "") \(usual.daypart == "morning" ? "lunch" : "dinner")",
-                                       size: 12.5, color: .cavnarInk3)
+                                       size: CavnarType.caption, color: .cavnarInk3)
                     Button {
                         Task { await viewModel.assignSection(row, section: name) }
                     } label: {
                         Text(viewModel.sectionBusy == row.id ? "Assigning" : "Assign")
-                            .font(.cavnarBody(12.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 44)
                             .contentShape(Rectangle())
@@ -578,26 +578,26 @@ struct ScheduleRequirementsView: View {
             .buttonStyle(.plain)
             if open {
                 Text("The people each shift needs, from what you usually run that day scaled by its expected sales. A role that moved shows its usual crew; your floors and staffing asks are folded in.")
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text(CavnarDate.dayDate(row.day, row.date) + " \u{00B7} " + row.partLabel)
-                                .font(.cavnarBody(14, weight: 700))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 .foregroundStyle(Color.cavnarInk)
                             if row.isLate { ScheduleRowTag(text: "Late night", tone: .cavnarInk2, symbol: "moon.fill") }
                         }
                         HomeMixedText.make(row.roles.map(\.line).joined(separator: " \u{00B7} "),
-                                           size: 13.5, weight: 600, color: .cavnarInk2)
+                                           size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(row.reasons, id: \.self) { why in
-                            HomeMixedText.make(why, size: 12.5, color: .cavnarInk3)
+                            HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         ForEach(row.roles.compactMap(\.reason), id: \.self) { why in
-                            HomeMixedText.make(why, size: 12.5, color: .cavnarInk3)
+                            HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -628,7 +628,7 @@ struct ScheduleReviewExtras: View {
         VStack(alignment: .leading, spacing: 14) {
             if let split = result.hoursSplit, let line = split.line() {
                 HomeMixedText.make("\(CavnarQualityFormat.hours(result.hoursScheduled ?? 0))h scheduled \u{00B7} \(line)",
-                                   size: 13, weight: 600, color: .cavnarInk2)
+                                   size: CavnarType.caption, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let failures = review?.stageFailures?.items, !failures.isEmpty { stageBlock(failures) }
@@ -661,7 +661,7 @@ struct ScheduleReviewExtras: View {
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(f.blocksPublish ? Color.cavnarRed : Color.cavnarInk3)
                             .padding(.top, 3)
-                        HomeMixedText.make(text, size: 13.5, weight: f.blocksPublish ? 600 : 400,
+                        HomeMixedText.make(text, size: CavnarType.secondary, weight: f.blocksPublish ? 600 : 400,
                                            color: f.blocksPublish ? .cavnarRed : .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -678,7 +678,7 @@ struct ScheduleReviewExtras: View {
             kicker("What this week doesn\u{2019}t meet")
             ForEach(shown, id: \.title) { group in
                 VStack(alignment: .leading, spacing: 5) {
-                    HomeMixedText.make(group.title, size: 13, weight: 700, color: .cavnarInk3)
+                    HomeMixedText.make(group.title, size: CavnarType.caption, weight: 700, color: .cavnarInk3)
                     ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
                         unmetRow(item)
                     }
@@ -689,7 +689,7 @@ struct ScheduleReviewExtras: View {
                     Haptic.selection()
                     showingAllUnmet.toggle()
                 }
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarEmber2)
                 .buttonStyle(.plain)
             }
@@ -708,15 +708,15 @@ struct ScheduleReviewExtras: View {
             Circle().fill(tone).frame(width: 6, height: 6).padding(.top, 6)
             VStack(alignment: .leading, spacing: 2) {
                 HomeMixedText.make((item.what ?? "") + (item.partWords.map { " \u{00B7} \($0)" } ?? ""),
-                                   size: 14, weight: 700, color: .cavnarInk)
+                                   size: CavnarType.secondary, weight: 700, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if let why = item.why {
-                    HomeMixedText.make(why, size: 13, color: .cavnarInk3)
+                    HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if item.style == .unchecked {
                     Text("Check it yourself")
-                        .font(.cavnarBody(12.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -750,12 +750,12 @@ struct ScheduleReviewExtras: View {
         VStack(alignment: .leading, spacing: 5) {
             kicker("What holds the hours over budget", .cavnarAmber)
             if let held = c.heldLine {
-                HomeMixedText.make(held, size: 13.5, color: .cavnarInk2)
+                HomeMixedText.make(held, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(c.examples.prefix(6).enumerated()), id: \.offset) { _, e in
                 HomeMixedText.make([CavnarDate.dayDate(e.day, e.date), e.label].compactMap { $0 }
-                    .filter { !$0.isEmpty }.joined(separator: " \u{00B7} "), size: 12.5, color: .cavnarInk3)
+                    .filter { !$0.isEmpty }.joined(separator: " \u{00B7} "), size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -766,11 +766,11 @@ struct ScheduleReviewExtras: View {
         VStack(alignment: .leading, spacing: 5) {
             kicker("More on the floor than sections", .cavnarAmber)
             ForEach(Array(caps.prefix(4).enumerated()), id: \.offset) { _, c in
-                HomeMixedText.make(c.line, size: 13.5, color: .cavnarInk2)
+                HomeMixedText.make(c.line, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("Your floors or a rule held these over the section count. Lower a floor or raise the section count in Schedule rules.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -781,7 +781,7 @@ struct ScheduleReviewExtras: View {
         VStack(alignment: .leading, spacing: 5) {
             kicker("Under their minimum hours", .cavnarAmber)
             ForEach(Array(left.prefix(6).enumerated()), id: \.offset) { _, l in
-                HomeMixedText.make(l.line, size: 13.5, color: .cavnarInk2)
+                HomeMixedText.make(l.line, size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -793,11 +793,11 @@ struct ScheduleReviewExtras: View {
             kicker("Drafted against")
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(item.text ?? "", size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(item.text ?? "", size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if item.kind == "leader_rules_inactive", item.canAdopt {
                         if let note = viewModel.adoptNote {
-                            Text(note).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                            Text(note).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarGreen)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
                             Button {
@@ -813,7 +813,7 @@ struct ScheduleReviewExtras: View {
                     }
                     if item.kind == "close_times_missing" {
                         Button("Set close times in Hours") { onOpenHours() }
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .buttonStyle(.plain)
                             .frame(minHeight: 44)
@@ -829,11 +829,11 @@ struct ScheduleReviewExtras: View {
             kicker("Names that match nobody", .cavnarAmber)
             ForEach(Array(names.prefix(8).enumerated()), id: \.offset) { _, u in
                 VStack(alignment: .leading, spacing: 2) {
-                    HomeMixedText.make(u.detail ?? u.name ?? "", size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(u.detail ?? u.name ?? "", size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let s = u.suggestion {
                         Button("Open \(s)") { onOpenPerson(s) }
-                            .font(.cavnarBody(13, weight: 700))
+                            .font(.cavnarBody(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .buttonStyle(.plain)
                             .frame(minHeight: 44)
@@ -868,14 +868,14 @@ struct RedoDaysSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Redo \(viewModel.selectedRedoDates.count) \(viewModel.selectedRedoDates.count == 1 ? "day" : "days")")
-                            .font(.cavnarHeadline(22))
+                            .font(.cavnarHeadline(CavnarType.section))
                             .foregroundStyle(Color.cavnarInk)
                         HomeMixedText.make(viewModel.selectedRedoDates.sorted()
                             .map { CavnarDate.dayDate(LaborViewModel.weekdayName($0), $0) }.joined(separator: ", "),
-                                           size: 14, color: .cavnarInk3)
+                                           size: CavnarType.secondary, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Only these days are written again; the rest of the week is kept.")
-                            .font(.cavnarBody(13.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     AccountSection(kicker: "What's wrong with them?") {
@@ -891,7 +891,7 @@ struct RedoDaysSheet: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         TextField("What\u{2019}s wrong? (optional)", text: $text, axis: .vertical)
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .lineLimit(2...5)
                             .padding(12)
                             .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
@@ -899,7 +899,7 @@ struct RedoDaysSheet: View {
                             .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                                 .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
                             .onChange(of: text) { _, t in if t.count > 300 { text = String(t.prefix(300)) } }
-                        HomeMixedText.make("\(text.count)/300", size: 12, color: .cavnarInk3)
+                        HomeMixedText.make("\(text.count)/300", size: CavnarType.caption, color: .cavnarInk3)
                     }
                     Button {
                         Haptic.medium()
@@ -935,18 +935,18 @@ struct EditWhySheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Why this change?")
-                        .font(.cavnarHeadline(22))
+                        .font(.cavnarHeadline(CavnarType.section))
                         .foregroundStyle(Color.cavnarInk)
                     Text("One tap teaches the next draft. Skip any you'd rather not answer.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                     ForEach(viewModel.whyQuestions) { q in
                         VStack(alignment: .leading, spacing: 10) {
-                            HomeMixedText.make(q.text ?? "", size: 15, weight: 600, color: .cavnarInk)
+                            HomeMixedText.make(q.text ?? "", size: CavnarType.body, weight: 600, color: .cavnarInk)
                                 .fixedSize(horizontal: false, vertical: true)
                             if let said = viewModel.whyAnswered[q.key] {
                                 Label(said, systemImage: "checkmark")
-                                    .font(.cavnarBody(13.5, weight: 600))
+                                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                                     .foregroundStyle(said == "Saved" ? Color.cavnarGreen : Color.cavnarAmber)
                             } else {
                                 AccountFlowLayout(spacing: 8) {
@@ -961,7 +961,7 @@ struct EditWhySheet: View {
                         .cavnarCard()
                     }
                     if let error = viewModel.whyError {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     }
                     Button("Done") { dismiss() }
                         .buttonStyle(CavnarSecondaryButtonStyle())
@@ -987,23 +987,23 @@ struct PublishWorthALookCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("WORTH A LOOK")
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             if let line = hours?.line(budget: budget) {
-                HomeMixedText.make(line, size: 14, weight: 600, color: .cavnarInk2)
+                HomeMixedText.make(line, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
                 HStack(alignment: .top, spacing: 8) {
                     Circle().fill(Color.cavnarInk3).frame(width: 5, height: 5).padding(.top, 7)
-                    HomeMixedText.make(note.text, size: 14, color: .cavnarInk2)
+                    HomeMixedText.make(note.text, size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if !notes.isEmpty {
                 Text("These never hold the send \u{2014} nothing to acknowledge.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -1018,28 +1018,28 @@ struct PublishLikelyToChangeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("LIKELY TO CHANGE")
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             Text("From your own past edits \u{2014} rows you usually change. Worth a look before staff are told.")
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(Array(likely.rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .top, spacing: 10) {
                     if let l = row.likelihood {
                         Text("\(Int((l * 100).rounded()))%")
-                            .font(.cavnarNumber(14, weight: 700))
+                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(width: 42, alignment: .leading)
                     }
                     HomeMixedText.make(row.text ?? [row.employee, row.date.map { CavnarDate.mdy($0) }, row.shiftStart]
-                        .compactMap { $0 }.joined(separator: " \u{00B7} "), size: 14, color: .cavnarInk2)
+                        .compactMap { $0 }.joined(separator: " \u{00B7} "), size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let note = likely.note {
-                HomeMixedText.make(note.prefix(1).uppercased() + note.dropFirst() + ".", size: 12.5, color: .cavnarInk3)
+                HomeMixedText.make(note.prefix(1).uppercased() + note.dropFirst() + ".", size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

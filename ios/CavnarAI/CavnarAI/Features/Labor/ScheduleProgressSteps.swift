@@ -91,10 +91,10 @@ struct ScheduleProgressSteps: View {
                 // The live step shimmers; the others are plain, so exactly
                 // one thing on screen is moving.
                 CavnarShimmerText(text: steps[index].text, color: .cavnarInk)
-                    .font(.cavnarBody(13.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
             } else {
                 Text(steps[index].text)
-                    .font(.cavnarBody(13.5, weight: done ? 400 : 400))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(done ? Color.cavnarInk3 : Color.cavnarInk3Muted(contrast))
             }
             Spacer(minLength: 0)

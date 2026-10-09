@@ -95,18 +95,18 @@ struct ScheduleMemoryScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("Habits, teams and patterns the draft keeps, each with how sure Cavnar AI is and when a hand last confirmed it. Keep one, let it go, or make it a rule every draft must keep.")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel.isLoading {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.6, 0.9, 0.5])
                     } else if let error = viewModel.error {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         Button("Try again") { Task { await viewModel.load() } }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     } else if viewModel.groups.isEmpty {
                         Text("Nothing learned yet. As drafts are edited and published, what your managers keep doing shows up here.")
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -123,7 +123,7 @@ struct ScheduleMemoryScreen: View {
                         }
                     }
                     if let at = viewModel.view?.consolidatedAt {
-                        HomeMixedText.make("Updated \(at)", size: 12.5, color: .cavnarInk3)
+                        HomeMixedText.make("Updated \(at)", size: CavnarType.caption, color: .cavnarInk3)
                     }
                 }
                 .padding(20)
@@ -147,12 +147,12 @@ struct ScheduleMemoryScreen: View {
         let canAnswer = viewModel.view?.canAnswer == true
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HomeMixedText.make(item.text ?? item.key, size: 15, weight: 600, color: retired ? .cavnarInk3 : .cavnarInk)
+                HomeMixedText.make(item.text ?? item.key, size: CavnarType.body, weight: 600, color: retired ? .cavnarInk3 : .cavnarInk)
                     .strikethrough(retired, color: Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 6)
                 if let pct = item.confidencePct {
-                    Text(pct).font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarInk2)
+                    Text(pct).font(.cavnarNumber(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk2)
                 }
             }
             HStack(spacing: 6) {
@@ -166,10 +166,10 @@ struct ScheduleMemoryScreen: View {
                                 item.lastConfirmedByHand.map { "last confirmed by hand \($0)" },
                                 retired ? item.retiredWords : nil, item.answered].compactMap { $0 }
                                 .joined(separator: " \u{00B7} "),
-                               size: 12.5, color: .cavnarInk3)
+                               size: CavnarType.caption, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if let note = viewModel.notes[item.key] {
-                HomeMixedText.make(note, size: 13, weight: 600,
+                HomeMixedText.make(note, size: CavnarType.caption, weight: 600,
                                    color: viewModel.saved.contains(item.key) ? .cavnarGreen : .cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -189,7 +189,7 @@ struct ScheduleMemoryScreen: View {
             Task { await viewModel.answer(item, action: key) }
         } label: {
             Text(viewModel.busyKey == item.key ? "Saving" : label)
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(key == "let_go" ? Color.cavnarInk3 : Color.cavnarEmber2)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
@@ -264,16 +264,16 @@ struct MeasuredRatingsScreen: View {
                     if viewModel.isLoading {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.6, 0.9])
                     } else if let error = viewModel.error {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let data = viewModel.data {
                         if let note = data.note {
-                            Text(note).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                            Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if data.servers.isEmpty {
                             HomeMixedText.make(data.reason ?? "No server has enough tickets yet\(data.minTickets.map { " (\($0) are needed)" } ?? "").",
-                                               size: 14.5, color: .cavnarInk3)
+                                               size: CavnarType.secondary, color: .cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
                             VStack(alignment: .leading, spacing: 0) {
@@ -297,17 +297,17 @@ struct MeasuredRatingsScreen: View {
         let done = viewModel.confirmed[s.name]
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(s.name).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text(s.name).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                 Spacer()
-                HomeMixedText.make("Now \(s.current.map(String.init) ?? "—")", size: 13, weight: 600, color: .cavnarInk3)
+                HomeMixedText.make("Now \(s.current.map(String.init) ?? "—")", size: CavnarType.caption, weight: 600, color: .cavnarInk3)
             }
             if let suggested = s.suggested {
                 HomeMixedText.make("Suggested \(suggested)" + (s.reason.map { " \u{2014} \($0)" } ?? ""),
-                                   size: 13.5, color: .cavnarInk2)
+                                   size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let done {
-                HomeMixedText.make("Rated \(done) \u{2014} it\u{2019}s your Operational Score now", size: 13, weight: 600,
+                HomeMixedText.make("Rated \(done) \u{2014} it\u{2019}s your Operational Score now", size: CavnarType.caption, weight: 600,
                                    color: .cavnarGreen)
             } else {
                 HStack(spacing: 6) {
@@ -317,7 +317,7 @@ struct MeasuredRatingsScreen: View {
                     }
                     ForEach(1...5, id: \.self) { v in
                         Button("\(v)") { Task { await viewModel.confirm(s, score: v) } }
-                            .font(.cavnarNumber(14, weight: 700))
+                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarInk2)
                             .frame(width: 34, height: 34)
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.cavnarPaper2))
@@ -330,7 +330,7 @@ struct MeasuredRatingsScreen: View {
                 .disabled(viewModel.busy != nil)
             }
             if let e = viewModel.rowError[s.name] {
-                Text(e).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                Text(e).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
             }
         }
         .padding(.vertical, 10)

@@ -21,7 +21,7 @@ struct RulesManagersSection: View {
         if let m = store.managers {
             AccountSection(kicker: "Who runs the floor") {
                 VStack(alignment: .leading, spacing: 0) {
-                    HomeMixedText.make(store.managersLine ?? m.line ?? "Managers: nobody yet", size: 15, weight: 600,
+                    HomeMixedText.make(store.managersLine ?? m.line ?? "Managers: nobody yet", size: CavnarType.body, weight: 600,
                                        color: m.managers.isEmpty ? .cavnarAmber : .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.vertical, 10)
@@ -36,7 +36,7 @@ struct RulesManagersSection: View {
                     if !m.notCounted.isEmpty {
                         AccountRowDivider()
                         Text("NOT COUNTED")
-                            .font(.cavnarBody(11.5, weight: 700))
+                            .font(.cavnar(.kicker))
                             .tracking(1.1)
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 10)
@@ -50,14 +50,14 @@ struct RulesManagersSection: View {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(m.acting) { a in
                                 HomeMixedText.make("\(a.name) stands in" + (a.label.map { " on \($0)" } ?? ""),
-                                                   size: 13.5, color: .cavnarInk2)
+                                                   size: CavnarType.secondary, color: .cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         .padding(.vertical, 10)
                     }
                     if let error = store.managerError {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 8)
                     }
@@ -79,7 +79,7 @@ struct RulesManagersSection: View {
         return VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(name + (role.map { " (\($0))" } ?? ""))
-                    .font(.cavnarBody(15, weight: 600))
+                    .font(.cavnar(.label))
                     .foregroundStyle(counts ? Color.cavnarInk : Color.cavnarInk2)
                 Spacer(minLength: 6)
                 if canEdit {
@@ -97,7 +97,7 @@ struct RulesManagersSection: View {
                             }
                         } label: {
                             Text("Change")
-                                .font(.cavnarBody(13.5, weight: 700))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
                                 .frame(minHeight: 32)
                         }
@@ -105,11 +105,11 @@ struct RulesManagersSection: View {
                 }
             }
             if let why, !why.isEmpty {
-                HomeMixedText.make(why.prefix(1).uppercased() + why.dropFirst(), size: 13, color: .cavnarInk3)
+                HomeMixedText.make(why.prefix(1).uppercased() + why.dropFirst(), size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let extra {
-                HomeMixedText.make(extra, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(extra, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -126,7 +126,7 @@ struct RulesManagersSection: View {
     /// starts from their standing shifts; each name opens their sheet.
     private func askStandingCard(_ ask: String, names: [String]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HomeMixedText.make(ask, size: 14.5, weight: 600, color: .cavnarInk)
+            HomeMixedText.make(ask, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             AccountFlowLayout(spacing: 8) {
                 ForEach(names, id: \.self) { name in
@@ -135,7 +135,7 @@ struct RulesManagersSection: View {
                         onOpenPerson(name)
                     } label: {
                         HStack(spacing: 5) {
-                            Text("\(name)\u{2019}s days").font(.cavnarBody(14, weight: 700))
+                            Text("\(name)\u{2019}s days").font(.cavnarBody(CavnarType.secondary, weight: 700))
                             Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
                         }
                         .foregroundStyle(Color.cavnarEmber2)
@@ -170,7 +170,7 @@ struct RulesClosingSection: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Closing")
             Text("Minutes past close each role stays \u{2014} the one setting the draft keeps them to and is never cut short of. Blank means they leave at close.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             if !store.closeTimesMissing.isEmpty {
@@ -180,12 +180,12 @@ struct RulesClosingSection: View {
                         + "Set close times in Account \u{2192} Profile \u{2192} Hours & closures.")
             }
             ForEach(store.roleCloseConflicts) { c in
-                HomeMixedText.make(c.sentence, size: 13.5, weight: 600, color: .cavnarAmber)
+                HomeMixedText.make(c.sentence, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if roles.isEmpty {
                 Text("Roles appear here once there is shift history to read them from.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .italic()
             } else {
@@ -193,13 +193,13 @@ struct RulesClosingSection: View {
                     ForEach(Array(roles.enumerated()), id: \.element) { index, role in
                         HStack(spacing: 10) {
                             Text(role)
-                                .font(.cavnarBody(15, weight: 600))
+                                .font(.cavnar(.label))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer(minLength: 6)
                             TextField("0", text: Binding(
                                 get: { stays[role] ?? "" },
                                 set: { stays[role] = $0; edited = true }))
-                                .font(.cavnarNumber(15, weight: 700))
+                                .font(.cavnarNumber(CavnarType.body, weight: 700))
                                 .foregroundStyle(Color.cavnarInk)
                                 .multilineTextAlignment(.center)
                                 .keyboardType(.numberPad)
@@ -211,7 +211,7 @@ struct RulesClosingSection: View {
                                                   lineWidth: 1))
                                 .accessibilityLabel("\(role) stays this many minutes past close")
                             Text("MIN")
-                                .font(.cavnarBody(11, weight: 700))
+                                .font(.cavnar(.kicker))
                                 .tracking(0.5)
                                 .foregroundStyle(Color.cavnarInk3)
                         }
@@ -237,22 +237,22 @@ struct RulesClosingSection: View {
                     .padding(.top, 3)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Closers")
-                        .font(.cavnarBody(14.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                     if let summary = store.closerSummary {
                         ForEach(summary.byRole) { group in
                             HomeMixedText.make("\(group.role): " + group.closers.prefix(4).joined(separator: ", ")
                                                + (group.closers.count > 4 ? " +\(group.closers.count - 4)" : ""),
-                                               size: 13, color: .cavnarInk3)
+                                               size: CavnarType.caption, color: .cavnarInk3)
                                 .lineLimit(1)
                         }
                         if let warning = summary.warning {
                             HomeMixedText.make(warning.components(separatedBy: ". ").first.map { $0 + "." } ?? warning,
-                                               size: 13, weight: 600, color: .cavnarAmber)
+                                               size: CavnarType.caption, weight: 600, color: .cavnarAmber)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     } else {
-                        Text("Who closes for each role").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                        Text("Who closes for each role").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
                 Spacer()
@@ -305,15 +305,15 @@ struct RulesSalariedSection: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Salaried weekly cap").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                        Text("Salaried weekly cap").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
                         HomeMixedText.make("default \(Self.hours(store.salariedCapDefault)) hours \u{00B7} "
                                            + "\(Self.hours(store.salariedCapBounds.lowerBound))\u{2013}\(Self.hours(store.salariedCapBounds.upperBound))",
-                                           size: 13, color: .cavnarInk3.opacity(0.8))
+                                           size: CavnarType.caption, color: .cavnarInk3.opacity(0.8))
                     }
                     Spacer(minLength: 8)
                     TextField(Self.hours(store.salariedCapDefault), text: Binding(
                         get: { cap }, set: { cap = $0; edited = true }))
-                        .font(.cavnarNumber(15, weight: 700))
+                        .font(.cavnarNumber(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                         .multilineTextAlignment(.center)
                         .keyboardType(.decimalPad)
@@ -355,7 +355,7 @@ struct RulesSalariedSection: View {
                 ForEach(store.salaried.filter { $0.warning != nil }) { entry in
                     AccountRowDivider()
                     VStack(alignment: .leading, spacing: 8) {
-                        HomeMixedText.make(entry.warning ?? "", size: 13.5, weight: 600, color: .cavnarAmber)
+                        HomeMixedText.make(entry.warning ?? "", size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                         if let suggestion = entry.suggestion, canEdit {
                             Button {
@@ -374,7 +374,7 @@ struct RulesSalariedSection: View {
                     .padding(.vertical, 10)
                 }
                 if let error = store.salariedError {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 9)
                 }
@@ -411,11 +411,11 @@ struct RulesOwnerRulesSection: View {
                                 .padding(.top, 3)
                             VStack(alignment: .leading, spacing: 2) {
                                 if let text = rule.text {
-                                    HomeMixedText.make(text, size: 14, color: .cavnarInk2)
+                                    HomeMixedText.make(text, size: CavnarType.secondary, color: .cavnarInk2)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 if let reads = rule.readsAs {
-                                    HomeMixedText.make("Checked on every draft as: \(reads).", size: 13, color: .cavnarInk3)
+                                    HomeMixedText.make("Checked on every draft as: \(reads).", size: CavnarType.caption, color: .cavnarInk3)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -428,10 +428,10 @@ struct RulesOwnerRulesSection: View {
                                 .foregroundStyle(Color.cavnarAmber)
                                 .padding(.top, 3)
                             VStack(alignment: .leading, spacing: 2) {
-                                HomeMixedText.make(text, size: 14, color: .cavnarInk2)
+                                HomeMixedText.make(text, size: CavnarType.secondary, color: .cavnarInk2)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Text("Not checked by the schedule \u{2014} a draft is asked to follow it; check the week yourself.")
-                                    .font(.cavnarBody(13))
+                                    .font(.cavnar(.caption))
                                     .foregroundStyle(Color.cavnarAmber)
                                     .fixedSize(horizontal: false, vertical: true)
                             }

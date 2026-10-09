@@ -249,9 +249,9 @@ struct GenerateBuildRows: View {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("How you like the week built")
-                            .font(.cavnarBody(14, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarInk)
-                        HomeMixedText.make(settings.notesLine, size: 12.5, color: .cavnarInk3)
+                        HomeMixedText.make(settings.notesLine, size: CavnarType.caption, color: .cavnarInk3)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
@@ -274,11 +274,11 @@ struct GenerateBuildRows: View {
                 }
             }
             if let error = settings.error {
-                Text(error).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 6)
             } else if let status = settings.status {
-                HomeMixedText.make(status, size: 12.5, weight: 600, color: .cavnarGreen)
+                HomeMixedText.make(status, size: CavnarType.caption, weight: 600, color: .cavnarGreen)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 6)
             }
@@ -305,10 +305,10 @@ struct GenerateBuildRows: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Labor target")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("A ceiling, not a quota \u{2014} the draft keeps labor at or under it")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -319,8 +319,8 @@ struct GenerateBuildRows: View {
                         stepButton("minus", delta: -ScheduleBuildSettings.targetStep,
                                    disabled: target <= ScheduleBuildSettings.targetRange.lowerBound)
                     }
-                    (Text(ScheduleBuildSettings.pct(target)).font(.cavnarNumber(16, weight: 700))
-                     + Text("%").font(.cavnarNumber(12, weight: 600)))
+                    (Text(ScheduleBuildSettings.pct(target)).font(.cavnarNumber(CavnarType.body, weight: 700))
+                     + Text("%").font(.cavnarNumber(CavnarType.caption, weight: 600)))
                         .foregroundStyle(Color.cavnarInk)
                         .frame(minWidth: 46)
                         .opacity(settings.saving == "target" ? 0.6 : 1)
@@ -331,7 +331,7 @@ struct GenerateBuildRows: View {
                     }
                 }
             } else {
-                Text("\u{2014}").font(.cavnarNumber(16, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                Text("\u{2014}").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk3)
             }
         }
         .frame(minHeight: 52)
@@ -360,7 +360,7 @@ struct GenerateBuildRows: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text("Cavnar AI drafts every")
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                     if draft.canEdit {
                         Menu {
@@ -369,18 +369,18 @@ struct GenerateBuildRows: View {
                             }
                         } label: {
                             HStack(spacing: 3) {
-                                Text(draft.day).font(.cavnarBody(14, weight: 700))
+                                Text(draft.day).font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
                             }
                             .foregroundStyle(Color.cavnarEmber2)
                         }
                         .disabled(settings.saving == "auto_draft_day")
                     } else {
-                        Text(draft.day).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text(draft.day).font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk)
                     }
                 }
                 Text("A draft only \u{2014} nothing goes to staff until you send it")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -402,11 +402,11 @@ struct GenerateBuildRows: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Publish it \(p.day ?? "the day after")")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 HomeMixedText.make(p.armed ? "Armed \u{2014} \(p.trust) schedules went out unedited in a row"
                                            : "Your record: \(p.trust) of \(p.needed) unedited schedules in a row",
-                                   size: 12.5, color: .cavnarInk3)
+                                   size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
@@ -424,7 +424,7 @@ struct GenerateBuildRows: View {
     /// "On" / "Off" for a login that may read the automation but not switch it.
     private func stateText(_ on: Bool) -> some View {
         Text(on ? "On" : "Off")
-            .font(.cavnarBody(14, weight: 700))
+            .font(.cavnarBody(CavnarType.secondary, weight: 700))
             .foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk3)
             .accessibilityLabel(on ? "On \u{2014} your login can\u{2019}t change it" : "Off \u{2014} your login can\u{2019}t change it")
     }
@@ -527,7 +527,7 @@ struct ScheduleNotesSheet: View {
                                 .lineLimit(3...10)
                                 .disabled(!editable)
                             Text("These are about the whole restaurant, and every draft reads them. A rule about one person \u{2014} \u{201C}no Tuesdays\u{201D}, \u{201C}out 12/20\u{2013}12/28\u{201D} \u{2014} belongs in that person\u{2019}s scheduling notes in Scheduling setup.")
-                                .font(.cavnarBody(13))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                             if editable {
@@ -543,17 +543,17 @@ struct ScheduleNotesSheet: View {
                                 .disabled(!changed || settings.saving != nil)
                             } else {
                                 Text("Only the account owner can change these.")
-                                    .font(.cavnarBody(13)).foregroundStyle(Color.cavnarAmber)
+                                    .font(.cavnar(.caption)).foregroundStyle(Color.cavnarAmber)
                             }
                         }
                         .padding(.vertical, 12)
                     }
                     readings
                     if let error = settings.error {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let status = settings.status {
-                        HomeMixedText.make(status, size: 13.5, weight: 600, color: .cavnarGreen)
+                        HomeMixedText.make(status, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -591,7 +591,7 @@ struct ScheduleNotesSheet: View {
         let earlier = payload?.earlierRules ?? []
         if sentences.isEmpty && earlier.isEmpty {
             Text("Write a note above and Cavnar AI shows here how it reads each one \u{2014} a minimum it can hold, like \u{201C}keep two cooks on Friday lunch\u{201D}, becomes a rule the draft is checked against.")
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         } else {
@@ -605,7 +605,7 @@ struct ScheduleNotesSheet: View {
                 }
                 if payload?.canEdit != true {
                     Text("Only the account owner can turn a note into a rule.")
-                        .font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                 }
             }
         }
@@ -629,10 +629,10 @@ struct ScheduleNotesSheet: View {
                 }
             }()
             VStack(alignment: .leading, spacing: 6) {
-                HomeMixedText.make("\u{201C}\(s.text)\u{201D}", size: 14, weight: 600, color: .cavnarInk)
+                HomeMixedText.make("\u{201C}\(s.text)\u{201D}", size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
-                (Text(head + " ").font(.cavnarBody(13, weight: 700)).foregroundStyle(tone)
-                 + Text(body).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3))
+                (Text(head + " ").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(tone)
+                 + Text(body).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3))
                     .fixedSize(horizontal: false, vertical: true)
                 if canEdit, s.kind == "rule" || s.kind == "unchecked" {
                     Button {
@@ -641,7 +641,7 @@ struct ScheduleNotesSheet: View {
                                              draft: s.rule ?? NoteRuleDraft(min: 1, dayparts: ["morning", "night"]))
                     } label: {
                         Text(s.kind == "rule" ? "Make it a rule" : "Make a minimum from it")
-                            .font(.cavnarBody(13.5, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 36)
                     }
@@ -657,7 +657,7 @@ struct ScheduleNotesSheet: View {
     private func ruleRow(source: String?, words: String, stale: String?, rule: NoteRule, canEdit: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let source, !source.isEmpty {
-                HomeMixedText.make("\u{201C}\(source)\u{201D}", size: 14, weight: 600, color: .cavnarInk)
+                HomeMixedText.make("\u{201C}\(source)\u{201D}", size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -665,7 +665,7 @@ struct ScheduleNotesSheet: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(stale == nil ? Color.cavnarGreen : Color.cavnarAmber)
                 HomeMixedText.make((stale.map { $0 + " " } ?? "A rule the draft is checked against: ") + words,
-                                   size: 13, color: .cavnarInk2)
+                                   size: CavnarType.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if canEdit {
@@ -673,7 +673,7 @@ struct ScheduleNotesSheet: View {
                     removing = rule
                 } label: {
                     Text(settings.saving == "rule:\(rule.id)" ? "Removing\u{2026}" : "Remove the rule")
-                        .font(.cavnarBody(13, weight: 600))
+                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                         .frame(minHeight: 36)
                 }
@@ -712,12 +712,12 @@ private struct NoteRuleForm: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HomeMixedText.make("\u{201C}\(target.source)\u{201D}", size: 15, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make("\u{201C}\(target.source)\u{201D}", size: CavnarType.body, weight: 600, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     AccountSection(kicker: "The rule") {
                         AccountKVRow(label: "At least") {
                             Stepper(value: $min, in: 1...10) {
-                                Text("\(min)").font(.cavnarNumber(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                Text("\(min)").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                             }
                             .fixedSize()
                         }
@@ -750,10 +750,10 @@ private struct NoteRuleForm: View {
                                 .accessibilityAddTraits(days.contains(d) ? .isSelected : [])
                             }
                         }
-                        Text("None picked is every day.").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                        Text("None picked is every day.").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     }
                     if let error {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 10) {

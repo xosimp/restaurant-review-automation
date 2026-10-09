@@ -367,7 +367,7 @@ struct RulesClosedDaysSection: View {
             AccountKicker(text: "Closed")
             Text("Days you do not open; the draft leaves them empty."
                  + (canEdit ? " Each day saves as you tap it." : ""))
-                .font(.cavnarBody(13.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
             AccountFlowLayout(spacing: 6) {
@@ -393,11 +393,11 @@ struct RulesClosedDaysSection: View {
                 CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
             }
             if let error = store.closedDaysError {
-                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("A closed date \u{2014} a holiday, a private event \u{2014} is set in Account \u{2192} Profile \u{2192} Hours & closures.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -421,18 +421,18 @@ struct RulesDiningSectionsSection: View {
             AccountSection(kicker: "Dining sections") {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Dining sections").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                        Text("Dining sections").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
                         Text("The most front-of-house people on the floor at once. Step down to No cap for none.")
-                            .font(.cavnarBody(13))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
                     Group {
                         if count == 0 {
-                            Text("No cap").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk2)
+                            Text("No cap").font(.cavnar(.label)).foregroundStyle(Color.cavnarInk2)
                         } else {
-                            Text("\(count)").font(.cavnarNumber(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                            Text("\(count)").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                         }
                     }
                     .fixedSize()
@@ -451,10 +451,10 @@ struct RulesDiningSectionsSection: View {
             if store.sectionCountSaving {
                 CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
             } else if let error = store.sectionCountError {
-                Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let note = store.sectionCountNote {
-                Text(note).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+                Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
             }
         }
         .onAppear {
@@ -520,12 +520,12 @@ struct KitchenStationsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("Which stations each shift needs and which cooks can work each. The draft staffs them; every change here saves as you make it.")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     if !canEdit {
                         Text("Only the account owner can change the kitchen stations.")
-                            .font(.cavnarBody(13.5, weight: 600))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 600))
                             .foregroundStyle(Color.cavnarAmber)
                     }
                     rolesStep
@@ -568,7 +568,7 @@ struct KitchenStationsSheet: View {
             let choices = ks.roleChoices
             if choices.isEmpty {
                 Text("Roles appear here once your roster has them.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).italic()
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3).italic()
             } else {
                 AccountFlowLayout(spacing: 6) {
                     ForEach(choices, id: \.self) { role in
@@ -593,7 +593,7 @@ struct KitchenStationsSheet: View {
             }
             if ks.roles.isEmpty {
                 Text("Pick the role (or roles) your cooks are under on the schedule, then add the stations.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -604,7 +604,7 @@ struct KitchenStationsSheet: View {
             AccountKicker(text: "Stations")
             if ks.stations.isEmpty {
                 Text("None yet. Add each station a cook can be on: Saut\u{00E9}, Grill, Fry, Pantry, Prep\u{2026}")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
@@ -658,15 +658,15 @@ struct KitchenStationsSheet: View {
             AccountKicker(text: "What each shift needs")
             if ks.needs.isEmpty {
                 Text("Nothing required yet. Say which stations must be staffed, and when.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(ks.needs.enumerated()), id: \.element.id) { i, need in
                         HStack(alignment: .center, spacing: 12) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(need.station).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                HomeMixedText.make(need.line, size: 13, color: .cavnarInk3)
+                                Text(need.station).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
+                                HomeMixedText.make(need.line, size: CavnarType.caption, color: .cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer(minLength: 8)
@@ -704,7 +704,7 @@ struct KitchenStationsSheet: View {
                 }
                 AccountKVRow(label: "Cooks", showsDivider: false) {
                     HStack(spacing: 10) {
-                        Text("\(needCount)").font(.cavnarNumber(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text("\(needCount)").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
                         Stepper("Cooks", value: $needCount, in: 1...4)
                             .labelsHidden()
                             .fixedSize()
@@ -715,7 +715,7 @@ struct KitchenStationsSheet: View {
             }
             .accountCard()
             Text("On (none picked means every day)")
-                .font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
             AccountFlowLayout(spacing: 6) {
                 ForEach(TeamSetupStore.weekdays, id: \.self) { day in
                     let on = needDays.contains(day)
@@ -751,14 +751,14 @@ struct KitchenStationsSheet: View {
             AccountKicker(text: "Who can work each station")
             if ks.kitchenPeople.isEmpty {
                 Text("Nobody on your roster is under \(ks.roles.joined(separator: " or ")) yet.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                    .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(ks.kitchenPeople.enumerated()), id: \.element) { i, person in
                         let have = ks.skills(of: person)
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(person).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(person).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
                             AccountFlowLayout(spacing: 6) {
                                 ForEach(ks.stations, id: \.self) { station in
                                     let on = have.contains(station)
@@ -789,10 +789,10 @@ struct KitchenStationsSheet: View {
         if store.stationBusy {
             CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
         } else if let error = store.stationError {
-            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let note = store.stationNote {
-            Text(note).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+            Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
         }
     }
 
@@ -807,7 +807,7 @@ struct KitchenStationsSheet: View {
         } label: {
             HStack(spacing: 6) {
                 Text(current)
-                    .font(.cavnarBody(15, weight: 600))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")

@@ -39,7 +39,7 @@ struct OpenShiftPostSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Somebody's shift on the published week, or an extra one. The team picks it up in the Cavnar AI app \u{2014} or only the person you offer it to.")
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     AccountSection(kicker: "The shift") {
@@ -73,7 +73,7 @@ struct OpenShiftPostSheet: View {
                     TextField("Note (e.g. Bears game, all hands)", text: $note)
                         .cavnarTextFieldStyle()
                     if let error {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -132,7 +132,7 @@ struct OpenShiftOfferSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    HomeMixedText.make(shift.whenLabel, size: 15, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make(shift.whenLabel, size: CavnarType.body, weight: 600, color: .cavnarInk2)
                     AccountKicker(text: "Offer it to")
                     AccountFlowLayout(spacing: 6) {
                         ForEach(names, id: \.self) { name in
@@ -144,7 +144,7 @@ struct OpenShiftOfferSheet: View {
                         }
                     }
                     if let error {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -192,7 +192,7 @@ struct AddTeamMemberSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Someone new, before their first shift is in the POS. Cavnar AI can schedule them from now on; once they have shift history, that record takes over.")
-                        .font(.cavnarBody(13.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     TextField("Their name, as the POS will spell it", text: $name)
@@ -209,7 +209,7 @@ struct AddTeamMemberSheet: View {
                         }
                     }
                     if let error {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -313,26 +313,26 @@ struct CoversTile: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.cavnarEmber2)
                 Text("Covers")
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer(minLength: 6)
                 if let line = model.payload?.averageLine {
-                    HomeMixedText.make(line, size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
                 } else if model.payload != nil {
-                    Text("no counts yet").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    Text("no counts yet").font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                 }
             }
             if let day = model.onFile {
                 HomeMixedText.make("\(day.covers) covers on file for \(CavnarDate.mdy(day.date))"
                                    + (day.source == "pos" ? " from your POS \u{2014} a number you enter replaces it" : ""),
-                                   size: 13, color: .cavnarInk2)
+                                   size: CavnarType.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
                 CavnarDateChip(iso: $model.date, accessibilityName: "Night")
                 TextField("covers", text: $model.count)
                     .keyboardType(.numberPad)
-                    .font(.cavnarNumber(16, weight: 700))
+                    .font(.cavnarNumber(CavnarType.body, weight: 700))
                     .focused($focused)
                     .cavnarTextFieldStyle()
                     .frame(maxWidth: 120)
@@ -351,12 +351,12 @@ struct CoversTile: View {
                 .disabled(model.count.isEmpty || model.saving)
             }
             if let error = model.error {
-                Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
             } else if let saved = model.saved {
-                HomeMixedText.make(saved, size: 13, weight: 600, color: .cavnarGreen)
+                HomeMixedText.make(saved, size: CavnarType.caption, weight: 600, color: .cavnarGreen)
             }
             Text("The one figure that tells a lean day from a short one \u{2014} read by the labor analysis.")
-                .font(.cavnarBody(12.5))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -389,11 +389,11 @@ struct GenerationBusyCard: View {
                 Image(systemName: "hourglass")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Color.cavnarAmber)
-                HomeMixedText.make(busy.headline, size: 14.5, weight: 700, color: .cavnarInk)
+                HomeMixedText.make(busy.headline, size: CavnarType.secondary, weight: 700, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let line = busy.error, !line.isEmpty {
-                HomeMixedText.make(line, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(line, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 10) {
@@ -408,7 +408,7 @@ struct GenerationBusyCard: View {
                     onDismiss()
                 } label: {
                     Text("OK")
-                        .font(.cavnarBody(14, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                         .frame(minWidth: 44, minHeight: 44)
                 }

@@ -157,7 +157,7 @@ struct FloorSectionsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("The sections a server\u{2019}s shift can be put in \u{2014} Patio, Bar, Section 3. The staff app shows each server theirs beside the shift.")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                     if !store.loaded {
@@ -176,7 +176,7 @@ struct FloorSectionsSheet: View {
                         list
                         if store.canEdit { addRow } else {
                             Text("Your login can see the sections but not change them.")
-                                .font(.cavnarBody(13.5, weight: 600))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                                 .foregroundStyle(Color.cavnarAmber)
                         }
                         status
@@ -206,7 +206,7 @@ struct FloorSectionsSheet: View {
         AccountKicker(text: store.names.isEmpty ? "Sections" : "Sections \u{00B7} \(store.names.count)")
         if store.names.isEmpty {
             Text("No sections named yet.")
-                .font(.cavnarBody(14))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .italic()
         } else {
@@ -253,10 +253,10 @@ struct FloorSectionsSheet: View {
         if store.busy != nil {
             CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
         } else if let error = store.error {
-            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let note = store.note {
-            Text(note).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+            Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
         }
     }
 

@@ -325,7 +325,7 @@ struct LaborView: View {
                 // tradeoff over guaranteed dead space in the common case.
                 if events.isEmpty {
                     Text("Nothing dining-relevant coming up in the next 3 weeks — no holiday or seasonal push to plan extra coverage around right now.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .lineSpacing(3)
                 } else {
@@ -334,29 +334,29 @@ struct LaborView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
                                     Text(event.name)
-                                        .font(.cavnarBody(14.5, weight: 700))
+                                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                         .foregroundStyle(Color.cavnarInk)
                                     // M/D/YY from the server (date_str), then
                                     // how far off it is.
                                     HomeMixedText.make("\(event.dateStr) · \(daysAwayLabel(event.daysAway))",
-                                                       size: 14, weight: 600, color: .cavnarEmber2)
+                                                       size: CavnarType.secondary, weight: 600, color: .cavnarEmber2)
                                 }
                                 if let label = event.label, !label.isEmpty {
                                     // This restaurant's own last-year figure,
                                     // or "check your own history" — never a
                                     // generic claim about covers (I5).
                                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                        HomeMixedText.make(label, size: 14, color: .cavnarInk2)
+                                        HomeMixedText.make(label, size: CavnarType.secondary, color: .cavnarInk2)
                                             .lineSpacing(3)
                                             .fixedSize(horizontal: false, vertical: true)
                                         ClaimKindTag(kind: event.claimKind)
                                     }
                                     Text(event.planningLine)
-                                        .font(.cavnarBody(13.5))
+                                        .font(.cavnar(.secondary))
                                         .foregroundStyle(Color.cavnarInk3)
                                 } else {
                                     Text(forecastCopy(daysAway: event.daysAway))
-                                        .font(.cavnarBody(14))
+                                        .font(.cavnar(.secondary))
                                         .foregroundStyle(Color.cavnarInk2)
                                         .lineSpacing(3)
                                 }
@@ -368,7 +368,7 @@ struct LaborView: View {
                 // and the frozen weekly projections' record (K8) — the only
                 // mobile payload that carries either is /labor.
                 ForEach(Self.forecastRecordLines(viewModel.stats), id: \.self) { line in
-                    HomeMixedText.make(line + ".", size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(line + ".", size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1130,7 +1130,7 @@ struct LaborView: View {
         // on the page background instead.
         VStack(alignment: .leading, spacing: 14) {
             Text("By role")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             RoleDonutChart(roles: roles, isExpanded: $viewModel.rolesExpanded, dateRange: dateRange)
         }
@@ -1838,27 +1838,27 @@ struct LaborView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.cavnarAmber)
                 Text("NEEDS REVIEW")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarAmber)
             }
             Text("These rows didn't come back with a normal weekday — double-check them before publishing.")
-                .font(.cavnarBody(14))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
             VStack(spacing: 6) {
                 ForEach(rows) { row in
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(row.employee ?? row.day ?? "Unknown")
-                                .font(.cavnarBody(14, weight: 600))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                                 .foregroundStyle(Color.cavnarInk)
                             Text("day: \(row.day ?? "—")  ·  role: \(row.role ?? "—")")
-                                .font(.cavnarBody(14))
+                                .font(.cavnar(.secondary))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
                         Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                            .font(.cavnarNumber(14))
+                            .font(.cavnarNumber(CavnarType.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                     }
                     .padding(.vertical, 4)
@@ -2162,7 +2162,7 @@ private struct ScheduleLoadingText: View {
     @State private var index = 0
 
     var body: some View {
-        ShimmerText(text: Self.messages[index], font: .cavnarBody(14.5, weight: 700), color: color)
+        ShimmerText(text: Self.messages[index], font: .cavnarBody(CavnarType.secondary, weight: 700), color: color)
             .task {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(3.5))
@@ -2356,7 +2356,7 @@ private struct LaborSetupSheet: View {
                         dismiss()
                     } label: {
                         Text("Done")
-                            .font(.cavnarBody(15, weight: 700))
+                            .font(.cavnar(.label))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)

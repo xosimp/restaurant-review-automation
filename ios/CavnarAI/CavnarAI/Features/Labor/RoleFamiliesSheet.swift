@@ -34,7 +34,7 @@ struct RoleFamiliesSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("The job codes your POS uses, grouped into roles. A floor, a closer, a leader rule or a staffing rule set on a role holds on every one of its codes \u{2014} the lunch code and the dinner code are halves of one role.")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -43,14 +43,14 @@ struct RoleFamiliesSheet: View {
                             .padding(.vertical, 10)
                             .accessibilityLabel("Loading the roles")
                     } else if let error = store.familiesError, families == nil {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                     } else if families != nil {
                         HStack(spacing: 6) {
                             AccountChip(text: isOwners ? "Yours" : "Suggested from the job names", muted: true)
                         }
                         if groups.isEmpty {
                             Text("No job codes on file yet \u{2014} they come from your shift history.")
-                                .font(.cavnarBody(14))
+                                .font(.cavnar(.secondary))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         ForEach(groups, id: \.role) { group in
@@ -76,7 +76,7 @@ struct RoleFamiliesSheet: View {
                             newRoleCard(code)
                         }
                         if let error = store.familiesError {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if canEdit {
@@ -108,7 +108,7 @@ struct RoleFamiliesSheet: View {
                                     }
                                 } label: {
                                     Text("Go back to the suggestion")
-                                        .font(.cavnarBody(14, weight: 700))
+                                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                         .foregroundStyle(Color.cavnarEmber2)
                                         .frame(maxWidth: .infinity, minHeight: 36)
                                 }
@@ -117,7 +117,7 @@ struct RoleFamiliesSheet: View {
                             }
                         } else {
                             Text("Only the account owner changes the roles.")
-                                .font(.cavnarBody(13.5))
+                                .font(.cavnar(.secondary))
                                 .foregroundStyle(Color.cavnarAmber)
                         }
                     }
@@ -165,7 +165,7 @@ struct RoleFamiliesSheet: View {
                     Button {
                         newRoleFor = nil
                     } label: {
-                        Text("Cancel").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                        Text("Cancel").font(.cavnarBody(CavnarType.secondary, weight: 700)).foregroundStyle(Color.cavnarInk3)
                     }
                     .buttonStyle(.plain)
                 }

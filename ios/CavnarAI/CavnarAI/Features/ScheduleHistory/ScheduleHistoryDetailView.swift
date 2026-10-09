@@ -183,8 +183,8 @@ struct ScheduleHistoryDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 10) {
-                    Text("Couldn't load this schedule").font(.cavnarBody(15, weight: 700))
-                    Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk2).multilineTextAlignment(.center)
+                    Text("Couldn't load this schedule").font(.cavnar(.label))
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2).multilineTextAlignment(.center)
                     Button("Retry") { Task { await viewModel.load(id: historyId) } }
                         .buttonStyle(CavnarPrimaryButtonStyle())
                         .padding(.top, 4)
@@ -205,7 +205,7 @@ struct ScheduleHistoryDetailView: View {
                 // without an error line, since there isn't one — always
                 // something on screen, always a way to retry.
                 VStack(spacing: 10) {
-                    Text("Couldn't load this schedule").font(.cavnarBody(15, weight: 700))
+                    Text("Couldn't load this schedule").font(.cavnar(.label))
                     Button("Retry") { Task { await viewModel.load(id: historyId) } }
                         .buttonStyle(CavnarPrimaryButtonStyle())
                         .padding(.top, 4)
@@ -284,7 +284,7 @@ struct ScheduleHistoryDetailView: View {
             HomeMixedText.make(
                 "Sent " + CavnarDate.mdyTimeLocal(publishedAt, in: RestaurantClock.timeZone)
                     + ((publishedBy ?? "").isEmpty ? "" : " by \(publishedBy ?? "")"),
-                size: 14, weight: 600, color: .cavnarGreen)
+                size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -300,7 +300,7 @@ struct ScheduleHistoryDetailView: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.cavnarInk3)
             HomeMixedText.make("Details trimmed " + CavnarDate.mdy(thinned) + ", 30 days on \u{2014} the score, band, "
-                               + "schedule and economics are kept.", size: 13.5, weight: 500, color: .cavnarInk3)
+                               + "schedule and economics are kept.", size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
@@ -317,7 +317,7 @@ struct ScheduleHistoryDetailView: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.cavnarBlue)
             HomeMixedText.make("Updated " + CavnarDate.mdyTimeLocal(republishedAt, in: RestaurantClock.timeZone) + " after sending",
-                               size: 14, weight: 600, color: .cavnarBlue)
+                               size: CavnarType.secondary, weight: 600, color: .cavnarBlue)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -336,7 +336,7 @@ struct ScheduleHistoryDetailView: View {
             // (UI-3); never the row's internal id.
             HomeMixedText.make((viewModel.detail?.replacedReason).flatMap { $0.isEmpty ? nil : $0 }
                                ?? "Replaced by a newer draft of this week \u{2014} kept for the record, and it can't be sent.",
-                               size: 13.5, weight: 600, color: .cavnarInk3)
+                               size: CavnarType.secondary, weight: 600, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
@@ -350,11 +350,11 @@ struct ScheduleHistoryDetailView: View {
     private func whatIfBlock(_ whatIf: ScheduleWhatIf) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("WHAT IF")
-                .font(.cavnarBody(12.5, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(1.4)
                 .foregroundStyle(Color.cavnarInk3)
             if let verdict = whatIf.verdict, !verdict.isEmpty {
-                HomeMixedText.make(verdict, size: 14.5, weight: 600, color: .cavnarInk)
+                HomeMixedText.make(verdict, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HomeMixedText.make(
@@ -362,7 +362,7 @@ struct ScheduleHistoryDetailView: View {
                  whatIf.baselineScore.flatMap { b in whatIf.bestScore.map { "\(b) → \($0)" } },
                  whatIf.improvement.map { $0 > 0 ? "+\($0) available" : "nothing better found" }]
                     .compactMap { $0 }.joined(separator: " · "),
-                size: 13, color: .cavnarInk3)
+                size: CavnarType.caption, color: .cavnarInk3)
             ForEach(whatIf.swaps ?? []) { swap in
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "arrow.left.arrow.right")
@@ -371,14 +371,14 @@ struct ScheduleHistoryDetailView: View {
                         .padding(.top, 4)
                     VStack(alignment: .leading, spacing: 1) {
                         HomeMixedText.make("\(swap.from.employee ?? "—") ↔ \(swap.to.employee ?? "—") · +\(swap.gain)",
-                                           size: 13.5, weight: 600, color: .cavnarInk)
-                        HomeMixedText.make(swap.reason, size: 13, color: .cavnarInk3)
+                                           size: CavnarType.secondary, weight: 600, color: .cavnarInk)
+                        HomeMixedText.make(swap.reason, size: CavnarType.caption, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
             if let reason = whatIf.reason, !reason.isEmpty, (whatIf.swaps ?? []).isEmpty {
-                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -396,7 +396,7 @@ struct ScheduleHistoryDetailView: View {
         if !viewModel.versions.isEmpty || viewModel.draftVsPublished?.available == true {
             VStack(alignment: .leading, spacing: 14) {
                 Text("VERSIONS")
-                    .font(.cavnarBody(12.5, weight: 700))
+                    .font(.cavnar(.kicker))
                     .tracking(1.4)
                     .foregroundStyle(Color.cavnarInk3)
                 VStack(alignment: .leading, spacing: 0) {
@@ -411,7 +411,7 @@ struct ScheduleHistoryDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard()
         } else if let error = viewModel.versionsError {
-            Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
         }
     }
 
@@ -434,28 +434,28 @@ struct ScheduleHistoryDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text("v\(version.version)")
-                        .font(.cavnarNumber(14.5, weight: 700))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                         .foregroundStyle(version.isPublished ? Color.cavnarEmber : Color.cavnarInk)
                     Text(version.title)
-                        .font(.cavnarBody(14.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     Spacer(minLength: 4)
                     if let score = version.score {
                         Text("\(score)")
-                            .font(.cavnarNumber(14, weight: 700))
+                            .font(.cavnarNumber(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarInk2)
                             .accessibilityLabel("Shift Quality \(score)")
                     }
                 }
                 if let at = version.createdAt, !at.isEmpty {
-                    HomeMixedText.make(CavnarDate.mdyTimeLocal(at, in: RestaurantClock.timeZone), size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(CavnarDate.mdyTimeLocal(at, in: RestaurantClock.timeZone), size: CavnarType.caption, color: .cavnarInk3)
                 }
                 ForEach(Array((version.lines ?? []).prefix(4).enumerated()), id: \.offset) { _, line in
-                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let n = version.changes, n > (version.lines ?? []).count, n > 4 {
-                    HomeMixedText.make("\(n) changes in all", size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make("\(n) changes in all", size: CavnarType.caption, color: .cavnarInk3)
                 }
             }
             .padding(.bottom, isLast ? 0 : 14)
@@ -465,23 +465,23 @@ struct ScheduleHistoryDetailView: View {
     private func draftVsPublishedBlock(_ diff: DraftVsPublished) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("DRAFT VS PUBLISHED")
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnar(.kicker))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarBlue)
             if let summary = diff.summaryLine {
-                HomeMixedText.make(summary, size: 14, weight: 600, color: .cavnarInk)
+                HomeMixedText.make(summary, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(Array((diff.lines ?? []).enumerated()), id: \.offset) { _, line in
                 HStack(alignment: .top, spacing: 7) {
                     Circle().fill(Color.cavnarBlue).frame(width: 4, height: 4).padding(.top, 7)
-                    HomeMixedText.make(line, size: 13.5, color: .cavnarInk2)
+                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if (diff.changes ?? 0) == 0 && (diff.lines ?? []).isEmpty {
                 Text("Published exactly as generated.")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -594,7 +594,7 @@ struct ScheduleHistoryDetailView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(day.uppercased())
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarEmber)
                     .padding(.horizontal, 10)
@@ -602,7 +602,7 @@ struct ScheduleHistoryDetailView: View {
                     .background(Color.cavnarEmber.opacity(0.16))
                     .clipShape(Capsule())
                 Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             }
             VStack(alignment: .leading, spacing: 12) {
@@ -623,21 +623,21 @@ struct ScheduleHistoryDetailView: View {
                 Image(systemName: label == "MORNING" ? "sun.max.fill" : "moon.stars.fill")
                     .font(.system(size: 10, weight: .bold))
                 Text("\(label) · \(count)")
-                    .font(.cavnarBody(14, weight: 800))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 800))
                     .tracking(1.1)
             }
             .foregroundStyle(Color.cavnarEmber)
             ForEach(Self.groupedByRole(rows)) { row in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(row.employee ?? "").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(row.employee ?? "").font(.cavnarBody(CavnarType.secondary, weight: 600)).foregroundStyle(Color.cavnarInk)
                         if let role = row.role, !role.isEmpty {
-                            Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            Text(role).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
                     Spacer()
                     Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                        .font(.cavnarNumber(14))
+                        .font(.cavnarNumber(CavnarType.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                 }
                 .padding(.vertical, 4)

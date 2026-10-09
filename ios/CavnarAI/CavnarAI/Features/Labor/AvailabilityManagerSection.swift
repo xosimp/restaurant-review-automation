@@ -37,7 +37,7 @@ struct AvailabilityManagerSection: View {
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Cavnar AI never schedules someone on a day marked unavailable here.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
 
                 addForm
@@ -46,7 +46,7 @@ struct AvailabilityManagerSection: View {
                     CavnarWorkingLine().padding(.vertical, 12)
                 } else if viewModel.availability.isEmpty {
                     Text("No availability set yet — add someone above.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .italic()
                 } else {
@@ -169,7 +169,7 @@ struct AvailabilityManagerSection: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Available days")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 HStack(spacing: 6) {
                     ForEach(Array(zip(LaborDayOfWeek.allNames, LaborDayOfWeek.shortLabels)), id: \.0) { full, short in
@@ -213,7 +213,7 @@ struct AvailabilityManagerSection: View {
             }
 
             if let error = viewModel.availabilityError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
             }
         }
         .animation(.easeOut(duration: 0.3), value: savedFlash)
@@ -229,7 +229,7 @@ struct AvailabilityManagerSection: View {
             if isOn { selectedDays.remove(full) } else { selectedDays.insert(full) }
         } label: {
             Text(short)
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(isOn ? Color.cavnarInk : Color.cavnarInk3)
                 .frame(maxWidth: .infinity, minHeight: 44)   // 44pt tall, the week shares the width
                 .contentShape(Rectangle())
@@ -243,21 +243,21 @@ struct AvailabilityManagerSection: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.employeeName)
-                    .font(.cavnarBody(14, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 if !entry.availableDays.isEmpty {
                     Text("✓ Available: \(entry.availableDays.map { String($0.prefix(3)) }.joined(separator: ", "))")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarGreen)
                 }
                 if !entry.unavailableDays.isEmpty {
                     Text("✗ Not available: \(entry.unavailableDays.map { String($0.prefix(3)) }.joined(separator: ", "))")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarRed)
                 }
                 if let notes = entry.notes, !notes.isEmpty {
                     Text(notes)
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }

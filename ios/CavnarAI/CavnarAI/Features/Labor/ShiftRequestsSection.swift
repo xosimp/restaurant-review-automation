@@ -50,18 +50,18 @@ struct ShiftRequestsSection: View {
                     .buttonStyle(CavnarSecondaryButtonStyle())
                 }
                 if let notice = viewModel.openShiftNotice {
-                    HomeMixedText.make(notice, size: 13.5, weight: 600, color: .cavnarGreen)
+                    HomeMixedText.make(notice, size: CavnarType.secondary, weight: 600, color: .cavnarGreen)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let error = viewModel.requestError {
                     Text(error)
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let warning = viewModel.requestWarning {
-                    HomeMixedText.make(warning, size: 14, color: .cavnarEmber)
+                    HomeMixedText.make(warning, size: CavnarType.secondary, color: .cavnarEmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -275,7 +275,7 @@ struct ReplacementPickerSheet: View {
                         }
                     }
                     if let error = viewModel.requestError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(spacing: 10) {

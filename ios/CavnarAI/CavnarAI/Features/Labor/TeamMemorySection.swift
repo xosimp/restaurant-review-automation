@@ -331,11 +331,11 @@ struct TeamMemorySection: View {
                     if !viewModel.mentions.isEmpty { mentionsBlock }
                 }
                 if let message = viewModel.message {
-                    Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarGreen)
+                    Text(message).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let error = viewModel.errorMessage {
-                    Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -352,10 +352,10 @@ struct TeamMemorySection: View {
     private func blockTitle(_ title: String, _ help: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             Text(help)
-                .font(.cavnarBody(13))
+                .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -381,7 +381,7 @@ struct TeamMemorySection: View {
                        + "\(viewModel.staleAfterDays ?? 90) days old asks whether it\u{2019}s still true.")
             if viewModel.notes.isEmpty {
                 Text("No scheduling notes yet \u{2014} add one below (\u{201C}out until 10/15/26\u{201D}, \u{201C}no doubles\u{201D}).")
-                    .font(.cavnarBody(13.5))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -403,7 +403,7 @@ struct TeamMemorySection: View {
                 person = PersonSheetTarget(key: nil, name: note.employeeName)
             } label: {
                 Text(note.employeeName)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
             }
             .buttonStyle(.plain)
@@ -421,12 +421,12 @@ struct TeamMemorySection: View {
                 Circle()
                     .fill(part.ended ? Color.cavnarInk3 : (asking ? Color.cavnarAmber : Color.cavnarGreen))
                     .frame(width: 6, height: 6)
-                HomeMixedText.make(part.text, size: 14, color: part.ended ? .cavnarInk3 : .cavnarInk2)
+                HomeMixedText.make(part.text, size: CavnarType.secondary, color: part.ended ? .cavnarInk3 : .cavnarInk2)
                     .strikethrough(part.ended, color: Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let line = part.dateLine {
-                HomeMixedText.make(line, size: 12.5, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(line, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .padding(.leading, 14)
             }
             // Held as a constraint, or offered to be (#68).
@@ -434,7 +434,7 @@ struct TeamMemorySection: View {
             if asking {
                 HStack(spacing: 8) {
                     Text("Still true?")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
                         .foregroundStyle(Color.cavnarAmber)
                     Spacer(minLength: 4)
                     if viewModel.canEditNotes {
@@ -449,7 +449,7 @@ struct TeamMemorySection: View {
                             Task { await viewModel.answer(note, part: part, action: "expire") }
                         } label: {
                             Text("It\u{2019}s over")
-                                .font(.cavnarBody(13.5, weight: 600))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         .buttonStyle(.plain)
@@ -463,7 +463,7 @@ struct TeamMemorySection: View {
                     Task { await viewModel.answer(note, part: part, action: "remove") }
                 } label: {
                     Text("Remove")
-                        .font(.cavnarBody(12.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 .buttonStyle(.plain)
@@ -476,7 +476,7 @@ struct TeamMemorySection: View {
     private var addNoteForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Add a note")
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk2)
             if !names.isEmpty {
                 Menu {
@@ -486,7 +486,7 @@ struct TeamMemorySection: View {
                 } label: {
                     HStack {
                         Text(viewModel.newName.isEmpty ? "Who" : viewModel.newName)
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .foregroundStyle(viewModel.newName.isEmpty ? Color.cavnarInk3 : Color.cavnarInk)
                         Spacer()
                         Image(systemName: "chevron.down")
@@ -540,21 +540,21 @@ struct TeamMemorySection: View {
         let busy = viewModel.busyKey == "q:\(q.id)"
         return VStack(alignment: .leading, spacing: 6) {
             Text(q.question)
-                .font(.cavnarBody(15, weight: 700))
+                .font(.cavnar(.label))
                 .foregroundStyle(Color.cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
             if let reason = q.reason {
-                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach([q.a, q.b], id: \.self) { side in
                 if let detail = side.detail {
-                    HomeMixedText.make("\(side.name): \(detail)", size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make("\(side.name): \(detail)", size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let asked = q.asked {
-                HomeMixedText.make("Asked " + asked, size: 12.5, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make("Asked " + asked, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
             }
             if viewModel.canAnswer {
                 HStack(spacing: 8) {
@@ -573,7 +573,7 @@ struct TeamMemorySection: View {
                 }
             } else {
                 Text("The account owner answers this one.")
-                    .font(.cavnarBody(13))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
@@ -602,17 +602,17 @@ struct TeamMemorySection: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(m.name)
-                    .font(.cavnarBody(15, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarInk)
                 if m.isPraise { AccountChip(text: "Praise", tint: .cavnarGreen) }
                 if m.isComplaint { AccountChip(text: "Complaint", tint: .cavnarRed) }
                 Spacer(minLength: 4)
                 if let d = m.dateLabel {
-                    Text(d).font(.cavnarNumber(12.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                    Text(d).font(.cavnarNumber(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
                 }
             }
             if let snippet = m.snippet {
-                HomeMixedText.make("\u{201C}\(snippet)\u{201D}", size: 13.5, color: .cavnarInk2)
+                HomeMixedText.make("\u{201C}\(snippet)\u{201D}", size: CavnarType.secondary, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if viewModel.canConfirm {
@@ -667,7 +667,7 @@ struct TeamMemoryNudge: View {
                     }
                     Spacer(minLength: 8)
                     Text("Review")
-                        .font(.cavnarBody(13.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                 }
                 .contentShape(Rectangle())
@@ -714,11 +714,11 @@ struct CapabilityHistoryBlock: View {
         VStack(alignment: .leading, spacing: 6) {
             if loaded && !changes.isEmpty {
                 Text("Rating history")
-                    .font(.cavnarBody(14.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 let shown = showingAll ? changes : Array(changes.prefix(5))
                 ForEach(shown) { change in
-                    HomeMixedText.make(change.line, size: 13, color: .cavnarInk3)
+                    HomeMixedText.make(change.line, size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if changes.count > 5 {
@@ -727,7 +727,7 @@ struct CapabilityHistoryBlock: View {
                         withAnimation(.easeOut(duration: 0.2)) { showingAll.toggle() }
                     } label: {
                         Text(showingAll ? "Show fewer" : "Show all \(changes.count)")
-                            .font(.cavnarBody(13, weight: 700))
+                            .font(.cavnarBody(CavnarType.caption, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)
@@ -779,27 +779,27 @@ struct CoverAnswerRow: View {
             if let answer {
                 Text(answer ? "\(first) took it \u{2014} it counts on their record."
                             : "\(first) didn\u{2019}t take it \u{2014} noted.")
-                    .font(.cavnarBody(12.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.caption, weight: 600))
                     .foregroundStyle(answer ? Color.cavnarGreen : Color.cavnarInk3)
             } else {
                 HStack(spacing: 12) {
                     Text("Did \(first) take it?")
-                        .font(.cavnarBody(12.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
                         .foregroundStyle(Color.cavnarInk2)
                     Button { send(true) } label: {
-                        Text("Yes").font(.cavnarBody(12.5, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                        Text("Yes").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarEmber2)
                     }
                     .buttonStyle(.plain)
                     .disabled(busy)
                     Button { send(false) } label: {
-                        Text("No").font(.cavnarBody(12.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+                        Text("No").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarInk3)
                     }
                     .buttonStyle(.plain)
                     .disabled(busy)
                 }
             }
             if let error {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
             }
         }
         .onAppear {
@@ -854,14 +854,14 @@ private struct StaffNoteHoldRow: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: "lock.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.cavnarGreen)
                         HomeMixedText.make("Held \u{2014} \(held.words ?? "") The draft can\u{2019}t schedule them then.",
-                                           size: 13, weight: 600, color: .cavnarGreen)
+                                           size: CavnarType.caption, weight: 600, color: .cavnarGreen)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if viewModel.canEditNotes {
                         Button {
                             stopping = true
                         } label: {
-                            Text("Stop holding").font(.cavnarBody(12.5, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                            Text("Stop holding").font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarInk3)
                                 .frame(minHeight: 32)
                         }
                         .buttonStyle(.plain)
@@ -876,7 +876,7 @@ private struct StaffNoteHoldRow: View {
             } else if !part.ended, part.reading?.kind == "hold", let hold = part.reading?.hold {
                 VStack(alignment: .leading, spacing: 7) {
                     HomeMixedText.make("Cavnar AI can hold this \u{2014} \(hold.words ?? ""). Until you do, the draft only aims for it.",
-                                       size: 13, color: .cavnarInk2)
+                                       size: CavnarType.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if viewModel.canEditNotes {
                         AccountFlowLayout(spacing: 5) {
@@ -913,7 +913,7 @@ private struct StaffNoteHoldRow: View {
                     parts = Set(hold.dayparts ?? [])
                 }
             } else if !part.ended, part.reading?.kind == "unchecked", let why = part.reading?.why, !why.isEmpty {
-                HomeMixedText.make("Not held. \(why)", size: 12.5, color: .cavnarAmber)
+                HomeMixedText.make("Not held. \(why)", size: CavnarType.caption, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 14)
             }

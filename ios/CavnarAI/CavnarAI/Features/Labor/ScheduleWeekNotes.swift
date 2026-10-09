@@ -96,7 +96,7 @@ struct ScheduleWeekNotes: View {
                 .tracking(1)
                 .foregroundStyle(Color.cavnarInk3)
             Text(value)
-                .font(.cavnarNumber(17, weight: 700))
+                .font(.cavnarNumber(CavnarText.figureS.size, weight: 700))
                 .foregroundStyle(tone)
                 .cavnarSensitive()
         }
@@ -116,7 +116,7 @@ struct ScheduleWeekNotes: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarAmber)
                     HomeMixedText.make(Self.trimSummary(shifts, hours: result.trimmedHours),
-                                       size: 14, weight: 700, color: .cavnarInk)
+                                       size: CavnarType.secondary, weight: 700, color: .cavnarInk)
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .bold))
@@ -136,9 +136,9 @@ struct ScheduleWeekNotes: View {
                                  shift.kind == "cut" ? shift.to.map { "ended at \($0)" } : nil,
                                  shift.hours.map { "\($0.commaFormatted)h" }]
                                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
-                                size: 13.5, weight: 600, color: .cavnarInk)
+                                size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                             if let reason = shift.reason, !reason.isEmpty {
-                                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -183,7 +183,7 @@ struct ScheduleWeekNotes: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarBlue)
                     HomeMixedText.make("\(starts.count) \(starts.count == 1 ? "start" : "starts") staggered along the sales curve",
-                                       size: 14, weight: 700, color: .cavnarInk)
+                                       size: CavnarType.secondary, weight: 700, color: .cavnarInk)
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .bold))
@@ -201,9 +201,9 @@ struct ScheduleWeekNotes: View {
                                 [start.employee, start.role, start.date.map(CavnarDate.mdy),
                                  "\(start.from ?? "") → \(start.to ?? "")"]
                                     .compactMap { $0 }.filter { !$0.isEmpty && $0 != " → " }.joined(separator: " · "),
-                                size: 13.5, weight: 600, color: .cavnarInk)
+                                size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                             if let reason = start.reason, !reason.isEmpty {
-                                HomeMixedText.make(reason, size: 13, color: .cavnarInk3)
+                                HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk3)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -244,12 +244,12 @@ struct ScheduleWeekNotes: View {
                     .foregroundStyle(Color.cavnarEmber2)
                 let done = reqs.filter { $0.applied == true }.count
                 HomeMixedText.make("Asked of this week \u{2014} \(done) of \(reqs.count) applied",
-                                   size: 14, weight: 700, color: .cavnarInk)
+                                   size: CavnarType.secondary, weight: 700, color: .cavnarInk)
             }
             ForEach(reqs) { req in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        HomeMixedText.make(req.text, size: 13.5, weight: 600, color: .cavnarInk)
+                        HomeMixedText.make(req.text, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 4)
                         if let applied = req.appliedLabel {
@@ -259,7 +259,7 @@ struct ScheduleWeekNotes: View {
                     HomeMixedText.make([req.sourceLabel, req.confirm.map { "to confirm: " + $0 },
                                         req.expires.map { "until " + CavnarDate.mdy($0) }]
                                         .compactMap { $0 }.joined(separator: " \u{00B7} "),
-                                       size: 12.5, color: .cavnarInk3)
+                                       size: CavnarType.caption, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -309,9 +309,9 @@ struct EditCostReadout: View {
                 Image(systemName: "dollarsign.circle")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(tone)
-                HomeMixedText.make(summary, size: 14, weight: 700, color: tone)
+                HomeMixedText.make(summary, size: CavnarType.secondary, weight: 700, color: tone)
                 Text("vs the draft")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             }
             .accessibilityLabel("This edit: \(summary), against the draft")
@@ -336,11 +336,11 @@ struct SaveConflictSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(conflict.savedBy ?? "Somebody") changed this week first")
-                            .font(.cavnarHeadline(22))
+                            .font(.cavnarHeadline(CavnarType.section))
                             .foregroundStyle(Color.cavnarInk)
                         HomeMixedText.make(
                             conflict.error ?? "This week changed after you opened it. Your edits are still here \u{2014} keep yours, or reload theirs.",
-                            size: 14.5, color: .cavnarInk3)
+                            size: CavnarType.secondary, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let lines = conflict.lines, !lines.isEmpty {
@@ -349,7 +349,7 @@ struct SaveConflictSheet: View {
                             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                                 HStack(alignment: .top, spacing: 7) {
                                     Circle().fill(Color.cavnarBlue).frame(width: 4, height: 4).padding(.top, 7)
-                                    HomeMixedText.make(line, size: 14, color: .cavnarInk2)
+                                    HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk2)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -400,7 +400,7 @@ struct SaveConflictSheet: View {
                     }
                     if case .failed(let message) = viewModel.overrideState, viewModel.isReloadingAfterConflict == false,
                        message != conflict.error {
-                        Text(message).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(message).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -433,7 +433,7 @@ struct GenerateWeekPicker: View {
             if showingDate {
                 DatePicker("Week containing", selection: $pickedDate, in: Date()..., displayedComponents: .date)
                     .datePickerStyle(.compact)
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .tint(Color.cavnarEmber)
                     .onChange(of: pickedDate) { _, d in viewModel.generateWeek = .date(d) }
                     .onAppear { viewModel.generateWeek = .date(pickedDate) }
@@ -489,11 +489,11 @@ struct RedoSelectedDaysRow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(n == 0 ? "Tick a day to redo just that day" : "\(n) \(n == 1 ? "day" : "days") ticked")
-                    .font(.cavnarBody(13.5, weight: n == 0 ? 400 : 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: n == 0 ? 400 : 600))
                     .foregroundStyle(n == 0 ? Color.cavnarInk3 : Color.cavnarInk)
                 if n > 0 {
                     HomeMixedText.make(viewModel.selectedRedoDates.sorted().map(CavnarDate.mdy).joined(separator: ", "),
-                                       size: 12.5, color: .cavnarInk3)
+                                       size: CavnarType.caption, color: .cavnarInk3)
                 }
             }
             Spacer(minLength: 6)

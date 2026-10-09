@@ -52,7 +52,7 @@ struct LaborTeamSection: View {
                 Spacer(minLength: 8)
                 if model.unread > 0 {
                     Text("\(model.unread)")
-                        .font(.cavnarNumber(13, weight: 700))
+                        .font(.cavnarNumber(CavnarType.caption, weight: 700))
                         .foregroundStyle(Color.white)
                         .padding(.horizontal, 8)
                         .frame(minHeight: 22)
@@ -570,7 +570,7 @@ struct StaffPulseTile: View {
         .chartYAxis(.hidden)
         .chartXAxis {
             AxisMarks { _ in
-                AxisValueLabel().font(.cavnarNumber(11, weight: 600)).foregroundStyle(Color.cavnarInk3)
+                AxisValueLabel().font(.cavnarNumber(CavnarType.tag, weight: 600)).foregroundStyle(Color.cavnarInk3)
             }
         }
         .accessibilityLabel("Answers by rating: " + bars.map { "\($0.rating): \($0.count)" }.joined(separator: ", "))
@@ -584,7 +584,7 @@ struct StaffPulseTile: View {
         } label: {
             HStack(spacing: 6) {
                 Text(showingDays ? "Hide the nights" : "By night, and what they said")
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarEmber2)
                 Image(systemName: showingDays ? "chevron.up" : "chevron.down")
                     .font(.system(size: 11, weight: .bold))

@@ -881,7 +881,7 @@ struct PublishScheduleSheet: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Color.cavnarAmber)
                 Text("BEFORE THIS GOES OUT")
-                    .font(.cavnarBody(13.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarAmber)
             }
@@ -889,7 +889,7 @@ struct PublishScheduleSheet: View {
                 ForEach(Array(viewModel.blockers.enumerated()), id: \.offset) { _, line in
                     HStack(alignment: .top, spacing: 8) {
                         Circle().fill(Color.cavnarAmber).frame(width: 5, height: 5).padding(.top, 7)
-                        HomeMixedText.make(line, size: 14.5, color: .cavnarInk)
+                        HomeMixedText.make(line, size: CavnarType.secondary, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -915,7 +915,7 @@ struct PublishScheduleSheet: View {
                 : (result.alreadyPublished == true
                    ? "This week was already sent to staff — nothing went out twice." : result.note) {
                 Text(line)
-                    .font(.cavnarBody(14, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarInk2)
             }
             if result.acknowledged == true {
@@ -924,7 +924,7 @@ struct PublishScheduleSheet: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarAmber)
                     Text("Sent after you read the notes")
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarAmber)
                 }
                 .padding(.bottom, 2)
@@ -935,7 +935,7 @@ struct PublishScheduleSheet: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarGreen)
                     HomeMixedText.make("\(sent.employeeName) — \(sent.shifts) shifts sent",
-                                       size: 14, weight: 600, color: .cavnarInk)
+                                       size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                 }
             }
             ForEach(result.unreachable) { person in
@@ -944,7 +944,7 @@ struct PublishScheduleSheet: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarAmber)
                     Text("\(person.employeeName) — \(person.reason)")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -955,7 +955,7 @@ struct PublishScheduleSheet: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.cavnarRed)
                     Text("\(failure.employeeName) — \(failure.error)")
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -968,22 +968,22 @@ struct PublishScheduleSheet: View {
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("WHO'S SEEN IT")
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) {
                 ForEach(Array(viewModel.status.enumerated()), id: \.element.id) { index, row in
                     HStack(spacing: 10) {
                         Text(row.employeeName)
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarInk)
                         Spacer(minLength: 8)
                         if row.hasViewed {
                             HomeMixedText.make(row.viewCount > 1 ? "Opened \(row.viewCount) times" : "Opened",
-                                               size: 13, weight: 700, color: .cavnarGreen)
+                                               size: CavnarType.caption, weight: 700, color: .cavnarGreen)
                         } else {
                             Text("Not opened yet")
-                                .font(.cavnarBody(13, weight: 600))
+                                .font(.cavnarBody(CavnarType.caption, weight: 600))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }
@@ -1000,10 +1000,10 @@ struct PublishScheduleSheet: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("No schedule yet")
-                .font(.cavnarHeadline(17))
+                .font(.cavnarHeadline(CavnarType.emphasis))
                 .foregroundStyle(Color.cavnarInk)
             Text("Generate next week's schedule first — then you can send everyone their own shifts.")
-                .font(.cavnarBody(14.5))
+                .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1030,7 +1030,7 @@ private struct StaffContactSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text("Where should \(contact.employeeName)'s schedule go? They'll get a private link to their own shifts — no login needed.")
-                        .font(.cavnarBody(15))
+                        .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -1040,7 +1040,7 @@ private struct StaffContactSheet: View {
                     )
 
                     if let error = viewModel.contactError {
-                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRed)
                     }
 
                     VStack(spacing: 10) {
