@@ -4041,9 +4041,25 @@ def _dummy_password_hash() -> str:
     return _DUMMY_HASH
 
 
+def _user_by_login_email(email: str, db_path: str = DB_PATH) -> Optional[dict]:
+    """The one active login with this email (users.email is unique), or
+    None — so a sign-in may type the email instead of the username."""
+    e = (email or "").strip().lower()
+    if "@" not in e:
+        return None
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT * FROM users WHERE lower(email)=? AND is_active=1 LIMIT 2", (e,)).fetchall()
+    conn.close()
+    return dict(rows[0]) if len(rows) == 1 else None
+
+
 def verify_password(username: str, password: str,
                     db_path: str = DB_PATH) -> Optional[dict]:
-    user = get_user_by_username(username, db_path)
+    """The login for a username or its email, when the password matches.
+    The email counts too (owner, 10/9/26: Erik typed his email, the form
+    said "Invalid username or password" and he thought the new password
+    hadn't taken — his login was the username "erik")."""
+    user = get_user_by_username(username, db_path) or _user_by_login_email(username, db_path)
     if not user:
         # Pay for one hash anyway (SEC-35). Returning here before any hashing
         # made an unknown username answer in microseconds and a known one in

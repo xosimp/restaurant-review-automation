@@ -50,6 +50,16 @@ def test_verify_password_fails_with_wrong_password(db_path):
     assert verify_password("alice", "wrong-password", db_path=db_path) is None
 
 
+def test_the_login_email_signs_in_like_the_username(db_path):
+    """Owner, 10/9/26: Erik typed his email, the login is the username
+    "erik", and the form said his new password was wrong."""
+    rid = _restaurant(db_path)
+    create_user(rid, "erik", "EBaylis@Example.com", "correct-horse", db_path=db_path)
+    assert verify_password(" ebaylis@example.com ", "correct-horse", db_path=db_path)["username"] == "erik"
+    assert verify_password("ebaylis@example.com", "wrong-password", db_path=db_path) is None
+    assert verify_password("ebaylis@exampel.com", "correct-horse", db_path=db_path) is None
+
+
 def test_verify_password_fails_for_unknown_username(db_path):
     assert verify_password("nobody", "whatever", db_path=db_path) is None
 
