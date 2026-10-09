@@ -3084,12 +3084,19 @@ def add_role(restaurant_id, name, role, since=None, primary=False, created_by=No
 
 
 def remove_role(restaurant_id, name, role, db_path=None, user=None, record=True) -> bool:
+    """Ends a role they hold. A person's removal (`record`, the roster's
+    remove) becomes the owner's row, so the POS's job sync never puts it
+    back (pos_archive.sync_roles: "Gabriel holds Manager FOH in RPOWER but
+    never runs FOH", owner, 10/9/26); the sync's own removal (record=False)
+    stays the sync's, and the job returns if the POS lists it again."""
     role = " ".join(str(role or "").split())
     conn = _conn(db_path)
     try:
-        cur = conn.execute("UPDATE person_roles SET removed_at=datetime('now'), is_primary=0 WHERE restaurant_id=? "
+        cur = conn.execute("UPDATE person_roles SET removed_at=datetime('now'), is_primary=0, "
+                           "source=CASE WHEN ? THEN 'owner' ELSE source END WHERE restaurant_id=? "
                            "AND employee_key=? AND lower(role)=lower(?) AND removed_at IS NULL",
-                           (restaurant_id, canonical_key(restaurant_id, name, db_path=db_path), role))
+                           (1 if record else 0, restaurant_id, canonical_key(restaurant_id, name, db_path=db_path),
+                            role))
         conn.commit()
         done = (cur.rowcount or 0) > 0
     finally:

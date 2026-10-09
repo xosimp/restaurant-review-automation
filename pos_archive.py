@@ -253,6 +253,11 @@ def sync_roles(restaurant_id, db_path=DB_PATH) -> dict:
         for r in conn.execute("SELECT display_name, name_key FROM people WHERE restaurant_id=? AND merged_into IS NULL",
                               (restaurant_id,)).fetchall():
             by_key.setdefault(r["name_key"], []).append(r["display_name"])
+        # A job the owner removed stays removed, whatever the POS still lists
+        # (people.remove_role makes a person's removal the owner's row).
+        refused = {(r[0], str(r[1]).lower()) for r in conn.execute(
+            "SELECT employee_key, role FROM person_roles WHERE restaurant_id=? AND removed_at IS NOT NULL "
+            "AND COALESCE(source, '') != ?", (restaurant_id, ROLE_SOURCE)).fetchall()}
     finally:
         conn.close()
     want = {}
@@ -271,7 +276,7 @@ def sync_roles(restaurant_id, db_path=DB_PATH) -> dict:
     for person, roles in want.items():
         key = people._nk(person)
         for role, primary in roles.items():
-            if (key, role.lower()) in everyone:
+            if (key, role.lower()) in everyone or (key, role.lower()) in refused:
                 continue
             people.add_role(restaurant_id, person, role, primary=primary and key not in has_primary,
                             source=ROLE_SOURCE, db_path=db_path, record=False)

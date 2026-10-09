@@ -201,6 +201,16 @@ def test_pos_jobs_become_roles_for_known_people_only_and_never_override_the_owne
     out = pos_archive.sync_roles(rid, db_path=db_path)
     assert out["removed"] == 1 and ("Dana Reyes", "Bartender PM") not in {
         (h["name"], h["role"]) for h in people.held_roles(rid, db_path=db_path)}
+    # The owner removes a job the POS still lists (owner, 10/9/26: Gabriel
+    # holds Manager FOH in RPOWER but never runs FOH): the next sync leaves
+    # it removed; the sync's own removal above stays the sync's.
+    assert people.remove_role(rid, "Bo Park", "Host PM", db_path=db_path) is True       # the roster's remove
+    out = pos_archive.sync_roles(rid, db_path=db_path)
+    assert out["added"] == 0 and ("Bo Park", "Host PM") not in {
+        (h["name"], h["role"]) for h in people.held_roles(rid, db_path=db_path)}
+    jobs.append({"external_id": "E1", "role": "Bartender PM", "primary": False})      # the POS lists it again
+    out = pos_archive.sync_roles(rid, db_path=db_path)
+    assert ("Dana Reyes", "Bartender PM") in {(h["name"], h["role"]) for h in people.held_roles(rid, db_path=db_path)}
 
 
 # ── menu prices (High ROI #7) ────────────────────────────────────────────────
