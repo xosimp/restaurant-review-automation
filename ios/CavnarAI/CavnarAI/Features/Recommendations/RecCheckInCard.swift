@@ -116,14 +116,16 @@ struct RecAnswerPillStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.cavnarBody(13.5, weight: 700))
+            .font(.cavnar(.label))
             .foregroundStyle(selected ? Color.white : Color.cavnarEmber2)
-            .padding(.horizontal, 15)
-            .padding(.vertical, 7)
+            .padding(.horizontal, CavnarSpace.m)
+            .padding(.vertical, CavnarSpace.xs)
             .background(Capsule().fill(selected ? Color.cavnarEmber : Color.cavnarEmber.opacity(0.1)))
             .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(selected ? 0 : 0.35), lineWidth: 1))
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            // The capsule stays its size; the tap area is 44pt (HIG).
+            .cavnarHitTarget()
     }
 }
 
@@ -147,31 +149,22 @@ struct RecCheckInCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "checklist")
-                    .font(.system(size: 11, weight: .bold))
-                Text("CHECK IN")
-                    .font(.cavnarBody(11, weight: 700))
-                    .tracking(1.4)
-            }
-            .foregroundStyle(Color.cavnarEmber2)
+            CavnarKicker("Check in", icon: "checklist")
 
-            HomeMixedText.make(outcome.resultLine ?? outcome.summary ?? outcome.title ?? "Your change was measured",
-                               size: 14, weight: 600, color: .cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarMixedText(outcome.resultLine ?? outcome.summary ?? outcome.title ?? "Your change was measured",
+                            role: .label, color: .cavnarInk)
 
             if let thanks {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                    Text(thanks).font(.cavnarBody(13, weight: 500))
+                    Image(systemName: "checkmark").font(.cavnar(.caption))
+                    Text(thanks).font(.cavnar(.secondary))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
                 .transition(.opacity)
             } else {
                 Text("Did you make this change?")
-                    .font(.cavnarBody(14.5, weight: 700))
-                    .foregroundStyle(Color.cavnarInk2)
+                    .cavnarText(.label, color: .cavnarInk2)
                 HStack(spacing: 8) {
                     ForEach(RecCheckIn.answers, id: \.code) { answer in
                         Button {
@@ -194,13 +187,13 @@ struct RecCheckInCard: View {
                 } label: {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: somethingElseChanged ? "checkmark.square.fill" : "square")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(somethingElseChanged ? Color.cavnarEmber : Color.cavnarInk3)
+                            .font(.cavnar(.body))
+                            .foregroundStyle(somethingElseChanged ? Color.cavnarEmber : Color.cavnarInk2)
                         Text("Something else changed these weeks too")
-                            .font(.cavnarBody(13, weight: 500))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    .frame(minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -209,8 +202,7 @@ struct RecCheckInCard: View {
                 .accessibilityValue(somethingElseChanged ? "Yes" : "No")
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.cavnarBody(12.5))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.secondary, color: .cavnarRedText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -271,12 +263,12 @@ struct WhatWorkedCard: View {
                     ForEach(Array(whatWorked.sentences.enumerated()), id: \.offset) { _, sentence in
                         HStack(alignment: .top, spacing: 12) {
                             Circle().fill(Color.cavnarGreen).frame(width: 7, height: 7).padding(.top, 7)
-                            HomeMixedText.make(sentence, size: 14.5, weight: 500, color: .cavnarInk2)
+                            HomeMixedText.make(sentence, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                         }
                     }
-                    CavnarCaveat(title: "Before and after, not proof",
+                    CavnarCaveat(title: "Measured before and after \u{2014} not proof it caused it",
                                  detail: (whatWorked.caveat?.isEmpty == false ? whatWorked.caveat : nil)
                                     ?? "Measured before and after, not proven cause.")
                         .padding(.top, 4)

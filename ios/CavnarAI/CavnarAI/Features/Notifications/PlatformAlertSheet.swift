@@ -64,26 +64,26 @@ struct PlatformAlertSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("PLATFORM NEEDS YOU")
-                        .font(.cavnarBody(12, weight: 700))
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarEmber2)
                     Text(alert.subject ?? "A platform alert went out")
-                        .font(.cavnarHeadline(20))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     if let sent = alert.sentLine() {
-                        HomeMixedText.make(sent, size: 14, weight: 600, color: .cavnarInk3)
+                        HomeMixedText.make(sent, size: CavnarType.secondary, weight: 600, color: .cavnarInk3)
                     }
                     if alert.lines.isEmpty {
                         Text("The alert's details are in the console.")
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk2)
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(Array(alert.lines.enumerated()), id: \.offset) { _, line in
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Circle().fill(Color.cavnarEmber).frame(width: 5, height: 5)
-                                    HomeMixedText.make(line, size: 14.5, weight: 500, color: .cavnarInk2)
+                                    HomeMixedText.make(line, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }

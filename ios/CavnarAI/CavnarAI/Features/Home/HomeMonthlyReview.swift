@@ -101,7 +101,7 @@ struct HomeMonthlyReviewCard: View {
                                   trailing: r.comparedWith.map { "against \($0)" })
                 VStack(alignment: .leading, spacing: 14) {
                     if let head = month.headline, !head.isEmpty {
-                        HomeMixedText.make(head, size: 17, weight: 700, color: .cavnarInk)
+                        HomeMixedText.make(head, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
                     }
                     if !month.measured.isEmpty {
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
@@ -118,7 +118,7 @@ struct HomeMonthlyReviewCard: View {
                             ForEach(Array(results.enumerated()), id: \.offset) { _, res in
                                 HStack(alignment: .top, spacing: 10) {
                                     Circle().fill(Self.tone(res.standing)).frame(width: 7, height: 7).padding(.top, 6)
-                                    HomeMixedText.make(res.summary ?? res.title ?? "", size: 13.5, weight: 500, color: .cavnarInk2)
+                                    HomeMixedText.make(res.summary ?? res.title ?? "", size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                                 }
                             }
                         }
@@ -132,7 +132,7 @@ struct HomeMonthlyReviewCard: View {
                         VStack(alignment: .leading, spacing: 6) {
                             kicker("Worth your time next month")
                             ForEach(Array(priorities.enumerated()), id: \.offset) { _, p in
-                                HomeMixedText.make(Self.priorityLine(p), size: 13.5, weight: 500, color: .cavnarInk2)
+                                HomeMixedText.make(Self.priorityLine(p), size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                             }
                         }
                     }
@@ -142,7 +142,7 @@ struct HomeMonthlyReviewCard: View {
                             onOpen()
                         } label: {
                             Text("The whole month, to share \u{2192}")
-                                .font(.cavnarBody(13, weight: 700))
+                                .font(.cavnarBody(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
                                 .frame(minHeight: 44, alignment: .leading)
                                 .contentShape(Rectangle())
@@ -174,18 +174,18 @@ struct HomeMonthlyReviewCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
             Text(Self.format(m.value ?? 0, unit: m.unit))
-                .font(.cavnarNumber(22, weight: 700))
+                .font(.cavnarNumber(CavnarType.tileNumber, weight: 700))
                 .foregroundStyle(tone == Color.cavnarInk3 ? Color.cavnarInk : tone)
             if let delta = m.delta, m.previous != nil, let cw = comparedWith {
                 HomeMixedText.make(Self.formatDelta(delta, unit: m.unit) + " vs " + cw,
-                                   size: 12, weight: 500, color: .cavnarInk3)
+                                   size: CavnarType.caption, weight: 500, color: .cavnarInk3)
             } else if let why = m.why, !why.isEmpty {
-                Text(why).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                Text(why).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let yc = month.yoy?[m.key], !yc.isEmpty {
                 HomeMixedText.make(yc.replacingOccurrences(of: "^ — ", with: "", options: .regularExpression),
-                                   size: 12, weight: 500, color: .cavnarInk3)
+                                   size: CavnarType.caption, weight: 500, color: .cavnarInk3)
             }
             if interactive, let ask = m.ask {
                 HomeAskLink(question: ask, label: "Ask").padding(.top, 2)
@@ -273,7 +273,7 @@ struct HomeMonthlyReviewSheet: View {
                         .buttonStyle(CavnarSecondaryButtonStyle())
                     } else if renderFailed {
                         Text("Couldn\u{2019}t make the PDF \u{2014} take a screenshot of the month instead.")
-                            .font(.cavnarBody(14))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarRed)
                     } else {
                         CavnarSkeletonBar(height: 3)

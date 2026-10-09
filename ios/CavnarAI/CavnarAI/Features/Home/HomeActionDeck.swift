@@ -100,7 +100,7 @@ struct HomeActionDeck: View {
                     withAnimation(.easeOut(duration: 0.25)) { showingAll = true }
                 } label: {
                     Text("+\(split.hidden) more")
-                        .font(.cavnarNumber(16, weight: 700))
+                        .font(.cavnarNumber(CavnarType.body, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
@@ -148,7 +148,7 @@ private struct ActionDeckRow: View {
                             CavnarShimmerText(text: "Working…")
                         } else {
                             HStack(spacing: 3) {
-                                HomeMixedText.make(cta, size: 15, weight: 800, color: .cavnarEmber2,
+                                HomeMixedText.make(cta, size: CavnarType.body, weight: 800, color: .cavnarEmber2,
                                                    numberWeight: 700, numberColor: .cavnarEmber2)
                                     .lineLimit(2)
                                     .multilineTextAlignment(.trailing)
@@ -236,7 +236,7 @@ private struct ActionDeckCard: View {
                 if let secondary = item.secondary {
                     Button(action: onSecondary) {
                         HStack(spacing: 3) {
-                            Text(secondary).font(.cavnarBody(15, weight: 700))
+                            Text(secondary).font(.cavnar(.label))
                             Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
                         }
                         .foregroundStyle(Color.cavnarEmber2)
@@ -251,7 +251,7 @@ private struct ActionDeckCard: View {
                         if busy {
                             CavnarShimmerText(text: "Working…")
                         } else {
-                            HomeMixedText.make(cta, size: 15.5, weight: 800, color: .white, numberWeight: 700, numberColor: .white)
+                            HomeMixedText.make(cta, size: CavnarType.body, weight: 800, color: .white, numberWeight: 700, numberColor: .white)
                         }
                     }
                     .buttonStyle(DeckPrimaryButtonStyle())

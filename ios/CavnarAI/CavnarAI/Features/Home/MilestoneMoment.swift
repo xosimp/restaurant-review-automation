@@ -75,16 +75,16 @@ struct MilestoneMoment: View {
 
                 VStack(spacing: 8) {
                     Text(kicker)
-                        .font(.cavnarBody(11, weight: 700))
+                        .font(.cavnarBody(CavnarType.tag, weight: 700))
                         .tracking(1.6)
                         .foregroundStyle(Color.cavnarEmber2)
                     Text(milestone.title)
-                        .font(.cavnarHeadline(22))
+                        .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
                         .multilineTextAlignment(.center)
                     if let body = milestone.body {
                         Text(body)
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .multilineTextAlignment(.center)
                             .lineSpacing(3)
@@ -92,7 +92,7 @@ struct MilestoneMoment: View {
                     }
                     if milestone.kind == "response_rate" {
                         Text(Self.responseRateSource)
-                            .font(.cavnarBody(12))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
@@ -104,7 +104,7 @@ struct MilestoneMoment: View {
                     onDismiss()
                 } label: {
                     Text("Got it")
-                        .font(.cavnarBody(15, weight: 700))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarPaper)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)

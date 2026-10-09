@@ -100,7 +100,7 @@ struct CommandSheet: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color.cavnarInk3)
             TextField("Find or ask anything…", text: $viewModel.query)
-                .font(.cavnarBody(16))
+                .font(.cavnar(.body))
                 .foregroundStyle(Color.cavnarInk)
                 .focused($fieldFocused)
                 .submitLabel(.go)
@@ -203,7 +203,7 @@ struct CommandSheet: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 12, weight: .semibold))
-                HomeMixedText.make(label, size: 14, weight: 600, color: .cavnarInk)
+                HomeMixedText.make(label, size: CavnarType.secondary, weight: 600, color: .cavnarInk)
             }
             .foregroundStyle(Color.cavnarEmber2)
             .padding(.horizontal, 14)
@@ -222,7 +222,7 @@ struct CommandSheet: View {
                 CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
             } else if viewModel.waiting.isEmpty && viewModel.pendingSends.isEmpty {
                 Text("Nothing waiting on you.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             } else {
                 VStack(spacing: 8) {
@@ -243,12 +243,12 @@ struct CommandSheet: View {
         let title = send.label?.isEmpty == false ? send.label! : PendingSendAttributes.plainTitle(kind: send.kind)
         return HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                HomeMixedText.make(title, size: 15, weight: 700, color: .cavnarInk)
+                HomeMixedText.make(title, size: CavnarType.body, weight: 700, color: .cavnarInk)
                 if let outcome = viewModel.rowOutcome[key] {
-                    Text(outcome).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                    Text(outcome).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk3)
                 } else if let fire = CavnarISODate.parse(send.executeAt) {
-                    (Text("Goes out in ").font(.cavnarBody(13))
-                     + Text(fire, style: .relative).font(.cavnarNumber(13, weight: 600)))
+                    (Text("Goes out in ").font(.cavnar(.caption))
+                     + Text(fire, style: .relative).font(.cavnarNumber(CavnarType.caption, weight: 600)))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -285,12 +285,12 @@ struct CommandSheet: View {
                         .frame(width: 7, height: 7)
                         .padding(.top, 6)
                     VStack(alignment: .leading, spacing: 3) {
-                        HomeMixedText.make(item.title, size: 15, weight: 700, color: .cavnarInk)
+                        HomeMixedText.make(item.title, size: CavnarType.body, weight: 700, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                         if let outcome = viewModel.rowOutcome[item.key] {
-                            Text(outcome).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                            Text(outcome).font(.cavnarBody(CavnarType.caption, weight: 600)).foregroundStyle(Color.cavnarGreen)
                         } else if let detail = item.detail {
-                            HomeMixedText.make(detail, size: 13, color: .cavnarInk3)
+                            HomeMixedText.make(detail, size: CavnarType.caption, color: .cavnarInk3)
                         }
                     }
                     Spacer(minLength: 0)
@@ -358,7 +358,7 @@ struct CommandSheet: View {
                 AccountKicker(text: "Confirm")
                 ProposalCard(proposal: proposal, viewModel: viewModel.askViewModel)
                 Button("Back to results") { viewModel.clearProposal() }
-                    .font(.cavnarBody(14, weight: 600))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 600))
                     .foregroundStyle(Color.cavnarEmber2)
                     .frame(minHeight: 44)
             }
@@ -379,7 +379,7 @@ struct CommandSheet: View {
                 }
             }
             if let error = viewModel.errorLine {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
             }
             askRow
         }
@@ -432,11 +432,11 @@ struct CommandSheet: View {
                 if busy {
                     CavnarShimmerText(text: "Preparing…")
                 } else {
-                    HomeMixedText.make(title, size: 15, weight: 600, color: tint)
+                    HomeMixedText.make(title, size: CavnarType.body, weight: 600, color: tint)
                         .lineLimit(2)
                 }
                 if let subtitle {
-                    HomeMixedText.make(subtitle, size: 12.5, color: .cavnarInk3)
+                    HomeMixedText.make(subtitle, size: CavnarType.caption, color: .cavnarInk3)
                         .lineLimit(1)
                 }
             }

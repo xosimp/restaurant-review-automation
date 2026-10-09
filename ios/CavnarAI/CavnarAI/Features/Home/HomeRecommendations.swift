@@ -27,7 +27,6 @@ struct HomeRecommendations: View {
     let recommendations: [HomeRecommendation]
     let viewModel: HomeFollowThroughViewModel
     var assignees: [HomeAssignee] = []
-    var quieter: [HomeQuietKind] = []
     var onOpenModule: (String) -> Void
     /// Something changed server-side (an answer, a restore) — reload Home.
     var onChanged: () -> Void = {}
@@ -52,13 +51,14 @@ struct HomeRecommendations: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HomeSectionHeader(kicker: "Worth your time", title: "Cavnar AI recommends")
+            Text("Cavnar AI recommends")
+                .cavnarText(.headline)
+                .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) {
                 let shown = recommendations.filter { !answered.contains($0.key) }.prefix(3)
                 if shown.isEmpty {
                     Text("Nothing to recommend yet \u{2014} that changes as your data grows.")
-                        .font(.cavnarBody(HomeType.body))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.body)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
                 }
@@ -71,13 +71,9 @@ struct HomeRecommendations: View {
             if let hidden = restorable, let onRestore {
                 restoreButton(hidden, onRestore)
             }
-            if !quieter.isEmpty {
-                quieterLine
-            }
             if let toast {
                 Text(toast)
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(Color.cavnarGreen)
+                    .cavnarText(.secondary, color: .cavnarGreen)
                     .transition(.opacity)
             }
         }
@@ -129,8 +125,8 @@ struct HomeRecommendations: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "arrow.uturn.backward").font(.system(size: 13, weight: .bold))
-                Text("Restore hidden").font(.cavnarBody(15, weight: 700))
+                Image(systemName: "arrow.uturn.backward").font(.cavnar(.caption))
+                Text("Restore hidden").font(.cavnar(.label))
             }
             .foregroundStyle(Color.cavnarEmber2)
             .frame(minHeight: 44)
@@ -138,36 +134,6 @@ struct HomeRecommendations: View {
         }
         .buttonStyle(HomeTextButtonStyle())
         .accessibilityLabel("Restore hidden: \(hidden.title)")
-    }
-
-    private var quieterLine: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Quieter: \(quieter.map(\.label).joined(separator: ", ")) — the last four went by unanswered.")
-                .font(.cavnarBody(15, weight: 500))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(quieter) { q in
-                if let back = RecMemoryLines.reviewOn(q.reviewOn) {
-                    HomeMixedText.make("\(q.label): \(back)", size: HomeType.meta, weight: 500,
-                                       color: .cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Button {
-                    Haptic.light()
-                    Task {
-                        if await viewModel.restoreKind(q.kind) {
-                            withAnimation { toast = "It will show again" }
-                            onChanged()
-                        }
-                    }
-                } label: {
-                    Text("Show \(q.label.lowercased()) again")
-                        .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
-                .buttonStyle(HomeTextButtonStyle())
-            }
-        }
     }
 
     /// Dollars at stake, timeframe, impact. The old "evidence strength" pill
@@ -217,11 +183,10 @@ struct HomeRecommendations: View {
         return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Text(String(format: "%02d", number))
-                    .font(.cavnarNumber(19, weight: 600))
-                    .foregroundStyle(Color.cavnarEmber)
+                    .cavnarText(.figureS, color: .cavnarEmber2)
                     .frame(width: 30, alignment: .leading)
                 VStack(alignment: .leading, spacing: 6) {
-                    HomeMixedText.make(rec.title, size: HomeType.line + 0.5, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(rec.title, role: .lead)
                         .fixedSize(horizontal: false, vertical: true)
                     // What another module knows against it (M3's trim
                     // guard) and what was said before about it (memory
@@ -233,7 +198,7 @@ struct HomeRecommendations: View {
                     RecMemoryNote(previous: rec.previousAnswer, delegate: rec.delegateAnswer,
                                   retest: rec.retest == true)
                     if let stake = Self.stake(rec) {
-                        HomeMixedText.make(stake, size: HomeType.action, weight: 700,
+                        HomeMixedText.make(stake, role: .label,
                                            color: .cavnarInk2, numberColor: .cavnarInk)
                             .lineLimit(2)
                     }
@@ -253,11 +218,11 @@ struct HomeRecommendations: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Text(open ? "Less" : "Details")
-                                    .font(.cavnarBody(HomeType.action, weight: 600))
+                                    .font(.cavnar(.label))
                                 Image(systemName: open ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 12, weight: .bold))
+                                    .font(.cavnar(.caption))
                             }
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(Color.cavnarInk2)
                         }
                         .buttonStyle(HomeTextButtonStyle())
                         .accessibilityHint(open ? "Hides the detail" : "Shows why, what it rests on and the other answers")
@@ -288,24 +253,24 @@ struct HomeRecommendations: View {
                                compact: true)
             }
             if rec.modelWritten == true {
-                ClaimKindTag(kind: nil, modelWritten: true)
+                Text("Written by Cavnar AI from your numbers").cavnarText(.caption)
             }
             if let why = rec.why {
-                HomeMixedText.make(why, size: HomeType.action, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(why, role: .body)
                     .fixedSize(horizontal: false, vertical: true)
             }
             let meta = Array(Self.chips(rec).dropFirst(Self.stake(rec) == nil ? 0 : 1))
             if !meta.isEmpty {
-                HomeMixedText.make(meta.joined(separator: " · "), size: HomeType.meta, weight: 600, color: .cavnarInk3)
+                HomeMixedText.make(meta.joined(separator: " · "), role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let evidence = rec.evidence {
-                HomeMixedText.make(evidence, size: HomeType.meta, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(evidence, role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let ignored = rec.ifIgnored {
-                (Text(OwnerCopy.ifIgnoredLabel).font(.cavnarBody(HomeType.meta, weight: 700)).foregroundColor(.cavnarInk2)
-                 + Text(ignored).font(.cavnarBody(HomeType.meta, weight: 500)).foregroundColor(.cavnarInk3))
+                (Text(OwnerCopy.ifIgnoredLabel).font(.cavnar(.label)).foregroundColor(.cavnarInk2)
+                 + Text(ignored).font(.cavnar(.secondary)).foregroundColor(.cavnarInk2))
                     .fixedSize(horizontal: false, vertical: true)
             }
             actions(rec, excluding: Self.primaryAnswer(rec))
@@ -328,7 +293,7 @@ struct HomeRecommendations: View {
                 }
             } label: {
                 Text(rec.action?.label ?? "Reprice")
-                    .font(.cavnarBody(HomeType.action, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarEmber2)
             }
             .buttonStyle(HomeTextButtonStyle())
@@ -342,7 +307,7 @@ struct HomeRecommendations: View {
                 }
             } label: {
                 Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
-                    .font(.cavnarBody(HomeType.action, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(viewModel.tracked.contains(rec.key)
                                      ? Color.cavnarGreen : Color.cavnarEmber2)
             }
@@ -355,7 +320,7 @@ struct HomeRecommendations: View {
                 submit(rec, kind: "done")
             } label: {
                 Text("Done")
-                    .font(.cavnarBody(HomeType.action, weight: 700))
+                    .font(.cavnar(.label))
                     .foregroundStyle(Color.cavnarEmber2)
             }
             .buttonStyle(HomeTextButtonStyle())
@@ -375,8 +340,7 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text(a.label ?? "Reprice")
-                        .font(.cavnarBody(15.5, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber2)
+                        .cavnarText(.label, color: .cavnarEmber2)
                 }
                 .buttonStyle(HomeTextButtonStyle())
             }
@@ -390,9 +354,8 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text(viewModel.tracked.contains(rec.key) ? "Measuring" : "Measure it")
-                        .font(.cavnarBody(15.5, weight: 700))
-                        .foregroundStyle(viewModel.tracked.contains(rec.key)
-                                         ? Color.cavnarGreen : Color.cavnarEmber2)
+                        .cavnarText(.label, color: viewModel.tracked.contains(rec.key)
+                                    ? Color.cavnarGreen : Color.cavnarEmber2)
                 }
                 .buttonStyle(HomeTextButtonStyle())
                 .disabled(viewModel.tracked.contains(rec.key))
@@ -404,8 +367,7 @@ struct HomeRecommendations: View {
                     onOpenModule(module)
                 } label: {
                     Text("Open \(module == "inventory" ? "Food Cost" : module.capitalized)")
-                        .font(.cavnarBody(15.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
                 }
                 .buttonStyle(HomeTextButtonStyle())
             }
@@ -417,8 +379,7 @@ struct HomeRecommendations: View {
                     RecEvidenceLog.viewed(key: rec.key, surface: "home", module: "home")
                 } label: {
                     Text("Could also be…")
-                        .font(.cavnarBody(15.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
                 }
                 .buttonStyle(HomeTextButtonStyle())
             }
@@ -443,8 +404,8 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text("Assign")
-                        .font(.cavnarBody(15, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
+                        .cavnarHitTarget()
                 }
             }
             Spacer(minLength: 0)
@@ -458,8 +419,7 @@ struct HomeRecommendations: View {
                     }
                 } label: {
                     Text(kind == "done" ? "Done" : RecAnswer.notForUs.label)
-                        .font(.cavnarBody(15, weight: 600))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.label, color: .cavnarInk2)
                 }
                 .buttonStyle(HomeTextButtonStyle())
             }
@@ -472,8 +432,7 @@ struct HomeRecommendations: View {
                 }
             } label: {
                 Text("Hide")
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.label, color: .cavnarInk2)
             }
             .buttonStyle(HomeTextButtonStyle())
             .accessibilityHint("Hides it for two weeks, everywhere Cavnar AI would say it")

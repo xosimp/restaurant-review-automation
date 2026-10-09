@@ -28,23 +28,22 @@ struct HomePolicyNoticeCard: View {
                     .background(Color.cavnarEmber.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 6) {
-                    HomeMixedText.make(notice.text, size: CavnarType.secondary, weight: 500, color: .cavnarInk)
+                    HomeMixedText.make(notice.text, role: .body, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
                         Haptic.light()
                         openURL(notice.destination)
                     } label: {
                         Text(notice.linkText)
-                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .frame(minHeight: 32, alignment: .leading)
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .frame(minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Opens the privacy policy on cavnar.ai")
                     if busy { CavnarSkeletonBar(height: 3) }
                     if let error {
-                        Text(error).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

@@ -72,14 +72,28 @@ def test_home_leads_with_the_work():
     home = _src("Features/Home/HomeView.swift")
     body = home.split("var body: some View", 1)[1]
     attention = body.index("attentionSection(summary, items: attentionItems(summary")
-    assert attention < body.index("HomeValueBand(")
-    assert attention < body.index("HomeBenchmarkStrip(")
-    assert attention < body.index("HomeLastNightCard(")
+    # The work comes before every result and comparison (they are in the
+    # closed More group since the readability round, 10/8/26).
+    assert attention < body.index("moreGroup(summary, lead: lead)")
+    assert body.index("moreGroup(summary, lead: lead)") < body.index("private func moreGroup(")
+    more = body[body.index("private func moreGroup("):]
+    assert "HomeValueBand(" in more and "HomeBenchmarkStrip(" in more
+    # Last night's report leads only before noon (#37); after noon it sits
+    # under Needs you with the brief.
+    first_night = body.index("HomeLastNightCard(")
+    assert "Self.isMorning(summary), lastNight.night != nil" in body[first_night - 200:first_night]
+    later_night = body.index("HomeLastNightCard(", first_night + 1)
+    assert attention < later_night
+    assert "!Self.isMorning(summary), lastNight.night != nil" in body[later_night - 200:later_night]
     # Every item, not the first four behind a swipe — less only the one the
     # one-thing card leads with, plus the cross-module links (parity #1/#5).
     assert "var items = summary.needsAttention" in home
     assert "return items + followThrough.linkItems" in home
     assert "items: items," in home
+    needs = _src("Features/Home/HomeNeedsYou.swift")
+    assert "CavnarMoreToggle(hiddenCount: all.count - cap" in needs
+    assert "HomeActionDeck.shownByDefault - (leadTookAttention ? 1 : 0)" in needs
+    assert "DragGesture" not in needs
     deck = _src("Features/Home/HomeActionDeck.swift")
     assert "+\\(split.hidden) more" in deck
     assert "DragGesture" not in deck

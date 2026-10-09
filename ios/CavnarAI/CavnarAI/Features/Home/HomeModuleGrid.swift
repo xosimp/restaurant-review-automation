@@ -28,7 +28,7 @@ struct KPITile: View {
             // signal for the same thing.
             GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
             Text(module.kpi?.value ?? "—")
-                .font(.cavnarNumber(26, weight: 500))
+                .font(.cavnarNumber(CavnarType.cardNumber, weight: 500))
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarNumberGlow()
                 .cavnarSensitive()
@@ -42,20 +42,20 @@ struct KPITile: View {
             // Cream, not ember, at 18 (10/8/26): ember on the tile's own
             // ember glass all but disappeared in a dim room.
             Text(module.label)
-                .font(.cavnarHeadline(18))
+                .font(.cavnar(.headline))
                 .foregroundStyle(Color.cavnarInk)
                 .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                 .multilineTextAlignment(.center)
             if let sublabel = module.kpi?.sublabel {
                 Text(OwnerCopy.displayLabel(sublabel))
-                    .font(.cavnarBody(15, weight: 500))
+                    .font(.cavnar(.body))
                     .foregroundStyle(Color.cavnarInk.opacity(0.82))
                     .multilineTextAlignment(.center)
             }
             // The status in words on a dark pill, so red or amber reads on
             // the ember tile (10/8/26).
             if let why = Self.why(module) {
-                HomeMixedText.make(why, size: 13.5, weight: 700,
+                HomeMixedText.make(why, size: CavnarType.caption, weight: 700,
                                    color: HomePulseStrip.toneColor(tone))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -186,14 +186,14 @@ struct ComingSoonModuleTile: View {
                 .grayscale(1)
                 .opacity(0.7)
             Text("—")
-                .font(.cavnarNumber(26, weight: 500))
+                .font(.cavnarNumber(CavnarType.cardNumber, weight: 500))
                 .foregroundStyle(Color.cavnarInk2)
             Text(module.label)
-                .font(.cavnarHeadline(14))
+                .font(.cavnar(.headline))
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
             Text("Coming Soon")
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)
         }

@@ -304,7 +304,11 @@ def test_ios_running_on_ai_only_over_a_live_source():
     home = _strip_swift_comments(_ios("Features", "Home", "HomeView.swift"))
     lines = [l for l in home.split("\n") if "running on AI" in l]
     assert len(lines) == 1 and "(liveSources ?? 0) > 0 ?" in lines[0]
-    assert "AllClearRow(notClearReason: OwnerCopy.allClear(" in home
+    # The all-clear is the server's verdict (OwnerCopy.allClear), drawn by
+    # Needs you since the readability round (10/8/26).
+    assert "notClearReason: OwnerCopy.allClear(" in home
+    needs = _strip_swift_comments(_ios("Features", "Home", "HomeNeedsYou.swift"))
+    assert "AllClearRow(notClearReason: notClearReason)" in needs
 
 
 def test_ios_reads_the_new_server_fields_tolerantly():

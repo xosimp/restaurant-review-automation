@@ -88,13 +88,13 @@ struct ProposalReopenSheet: View {
                             .foregroundStyle(Color.cavnarInk3)
                         if let summary = viewModel.response?.summary {
                             Text(summary)
-                                .font(.cavnarHeadline(18))
+                                .font(.cavnar(.headline))
                                 .foregroundStyle(Color.cavnarInk)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     } else {
                         Text(viewModel.errorMessage ?? "That proposal wasn\u{2019}t found.")
-                            .font(.cavnarBody(15))
+                            .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarInk2)
                     }
                 }

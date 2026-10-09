@@ -156,10 +156,10 @@ struct DataHealthSheet: View {
                         content(snap)
                     } else if let error = store.errorMessage, !store.isLoading {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button("Try again") { Task { await store.load(force: true) } }
-                                .font(.cavnarBody(14, weight: 700))
+                                .font(.cavnarBody(CavnarType.secondary, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
                                 .buttonStyle(.plain)
                         }
@@ -190,11 +190,11 @@ struct DataHealthSheet: View {
             if let pct = o?.pct {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("\(pct)%")
-                        .font(.cavnarNumber(40, weight: 600))
+                        .font(.cavnarNumber(CavnarType.heroNumber, weight: 600))
                         .foregroundStyle(tone)
                         .cavnarNumberGlow(tone)
                     Text("data health")
-                        .font(.cavnarBody(15.5, weight: 600))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 .accessibilityElement(children: .combine)
@@ -203,19 +203,19 @@ struct DataHealthSheet: View {
                     .frame(maxWidth: .infinity)
             } else if o?.isPending == true {
                 Text("Waiting for the first sync")
-                    .font(.cavnarHeadline(22))
+                    .font(.cavnar(.headline))
                     .foregroundStyle(Color.cavnarInk2)
             } else if let label = o?.label {
-                HomeMixedText.make(label, size: 22, weight: 600, color: .cavnarInk2)
+                HomeMixedText.make(label, size: CavnarType.section, weight: 600, color: .cavnarInk2)
             } else if store.snapshot == nil && store.errorMessage == nil {
                 CavnarSkeletonBar(height: 30, widthFraction: 0.4)
             }
             if let reason = o?.reason {
-                HomeMixedText.make(reason, size: 15, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(reason, size: CavnarType.body, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let worst = store.snapshot?.worstLine ?? summary?.worstLine {
-                HomeMixedText.make(worst, size: 13.5, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(worst, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -257,7 +257,7 @@ struct DataHealthSheet: View {
             AccountSection(kicker: "What it does to your recommendations") {
                 ForEach(Array(impacts.enumerated()), id: \.offset) { i, line in
                     VStack(alignment: .leading, spacing: 0) {
-                        HomeMixedText.make(line, size: 14.5, weight: 500, color: .cavnarInk2)
+                        HomeMixedText.make(line, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.vertical, 11)
                         if i < impacts.count - 1 { AccountRowDivider() }
@@ -267,7 +267,7 @@ struct DataHealthSheet: View {
         }
         if snap.sources.isEmpty && snap.notConnected.isEmpty {
             Text("No sources are connected yet. Connect your POS or Google in Account \u{2192} Connections and this fills in.")
-                .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -282,25 +282,25 @@ struct DataHealthSheet: View {
                     .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 1 }
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    HomeMixedText.make(s.displayLine, size: 14.5, weight: 600, color: .cavnarInk2)
+                    HomeMixedText.make(s.displayLine, size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let basis = s.reliability?.basis {
-                        HomeMixedText.make(basis, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(basis, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let expected = s.expectedLine {
-                        HomeMixedText.make(expected, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(expected, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = s.error {
-                        HomeMixedText.make(error, size: 12.5, weight: 500, color: .cavnarAmber)
+                        HomeMixedText.make(error, size: CavnarType.caption, weight: 500, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 6)
                 if let pct = s.displayPct {
                     Text("\(pct)%")
-                        .font(.cavnarNumber(15, weight: 600))
+                        .font(.cavnarNumber(CavnarType.body, weight: 600))
                         .foregroundStyle(tone == .cavnarInk3 ? Color.cavnarInk3 : Color.cavnarInk2)
                 }
             }
@@ -314,10 +314,10 @@ struct DataHealthSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(n.label ?? n.key)
-                    .font(.cavnarBody(14.5, weight: 700))
+                    .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarInk2)
                 if let next = n.next {
-                    HomeMixedText.make(next, size: 13, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(next, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -349,7 +349,7 @@ struct DataHealthSheet: View {
                     .accessibilityHidden(true)
             }
             if let message = store.syncMessage {
-                HomeMixedText.make(message, size: 13.5, weight: 500,
+                HomeMixedText.make(message, size: CavnarType.caption, weight: 500,
                                    color: store.syncFailed ? .cavnarRed : .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -370,7 +370,7 @@ struct ServerStatusCaption: View {
             Circle().fill(DataHealthTone.dot(status.tone))
                 .frame(width: 6, height: 6)
                 .accessibilityHidden(true)
-            HomeMixedText.make(status.line, size: 12.5, weight: 500,
+            HomeMixedText.make(status.line, size: CavnarType.caption, weight: 500,
                                color: status.isWarning ? .cavnarAmber : .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -402,7 +402,7 @@ struct DataHealthModuleBadge: View {
                         Circle().fill(DataHealthTone.dot(badge.tone))
                             .frame(width: 6, height: 6)
                             .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 1 }
-                        HomeMixedText.make(badge.text, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(badge.text, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
@@ -436,14 +436,14 @@ struct DataHealthDistrustRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Circle().fill(Color.cavnarAmber).frame(width: 7, height: 7)
                     Text(item.label ?? item.source.capitalized)
-                        .font(.cavnarBody(15.5, weight: 700))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
                 }
-                HomeMixedText.make(item.text, size: 14, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make(item.text, size: CavnarType.secondary, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 if let done {
                     Label(done, systemImage: "checkmark")
-                        .font(.cavnarBody(13.5, weight: 600))
+                        .font(.cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(Color.cavnarGreen)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -452,7 +452,7 @@ struct DataHealthDistrustRow: View {
                         Task { await verify() }
                     } label: {
                         Text("Re-verified")
-                            .font(.cavnarBody(14, weight: 700))
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
                             .foregroundStyle(Color.cavnarEmber2)
                             .frame(minHeight: 36)
                             .contentShape(Rectangle())
@@ -463,7 +463,7 @@ struct DataHealthDistrustRow: View {
                     if busy { CavnarSkeletonBar(height: 3) }
                 }
                 if let error {
-                    Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnar(.caption)).foregroundStyle(Color.cavnarRed)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

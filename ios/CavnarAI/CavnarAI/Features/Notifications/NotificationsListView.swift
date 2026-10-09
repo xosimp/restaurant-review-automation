@@ -336,6 +336,14 @@ struct NotificationsListView: View {
     /// urgent, "Everything" otherwise (density #39) — the bell used to open
     /// on the chronological feed with the urgent items mixed into the FYIs.
     @State private var urgentChoice: Bool?
+    /// What Cavnar AI is doing right now — the rotating ticker that used to
+    /// sit at the foot of Home (iOS readability round, 10/8/26, #40).
+    @State private var activity = AIActivityViewModel()
+    /// Drafts opened past their first four lines ("Show all").
+    @State private var expandedDrafts: Set<String> = []
+
+    /// A draft longer than this is clamped to four lines until opened.
+    static let draftClampChars = 220
 
     /// Urgent AND not yet handled, as on the web bell — an answered review
     /// or a resolved issue no longer opens the list on "Needs you".
@@ -402,7 +410,7 @@ struct NotificationsListView: View {
                     .padding(20)
                 } else if let error = viewModel.errorMessage {
                     VStack(spacing: 12) {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Text(error).cavnarText(.body)
                         Button("Retry") { Task { await viewModel.load() } }
                     }
                     .padding(.top, 60)
@@ -415,10 +423,19 @@ struct NotificationsListView: View {
                     .padding(.top, 40)
                 } else {
                     List {
+                        // Right now: what Cavnar AI is running, rotating; a
+                        // tap opens the feed. Nothing for an account with
+                        // nothing armed.
+                        if activity.currentLine != nil {
+                            AIActivityStrip(viewModel: activity)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
                         if let summary = Self.summaryLine(viewModel.notifications) {
-                            HomeMixedText.make(summary, size: CavnarType.body, weight: 700,
+                            HomeMixedText.make(summary, role: .label,
                                                color: hasUrgent ? .cavnarInk : .cavnarInk2,
-                                               numberColor: hasUrgent ? .cavnarRed : nil)
+                                               numberColor: hasUrgent ? .cavnarRedText : nil)
                                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
@@ -442,8 +459,7 @@ struct NotificationsListView: View {
                                 }
                             } header: {
                                 Text(day)
-                                    .font(.cavnarBody(13, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                    .cavnarText(.label, color: .cavnarInk2)
                                     .textCase(nil)
                             }
                         }
@@ -455,8 +471,7 @@ struct NotificationsListView: View {
                                 Task { await viewModel.markAllRead() }
                             } label: {
                                 Text("Mark all read")
-                                    .font(.cavnarBody(14, weight: 700))
-                                    .foregroundStyle(Color.cavnarEmber2)
+                                    .cavnarText(.label, color: .cavnarEmber2)
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .buttonStyle(.plain)
@@ -486,6 +501,7 @@ struct NotificationsListView: View {
             // — the same chrome every Account sheet uses.
             .accountSheetChrome("Notifications")
             .undoWhyDialog(Binding(get: { viewModel.askWhy }, set: { viewModel.askWhy = $0 }))
+            .task { await activity.load() }
         }
     }
 
@@ -522,11 +538,9 @@ struct NotificationsListView: View {
                             .frame(width: 6, height: 6)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.label)
-                                .font(.cavnarBody(14, weight: item.isUnread ? 700 : 600))
-                                .foregroundStyle(Color.cavnarInk)
+                                .cavnarText(item.isUnread ? .label : .body, color: .cavnarInk)
                             Text(item.relativeFiredAt)
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .cavnarText(.secondary)
                         }
                         Spacer(minLength: 8)
                     }
@@ -537,35 +551,53 @@ struct NotificationsListView: View {
 
                 if let done = viewModel.answered[item.id] {
                     Text(done)
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarGreen)
+                        .cavnarText(.label, color: .cavnarGreen)
                 } else if busy {
                     CavnarShimmerText(text: "Working…")
                 } else if let undo {
                     rowAction("Undo", tint: .cavnarRed) { Task { await viewModel.undo(item, action: undo) } }
+                } else if approve, Self.draftIsClamped(item, expanded: expandedDrafts.contains(item.id)) {
+                    // A reply is approved here only once it has been read
+                    // in full (F3-10): a long one opens first.
+                    rowAction("Read it", tint: .cavnarEmber2) { expandDraft(item) }
                 } else if approve {
                     rowAction("Approve", tint: .cavnarEmber2) { Task { await viewModel.approve(item) } }
                 } else {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.cavnarInk3.opacity(0.6))
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk3)
                 }
             }
             // The reply Approve would publish, in full, before it can be
             // approved here (F3-10).
+            // Four lines, then "Show all" — and Approve only once it is
+            // all on screen.
             if approve, let draft = item.draft {
-                Text(draft)
-                    .font(.cavnarBody(13.5))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
-                    .padding(.leading, 16)
+                let clamped = Self.draftIsClamped(item, expanded: expandedDrafts.contains(item.id))
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    Text(draft)
+                        .cavnarText(.secondary)
+                        .lineLimit(clamped ? 4 : nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if clamped {
+                        Button {
+                            Haptic.light()
+                            expandDraft(item)
+                        } label: {
+                            Text("Show all")
+                                .cavnarText(.label, color: .cavnarEmber2)
+                                .cavnarHitTarget()
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(10)
+                .background(Color.cavnarPaper2, in: RoundedRectangle(cornerRadius: CavnarRadius.control))
+                .padding(.leading, 16)
             }
             if let error = viewModel.rowError, error.id == item.id {
                 Text(error.message)
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarRed)
+                    .cavnarText(.secondary, color: .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -581,14 +613,23 @@ struct NotificationsListView: View {
         }
     }
 
+    /// True while a long draft still shows only its first four lines.
+    static func draftIsClamped(_ item: NotificationItem, expanded: Bool) -> Bool {
+        !expanded && (item.draft?.count ?? 0) > draftClampChars
+    }
+
+    private func expandDraft(_ item: NotificationItem) {
+        Haptic.light()
+        withAnimation(.easeOut(duration: 0.2)) { _ = expandedDrafts.insert(item.id) }
+    }
+
     private func rowAction(_ title: String, tint: Color, _ action: @escaping () -> Void) -> some View {
         Button {
             Haptic.light()
             action()
         } label: {
             Text(title)
-                .font(.cavnarBody(13.5, weight: 700))
-                .foregroundStyle(tint)
+                .cavnarText(.label, color: tint == .cavnarRed ? .cavnarRedText : tint)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())

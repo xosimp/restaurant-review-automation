@@ -14,9 +14,23 @@ import Observation
 /// Reached from Account → Recommendations and from Home's "What Cavnar AI
 /// has been worth". Built from the Account identity-card kit.
 struct RecommendationHistoryView: View {
+    /// The kinds Cavnar AI holds back on this restaurant's own record,
+    /// each asked "Keep suggesting it?" (M4) — moved here from Home (iOS
+    /// readability round, 10/8/26, #96). Empty from Account.
+    var kindHolds: [HomeKindHold] = []
+    /// Kinds that went quieter after the last four passed unanswered, each
+    /// with "Show … again" (home_brief `quieter`) — also moved from Home.
+    var quieter: [HomeQuietKind] = []
+    /// "Show … again": POST the kind back (HomeFollowThroughViewModel).
+    var onRestoreKind: ((String) async -> Bool)? = nil
+
     @State private var viewModel = RecommendationHistoryViewModel()
     @State private var confirmingStop: RecOutcome?
     @State private var showingStopConfirm = false
+    /// "Most effective" and the timeline wait behind "Full record".
+    @State private var showingFullRecord = false
+    @State private var restoredNote: String?
+    @State private var restoredKinds: Set<String> = []
 
     var body: some View {
         NavigationStack {
@@ -30,9 +44,8 @@ struct RecommendationHistoryView: View {
                             .background(Color.cavnarEmber.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     } subtitle: {
-                        // The web record's words (parity audit #6).
-                        Text("What Cavnar AI suggested, what you did with it, and what was measured afterwards. "
-                             + "Anything left unanswered counts as not acted on.")
+                        // One sentence (parity audit #6's words, shortened).
+                        Text("What Cavnar AI suggested, what you did, and what was measured after.")
                     }
 
                     CavnarSegmentedControl(selection: $viewModel.window,
@@ -49,11 +62,35 @@ struct RecommendationHistoryView: View {
                     }
 
                     followedSection
-                    mostEffectiveSection
-                    timelineSection
+                    kindHoldSection
+                    quieterSection
+
+                    // The long record waits behind one row (L2).
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.22)) { showingFullRecord.toggle() }
+                    } label: {
+                        HStack(spacing: CavnarSpace.xs) {
+                            Text(showingFullRecord ? "Hide the full record" : "Full record")
+                                .cavnarText(.label, color: .cavnarEmber2)
+                            Image(systemName: "chevron.down")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarEmber2)
+                                .rotationEffect(.degrees(showingFullRecord ? 180 : 0))
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Shows what worked best and every recommendation, newest first")
+                    if showingFullRecord {
+                        mostEffectiveSection
+                        timelineSection
+                    }
 
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -77,6 +114,61 @@ struct RecommendationHistoryView: View {
             } message: { _ in
                 Text("For a change you reversed, or one that no longer applies. Nothing from it is counted.")
             }
+        }
+    }
+
+    // MARK: - Kinds on hold and quieter kinds (from Home, #96)
+
+    @ViewBuilder
+    private var kindHoldSection: some View {
+        if !kindHolds.isEmpty {
+            HomeKindHolds(holds: kindHolds)
+        }
+    }
+
+    @ViewBuilder
+    private var quieterSection: some View {
+        let shown = quieter.filter { !restoredKinds.contains($0.kind) }
+        if !shown.isEmpty {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                Text("Quieter")
+                    .cavnarText(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Text("The last four of these went by unanswered, so Cavnar AI suggests them less.")
+                    .cavnarText(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(shown) { q in
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        Text(q.label).cavnarText(.label)
+                        if let back = RecMemoryLines.reviewOn(q.reviewOn) {
+                            CavnarMixedText(back, role: .secondary)
+                        }
+                        if let onRestoreKind {
+                            Button {
+                                Haptic.light()
+                                Task {
+                                    if await onRestoreKind(q.kind) {
+                                        withAnimation {
+                                            restoredKinds.insert(q.kind)
+                                            restoredNote = "\(q.label) will show again"
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Text("Show \(q.label.lowercased()) again")
+                                    .cavnarText(.label, color: .cavnarEmber2)
+                                    .cavnarHitTarget()
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, CavnarSpace.xxs)
+                }
+                if let restoredNote {
+                    Text(restoredNote).cavnarText(.secondary, color: .cavnarGreen)
+                }
+            }
+            .cavnarCard()
         }
     }
 
@@ -116,7 +208,7 @@ struct RecommendationHistoryView: View {
                 }
                 // Each tile's basis, in full — the tiles are too narrow for it.
                 ForEach(tiles, id: \.label) { tile in
-                    HomeMixedText.make(tile.label + ": " + tile.detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(tile.label + ": " + tile.detail, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -142,7 +234,7 @@ struct RecommendationHistoryView: View {
                     HomeMixedText.make(
                         "Ignored means it expired unanswered after 14 days \u{2014} it counts against the rate. "
                             + "A rate shows once \(summary.minSettled ?? 10) are settled.",
-                        size: 13, weight: 500, color: .cavnarInk3)
+                        size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 8)
                         .padding(.bottom, 6)
@@ -158,19 +250,19 @@ struct RecommendationHistoryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(RecSummaryFormat.moduleLabel(key))
-                        .font(.cavnarBody(16, weight: 600))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
                     Spacer(minLength: 8)
                     Text(RecSummaryFormat.rate(m))
-                        .font(m.enough ? .cavnarNumber(17, weight: 600) : .cavnarBody(13.5, weight: 600))
+                        .font(m.enough ? .cavnarNumber(CavnarType.emphasis, weight: 600) : .cavnarBody(CavnarType.caption, weight: 600))
                         .foregroundStyle(m.enough ? Color.cavnarInk : Color.cavnarInk3)
                 }
-                HomeMixedText.make(RecSummaryFormat.counts(m), size: 13.5, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(RecSummaryFormat.counts(m), size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 if let range = RecSummaryFormat.range(m) {
-                    HomeMixedText.make(range, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(range, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                 } else if let why = RecSummaryFormat.notEnoughDetail(m, minimum: minimum) {
-                    HomeMixedText.make(why, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(why, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                 }
             }
             .padding(.vertical, 10)
@@ -186,7 +278,7 @@ struct RecommendationHistoryView: View {
             if let e = viewModel.summary?.mostEffective, let line = RecSummaryFormat.mostEffectiveLine(e) {
                 HStack(alignment: .top, spacing: 12) {
                     Circle().fill(Color.cavnarGreen).frame(width: 8, height: 8).padding(.top, 7)
-                    HomeMixedText.make(line, size: 15, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(line, size: CavnarType.body, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
@@ -238,7 +330,7 @@ struct RecommendationHistoryView: View {
                                 Text("Show older ones")
                             }
                         }
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(CavnarType.secondary, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
@@ -247,7 +339,7 @@ struct RecommendationHistoryView: View {
                     .disabled(viewModel.isLoadingMore)
                 }
                 if let caveat = viewModel.caveat {
-                    CavnarCaveat(title: "Before and after, not proof", detail: caveat)
+                    CavnarCaveat(title: "Measured before and after \u{2014} not proof it caused it", detail: caveat)
                         .padding(.vertical, 10)
                 }
             }
@@ -255,7 +347,7 @@ struct RecommendationHistoryView: View {
     }
 
     private func emptyLine(_ text: String) -> some View {
-        HomeMixedText.make(text, size: 14, weight: 500, color: .cavnarInk3)
+        HomeMixedText.make(text, size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 10)
     }
@@ -274,9 +366,9 @@ private struct RecTimelineRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HomeMixedText.make(item.title, size: 15, weight: 600, color: .cavnarInk)
+            HomeMixedText.make(item.title, size: CavnarType.body, weight: 600, color: .cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
-            HomeMixedText.make(item.metaLine(), size: 12.5, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make(item.metaLine(), size: CavnarType.caption, weight: 500, color: .cavnarInk3)
             AccountFlowLayout(spacing: 6) {
                 AccountChip(text: item.answerChip(), muted: !item.wasTaken)
                 if outcome?.validated == true {
@@ -284,11 +376,11 @@ private struct RecTimelineRow: View {
                 }
             }
             if let why = item.reasonLine {
-                HomeMixedText.make("Why: " + why, size: 13, weight: 500, color: .cavnarInk2)
+                HomeMixedText.make("Why: " + why, size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let made = item.madeTheChangeLine() {
-                HomeMixedText.make(made, size: 13, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(made, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
             }
             if let outcome {
                 outcomeBlock(outcome)
@@ -304,14 +396,12 @@ private struct RecTimelineRow: View {
             if let line = o.measuringLine { RecTrackerLine(text: line) }
             if let interim = o.interimLine {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text("PARTIAL")
-                        .font(.cavnarBody(10, weight: 700))
-                        .tracking(0.9)
-                        .foregroundStyle(Color.cavnarAmber)
+                    Text("Partial")
+                        .cavnarText(.tag, color: .cavnarAmber)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.cavnarAmberBg, in: Capsule())
-                    HomeMixedText.make(interim, size: 13, weight: 500, color: .cavnarInk2)
+                    HomeMixedText.make(interim, size: CavnarType.caption, weight: 500, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityElement(children: .combine)
@@ -324,8 +414,8 @@ private struct RecTimelineRow: View {
                     CavnarShimmerText(text: "Stopping", color: Color.cavnarRed)
                 } else {
                     Text("Stop measuring")
-                        .font(.cavnarBody(13, weight: 600))
-                        .foregroundStyle(Color.cavnarRed)
+                        .cavnarText(.label, color: .cavnarRedText)
+                        .cavnarHitTarget()
                 }
             }
             .buttonStyle(.plain)
@@ -335,26 +425,26 @@ private struct RecTimelineRow: View {
             if let result = o.resultLine ?? o.summary {
                 HStack(alignment: .top, spacing: 10) {
                     Circle().fill(o.tone).frame(width: 7, height: 7).padding(.top, 6)
-                    HomeMixedText.make(result, size: 13.5, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make(result, size: CavnarType.caption, weight: 600, color: .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let label = o.attributionLabel, !label.isEmpty {
-                HomeMixedText.make(label, size: 13, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(label, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             // Not counted / the grade / what it was compared with (F1–F3).
             ForEach(o.measurementNotes, id: \.self) { note in
-                HomeMixedText.make(note + ".", size: 13, weight: 500,
+                HomeMixedText.make(note + ".", size: CavnarType.caption, weight: 500,
                                    color: note.hasPrefix("Not counted") ? .cavnarAmber : .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let other = o.otherChangesLine {
-                HomeMixedText.make(other, size: 13, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(other, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let recheck = o.recheckLine {
-                HomeMixedText.make(recheck, size: 13, weight: 500,
+                HomeMixedText.make(recheck, size: CavnarType.caption, weight: 500,
                                    color: o.recheckVerdict == "held" ? .cavnarGreen : .cavnarInk3)
             }
             if showsCheckIn, RecCheckIn.isDue(o) {
@@ -362,7 +452,7 @@ private struct RecTimelineRow: View {
                     .padding(.top, 4)
             }
         } else if o.status == "abandoned" {
-            HomeMixedText.make("Stopped measuring", size: 13, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make("Stopped measuring", size: CavnarType.caption, weight: 500, color: .cavnarInk3)
         }
     }
 }

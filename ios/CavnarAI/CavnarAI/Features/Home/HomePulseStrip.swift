@@ -127,7 +127,7 @@ private struct DataHealthChip: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(stale ? Color.cavnarAmber : Color.cavnarInk3)
                 .accessibilityHidden(true)
-            HomeMixedText.make(label, size: 12, weight: 700, color: .cavnarInk2)
+            HomeMixedText.make(label, size: CavnarType.caption, weight: 700, color: .cavnarInk2)
                 .lineLimit(1)
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .bold))
@@ -171,10 +171,10 @@ private struct PulseChip: View {
             .frame(width: 10, height: 10)
 
             Text(pulse.value)
-                .font(.cavnarNumber(13, weight: 700))
+                .font(.cavnarNumber(CavnarType.caption, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarSensitive()
-            HomeMixedText.make(OwnerCopy.displayLabel(pulse.label), size: 12, weight: 700, color: .cavnarInk2)
+            HomeMixedText.make(OwnerCopy.displayLabel(pulse.label), size: CavnarType.caption, weight: 700, color: .cavnarInk2)
                 .lineLimit(1)
             if stale {
                 Image(systemName: "clock.badge.exclamationmark")
@@ -193,5 +193,174 @@ private struct PulseChip: View {
         )
         .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.28), lineWidth: 1))
         .shadow(color: Color.cavnarEmber.opacity(0.14), radius: 9, x: 0, y: 0)
+    }
+}
+
+// MARK: - The fixed three-up glance (iOS readability round, 10/8/26, #94)
+
+/// Home's glance under the hero: three fixed tiles — net last night (else
+/// replies), labor %, rating — at a readable figure size, in place of the
+/// horizontally scrolling pulse strip; and under them, data health as a
+/// dot and words ("All data current", "1 source stale") rather than
+/// "Data 87%". A tap on a tile opens its report or module; a tap on the
+/// health line opens Data health. A missing measurement is "—", never 0.
+struct HomeKPIRow: View {
+    enum Target: Equatable {
+        case report(String)
+        case module(String)
+    }
+
+    struct Tile: Identifiable, Equatable {
+        let id: String
+        let value: String
+        let label: String
+        var detail: String? = nil
+        var tone: Color = .cavnarInk
+        let target: Target
+    }
+
+    struct Health: Equatable {
+        let text: String
+        let tone: Color
+    }
+
+    let tiles: [Tile]
+    var health: Health? = nil
+    var onOpen: (Target) -> Void
+    var onOpenDataHealth: () -> Void = {}
+
+    var body: some View {
+        if !tiles.isEmpty {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                HStack(alignment: .top, spacing: CavnarSpace.xs) {
+                    ForEach(tiles) { tile in
+                        Button {
+                            Haptic.light()
+                            onOpen(tile.target)
+                        } label: {
+                            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                                Text(tile.value)
+                                    .cavnarText(.figureM, color: tile.tone)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                    .cavnarSensitive()
+                                Text(tile.label)
+                                    .cavnarText(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                if let detail = tile.detail {
+                                    CavnarMixedText(detail, role: .caption, color: .cavnarInk2)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+                            .padding(CavnarSpace.s)
+                            .background(Color.cavnarPaper2.opacity(0.85),
+                                        in: RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                                .strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityHint("Opens it")
+                    }
+                }
+                if let health {
+                    Button {
+                        Haptic.light()
+                        onOpenDataHealth()
+                    } label: {
+                        HStack(spacing: CavnarSpace.xs) {
+                            Circle().fill(health.tone).frame(width: 8, height: 8)
+                                .accessibilityHidden(true)
+                            CavnarMixedText(health.text, role: .secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .accessibilityHidden(true)
+                            Spacer(minLength: 0)
+                        }
+                        .cavnarHitTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens data health")
+                }
+            }
+        }
+    }
+
+    /// The three tiles, from what Home already read: the latest report's
+    /// net (Daily Sales Report — else the reviews reply count), the labor
+    /// chip's figure and tone, and the newest week's rating.
+    static func tiles(modules: [ModuleSummary], charts: HomeCharts?, night: DSRSummary?,
+                      nightKicker: String?) -> [Tile] {
+        var out: [Tile] = []
+        var pulses: [String: ModulePulse] = [:]
+        for m in modules where m.isAvailable {
+            if let p = m.pulse, pulses[m.key] == nil { pulses[m.key] = p }
+        }
+        let replies: Tile? = pulses["reviews"].map { reviews in
+            Tile(id: "reviews", value: reviews.value, label: "Replied",
+                 detail: OwnerCopy.displayLabel(reviews.label),
+                 tone: Self.tone(reviews.tone), target: .module("reviews"))
+        }
+        if let night {
+            out.append(Tile(id: "net", value: night.net.map { DSRFormat.money($0) } ?? "\u{2014}",
+                            label: "Net, " + (nightKicker ?? "last night").lowercased(),
+                            detail: night.vsYesterdayPct.map { DSRFormat.signedPct($0) + " vs the night before" },
+                            tone: .cavnarInk, target: .report(night.businessDate)))
+        } else if let replies {
+            out.append(replies)
+        }
+        if let labor = pulses["labor"] {
+            let detail = labor.label.replacingOccurrences(of: "labor \u{00B7} ", with: "")
+            out.append(Tile(id: "labor", value: labor.value, label: "Labor",
+                            detail: detail.isEmpty ? nil : detail,
+                            tone: Self.tone(labor.tone), target: .module("labor")))
+        }
+        if let week = charts?.rating.last(where: { $0.total > 0 }) {
+            out.append(Tile(id: "rating", value: String(format: "%.1f\u{2605}", week.avg), label: "Rating",
+                            detail: "\(week.total) review\(week.total == 1 ? "" : "s"), week of \(week.label)",
+                            tone: .cavnarInk, target: .module("reviews")))
+        } else if night != nil, let replies {
+            out.append(replies)
+        }
+        return out
+    }
+
+    /// The figure's status colour: red over the named threshold, amber
+    /// watch, green good, ink when there is no judgement to make (ember is
+    /// never a status).
+    static func tone(_ tone: String?) -> Color {
+        switch tone {
+        case "bad": return .cavnarRed
+        case "good": return .cavnarGreen
+        case "warn": return .cavnarAmber
+        default: return .cavnarInk
+        }
+    }
+
+    /// Data health in words: "Waiting for first sync", "1 source stale",
+    /// "2 sources catching up", "All data current" — or "Couldn't check
+    /// your data". Nil when the server sent nothing to state.
+    static func healthLine(health: HomeDataHealth?, unavailable: Bool,
+                           entries: [HomeFreshnessEntry]) -> Health? {
+        if health?.overall?.isPending == true { return Health(text: "Waiting for first sync", tone: .cavnarInk3) }
+        let stale = entries.filter { $0.state == .stale || $0.state == .disconnected }.count
+        if stale > 0 { return Health(text: "\(stale) source\(stale == 1 ? "" : "s") stale", tone: .cavnarAmber) }
+        let aging = entries.filter { $0.state == .aging }.count
+        if aging > 0 {
+            return Health(text: "\(aging) source\(aging == 1 ? "" : "s") catching up", tone: .cavnarAmber)
+        }
+        if entries.contains(where: { $0.state == .current }) {
+            return Health(text: "All data current", tone: .cavnarGreen)
+        }
+        if let pct = health?.overall?.pct {
+            return pct >= 90 ? Health(text: "All data current", tone: .cavnarGreen)
+                             : Health(text: "Some data is behind", tone: .cavnarAmber)
+        }
+        if unavailable { return Health(text: "Couldn\u{2019}t check your data", tone: .cavnarAmber) }
+        return nil
     }
 }

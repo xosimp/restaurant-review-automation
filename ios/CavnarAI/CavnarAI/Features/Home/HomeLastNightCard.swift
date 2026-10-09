@@ -8,15 +8,15 @@ import Observation
 /// restaurant that has never had one — Home doesn't carry an empty card
 /// for a feature a location doesn't run.
 struct HomeLastNightCard: View {
+    /// HomeView's — one read feeds this card and the glance row's net tile.
+    /// HomeView reads it again with every Home refresh (pull, foreground, a
+    /// location switch), and not before the first one, the same rhythm as
+    /// HomeFollowThrough.
+    let viewModel: HomeLastNightViewModel
     var open: (DailyReportRoute) -> Void
-    /// When /mobile/api/home last answered — this reads again with every
-    /// Home refresh (pull, foreground, a location switch), and not before
-    /// the first one, the same rhythm as HomeFollowThrough.
-    var homeLoadedAt: Date?
     /// The restaurant's own clock from Home (`local_now`, ISO) — the
     /// fallback for "tonight" when the report list doesn't carry it.
     var localNow: String? = nil
-    @State private var viewModel = HomeLastNightViewModel()
 
     var body: some View {
         Group {
@@ -28,13 +28,7 @@ struct HomeLastNightCard: View {
             case .ready(let night, let report, let tonight):
                 ready(night, report, gap: LastNightGap.days(from: night.businessDate,
                                                             to: tonight ?? localNow))
-                    .padding(.horizontal, 20)
-                    .padding(.top, 30)
             }
-        }
-        .task(id: homeLoadedAt) {
-            guard homeLoadedAt != nil else { return }
-            await viewModel.load()
         }
     }
 
@@ -65,15 +59,14 @@ struct HomeLastNightCard: View {
                 .frame(width: 9, height: 9)
                 .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 1 }
             Text(v.label)
-                .font(.cavnarBody(CavnarType.body, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+                .cavnarText(.label)
             if let overall = v.overall {
-                (Text("\(overall)").font(.cavnarNumber(CavnarType.body, weight: 700)).foregroundColor(.cavnarInk)
-                 + Text("/100").font(.cavnarNumber(CavnarType.caption)).foregroundColor(.cavnarInk3))
+                (Text("\(overall)").font(.cavnar(.figureS)).foregroundColor(.cavnarInk)
+                 + Text("/100").font(.cavnar(.caption)).foregroundColor(.cavnarInk2))
             }
             if let vs = vsBudget {
                 Text("\(vs >= 0 ? "+" : "\u{2212}")\(DSRFormat.money(abs(vs))) vs budget")
-                    .font(.cavnarNumber(CavnarType.caption, weight: 600))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(vs >= 0 ? Color.cavnarGreen : Color.cavnarAmber)
                     .cavnarSensitive()
                     .lineLimit(1)
@@ -89,13 +82,19 @@ struct HomeLastNightCard: View {
         let summary = night.lead ?? report?.narrative?.executiveSummary?.text
         let sales = report?.facts.blocks["sales"]
         return VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: LastNightGap.kicker(gap: gap), title: "Daily report", trailing: night.displayDate)
+            // One header, no kicker above it: "Last night · 10/7/26".
+            HStack(alignment: .firstTextBaseline) {
+                Text(LastNightGap.kicker(gap: gap))
+                    .cavnarText(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: CavnarSpace.xs)
+                Text(night.displayDate).cavnarText(.secondary)
+            }
             // The latest report is older than last night: say the night
             // that's missing, so an old report never reads as last night's.
             if LastNightGap.lastNightMissing(gap: gap) {
                 Text(LastNightGap.missingLine)
-                    .font(.cavnarBody(13.5, weight: 600))
-                    .foregroundStyle(Color.cavnarAmber)
+                    .cavnarText(.secondary, color: .cavnarAmber)
                     .padding(.leading, 4)
             }
             Button {
@@ -107,15 +106,14 @@ struct HomeLastNightCard: View {
                         if let net = (sales?.isReady == true ? sales?.metric("net") : nil) ?? night.net {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(DSRFormat.money(net))
-                                    .font(.cavnarNumber(30, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk)
+                                    .cavnarText(.figureL)
                                     .cavnarSensitive()
                                 if let vs = sales?.metric("vs_yesterday_pct") ?? night.vsYesterdayPct {
-                                    (Text(DSRFormat.signedPct(vs)).font(.cavnarNumber(13, weight: 700))
+                                    (Text(DSRFormat.signedPct(vs)).font(.cavnar(.figureS))
                                         .foregroundStyle(DSRFormat.tone(vs))
-                                     + Text(" net vs yesterday").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3))
+                                     + Text(" net vs yesterday").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2))
                                 } else {
-                                    Text("net sales").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                    Text("net sales").cavnarText(.secondary)
                                 }
                             }
                         }
@@ -131,29 +129,29 @@ struct HomeLastNightCard: View {
                         verdictRow(v, vsBudget: night.vsBudget)
                     }
                     if let summary {
-                        HomeMixedText.make(summary, size: CavnarType.secondary, color: .cavnarInk2)
+                        HomeMixedText.make(summary, role: .body)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     } else if phase == .running {
                         Text(report?.checklist?.statusLabel ?? "The report is being built.")
-                            .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                     }
                     // "Watch:" the night's first risk, as the web card has it.
                     if phase != .running, let risk = night.firstRisk, !risk.isEmpty {
-                        (Text("Watch: ").font(.cavnarBody(13, weight: 700)).foregroundColor(.cavnarInk2)
-                         + HomeMixedText.make(risk, size: 13, color: .cavnarInk2))
+                        (Text("Watch: ").font(.cavnar(.label)).foregroundColor(.cavnarInk2)
+                         + HomeMixedText.make(risk, role: .secondary))
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
                     if !night.missing.isEmpty {
                         HomeMixedText.make(night.missing.count == 1 ? night.missing[0]
                                            : "\(night.missing.count) things still missing",
-                                           size: 12.5, color: .cavnarAmber)
+                                           role: .secondary, color: .cavnarAmber)
                             .lineLimit(2)
                     }
                     HStack(spacing: 6) {
-                        Text("Read the report").font(.cavnarBody(13.5, weight: 700))
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
+                        Text("Read the report").font(.cavnar(.label))
+                        Image(systemName: "chevron.right").font(.cavnar(.caption))
                     }
                     .foregroundStyle(Color.cavnarEmber2)
                 }
@@ -168,8 +166,8 @@ struct HomeLastNightCard: View {
                 open(.list)
             } label: {
                 Text("All nights")
-                    .font(.cavnarBody(13, weight: 700))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.label, color: .cavnarInk2)
+                    .cavnarHitTarget()
             }
             .buttonStyle(.plain)
             .padding(.leading, 4)
@@ -190,6 +188,19 @@ final class HomeLastNightViewModel {
 
     private(set) var state: State = .loading
     private let client: APIClient
+
+    /// The night the card shows, when there is one — and the glance row's
+    /// net tile reads the same.
+    var night: DSRSummary? {
+        if case .ready(let n, _, _) = state { return n }
+        return nil
+    }
+
+    /// "Tonight" / "Last night" / "Latest report", on the restaurant's clock.
+    func kicker(localNow: String?) -> String? {
+        guard case .ready(let n, _, let tonight) = state else { return nil }
+        return LastNightGap.kicker(gap: LastNightGap.days(from: n.businessDate, to: tonight ?? localNow))
+    }
 
     init(client: APIClient = .shared) { self.client = client }
 

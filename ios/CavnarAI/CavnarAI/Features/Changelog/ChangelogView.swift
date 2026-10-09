@@ -32,7 +32,7 @@ struct ChangelogView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    Text(error).cavnarText(.body)
                     Button("Retry") { Task { await viewModel.load() } }
                 }
             } else {
@@ -41,23 +41,20 @@ struct ChangelogView: View {
                         ForEach(viewModel.entries) { entry in
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(entry.title).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk)
+                                    Text(entry.title).cavnarText(.label)
                                     Spacer()
                                     if let tag = entry.tag {
-                                        Text(tag.uppercased())
-                                            .font(.cavnarBody(13.5, weight: 700))
-                                            .foregroundStyle(Color.cavnarEmber)
+                                        CavnarKicker(tag)
                                     }
                                 }
                                 // When it shipped, M/D/YY — the web list's
                                 // date beside its tag (parity audit #11).
                                 if let date = entry.displayDate {
                                     Text(date)
-                                        .font(.cavnarNumber(12.5, weight: 600))
-                                        .foregroundStyle(Color.cavnarInk3)
+                                        .cavnarText(.caption)
                                 }
                                 if let body = entry.body, !body.isEmpty {
-                                    Text(body).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                                    Text(body).cavnarText(.body)
                                 }
                             }
                             .cavnarCard()

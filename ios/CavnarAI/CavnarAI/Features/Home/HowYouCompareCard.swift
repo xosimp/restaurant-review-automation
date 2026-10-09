@@ -140,26 +140,26 @@ struct HowYouCompareCard: View {
     private func content(_ card: BenchmarkCard) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("HOW YOU COMPARE")
-                .font(.cavnarBody(13.5, weight: 700))
+                .font(.cavnarBody(CavnarType.caption, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             if let who = card.who, let text = who.text {
-                HomeMixedText.make(text, size: 15.5, weight: 600, color: .cavnarInk2)
+                HomeMixedText.make(text, size: CavnarType.body, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 if let sub = who.subline {
-                    HomeMixedText.make(sub, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(sub, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                 }
             }
             if let s = card.strength { strengthLine(s) }
             if let b = card.belowMinimum, let text = b.text {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(text)
-                        .font(.cavnarBody(13.5, weight: 500))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let why = b.whyNot {
                         Text("Why: " + why)
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -174,7 +174,7 @@ struct HowYouCompareCard: View {
             if card.rows.isEmpty {
                 if let empty = card.empty {
                     Text(empty)
-                        .font(.cavnarBody(14))
+                        .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -187,7 +187,7 @@ struct HowYouCompareCard: View {
                 }
                 if let n = card.unmeasured, n > 0 {
                     Text("\(n) more not measured yet")
-                        .font(.cavnarBody(12.5))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -206,20 +206,18 @@ struct HowYouCompareCard: View {
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             ConfidenceMeter(fraction: ConfidenceDisplay.fraction(s.pct), tone: tone)
                 .alignmentGuide(.firstTextBaseline) { dim in dim[.bottom] + 1 }
-            (HomeMixedText.make(s.lineLabel ?? "", size: 12.5, weight: 700, color: tone.color)
-             + (s.reason.map { HomeMixedText.make(" \u{2014} " + $0, size: 12.5, weight: 500, color: .cavnarInk3) }
+            (HomeMixedText.make(ComparisonStrengthSheet.matchLine(s) ?? "", role: .label, color: tone.color)
+             + (s.reason.map { HomeMixedText.make(" \u{2014} " + $0, role: .secondary) }
                 ?? Text(verbatim: "")))
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("\(s.pct ?? 0) percent comparison strength. \(s.reason ?? "")")
+                .accessibilityLabel("How close the match is: \(s.pct ?? 0) percent. \(s.reason ?? "")")
             Button {
                 Haptic.light()
                 showingWhy = true
             } label: {
                 Text("Why?")
-                    .font(.cavnarBody(12.5, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
+                    .cavnarText(.label, color: .cavnarEmber2)
+                    .cavnarHitTarget()
             }
             .buttonStyle(.plain)
             .accessibilityHint("Shows what this comparison rests on")
@@ -240,13 +238,13 @@ struct BenchmarkProfileAction: View {
         VStack(alignment: .leading, spacing: 3) {
             if let s = action.suggestion {
                 Text(s)
-                    .font(.cavnarBody(12.5, weight: 600))
+                    .font(.cavnarBody(CavnarType.caption, weight: 600))
                     .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if action.canEdit == false {
                 Text("The account owner can confirm it in Account.")
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
             } else {
                 Button {
@@ -254,7 +252,7 @@ struct BenchmarkProfileAction: View {
                     onOpen()
                 } label: {
                     Text((action.label ?? "Confirm your profile") + " \u{2192}")
-                        .font(.cavnarBody(12.5, weight: 700))
+                        .font(.cavnarBody(CavnarType.caption, weight: 700))
                         .foregroundStyle(Color.cavnarEmber2)
                         .padding(.vertical, 4)
                         .contentShape(Rectangle())
@@ -288,16 +286,16 @@ struct HowYouCompareRow: View {
                 HomeMixedText.make(row.headline, size: compact ? 13.5 : 14.5, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                 if !compact, let detail = row.detail {
-                    HomeMixedText.make(detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(detail, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if compact, showsTag, let tag = row.tag {
-                    HomeMixedText.make(tag, size: 12, weight: 500, color: .cavnarInk3)
+                    HomeMixedText.make(tag, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !compact, let note = row.note {
                     Text(note)
-                        .font(.cavnarBody(12.5))
+                        .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -309,10 +307,8 @@ struct HowYouCompareRow: View {
                         onOpenModule(module)
                     } label: {
                         Text("Open \u{2192}")
-                            .font(.cavnarBody(12.5, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber2)
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
+                            .cavnarText(.label, color: .cavnarEmber2)
+                            .cavnarHitTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open \(row.label)")
@@ -334,6 +330,12 @@ struct HowYouCompareRow: View {
 struct ComparisonStrengthSheet: View {
     let strength: BenchmarkStrength
 
+    /// "How close the match is: 72%" — the plain words for the comparison
+    /// strength %, never "comparison strength".
+    static func matchLine(_ s: BenchmarkStrength) -> String? {
+        s.pct.map { "How close the match is: \($0)%" }
+    }
+
     var body: some View {
         let tone = ConfidenceDisplay.tone(pct: strength.pct)
         let rows = strength.displayRows
@@ -341,30 +343,29 @@ struct ComparisonStrengthSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 10) {
-                        AccountKicker(text: "How strong is this comparison")
+                        CavnarKicker("How close the match is")
                         if let meaning = strength.meaning {
                             Text(meaning + ".")
-                                .font(.cavnarBody(13.5, weight: 500))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if let pct = strength.pct {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text("\(pct)%")
-                                    .font(.cavnarNumber(40, weight: 600))
+                                    .font(.cavnarNumber(CavnarType.heroNumber, weight: 600))
                                     .foregroundStyle(tone.color)
                                     .cavnarNumberGlow(tone.color)
-                                Text("comparison strength")
-                                    .font(.cavnarBody(15.5, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk3)
+                                Text("match")
+                                    .cavnarText(.body)
                             }
                             .accessibilityElement(children: .combine)
-                            .accessibilityLabel("\(pct) percent comparison strength")
+                            .accessibilityLabel("\(pct) percent match")
                         }
                         ConfidenceMeter(fraction: ConfidenceDisplay.fraction(strength.pct), tone: tone, width: nil, height: 8)
                             .frame(maxWidth: .infinity)
                         if let reason = strength.reason {
-                            HomeMixedText.make(reason, size: 15, weight: 500, color: .cavnarInk2)
+                            HomeMixedText.make(reason, size: CavnarType.body, weight: 500, color: .cavnarInk2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -374,13 +375,13 @@ struct ComparisonStrengthSheet: View {
                         }
                     }
                     if let footer = strength.footer {
-                        HomeMixedText.make(footer, size: 12.5, weight: 500, color: .cavnarInk3)
+                        HomeMixedText.make(footer, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(20)
             }
-            .accountSheetChrome("Comparison strength")
+            .accountSheetChrome("How close the match is")
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -400,15 +401,35 @@ struct HomeBenchmarkStrip: View {
     @State private var store = BenchmarkCardStore.shared
     @State private var showingProfile = false
     @State private var profileCanEdit = true
+    @State private var showingMatch = false
 
     var body: some View {
         Group {
             if let card = store.card(for: "home"), card.ok, !card.rows.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        HomeMixedText.make(Self.kicker(card), size: 11, weight: 700, color: .cavnarInk3,
-                                           numberColor: .cavnarInk2)
-                            .tracking(1.1)
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    // "Vs. similar casual Italian" — who it is compared to,
+                    // as the title (inside Results, #96), and how close the
+                    // match is as a % chip that opens what it rests on.
+                    HStack(alignment: .center, spacing: CavnarSpace.xs) {
+                        CavnarMixedText(Self.title(card), role: .label)
+                        Spacer(minLength: CavnarSpace.xs)
+                        if let s = card.strength, let pct = s.pct {
+                            Button {
+                                Haptic.light()
+                                showingMatch = true
+                            } label: {
+                                Text("\(pct)% match")
+                                    .cavnarText(.label, color: ConfidenceDisplay.tone(pct: pct).color)
+                                    .padding(.horizontal, CavnarSpace.s)
+                                    .frame(minHeight: 32)
+                                    .background(Capsule().fill(Color.cavnarPaper2))
+                                    .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                                    .cavnarHitTarget()
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("How close the match is: \(pct) percent")
+                            .accessibilityHint("Shows what the comparison rests on")
+                        }
                     }
                     VStack(alignment: .leading, spacing: 0) {
                         // Rows from different groups each name their own
@@ -420,7 +441,7 @@ struct HomeBenchmarkStrip: View {
                     }
                     if let b = card.belowMinimum, let text = b.text {
                         Text(text)
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                         if let a = b.profileAction {
@@ -438,6 +459,17 @@ struct HomeBenchmarkStrip: View {
         .sheet(isPresented: $showingProfile) {
             AccountRestaurantProfileSheet(canEdit: profileCanEdit)
         }
+        .sheet(isPresented: $showingMatch) {
+            if let s = store.card(for: "home")?.strength { ComparisonStrengthSheet(strength: s) }
+        }
+    }
+
+    /// "Vs your own previous 13 weeks" — the group, as the strip's title.
+    static func title(_ card: BenchmarkCard) -> String {
+        guard let who = card.who?.text?.trimmingCharacters(in: .whitespaces), !who.isEmpty else {
+            return "How you compare"
+        }
+        return who.prefix(1).uppercased() + who.dropFirst()
     }
 
     /// "HOW YOU COMPARE · VS YOUR OWN PREVIOUS 13 WEEKS · 72% COMPARISON
@@ -465,14 +497,14 @@ struct LocationComparisonSection: View {
                 if lc.metrics.isEmpty {
                     if let why = lc.whyNot {
                         Text("Locations compared side by side appear once two or more are measured \u{2014} \(why).")
-                            .font(.cavnarBody(13))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Each against its own normal first, then against your other locations \u{2014} a gap is called only when it is wider than both locations\u{2019} own week-to-week swing.")
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(lc.metrics) { m in
@@ -499,9 +531,9 @@ struct LocationComparisonSection: View {
             VStack(alignment: .leading, spacing: 3) {
                 HomeMixedText.make(l.name + (l.valueText.map { " \($0)" } ?? "")
                                    + (l.vsGroup.map { " \u{2014} \($0)" } ?? ""),
-                                   size: 14, weight: 600, color: .cavnarInk2)
+                                   size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
-                HomeMixedText.make(l.detail, size: 12.5, weight: 500, color: .cavnarInk3)
+                HomeMixedText.make(l.detail, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)

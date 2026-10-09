@@ -58,13 +58,13 @@ struct HomeSignals: View {
                     Spacer(minLength: 8)
                     if let value {
                         Text(value)
-                            .font(.cavnarNumber(17, weight: 600))
+                            .font(.cavnarNumber(CavnarType.emphasis, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                     }
                 }
                 chart()
                 Text(caption)
-                    .font(.cavnarBody(14, weight: 500))
+                    .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

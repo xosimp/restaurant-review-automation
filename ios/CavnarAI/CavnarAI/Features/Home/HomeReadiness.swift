@@ -40,12 +40,12 @@ struct HomeReadinessCard: View {
                     .padding(.top, 7)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(m.label)
-                        .font(.cavnarBody(15, weight: 600))
+                        .font(.cavnar(.label))
                         .foregroundStyle(Color.cavnarInk)
                     if m.connected {
                         let reading = (m.measurable ?? []).map { $0.lowercased() }
                         Text(reading.isEmpty ? "Connected" : "Reading " + reading.joined(separator: ", "))
-                            .font(.cavnarBody(13))
+                            .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                     } else if let next = m.next {
                         Button {
@@ -53,7 +53,7 @@ struct HomeReadinessCard: View {
                             onOpenModule(m.module ?? m.key)
                         } label: {
                             Text(next + " →")
-                                .font(.cavnarBody(13, weight: 700))
+                                .font(.cavnarBody(CavnarType.caption, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber2)
                         }
                         .buttonStyle(.plain)

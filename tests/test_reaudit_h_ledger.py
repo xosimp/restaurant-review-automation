@@ -666,7 +666,12 @@ def test_h23_ios_follow_through_waits_for_the_home_fetch():
     assert ".task(id: homeLoadedAt)" in ft and "guard homeLoadedAt != nil" in ft
     assert ".task { await viewModel.load() }" not in ft
     hv = open("ios/CavnarAI/CavnarAI/Features/Home/HomeView.swift").read()
-    assert "homeLoadedAt: viewModel.lastLoadedAt" in hv
+    # Home reads the queue itself since the readability round (10/8/26) —
+    # keyed on its own fetch, and never before the first one.
+    task = hv[hv.index(".task(id: viewModel.lastLoadedAt) {"):]
+    task = task[:task.index("_ = await")]
+    assert "guard viewModel.lastLoadedAt != nil else { return }" in task
+    assert "followThrough.load()" in task
 
 
 # ── H-24 a result is in one morning brief ───────────────────────────────────
