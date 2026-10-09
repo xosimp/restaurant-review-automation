@@ -284,16 +284,16 @@ struct DSRSettingsSheet: View {
                         calendarSection(p)
                         departmentsSection(p)
                     } else if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                        Text(error).cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                             .cavnarCard()
                     }
                     if viewModel.payload != nil, let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let note = mapNote {
-                        HomeMixedText.make(note, size: 13.5, weight: 600, color: .cavnarGreen)
+                        HomeMixedText.make(note, role: .label, color: .cavnarGreen)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -370,7 +370,7 @@ struct DSRSettingsSheet: View {
         }
         .overlay(alignment: .topTrailing) {
             if let saved = viewModel.savedLine {
-                Text(saved).font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarGreen)
+                Text(saved).font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(Color.cavnarGreen)
             }
         }
     }
@@ -379,14 +379,14 @@ struct DSRSettingsSheet: View {
         AccountSection(kicker: "Your calendar") {
             VStack(alignment: .leading, spacing: 6) {
                 if let label = p.settings?.calendarLabel, p.settings?.fiscalYearStart != nil {
-                    HomeMixedText.make("Today falls in \(label).", size: 15, weight: 600, color: .cavnarInk)
+                    HomeMixedText.make("Today falls in \(label).", role: .label)
                 } else {
                     Text("No fiscal calendar yet \u{2014} the report has weeks but no period numbers.")
-                        .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text("Set your calendar on the web: Account \u{2192} Daily report.")
-                    .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 10)
@@ -397,7 +397,7 @@ struct DSRSettingsSheet: View {
         AccountSection(kicker: "POS departments") {
             if p.unmapped.isEmpty && p.categoryMap.isEmpty {
                 Text("No POS departments yet. They appear here after the first night the POS reports its departments.")
-                    .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 10)
             }
@@ -422,8 +422,8 @@ struct DSRSettingsSheet: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(name).font(.cavnarBody(16, weight: 600)).foregroundStyle(Color.cavnarInk)
-                    HomeMixedText.make(detail, size: 13, color: current == nil ? .cavnarAmber : .cavnarInk3)
+                    Text(name).cavnarText(.label)
+                    HomeMixedText.make(detail, role: .caption, color: current == nil ? .cavnarAmber : .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
@@ -442,7 +442,7 @@ struct DSRSettingsSheet: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text(current ?? "Pick").font(.cavnarBody(14, weight: 700))
+                        Text(current ?? "Pick").font(.cavnarBody(CavnarType.secondary, weight: 700))
                         Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .bold))
                     }
                     .foregroundStyle(Color.cavnarEmber2)
@@ -483,13 +483,13 @@ struct DSRCategoryMapSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         DSRKicker(text: "POS department")
-                        Text(department.department).font(.cavnarHeadline(22)).foregroundStyle(Color.cavnarInk)
+                        Text(department.department).cavnarText(.headline)
                         HomeMixedText.make(Self.why(department) + (department.net.map { " \u{00B7} \(DSRFormat.money($0)) that night" } ?? "") + ".",
-                                           size: 13.5, color: .cavnarInk3)
+                                           role: .secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let note {
-                        HomeMixedText.make(note, size: 14, weight: 600, color: .cavnarGreen)
+                        HomeMixedText.make(note, role: .label, color: .cavnarGreen)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Done") { dismiss() }.buttonStyle(CavnarPrimaryButtonStyle())
                     } else if viewModel.isLoading {
@@ -503,7 +503,7 @@ struct DSRCategoryMapSheet: View {
                                 } label: {
                                     AccountKVRow(label: c, showsDivider: i < p.categories.count - 1) {
                                         if department.mappedTo == c {
-                                            Text("where it counts now").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                                            Text("where it counts now").cavnarText(.caption, color: .cavnarInk2)
                                         }
                                         AccountDisclosureChip()
                                     }
@@ -528,7 +528,7 @@ struct DSRCategoryMapSheet: View {
                         }
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -737,7 +737,7 @@ struct DSRBudgetSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Gross and net for each night. Leave a night blank for no budget \u{2014} nothing carries over on its own.")
-                        .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     startFrom
                     VStack(spacing: 0) {
@@ -746,13 +746,13 @@ struct DSRBudgetSheet: View {
                             Text("GROSS").frame(width: 104, alignment: .leading)
                             Text("NET").frame(width: 104, alignment: .leading)
                         }
-                        .font(.cavnarBody(11, weight: 700)).tracking(1).foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1).foregroundStyle(Color.cavnarInk2)
                         .padding(.bottom, 6)
                         ForEach($viewModel.rows) { $row in
                             HStack(spacing: 8) {
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text(row.weekday ?? "").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                    Text(CavnarDate.mdy(row.date)).font(.cavnarNumber(12)).foregroundStyle(Color.cavnarInk3)
+                                    Text(row.weekday ?? "").cavnarText(.label)
+                                    Text(CavnarDate.mdy(row.date)).font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 field("Gross", $row.gross, id: row.date + "g")
@@ -764,10 +764,10 @@ struct DSRBudgetSheet: View {
                     }
                     .cavnarCard()
                     if let line = viewModel.fillLine {
-                        HomeMixedText.make(line, size: 13, color: .cavnarInk2).fixedSize(horizontal: false, vertical: true)
+                        HomeMixedText.make(line, role: .caption, color: .cavnarInk2).fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Button {
@@ -811,7 +811,7 @@ struct DSRBudgetSheet: View {
                 }
             }
             Stepper(value: $viewModel.lastYearPct, in: -50...100, step: 1) {
-                HomeMixedText.make("Last year plus \(viewModel.lastYearPct)%", size: 13.5, color: .cavnarInk2)
+                HomeMixedText.make("Last year plus \(viewModel.lastYearPct)%", role: .secondary)
             }
             .tint(Color.cavnarEmber2)
             if viewModel.isFilling { CavnarShimmerText(text: "Filling", color: .cavnarInk) }
@@ -821,7 +821,7 @@ struct DSRBudgetSheet: View {
     private func field(_ label: String, _ text: Binding<String>, id: String) -> some View {
         TextField(label, text: text)
             .keyboardType(.decimalPad)
-            .font(.cavnarNumber(15, weight: 600))
+            .font(.cavnarNumber(CavnarType.body, weight: 600))
             .foregroundStyle(Color.cavnarInk)
             .padding(.vertical, 8)
             .padding(.horizontal, 10)

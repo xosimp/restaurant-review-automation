@@ -229,7 +229,8 @@ enum DSRPhase: Equatable {
         switch self {
         case .running: return "Running"
         case .final: return "Final"
-        case .provisional: return "Provisional"
+        // Owner words (10/8/26): "Provisional" said nothing to an owner.
+        case .provisional: return "Missing data"
         case .failed: return "Couldn\u{2019}t finish"
         case .notStarted: return "Not started"
         }
@@ -365,13 +366,20 @@ struct DSRReport: Decodable {
         }
     }
 
-    /// "Not part of your view: Food, Labor. The owner decides what a manager
-    /// login can read." Nil when nothing is withheld.
+    /// "Food and Labor aren't part of your access. The owner chooses what
+    /// managers see." Nil when nothing is withheld.
     var withheldLine: String? {
         let names = facts.withheld.map { DSRBlock.titles[$0] ?? $0.capitalized }
         guard !names.isEmpty else { return nil }
-        return "Not part of your view: \(names.joined(separator: ", ")). "
-            + "The owner decides what a manager login can read."
+        return "\(DSRText.list(names)) \(names.count == 1 ? "isn\u{2019}t" : "aren\u{2019}t") part of your access. "
+            + "The owner chooses what managers see."
+    }
+
+    /// The blocks the night had no row for, by title — one caption line
+    /// ("Not collected this night: Marketing and Intel") instead of a card each.
+    var notCollectedTitles: [String] {
+        displayedBlocks.filter { $0.block == DSRBlock.notCollected }
+            .map { DSRBlock.titles[$0.name] ?? $0.name.capitalized }
     }
 }
 
@@ -548,15 +556,14 @@ struct DSRAction: Decodable, Hashable, Identifiable {
         }
     }
 
-    /// "Cavnar AI marked this Today; moved to This week because nothing it
-    /// cites moved 10% (2 points) from what it is compared with" — the
-    /// web's sentence (D3-13). Nil unless the server moved it.
+    /// "Moved to This week — the numbers don't show it's urgent": the
+    /// server moved an urgency the cited facts didn't carry (H13), said in
+    /// an owner's words (iOS readability round, 10/8/26 — the web's longer
+    /// sentence names the check's thresholds). Nil unless the server moved it.
     var urgencyAdjustedLine: String? {
         guard let adj = urgencyAdjusted, adj.from != nil || adj.to != nil else { return nil }
-        let from = Self.urgencyWords(adj.from) ?? "Today"
         let to = Self.urgencyWords(adj.to) ?? "This week"
-        let why = (adj.why?.isEmpty == false ? adj.why! : "the figures it cites don\u{2019}t show that urgency")
-        return "Cavnar AI marked this \(from); moved to \(to) because \(why)"
+        return "Moved to \(to) \u{2014} the numbers don\u{2019}t show it\u{2019}s urgent"
     }
 
     /// The dollars to show and what corrected them — the adjusted figure
@@ -593,10 +600,14 @@ struct DSRAction: Decodable, Hashable, Identifiable {
     /// made readable.
     var urgencyLabel: String? { Self.urgencyWords(urgency) }
 
+    /// "Effort: medium" — "(estimate)" when it is Cavnar AI's own guess.
     var effortLabel: String? {
         guard let e = effort, !e.isEmpty else { return nil }
-        return "\(e) effort" + (effortSource == "model" ? " (Cavnar AI\u{2019}s estimate)" : "")
+        return "Effort: \(e.lowercased())" + (effortSource == "model" ? " (estimate)" : "")
     }
+
+    /// The first sentence of `why` — the one line a collapsed priority shows.
+    var whyFirstSentence: String? { why.map { DSRText.split($0).first } }
 }
 
 extension DSRAction {
@@ -728,6 +739,35 @@ struct DSRVerification: Decodable, Hashable {
             s += " \u{00B7} 1 left out: " + why
         }
         return s
+    }
+
+    /// The check in an owner's words, one sentence a line — what the
+    /// "Checked against the night's facts" sheet lists (iOS readability
+    /// round, 10/8/26). `footer` stays the web's sentence.
+    var ownerLines: [String] {
+        guard let checked, let kept, checked > 0 else { return [] }
+        var out = ["\(kept) of \(checked) lines kept."]
+        if let m = measured, let e = estimated, e > 0 {
+            out.append("\(m) rest on measured figures; \(e) on estimates, and say so.")
+        } else if let e = estimated, e > 0 {
+            out.append("\(e) rest\(e == 1 ? "s" : "") on an estimate, and say\(e == 1 ? "s" : "") so.")
+        } else {
+            out.append("Every figure in them matches the night\u{2019}s numbers.")
+        }
+        let total = dropped ?? 0
+        let answered = min(droppedAnswered, total)
+        let failed = max(0, total - answered - leftOutWhys.count)
+        if failed > 0 {
+            out.append("\(failed) left out because \(failed == 1 ? "its figures" : "their figures") didn\u{2019}t match the night.")
+        }
+        if answered > 0 {
+            out.append("\(answered) left out because you already answered \(answered == 1 ? "it" : "them"), "
+                       + "or \(answered == 1 ? "it" : "they") repeated a line above.")
+        }
+        for why in leftOutWhys {
+            out.append("1 left out: " + why)
+        }
+        return out
     }
 
     /// A count sent as a number or as the list it counts.
@@ -1184,4 +1224,33 @@ struct DSRGridTotals: Decodable {
     }
 
     func category(_ name: String) -> Double? { cats[name] ?? nil }
+}
+
+// MARK: - Text helpers
+
+/// Sentence and list helpers for the report's prose (iOS readability round,
+/// 10/8/26): the lead's first sentence becomes its headline, a priority's
+/// first sentence its one-line why.
+enum DSRText {
+    /// The first sentence and the rest (nil when there is none). A sentence
+    /// ends at ". ", "! " or "? " followed by a capital, a digit, "$" or a
+    /// quote — so "31.5%" and "vs. last week" never split.
+    static func split(_ text: String) -> (first: String, rest: String?) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let r = t.range(of: #"(?<=[.!?])\s+(?=[A-Z0-9$"\x{201C}])"#, options: .regularExpression) else {
+            return (t, nil)
+        }
+        let first = String(t[..<r.lowerBound])
+        let rest = String(t[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (first, rest.isEmpty ? nil : rest)
+    }
+
+    /// "Food", "Food and Labor", "Food, Labor and Intel".
+    static func list(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        default: return names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        }
+    }
 }

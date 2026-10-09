@@ -315,54 +315,107 @@ struct DSRSparkline: View {
     }
 }
 
+/// The night's key numbers as slim tiles (10/8/26): label, value, trend
+/// line and its change; the streak, target, fair peer comparison and note
+/// open on a tap. A peer comparison that isn't fair yet is not mentioned.
 struct DSRKPIGrid: View {
-    let kicker: String
+    var kicker: String? = nil
     let title: String
     let kpis: [DSRKPI]
 
     var body: some View {
         if !kpis.isEmpty {
-            HomeSectionHeader(kicker: kicker, title: title).padding(.top, 8)
+            DSRSectionTitle(kicker: kicker, title: title)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top),
                                 GridItem(.flexible(), spacing: 10, alignment: .top)], spacing: 10) {
-                ForEach(kpis) { tile($0) }
+                ForEach(kpis) { DSRKPITile(kpi: $0) }
             }
         }
     }
+}
 
-    private func tile(_ k: DSRKPI) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(k.label.uppercased() + (k.estimate ? " · EST." : ""))
-                .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.1).foregroundStyle(Color.cavnarInk3)
-            HStack(alignment: .center) {
-                Text(k.valueText).font(.cavnarNumber(22, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Spacer(minLength: 4)
-                if k.spark.count >= 3 { DSRSparkline(values: k.spark) }
+struct DSRKPITile: View {
+    let kpi: DSRKPI
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The fair peer comparison, or nil — "no fair comparison yet" is never said.
+    private var peerLine: String? {
+        guard let p = kpi.peers, p.available, let v = p.valueText else { return nil }
+        return "\(p.label) \(v)"
+    }
+
+    private var hasMore: Bool {
+        kpi.streak != nil || kpi.detail != nil || kpi.target != nil || peerLine != nil
+    }
+
+    var body: some View {
+        if hasMore {
+            Button {
+                Haptic.light()
+                if reduceMotion { open.toggle() } else { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } }
+            } label: { content.contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .accessibilityHint(open ? "Hides the target and trend" : "Shows the target and trend")
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(kpi.label.uppercased() + (kpi.estimate ? " · EST." : ""))
+                    .font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.1)
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
+                if hasMore {
+                    Image(systemName: "chevron.down")
+                        .font(.cavnar(.caption))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                        .accessibilityHidden(true)
+                }
             }
-            if let c = k.change {
-                HomeMixedText.make(c.text, size: 12.5, weight: 600, color: toneColor(c.tone) ?? .cavnarInk2)
+            HStack(alignment: .center) {
+                Text(kpi.valueText).cavnarText(.figureM)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 4)
+                if kpi.spark.count >= 3 { DSRSparkline(values: kpi.spark) }
+            }
+            if let c = kpi.change {
+                HomeMixedText.make(c.text, role: .caption, color: toneColor(c.tone) ?? .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let s = k.streak {
-                Text(s.text).font(.cavnarBody(12.5, weight: 600)).foregroundStyle(toneColor(s.tone) ?? .cavnarInk2)
-            }
-            if let d = k.detail {
-                Text(d).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
-            }
-            if let t = k.target {
-                HomeMixedText.make("\(t.label) \(t.valueText)", size: 12, color: .cavnarInk2)
-            }
-            if let p = k.peers {
-                if p.available, let v = p.valueText {
-                    HomeMixedText.make("\(p.label) \(v)", size: 12, color: .cavnarInk2)
-                } else {
-                    Text("\(p.label): no fair comparison yet").font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+            if open {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    if let s = kpi.streak {
+                        HomeMixedText.make(s.text, role: .caption, color: toneColor(s.tone) ?? .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let t = kpi.target {
+                        HomeMixedText.make("\(t.label) \(t.valueText)", role: .caption, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let peer = peerLine {
+                        HomeMixedText.make(peer, role: .caption, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let d = kpi.detail {
+                        HomeMixedText.make(d, role: .caption, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .transition(reduceMotion ? .identity : .opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.cavnarInk3.opacity(0.07)))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -371,26 +424,27 @@ struct DSRShiftCard: View {
     /// The report night's weekday, so the kicker reads "Monday's shift".
     var dayName: String? = nil
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: dayName.map { "\($0)'s shift" } ?? "The night's shift")
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker(dayName.map { "\($0)'s shift" } ?? "The night's shift")
             if let verdict = shift.verdict, !verdict.isEmpty {
-                HomeMixedText.make(verdict, size: CavnarType.emphasis, weight: 700, color: .cavnarInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarMixedText(verdict, role: .lead)
             }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10),
                                 GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 ForEach(shift.rows) { r in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(r.valueText).font(.cavnarNumber(22, weight: 600))
-                            .foregroundStyle(toneColor(r.tone) ?? .cavnarInk)
-                        Text(r.label).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                        Text(r.valueText).cavnarText(.figureM, color: toneColor(r.tone) ?? .cavnarInk)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                        Text(r.label).cavnarText(.caption, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             if let note = shift.note {
-                Text(note).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                Text(note).cavnarText(.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -398,96 +452,163 @@ struct DSRShiftCard: View {
     }
 }
 
+/// Cavnar AI's insights as full-width rows in one card (10/8/26: half-width
+/// prose was a column of six-word lines), three lines each, the rest on tap.
 struct DSRInsightsGrid: View {
     let insights: [DSRInsight]
     var body: some View {
         if !insights.isEmpty {
-            HomeSectionHeader(kicker: "Cavnar AI", title: "AI insights").padding(.top, 8)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .top),
-                                GridItem(.flexible(), spacing: 10, alignment: .top)], spacing: 10) {
-                ForEach(insights) { x in
-                    VStack(alignment: .leading, spacing: 6) {
-                        DSRKicker(text: x.label)
-                        HomeMixedText.make(x.text, size: 13.5, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .cavnarCard()
+            DSRSectionTitle(title: "What Cavnar AI noticed")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(insights.enumerated()), id: \.element.id) { i, x in
+                    DSRInsightRow(insight: x)
+                    if i < insights.count - 1 { AccountRowDivider() }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
         }
     }
 }
 
-struct DSRTomorrowCard: View {
-    let tomorrow: DSRTomorrow
-    let recommendation: String?
+struct DSRInsightRow: View {
+    let insight: DSRInsight
+    @State private var open = false
+    /// Under this many characters three lines hold it all; no tap needed.
+    static let clampAfter = 140
+
+    private var clamps: Bool { insight.text.count > Self.clampAfter }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: tomorrow.heading)
+        let content = VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            CavnarKicker(insight.label)
+            HomeMixedText.make(insight.text, role: .body)
+                .cavnarText(.body)
+                .lineLimit(open || !clamps ? nil : 3)
+                .fixedSize(horizontal: false, vertical: true)
+            if clamps {
+                Text(open ? "Show less" : "Read more")
+                    .cavnarText(.label, color: .cavnarEmber2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, CavnarSpace.s)
+        .contentShape(Rectangle())
+
+        if clamps {
+            Button {
+                Haptic.light()
+                withAnimation(.easeOut(duration: 0.2)) { open.toggle() }
+            } label: { content }
+            .buttonStyle(.plain)
+        } else {
+            content
+        }
+    }
+}
+
+/// The day after: what to prep, Cavnar AI's forecast with how sure it is
+/// on one line under it ("70% confident"), and what the forecast rests on
+/// behind a tap (10/8/26). The staffing priority is pointed to, never said
+/// a second time (the web's rule).
+struct DSRTomorrowCard: View {
+    let tomorrow: DSRTomorrow
+    /// "Staffing for Friday: see priority 2 above" — nil when there is none.
+    var staffingPointer: String? = nil
+
+    @State private var showingBasis = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// "70% confident", or — with no figure (too little measured) — said so,
+    /// never 0%.
+    static func confidenceLine(_ cf: DSRTomorrow.Confidence) -> String {
+        if let pct = cf.pct { return "\(pct)% confident" }
+        return "No confidence figure yet"
+    }
+
+    private var basisLines: [(String, Color)] {
+        var out: [(String, Color)] = []
+        if let b = tomorrow.forecast?.basis, !b.isEmpty {
+            // The server's basis names each measured effect it applied
+            // ("Rain −12% (measured 5 times here)", M5).
+            out.append((String(b.prefix(1).uppercased() + b.dropFirst()), .cavnarInk2))
+        }
+        if let cf = tomorrow.confidence {
+            if !cf.basedOn.isEmpty { out.append(("Based on " + cf.basedOn.joined(separator: " · "), .cavnarInk2)) }
+            if !cf.watch.isEmpty { out.append(("Watch: " + cf.watch.joined(separator: " · "), .cavnarInk2)) }
+            if !cf.missing.isEmpty { out.append(("Missing: " + cf.missing.joined(separator: " · "), .cavnarInk2)) }
+            if let t = cf.track, !t.isEmpty { out.append((t, .cavnarInk2)) }
+        }
+        return out
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker(tomorrow.heading)
+            if let fc = tomorrow.forecast {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cavnar AI\u{2019}s forecast").cavnarText(.secondary)
+                    HomeMixedText.make(fc.text, role: .figureM)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
+                    if let cf = tomorrow.confidence {
+                        Text(Self.confidenceLine(cf)).cavnarText(.secondary)
+                    }
+                }
+            } else if let cf = tomorrow.confidence {
+                Text(Self.confidenceLine(cf)).cavnarText(.secondary)
+            }
             if tomorrow.items.isEmpty {
-                Text("Nothing on the books to prep for.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text("Nothing on the books to prep for.").cavnarText(.secondary)
             }
             ForEach(tomorrow.items) { item in
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
                     Image(systemName: item.tone == "warn" ? "exclamationmark.triangle.fill" : "circle.fill")
-                        .font(.system(size: item.tone == "warn" ? 12 : 5, weight: .bold))
+                        .font(item.tone == "warn" ? .cavnar(.secondary) : .system(size: 6, weight: .bold))
                         .foregroundStyle(item.tone == "warn" ? Color.cavnarAmber : Color.cavnarInk3)
-                        .frame(width: 18).padding(.top, 3).accessibilityHidden(true)
-                    HomeMixedText.make(item.text, size: 14.5, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 18).accessibilityHidden(true)
+                    CavnarMixedText(item.text, role: .body)
                     Spacer(minLength: 0)
                 }
             }
             if let n = tomorrow.scheduled {
-                Text("\(n) on the published schedule").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                HomeMixedText.make("\(n) on the published schedule", role: .secondary)
             }
-            if let rec = recommendation {
-                VStack(alignment: .leading, spacing: 4) {
-                    DSRKicker(text: "AI recommendation")
-                    HomeMixedText.make(rec, size: 15, weight: 600, color: .cavnarInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 4)
+            if let pointer = staffingPointer {
+                HomeMixedText.make(pointer, role: .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let fc = tomorrow.forecast {
-                VStack(alignment: .leading, spacing: 3) {
-                    DSRKicker(text: "Cavnar AI's forecast")
-                    Text(fc.text).font(.cavnarNumber(22, weight: 600)).foregroundStyle(Color.cavnarInk)
-                    // The server's basis names each measured effect it
-                    // applied ("Rain −12% (measured 5 times here)", M5 —
-                    // tomorrow.forecast.effects); figures in the number face.
-                    if let b = fc.basis {
-                        HomeMixedText.make(String(b.prefix(1).uppercased() + b.dropFirst()), size: 12, color: .cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+            let lines = basisLines
+            if !lines.isEmpty {
+                Button {
+                    Haptic.light()
+                    if reduceMotion { showingBasis.toggle() } else {
+                        withAnimation(.easeOut(duration: 0.2)) { showingBasis.toggle() }
                     }
+                } label: {
+                    HStack(spacing: CavnarSpace.xxs + 2) {
+                        Text(showingBasis ? "Hide what it rests on" : "What the forecast rests on")
+                            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                        Image(systemName: "chevron.down")
+                            .font(.cavnar(.caption))
+                            .rotationEffect(.degrees(showingBasis ? 180 : 0))
+                            .accessibilityHidden(true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .cavnarHitTarget()
                 }
-                .padding(.top, 4)
-            }
-            if let cf = tomorrow.confidence {
-                VStack(alignment: .leading, spacing: 3) {
-                    DSRKicker(text: "AI confidence")
-                    Text(cf.figure).font(.cavnarNumber(26, weight: 600))
-                        .foregroundStyle(cf.pct == nil ? Color.cavnarInk3 : Color.cavnarInk)
-                    if !cf.basedOn.isEmpty {
-                        Text("Based on " + cf.basedOn.joined(separator: " · ")).font(.cavnarBody(12.5))
-                            .foregroundStyle(Color.cavnarInk2).fixedSize(horizontal: false, vertical: true)
+                .buttonStyle(.plain)
+                .accessibilityValue(showingBasis ? "Expanded" : "Collapsed")
+                if showingBasis {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            HomeMixedText.make(line.0, role: .caption, color: line.1)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    if !cf.watch.isEmpty {
-                        Text("Watch: " + cf.watch.joined(separator: " · ")).font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarInk2).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !cf.missing.isEmpty {
-                        Text("Missing: " + cf.missing.joined(separator: " · ")).font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarInk3).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let t = cf.track {
-                        Text(t).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    .transition(reduceMotion ? .identity : .opacity)
                 }
-                .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -495,26 +616,75 @@ struct DSRTomorrowCard: View {
     }
 }
 
+/// "Yesterday's calls: 3 of 4 right" — one line that opens the graded
+/// predictions in a sheet (10/8/26: a whole card at the foot of the report).
+struct DSRYesterdayLine: View {
+    let yesterday: DSRYesterday
+    @State private var showing = false
+
+    /// "Yesterday's calls: 3 of 4 right", or "not graded yet" when none was.
+    static func summary(_ y: DSRYesterday) -> String {
+        let graded = y.items.filter { $0.outcome == "correct" || $0.outcome == "incorrect" }
+        guard !graded.isEmpty else { return "Yesterday\u{2019}s calls: not graded yet" }
+        let right = graded.filter { $0.outcome == "correct" }.count
+        return "Yesterday\u{2019}s calls: \(right) of \(graded.count) right"
+    }
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            showing = true
+        } label: {
+            HStack(spacing: CavnarSpace.s) {
+                Image(systemName: "scope")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                HomeMixedText.make(Self.summary(yesterday), role: .label)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens how each of yesterday's predictions turned out")
+        .sheet(isPresented: $showing) {
+            NavigationStack {
+                ScrollView {
+                    DSRYesterdayCard(yesterday: yesterday)
+                        .padding(CavnarSpace.gutter)
+                }
+                .accountSheetChrome("Yesterday\u{2019}s calls")
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+/// How each of yesterday's predictions turned out, and the running accuracy.
 struct DSRYesterdayCard: View {
     let yesterday: DSRYesterday
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DSRKicker(text: "Cavnar AI grading itself")
-            Text("How did yesterday turn out?").font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             ForEach(yesterday.items) { x in
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
                     Image(systemName: x.outcome == "correct" ? "checkmark.circle.fill"
                           : (x.outcome == "incorrect" ? "xmark.circle.fill" : "circle"))
+                        .font(.cavnar(.body))
                         .foregroundStyle(x.outcome == "correct" ? Color.cavnarGreen
                                          : (x.outcome == "incorrect" ? Color.cavnarRed : Color.cavnarInk3))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        HomeMixedText.make(x.text, size: 14.5, color: .cavnarInk2)
+                        CavnarMixedText(x.text, role: .body)
+                        HomeMixedText.make((x.outcome == "correct" ? "Correct" : (x.outcome == "incorrect" ? "Incorrect" : "Not graded"))
+                                           + (x.actualText.map { " · \($0)" } ?? ""), role: .caption, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(x.outcome == "correct" ? "Correct" : (x.outcome == "incorrect" ? "Incorrect" : "Not graded")
-                             + (x.actualText.map { " · \($0)" } ?? ""))
-                            .font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk3)
                     }
                     Spacer(minLength: 0)
                 }
@@ -522,17 +692,17 @@ struct DSRYesterdayCard: View {
             }
             if let a = yesterday.accuracy {
                 Divider()
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("PREDICTION ACCURACY").font(.cavnarBody(10.5, weight: 700)).tracking(1.1)
-                        .foregroundStyle(Color.cavnarEmber)
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
+                    CavnarKicker("Prediction accuracy")
                     Spacer()
                     if let pct = a.pct {
-                        Text("\(pct)%").font(.cavnarNumber(24, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text("\(pct)%").cavnarText(.figureM)
                     }
                 }
-                Text(a.pct != nil ? "\(a.correct) of \(a.graded) right, last \(a.windowDays) days"
-                     : "\(a.correct) of \(a.graded) right so far — a percentage after \(a.minGraded ?? 5) graded")
-                    .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk2)
+                HomeMixedText.make(a.pct != nil ? "\(a.correct) of \(a.graded) right, last \(a.windowDays) days"
+                                   : "\(a.correct) of \(a.graded) right so far — a percentage after \(a.minGraded ?? 5) graded",
+                                   role: .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

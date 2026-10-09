@@ -17,6 +17,9 @@ struct DailyReportWeekView: View {
     @State private var kind: GridKind
     @State private var viewModel = DailyReportWeekViewModel()
     @State private var editingBudget = false
+    /// Every column (categories, gross, budget, notes) instead of the four
+    /// the phone shows by default.
+    @State private var allColumns = false
 
     enum GridKind: String, CaseIterable, Identifiable {
         case week = "Week"
@@ -44,12 +47,12 @@ struct DailyReportWeekView: View {
                     // No fiscal calendar: the server's sentence, and where
                     // the calendar is set — never a dead end (parity #64).
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("No periods yet").font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
+                        Text("No periods yet").cavnarText(.headline)
                         Text(viewModel.errorMessage ?? "Set your fiscal calendar to see periods.")
-                            .font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk2)
+                            .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Set your calendar on the web: Account \u{2192} Daily report. Weeks read here in the meantime.")
-                            .font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("See the week") {
                             Haptic.light()
@@ -60,13 +63,16 @@ struct DailyReportWeekView: View {
                     .cavnarCard()
                 } else if let error = viewModel.errorMessage, viewModel.grid == nil {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarRed)
+                        Text(error).cavnarText(.body, color: .cavnarRedText)
                         Button("Try again") { Task { await viewModel.load(date: date, period: isPeriod) } }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .cavnarCard()
                 } else if let grid = viewModel.grid {
-                    DSRWeekGrid(table: DSRWeekTable(grid: grid)) { day in
+                    // Net, vs last year, vs budget and Labor % by default
+                    // (10/8/26); every column one tap away.
+                    let full = DSRWeekTable(grid: grid)
+                    DSRWeekGrid(table: allColumns ? full : full.compact()) { day in
                         if grid.kind == "period" {
                             // A period's row is a week: open it here.
                             date = day
@@ -75,18 +81,38 @@ struct DailyReportWeekView: View {
                             open(.report(date: day))
                         }
                     }
-                        .opacity(viewModel.isLoading ? 0.5 : 1)
+                        .opacity(viewModel.isLoading ? 0.6 : 1)
                         .animation(.easeOut(duration: 0.2), value: viewModel.isLoading)
+                    if full.columns.count > full.compact().columns.count {
+                        Button {
+                            Haptic.light()
+                            withAnimation(.easeOut(duration: 0.2)) { allColumns.toggle() }
+                        } label: {
+                            HStack(spacing: CavnarSpace.xxs + 2) {
+                                Text(allColumns ? "Fewer columns" : "More columns")
+                                    .font(.cavnarBody(CavnarType.body, weight: 700))
+                                Image(systemName: allColumns ? "chevron.left" : "chevron.right")
+                                    .font(.cavnar(.caption))
+                                    .accessibilityHidden(true)
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(Color.cavnarEmber2)
+                            .cavnarHitTarget()
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(allColumns ? "Shows net, last year, budget and labor only"
+                                                      : "Shows every category, gross and the notes")
+                    }
                     if !grid.showsBudget {
                         Text("Budget columns are the owner\u{2019}s.")
-                            .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption, color: .cavnarInk2)
                     }
                     if viewModel.canEditBudget, grid.kind != "period", !grid.days.isEmpty,
                        grid.days.allSatisfy({ $0.lastYearNet == nil }) {
                         // The import stays on the web (re-audit 10/8/26 #10):
                         // say where, rather than leave the column empty.
                         Text("No last year here yet. Import last year\u{2019}s nights from your old workbooks on the web: Daily report \u{2192} The week \u{2192} Import last year.")
-                            .font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                            .cavnarText(.caption, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     weekActions(grid)
@@ -140,9 +166,10 @@ struct DailyReportWeekView: View {
         HStack(alignment: .center, spacing: 12) {
             stepButton(-1, systemImage: "chevron.left", label: isPeriod ? "Previous period" : "Previous week")
             VStack(spacing: 3) {
-                HomeMixedText.make(viewModel.grid?.label ?? kind.rawValue, size: 17, weight: 700, color: .cavnarInk)
+                HomeMixedText.make(viewModel.grid?.label ?? kind.rawValue, role: .label)
+                    .multilineTextAlignment(.center)
                 if let g = viewModel.grid {
-                    HomeMixedText.make(CavnarDate.mdyRange(g.start, g.end), size: 13, color: .cavnarInk3)
+                    HomeMixedText.make(CavnarDate.mdyRange(g.start, g.end), role: .caption, color: .cavnarInk2)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -197,6 +224,30 @@ struct DSRWeekTable {
 
     let columns: [Column]
     let rows: [Row]
+
+    /// The phone's default columns (10/8/26), in this order — each only when
+    /// the full table has it (a manager has no budget, a login without
+    /// labor no Labor %).
+    static let compactTitles = ["Net", "vs last yr", "vs budget", "Labor %"]
+
+    /// The table cut to `compactTitles`, narrower so a phone shows it whole;
+    /// every row keeps one cell per column.
+    func compact() -> DSRWeekTable {
+        let picks: [Int] = Self.compactTitles.compactMap { t in columns.firstIndex { $0.title == t } }
+        let narrow: [String: CGFloat] = ["Net": 84, "vs last yr": 72, "vs budget": 74, "Labor %": 64]
+        let cols = picks.map { i in Column(title: columns[i].title, width: narrow[columns[i].title] ?? columns[i].width,
+                                           numeric: columns[i].numeric) }
+        let rows = rows.map { r in
+            Row(id: r.id, label: r.label, opens: r.opens, provisional: r.provisional, isTotal: r.isTotal,
+                cells: picks.map { r.cells[$0] })
+        }
+        return DSRWeekTable(columns: cols, rows: rows)
+    }
+
+    private init(columns: [Column], rows: [Row]) {
+        self.columns = columns
+        self.rows = rows
+    }
 
     init(grid: DSRGrid) {
         let budget = grid.showsBudget
@@ -327,6 +378,15 @@ struct DSRWeekGrid: View {
                         .frame(height: rowHeight)
                         .background(row.isTotal ? Color.cavnarEmber.opacity(0.06) : Color.clear)
                         .overlay(alignment: .top) { divider(row) }
+                        // The whole row opens the night (10/8/26), not only
+                        // its pinned label; VoiceOver uses the label's button.
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard let date = row.opens else { return }
+                            Haptic.light()
+                            onOpen(date)
+                        }
+                        .accessibilityHidden(row.opens != nil)
                     }
                 }
             }
@@ -343,12 +403,11 @@ struct DSRWeekGrid: View {
     }
 
     private func headerCell(_ title: String, width: CGFloat, numeric: Bool) -> some View {
-        Text(title.uppercased())
-            .font(.cavnarBody(10.5, weight: 700))
-            .tracking(0.9)
-            .foregroundStyle(Color.cavnarInk3)
+        Text(title)
+            .font(.cavnarBody(CavnarType.caption, weight: 700))
+            .foregroundStyle(Color.cavnarInk2)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            .minimumScaleFactor(0.85)
             .padding(.horizontal, 10)
             .frame(width: width, height: headerHeight, alignment: numeric ? .trailing : .leading)
     }
@@ -358,10 +417,10 @@ struct DSRWeekGrid: View {
         let content = HStack(spacing: 6) {
             if row.provisional {
                 Circle().fill(Color.cavnarAmber).frame(width: 6, height: 6)
-                    .accessibilityLabel("Provisional")
+                    .accessibilityLabel("Missing data")
             }
-            HomeMixedText.make(row.label, size: 13, weight: row.isTotal ? 700 : 600,
-                               color: row.opens == nil && !row.isTotal ? .cavnarInk3 : .cavnarInk)
+            HomeMixedText.make(row.label, size: CavnarType.caption, weight: 700,
+                               color: row.opens == nil && !row.isTotal ? .cavnarInk2 : .cavnarInk)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
             Spacer(minLength: 0)
@@ -385,10 +444,10 @@ struct DSRWeekGrid: View {
 
     private func valueCell(_ cell: DSRWeekTable.Cell, column: DSRWeekTable.Column, isTotal: Bool) -> some View {
         Text(cell.text)
-            .font(column.numeric ? .cavnarNumber(13, weight: isTotal ? 700 : 500) : .cavnarBody(12))
+            .font(column.numeric ? .cavnarNumber(CavnarType.caption, weight: isTotal ? 700 : 500) : .cavnarBody(CavnarType.caption))
             .foregroundStyle(color(cell.tone))
             .lineLimit(column.numeric ? 1 : 2)
-            .minimumScaleFactor(column.numeric ? 0.75 : 1)
+            .minimumScaleFactor(column.numeric ? 0.85 : 1)
             .padding(.horizontal, 10)
             .frame(width: column.width, height: rowHeight, alignment: column.numeric ? .trailing : .leading)
     }
@@ -396,9 +455,9 @@ struct DSRWeekGrid: View {
     private func color(_ tone: DSRWeekTable.Tone) -> Color {
         switch tone {
         case .plain: return .cavnarInk
-        case .muted: return .cavnarInk3
+        case .muted: return .cavnarInk2
         case .good: return .cavnarGreen
-        case .bad: return .cavnarRed
+        case .bad: return .cavnarRedText
         }
     }
 }

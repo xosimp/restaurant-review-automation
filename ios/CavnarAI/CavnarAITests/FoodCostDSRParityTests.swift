@@ -66,7 +66,8 @@ final class FoodCostDSRParityTests: XCTestCase {
         XCTAssertEqual(b.register?.payouts.first?.approvedBy, "Office Drawer")
         XCTAssertEqual(b.punchEdits?.count, 1)
         XCTAssertEqual(DSRPunchEdits.line(b.punchEdits![0]),
-                       "3:58pm\u{2013}11:10pm \u{00B7} 7.20h \u{00B7} edited by Erik at 11:40pm \u{00B7} RPOWER code 3")
+                       "3:58pm\u{2013}11:10pm \u{00B7} 7.20h \u{00B7} edited by Erik at 11:40pm")
+        XCTAssertEqual(DSRNightDetail.punchSummary(b.punchEdits), "1 punch edited by a manager")
         XCTAssertEqual(DSRHeadline.line(for: "service", b), "112 checks \u{00B7} 2 servers \u{00B7} $210.50 given away")
     }
 

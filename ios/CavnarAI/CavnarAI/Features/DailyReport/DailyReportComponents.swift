@@ -5,20 +5,22 @@ import SwiftUI
 
 // MARK: - Status
 
-/// Final (green) / Provisional (amber) / Running (ember, breathing) /
+/// Final (green) / Missing data (amber) / Running (ember, breathing) /
 /// Couldn't finish (red) — the night's state, in words, never colour alone.
+/// The report draws it only when the night is not Final (10/8/26): a
+/// finished night needs no badge.
 struct DSRStatusPill: View {
     let phase: DSRPhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: CavnarSpace.xxs + 1) {
             if phase == .running {
                 BreathingDot(color: .cavnarEmber, paused: reduceMotion)
                     .frame(width: 12, height: 12)
             }
             Text(phase.label)
-                .font(.cavnarBody(12.5, weight: 700))
+                .font(.cavnarBody(CavnarType.caption, weight: 700))
         }
         .foregroundStyle(tone.foreground)
         .padding(.horizontal, 9)
@@ -53,29 +55,27 @@ struct DSRStatTile: View {
     /// drawn in the body face with its figures in the number face, over
     /// two lines, instead of one line of the number face.
     var valueIsText: Bool = false
-    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs + 1) {
             Text(label.uppercased())
                 .font(.cavnarBody(CavnarType.kicker, weight: 700))
                 .tracking(1.1)
-                .foregroundStyle(Color.cavnarInk3(contrast))
+                .foregroundStyle(Color.cavnarInk2)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.85)
             if valueIsText {
-                HomeMixedText.make(value, size: 15, weight: 600, color: tone, numberWeight: 600)
+                HomeMixedText.make(value, role: .label, color: tone)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(value)
-                    .font(.cavnarNumber(19, weight: 600))
-                    .foregroundStyle(value == DSRFormat.dash ? Color.cavnarInk3 : tone)
+                    .cavnarText(.figureS, color: value == DSRFormat.dash ? Color.cavnarInk3 : tone)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.85)
             }
             if let detail {
-                HomeMixedText.make(detail, size: 12, color: .cavnarInk3)
+                HomeMixedText.make(detail, role: .caption, color: .cavnarInk2)
                     .lineLimit(2)
             }
         }
@@ -93,9 +93,9 @@ struct DSRTileRow: View {
 
     var body: some View {
         let rows = stride(from: 0, to: tiles.count, by: 3).map { Array(tiles[$0..<min($0 + 3, tiles.count)]) }
-        VStack(spacing: 8) {
+        VStack(spacing: CavnarSpace.xs) {
             ForEach(rows.indices, id: \.self) { r in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: CavnarSpace.xs) {
                     ForEach(rows[r].indices, id: \.self) { i in rows[r][i] }
                 }
             }
@@ -105,69 +105,91 @@ struct DSRTileRow: View {
 
 // MARK: - Kicker
 
+/// The report's old kicker. Every Daily Report screen now uses
+/// `CavnarKicker` (10/8/26); this stays until a trace confirms nothing else
+/// draws it — candidate for future cleanup after additional verification.
 struct DSRKicker: View {
     let text: String
     var tone: Color = .cavnarEmber2
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(CavnarType.kicker, weight: 700))
-            .tracking(1.5)
-            .foregroundStyle(tone)
+        CavnarKicker(text, tint: tone)
+    }
+}
+
+// MARK: - Section title
+
+/// A section's title in the report's column: the Clash headline, with an
+/// optional ember kicker above it (never one that repeats the screen title).
+struct DSRSectionTitle: View {
+    var kicker: String? = nil
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            if let kicker { CavnarKicker(kicker) }
+            Text(title)
+                .cavnarText(.headline)
+                .accessibilityAddTraits(.isHeader)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, CavnarSpace.xs)
     }
 }
 
 // MARK: - Expandable block card
 
-/// One block of the night — Sales, Labor, Food… The header always shows the
-/// title, where it came from, its status and ONE headline figure, so the
-/// report can be read collapsed in under two minutes; the detail opens on
-/// tap. A block that isn't ready shows the server's reason instead of a
-/// body, and doesn't expand.
+/// One block of the night — Sales, Labor, Food… The header shows the title
+/// with its source under it, a status only when the block is NOT ready,
+/// and ONE headline line, so the report reads collapsed in under two
+/// minutes; the detail opens on tap. A block that isn't ready shows the
+/// server's reason instead of a body, and doesn't expand.
 struct DSRBlockCard<Content: View>: View {
     let title: String
     let block: DSRBlock
     var headline: String? = nil
     @Binding var isExpanded: Bool
     @ViewBuilder var content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 guard block.isReady else { return }
                 Haptic.selection()
-                withAnimation(.easeOut(duration: 0.3)) { isExpanded.toggle() }
+                if reduceMotion { isExpanded.toggle() } else {
+                    withAnimation(.easeOut(duration: 0.3)) { isExpanded.toggle() }
+                }
             } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Text(title)
-                            .font(.cavnarHeadline(19))
-                            .foregroundStyle(Color.cavnarInk)
-                        Spacer(minLength: 8)
-                        if let source = block.sourceLabel {
-                            Text(source)
-                                .font(.cavnarBody(12))
-                                .foregroundStyle(Color.cavnarInk3)
-                                .lineLimit(1)
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title).cavnarText(.headline)
+                            if let source = block.sourceLabel {
+                                Text("From \(source)").cavnarText(.caption)
+                                    .lineLimit(1)
+                            }
                         }
-                        DSRBlockStatus(status: block.status)
-                        if block.isReady {
+                        Spacer(minLength: CavnarSpace.xs)
+                        if !block.isReady {
+                            DSRBlockStatus(status: block.status)
+                        } else {
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .font(.cavnar(.secondary))
+                                .foregroundStyle(Color.cavnarInk2)
                                 .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                                .accessibilityHidden(true)
                         }
                     }
                     if block.isReady, let headline {
-                        HomeMixedText.make(headline, size: 14.5, weight: 500, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(headline, role: .body)
                     } else if !block.isReady {
                         Text(block.reason ?? "Not ready yet.")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarAmber)
+                            .cavnarText(.secondary, color: .cavnarAmber)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .frame(minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -176,23 +198,23 @@ struct DSRBlockCard<Content: View>: View {
 
             if isExpanded && block.isReady {
                 content()
-                    .padding(.top, 14)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    .padding(.top, CavnarSpace.m)
+                    .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .cavnarCard()
     }
 }
 
-/// "Ready" / "Waiting" / "Missing" beside a block's title.
+/// "Waiting" / "Unavailable" / "Not connected" beside a block that isn't
+/// ready. A ready block shows no badge (10/8/26).
 struct DSRBlockStatus: View {
     let status: String?
 
     var body: some View {
         let (text, tone) = Self.describe(status)
         Text(text)
-            .font(.cavnarBody(11.5, weight: 700))
-            .foregroundStyle(tone.foreground)
+            .cavnarText(.tag, color: tone.foreground)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(tone.background)
@@ -221,12 +243,11 @@ struct DSRLineList: View {
     let dot: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
             ForEach(lines) { line in
-                HStack(alignment: .top, spacing: 10) {
-                    Circle().fill(dot).frame(width: 7, height: 7).padding(.top, 7)
-                    HomeMixedText.make(line.text, size: 14.5, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: CavnarSpace.s) {
+                    Circle().fill(dot).frame(width: 7, height: 7).padding(.top, 8)
+                    CavnarMixedText(line.text, role: .body)
                     Spacer(minLength: 0)
                 }
             }
@@ -270,12 +291,14 @@ struct DSRHourlyBars: View {
             }
             HStack(spacing: 4) {
                 ForEach(Array(hours.enumerated()), id: \.offset) { index, hour in
+                    // A chart axis: 11pt, the one size allowed under the
+                    // caption floor besides a tag (10/8/26).
                     Text(index % 2 == 0 ? hour.label : " ")
-                        .font(.cavnarNumber(10))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .font(.cavnarNumber(CavnarType.tag))
+                        .foregroundStyle(Color.cavnarInk2)
                         .frame(maxWidth: .infinity)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.85)
                 }
             }
         }
@@ -293,13 +316,12 @@ struct DSRCategoryBars: View {
         let top = categories.compactMap(\.net).max() ?? 0
         VStack(spacing: 9) {
             ForEach(Array(categories.enumerated()), id: \.offset) { index, cat in
-                HStack(spacing: 10) {
+                HStack(spacing: CavnarSpace.s) {
                     Text(cat.name)
-                        .font(.cavnarBody(13.5))
-                        .foregroundStyle(Color.cavnarInk2)
+                        .cavnarText(.secondary)
                         .frame(width: 92, alignment: .leading)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.85)
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.cavnarPaper3.opacity(0.6))
@@ -315,7 +337,7 @@ struct DSRCategoryBars: View {
                     }
                     .frame(height: 6)
                     Text(DSRFormat.money(cat.net))
-                        .font(.cavnarNumber(13.5, weight: 600))
+                        .font(.cavnarNumber(CavnarType.secondary, weight: 600))
                         .foregroundStyle(cat.net == nil ? Color.cavnarInk3 : Color.cavnarInk)
                         .frame(width: 70, alignment: .trailing)
                 }
@@ -354,25 +376,25 @@ struct DSRProgressChecklist: View {
                              time: DSRFormat.localTime(stage.atLocal), isLast: index == stages.count - 1)
                 }
                 if !checklist.blocks.isEmpty {
-                    DSRKicker(text: "What's in", tone: .cavnarInk3)
+                    CavnarKicker("What's in")
                         .padding(.top, 14)
                         .padding(.bottom, 6)
                     ForEach(checklist.blocks) { b in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
                             Image(systemName: b.status == "ready" ? "checkmark" : (b.status == nil ? "circle" : "clock"))
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.cavnar(.caption))
                                 .foregroundStyle(b.status == "ready" ? Color.cavnarGreen : Color.cavnarInk3)
                                 .frame(width: 14)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(b.label).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text(b.label).cavnarText(.label)
                                 if b.status != "ready", let reason = b.reason {
-                                    Text(reason).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarAmber)
+                                    Text(reason).cavnarText(.caption, color: .cavnarAmber)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
-                            Spacer(minLength: 8)
+                            Spacer(minLength: CavnarSpace.xs)
                             if let t = DSRFormat.localTime(b.atLocal), b.status == "ready" {
-                                Text(t).font(.cavnarNumber(12)).foregroundStyle(Color.cavnarInk3)
+                                Text(t).font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2)
                             }
                         }
                         .padding(.vertical, 5)
@@ -381,11 +403,11 @@ struct DSRProgressChecklist: View {
                 }
             }
         }
-        .animation(.easeOut(duration: 0.3), value: checklist?.stages.map(\.done))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: checklist?.stages.map(\.done))
     }
 
     private func stageRow(label: String, done: Bool, current: Bool, time: String?, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: CavnarSpace.s) {
             VStack(spacing: 0) {
                 ZStack {
                     if current {
@@ -395,7 +417,7 @@ struct DSRProgressChecklist: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Color.cavnarGreen)
                     } else {
-                        Circle().strokeBorder(Color.cavnarInk3.opacity(0.5), lineWidth: 1.5).frame(width: 13, height: 13)
+                        Circle().strokeBorder(Color.cavnarInk3, lineWidth: 1.5).frame(width: 13, height: 13)
                     }
                 }
                 .frame(width: 18, height: 18)
@@ -405,13 +427,12 @@ struct DSRProgressChecklist: View {
                 }
             }
             Text(label)
-                .font(.cavnarBody(14, weight: current ? 700 : 500))
-                .foregroundStyle(done || current ? Color.cavnarInk : Color.cavnarInk3)
+                .font(.cavnarBody(CavnarType.body, weight: current ? 700 : 400))
+                .foregroundStyle(done || current ? Color.cavnarInk : Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 1)
-            Spacer(minLength: 8)
+            Spacer(minLength: CavnarSpace.xs)
             if let time {
-                Text(time).font(.cavnarNumber(12)).foregroundStyle(Color.cavnarInk3).padding(.top, 2)
+                Text(time).font(.cavnarNumber(CavnarType.caption)).foregroundStyle(Color.cavnarInk2).padding(.top, 2)
             }
         }
         .accessibilityElement(children: .combine)

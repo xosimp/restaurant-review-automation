@@ -65,8 +65,9 @@ struct DSRScorecard: Decodable, Hashable {
     }
 }
 
-/// Today's score: the verdict and the overall score, then the four
-/// components in a 2×2 grid.
+/// The night's score: the verdict and the overall score — the screen's ONE
+/// FigureXL (DESIGN_SYSTEM §2) — the net (the one place the report states
+/// it, 10/8/26) against budget, then the four components in a 2×2 grid.
 struct DSRScorecardCard: View {
     let card: DSRScorecard
     /// The night's Sales block, for the net and net-vs-budget beside the
@@ -84,33 +85,30 @@ struct DSRScorecardCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            DSRKicker(text: card.label("score", "The night's score"))
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            CavnarKicker(card.label("score", "The night's score"))
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
                 Circle()
                     .fill(DSRScorecard.color(card.verdict?.tone) ?? Color.cavnarInk3)
                     .frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
                 Text(card.verdict?.label ?? "Not scored yet")
-                    .font(.cavnarHeadline(24))
-                    .foregroundStyle(Color.cavnarInk)
-                Spacer(minLength: 8)
+                    .cavnarText(.title)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: CavnarSpace.xs)
                 if let overall = card.overall {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        // The screen's one 40pt figure: the status (§2).
-                        (Text("\(overall)").font(.cavnarNumber(CavnarType.heroNumber, weight: 600)).foregroundColor(.cavnarInk)
-                         + Text("/100").font(.cavnarNumber(14)).foregroundColor(.cavnarInk3))
-                        Text("OVERALL").font(.cavnarBody(10.5, weight: 700)).tracking(1.2)
-                            .foregroundStyle(Color.cavnarInk3)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Overall performance \(overall) out of 100")
+                    // The screen's one FigureXL: the status (§2).
+                    (Text("\(overall)").font(.cavnar(.figureXL)).foregroundColor(.cavnarInk)
+                     + Text("/100").font(.cavnar(.secondary)).foregroundColor(.cavnarInk2))
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Overall score \(overall) out of 100")
                 }
             }
             if let s = sales, s.isReady, let net = s.metric("net") {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    (Text(DSRFormat.money(net)).font(.cavnarNumber(CavnarType.tileNumber, weight: 600))
-                        .foregroundColor(.cavnarInk)
-                     + Text(" net").font(.cavnarBody(CavnarType.secondary)).foregroundColor(.cavnarInk3))
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
+                    (Text(DSRFormat.money(net)).font(.cavnar(.figureM)).foregroundColor(.cavnarInk)
+                     + Text(" net").font(.cavnar(.secondary)).foregroundColor(.cavnarInk2))
                         .cavnarSensitive()
                     if let vs = Self.vsBudget(s) {
                         Text("\(vs >= 0 ? "+" : "\u{2212}")\(DSRFormat.money(abs(vs))) vs budget")
@@ -127,7 +125,7 @@ struct DSRScorecardCard: View {
                 ForEach(card.components) { c in component(c) }
             }
             if let basis = card.basis, !basis.isEmpty {
-                Text(basis).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                Text(basis).cavnarText(.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -137,24 +135,25 @@ struct DSRScorecardCard: View {
 
     @ViewBuilder
     private func component(_ c: DSRScorecard.Component) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
             Text(c.label.uppercased()).font(.cavnarBody(CavnarType.kicker, weight: 700)).tracking(1.2)
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             if c.measured, let value = c.value {
                 if c.key == "guests" {
-                    Text(value).font(.system(size: 17)).foregroundStyle(Color.cavnarEmber)
+                    Text(value).font(.body).foregroundStyle(Color.cavnarEmber)
                         .accessibilityLabel(c.detail ?? value)
                 } else {
-                    HomeMixedText.make(value, size: 16, weight: 600,
-                                       color: DSRScorecard.color(c.tone) ?? .cavnarInk)
+                    HomeMixedText.make(value, role: .label, color: DSRScorecard.color(c.tone) ?? .cavnarInk)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let detail = c.detail {
-                    HomeMixedText.make(detail, size: 12, color: .cavnarInk3)
+                    HomeMixedText.make(detail, role: .caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
-                Text(c.why ?? "Not measured").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                Text(c.why ?? "Not measured").cavnarText(.caption, color: .cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -164,37 +163,65 @@ struct DSRScorecardCard: View {
     }
 }
 
-/// The night's wins and risks, each a short checklist, labelled with its weekday.
+/// The night's wins and risks in ONE card (10/8/26): the top risk first,
+/// then the top win, the rest behind "+N more".
 struct DSRWinsRisks: View {
     let card: DSRScorecard
 
     var body: some View {
-        list(card.label("wins", "The night's wins"), card.wins, glyph: "checkmark", tint: .cavnarGreen,
-             empty: card.label("no_wins", "Nothing stood out that night."))
-        list(card.label("risks", "The night's risks"), card.risks, glyph: "exclamationmark.triangle.fill",
-             tint: .cavnarAmber, empty: card.label("no_risks", "Nothing to watch from that night."))
+        DSRWinsRisksCard(riskTitle: card.label("risks", "The night's risks"), risks: card.risks.map(\.text),
+                         noRisks: card.label("no_risks", "Nothing to watch from that night."),
+                         winTitle: card.label("wins", "The night's wins"), wins: card.wins.map(\.text),
+                         noWins: card.label("no_wins", "Nothing stood out that night."))
+    }
+}
+
+/// Risks above wins, one of each shown, the rest one tap away — the
+/// owner's scorecard lists and a manager's needs-attention / went-well.
+struct DSRWinsRisksCard: View {
+    let riskTitle: String
+    let risks: [String]
+    var noRisks: String? = nil
+    let winTitle: String
+    let wins: [String]
+    var noWins: String? = nil
+
+    @State private var expanded = false
+
+    private var hidden: Int { max(0, risks.count - 1) + max(0, wins.count - 1) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            section(riskTitle, expanded ? risks : Array(risks.prefix(1)), glyph: "exclamationmark.triangle.fill",
+                    tint: .cavnarAmber, empty: noRisks)
+            section(winTitle, expanded ? wins : Array(wins.prefix(1)), glyph: "checkmark",
+                    tint: .cavnarGreen, empty: noWins)
+            if hidden > 0 {
+                CavnarMoreToggle(hiddenCount: hidden, isExpanded: $expanded)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cavnarCard()
     }
 
-    private func list(_ title: String, _ items: [DSRScorecard.Item], glyph: String, tint: Color,
-                      empty: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.cavnarHeadline(19)).foregroundStyle(Color.cavnarInk)
-            if items.isEmpty {
-                Text(empty).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-            } else {
-                ForEach(items) { item in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: glyph).font(.system(size: 13, weight: .bold)).foregroundStyle(tint)
-                            .frame(width: 18).padding(.top, 2)
+    @ViewBuilder
+    private func section(_ title: String, _ items: [String], glyph: String, tint: Color, empty: String?) -> some View {
+        if !items.isEmpty || empty != nil {
+            VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                CavnarKicker(title)
+                if items.isEmpty, let empty {
+                    Text(empty).cavnarText(.secondary)
+                }
+                ForEach(Array(items.enumerated()), id: \.offset) { _, text in
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.s) {
+                        Image(systemName: glyph).font(.cavnar(.secondary)).foregroundStyle(tint)
+                            .frame(width: 18)
                             .accessibilityHidden(true)
-                        HomeMixedText.make(item.text, size: 14.5, color: .cavnarInk2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarMixedText(text, role: .body)
                         Spacer(minLength: 0)
                     }
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarCard()
     }
 }
