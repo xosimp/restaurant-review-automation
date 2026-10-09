@@ -22327,7 +22327,7 @@ function _schedHandleResult(data) {
   if (panel) panel.style.display = 'block';
   if (window.swFill) swFill(data);
   // A fresh generation goes to the Studio's summary; a reopened week to the week.
-  if (window.studioOnResult) studioOnResult(data, !!_schedBtn);
+  if (window.studioOnResult) studioOnResult(data, !!_schedBtn || !!data._fromJob);
   // A draft reopened on its own when Labor loads (openScheduleDraft quiet)
   // does not pull the page down to it.
   if (panel && !window._schedQuietOpen) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
@@ -23879,6 +23879,10 @@ function generateSchedule(btn, opts) {
             clearInterval(_elapsedTimer);
             clearInterval(_schedPollInterval);
             _schedPollInterval = null;
+            // The job's own answer, even when a week was reopened from
+            // History meanwhile (that clears _schedBtn): the Studio's
+            // "generating" ends here (owner, 10/9/26: Setup went blank).
+            pollData._fromJob = true;
             _schedHandleResult(pollData);
           })
           .catch(function() {
@@ -26427,9 +26431,18 @@ function studioOnRoute() {
   else if (!inStudio && _ssOpen) studioClose({fromPop: true});
 }
 // ── stages ─────────────────────────────────────────────────────────────
+// Whether a week is really being built: the flag AND the Building visual
+// (#sched-week, removed by _schedReset and _schedHandleResult). A flag left
+// on with nothing building sent Setup to an empty Build stage (owner,
+// 10/9/26: History, open a week, back to Setup showed a blank canvas).
+function ssBuilding() {
+  if (_ssGenerating && !document.getElementById('sched-week')) _ssGenerating = false;
+  return _ssGenerating;
+}
 function studioGo(stage) {
   var st = document.getElementById('studio'); if (!st) return;
   if (SS_STAGES.indexOf(stage) < 0) stage = 'setup';
+  ssBuilding();
   var has = _ssHasDraft();
   if (stage === 'build' && !_ssGenerating) stage = has ? 'schedule' : 'setup';
   if ((stage === 'summary' || stage === 'schedule' || stage === 'publish') && !has) stage = _ssGenerating ? 'build' : 'setup';

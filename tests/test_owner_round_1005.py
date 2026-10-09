@@ -223,3 +223,19 @@ def test_the_studio_day_row_is_one_full_width_band_with_no_blur():
     assert "left:-100vw;right:-100vw" in band and "background:var(--paper)" in band
     assert "transparent" not in band and "--ss-band" not in band
     assert ".ss .ss-main{overflow-x:hidden}" in SRC
+
+
+def test_setup_never_lands_on_an_empty_build_stage():
+    """Owner, 10/9/26: History, open a week, back to Setup showed a blank
+    canvas. Reopening a week clears _schedBtn, so a generation's own answer
+    read as a reopen and the Studio's "generating" flag stayed on; Setup then
+    redirected to a Build stage with nothing building. The job's answer now
+    ends it, and Build counts only while the Building visual exists."""
+    assert "pollData._fromJob = true;" in SRC
+    assert "studioOnResult(data, !!_schedBtn || !!data._fromJob)" in SRC
+    fn = SRC[_at("function ssBuilding() {"):]
+    fn = fn[:fn.index("\n}")]
+    assert "!document.getElementById('sched-week')" in fn and "_ssGenerating = false" in fn
+    go = SRC[_at("function studioGo(stage) {"):]
+    go = go[:go.index("if (stage === 'setup' && _ssGenerating)")]
+    assert "ssBuilding();" in go

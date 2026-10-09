@@ -78,7 +78,7 @@ def test_the_building_animation_is_kept_and_fills_the_build_stage():
 
 def test_a_fresh_draft_lands_on_the_summary_and_a_reopened_one_on_the_week():
     s = _src()
-    assert "if (window.studioOnResult) studioOnResult(data, !!_schedBtn);" in s
+    assert "if (window.studioOnResult) studioOnResult(data, !!_schedBtn || !!data._fromJob);" in s
     f = _fn("studioOnResult")
     assert "studioGo('summary')" in f and "studioGo('schedule')" in f
 
