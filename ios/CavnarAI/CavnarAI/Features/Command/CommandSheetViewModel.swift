@@ -157,9 +157,12 @@ final class CommandSheetViewModel {
     /// anyone to claim; naming a replacement stays in Labor.
     func decide(_ item: CommandWaitingItem, approve: Bool) async {
         guard let req = item.request else { return }
-        let path = req.kind == "time_off"
-            ? "/mobile/api/labor/time-off/\(req.id)/decide"
-            : "/mobile/api/labor/shift-requests/\(req.id)/decide"
+        let path: String
+        switch req.kind {
+        case "time_off": path = "/mobile/api/labor/time-off/\(req.id)/decide"
+        case "availability_change": path = "/mobile/api/labor/availability-changes/\(req.id)/decide"
+        default: path = "/mobile/api/labor/shift-requests/\(req.id)/decide"
+        }
         rowBusy.insert(item.key)
         defer { rowBusy.remove(item.key) }
         do {

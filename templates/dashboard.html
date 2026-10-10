@@ -24441,7 +24441,7 @@ function _schedShowConflict(d) {
 
 // "Keep my edits": the owner saw what the other save changed. The server
 // re-applies these edits onto the newer week shift by shift, against the
-// version this screen came from (ARCH-8); `override` keeps them over a
+// version this screen came from (ARCH-8); the override flag keeps them over a
 // staff cover or swap it named (BUGSLIFE-16).
 function schedKeepMine(btn, override) {
   if (window._schedConflictAt === null || window._schedConflictAt === undefined) return;
@@ -36796,8 +36796,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // a colleague who isn't on the app can say yes in person (LG-12).
     if(wait.length){h+='<div class="sr-k" style="margin:16px 0 4px">Waiting on a colleague</div>';
       for(i=0;i<wait.length;i++){var w=wait[i];
-        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">you approved it · waiting on '+esc(w.target_name||'')+' to accept in the Cavnar AI app</span></div>'
-          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrAgreed('+(+w.id)+',this)">They agreed in person</button></div>';}
+        var wauto=w.decided_how==='auto'&&!w.reversed_at;
+        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">'+(wauto?'approved automatically':'you approved it')+' · waiting on '+esc(w.target_name||'')+' to accept in the Cavnar AI app</span></div>'
+          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrAgreed('+(+w.id)+',this)">They agreed in person</button>'
+          +(wauto?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+w.id)+',this)">Reverse</button>':'')+'</div>';}
     }
     // Offers waiting on one named person (H2): the coverage issue's ask or
     // a manager's pick, answered in the staff app.
@@ -36806,11 +36808,23 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
     if(!open.length)h+='<div class="hb-empty">No open shifts. An approved drop without a named replacement, or one you post below, shows here until somebody picks it up in the Cavnar AI app.</div>';
     for(i=0;i<open.length;i++){var o=open[i],who=o.employee_name?'was '+esc(o.employee_name):'extra shift',asked=byReq[o.id]||[];
-      h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+'</span></div>'
+      /* A pickup held for overtime (BUGSLIFE-14) and a drop that approved
+         itself (MARKET-14, reversible) say so on the row. */
+      var held=o.held_claimant?' · '+esc(o.held_claimant)+' asked for it — into overtime, answer it in Waiting on you':'';
+      var auto=o.decided_how==='auto'&&!o.reversed_at?' · approved automatically':'';
+      h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+held+auto+'</span></div>'
         +'<input type="text" class="ac-input" data-shr-offer list="lb2-people-names" autocomplete="off" placeholder="Offer it to…" aria-label="Offer it to" style="width:150px">'
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrOffer('+(+o.id)+',this)">Offer</button>'
+        +(auto?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCancelOpen('+(+o.id)+',this)">Take it off</button></div>';
     }
+    /* A swap that approved itself and went through can still be traded back. */
+    var ar=d.auto_recent||[],arHead=false;
+    for(i=0;i<ar.length;i++){var x=ar[i];if(x.status!=='covered')continue;
+      if(!arHead){arHead=true;h+='<div class="sr-k" style="margin:16px 0 4px">Approved automatically</div>';}
+      h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(x.kind||'drop')+'</span> <b>'+_shrWhen(x)+'</b><span class="sub">'+esc(x.employee_name||'')+(x.replacement_name?' → '+esc(x.replacement_name):'')+((x.auto_reasons||[]).length?' · '+esc(x.auto_reasons.join('; ')):'')+'</span></div>'
+        +(d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+x.id)+',this)">Reverse</button>':'')+'</div>';}
+    h+=_shrAutonomyHtml(d.autonomy,d.can_decide);
     // A manager posts a shift open: somebody's, or an extra one (H2).
     h+='<div class="sr-k" style="margin:18px 0 6px">Post an open shift</div>'
       +'<div class="lb2-form" id="shr-post">'
@@ -36825,6 +36839,38 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +'<div class="lb2-intro" id="shr-post-status" style="margin-top:6px"></div>';
     el.innerHTML=h;
     _shrNames();
+  };
+  /* Drops and swaps that approve themselves by your rules, once your own
+     approvals have earned it (schedule audit 10/10/26 MARKET-14), and
+     whether an availability cut waits on you (MARKET-15). */
+  function _shrAutonomyHtml(a,canDecide){
+    if(!a||!a.policy)return '';
+    var p=a.policy,t=a.trust||{},h='<div class="sr-k" style="margin:18px 0 6px">Automatic approval</div>',k,kinds=['drop','swap'];
+    h+='<div class="lb2-intro">'+(p.auto_approve?'On: a drop or swap that keeps a manager on every minute and the closers, adds no overtime, is the same role, is more than <span class="hb-num">'+esc(p.notice_hours)+'</span> hours out and costs Shift Quality no more than <span class="hb-num">'+esc(p.max_quality_drop)+'</span> points approves itself — once your own approvals of that kind earn it. Reverse one and that kind comes back to you.':'Off: every drop and swap waits on you.')+'</div>';
+    for(k=0;k<kinds.length;k++){var tr=t[kinds[k]]||{};
+      h+='<div class="lb2-intro">'+(kinds[k]==='drop'?'Drops':'Swaps')+': '+(tr.earned?'earned':'<span class="hb-num">'+esc(tr.approvals||0)+'</span> of the <span class="hb-num">'+esc(tr.needed||0)+'</span> approvals it needs')+(tr.lapse_reason&&!tr.earned?' (back to you: '+esc(tr.lapse_reason)+')':'')+'</div>';}
+    h+='<div class="lb2-intro">Less availability: '+(p.availability_approval?'waits for your approval, from the first week you haven’t built':'starts on its own, from the first week you haven’t built')+'.</div>';
+    if(canDecide)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrPolicy({auto_approve:'+(p.auto_approve?'false':'true')+'},this)">'+(p.auto_approve?'Turn automatic approval off':'Turn automatic approval on')+'</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({availability_approval:'+(p.availability_approval?'false':'true')+'},this)">'+(p.availability_approval?'Let less availability start on its own':'Approve less availability first')+'</button></div>';
+    return h;
+  }
+  window.shrPolicy=function(body,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/request-policy',body,function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not change that','error');return;}
+      toast('Saved','success');
+      loadShiftRequests();
+    });
+  };
+  window.shrReverse=function(id,btn){
+    var done=busy(btn,'Reversing…');
+    jsend('/api/labor/shift-requests/'+id+'/reverse',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not reverse that','error');return;}
+      toast(d.undone?'Reversed — they are back on it, and automatic approval comes back to you':(d.note||'Automatic approval comes back to you'),'success');
+      loadShiftRequests();if(window.lb2LoadWaiting)lb2LoadWaiting();
+    });
   };
   // The roster's active names for the offer and post boxes.
   function _shrNames(){
@@ -38169,10 +38215,10 @@ function sfw1RatingLine(s) {
     var h = '';
     if (r && r._pinned === 'manager_plan') h += '<span class="sfw1-pin" title="' + e(r._pin_reason || 'Planned before the draft so every minute has a manager') + '">Manager plan</span>';
     if (r && r.dst_hours) h += '<span class="sfw1-dst" title="Includes the extra hour when the clocks go back">+1h clocks</span>';
-    /* A week staff have: the holder was let off this shift (an approved
+    /* A week staff have: the holder was excused from this shift (an approved
        drop nobody claimed, approved time off) - it is open, not theirs
        (schedule audit 10/10/26 BUGSLIFE-12). */
-    if (r && r.release) h += '<span class="sfw1-pin" title="' + e((r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was let off it') + ' - nobody has picked it up') + '">Open</span>';
+    if (r && r.release) h += '<span class="sfw1-pin" title="' + e((r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was excused from it') + ' - nobody has picked it up') + '">Open</span>';
     return h;
   };
   /* The shift pane: why a planned row is there, the clocks, and the server's
@@ -38182,7 +38228,7 @@ function sfw1RatingLine(s) {
     if (!r) return '';
     if (r._pinned === 'manager_plan') h += '<div class="sw-flag"><b>Manager plan</b> — ' + n(r._pin_reason || 'planned before the draft so every minute on the floor has a manager') + '. Passes after the draft never move it.</div>';
     if (r.dst_hours) h += '<div class="sw-flag">Includes the extra hour when the clocks go back (<span class="hb-num">' + e(sfw1G(r.dst_hours)) + 'h</span> paid).</div>';
-    if (r.release) h += '<div class="sw-flag"><b>Open</b> - ' + e(r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was let off this shift') + ' and nobody has picked it up yet. Offer it from Shift requests.</div>';
+    if (r.release) h += '<div class="sw-flag"><b>Open</b> - ' + e(r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was excused from this shift') + ' and nobody has picked it up yet. Offer it from Shift requests.</div>';
     return h;
   };
   window.sfw1UsualSection = function (r, usual) {
@@ -38262,7 +38308,8 @@ function sfw1RatingLine(s) {
   /* The forecast's own freshness read for the picked week: its line, and
      when it is blocked the message and why Generate will refuse; the
      budget's assumed wage (E-24) with where to fix it. */
-  var _freshKey = null;
+  var _freshKey = null, _freshHtml = '', _availHtml = '';
+  function freshPaint() { var el = $id('sfw1-gen-fresh'); if (el) el.innerHTML = _freshHtml + _availHtml; }
   window.sfw1LoadFresh = function (force) {
     var el = $id('sfw1-gen-fresh'); if (!el) return;
     var ws = (window._schedWeekStart && _schedWeekStart()) || '';
@@ -38270,14 +38317,43 @@ function sfw1RatingLine(s) {
     _freshKey = ws;
     jget('/api/labor/schedule-forecast' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), function (d) {
       if (_freshKey !== ws) return;
-      if (!d.ok) { _freshKey = null; el.innerHTML = ''; return; }
+      if (!d.ok) { _freshKey = null; _freshHtml = ''; freshPaint(); return; }
       var h = '', dd = d.demand_data_through, bb = d.budget_basis || {};
       if (dd && dd.blocked) h += note('bad', '<b>Generate will refuse this week for now.</b> ' + n(dd.message || dd.line || 'The sales the forecast stands on are too old.'), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/integrations">Check the POS</button>');
       else if (dd && dd.line) h += note(dd.blind || dd.stale ? 'warn' : '', n(dd.line));
       if (bb.caveat) h += note(bb.trim_ok === false ? 'bad' : 'warn', n(bb.caveat), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set pay rates</button>');
-      el.innerHTML = h;
+      _freshHtml = h;
+      freshPaint();
+    });
+    sfw1LoadAvailChanges();
+  };
+  /* Staff availability cuts waiting on a manager (schedule audit 10/10/26
+     MARKET-15): the draft uses one only once it is approved, and only from
+     its date - so they are read here, before Generate. */
+  window.sfw1LoadAvailChanges = function () {
+    jget('/api/labor/availability-changes', function (a) {
+      var h = '', i, ch, cs = (a && a.ok && a.changes) || [];
+      for (i = 0; i < cs.length; i++) {
+        ch = cs[i];
+        if (ch.status !== 'pending') continue;
+        h += note('warn', '<b>' + e(ch.employee_name) + '</b> asked to work less from <span class="hb-num">' + e(sfw1Mdy(ch.effective_from)) + '</span>: ' + e(ch.summary || '') + '. This week’s draft uses it only once you approve.',
+          a.can_decide ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="sfw1AvDecide(' + (+ch.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="sfw1AvDecide(' + (+ch.id) + ',\'approve\',this)">Approve</button>' : '');
+      }
+      _availHtml = h;
+      freshPaint();
     });
   };
+  window.sfw1AvDecide = function (id, decision, btn) {
+    var done = busy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
+    jpost('/api/labor/availability-changes/' + id + '/decide', {decision: decision}, function (d) {
+      done();
+      if (!d.ok) { say(d.error || 'Could not answer that', 'error'); return; }
+      say(d.warning ? 'Approved — ' + d.warning : (decision === 'approve' ? 'Approved — they are told' : 'Denied — they are told'), d.warning ? 'warning' : 'success');
+      sfw1LoadAvailChanges();
+      if (window.lb2LoadWaiting) lb2LoadWaiting();
+    });
+  };
+  function sfw1Mdy(iso) { return (typeof mdy === 'function') ? mdy(iso) : String(iso || ''); }
   document.addEventListener('change', function (ev) {
     var t = ev.target; if (t && (t.id === 'sched-week-pick' || t.id === 'sched-week-date')) sfw1LoadFresh();
   });
@@ -39111,6 +39187,29 @@ window.cavPalette = cavPalette;
          + '<div class="c">' + rep + note + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'approve\',this)">Approve</button></div></div>';
       n++;
     }
+    /* A pickup into overtime while a teammate has room waits on you
+       (schedule audit 10/10/26 BUGSLIFE-14): Approve gives it to them. */
+    for (i = 0; i < (_wait.reqs || []).length; i++) {
+      var hc = _wait.reqs[i]; if (hc.status !== 'open' || !hc.held_claimant) continue;
+      h += '<div class="ac-row" data-wait-key="held_claim-' + e(hc.id) + '"><div class="l"><b>' + e(hc.held_claimant) + ' wants ' + e(_schedDayOf(hc.date).slice(0, 3)) + ' <span class="hb-num">' + e(md(hc.date)) + '</span> ' + e(hc.shift_start || '') + ' — into overtime</b><span>' + e(hc.held_claim_note || 'A teammate has room') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+hc.id) + ',\'deny\',this)">Keep it open</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+hc.id) + ',\'approve\',this)">Give it to them</button></div></div>';
+      n++;
+    }
+    /* Approved time off still on a published shift (BUGSLIFE-5): here until
+       the shift is covered, posted or moved. */
+    for (i = 0; i < (_wait.follow || []).length; i++) {
+      var fu = _wait.follow[i];
+      h += '<div class="ac-row" data-wait-key="time_off_shift-' + e(fu.request_id) + '-' + e(fu.date) + '"><div class="l"><b>' + e(fu.employee_name) + ' is off ' + e(_schedDayOf(fu.date).slice(0, 3)) + ' <span class="hb-num">' + e(md(fu.date)) + '</span> but still on ' + e(fu.shift_start || '') + '</b><span>Approved time off — cover the shift or post it open</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-fu-date="' + e(fu.date) + '" data-fu-start="' + e(fu.shift_start || '') + '" data-fu-name="' + e(fu.employee_name) + '" onclick="lb2PostFollowUp(this)">Post it open</button></div></div>';
+      n++;
+    }
+    /* Less availability waiting on you, with the date it starts (MARKET-15). */
+    for (i = 0; i < (_wait.avail || []).length; i++) {
+      var av = _wait.avail[i]; if (av.status !== 'pending') continue;
+      h += '<div class="ac-row" data-wait-key="availability_change-' + e(av.id) + '"><div class="l"><b>' + e(av.employee_name) + ' can work less from <span class="hb-num">' + e(md(av.effective_from)) + '</span></b><span>' + e(av.summary || '') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="sfw1AvDecide(' + (+av.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="sfw1AvDecide(' + (+av.id) + ',\'approve\',this)">Approve</button></div></div>';
+      n++;
+    }
     el.innerHTML = h;
     n += window.memWaitCount ? memWaitCount() : 0;
     box.hidden = !n;
@@ -39127,8 +39226,9 @@ window.cavPalette = cavPalette;
   window.lb2LoadWaiting = function () {
     if (!$id('lb2-wait')) return;
     _wait.offs = null; _wait.reqs = null; _wait.draft = null;
-    getJ('/api/labor/time-off', function (d) { _wait.offs = d.ok ? (d.requests || []) : []; _wait.lastOffs = _wait.offs; waitRender(); });
+    getJ('/api/labor/time-off', function (d) { _wait.offs = d.ok ? (d.requests || []) : []; _wait.follow = d.ok ? (d.follow_ups || []) : []; _wait.lastOffs = _wait.offs; waitRender(); });
     getJ('/api/labor/shift-requests', function (d) { _wait.reqs = d.ok ? (d.requests || []) : []; waitRender(); });
+    getJ('/api/labor/availability-changes', function (d) { _wait.avail = d.ok ? (d.changes || []) : []; waitRender(); });
     getJ('/api/labor/publish-check', function (d) { _wait.draft = d.ok ? d : {}; waitRender(); });
     if (window.memLoadPeopleQs) memLoadPeopleQs();
   };
@@ -39147,6 +39247,19 @@ window.cavPalette = cavPalette;
       }
       if (d.needs_ack) { openScheduleDraft(hid); return; }
       toast(d.error || 'Nothing sent', 'error');
+    });
+  };
+  /* Approved time off over a published shift: put it on the open board
+     (the same post a manager makes in Shift requests, BUGSLIFE-5). */
+  window.lb2PostFollowUp = function (btn) {
+    var body = {date: btn.getAttribute('data-fu-date'), shift_start: btn.getAttribute('data-fu-start'), employee: btn.getAttribute('data-fu-name')};
+    var done = cbtnBusy(btn, 'Posting…');
+    postJ('/api/labor/open-shifts', body, function (d) {
+      done();
+      if (!d.ok) { toast(d.error || 'Could not post that shift', 'error'); return; }
+      toast('Posted — the team can pick it up in the app', 'success');
+      lb2LoadWaiting();
+      if (window.loadShiftRequests) loadShiftRequests();
     });
   };
   window.lb2DecideShift = function (id, decision, btn) {

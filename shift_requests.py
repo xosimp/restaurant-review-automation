@@ -402,6 +402,29 @@ def for_manager(restaurant_id, db_path=DB_PATH) -> list:
     return [dict(r) for r in rows]
 
 
+def auto_recent(restaurant_id, db_path=DB_PATH, today=None, days=14) -> list:
+    """Drops and swaps that approved themselves (request_autonomy,
+    MARKET-14), not reversed, whose shift is still ahead — what a manager may
+    still reverse, with each one's reasons."""
+    today = _today(restaurant_id, today)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM shift_change_requests WHERE restaurant_id=? AND decided_how='auto' "
+                            "AND reversed_at IS NULL AND date >= ? AND decided_at >= datetime('now', ?) "
+                            "ORDER BY date, shift_start", (restaurant_id, today.isoformat(), f"-{int(days)} days")).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        r = dict(r)
+        try:
+            r["auto_reasons"] = (json.loads(r.get("auto_reasons_json") or "{}") or {}).get("reasons") or []
+        except (TypeError, ValueError):
+            r["auto_reasons"] = []
+        out.append(r)
+    return out
+
+
 def open_shifts(restaurant_id, db_path=DB_PATH, today=None) -> list:
     """Open shifts nobody has claimed yet, from today on — the manager's
     list (offer-only ones included). One from yesterday is history, not an

@@ -1788,7 +1788,15 @@ def _do_time_off_list(u):
         return _forbidden("Only someone who can see labor can review time off.")
     import time_off
     rows = time_off.recent(_rid(u))
-    return {"ok": True, "requests": rows, "pending": sum(1 for r in rows if r["status"] == "pending")}, 200
+    # Approved time off still on a published shift — kept until the shift is
+    # covered, posted or moved (schedule audit 10/10/26 BUGSLIFE-5).
+    try:
+        follow = time_off.follow_ups(_rid(u))
+    except Exception as e:
+        print(f"[time off] follow-ups unread rid={_rid(u)}: {e!r}")
+        follow = []
+    return {"ok": True, "requests": rows, "pending": sum(1 for r in rows if r["status"] == "pending"),
+            "follow_ups": follow}, 200
 
 
 def _do_time_off_decide(u, request_id):
@@ -3706,9 +3714,14 @@ def _do_shift_requests_list(u):
     except Exception as e:
         print(f"[requests] autonomy unread rid={_rid(u)}: {e!r}")
         autonomy = None
+    try:
+        auto_recent = _sq_req.auto_recent(_rid(u))
+    except Exception as e:
+        print(f"[requests] automatic decisions unread rid={_rid(u)}: {e!r}")
+        auto_recent = []
     return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
             "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_decide_requests(u),
-            "autonomy": autonomy}, 200
+            "autonomy": autonomy, "auto_recent": auto_recent}, 200
 
 
 def _do_shift_request_decide(u, request_id):
