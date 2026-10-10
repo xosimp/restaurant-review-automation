@@ -229,9 +229,9 @@ def test_a_week_that_left_the_plus_one_out_records_nothing(db_path):
 
 
 def test_publish_and_the_draft_wire_the_loop():
-    import client_api
+    import schedule_publish
     import schedule_engine
-    assert "_stsig_pub.record_published(rid, schedule_id" in inspect.getsource(client_api)
+    assert "_stsig_pub.record_published(rid, schedule_id" in inspect.getsource(schedule_publish)
     assert "_stsig_ap.present_requirements(restaurant_id" in inspect.getsource(schedule_engine)
     import rec_learning
     assert rec_learning.SURFACE_EXTRA_KINDS["review_diagnosis"] == ("staff_add",)

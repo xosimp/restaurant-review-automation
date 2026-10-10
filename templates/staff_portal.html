@@ -1330,6 +1330,9 @@
     if (!S.stats || !S.stats.ok) api('/staff/api/stats').then(function(d){ S.stats = d; renderMe(); });
     api('/staff/api/preferences').then(function(d){ S.prefs = d; renderMe(); });
     api('/staff/api/language').then(function(d){ S.lang = d; renderMe(); });
+    /* Shifts at the group's other locations (schedule audit 10/10/26
+       MARKET-16): only for someone who says yes here. */
+    api('/staff/api/travel').then(function(d){ S.travel = d; renderMe(); });
     S.agree = undefined;
     api('/staff/api/compliance').then(function(d){ S.agree = d; renderMe(); });
   };
@@ -1402,6 +1405,20 @@
         '<div class="errline" id="texts-err" role="status" aria-live="polite"></div>';
     } else html += '<p class="note" style="margin:0">Shift and task reminders come as notices in the Cavnar AI iPhone app. Here, your inbox and requests show what’s new each time you open it.</p>';
     html += '</div>';
+    var tr = S.travel;
+    if (tr && tr.ok && tr.group) {
+      html += '<div class="sechead">Other locations</div><div class="card">' +
+        '<label class="switch"><input type="checkbox" id="travel-on"' + (tr.travels ? ' checked' : '') + '>' +
+        '<span><b>Pick up shifts at our other locations</b><br><span class="note" style="display:block;margin:2px 0 0">A manager there can offer you a shift; it is checked against your hours here and your availability.</span></span></label>' +
+        '<div class="errline" id="travel-err" role="status" aria-live="polite"></div>';
+      for (var ti = 0; ti < (tr.offers || []).length; ti++) {
+        var to = tr.offers[ti];
+        html += '<div class="row" style="margin-top:10px"><div><b>' + esc(to.place || 'Another location') + '</b><br><span class="note">' + esc(shiftLabel(to.date, to.shift_start, to.shift_end)) + (to.role ? ' · ' + esc(to.role) : '') + '</span></div>' +
+          '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="travel-yes" data-id="' + esc(to.id) + '">Take it</button>' +
+          '<button type="button" class="cbtn cbtn-secondary" data-act="travel-no" data-id="' + esc(to.id) + '">Decline</button></div></div>';
+      }
+      html += '</div>';
+    }
     html += '<div class="sechead">Language</div><div class="card">';
     var l = S.lang;
     if (l === undefined) html += pulse('Loading languages');
@@ -1704,6 +1721,20 @@
       askConfirm('Take ' + shiftLabel(o.date, o.shift_start, o.shift_end) + '?', 'It goes on your schedule' + (o.role ? ' as ' + o.role : '') + ', and your manager hears you said yes.' +
         (o.pickup_overtime_note ? ' ' + o.pickup_overtime_note : ''), 'Take it', function(){
         act('offer' + o.id, '/staff/api/offers/' + o.id + '/respond', {accept: true}, 'It’s on your schedule');
+      });
+    },
+    'travel-yes': function(el){
+      var o = findIn((S.travel || {}).offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Take this shift at ' + (o.place || 'another location') + '?', shiftLabel(o.date, o.shift_start, o.shift_end) + (o.role ? ' as ' + o.role : '') + '. Their manager hears you said yes.', 'Take it', function(){
+        act('travel' + o.id, '/staff/api/travel/offers/' + o.id + '/respond', {accept: true}, 'It’s on their schedule', function(){ LOADERS.me(); });
+      });
+    },
+    'travel-no': function(el){
+      var o = findIn((S.travel || {}).offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Decline this shift?', 'Their manager is told you can’t take it.', 'Decline', function(){
+        act('travel' + o.id, '/staff/api/travel/offers/' + o.id + '/respond', {accept: false}, 'Declined', function(){ LOADERS.me(); });
       });
     },
     'offer-no': function(el){
@@ -2013,6 +2044,14 @@
         if (!d.ok) { t.checked = !on; $('texts-err').textContent = errText(d); return; }
         S.prefs.schedule_texts = d.schedule_texts;
         toast(d.schedule_texts ? 'Schedule texts on' : 'Schedule texts off');
+      });
+    }
+    if (t.id === 'travel-on') {
+      var yes = t.checked;
+      postJson('/staff/api/travel', {travels: yes}).then(function(d){
+        if (!d.ok) { t.checked = !yes; $('travel-err').textContent = errText(d); return; }
+        S.travel.travels = d.travels;
+        toast(d.travels ? 'Other locations can offer you shifts' : 'Only here from now on');
       });
     }
     if (t.id === 'lang') {

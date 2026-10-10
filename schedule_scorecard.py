@@ -119,6 +119,10 @@ def init_schedule_scorecard(db_path=None):
             created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_gen_tags_rid ON schedule_generation_tags(restaurant_id)")
+        # The retention sweep deletes by created_at (ops._RETENTION_DAYS):
+        # without its own index that delete scans the whole table.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_gen_tags_created "
+                     "ON schedule_generation_tags(created_at)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_learning_scores (
             restaurant_id      INTEGER NOT NULL REFERENCES restaurants(id),
             history_id         INTEGER NOT NULL,
@@ -560,9 +564,12 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
             if row and row["s"]:
                 out["labor_pct"] = round(float(row["w"]) / float(row["s"]), 2)
                 try:
-                    from notify import labor_target_for
+                    # The ONE read of the target (thresholds.target_for,
+                    # re-audit #10): the owner's goal first, then the setting.
+                    import thresholds as _thr
                     import schedule_economics as _econ
-                    tgt = labor_target_for(restaurant)
+                    _t = _thr.target_for(restaurant, "labor")
+                    tgt = _t.get("pct")
                     if tgt:
                         ht, _sal = _econ._hourly_target_pct(restaurant_id, float(tgt), int(row["n"] or 0),
                                                             float(row["s"]), **kw)

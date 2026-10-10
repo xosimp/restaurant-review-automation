@@ -358,7 +358,24 @@ final class PublishScheduleViewModel {
     /// can_publish); true until known.
     var canPublish = true
 
-    private struct StatusResponse: Decodable { let ok: Bool; let status: [ScheduleShareStatus] }
+    private struct StatusResponse: Decodable {
+        let ok: Bool
+        let status: [ScheduleShareStatus]
+        /// Who was told and how it went, from the publish outbox.
+        var delivery: PublishDelivery? = nil
+    }
+    /// The publish outbox's counts for the week on screen (schedule audit
+    /// 10/10/26 BUGSLIFE-9): still sending, failed (retried), unreachable.
+    struct PublishDelivery: Decodable {
+        var sending: Int? = nil
+        var failed: Int? = nil
+        var unreachable: Int? = nil
+        var missing: Int { (failed ?? 0) + (unreachable ?? 0) }
+    }
+    var delivery: PublishDelivery?
+    /// The version of the rows the screen holds (Labor's own), sent with
+    /// Send so a week changed since is refused, not sent unseen.
+    var version: Int?
     private typealias OKErrorResponse = APIClient.OKResponse
 
     var reachableCount: Int { contacts.filter(\.isReachable).count }
@@ -383,6 +400,7 @@ final class PublishScheduleViewModel {
             let s: StatusResponse? = try? await client.send(
                 "/mobile/api/labor/schedule-share-status", query: query, hapticOnError: false)
             status = s?.status ?? []
+            delivery = s?.delivery
             await loadCheck()
         } catch let error as APIClient.APIError {
             if contacts.isEmpty { errorMessage = error.message }
@@ -464,14 +482,25 @@ final class PublishScheduleViewModel {
         let acknowledge: Bool
         var keys: [String] = []
         var oneTap = false
+        /// The version of the rows the owner reviewed: a week somebody
+        /// changed since is refused with their changes (409 `stale`), never
+        /// sent unseen (schedule audit 10/10/26 BUGSLIFE-11).
+        var version: Int? = nil
+        /// "all" — the owner's "Send again to everyone"; "missing" — the
+        /// people whose message failed or who were unreachable then. A sent
+        /// week used to answer already_published and send nothing
+        /// (BUGSLIFE-9).
+        var resend: String? = nil
         enum CodingKeys: String, CodingKey {
-            case acknowledge
+            case acknowledge, version, resend
             case scheduleId = "schedule_id"
             case oneTap = "one_tap"
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(scheduleId, forKey: .scheduleId)
+            try c.encodeIfPresent(version, forKey: .version)
+            try c.encodeIfPresent(resend, forKey: .resend)
             if oneTap {
                 try c.encode(false, forKey: .acknowledge)
                 try c.encode(true, forKey: .oneTap)
@@ -560,13 +589,15 @@ final class PublishScheduleViewModel {
     /// `resend` is the owner's explicit "send it to everyone again", behind
     /// its own confirmation. Without it a second call after a successful
     /// send does nothing: the button used to stay "Send to N staff" and a
-    /// second tap re-emailed the whole roster (CLIENT-36).
-    func publish(resend: Bool = false) async {
+    /// second tap re-emailed the whole roster (CLIENT-36). The server now
+    /// sends it (`resend: "all"`); `missingOnly` sends to the people whose
+    /// message failed or who were unreachable then (BUGSLIFE-9).
+    func publish(resend: Bool = false, missingOnly: Bool = false) async {
         guard !isPublishing else { return }
         // A week already sent from this sheet goes again only by the owner's
         // explicit resend — or when shifts changed since, and Send tells
         // just those people.
-        guard resend || !hasSent || !unsentChanges.isEmpty else { return }
+        guard resend || missingOnly || !hasSent || !unsentChanges.isEmpty else { return }
         // A send already waiting out the window is undone, never stacked.
         guard queuedSend == nil else { return }
         guard let scheduleId else {
@@ -580,7 +611,9 @@ final class PublishScheduleViewModel {
         do {
             let result: PublishResult = try await client.send(
                 "/mobile/api/labor/publish-schedule", method: .post,
-                body: PublishBody(scheduleId: scheduleId, acknowledge: acknowledgeBlockers, keys: blockerKeys))
+                body: PublishBody(scheduleId: scheduleId, acknowledge: acknowledgeBlockers, keys: blockerKeys,
+                                  version: (resend || missingOnly) ? nil : version,
+                                  resend: missingOnly ? "missing" : (resend ? "all" : nil)))
             lastResult = result
             if result.ok && result.queued {
                 // Waiting out the send window: nothing reached staff, so the
@@ -637,12 +670,13 @@ struct PublishScheduleSheet: View {
     /// the publish check states the hours but not the budget they are held to.
     var hoursBudget: Double? = nil
 
-    init(scheduleId: Int? = nil, unsentChanges: [String] = [], hoursBudget: Double? = nil,
+    init(scheduleId: Int? = nil, unsentChanges: [String] = [], hoursBudget: Double? = nil, version: Int? = nil,
          onSent: (() -> Void)? = nil, onVersion: ((Int) -> Void)? = nil) {
         self.hoursBudget = hoursBudget
         let vm = PublishScheduleViewModel()
         vm.scheduleId = scheduleId
         vm.unsentChanges = unsentChanges
+        vm.version = version
         vm.onSent = onSent
         vm.onVersion = onVersion
         _viewModel = State(initialValue: vm)
@@ -903,9 +937,21 @@ struct PublishScheduleSheet: View {
             }
             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isPublishing))
             .disabled(viewModel.isPublishing)
-        } else if viewModel.hasSent {
+        } else if viewModel.hasSent || viewModel.check?.publishedAt != nil {
             // Sent. Another send re-sends to everyone, so it is a separate,
-            // quieter action that asks first (CLIENT-36).
+            // quieter action that asks first (CLIENT-36). The people the
+            // first send did not reach get their own, unconfirmed action.
+            if let missing = viewModel.delivery?.missing, missing > 0 {
+                Button {
+                    Task { await viewModel.publish(missingOnly: true) }
+                } label: {
+                    Text(missing == 1 ? "Send to the 1 person who didn\u{2019}t get it"
+                                      : "Send to the \(missing) who didn\u{2019}t get it")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .disabled(viewModel.isPublishing)
+            }
             Button {
                 confirmingResend = true
             } label: {

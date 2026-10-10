@@ -4105,9 +4105,16 @@ def _do_shift_requests_list(u):
     except Exception as e:
         print(f"[requests] automatic decisions unread rid={_rid(u)}: {e!r}")
         auto_recent = []
+    # `group`: this location has sibling locations, so an open shift can be
+    # offered to people there who travel (cross_site, MARKET-16).
+    try:
+        import schedule_rules as _sr_grp
+        group = bool(_sr_grp.org_sibling_ids(_rid(u)))
+    except Exception:
+        group = False
     return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
             "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_decide_requests(u),
-            "autonomy": autonomy, "auto_recent": auto_recent}, 200
+            "autonomy": autonomy, "auto_recent": auto_recent, "group": group}, 200
 
 
 def _do_shift_request_decide(u, request_id):
@@ -4842,7 +4849,7 @@ def _auto_publish_offer(rid) -> dict:
     conn = get_conn()
     try:
         latest = conn.execute("SELECT quality_json FROM schedule_history WHERE restaurant_id=? AND quality_json IS NOT NULL "
-                              "ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+                              "AND superseded_by IS NULL ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
     finally:
         conn.close()
     try:
@@ -7122,7 +7129,7 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
     if not can_publish or not schedule_id:
         return False
     try:
-        from client_api import publish_review
+        from schedule_publish import publish_review
         from labor import employees_in_schedule
         from models import get_conn as _gc
         import people
@@ -7154,7 +7161,7 @@ def _do_publish_check(u):
     With no schedule_id: the open draft (or schedule_id null when none)."""
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the schedule.")
-    from client_api import publish_review
+    from schedule_publish import publish_review, notice_status
     from labor import employees_in_schedule
     from models import get_conn as _gc
     import people
@@ -7229,6 +7236,12 @@ def _do_publish_check(u):
             # 10/4/26 UI-3): the sheet says why instead of offering Send.
             "superseded_by": row["superseded_by"],
             "replaced_reason": __import__("schedule_versions").replaced_error(row),
+            # The version these rows are: a Send that names it goes out
+            # only while the stored rows are still these (BUGSLIFE-11).
+            "version": (__import__("schedule_versions").newest_version(rid, row["id"]) or [{}])[0].get("version"),
+            # Who has been told about the week and how it went (the
+            # publish outbox — BUGSLIFE-9): still sending, failed, unreachable.
+            "delivery": notice_status(rid, row["id"]) if row["published_at"] else None,
             "can_publish": _can_publish}, 200
 
 
@@ -7820,6 +7833,12 @@ def _wrap(body, decorator):
     view.__name__ = body.__name__
     return decorator(view)
 
+
+# The schedule on the floor — the POS schedule push, live labor and its moves,
+# one-shift edits, people from sibling locations (floor_api; schedule audit
+# 10/10/26, J2): their bodies live there, the twins are mounted here.
+import floor_api as _floor_api  # noqa: E402
+_ROUTES += _floor_api.ROUTES
 
 for _path, _methods, _body_fn, _ep in _ROUTES:
     strategy_bp.add_url_rule("/api" + _path, endpoint=_ep, methods=_methods,

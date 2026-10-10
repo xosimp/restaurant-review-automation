@@ -214,9 +214,15 @@ def test_generation_payload_carries_the_version_it_saved(db_path, monkeypatch):
     assert res["version"] == newest == 1
     d = c.get(f"/mobile/api/labor/schedule-history/{res['history_id']}", headers=h).get_json()
     assert d["version"] == res["version"]
-    # Saving the generated rows against that version goes straight through.
+    # Saving the generated rows against that version goes straight through
+    # — and, being the week already, writes no second version (schedule
+    # audit 10/10/26: a retried or repeated save is idempotent).
     s = _save(c, h, res["history_id"], res["preview_rows"], res["version"])
-    assert s.status_code == 200 and s.get_json()["version"] == 2
+    assert s.status_code == 200 and s.get_json()["version"] == 1 and s.get_json()["unchanged"] is True
+    # Each row the client holds carries the shift id it was stored with.
+    stored = schedule_versions.draft_rows(res["history_id"], db_path=db_path)
+    assert [r.get("shift_id") for r in res["preview_rows"]] == [r["shift_id"] for r in stored]
+    assert all(len(r["shift_id"]) == 32 for r in stored)
 
 
 # ── UI-3: a replaced copy is read-only ─────────────────────────────────────

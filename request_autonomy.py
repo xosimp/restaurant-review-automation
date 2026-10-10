@@ -46,7 +46,16 @@ DEFAULT_NOTICE_HOURS = 24
 DEFAULT_MAX_QUALITY_DROP = 5.0
 AUTO_ACTOR = "Cavnar AI (automatic)"
 DEFAULTS = {"auto_approve": False, "kinds": list(KINDS), "notice_hours": DEFAULT_NOTICE_HOURS,
-            "max_quality_drop": DEFAULT_MAX_QUALITY_DROP, "availability_approval": True}
+            "max_quality_drop": DEFAULT_MAX_QUALITY_DROP, "availability_approval": True,
+            # An open shift offered by name to its best legal fit first, once
+            # earned (auto_offer_open, MARKET-25). Off by default.
+            "auto_offer": False}
+# The subject the automatic offer earns its trust under (automation_trust
+# scope "shift_request"): the managers' own named offers earn it.
+OFFER = "offer"
+EARN_OFFERS = 5
+# How many legal takers are scored for the best fit (each is a week rescore).
+OFFER_CANDIDATES = 5
 _BOUNDS = {"notice_hours": (0, 336), "max_quality_drop": (0, 100)}
 
 
@@ -70,7 +79,7 @@ def policy(restaurant) -> dict:
         stored = {}
     if not isinstance(stored, dict):
         return out
-    for k in ("auto_approve", "availability_approval"):
+    for k in ("auto_approve", "availability_approval", "auto_offer"):
         if isinstance(stored.get(k), bool):
             out[k] = stored[k]
     if isinstance(stored.get("kinds"), list):
@@ -102,7 +111,7 @@ def save_policy(restaurant_id, data: dict, user=None, db_path=DB_PATH) -> dict:
         raise PolicyError("send the settings as an object")
     cur = policy_for(restaurant_id, db_path)
     new = dict(cur)
-    for k in ("auto_approve", "availability_approval"):
+    for k in ("auto_approve", "availability_approval", "auto_offer"):
         if k in data:
             if not isinstance(data[k], bool):
                 raise PolicyError(f"{k} is true or false")
@@ -176,7 +185,8 @@ def trust(restaurant_id, kind, db_path=DB_PATH) -> dict:
 def status(restaurant_id, db_path=DB_PATH) -> dict:
     """What the owner's switch shows: the policy and each kind's trust."""
     return {"policy": policy_for(restaurant_id, db_path),
-            "trust": {k: trust(restaurant_id, k, db_path=db_path) for k in KINDS},
+            "trust": dict({k: trust(restaurant_id, k, db_path=db_path) for k in KINDS},
+                          **{OFFER: offer_trust(restaurant_id, db_path=db_path)}),
             "earn_approvals": EARN_APPROVALS, "earn_window_days": EARN_WINDOW_DAYS}
 
 
@@ -448,3 +458,186 @@ def reverse(restaurant_id, request_id, actor=None, db_path=DB_PATH, now=None) ->
     automation_trust.transition(restaurant_id, SCOPE, kind, False,
                                 reason=f"you reversed an automatic {kind} approval", db_path=db_path)
     return {"ok": True, "undone": undone, "note": note, "request": _srq._get_row(restaurant_id, row["id"], db_path)}
+
+
+# ── the open shift offered to its best fit first (MARKET-25) ────────────────
+#
+# The marketplace broadcast every open shift to every legal taker in turn and
+# left the choosing to whoever answered first. Once a restaurant's managers
+# have made EARN_OFFERS named offers themselves (since the last reversal), and
+# the owner turned `auto_offer` on, Cavnar AI does what they do: the legal
+# takers (the claim's own check — shift_requests._who_could_take) are scored
+# by what each does to the shift's Shift Quality, and the best fit is offered
+# the shift by name before the board hears of it — inside these guardrails:
+#   - legal by the one engine (replacement_is_legal → judge_change: a manager
+#     on the floor every minute, the floors, closers, rest, hours, minors);
+#   - no overtime while a same-role teammate has room (teammates_with_room);
+#   - the shift's Shift Quality falls by no more than `max_quality_drop` from
+#     the week as published (unmeasured weeks say so, never score 0).
+# A manager withdrawing an automatic offer (reverse_offer) lapses it at once.
+
+def manager_offers(restaurant_id, since=None, db_path=DB_PATH) -> int:
+    """Named offers the managers made themselves in the window since the
+    last lapse — never an automatic one, never a coverage issue's."""
+    floor = (datetime.utcnow() - timedelta(days=EARN_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    after = since is not None and str(since)[:19] >= floor
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM shift_offers WHERE restaurant_id=? AND COALESCE(created_by,'') NOT IN "
+            "('', ?, 'coverage issue') AND created_at " + ("> ?" if after else ">= ?"),
+            (restaurant_id, AUTO_ACTOR, str(since)[:19] if after else floor)).fetchone()
+    finally:
+        conn.close()
+    return int(row[0] or 0) if row else 0
+
+
+def offer_trust(restaurant_id, db_path=DB_PATH) -> dict:
+    """{kind: "offer", earned, approvals, needed, lapsed_at, lapse_reason}."""
+    import automation_trust
+    st = automation_trust.states(restaurant_id, SCOPE, db_path=db_path).get(OFFER) or {}
+    since = st.get("lapsed_at") if st.get("state") == "lapsed" else None
+    try:
+        n = manager_offers(restaurant_id, since=since, db_path=db_path)
+    except Exception:
+        n = 0
+    earned = st.get("state") == "earned" or n >= EARN_OFFERS
+    if earned and st.get("state") != "earned":
+        automation_trust.transition(restaurant_id, SCOPE, OFFER, True,
+                                    basis={"offers": n, "window_days": EARN_WINDOW_DAYS}, db_path=db_path)
+    return {"kind": OFFER, "earned": bool(earned), "approvals": n, "needed": EARN_OFFERS,
+            "lapsed_at": st.get("lapsed_at"), "lapse_reason": st.get("lapse_reason")}
+
+
+def _shift_score(restaurant_id, rows, key, inputs):
+    """The Shift Quality score of the (date, daypart) shift `key` in `rows`,
+    or None when it cannot be scored (nobody rated)."""
+    import schedule_engine as _se
+    try:
+        q, _w = _se._score_schedule_quality(restaurant_id, rows, inputs, what_if=False)
+    except Exception:
+        return None
+    if not (q or {}).get("checked"):
+        return None
+    for s in q.get("shifts") or []:
+        if (s.get("date"), s.get("daypart")) == key and s.get("scored") and s.get("score") is not None:
+            return float(s["score"])
+    return None
+
+
+def rank_takers(restaurant_id, req, db_path=DB_PATH, limit=OFFER_CANDIDATES) -> list:
+    """The legal takers of an open shift scored for the best fit:
+    [{name, score, drop, overtime, ok, why}] best first. `ok` False (with
+    `why`) for one a guardrail stops."""
+    import schedule_engine as _se
+    import schedule_rules as _rules
+    import shift_requests as _srq
+    from schedule_versions import rows_from_csv
+    legal = _srq._who_could_take(restaurant_id, req, db_path)[:limit]
+    if not legal:
+        return []
+    conn = get_conn(db_path)
+    try:
+        hist = _srq._live_hist(conn, restaurant_id, req)
+    finally:
+        conn.close()
+    if not hist:
+        return []
+    rows, idx = _srq._locate(rows_from_csv(hist["schedule_csv"]), req)
+    if idx is None:
+        return []
+    c = _srq._week_constraints(restaurant_id, rows)
+    key = (rows[idx].get("date"), _rules.daypart_of(rows[idx].get("shift_start") or ""))
+    try:
+        inputs = _se.quality_inputs_from_db(restaurant_id, week_rows=rows)
+    except Exception:
+        inputs = None
+    base = _shift_score(restaurant_id, rows, key, inputs) if (inputs is not None and not _srq._is_extra(req)) else None
+    room = None
+    pol = policy_for(restaurant_id, db_path)
+    out = []
+    for name in legal:
+        trial = [dict(r) for r in rows]
+        trial[idx] = dict(trial[idx], employee=name)
+        ot = _rules.overtime_added(c, name, trial[idx], [r for j, r in enumerate(trial) if j != idx])
+        score = _shift_score(restaurant_id, trial, key, inputs) if inputs is not None else None
+        drop = round(base - score, 1) if (base is not None and score is not None) else None
+        entry = {"name": name, "score": score, "drop": drop, "overtime": round(ot, 2), "ok": True, "why": None}
+        if ot > 0.05:
+            if room is None:
+                room = _srq.teammates_with_room(restaurant_id, rows, idx, c, exclude=(req.get("employee_name"),))
+            if room:
+                entry.update(ok=False, why=f"puts {name} {ot:g}h into overtime while {room[0]} has room")
+        if entry["ok"] and drop is not None and drop > float(pol["max_quality_drop"]):
+            entry.update(ok=False, why=f"Shift Quality falls {drop:g} points (your limit is "
+                                       f"{pol['max_quality_drop']:g})")
+        out.append(entry)
+    out.sort(key=lambda e: (not e["ok"], -(e["score"] if e["score"] is not None else -1), e["overtime"],
+                            legal.index(e["name"])))
+    return out
+
+
+def auto_offer_open(restaurant_id, req, db_path=DB_PATH):
+    """Offer a just-opened shift to its best legal fit by name, when the
+    owner turned automatic offers on and the managers' own offers earned
+    it. Returns the offer, or None (the reasons kept on the request when it
+    is on but refused). Never raises."""
+    import shift_requests as _srq
+    try:
+        pol = policy_for(restaurant_id, db_path)
+        if not pol.get("auto_offer") or not req or req.get("status") != "open" or req.get("offer_only"):
+            return None
+        t = offer_trust(restaurant_id, db_path=db_path)
+        verdict = {"ok": False, "kind": OFFER, "reasons": [], "refusals": []}
+        if not t["earned"]:
+            verdict["refusals"].append(f"not earned yet — {t['approvals']} of the {t['needed']} named offers you "
+                                       "make yourself before Cavnar AI offers open shifts on its own")
+            _log(restaurant_id, req["id"], verdict, db_path)
+            return None
+        ranked = rank_takers(restaurant_id, req, db_path=db_path)
+        pick = next((e for e in ranked if e["ok"]), None)
+        if not pick:
+            verdict["refusals"].append("nobody legal clears the guardrails" if ranked else "nobody legal can take it")
+            verdict["candidates"] = ranked[:3]
+            _log(restaurant_id, req["id"], verdict, db_path)
+            return None
+        offer = _srq.offer_shift(restaurant_id, req["id"], pick["name"], actor=AUTO_ACTOR,
+                                 note="You're the best fit for this one.", db_path=db_path)
+        verdict.update(ok=True, offered_to=pick["name"],
+                       reasons=["legal by every rule, the manager on the floor and the closers kept",
+                                "no overtime while a teammate has room" if pick["overtime"] <= 0.05 else
+                                f"{pick['overtime']:g}h of overtime — nobody with room could take it",
+                                (f"Shift Quality falls {max(pick['drop'], 0):g} points at most"
+                                 if pick["drop"] is not None else "Shift Quality not measured (nobody rated)")])
+        _log(restaurant_id, req["id"], verdict, db_path)
+        return offer
+    except Exception as e:
+        print(f"[request_autonomy] automatic offer failed rid={restaurant_id}: {e!r}")
+        return None
+
+
+def reverse_offer(restaurant_id, offer_id, actor=None, db_path=DB_PATH) -> dict:
+    """A manager withdrawing an automatic offer: withdrawn where nobody has
+    answered yet, and automatic offers lapse at once (automation_trust)."""
+    import automation_trust
+    import shift_requests as _srq
+    conn = get_conn(db_path)
+    try:
+        o = conn.execute("SELECT * FROM shift_offers WHERE id=? AND restaurant_id=? AND created_by=?",
+                         (int(offer_id), restaurant_id, AUTO_ACTOR)).fetchone()
+        if not o:
+            return {"ok": False, "error": "That wasn't an automatic offer."}
+        o = dict(o)
+        cur = conn.execute("UPDATE shift_offers SET status='withdrawn', answered_at=datetime('now') WHERE id=? "
+                           "AND status='offered'", (o["id"],))
+        conn.commit()
+        undone = cur.rowcount == 1
+    finally:
+        conn.close()
+    if undone:
+        req = _srq._get_row(restaurant_id, o["request_id"], db_path)
+        _srq._notify_offer(restaurant_id, "offer_withdrawn", o, req or {}, db_path)
+    automation_trust.transition(restaurant_id, SCOPE, OFFER, False,
+                                reason="you withdrew an automatic offer", db_path=db_path)
+    return {"ok": True, "undone": undone,
+            "note": None if undone else "They already answered — change the week in the Studio if it should change."}

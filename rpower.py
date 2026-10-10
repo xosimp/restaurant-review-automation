@@ -1297,6 +1297,11 @@ def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
         rows.append({"employee": emps[mid],
                      "role": jobs.get(str(e.get("job_mid") or "")) or (e.get("job_id") or "").strip() or "Staff",
                      "clocked_in_at": _punch_dt(e.get("in_dttm")).isoformat(),
+                     # The punch's end once they clocked out, and its pay
+                     # rate — live labor to date reads both (labor_live).
+                     "clocked_out_at": (_punch_dt(e.get("out_dttm")).isoformat()
+                                        if _punch_dt(e.get("out_dttm")) else None),
+                     "hourly_wage": _num(e.get("reg_rate")) or None,
                      "external_id": mid})
     return rows
 

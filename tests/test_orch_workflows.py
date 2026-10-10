@@ -21,7 +21,14 @@ from models import Restaurant, Review, create_restaurant, get_restaurant, save_r
 
 
 def _tier(workflow, step=0, start=None):
-    return wf.route_for(wf.POLICIES[workflow], step, start).model
+    """The model a step runs on for a restaurant here — every one of them on
+    the canary (the autouse fixture below). A tier's new model ships to the
+    canary restaurants first (scheduler audit 10/10/26 AI-27: T1 is Haiku 5.5
+    there, the previous Haiku for a call made for no one restaurant), so the
+    expected model is read the way the runs read it: for a restaurant."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AI_CANARY_RESTAURANTS", "*")
+        return wf.route_for(wf.POLICIES[workflow], step, start, restaurant_id=1).model
 
 
 T1 = _tier("draft_response", 0)

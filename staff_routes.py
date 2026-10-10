@@ -1107,7 +1107,8 @@ def api_colleagues(current_user):
     # owns it — the same reading the portal's own shifts use.
     weeks = staff_schedule._published_weeks(rid, min(today, on))
     me = name.strip().lower()
-    # The CSV and the stations only (SCALE-19), never SELECT * and its JSON.
+    # Each week's PUBLISHED copy (ARCH-1) — the CSV and the stations only
+    # (SCALE-19), never SELECT * and its JSON.
     details = {w["id"]: (get_published_week_csv(w["id"], rid, with_stations=True) or {}) for w in weeks}
     rows_by_week = {wid: rows_from_csv(d.get("schedule_csv") or "") for wid, d in details.items()}
     coworkers, posted = _coworkers_on(weeks, details, rows_by_week, on, me)
@@ -1307,6 +1308,50 @@ def api_offer_respond(offer_id, current_user):
     o = out["offer"]
     return jsonify(ok=True, offer={"id": o["id"], "status": o["status"]},
                    request=shift_requests._for_teammate(out["request"]) if out.get("request") else None)
+
+
+@staff_bp.route("/api/travel")
+@staff_login_required
+def api_travel_get(current_user):
+    """Whether this person picks up shifts at the group's other locations,
+    and the ones offered to them there (cross_site, schedule audit 10/10/26
+    MARKET-16)."""
+    rid, name = _staff_context(current_user)
+    import cross_site
+    import schedule_rules
+    return jsonify(ok=True, travels=cross_site.travels(rid, name),
+                   group=bool(schedule_rules.org_sibling_ids(rid)), offers=cross_site.offers_for(rid, name))
+
+
+@staff_bp.route("/api/travel", methods=["POST"])
+@staff_login_required
+def api_travel_set(current_user):
+    """{travels: bool} — this person's own yes to being offered shifts at
+    the group's other locations; nobody is offered one otherwise."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("travels"), bool) or not name:
+        return jsonify(ok=False, error="travels must be true or false."), 400
+    import cross_site
+    cross_site.set_travel(rid, name, body["travels"], source="staff")
+    return jsonify(ok=True, travels=body["travels"])
+
+
+@staff_bp.route("/api/travel/offers/<int:offer_id>/respond", methods=["POST"])
+@staff_login_required
+def api_travel_offer_respond(offer_id, current_user):
+    """{accept: bool} — this person's answer to a shift at another location:
+    yes is judged there again and written into that location's week."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("accept"), bool):
+        return jsonify(ok=False, error="accept must be true or false."), 400
+    import cross_site
+    try:
+        out = cross_site.respond(rid, name, offer_id, body["accept"])
+    except cross_site.CrossSiteError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, **out)
 
 
 @staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])

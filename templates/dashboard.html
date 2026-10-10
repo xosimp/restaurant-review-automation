@@ -13039,6 +13039,22 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
+  <!-- On the floor (schedule audit 10/10/26 J2) — labor so far against
+       sales so far and the projected close, the one move worth making now,
+       and the published week on the POS time clock. -->
+  <div class="lb2-srow s7">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleFloorPanel)">
+      <div class="lb2-subsection-title">On the floor <span id="floor-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleFloorPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="floor-toggle-btn">Open ↓</button>
+    </div>
+    <div id="floor-panel" style="display:none">
+      <div class="lb2-avail">
+        <div class="lb2-intro">Labor so far against sales so far, where tonight is heading, and the one legal, priced move worth making now. Checked every 15 minutes while you are open.</div>
+        <div id="floor-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Shift requests — a published shift somebody cannot work, and the
        open shifts nobody has picked up yet. -->
   <div class="lb2-srow s7">
@@ -23788,6 +23804,11 @@ function rescoreSchedule(btn, after) {
   _setQualityState('saving');
   var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
   var body = {rows: _schedRows, daily_target_hours: _schedTargets, save: true};
+  /* What this save carries, to tell afterwards whether the week on screen
+     moved while it was in flight (schedule audit 10/10/26 BUGSLIFE-17): an
+     edit made during the save is not saved, so the page stays unsaved and
+     Save & send does not send the stored week without it. */
+  var postedSig = _schedSaveSig(_schedRows);
   // Saving appends an "edited" version to the row the preview came from,
   // rather than minting a second history entry for the same week. The
   // version these rows came from goes with it: rows somebody else changed
@@ -23821,8 +23842,17 @@ function rescoreSchedule(btn, after) {
       renderShiftQuality(d.quality, d.what_if, prevScore);
       _schedCsvCache = '';
       if (d.history_id) _schedHistoryId = d.history_id;
-      _setQualityState(d.saved ? 'saved' : 'unsaved');
-      if (d.saved) {
+      var movedSince = !!d.saved && _schedSaveSig(_schedRows) !== postedSig;
+      _setQualityState(d.saved && !movedSince ? 'saved' : 'unsaved');
+      if (d.saved && movedSince) {
+        /* The rows this save sent are stored; the edit made after it left
+           is still only on this page. Its version is the base of the next
+           save. Nothing is sent: Save & send runs on a second press. */
+        if (d.version !== undefined && d.version !== null) _schedVersion = d.version;
+        _schedSetDirty(true);
+        _schedHideConflict();
+        toast('Saved — your newest change came in while saving and isn’t saved yet. Save again to keep it.', 'warning');
+      } else if (d.saved) {
         /* Merged onto the newer week: what was saved is the screen now. */
         if (d.merged_rows && d.merged_rows.length) _schedRows = d.merged_rows;
         _schedSetDirty(false);
@@ -23851,7 +23881,7 @@ function rescoreSchedule(btn, after) {
       _schedRenderTable();
       // Save & send: the send runs only once the week it sends is stored.
       // A plain Save re-reads what Send would do for the saved week.
-      if (d.saved && typeof after === 'function') after();
+      if (d.saved && !movedSince && typeof after === 'function') after();
       else if (d.saved && window.psRefresh) psRefresh();
     } else if (d && d.conflict) {
       _schedShowConflict(d);
@@ -24322,6 +24352,9 @@ function publishScheduleNow(ack){
   var keys = window._psAckKeys && window._psAckKeys.hid === _schedHistoryId ? window._psAckKeys.keys : null;
   var body = {acknowledge: ack ? (keys && keys.length ? keys.slice() : true) : false};
   if (_schedHistoryId) body.schedule_id = _schedHistoryId;
+  /* The version of the rows on screen: a week somebody changed since is
+     refused with their changes, never sent unseen (BUGSLIFE-11). */
+  if (!_schedDirty && _schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
   var status = 0;
   fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
     .then(function(r){ status = r.status; return r.json().catch(function(){ return {ok:false, error:'Server error (HTTP ' + status + ') — please try again'}; }); })
@@ -24345,13 +24378,15 @@ function publishScheduleNow(ack){
           result.textContent = d.note || 'Published to the staff portal.';
           toast('Published to the portal','success');
         } else {
-          var sent = d.sent || [], total = sent.length + (d.unreachable || []).length + (d.failed || []).length, by = {app: 0, text: 0, email: 0}, k;
+          /* sending: the people the Send's inline window did not reach -
+             the outbox tells them within the minute (ARCH-20). */
+          var sent = d.sent || [], going = (d.sending || []).length, total = sent.length + going + (d.unreachable || []).length + (d.failed || []).length, by = {app: 0, text: 0, email: 0}, k;
           for (k = 0; k < sent.length; k++) { var ch = sent[k].channel; if (ch === 'push') by.app++; else if (ch === 'sms') by.text++; else by.email++; }
           var parts = [];
           if (by.app) parts.push(by.app + ' in the app');
           if (by.text) parts.push(by.text + ' by text');
           if (by.email) parts.push(by.email + ' by email');
-          result.textContent = 'Sent to ' + sent.length + ' of ' + total + ' staff' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
+          result.textContent = 'Sent to ' + sent.length + ' of ' + total + ' staff' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + (going ? ' · ' + going + ' still sending' : '') + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed — retried, or Send to them' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
           toast('Schedule sent','success');
         }
         // The button keeps its sent state from here (psLabel), not the
@@ -24379,6 +24414,9 @@ function publishScheduleNow(ack){
       }
       // A newer copy of this week replaced this one: it cannot be sent (UI-3).
       if (d.replaced) _schedSetReplaced({by: d.superseded_by || null, text: d.error});
+      /* Somebody changed the week after this page loaded it: their change
+         is shown, nothing went out (BUGSLIFE-11). */
+      if (d.stale && window._schedShowConflict) _schedShowConflict(d);
       result.style.color = 'var(--hb-bad)';
       // 403: this login can draft the week but not send it. The server's
       // sentence says exactly that; show it rather than "Nothing sent".
@@ -24722,6 +24760,18 @@ function _recEvent(key, event, kind) {
   if (kind) body.kind = kind;
   fetch('/api/recs/event', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .catch(function () {});
+}
+
+/* Everything a save stores about the rows on screen, as one comparable
+   value: the eight columns, each shift's id and its lock. */
+function _schedSaveSig(rows) {
+  var out = [], i, r;
+  for (i = 0; i < (rows || []).length; i++) {
+    r = rows[i] || {};
+    out.push([r.date, r.day, r.employee, r.role, r.shift_start, r.shift_end, r.scheduled_hours, r.notes,
+              r.shift_id, r.locked ? 1 : 0].join('|'));
+  }
+  return out.join('~');
 }
 
 function _schedSnapshot() {
@@ -37077,6 +37127,111 @@ window._cuRole=window.CAV_BOOT.role;
     jsend('/api/labor/demand-signals/'+id,{},function(d){done();if(!d.ok){toast(d.error||'Could not remove that','error');return;}toast(d.event_id?'Removed — Put back under Games you removed brings it back':'Removed','success');loadSignals();},'DELETE');
   };
 
+  // ── On the floor (schedule audit 10/10/26 J2) ──
+  // The live labor read and its moves (labor_live), the switches
+  // (floor_settings) and the POS schedule push (pos_schedule_push).
+  var _floor={live:null,set:null,preview:null};
+  window.toggleFloorPanel=function(){_lbToggle('floor',loadFloor,'Open ↓');};
+  window.loadFloor=function(){
+    jget('/api/labor/live',function(d){_floor.live=d;renderFloor();});
+    jget('/api/labor/floor-settings',function(d){_floor.set=d;renderFloor();});
+  };
+  function _flMoney(v){return v===null||v===undefined?'—':'<span class="hb-num">$'+esc(Math.round(v).toLocaleString())+'</span>';}
+  function _flPct(v){return v===null||v===undefined?'—':'<span class="hb-num">'+esc(v)+'%</span>';}
+  function _flWhen(iso){
+    if(!iso)return '';
+    var d=String(iso).slice(0,10),t=String(iso).slice(11,16),h=+t.slice(0,2),m=t.slice(3,5);
+    return esc(_dayShort(d))+' <span class="hb-num">'+esc(mdy(d))+' '+esc((h%12||12)+(m!=='00'?':'+m:'')+(h<12?'am':'pm'))+'</span>';
+  }
+  var _flActLabel={cut:'Let them go',extend:'Ask them to stay',call_in:'Call them in'};
+  var _flStatus={would_send:'will go',sent:'sent',skipped:'skipped',problem:'the POS would refuse it',started:'already started',salaried:'salaried, doesn’t clock in',unchanged:'already there',failed:'didn’t go through',removed_unconfirmed:'taken off: check the POS'};
+  window.renderFloor=function(){
+    var el=document.getElementById('floor-body');if(!el)return;
+    var L=_floor.live,S=_floor.set,h='',i;
+    if(!L||!S){return;}
+    if(!L.ok||!S.ok){el.innerHTML='<div class="hb-empty">'+esc((L&&L.error)||(S&&S.error)||'Could not load this.')+'</div>';return;}
+    var r=L.read||{},s=r.sales||{},lab=r.labor||{},p=r.pct||{};
+    var chip=document.getElementById('floor-chip');
+    if(!r.available){h+='<div class="hb-empty">'+esc(r.reason||'Nothing to read yet today.')+'</div>';if(chip)chip.textContent='';}
+    else{
+      if(chip)chip.textContent=p.all_in_projected!==null&&p.all_in_projected!==undefined?p.all_in_projected+'% projected':'';
+      h+='<div class="lb2-intro"><b>'+esc(r.sentence||'')+'</b></div>';
+      h+='<div class="shr-row"><div class="who"><b>Sales</b><span class="sub">'+_flMoney(s.so_far)+' so far ('+esc(s.basis||'no reading yet')+') · '+_flMoney(s.projected)+' projected at close: '+esc(s.projected_basis||'not enough to project from yet')+(s.covers_booked?' · <span class="hb-num">'+esc(s.covers_booked)+'</span> covers booked':'')+'</span></div></div>';
+      h+='<div class="shr-row"><div class="who"><b>Labor</b><span class="sub">'+_flMoney(lab.to_date)+' so far ('+_flPct(p.hourly_so_far)+' of sales, hourly) · '+_flMoney(lab.rest)+' still scheduled · '+_flPct(p.all_in_projected)+' projected all-in'+(p.target!==null&&p.target!==undefined?' against '+esc(p.target_label||'your target')+' of '+_flPct(p.target):'')+(lab.basis==='schedule'?' · the POS has no live clock feed, so labor so far is the schedule’s':'')+'</span></div></div>';
+      var ms=r.moves||[];
+      if(ms.length)h+='<div class="sr-k" style="margin:14px 0 4px">Worth doing now</div>';
+      for(i=0;i<ms.length;i++){h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(ms[i].kind.replace('_','-'))+'</span> <span class="sub">'+esc(ms[i].text)+'</span></div></div>';}
+    }
+    var today=L.moves_today||[];
+    if(today.length){h+='<div class="sr-k" style="margin:14px 0 4px">Tonight’s moves</div>';
+      for(i=0;i<today.length;i++){var m=today[i],open=m.status==='suggested'||m.status==='pushed';
+        h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(m.kind.replace('_','-'))+'</span> <b>'+esc(m.employee||'')+'</b><span class="sub">'+esc(m.text||'')+(open?'':' · '+esc(m.status)+(m.how==='auto'?' automatically':''))+'</span></div>'
+          +(open&&L.can_act?'<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="floorAct('+(+m.id)+',this)">'+esc(_flActLabel[m.kind]||'Do it')+'</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorMove('+(+m.id)+',\'dismiss\',this)">Not now</button>':'')
+          +(m.how==='auto'&&m.status==='offered'&&L.can_act?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorMove('+(+m.id)+',\'reverse\',this)">Reverse</button>':'')+'</div>';}
+    }
+    var st=S.settings||{},pos=S.pos||{},ap=S.autopilot||{};
+    h+='<div class="sr-k" style="margin:18px 0 6px">Your switches</div>';
+    h+='<div class="lb2-intro">Suggestions during service: '+(st.live_moves?'on':'off')+'. Autopilot: '+(st.autopilot?'on':'off')+'. With autopilot on, an extension or call-in you have approved <span class="hb-num">'+esc((ap.extend||{}).needed||6)+'</span> times yourself is offered to the person without your tap (extensions: '+((ap.extend||{}).earned?'earned':'<span class="hb-num">'+esc((ap.extend||{}).approvals||0)+'</span> so far')+'; call-ins: '+((ap.call_in||{}).earned?'earned':'<span class="hb-num">'+esc((ap.call_in||{}).approvals||0)+'</span> so far')+'). A cut always waits for you. Reverse one and it comes back to you.</div>';
+    if(S.can_edit)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorSet({live_moves:'+(st.live_moves?'false':'true')+'},this)">'+(st.live_moves?'Turn suggestions off':'Turn suggestions on')+'</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorSet({autopilot:'+(st.autopilot?'false':'true')+'},this)">'+(st.autopilot?'Turn autopilot off':'Turn autopilot on')+'</button></div>';
+    h+='<div class="sr-k" style="margin:18px 0 6px">The week on the POS time clock</div>';
+    if(!pos.schedule_push&&!pos.schedule_preview){h+='<div class="lb2-intro">'+(pos.provider?esc(pos.label||pos.provider)+' has no schedule write Cavnar AI can use: the week stays in Cavnar AI and the staff app.':'No POS is connected.')+'</div>';}
+    else{
+      h+='<div class="lb2-intro">'+(st.pos_push?'On: every week you send to staff also goes to '+esc(pos.label||'your POS')+'’s time clock, which holds early clock-ins and late clock-outs to it.':'Off: nothing is written to '+esc(pos.label||'your POS')+'. Look at the preview first: it shows every shift and what the POS would do with it.')+'</div>';
+      if(S.published_schedule_id)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorPreview('+(+S.published_schedule_id)+',this)">Preview this week</button></div>';
+      else h+='<div class="hb-empty">Send a week to staff and its preview shows here.</div>';
+      var pv=_floor.preview;
+      if(pv){
+        if(!pv.ok)h+='<div class="hb-empty">'+esc(pv.error||'The preview could not be read.')+'</div>';
+        else{
+          if(pv.external)h+='<div class="lb2-intro">'+esc(pv.external)+'</div>';
+          var sh=pv.shifts||[];
+          for(i=0;i<sh.length;i++){h+='<div class="shr-row"><div class="who"><b>'+esc(sh[i].employee||'')+'</b> '+(sh[i].start?_flWhen(sh[i].start):'')+(sh[i].role?' · '+esc(sh[i].role):'')+'<span class="sub">'+esc(_flStatus[sh[i].status]||sh[i].status)+(sh[i].reason?': '+esc(sh[i].reason):'')+'</span></div></div>';}
+          var lp=pv.last_push;
+          if(lp)h+='<div class="lb2-intro">Last push: '+esc(lp.status)+(lp.sent_on?' on <span class="hb-num">'+esc(lp.sent_on)+'</span>':'')+(lp.error?' · '+esc(lp.error):'')+'</div>';
+          if(S.can_edit&&pv.supported&&!st.pos_push&&!pv.external)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="floorSet({pos_push:true,previewed:true},this)">Send published weeks to '+esc(pos.label||'the POS')+'</button></div>';
+          if(S.can_edit&&st.pos_push)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorPush('+(+pv.history_id)+',this)">Send this week now</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorSet({pos_push:false},this)">Stop sending to the POS</button></div>';
+        }
+      }
+    }
+    el.innerHTML=h;
+  };
+  window.floorSet=function(body,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/floor-settings',body,function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not change that','error');return;}
+      toast('Saved','success');loadFloor();
+    });
+  };
+  window.floorPreview=function(id,btn){
+    var done=busy(btn,'Reading the POS…');
+    jget('/api/labor/pos-schedule-push?schedule_id='+id,function(d){done();_floor.preview=d;renderFloor();});
+  };
+  window.floorPush=function(id,btn){
+    var done=busy(btn,'Sending…');
+    jsend('/api/labor/pos-schedule-push',{schedule_id:id},function(d){
+      done();
+      if(!d.ok){toast(d.error||'It didn’t all go through: each shift says why','error');}
+      else toast(d.status==='unchanged'?'Already on the POS: nothing changed':'Sent to the POS','success');
+      floorPreview(id,btn);
+    });
+  };
+  window.floorAct=function(id,btn){
+    var done=busy(btn,'Working…');
+    jsend('/api/labor/live/moves/'+id+'/act',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not do that','error');return;}
+      toast(d.status==='offered'?'Offered to them in the Cavnar AI app':(d.note||'Done, and they have been told'),'success');loadFloor();
+    });
+  };
+  window.floorMove=function(id,what,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/live/moves/'+id+'/'+what,{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not do that','error');return;}
+      toast(what==='reverse'?(d.undone?'Withdrawn. Autopilot comes back to you':(d.note||'Autopilot comes back to you')):'Okay','success');loadFloor();
+    });
+  };
   // ── Shift requests ──
   var _requests=null;
   window.toggleRequestsPanel=function(){_lbToggle('requests',loadShiftRequests,'Review ↓');};
@@ -37112,7 +37267,10 @@ window._cuRole=window.CAV_BOOT.role;
     // Offers waiting on one named person (H2): the coverage issue's ask or
     // a manager's pick, answered in the staff app.
     var offers=d.offers||[],byReq={};
-    for(i=0;i<offers.length;i++){(byReq[offers[i].request_id]=byReq[offers[i].request_id]||[]).push(offers[i].name);}
+    var autoOffer={};
+    for(i=0;i<offers.length;i++){(byReq[offers[i].request_id]=byReq[offers[i].request_id]||[]).push(offers[i].name);
+      /* Offered to its best legal fit by Cavnar AI, once earned (MARKET-25). */
+      if(offers[i].created_by==='Cavnar AI (automatic)')autoOffer[offers[i].request_id]={id:offers[i].id,name:offers[i].name};}
     h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
     if(!open.length)h+='<div class="hb-empty">No open shifts. An approved drop without a named replacement, or one you post below, shows here until somebody picks it up in the Cavnar AI app.</div>';
     for(i=0;i<open.length;i++){var o=open[i],who=o.employee_name?'was '+esc(o.employee_name):'extra shift',asked=byReq[o.id]||[];
@@ -37120,10 +37278,14 @@ window._cuRole=window.CAV_BOOT.role;
          itself (MARKET-14, reversible) say so on the row. */
       var held=o.held_claimant?' · '+esc(o.held_claimant)+' asked for it — into overtime, answer it in Waiting on you':'';
       var auto=o.decided_how==='auto'&&!o.reversed_at?' · approved automatically':'';
+      var ao=autoOffer[o.id];
+      if(ao)auto+=' · offered to '+esc(ao.name)+' automatically, the best legal fit';
       h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+held+auto+'</span></div>'
         +'<input type="text" class="ac-input" data-shr-offer list="lb2-people-names" autocomplete="off" placeholder="Offer it to…" aria-label="Offer it to" style="width:150px">'
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrOffer('+(+o.id)+',this)">Offer</button>'
-        +(auto?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
+        +(auto&&!ao?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
+        +(ao&&d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrOfferReverse('+(+ao.id)+',this)">Withdraw offer</button>':'')
+        +(d.group&&d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCrossSite('+(+o.id)+',this)">Other locations</button>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCancelOpen('+(+o.id)+',this)">Take it off</button></div>';
     }
     /* A swap that approved itself and went through can still be traded back. */
@@ -37157,9 +37319,12 @@ window._cuRole=window.CAV_BOOT.role;
     h+='<div class="lb2-intro">'+(p.auto_approve?'On: a drop or swap that keeps a manager on every minute and the closers, adds no overtime, is the same role, is more than <span class="hb-num">'+esc(p.notice_hours)+'</span> hours out and costs Shift Quality no more than <span class="hb-num">'+esc(p.max_quality_drop)+'</span> points approves itself — once your own approvals of that kind earn it. Reverse one and that kind comes back to you.':'Off: every drop and swap waits on you.')+'</div>';
     for(k=0;k<kinds.length;k++){var tr=t[kinds[k]]||{};
       h+='<div class="lb2-intro">'+(kinds[k]==='drop'?'Drops':'Swaps')+': '+(tr.earned?'earned':'<span class="hb-num">'+esc(tr.approvals||0)+'</span> of the <span class="hb-num">'+esc(tr.needed||0)+'</span> approvals it needs')+(tr.lapse_reason&&!tr.earned?' (back to you: '+esc(tr.lapse_reason)+')':'')+'</div>';}
+    var to=t.offer||{};
+    h+='<div class="lb2-intro">Open shifts offered to their best legal fit first: '+(p.auto_offer?'on':'off')+' — '+(to.earned?'earned':'<span class="hb-num">'+esc(to.approvals||0)+'</span> of the <span class="hb-num">'+esc(to.needed||0)+'</span> offers you make yourself it needs')+(to.lapse_reason&&!to.earned?' (back to you: '+esc(to.lapse_reason)+')':'')+'. Never into overtime while a teammate has room; withdraw one and it comes back to you.</div>';
     h+='<div class="lb2-intro">Less availability: '+(p.availability_approval?'waits for your approval, from the first week you haven’t built':'starts on its own, from the first week you haven’t built')+'.</div>';
     if(canDecide)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrPolicy({auto_approve:'+(p.auto_approve?'false':'true')+'},this)">'+(p.auto_approve?'Turn automatic approval off':'Turn automatic approval on')+'</button>'
-      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({availability_approval:'+(p.availability_approval?'false':'true')+'},this)">'+(p.availability_approval?'Let less availability start on its own':'Approve less availability first')+'</button></div>';
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({availability_approval:'+(p.availability_approval?'false':'true')+'},this)">'+(p.availability_approval?'Let less availability start on its own':'Approve less availability first')+'</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({auto_offer:'+(p.auto_offer?'false':'true')+'},this)">'+(p.auto_offer?'Stop offering open shifts automatically':'Offer open shifts to the best fit automatically')+'</button></div>';
     return h;
   }
   window.shrPolicy=function(body,btn){
@@ -37168,6 +37333,41 @@ window._cuRole=window.CAV_BOOT.role;
       done();
       if(!d.ok){toast(d.error||'Could not change that','error');return;}
       toast('Saved','success');
+      loadShiftRequests();
+    });
+  };
+  /* People at the group's other locations who said they travel, judged by
+     this location's rules (cross_site, MARKET-16). */
+  window.shrCrossSite=function(id,btn){
+    var done=busy(btn,'Looking…');
+    jget('/api/labor/cross-site/candidates?request_id='+id,function(d){
+      done();
+      var row=document.querySelector('[data-shr-open="'+id+'"]');if(!row)return;
+      var box=row.querySelector('.shr-xsite');
+      if(!box){box=document.createElement('div');box.className='shr-xsite lb2-intro';row.appendChild(box);}
+      if(!d.ok){box.textContent=d.error||'Could not look that up.';return;}
+      var c=d.candidates||[],h='',i;
+      if(!c.length)h='Nobody at your other locations who said they travel works that role.';
+      for(i=0;i<c.length;i++){
+        h+='<div>'+esc(c[i].name)+' <span class="sub">('+esc(c[i].home)+')</span> '+(c[i].ok?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-name="'+esc(c[i].name)+'" onclick="shrCrossOffer('+(+id)+','+(+c[i].home_restaurant_id)+',this)">Offer</button>':'<span class="sub">can’t: '+esc(c[i].why||'')+'</span>')+'</div>';}
+      box.innerHTML=h;
+    });
+  };
+  window.shrCrossOffer=function(id,home,btn){
+    var name=btn.getAttribute('data-name')||'';
+    var done=busy(btn,'Offering…');
+    jsend('/api/labor/cross-site/offer',{request_id:id,home_restaurant_id:home,name:name},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not offer that','error');return;}
+      toast('Offered to '+name,'success');loadShiftRequests();
+    });
+  };
+  window.shrOfferReverse=function(id,btn){
+    var done=busy(btn,'Withdrawing…');
+    jsend('/api/labor/shift-offers/'+id+'/reverse',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not withdraw that','error');return;}
+      toast(d.undone?'Withdrawn. Automatic offers come back to you':(d.note||'Automatic offers come back to you'),'success');
       loadShiftRequests();
     });
   };
@@ -39378,7 +39578,14 @@ window.cavPalette = cavPalette;
   function psReach() {
     var el = $id('ps-reach'), c = window._psCheck; if (!el) return;
     if (!c || !c.reach) { el.innerHTML = ''; return; }
-    if (c.published_at) { var un = c.unsent_changes || []; el.innerHTML = 'Sent to staff <span class="hb-num">' + e(window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.'); return; }
+    if (c.published_at) {
+      var un = c.unsent_changes || [], dl = c.delivery || {}, miss = (dl.failed || 0) + (dl.unreachable || 0);
+      el.innerHTML = 'Sent to staff <span class="hb-num">' + e(window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.')
+        + (dl.sending ? ' · <span class="hb-num">' + dl.sending + '</span> still sending' : '')
+        + (miss ? ' · <span class="hb-num">' + miss + '</span> didn’t get it <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="psResend(\'missing\', this)">Send to them</button>' : '')
+        + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="psResend(\'all\', this)">Send again to everyone</button>';
+      return;
+    }
     var r = c.reach, bits = [];
     if (r.by_app) bits.push('<span class="hb-num">' + r.by_app + '</span> in the app');
     if (r.by_text) bits.push('<span class="hb-num">' + r.by_text + '</span> by text');
@@ -39389,6 +39596,24 @@ window.cavPalette = cavPalette;
       + (lost ? ' · <span class="hb-num">' + lost + '</span> only in the staff portal' : '')
       + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="togglePublishSchedule()">' + (lost ? 'Fix contacts' : 'Contacts') + '</button>';
   }
+  /* Send a week staff already have again (BUGSLIFE-9): "missing" - the
+     people whose message failed or who were unreachable then - or "all",
+     after a confirm, since everyone hears about it a second time. */
+  window.psResend = function (scope, btn) {
+    if (!_schedHistoryId) return;
+    if (scope === 'all' && !window.confirm('Send this week to everyone on it again? Everyone hears about their shifts a second time, even if nothing changed.')) return;
+    var done = btn ? cbtnBusy(btn, 'Sending…') : function () {};
+    postJ('/api/labor/publish-schedule', {schedule_id: _schedHistoryId, resend: scope}, function (d) {
+      done();
+      if (d.ok) {
+        var n = (d.sent || []).length, f = (d.failed || []).length, w = (d.sending || []).length;
+        toast(d.nothing_to_send ? (d.note || 'Everyone on this week has it.') : ('Sent again to ' + n + (w ? ' · ' + w + ' still sending' : '') + (f ? ' · ' + f + ' failed' : '')), f ? 'warning' : 'success');
+        if (window.psRefresh) psRefresh();
+      } else {
+        toast(d.error || 'Nothing sent', 'error');
+      }
+    });
+  };
   window.psIsSent = function () {
     if (!_schedHistoryId || _schedDirty) return false;
     var c = window._psCheck, mine = c && c.schedule_id != null ? +c.schedule_id === +_schedHistoryId : true;

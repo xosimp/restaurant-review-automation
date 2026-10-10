@@ -2645,6 +2645,9 @@ _RETENTION_DAYS = {
     "admin_issue_resolution_history": int(os.getenv("RETAIN_RESOLUTION_HISTORY_DAYS", "400")),
     "sms_log":            int(os.getenv("RETAIN_SMS_LOG_DAYS", "90")),
     "push_outbox":        int(os.getenv("RETAIN_PUSH_OUTBOX_DAYS", "30")),
+    # The schedule publish outbox (schedule_publish): who each Send told and
+    # how; the share-status list reads a week's own rows.
+    "schedule_notices":   int(os.getenv("RETAIN_SCHEDULE_NOTICES_DAYS", "180")),
     "webhook_outbox":     int(os.getenv("RETAIN_WEBHOOK_OUTBOX_DAYS", "30")),
     "morning_brief_deliveries": int(os.getenv("RETAIN_BRIEF_DELIVERIES_DAYS", "90")),
     "alert_storm_caps":   int(os.getenv("RETAIN_ALERT_STORM_CAPS_DAYS", "365")),
@@ -2740,6 +2743,17 @@ _RETENTION_DAYS = {
     # An employee's availability cut and its answer (availability_changes,
     # 10/10/26 MARKET-15): what they asked and when it took effect.
     "staff_availability_changes": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    # A shift at another location offered to someone who travels (cross_site,
+    # 10/10/26 MARKET-16): kept like the offers here.
+    "cross_site_offers": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    # The schedule on the floor (J2, 10/10/26): each push of a week to the POS
+    # clock and its shifts' statuses; the live labor moves and their answers
+    # (autopilot earns on 60 days of them); the kept live read (a cache of
+    # today's — a miss reads again).
+    "pos_schedule_pushes": int(os.getenv("RETAIN_POS_PUSH_DAYS", "400")),
+    "pos_schedule_push_shifts": int(os.getenv("RETAIN_POS_PUSH_DAYS", "400")),
+    "live_labor_moves": int(os.getenv("RETAIN_LIVE_LABOR_DAYS", "400")),
+    "live_labor_reads": int(os.getenv("RETAIN_LIVE_LABOR_READS_DAYS", "30")),
     "staff_shift_pulse":     int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_briefs":          int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_calendar_links":  int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
@@ -2830,6 +2844,7 @@ _RETENTION_COLUMN = {
     "missed_windows": "created_at",
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
+    "schedule_notices": "created_at",
     "places_details_cache": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
@@ -2844,7 +2859,9 @@ _RETENTION_COLUMN = {
     "ask_topics": "created_at", "ask_feedback": "created_at",
     "staff_announcement_recipients": "created_at", "staff_announcements": "created_at",
     "staff_thread_messages": "created_at", "staff_running_late": "business_date", "shift_offers": "created_at",
-    "staff_availability_changes": "created_at",
+    "staff_availability_changes": "created_at", "cross_site_offers": "created_at",
+    "pos_schedule_pushes": "created_at", "pos_schedule_push_shifts": "created_at",
+    "live_labor_moves": "business_date", "live_labor_reads": "business_date",
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
@@ -2937,6 +2954,9 @@ _RETENTION_FLOOR_DAYS = {
     # The Places Details cache is read for its own day only (#13).
     "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
+    # A sent week's delivery list (schedule_publish.notice_status) is read
+    # while the week is current — a few weeks, never more than two months.
+    "schedule_notices": 60,
     "morning_brief_deliveries": 30, "alert_storm_caps": 60, "login_history": 60,
     # Account -> Memory offers a year to restore a forgotten fact (M2's archive).
     "ask_memory_archive": 365,
@@ -2970,6 +2990,11 @@ _RETENTION_FLOOR_DAYS = {
     # in force (the first week nobody has built, a few weeks ahead) and 30
     # days after.
     "staff_availability_changes": 90,
+    # Offers at another location read while live; the POS pushes read per
+    # week (the newest); live moves' autopilot trust reads EARN_WINDOW_DAYS
+    # (60) of them; the live read is today's.
+    "cross_site_offers": 30, "pos_schedule_pushes": 30, "pos_schedule_push_shifts": 30,
+    "live_labor_moves": 120, "live_labor_reads": 7,
     # Floor sections: the scheduling memory learns each server's usual
     # section from 24 weeks of them (schedule audit 10/3/26 L-22).
     "staff_calendar_links": 30, "shift_sections": 168, "staff_translations": 7,

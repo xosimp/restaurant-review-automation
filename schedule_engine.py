@@ -1868,6 +1868,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # owner typed for this draft, hard — applied just below.
     import owner_rules as _owr
     _owner_words = {"instruction": []}
+    # A stopped run starts no further model call (10/9/26) — the reading
+    # below is one.
+    _raise_if_stopped(current_clock())
     try:
         _owner_words = _owr.prepare(restaurant_id, next_week_dates, instruction=instruction)
     except Exception as _sfx:
@@ -4653,10 +4656,11 @@ def _last_published_week(restaurant_id, before_date) -> dict:
     from models import get_conn
     conn = get_conn()
     try:
+        import models as _m_live
         row = conn.execute(
-            "SELECT schedule_csv, week_start, week_end, quality_score, quality_band FROM schedule_history "
-            "WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-            "AND week_end < ? AND week_end >= date(?, '-2 days') ORDER BY week_end DESC, id DESC LIMIT 1",
+            "SELECT " + _m_live.live_csv_sql("h") + " AS schedule_csv, week_start, week_end, quality_score, "
+            "quality_band FROM schedule_history h WHERE h.restaurant_id=? AND " + _m_live.live_where("h") + " "
+            "AND h.week_end < ? AND h.week_end >= date(?, '-2 days') ORDER BY h.week_end DESC, h.id DESC LIMIT 1",
             (restaurant_id, before_date, before_date)).fetchone()
     finally:
         conn.close()
@@ -6883,11 +6887,8 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
         if not csv_text:
             return {}
         out = {}
-        for line in csv_text.split("\n")[1:]:
-            parts = [p.strip() for p in line.split(",", 7)]
-            if len(parts) < 5:
-                continue
-            date, _day, name, _role, start = parts[0], parts[1], parts[2], parts[3], parts[4]
+        for _pr in _versions.rows_from_csv(csv_text):
+            date, name, start = _pr.get("date") or "", _pr.get("employee") or "", _pr.get("shift_start") or ""
             if not (date and name):
                 continue
             try:
@@ -6895,7 +6896,7 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
             except ValueError:
                 continue
             part = _stime.primary_daypart({"date": date, "shift_start": start,
-                                           "shift_end": parts[5] if len(parts) > 5 else ""})
+                                           "shift_end": _pr.get("shift_end") or ""})
             entry = {"date": date, "daypart": part,
                      "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A")}
             bucket = out.setdefault(name, [])
@@ -8569,9 +8570,8 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates, extra_rows=None)
     except Exception as e:
         print(f"[schedule] gate: draft not read for the fill: {e!r}")
         return None
-    lines = text.split("\n")
     want = set(dates)
-    body = [ln for ln in lines[1:] if ln.strip() and ln.split(",", 1)[0].strip().strip('"') in want]
+    body = [r for r in _versions.rows_from_csv(text) if (r.get("date") or "")[:10] in want]
     if not body:
         return None
     # The shifts the exact solve of the gate's days found (LOGIC-26), with
@@ -8580,10 +8580,13 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates, extra_rows=None)
         if r.get("date") in want and (r.get("employee") or "").strip():
             body.append(_rows_to_csv_text([r]).split("\n", 1)[-1].strip())
     out = copy.deepcopy(answer)
-    out["schedule_csv"] = (lines[0] or EXPECTED_SCHEDULE_HEADER) + "\n" + "\n".join(body)
+    # The stored text is quoted and carries ids; the answer parser reads its
+    # own eight-column lines (schedule_rows.answer_csv).
+    import schedule_rows as _srows_fill
+    out["schedule_csv"] = _srows_fill.answer_csv(body)
     # The gate's dates as the draft has them, typed (ARCH-10): never the
     # model's first answer's rows, which the copy would otherwise carry.
-    out["rows"] = [r for r in _versions.rows_from_csv(out["schedule_csv"]) if r.get("date") in want]
+    out["rows"] = [dict(r) for r in body]
     out["dropped_rows"] = []
     out["unwritten_dates"] = []
     out["generation_seconds"] = 0.0
@@ -8735,8 +8738,10 @@ def _restore_draft(restaurant_id, keep_id, drop_id=None):
                            (keep_id, restaurant_id)).fetchone()
         if not row:
             return
+        import models as _m_claim
         conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? AND id>? "
-                     "AND published_at IS NULL", (keep_id, restaurant_id, row["week_start"], keep_id))
+                     "AND published_at IS NULL AND NOT " + _m_claim.publish_claim_fresh_sql(),
+                     (keep_id, restaurant_id, row["week_start"], keep_id))
         conn.execute("UPDATE schedule_history SET superseded_by=NULL WHERE id=? AND restaurant_id=?",
                      (keep_id, restaurant_id))
         conn.commit()
@@ -11035,7 +11040,6 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                             result["review"]["stations"] = _stations
                 except Exception as _stx:
                     _soft_fail("station report", _stx, restaurant_id)
-                _lines_out = [",".join(_COLS)]
                 for _r in preview_rows:
                     if _r.get("needs_review"):
                         _n = (_r.get("notes") or "").strip()
@@ -11045,8 +11049,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                         # reason of a breach that may be gone.
                         _n = _rules.strip_review_mark(_n)
                         _r["notes"] = f"{_n} — {_mark}" if _n else _mark
-                    _lines_out.append(",".join(str(_r.get(c, "") or "").replace(",", ";") for c in _COLS))
-                result["schedule_csv"] = "\n".join(_lines_out)
+                # The stored text: schedule_rows.to_csv, the one writer —
+                # quoted, so a comma or a line break in a note survives, with
+                # each row's person id; save_schedule_history gives each row
+                # the shift id it keeps (ARCH-6, ARCH-31, SCALE-31).
+                import schedule_rows as _srows_out
+                _versions.stamp_people(restaurant_id, preview_rows)
+                result["schedule_csv"] = _srows_out.to_csv(preview_rows)
         except ScheduleGenerationError:
             raise                      # already a sentence the owner can read
         except Exception as _csv_ex:
@@ -11099,6 +11108,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         # prompt only. schedule_narrative writes them from the final rows,
         # the diff and the unmet list, or keeps the model's own only where
         # the final week still holds them.
+        # The note is a model call: a stopped run starts no further one
+        # (10/9/26) — stopped by the owner is said as stopped, called dead by
+        # a poll as out of time, the same verdicts as the save check below.
+        _raise_if_stopped(clock, owner_only=True)
+        if clock is not None and clock.stopped():
+            raise ScheduleGenerationError(_TIMED_OUT_MESSAGE)
         try:
             import schedule_narrative as _snar
             _note = _snar.write(restaurant_id, preview_rows, changes=result.get("summary") or [],
@@ -11175,6 +11190,28 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # and a failed one left a draft in force that published without
             # its partial-week and failed-stage blockers. A redo writes only
             # over the draft it read (PIPE-2).
+            # The week's draft baseline, its experiment arm and its model
+            # calls' links are written in the save's own transaction (ARCH-29,
+            # BUGSLIFE-25): they were separate commits after it, and a lost
+            # `generated` version made the first manager save the draft —
+            # acceptance and learning then credited the AI with the
+            # manager's edits.
+            _gen_box = {}
+
+            def _with_the_week(_conn, _new_id):
+                import schedule_output as _so_link
+                import schedule_experiments as _sx_rec
+                _text = _conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?",
+                                      (_new_id,)).fetchone()[0]
+                _gen_box["csv"] = _text
+                _gen_box["version"] = _versions._insert_version(
+                    _conn, restaurant_id, _new_id, "generated", _text, result.get("quality"),
+                    "Cavnar AI", "system")[1]
+                _so_link.link_calls(restaurant_id, _new_id, result.get("generation_id"), conn=_conn)
+                _sx_rec.record(restaurant_id, _new_id, result.get("experiment_arms") or [],
+                               (result.get("quality") or {}).get("score"),
+                               solver_applied=(result.get("solver") or {}).get("applied")
+                               if (result.get("solver") or {}).get("ran") else None, conn=_conn)
             try:
                 _history_id = _save_durably(
                     job_id, clock, restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
@@ -11199,7 +11236,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                "requirements_by_date": _json_safe(result.get("requirements_by_date") or {})},
                     stage_seconds=_timer.as_dict(),
                     base=(int(base_history_id), _base_csv) if redo else None,
+                    in_transaction=_with_the_week,
                 )
+                _history_version = _gen_box.get("version")
+                # The rows as stored, with the shift id each kept or was
+                # given: the client holds them and sends them back on save.
+                if _gen_box.get("csv"):
+                    result["schedule_csv"] = _gen_box["csv"]
+                    _stored = _versions.rows_from_csv(_gen_box["csv"])
+                    if len(_stored) == len(preview_rows):
+                        for _pr, _sr_ in zip(preview_rows, _stored):
+                            _pr["shift_id"], _pr["person_id"] = _sr_["shift_id"], _sr_["person_id"]
+                            _pr["locked"] = _srows_out.is_locked(_sr_)
             except _DraftChanged as _moved:
                 _verdict = _redo_base_moved(_moved, _base_rows, dates, _answer, _reruns)
                 if _verdict == "again":
@@ -11219,15 +11267,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 print(f"[schedule] stage timings not updated for history {_history_id}: {_tsx}")
                 _ops.capture(_tsx, job="schedule_generate", context=f"restaurant_id={restaurant_id} — stage timings")
             # Every model call this generation made — its full input and
-            # answer — keyed to the week it produced, so the week can be
-            # replayed against another model, effort or prompt (schedule
-            # audit 10/3/26 PR-31, scripts/schedule_model_eval.py).
-            try:
-                import schedule_output as _so_link
-                _so_link.link_calls(restaurant_id, _history_id, result.get("generation_id"))
-            except Exception as _lx:
-                print(f"[schedule] model calls not linked to history {_history_id}: {_lx}")
-                _ops.capture(_lx, job="schedule_model_calls", context=f"restaurant_id={restaurant_id}")
+            # answer — is keyed to the week it produced inside the save
+            # (_with_the_week), so the week can be replayed against another
+            # model, effort or prompt (schedule audit 10/3/26 PR-31,
+            # scripts/schedule_model_eval.py).
             # What the generation cost and what the model's rows were worth
             # (schedule_metrics — AI-2's cost per accepted week, AI-23's
             # role violations, stage attribution, the eval's context).
@@ -11243,21 +11286,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # days the generation could not write (P-34).
             if _history_id and not _pinned and not result.get("unwritten_dates"):
                 mark_next_week_built(restaurant_id, _history_id)
-            # #50: this week's experiment arm, with the draft's score (internal only).
+            # #50: this week's experiment arm, with the draft's score
+            # (internal only), and the `generated` version these rows are —
+            # which travels with them to the client, sent back with its
+            # first save (schedule re-audit 10/4/26 UI-1) — were written in
+            # the save's transaction (_with_the_week).
             try:
-                import schedule_experiments as _sx_rec
-                _sx_rec.record(restaurant_id, _history_id, result.get("experiment_arms") or [],
-                               (result.get("quality") or {}).get("score"),
-                               solver_applied=(result.get("solver") or {}).get("applied")
-                               if (result.get("solver") or {}).get("ran") else None)
-            except Exception as _arx:
-                print(f"[schedule] experiment arm not recorded: {_arx}")
-            # What made this draft, kept for the Schedule Learning Scorecard
-            # (schedule audit 10/10/26 RM-4, AI-29, LEARNING-7): the commit
-            # and arms, each row's origin (the model, the managers' plan, a
-            # repair stage, a pass after the loop), the learning ablation,
-            # and the owner's rules the week honours. Never blocks the save.
-            try:
+                # What made this draft, kept for the Schedule Learning Scorecard
+                # (schedule audit 10/10/26 RM-4, AI-29, LEARNING-7): the commit
+                # and arms, each row's origin (the model, the managers' plan, a
+                # repair stage, a pass after the loop), the learning ablation,
+                # and the owner's rules the week honours. Never blocks the save.
                 import schedule_scorecard as _ssc_tag
                 _ga = locals().get("_gen_attr") or {}
                 _ssc_tag.tag_generation(
@@ -11270,16 +11309,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except Exception as _tgx:
                 print(f"[schedule] generation tags not kept: {_tgx}")
             try:
-                # The version these rows are travels with them to the client,
-                # which sends it back with its first save (schedule re-audit
-                # 10/4/26 UI-1).
-                _history_version = _versions.append(restaurant_id, _history_id, "generated", result["schedule_csv"],
-                                                    quality=result.get("quality"), saved_by="Cavnar AI",
-                                                    saved_authority="system", return_version=True)
-            except Exception as _vx:
-                print(f"[schedule] version save failed: {_vx}")
-            try:
-                from client_api import log_account_event
+                from models import log_account_event
                 log_account_event(restaurant_id, "schedule_generated", None,
                                   detail=f"week of {_wd[0] if _wd else '?'} · {len(preview_rows)} shifts · "
                                          f"{result.get('rows_needing_review', 0)} flagged")
@@ -12108,11 +12138,10 @@ def _json_safe(x):
 
 
 def _rows_to_csv_text(rows: list) -> str:
-    cols = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
-    lines = [",".join(cols)]
-    for r in rows:
-        lines.append(",".join(str(r.get(c, "") or "").replace(",", ";") for c in cols))
-    return "\n".join(lines)
+    """Rows as the stored text — schedule_rows.to_csv, the one writer (each
+    row's shift id, person id and lock kept; quoted)."""
+    import schedule_rows as _srows_t
+    return _srows_t.to_csv(rows)
 
 
 def prepare_replacements(restaurant_id, rows: list, constraints=None) -> dict:

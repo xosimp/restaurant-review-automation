@@ -47,34 +47,11 @@ def _published_weeks(restaurant_id: int, today):
     published before the stamp existed) has a share row. Reading only the
     single newest one meant that the moment next week was published, the
     rest of this week vanished from the portal and everybody read "off"
-    from Friday to Sunday."""
+    from Friday to Sunday. Each week's live copy is the one rule
+    (models.live_weeks — schedule audit 10/10/26 ARCH-11), newest live copy
+    first, so it owns a date two copies cover (_owner_of)."""
     import models as _m
-    conn = _m.get_conn()
-    try:
-        _m._ensure_history_columns(conn)
-        # Each week's live copy by the one rule (models._live_week_row, which
-        # the /s/ link and staff_insights read too): the published copy
-        # nothing superseded, newest (re)publish first, else — a week sent
-        # before the stamp — its newest shared copy. A superseded copy that
-        # still has share rows (every publish writes them) is not live, and
-        # a re-published older copy is (LG-34): the old query judged by id.
-        weeks = conn.execute(
-            "SELECT week_start, MAX(week_end) AS week_end, MAX(id) AS newest FROM schedule_history h "
-            "WHERE h.restaurant_id=? AND (h.published_at IS NOT NULL OR EXISTS "
-            "(SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
-            "GROUP BY week_start ORDER BY newest DESC LIMIT 60", (restaurant_id,)).fetchall()
-        live = []
-        for w in weeks:
-            we = _parse_day(w["week_end"])
-            if we and we < today:
-                continue
-            row = _m._live_week_row(conn, restaurant_id, w["week_start"])
-            if row:
-                live.append(row)
-    finally:
-        conn.close()
-    # Newest live copy first, so it owns a date two copies cover (_owner_of).
-    live.sort(key=lambda r: (str(r["live_at"] or ""), r["id"]), reverse=True)
+    live = _m.live_weeks(restaurant_id, lo=today.isoformat())
     return [{"id": r["id"], "start": _parse_day(r["week_start"]), "end": _parse_day(r["week_end"])}
             for r in live if not (_parse_day(r["week_end"]) and _parse_day(r["week_end"]) < today)]
 
@@ -197,6 +174,9 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
             print(f"[staff_schedule] spellings unread rid={restaurant_id}: {_px!r}")
     mine, week_of = [], None
     for w in weeks:
+        # The PUBLISHED copy — what staff were sent and the covers they
+        # were told about; a manager's unsent edit never reaches the portal
+        # before Send (schedule audit 10/10/26 ARCH-1, BUGSLIFE-3).
         # The CSV and the stations only (scheduler audit 10/10/26, SCALE-19):
         # every staff request read each live week with SELECT * and four
         # JSON parses (the 130-440 KB quality among them) to use two fields.

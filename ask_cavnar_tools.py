@@ -194,11 +194,12 @@ def _read_schedule(restaurant_id):
     try:
         from models import _ensure_history_columns
         _ensure_history_columns(conn)
-        row = conn.execute(
-            "SELECT id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, hours_budget, "
-            "schedule_csv, quality_json, edited_at FROM schedule_history "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
-            (restaurant_id,)).fetchone()
+        # The week in force (models.newest_draft, ARCH-11) — never a
+        # discarded rewrite or a replaced draft.
+        from models import newest_draft as _newest_draft
+        row = _newest_draft(conn, restaurant_id,
+                            columns="id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, "
+                                    "hours_budget, schedule_csv, quality_json, edited_at")
     finally:
         conn.close()
     if not row:
@@ -3699,6 +3700,39 @@ TOOLS = [
                 "instruction": {"type": "string"}}},
         },
     },
+    # One shift, not the whole pipeline (schedule audit 10/10/26 MARKET-20):
+    # "move Maria to close Friday", "add a second cook Saturday 5-10". The
+    # card is built from the stored week (shift_edits.card): the edit judged
+    # by the one legality engine, priced, with what a change to a week staff
+    # have may owe — and the version it was judged on, so Confirm saves it
+    # through the Studio's save steps or refuses when the week moved.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/shift-edit", "mobile": "/mobile/api/labor/shift-edit", "method": "POST"},
+        "summary": "Change one shift",
+        "module": "module_labor",
+        "spec": {
+            "name": "edit_shift",
+            "description": (
+                "Propose ONE shift change on the schedule: add a shift, move one to another day, retime one, "
+                "remove one, or give one to someone else. Call read_schedule first so names, dates and start "
+                "times are the week's own; it is checked against every scheduling rule before the card shows."),
+            "input_schema": {"type": "object", "required": ["op", "date"], "additionalProperties": False,
+                             "properties": {
+                "op": {"type": "string", "enum": ["add", "move", "retime", "remove", "reassign"]},
+                "date": {"type": "string", "description": "The shift's date, YYYY-MM-DD."},
+                "employee": {"type": "string", "description": "Who holds it (or who is added)."},
+                "shift_start": {"type": "string", "description": "Its start, e.g. 5:00pm — names which shift; "
+                                                                 "required for add."},
+                "shift_end": {"type": "string", "description": "add only."},
+                "role": {"type": "string", "description": "add only."},
+                "new_date": {"type": "string", "description": "move only, YYYY-MM-DD."},
+                "new_start": {"type": "string"},
+                "new_end": {"type": "string"},
+                "to_employee": {"type": "string", "description": "reassign only."}}},
+        },
+    },
     # Answering the team (Friction audit #18): the same decide routes the
     # Labor tab's Approve / Deny buttons post. Proposed, never performed —
     # an answer changes who can be scheduled and the employee is told.
@@ -4138,6 +4172,13 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
             return None
         return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
                 "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
+    if name == "edit_shift":
+        import shift_edits
+        body, summary_text, _why = shift_edits.card(restaurant_id, args)
+        if body is None:
+            return None
+        return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
+                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
         if restaurant_id is not None:
@@ -4316,6 +4357,10 @@ _FIELD_LABELS = {
     "week_start": "Week of",
     "dates": "Days to rewrite",
     "history_id": "Draft #",
+    # edit_shift (MARKET-20)
+    "op": "Change", "employee": "Whose shift", "shift_start": "Starting", "shift_end": "Ending",
+    "new_date": "Moved to", "new_start": "New start", "new_end": "New end", "to_employee": "Given to",
+    "version": "Judged on version",
     "instruction": "What you asked for",
     "time_windows": "Hours they can work",
     "daypart_availability": "Shifts they can work",
@@ -4663,6 +4708,9 @@ def proposal_refusal(name, tool_input, restaurant_id=None, owner_words=""):
         return _constraint_card(name, args, restaurant_id)[2]
     if name == "generate_schedule":
         return _schedule_card(args, restaurant_id)[2]
+    if name == "edit_shift":
+        import shift_edits
+        return shift_edits.card(restaurant_id, args)[2]
     domains = None
     for k, v in args.items():
         if not isinstance(v, str) or k in ("image_url", "email", "supplier_email"):
@@ -4983,7 +5031,7 @@ def proposal_details(name, args, restaurant_id, bulk_preview=None) -> dict:
             # confirm (the card never carries an acknowledgement), so say why
             # before the tap and where to send it knowingly (NS5 C1/H3).
             try:
-                from client_api import publish_blockers
+                from schedule_publish import publish_blockers
                 blockers = publish_blockers(restaurant_id, row["id"])
             except Exception:
                 blockers = []

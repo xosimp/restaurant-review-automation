@@ -89,19 +89,17 @@ def _key(name) -> str:
 
 
 def _published(conn, restaurant_id, on_date=None):
-    """The published week a shift on `on_date` belongs to: the newest
-    published row whose week contains that date. Taking simply the newest
+    """The published week a shift on `on_date` belongs to — its live copy
+    (models.live_week_for, the one rule, ARCH-11), its PUBLISHED rows as
+    `schedule_csv`: a manager's unsent edit is not what staff drop or swap
+    (ARCH-1). With no date, the newest live week. Taking simply the newest
     published row meant that once next week went out, nobody could drop or
     swap a shift in the week they were actually working."""
+    import models as _m
     if on_date is None:
-        return conn.execute(
-            "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-            "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
-    iso = on_date.isoformat() if hasattr(on_date, "isoformat") else str(on_date)[:10]
-    return conn.execute(
-        "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-        "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
-        "ORDER BY generated_at DESC, id DESC LIMIT 1", (restaurant_id, iso, iso)).fetchone()
+        weeks = _m.live_weeks(restaurant_id, conn=conn)
+        return weeks[0] if weeks else None
+    return _m.live_week_for(restaurant_id, on_date, conn=conn)
 
 
 def _live_hist(conn, restaurant_id, req):
@@ -111,8 +109,8 @@ def _live_hist(conn, restaurant_id, req):
     live = _published(conn, restaurant_id, req["date"])
     if live:
         return live
-    return conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                        (req["history_id"], restaurant_id)).fetchone()
+    return conn.execute("SELECT id, COALESCE(published_csv, schedule_csv) AS schedule_csv FROM schedule_history "
+                        "WHERE id=? AND restaurant_id=?", (req["history_id"], restaurant_id)).fetchone()
 
 
 def _today(restaurant_id, today=None):
@@ -457,7 +455,8 @@ def live_offers(restaurant_id, db_path=DB_PATH, name=None, today=None) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT o.id, o.request_id, o.name, o.status, o.note, o.issue_id, o.created_at, r.date, r.shift_start, "
+            "SELECT o.id, o.request_id, o.name, o.status, o.note, o.issue_id, o.created_at, o.created_by, r.date, "
+            "r.shift_start, "
             "r.shift_end, r.role, r.employee_name, r.kind FROM shift_offers o JOIN shift_change_requests r "
             "ON r.id=o.request_id WHERE o.restaurant_id=? AND o.status='offered' AND r.status='open' AND r.date >= ? "
             "ORDER BY r.date, r.shift_start", (restaurant_id, today.isoformat())).fetchall()
@@ -2674,7 +2673,17 @@ def _note_line(req):
 
 def _broadcast_open(restaurant_id, req, db_path, opener_line):
     who, when, role = (req.get("employee_name") or "").strip(), _when(req), req.get("role") or ""
-    takers = _who_could_take(restaurant_id, req, db_path)
+    # The best legal fit first, by name, once the managers' own offers have
+    # earned it (request_autonomy.auto_offer_open, schedule audit 10/10/26
+    # MARKET-25); they are not told twice by the board below.
+    named = None
+    try:
+        import request_autonomy as _ra_offer
+        named = _ra_offer.auto_offer_open(restaurant_id, req, db_path=db_path)
+    except Exception as e:
+        print(f"[shift_requests] automatic offer skipped rid={restaurant_id}: {e!r}")
+    takers = [n for n in _who_could_take(restaurant_id, req, db_path)
+              if not (named and _key(n) == _key(named.get("name")))]
     told = _tell_staff(restaurant_id, takers, f"Open shift: {when}",
                        [opener_line,
                         "It's yours if you want it — pick it up in the Cavnar AI app (Requests) before someone else does."],

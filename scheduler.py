@@ -4358,15 +4358,18 @@ def run_auto_publish_schedules():
                 # 10/4/26 PIPE-3): a later unedited draft — an auto-draft, a
                 # redo, the quality gate's rewrite — never goes out over the
                 # week the owner took over.
-                row = conn.execute(
-                    "SELECT h.id, h.week_start, h.generated_at, COALESCE(h.edited_at, (SELECT MAX(e.edited_at) FROM schedule_history e "
-                    "WHERE e.restaurant_id=h.restaurant_id AND e.week_start=h.week_start)) AS edited_at "
-                    "FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
-                    "AND h.superseded_by IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
-                    "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
-                    "  AND p.week_start=h.week_start AND (p.published_at IS NOT NULL "
-                    "  OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=p.id))) "
-                    "ORDER BY h.id DESC LIMIT 1", (r.id, nxt["w"])).fetchone()
+                # The week's working copy and whether any copy ever went
+                # out — the one definition (models.week_draft /
+                # week_ever_sent, schedule audit 10/10/26 ARCH-11).
+                import models as _m_live
+                draft = _m_live.week_draft(conn, r.id, nxt["w"])
+                if draft is not None and (draft["schedule_csv"] or "").strip() \
+                        and not _m_live.week_ever_sent(conn, r.id, nxt["w"]):
+                    edited = draft["edited_at"] or conn.execute(
+                        "SELECT MAX(e.edited_at) FROM schedule_history e WHERE e.restaurant_id=? AND e.week_start=?",
+                        (r.id, nxt["w"])).fetchone()[0]
+                    row = {"id": draft["id"], "week_start": draft["week_start"],
+                           "generated_at": draft["generated_at"], "edited_at": edited}
         finally:
             conn.close()
         if not row:
@@ -4389,7 +4392,7 @@ def run_auto_publish_schedules():
         # audit 10/3/26 SQ-29) — is named in the notice (NS5 H2/H3/M7).
         soft = []
         try:
-            from client_api import publish_review
+            from schedule_publish import publish_review
             _rv = publish_review(r.id, row["id"], unattended=True)
             blockers = [b["text"] for b in _rv["blockers"]]
             soft = _rv.get("soft") or []
@@ -4643,11 +4646,12 @@ def _minute_duties():
     """The per-tick work that owes the owner minutes, not hours: scheduled
     posts, delayed actions whose undo window closed, issue escalations and
     held notifications, alerts held through a rush, newsletter and campaign
-    batches, and the push and webhook outboxes. Each is idempotent and
-    claims its own rows, so running it an extra time is harmless.
+    batches, the push and webhook outboxes, and the schedule publish
+    outbox. Each is idempotent and claims its own rows, so running it an
+    extra time is harmless.
 
     Runs as the `minute_duties` job (ops.run_job) — it wrote no job run at
-    all (#31) — and returns the standard counts over its eight duties."""
+    all (#31) — and returns the standard counts over its nine duties."""
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
 
     def _duty(fn, job):
@@ -4675,6 +4679,17 @@ def _minute_duties():
     dl = _duty(_delayed_run, job="delayed_actions")
     if dl and (dl.get("ran") or dl.get("failed")):
         log.info(f"Delayed actions: {dl}")
+
+    # The publish outbox (schedule_publish, schedule audit 10/10/26 ARCH-19,
+    # ARCH-20, BUGSLIFE-9): the people a Send's inline window did not reach,
+    # and failed notices whose retry time came. The week was stamped first;
+    # this is only the telling, bounded, the outbox rows its cursor.
+    def _schedule_notices():
+        import schedule_publish as _sp
+        return _sp.run_schedule_notices(max_seconds=_sp.NOTICE_DUTY_SECONDS)
+    sn = _duty(_schedule_notices, job="schedule_notices")
+    if sn and (sn.get("ok") or sn.get("failed")):
+        log.info(f"Schedule notices: {sn}")
 
     def _issues_tick():
         import issues as _issues
@@ -5382,6 +5397,18 @@ def scheduler_loop():
             if _ops.claim_period("staff_reminders", f"{today}-{now.hour}-{now.minute // 10}"):
                 from staff_reminders import run_job as _run_staff_reminders
                 _ops.run_job("staff_reminders", _run_staff_reminders)
+
+            # Every 10 minutes — published weeks to the POS time clock where
+            # the owner turned the push on (pos_schedule_push; the queue is
+            # the cursor, a POS-side failure retried). Every 15 — live labor
+            # to date and the one legal, priced move (labor_live; each
+            # restaurant claimed per quarter hour inside).
+            if _ops.claim_period("pos_schedule_push", f"{today}-{now.hour}-{now.minute // 10}"):
+                from pos_schedule_push import run_queue as _run_pos_push
+                _ops.run_job("pos_schedule_push", _run_pos_push)
+            if _ops.claim_period("live_labor", f"{today}-{now.hour}-{now.minute // 15}"):
+                from labor_live import run_live_labor as _run_live_labor
+                _ops.run_job("live_labor", _run_live_labor)
 
             # During service — the only part of the product that can see a
             # day while it is happening (Toast and RPOWER both post during
