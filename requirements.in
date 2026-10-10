@@ -35,3 +35,9 @@ pillow==12.3.0
 # Passkeys (owner, 9/30/26): WebAuthn registration and sign-in verification
 # (webauthn_auth.py). Duo Labs' py_webauthn; attestation "none" only.
 webauthn==3.0.1
+# Schedule solver (scheduler audit 10/10/26 LOGIC-24, RM-8, RM-11): Google
+# OR-Tools CP-SAT for the shift-shape covering model (schedule_shapes.py)
+# and the who-works-each-shift assignment (schedule_cpsat.py). Wheels for
+# CPython 3.12 on macOS arm64 and manylinux x86_64; pulls numpy, pandas,
+# protobuf, absl-py and immutabledict (~60 MB installed).
+ortools==9.15.6755
