@@ -224,9 +224,18 @@ def test_a_model_alias_is_priced_like_its_family():
     assert ai_utils._estimate_cost("claude-haiku-4-5", 1_000_000, 1_000_000) == pytest.approx(dated)
 
 
-def test_the_global_backstop_does_not_scale_without_limit(monkeypatch):
+def test_the_global_backstop_binds_an_absolute_ceiling_only_when_one_is_set(monkeypatch):
+    """AI-12 capped the pool at $10,000, which stopped every client's AI at
+    ~400-650 paying restaurants (scheduler audit 10/10/26, SCALE-11). The
+    emergency ceiling grows with the paying restaurants; an absolute one is
+    a deliberate setting, and the runaway detector is what catches a loop."""
     monkeypatch.setattr(ai_utils, "_paying_client_count", lambda db_path=None: 100_000)
-    assert ai_utils.global_monthly_budget() < 100_000 * ai_utils.AI_GLOBAL_PER_CLIENT_USD
+    if not os.getenv("AI_GLOBAL_MAX_MONTHLY_BUDGET_USD"):
+        assert ai_utils.AI_GLOBAL_MAX_MONTHLY_BUDGET_USD == 0
+    monkeypatch.setattr(ai_utils, "AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", 0.0)
+    assert ai_utils.global_monthly_budget() == 100_000 * ai_utils.AI_GLOBAL_PER_CLIENT_USD
+    monkeypatch.setattr(ai_utils, "AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", 50_000.0)
+    assert ai_utils.global_monthly_budget() == 50_000.0
 
 
 # ── AI-10: the budget cache is pruned ───────────────────────────────────────

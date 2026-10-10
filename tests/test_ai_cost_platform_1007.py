@@ -290,9 +290,13 @@ def test_the_review_fetch_is_never_refused_by_the_platform_places_ceiling(db_pat
         ai_utils.places_request("details", {"key": "k", "place_id": "p"}, restaurant_id=None, action="geocode")
 
 
-def test_the_global_ai_pool_grows_thirty_dollars_a_paying_client():
+def test_the_global_ai_pool_grows_by_each_paying_clients_own_ceiling():
+    """$30 a client (10/7/26) made the pool a fleet-wide stop at a few hundred
+    restaurants; since the scheduler audit of 10/10/26 (SCALE-11) it is an
+    emergency ceiling that grows by each paying client's own monthly ceiling,
+    and a runaway is caught by the spend-rate detector instead."""
     if not os.getenv("AI_GLOBAL_PER_CLIENT_USD"):
-        assert ai_utils.AI_GLOBAL_PER_CLIENT_USD == 30.0
+        assert ai_utils.AI_GLOBAL_PER_CLIENT_USD == ai_utils.AI_MONTHLY_BUDGET_USD == 150.0
     assert 'os.getenv("AI_GLOBAL_MONTHLY_BUDGET_USD", "1500")' in inspect.getsource(ai_utils)
 
 
