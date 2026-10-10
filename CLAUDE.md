@@ -21,7 +21,7 @@ exploring code:
 | `TESTING.md` | How the suite is organised |
 | `ROADMAP.md` | Open work, recently shipped, deliberately not doing |
 | `INTELLIGENCE_ENGINE.md` | The cross-restaurant learning layer and its privacy rules |
-| `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/ENVIRONMENT.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md` | Controls, the emergency runbook, every environment variable, the deploy shape, the PIN pepper |
+| `docs/ops/SECURITY.md`, `docs/ops/RECOVERY.md`, `docs/ops/ENVIRONMENT.md`, `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`, `docs/ops/PIN_PEPPER_RUNBOOK.md`, `docs/ops/POSTGRES_CUTOVER.md` (and `migrations/`) | Controls, the emergency runbook, every environment variable, the deploy shape, the PIN pepper |
 | `docs/plans/` | Designs, each opening with its status. Built: the DSR engine, task sheets. Not yet built: Back Office, Postgres and more workers, the restaurant health row, the review-fetch queue, the nonce CSP |
 | `docs/audits/` | Audit registers whose finding IDs tests still cite (the 9/22/26 edge-case audit: 39 strict `xfail`s) |
 | `docs/history/` | Superseded material kept for the record; nothing in it is live |
@@ -163,14 +163,17 @@ A deletion is only "verified" when the trace is written down alongside it.
   at a time: two at once halve each other.
 - **`get_restaurant()` is memoised per Flask request**, and only per request —
   outside one (scheduler, tests, scripts) it is uncached, deliberately, so a
-  long-running job sees rows change under it. Any new write path to
+  long-running job sees rows change under it — except inside an explicit
+  `models.read_scope()` (one unit of work, e.g. a generation: the restaurant
+  row, `client_data` and the parsed shift history are read once). Any new write path to
   `restaurants` outside `update_restaurant` must call
   `models._invalidate_request_cache(rid)`.
 - **Never put schema DDL on a request or per-call path.** Every table is
   created at boot — by `init_db()` (which also calls `ops.init_ops`,
   `billing_jobs.init_billing`, `admin_events.init_admin_events`,
   `offboarding.init_offboarding`, `admin_ops.init_admin_ops` and
-  `ai_utils.init_ai_ops`) or by one of the `init_*` functions
+  `ai_utils.init_ai_ops`, and since 10/11/26 `job_queue.init_job_queue`,
+  `model_gateway.init_model_gateway`, `pg_shadow.init_pg_shadow`) or by one of the `init_*` functions
   `hosted_dashboard.py` calls right after it (`auth`, `push`, `webhooks`,
   `guest_marketing`, `sales_audits`, `platform_monitor.init_platform_tables`,
   `provider_health.init_provider_health`). `ai_utils._ensure_usage_schema` is
@@ -189,7 +192,8 @@ A deletion is only "verified" when the trace is written down alongside it.
   code (`/admin/two-factor/send`), the owner and login flows in
   `auth_routes`, and `/api/send-referral` — a local backend with the
   production `.env` still sends those. `ALLOW_LOCAL_SCHEDULER=1` overrides
-  both deliberately.
+  both deliberately. The scheduler also stands down while
+  `MAINTENANCE_READ_ONLY` is set (the Postgres cutover's write freeze).
 - **Never run a copy of the app from a worktree with Flask's own `.env`
   loading.** `hosted_dashboard.py` loads the `.env` beside it and runs
   `app.run(..., load_dotenv=False)`, because Flask's lookup walks up from the
@@ -200,7 +204,14 @@ A deletion is only "verified" when the trace is written down alongside it.
   **Never run it as a separate Railway service**: volumes cannot be shared
   between services, so it would schedule against an empty database while the
   real jobs stopped. `worker.py` is only valid as a second process in the same
-  service — see `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. The single-runner guarantee is
+  service — see `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. Background work
+  (schedule generations, auto-drafts, the per-restaurant nightly learners) is
+  the durable job queue (`job_queue.py`, `jobs` rows with leases, priority
+  classes and per-tenant fairness): consumed in the web process by default,
+  by `worker.py` in the SAME service with `QUEUE_WORKER=1`; `JOB_QUEUE=0` is
+  the old in-process path. A deploy hands running rows back and the next
+  process resumes them from their checkpoints (`schedule_resume`), never
+  paying for a model answer twice. The single-runner guarantee is
   `ops.acquire_scheduler_lease()`, and the lease lives in the SQLite file:
   the lease keeper renews it every minute, a kept lease silent for 4 minutes
   is taken over, and the web process's supervisor restarts a dead scheduler
@@ -211,26 +222,28 @@ A deletion is only "verified" when the trace is written down alongside it.
   on purpose and must stay read-only.
 - **Do not raise gunicorn `--workers` past 1** until the process-local
   state that still multiplies with workers is moved into the database:
-  `security._admin_hits` (the admin request ceiling), `ai_utils._breakers`
-  (per-process AI breakers), the console's fleet memo
+  `security._admin_hits` (the admin request ceiling), the console's fleet memo
   (`admin_ops._fleet_state`) and the bounded pools (`ASK_MAX_CONCURRENT`,
   the two admin pools — `ops.run_admin_task` and
   `admin_routes._submit_admin_job` — the webhook and push delivery
-  pools, the schedule generation pool, the owner AI job pool `ai_async`,
+  pools, the owner AI job pool `ai_async`,
   the interactive AI slots `ai_utils._INTERACTIVE_SLOTS` and the AI
   background pools — Ask's read and summary pools, the shadow-review and
-  scoring pools), the schedule-generation watchers (`schedule_engine._GEN_WATCHERS`:
-  a Generate press remembered on one worker pushes nobody when the job
-  lands on another) and the schedule Studio's kept inputs
-  (`schedule_engine._studio_cache` / `_studio_live` — a cache, safe to keep
-  per worker); the inventory and order are in
+  scoring pools), the per-generation model-call pool
+  (`SCHEDULE_PARALLEL_CALLS`) and the schedule Studio's kept inputs
+  (`schedule_engine._studio_cache` / `_studio_live`) and the requirement
+  model cache (`_REQUIREMENT_MODEL_CACHE`) — caches, safe to keep per
+  worker; the inventory and order are in
   `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`. Each worker gets its own copy,
   so two workers silently double every limit. (Already durable: the login
   limiter — `security.login_throttled` on `login_attempts`,
   `auth_routes._login_attempts` only its fail-closed fallback; the
   supplier-email cooldown — `ops.claim_cooldown` rows,
   `client_api._order_send_last` is gone; the AI rate limit —
-  `ai_rate_events`, `ai_utils._ai_call_log` only its fallback.) Railway
+  `ai_rate_events`, `ai_utils._ai_call_log` only its fallback; since
+  10/11/26 schedule generation — `job_queue` rows, slots are claimed rows
+  across processes; the "your draft is ready" watchers — `generation_watchers`
+  rows; the AI breakers — shared through `ai_breakers`.) Railway
   usage (Sep 2026) showed ~19 vCPU-minutes of CPU for the whole billing
   period, so there is no load reason to do it yet.
 - **Every outbound HTTP call names a timeout**, enforced by
@@ -250,7 +263,9 @@ A deletion is only "verified" when the trace is written down alongside it.
   `ops.run_job("<name>", fn)` call in `scheduler_loop`**, returning
   `{attempted, ok, failed, skipped, hit_bound}` or raising
   (`tests/test_fix_d_jobs.py` keeps the two in step; `ops.run_outcome` reads
-  any other result as partial, never clean). A growing ledger gets an entry
+  any other result as partial, never clean). A heavy per-restaurant pass
+  fans out as `job_queue` rows (`strategy_jobs.fan_out_learner` is the
+  pattern) instead of a long inline sweep on the scheduler thread. A growing ledger gets an entry
   in `ops._RETENTION_DAYS` / `_RETENTION_COLUMN`; a finding about a model's
   output is `ai_utils.record_quality_event`, not `ops.capture`.
 - **Recovery lives in `docs/ops/RECOVERY.md`.** The local backup snapshot is
@@ -262,6 +277,19 @@ A deletion is only "verified" when the trace is written down alongside it.
   holds `docs/ops/SECURITY.md`, `RECOVERY.md` and `RAILWAY_SCHEDULER_SPLIT.md`
   (and `DATABASE_SCHEMA.md`'s scrub list and retention table) to the code:
   change a control and its sentence together.
-- **Static assets have no cache-busting** (`/static/cavnar-orb.js`, bare
-  path). Do not add a far-future `max-age` until they are hashed or
-  versioned, or a JS fix will be stranded in browser caches.
+- **Static assets:** the dashboard's script and style blocks are served as
+  content-hashed, immutable bundles (`/b/<hash>`, `static_bundles`), so they
+  may be cached forever. Everything else under `/static/` (e.g.
+  `/static/cavnar-orb.js`) has no cache-busting: do not add a far-future
+  `max-age` to those until they are hashed too, or a fix will be stranded in
+  browser caches.
+- **SQL must stay translatable to Postgres.** `models.get_conn` returns a
+  Postgres connection when `DATABASE_URL` names one (`db_dialect`); run
+  `scripts/pg_sql_audit.py` after adding SQL — it must report
+  `untranslatable: 0, sqlite_only: 0`. Never set `DATABASE_URL` outside the
+  cutover runbook (`docs/ops/POSTGRES_CUTOVER.md`).
+- **Every Anthropic call passes the model gateway** (`model_gateway`, inside
+  `ai_utils.create_with_retry`): call classes, per-tenant budgets and the
+  organisation's tokens a minute. The fleet AI ceiling is per paying
+  restaurant (`AI_GLOBAL_PER_CLIENT_USD`) with a runaway detector and
+  `AI_EMERGENCY_STOP` — never an absolute fleet-wide cap again.
