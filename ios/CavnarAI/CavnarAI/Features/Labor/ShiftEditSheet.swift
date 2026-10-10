@@ -37,6 +37,10 @@ struct ShiftEditSheet: View {
     @State private var role = ""
     @State private var error: String?
     @State private var saving = false
+    /// Lock (contract #4, TRUST-17): a locked shift is kept exactly by every
+    /// pass, the solver and a regenerate. Saved the moment it is switched.
+    @State private var locked = false
+    @State private var lockSaving = false
 
     private var rows: [ScheduleRow] { viewModel.scheduleResult?.previewRows ?? [] }
 
@@ -150,6 +154,18 @@ struct ShiftEditSheet: View {
                         }
                     }
                     .cavnarCard()
+                    if case .edit(let row) = mode {
+                        VStack(alignment: .leading, spacing: 0) {
+                            AccountSwitchRow(label: "Lock this shift",
+                                             detail: "A new draft, Improve and every fix keep it exactly as it is.",
+                                             isOn: Binding(get: { locked }, set: { on in
+                                                 locked = on
+                                                 Task { await saveLock(row, on) }
+                                             }),
+                                             busy: lockSaving, disabled: lockSaving || saving, showsDivider: false)
+                        }
+                        .cavnarCard()
+                    }
                     if let hours = LaborViewModel.shiftHours(timeText(start), timeText(end)) {
                         HomeMixedText.make("\(hours) hours · the week is re-scored and saved when you tap Save.",
                                            size: CavnarType.secondary, color: .cavnarInk3)
@@ -200,6 +216,7 @@ struct ShiftEditSheet: View {
             start = dateFor(row.shiftStart) ?? dateFor("4:00pm")!
             end = dateFor(row.shiftEnd) ?? dateFor("10:00pm")!
             date = String((row.date ?? "").prefix(10))
+            locked = row.locked == true
         case .add:
             let first = rows.first
             date = weekDates.first ?? ""
@@ -218,6 +235,16 @@ struct ShiftEditSheet: View {
     private func timeText(_ d: Date) -> String {
         let c = Calendar.current.dateComponents([.hour, .minute], from: d)
         return LaborViewModel.shiftTimeText(minutes: (c.hour ?? 0) * 60 + (c.minute ?? 0))
+    }
+
+    /// The lock alone, saved now; on a refusal the switch goes back.
+    private func saveLock(_ row: ScheduleRow, _ on: Bool) async {
+        lockSaving = true
+        defer { lockSaving = false }
+        if let refusal = await viewModel.setShiftLocked(rowId: row.id, locked: on) {
+            locked = !on
+            error = refusal
+        }
     }
 
     private func save() async {

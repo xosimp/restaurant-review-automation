@@ -194,7 +194,7 @@ struct AskCavnarView: View {
             }
             // The mic never stays live behind another tab or screen.
             .onChange(of: motionPaused) { _, paused in if paused { voice.stop() } }
-            .onDisappear { voice.stop() }
+            .onDisappear { voice.stop(); AskReadBack.shared.stop() }
             .task {
                 await viewModel.loadInitialIfNeeded()
                 // Runs on every appear; the view model's own TTL decides
@@ -471,13 +471,38 @@ struct AskCavnarView: View {
                 .animation(.easeOut(duration: 0.15), value: inputFocused)
 
             // Voice types into the field; the owner still sends it.
-            AskMicButton(voice: voice, disabled: viewModel.isLoading || viewModel.isOpeningConversation) {
-                inputFocused = false
-                Task {
-                    await voice.toggle(read: { viewModel.question },
-                                       write: { viewModel.question = $0 })
-                }
-            }
+            AskMicButton(voice: voice, disabled: viewModel.isLoading || viewModel.isOpeningConversation,
+                         action: {
+                             inputFocused = false
+                             AskReadBack.shared.stop()
+                             Task {
+                                 await voice.toggle(read: { viewModel.question },
+                                                    write: { viewModel.question = $0 })
+                             }
+                         },
+                         // Push to talk (MARKET-31): hold, speak, let go —
+                         // sent, and the answer read back aloud.
+                         onHoldStart: {
+                             inputFocused = false
+                             AskReadBack.shared.stop()
+                             Task {
+                                 await voice.start(read: { viewModel.question },
+                                                   write: { viewModel.question = $0 })
+                             }
+                         },
+                         onHoldEnd: {
+                             voice.stop()
+                             Task {
+                                 // The final words land a beat after the stop.
+                                 try? await Task.sleep(for: .milliseconds(350))
+                                 guard viewModel.canSubmit else { return }
+                                 let before = viewModel.messages.count
+                                 await viewModel.submit()
+                                 if viewModel.messages.count > before, let answer = viewModel.messages.last, !answer.isUser {
+                                     AskReadBack.shared.speak(answer.text, proposals: answer.proposals.count)
+                                 }
+                             }
+                         })
 
             Button {
                 Haptic.light()

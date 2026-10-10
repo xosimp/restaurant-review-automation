@@ -680,7 +680,9 @@ struct ScheduleSummaryTiles {
     }
 }
 
-/// The scorecard sheet: "The week is built", six tiles, then View the
+/// The scorecard sheet: the pre-publish review's verdict (TRUST-4/6 —
+/// "Ready to send", "Ready after 2 decisions", "Not ready: …", never a
+/// celebration over a week that is not), six tiles, then View the
 /// schedule (the one primary), Publish and Optimize again.
 struct ScheduleSummarySheet: View {
     let result: GeneratedSchedule
@@ -689,26 +691,22 @@ struct ScheduleSummarySheet: View {
     let onPublish: () -> Void
     let onOptimize: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
+    /// The one verdict, from the pre-publish review (the web's Summary
+    /// reads the same object). Nil until it loads, or from an older server.
+    @State private var verdict: PublishReview.Verdict?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 16, weight: .heavy))
-                            .foregroundStyle(Color.cavnarEmber)
-                            .frame(width: 40, height: 40)
-                            .background(Circle().fill(Color.cavnarEmber.opacity(0.16)))
-                            .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.4), lineWidth: 1))
-                        VStack(alignment: .leading, spacing: 4) {
-                            CavnarKicker("Schedule complete")
-                            Text("The week is built")
-                                .font(.cavnarHeadline(CavnarText.title.size))
-                                .foregroundStyle(Color.cavnarInk)
-                            HomeMixedText.make(ScheduleSummaryTiles.headline(result), size: CavnarType.secondary, color: .cavnarInk3)
-                                .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                        CavnarKicker("Your draft")
+                        if let verdict, !verdict.sentence.isEmpty {
+                            PublishVerdictCard(verdict: verdict)
+                        } else {
+                            Text("Ready for your review").cavnarText(.title)
                         }
+                        CavnarMixedText(ScheduleSummaryTiles.headline(result), role: .secondary)
                     }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                               spacing: 10) {
@@ -750,6 +748,20 @@ struct ScheduleSummarySheet: View {
             .accountSheetChrome("Draft ready")
         }
         .presentationDetents([.large])
+        .task(id: result.historyId) { await loadVerdict() }
+    }
+
+    private struct VerdictOnly: Decodable {
+        let ok: Bool?
+        let verdict: PublishReview.Verdict?
+    }
+
+    /// The pre-publish review's verdict for this week (I1's one payload).
+    private func loadVerdict() async {
+        guard let id = result.historyId else { return }
+        let r: VerdictOnly? = try? await APIClient.shared.send(
+            "/mobile/api/labor/publish-review", query: ["schedule_id": String(id)], hapticOnError: false)
+        if r?.ok == true { verdict = r?.verdict }
     }
 
     @ViewBuilder

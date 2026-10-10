@@ -39,14 +39,19 @@ struct LaborWaitingOnYou: View {
     private var pendingShifts: [ShiftRequest] { setupViewModel.pendingRequests }
 
     static func count(timeOff: [TimeOffRequest], shifts: [ShiftRequest],
-                      draft: Bool = false, redo: Bool = false) -> Int {
+                      draft: Bool = false, redo: Bool = false, followUps: Int = 0) -> Int {
         timeOff.filter { $0.status == "pending" }.count + shifts.filter { $0.status == "pending" }.count
-            + (draft ? 1 : 0) + (redo ? 1 : 0)
+            + (draft ? 1 : 0) + (redo ? 1 : 0) + followUps
     }
+
+    /// The follow-up being posted, and what each said back.
+    @State private var postingFollowUp: String?
+    @State private var followUpNote: [String: String] = [:]
 
     var body: some View {
         let total = Self.count(timeOff: viewModel.timeOff, shifts: setupViewModel.pendingRequests,
-                               draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
+                               draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil,
+                               followUps: viewModel.timeOffFollowUps.count)
         if total > 0 || viewModel.draftSendNote != nil {
             // No kicker of its own: the screen's NEEDS YOU header names the
             // group and carries the count (M14 — it said it twice).
@@ -83,6 +88,7 @@ struct LaborWaitingOnYou: View {
                     }
                 }
                 ForEach(pendingTimeOff) { req in timeOffRow(req) }
+                ForEach(viewModel.timeOffFollowUps) { f in followUpRow(f) }
                 ForEach(pendingShifts) { req in shiftRow(req) }
                 if let error = viewModel.draftSendError {
                     Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
@@ -279,6 +285,42 @@ struct LaborWaitingOnYou: View {
             decideButtons(busy: busy, denyTitle: "Deny \(req.employeeName)\u{2019}s time off?",
                           deny: { await viewModel.decideTimeOff(req.id, approve: false) },
                           approve: { await viewModel.decideTimeOff(req.id, approve: true) })
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Approved time off still on a published shift: post it open (the
+    /// team can pick it up in the app) — or cover it in the week.
+    private func followUpRow(_ f: TimeOffFollowUp) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                nameButton(f.employeeName)
+                tag("Off, still on")
+            }
+            CavnarMixedText(f.line, role: .secondary)
+            if let note = followUpNote[f.id] {
+                CavnarMixedText(note, role: .secondary, color: .cavnarRedText)
+            }
+            Button {
+                Haptic.light()
+                postingFollowUp = f.id
+                Task {
+                    let refusal = await setupViewModel.postOpenShift(
+                        OpenShiftPostBody(date: f.date, shiftStart: f.shiftStart, employee: f.employeeName))
+                    followUpNote[f.id] = refusal
+                    postingFollowUp = nil
+                    if refusal == nil { await viewModel.loadTimeOff() }
+                }
+            } label: {
+                Group {
+                    if postingFollowUp == f.id { CavnarShimmerText(text: "Posting\u{2026}") } else { Text("Post it open") }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(postingFollowUp != nil)
         }
         .padding(12)
         .background(Color.white.opacity(0.03))

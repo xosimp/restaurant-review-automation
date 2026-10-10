@@ -1486,6 +1486,10 @@ final class ScheduleSetupViewModel {
     /// suggestion may leave in a role with no floor of its own
     /// (schedule_rules.cut_floor on the server). Cuts only, 1...cutFloorMax.
     var cutFloorDefault = 2
+    /// Where lunch ends and dinner starts for a shift that covers neither
+    /// core window (restaurants.daypart_boundary, schedule audit 10/10/26
+    /// ARCH-12): "3:30pm" as the server stores it, nil for the 3:00pm default.
+    var daypartBoundary: String?
     var cutFloorMax = 10
     /// Whether this login may change the rules (the account owner).
     var canEditRules = true
@@ -1523,6 +1527,7 @@ final class ScheduleSetupViewModel {
         let trimToBudget: Bool?
         let cutFloorDefault: Int?
         let cutFloorMax: Int?
+        let daypartBoundary: String?
         let canEdit: Bool?
         let certifications: [String]?
         let reservationFeed: ReservationFeedStatus?
@@ -1541,6 +1546,7 @@ final class ScheduleSetupViewModel {
             case trimToBudget = "trim_to_budget"
             case cutFloorDefault = "cut_floor_default"
             case cutFloorMax = "cut_floor_max"
+            case daypartBoundary = "daypart_boundary"
             case canEdit = "can_edit"
             case reservationFeed = "reservation_feed"
             case reservationProviders = "reservation_providers"
@@ -1572,6 +1578,8 @@ final class ScheduleSetupViewModel {
         var roleCloseMins: [String: Int?]? = nil
         /// The salaried weekly cap: `.some(nil)` goes back to the default.
         var salariedCap: Double?? = nil
+        /// Where lunch ends ("3:30pm"); `.some(nil)` goes back to 3:00pm.
+        var daypartBoundary: String?? = nil
 
         enum CodingKeys: String, CodingKey {
             case rules, jurisdiction
@@ -1588,6 +1596,7 @@ final class ScheduleSetupViewModel {
             case reservationApiKey = "reservation_api_key"
             case roleCloseMins = "role_close_mins"
             case salariedCap = "salaried_cap"
+            case daypartBoundary = "daypart_boundary"
         }
 
         func encode(to encoder: Encoder) throws {
@@ -1609,6 +1618,7 @@ final class ScheduleSetupViewModel {
             if let k = reservationApiKey { try c.encode(k, forKey: .reservationApiKey) }
             try c.encodeIfPresent(roleCloseMins, forKey: .roleCloseMins)
             if let cap = salariedCap { try c.encode(cap, forKey: .salariedCap) }
+            if let b = daypartBoundary { try c.encode(b, forKey: .daypartBoundary) }
         }
     }
 
@@ -1649,6 +1659,7 @@ final class ScheduleSetupViewModel {
             trimToBudget = r.trimToBudget ?? true
             cutFloorMax = max(1, r.cutFloorMax ?? 10)
             cutFloorDefault = min(max(r.cutFloorDefault ?? 2, 1), cutFloorMax)
+            daypartBoundary = r.daypartBoundary.flatMap { $0.isEmpty ? nil : $0 }
             canEditRules = r.canEdit ?? true
             ruleCertifications = r.certifications ?? []
             reservationFeed = r.reservationFeed

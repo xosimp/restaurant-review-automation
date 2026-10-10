@@ -56,6 +56,46 @@ struct TimeOffSection: View {
     }
 }
 
+/// Approved time off still on a published shift (GET labor/time-off
+/// `follow_ups`, schedule audit 10/10/26 BUGSLIFE-5): it stays in Waiting on
+/// you, with "Post it open", until the shift is covered, posted or moved —
+/// worked out by the server each time, so nothing can throw it away.
+struct TimeOffFollowUp: Decodable, Identifiable, Equatable {
+    var requestId: Int
+    var employeeName: String
+    var date: String
+    var day: String?
+    var shiftStart: String
+    var shiftEnd: String?
+    var role: String?
+
+    var id: String { "\(requestId)|\(date)|\(shiftStart)" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, day, role
+        case requestId = "request_id"
+        case employeeName = "employee_name"
+        case shiftStart = "shift_start"
+        case shiftEnd = "shift_end"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let r = c.sfInt(.requestId), let n = c.sfText(.employeeName), let d = c.sfText(.date),
+              let s = c.sfText(.shiftStart) else {
+            throw DecodingError.dataCorruptedError(forKey: .date, in: c, debugDescription: "A follow-up names no shift")
+        }
+        requestId = r; employeeName = n; date = d; shiftStart = s
+        day = c.sfText(.day); shiftEnd = c.sfText(.shiftEnd); role = c.sfText(.role)
+    }
+
+    /// "Ana is off Sat 10/17/26 but still on 4:00pm" — the queue's words.
+    var line: String {
+        "\(employeeName) is off \(CavnarDate.dayDate(day.map { String($0.prefix(3)) }, date)) but still on \(shiftStart)"
+            + (shiftEnd.map { "\u{2013}\($0)" } ?? "")
+    }
+}
+
 struct TimeOffRequest: Decodable, Identifiable, Equatable {
     let id: Int
     let employeeName: String

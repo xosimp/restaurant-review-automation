@@ -119,9 +119,16 @@ struct StaffShift: Codable, Hashable {
     let legs: [StaffShift]?
     /// `upcoming[]` carries the ISO date beside the CSV's own.
     let dateISO: String?
+    /// How firm the shift is, as recorded when the week was published
+    /// (commitment_ladder, schedule audit 10/10/26 MARKET-27): "firm",
+    /// "likely" or "tentative", and the words for it. Nil before a week is
+    /// published under the ladder, or once the shift changed since.
+    var commitment: String? = nil
+    var commitmentText: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case date, day, role, notes, station, section, start, end, hours, request, actions, legs
+        case date, day, role, notes, station, section, start, end, hours, request, actions, legs, commitment
+        case commitmentText = "commitment_text"
         case shiftStart = "shift_start"
         case shiftEnd = "shift_end"
         case scheduledHours = "scheduled_hours"
@@ -165,6 +172,9 @@ struct StaffShift: Codable, Hashable {
         actions = (try? c.decodeIfPresent([String].self, forKey: .actions)) ?? nil
         legs = (try? c.decodeIfPresent([StaffShift].self, forKey: .legs)) ?? nil
         dateISO = (try? c.decodeIfPresent(String.self, forKey: .dateISO)) ?? nil
+        commitment = ((try? c.decodeIfPresent(String.self, forKey: .commitment)) ?? nil)
+            .flatMap { ["firm", "likely", "tentative"].contains($0) ? $0 : nil }
+        commitmentText = (try? c.decodeIfPresent(String.self, forKey: .commitmentText)) ?? nil
     }
 
     /// Written back in the server's own spelling, so the device cache
@@ -187,6 +197,19 @@ struct StaffShift: Codable, Hashable {
         try c.encodeIfPresent(actions, forKey: .actions)
         try c.encodeIfPresent(legs, forKey: .legs)
         try c.encodeIfPresent(dateISO, forKey: .dateISO)
+        try c.encodeIfPresent(commitment, forKey: .commitment)
+        try c.encodeIfPresent(commitmentText, forKey: .commitmentText)
+    }
+
+    /// "Firm" / "Likely" / "Tentative" and what it means for the person
+    /// ("needed even on a slow night…"), the server's words after its dash.
+    var commitmentPill: (word: String, tone: CavnarTone, meaning: String?)? {
+        guard let commitment else { return nil }
+        let word = commitment.prefix(1).uppercased() + commitment.dropFirst()
+        let tone: CavnarTone = commitment == "firm" ? .good : (commitment == "tentative" ? .warning : .neutral)
+        var meaning = commitmentText
+        if let t = meaning, let dash = t.range(of: " \u{2014} ") { meaning = String(t[dash.upperBound...]) }
+        return (word, tone, meaning)
     }
 
     /// "4pm – 10pm" — the house time form (DESIGN_SYSTEM → Dates and
