@@ -35,8 +35,9 @@ import demand_signals as _signals
 # thinking shares max_tokens (labor.SCHEDULE_MAX_TOKENS_THINKING) with the
 # rows, so a call can carry
 #     (SCHEDULE_TOKEN_CEILING - THINKING_TOKENS_RESERVED - SUMMARY_TOKENS)
-#         / OUTPUT_TOKENS_PER_ROW  rows  = (64,000 - 40,000 - 1,500) / 30 = 750
-# before it risks a truncated answer. OUTPUT_TOKENS_PER_ROW is what one row
+#         / OUTPUT_TOKENS_PER_ROW  rows  = (128,000 - 56,000 - 1,500) / 30 = 2,350
+# before it risks a truncated answer (64,000 and a 40,000 reserve until
+# 10/10/26 — AI-17). OUTPUT_TOKENS_PER_ROW is what one row
 # costs under the output contract in force — schedule_output's compact
 # schema, each day's shifts under their date with five short keys: ~30
 # answer tokens a row (schedule_output.ANSWER_TOKENS_PER_ROW_ESTIMATE, from
@@ -44,8 +45,9 @@ import demand_signals as _signals
 # tokens). tests/test_schedule_b2_calls.py holds it to the schema in force,
 # so a schema change re-sizes the calls. A call's minutes grow with what it
 # writes as well (and with its thinking), so the row tokens one call is held
-# to, ROW_TOKENS_PER_CALL, are what a 160-row slice of the old ~60-token rows
-# wrote inside the old 360-second timeout: 9,600 / 30 = 320 rows a call.
+# to, ROW_TOKENS_PER_CALL, are what fits CALL_TARGET_SECONDS at the measured
+# speed after the thinking reserve: 900 s x 120/s - 56,000 - 1,500 = 50,500,
+# 1,683 rows a call (320 until 10/10/26, from the old 360-second timeout).
 # Once a restaurant's calls have run, rows_per_call reads what a row really
 # cost it — every output token, thinking included, per row written
 # (schedule_output.measured_tokens_per_row) — and plans no call bigger than
@@ -53,25 +55,57 @@ import demand_signals as _signals
 # rows and seconds are logged (`slices` → model_call). A wrong guess costs a
 # split, not the week: a cut answer keeps its finished days and the rest is
 # written again smaller.
-SCHEDULE_TOKEN_CEILING = 64000          # labor.SCHEDULE_MAX_TOKENS_THINKING (a test holds them equal)
+# 128K since 10/10/26 (scheduler audit AI-17, AI-2, SCALE-23): both schedule
+# models (Opus 5.5, Sonnet 5.5) write up to 128,000 output tokens, streamed.
+# At 64K a 250-person week was cut into ~5 calls and each paid the whole
+# thinking again (thinking is mostly a fixed cost per CALL — schedule_output.
+# call_costs); one call now carries what three to five did.
+SCHEDULE_TOKEN_CEILING = 128000         # labor.SCHEDULE_MAX_TOKENS_THINKING (a test holds them equal)
 # The thinking a call leaves room for, by the effort it runs at (AI cost
-# audit 10/7/26 #34): one figure "at effort high" planned every call's time
-# after the effort dropped to medium (labor.SCHEDULE_EFFORT, 10/6/26). A
-# call's planned seconds read the effort in force (thinking_tokens_reserved);
-# its SIZE never does — the rows a call carries are sized for the largest
-# reserve, so lowering the effort never grows a call toward the ceiling
-# (SCHEDULE_TOKEN_CEILING is unchanged). The one call on record (high,
-# 62,353 output tokens for 215 rows) is why "high" is not lowered; "medium"
-# is a planning figure until medium calls are recorded (call_costs reads
-# them by effort and replaces it).
-THINKING_TOKENS_BY_EFFORT = {"low": 20000, "medium": 32000, "high": 40000}
+# audit 10/7/26 #34) — MEASURED (scheduler audit 10/10/26 AI-17): the eval
+# of 10/7/26 on Simple EJ's 215-row week, each arm's output tokens less its
+# answer (215 rows x 30) and summary: Opus 5.5 high 54.4k, medium 46.7k, low
+# 8.8k (Sonnet 5.5 medium 25.8k, low 2.3k). The reserve is the dearer model's,
+# rounded up — the old 40k "high" / 32k "medium" were under what Opus spent
+# (48k + rows + summary ran a 320-row call into its 64k ceiling). A call's
+# planned seconds read the effort in force (thinking_tokens_reserved); its
+# SIZE never does — the rows a call carries are sized for the largest
+# reserve, so lowering the effort never grows a call toward the ceiling.
+# call_costs replaces these with the restaurant's (then the fleet's) own
+# measured calls as they are recorded (call_cost_model).
+THINKING_TOKENS_BY_EFFORT = {"low": 12000, "medium": 48000, "high": 56000}
 THINKING_TOKENS_RESERVED = max(THINKING_TOKENS_BY_EFFORT.values())   # what a call is sized for, at any effort
 SUMMARY_TOKENS = 1500                   # the three bullets and the JSON around the rows
 OUTPUT_TOKENS_PER_ROW = _sched_out.ANSWER_TOKENS_PER_ROW_ESTIMATE   # one row of schedule_output.schedule_schema()
-ROW_TOKENS_PER_CALL = 9600              # what one call is held to writing, for its minutes
+# The output speed every planned call assumes before any call is measured
+# (AI-17): MEASURED on the 10/7/26 eval — 33.7k tokens in 278 s (Sonnet 5.5
+# medium, 121/s), 54.7k in 456 s (Opus 5.5 medium, 120/s), 62.4k in 496 s
+# (Opus high, 126/s), 16.8k in 120 s and 10.2k in 74 s (low, ~139/s): the
+# slowest, 120 tokens a second. It was 9,600 tokens in 360 s (26.7/s), the
+# old no-thinking calibration, so every call was planned at ~4.5x its real
+# length — the deadline, the cache TTL choice and the Building ETA with it.
+ASSUMED_OUTPUT_TOKENS_PER_SECOND = 120.0
+# The model time one planned call is held to (a quarter of an hour), so the
+# gate's rewrite and the post-model work still fit the job's deadline; at
+# the measured speed that is ROW_TOKENS_PER_CALL of answer once the largest
+# thinking reserve and the summary are written.
+CALL_TARGET_SECONDS = 900
+ROW_TOKENS_PER_CALL = int(CALL_TARGET_SECONDS * ASSUMED_OUTPUT_TOKENS_PER_SECOND) \
+    - THINKING_TOKENS_RESERVED - SUMMARY_TOKENS
 ROWS_PER_CALL_BY_TOKENS = (SCHEDULE_TOKEN_CEILING - THINKING_TOKENS_RESERVED - SUMMARY_TOKENS) // OUTPUT_TOKENS_PER_ROW
 ROWS_PER_CALL_BY_TIME = ROW_TOKENS_PER_CALL // OUTPUT_TOKENS_PER_ROW
 CHUNK_ROWS_PER_CALL = min(ROWS_PER_CALL_BY_TOKENS, ROWS_PER_CALL_BY_TIME)
+# What the schedule's calls are measured to spend and how fast they write,
+# per (model, effort) — the 10/7/26 eval (above) — the prior a call is
+# planned at until this restaurant's, then the fleet's, calls are recorded
+# (call_cost_model, AI-17). {"thinking": tokens, "tokens_per_second": n}.
+MEASURED_CALL_PRIORS = {
+    ("claude-opus-5-5", "high"): {"thinking": 54400, "tokens_per_second": 126.0},
+    ("claude-opus-5-5", "medium"): {"thinking": 46700, "tokens_per_second": 120.0},
+    ("claude-opus-5-5", "low"): {"thinking": 8800, "tokens_per_second": 140.0},
+    ("claude-sonnet-5-5", "medium"): {"thinking": 25800, "tokens_per_second": 121.0},
+    ("claude-sonnet-5-5", "low"): {"thinking": 2300, "tokens_per_second": 138.0},
+}
 # The measured cost of a row (thinking included) is held to this share of the
 # ceiling, and never plans a call smaller than MIN_ROWS_PER_CALL.
 MEASURED_HEADROOM = 0.85
@@ -112,8 +146,9 @@ MAX_EXTRA_CALLS = 8
 # not read from here) — it is the code's only recorded rate, the old
 # calibration's 9,600 tokens in 360 seconds, and it errs long: a deadline
 # too long costs only a hung job found later, one too short kills a call
-# that is still thinking.
-ASSUMED_OUTPUT_TOKENS_PER_SECOND = ROW_TOKENS_PER_CALL / 360.0
+# that is still thinking. Since 10/10/26 (AI-17) the assumed speed is the
+# measured one (ASSUMED_OUTPUT_TOKENS_PER_SECOND, above), and a restaurant
+# with no calls of its own is planned from the fleet's (call_cost_model).
 CALL_SECONDS_HEADROOM = 1.25
 
 
@@ -774,17 +809,17 @@ WORKFLOW = "labor_schedule"
 #   * a dated closure in the week (schedule_rules.closures "closed_dates":
 #     a special day the owner closed, not a weekday the restaurant never
 #     trades);
-#   * more people on the roster offered to the model than HARD_WEEK_ROSTER
-#     — set at about twice the roster the eval cleared: Simple EJ's 67-person
-#     roster (prod, 10/7/26) is the week Sonnet 5.5 matched Opus on, so a
-#     threshold under it would have sent every EJ's week to Opus against the
-#     evidence; past ~120 is untested;
+#   * a roster size the EVAL showed T4 better for (schedule_eval.
+#     route_evidence: the newest stored verdict of T4 against T3 for the
+#     roster's size band, won by T4 at 90% on agreement with the weeks
+#     owners published — scheduler audit 10/10/26 AI-3). It was "more than
+#     120 people", a size the code itself called untested, which sent a
+#     250-person week to Opus at ~$6 a generation on no evidence;
 #   * more owner standing rules in force than HARD_WEEK_OWNER_RULES;
 #   * the restaurant's first generation (no schedule_history row yet);
 #   * a new draft of a week whose last run escalated.
 HARD_WEEK_HOLIDAYS = ("New Year's Eve", "New Year's Day", "Valentine's Day", "Easter", "Mother's Day",
                       "Fourth of July", "Thanksgiving", "Christmas Eve", "Christmas Day")
-HARD_WEEK_ROSTER = 120
 HARD_WEEK_OWNER_RULES = 12
 
 _SCHED_RUN = contextvars.ContextVar("schedule_generation_run", default=None)
@@ -807,15 +842,41 @@ def _pinned_route():
                      effort=_labor_r.SCHEDULE_EFFORT if _labor_r.schedule_model_thinks(model) else None)
 
 
+# No case for the $10/$50 tier on the schedule (scheduler audit 10/10/26
+# AI-30): on the 10/7/26 eval every medium-or-higher arm ended at 0 hard
+# breaches after the repair, and Opus high (62k tokens, $1.39) scored 83 to
+# Sonnet medium's 78 at $0.41 — a few unverified points for multiplying the
+# dominant cost. A route that would put the week on Claude Fable or Mythos
+# (an env pin, a tier override) runs on Opus 5.5 instead, said in the run's
+# steps, unless SCHEDULE_ALLOW_TOP_TIER=1 — set only once the eval
+# (schedule_eval) shows a measured ceiling below it.
+SCHEDULE_BARRED_MODELS = ("claude-fable", "claude-mythos")
+
+
+def _route_allowed(route):
+    """`route`, or Opus 5.5 at the route's effort when it names a barred model."""
+    model = str(getattr(route, "model", "") or "").lower()
+    if not model.startswith(SCHEDULE_BARRED_MODELS) or os.getenv("SCHEDULE_ALLOW_TOP_TIER") == "1":
+        return route
+    import ai_utils as _ai
+    import ai_workflows as _wf
+    print(f"[schedule] {route.model} is barred from the schedule route (AI-30) — running on {_ai.OPUS_55}")
+    run = _SCHED_RUN.get()
+    if run is not None:
+        run.setdefault("steps", []).append({"barred_model": route.model, "ran_on": _ai.OPUS_55})
+    return _wf.Route(tier=route.tier, model=_ai.OPUS_55, effort=route.effort or "medium")
+
+
 def start_route(start=None):
     """The route a generation starts on: the pin when SCHEDULE_MODEL is set;
     else the policy's rung `start` (a pre-routed tier on its ladder) or its
-    first. A "default" rung (a console override) is the call site's own."""
+    first. A "default" rung (a console override) is the call site's own.
+    Never a barred model (AI-30, _route_allowed)."""
     import ai_workflows as _wf
     if schedule_pinned():
-        return _pinned_route()
+        return _route_allowed(_pinned_route())
     r = _wf.route_for(_wf.policy(WORKFLOW), 0, start)
-    return _pinned_route() if r.tier == _wf.DEFAULT else r
+    return _route_allowed(_pinned_route() if r.tier == _wf.DEFAULT else r)
 
 
 def schedule_route():
@@ -835,9 +896,11 @@ def current_schedule_run():
 
 
 def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0, prior_generations=None,
-                      last_run_escalated=False) -> list:
+                      last_run_escalated=False, roster_evidence=None) -> list:
     """Why a week is hard enough to start on the ladder's top rung — [] for
-    an ordinary week. Pure: the thresholds above, nothing asked of a model."""
+    an ordinary week. Pure: the thresholds above, nothing asked of a model.
+    `roster_evidence` is schedule_eval.route_evidence for the roster's size
+    (the caller reads it): a size alone is never a reason (AI-3)."""
     from time_utils import mdy
     out = []
     hol = []
@@ -857,8 +920,8 @@ def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0,
     special = sorted(set(str(d)[:10] for d in closed_dates or ()) & set(str(d)[:10] for d in week_dates or ()))
     if special:
         out.append("closed for a dated closure: " + ", ".join(mdy(d) for d in special))
-    if int(roster_size or 0) > HARD_WEEK_ROSTER:
-        out.append(f"roster of {int(roster_size)} (over {HARD_WEEK_ROSTER})")
+    if roster_evidence:
+        out.append(f"roster of {int(roster_size or 0)}: {roster_evidence}")
     if int(owner_rules or 0) > HARD_WEEK_OWNER_RULES:
         out.append(f"{int(owner_rules)} owner standing rules (over {HARD_WEEK_OWNER_RULES})")
     if prior_generations == 0:
@@ -907,8 +970,11 @@ def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster
             closed = []
         rules_n = len(getattr(constraints, "owner_rules", None) or []) + \
             len(getattr(constraints, "owner_rules_unchecked", None) or [])
+        import schedule_eval as _seval
+        evidence = _seval.route_evidence(len(roster_pairs or []))
         reasons = hard_week_reasons(week_dates, closed_dates=closed, roster_size=len(roster_pairs or []),
-                                    owner_rules=rules_n, prior_generations=prior, last_run_escalated=escalated)
+                                    owner_rules=rules_n, prior_generations=prior, last_run_escalated=escalated,
+                                    roster_evidence=evidence)
     pol = _wf.policy(WORKFLOW)
     start = pol.ladder[-1] if (reasons and not schedule_pinned()) else None
     route = start_route(start)
@@ -972,7 +1038,7 @@ def _escalate_for_gate(gate) -> str:
             and int(run.get("escalations") or 0) < int(pol.max_escalations)
             and ladder.index(route.tier) + 1 < len(ladder)):
         nxt = _wf.route_for(pol, ladder.index(route.tier) + 1)
-        nxt = _pinned_route() if nxt.tier == _wf.DEFAULT else nxt
+        nxt = _route_allowed(_pinned_route() if nxt.tier == _wf.DEFAULT else nxt)
         run["route"] = nxt
         run["escalations"] = int(run.get("escalations") or 0) + 1
         run["notes"] = notes
@@ -2638,8 +2704,18 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         # job's row already says "Stopped", and nothing is saved.
         if clock is not None and clock.stopped():
             raise ScheduleStopped(STOPPED_MESSAGE)
-        if calls >= call_cap or (clock is not None and clock.model_seconds_left() < need):
-            why = "calls" if calls >= call_cap else "time"
+        # The run's dollar and call caps, checked before EVERY planned call
+        # (scheduler audit 10/10/26 AI-16): they were read only before the
+        # gate's escalation, so a 250-person Opus week could spend ~$14 at
+        # plan + 8 extras against a documented $6 cap. A call whose expected
+        # cost would cross the cap is not started; the days already written
+        # are kept and the rest are said (and filled without the model —
+        # schedule_fallback).
+        capped = _run_cap_reached(task_rows(t), costs, contract, len(t["people"] or roster_pairs or []))
+        if calls >= call_cap or capped or (clock is not None and clock.model_seconds_left() < need):
+            why = "calls" if calls >= call_cap else ("capped" if capped else "time")
+            if capped:
+                _note_capped(capped)
             for task in [t] + queue:
                 for d in _required(task["dates"]):
                     unwritten.setdefault(d, why)
@@ -2650,7 +2726,14 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         dk = _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock)
         whole = redo is None and t["people"] is None and t["dates"] == open_dates and not kept
         dk["call_kind"] = kind_base or ("week" if whole else "slice")
-        dk["cache_ttls"] = _sp.cache_ttls(len(plan), sharing.get(week_key(t), 1),
+        # Only calls sent the SAME schema share a cached prefix (scheduler
+        # audit 10/10/26 AI-24): a changed output format invalidates the
+        # cache, and each department's schema carries its own roster enum,
+        # so the standing block is shared by this call's own part's calls
+        # alone — never "every planned call", which bought a 1h (2x) write
+        # on department-split weeks that no later call read.
+        same_schema = sharing.get(week_key(t), 1)
+        dk["cache_ttls"] = _sp.cache_ttls(same_schema, same_schema,
                                           call_seconds(task_rows(t), costs, contract=contract), read_rate)
         entry = {"dates": list(t["dates"]), "part": t["what"], "retried": False}
         try:
@@ -2919,6 +3002,66 @@ def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock)
 
 # A call is not started with less of the job's model time left than this.
 MIN_CALL_SECONDS = 60
+
+# What one call reads (input tokens) before the cache, for its expected cost
+# (AI-16): the standing instructions and the request (~8k) and a ROSTER line
+# per person (~120 tokens a person — Simple EJ's 67 people read ~16k).
+INPUT_TOKENS_BASE = 8000
+INPUT_TOKENS_PER_PERSON = 120
+
+
+def expected_call_usd(rows, costs=None, contract=None, heads=0, model=None) -> float:
+    """What one planned call writing `rows` rows is expected to cost at list
+    price: its output (the measured fixed part and per row — else the
+    model's measured thinking at this effort, else the reserve — plus the
+    rows) and its input (INPUT_TOKENS_BASE + a line a person)."""
+    import ai_utils as _ai
+    costs = costs or {}
+    rows = max(0.0, float(rows or 0))
+    if costs.get("source") in ("fit", "comparable") and costs.get("per_row"):
+        out = float(costs.get("fixed") or 0) + float(costs["per_row"]) * rows
+    else:
+        think = costs.get("prior_thinking") or thinking_tokens_reserved()
+        out = float(think) + SUMMARY_TOKENS + rows * output_tokens_per_row(contract)
+    inp = INPUT_TOKENS_BASE + INPUT_TOKENS_PER_PERSON * max(0, int(heads or 0))
+    try:
+        model = model or schedule_route().model
+    except Exception:
+        model = None
+    return float(_ai._estimate_cost(model or "", int(inp), int(out)))
+
+
+def _run_cap_reached(rows, costs=None, contract=None, heads=0, inflight_usd=0.0, inflight_calls=0):
+    """{"calls", "usd", "next_usd", "cap_calls", "cap_usd"} when the next
+    call would take the generation's run past its policy caps
+    (ai_workflows labor_schedule: 16 calls, $6) — the ledger's spend so far
+    under the run's correlation id, the calls in flight, and the next call's
+    expected cost — else None. Outside a run (a test, a script) never."""
+    run = _SCHED_RUN.get()
+    if run is None or not run.get("run_id"):
+        return None
+    try:
+        import ai_orchestrator as _orch
+        import ai_workflows as _wf
+        cost, _i, _o, n = _orch._spent(run["run_id"])
+        caps = _wf.policy(WORKFLOW).caps
+        nxt = expected_call_usd(rows, costs, contract, heads)
+    except Exception as e:
+        print(f"[schedule] run spend not read: {e!r}")
+        return None
+    calls = int(n or 0) + int(inflight_calls or 0)
+    usd = float(cost or 0) + float(inflight_usd or 0)
+    if calls + 1 > int(caps.calls) or usd + nxt > float(caps.usd):
+        return {"calls": calls, "usd": round(usd, 4), "next_usd": round(nxt, 4), "cap_calls": int(caps.calls),
+                "cap_usd": float(caps.usd)}
+    return None
+
+
+def _note_capped(capped) -> None:
+    run = _SCHED_RUN.get()
+    if run is not None and run.get("capped") is None:
+        run["capped"] = dict(capped)
+        run.setdefault("steps", []).append({"capped": dict(capped)})
 # How a department part is named to the owner in the draft's note.
 _PART_WORDS = {"KITCHEN": "Kitchen", "FRONT OF HOUSE": "Front of house", "STAFF": "Staff"}
 
@@ -2948,12 +3091,48 @@ def call_cost_model(restaurant_id=None, contract=None) -> dict:
     if not restaurant_id:
         return empty
     try:
-        return _sched_out.call_costs(restaurant_id=restaurant_id, model=schedule_route().model,
-                                     effort=schedule_effort_in_force(),
-                                     contract=_sched_out.schedule_contract(contract))
+        model, effort = schedule_route().model, schedule_effort_in_force()
+        kw = dict(model=model, effort=effort, contract=_sched_out.schedule_contract(contract))
+        own = _sched_out.call_costs(restaurant_id=restaurant_id, **kw)
     except Exception as e:
         _soft_fail("measured call cost", e, restaurant_id)
         return empty
+    # Before this restaurant's own calls say anything, every restaurant's
+    # calls on the same model, effort and contract do (scheduler audit
+    # 10/10/26 AI-17: a new restaurant's every call was planned at the old
+    # 27-tokens-a-second guess, ~4.5x too long); before any call anywhere,
+    # the measured priors (MEASURED_CALL_PRIORS). `basis` says which.
+    return _with_fleet_and_prior(own, restaurant_id, kw)
+
+
+def _with_fleet_and_prior(own, restaurant_id, kw) -> dict:
+    out = dict(own, basis="restaurant")
+    tokens_known = own.get("source") in ("fit", "comparable")
+    seconds_known = own.get("seconds_source") in ("fit", "rate")
+    if tokens_known and seconds_known:
+        return out
+    try:
+        fleet = _sched_out.call_costs(restaurant_id=None, **kw)
+    except Exception as e:
+        _soft_fail("fleet call cost", e, restaurant_id)
+        fleet = {}
+    if not tokens_known and fleet.get("source") in ("fit", "comparable"):
+        out.update(fixed=fleet.get("fixed"), per_row=fleet.get("per_row"), source=fleet["source"], basis="fleet")
+        tokens_known = True
+    if not seconds_known and fleet.get("seconds_source") in ("fit", "rate"):
+        out.update(seconds_fixed=fleet.get("seconds_fixed"), seconds_per_row=fleet.get("seconds_per_row"),
+                   seconds_source=fleet["seconds_source"], tokens_per_second=fleet.get("tokens_per_second"),
+                   seconds_basis="fleet")
+        seconds_known = True
+    if seconds_known:
+        return out
+    prior = MEASURED_CALL_PRIORS.get((kw.get("model"), kw.get("effort")))
+    if prior:
+        # The measured speed and thinking of this model at this effort: a
+        # prior, never read as this restaurant's measurement (_call_measured).
+        out.update(seconds_source="prior", tokens_per_second=prior["tokens_per_second"],
+                   prior_thinking=prior["thinking"], seconds_basis="prior")
+    return out
 
 
 def rows_per_call(restaurant_id=None, costs=None) -> int:
@@ -2993,9 +3172,13 @@ def call_seconds(rows, costs=None, headroom: bool = True, contract=None) -> floa
     if costs.get("seconds_source") == "fit":
         sec = float(costs.get("seconds_fixed") or 0) + float(costs.get("seconds_per_row") or 0) * rows
     elif costs.get("tokens_per_second"):
-        writes = (float(costs["fixed"]) + float(costs["per_row"]) * rows
-                  if costs.get("source") in ("fit", "comparable") and costs.get("per_row") else
-                  thinking_tokens_reserved() + SUMMARY_TOKENS + rows * output_tokens_per_row(contract))
+        if costs.get("source") in ("fit", "comparable") and costs.get("per_row"):
+            writes = float(costs["fixed"]) + float(costs["per_row"]) * rows
+        else:
+            # The model's measured thinking at this effort when the prior
+            # carries it (AI-17), else the reserve.
+            think = costs.get("prior_thinking") or thinking_tokens_reserved()
+            writes = float(think) + SUMMARY_TOKENS + rows * output_tokens_per_row(contract)
         sec = writes / float(costs["tokens_per_second"])
     else:
         return _assumed_call_seconds(rows, contract=contract)
@@ -3383,6 +3566,7 @@ _UNWRITTEN_WHY = {
     "provider": "Cavnar AI's model provider failed partway",
     "data": "the data behind them stopped being current partway",
     "refused": "the model declined to write them",
+    "capped": "the generation reached the spending cap a draft is allowed",
     "config": "Cavnar AI couldn't reach its model partway (we've been alerted)",
     "generation": "they couldn't be written",
     "other": "something failed partway (we've been alerted)",

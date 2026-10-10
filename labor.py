@@ -2224,7 +2224,11 @@ STAFF_CONSTRAINTS_RULE = ("The STAFF CONSTRAINTS are the manager's notes about w
 # (schedule_engine.schedule_route).
 SCHEDULE_THINKING_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable", "claude-mythos")
 SCHEDULE_EFFORT = "medium"
-SCHEDULE_MAX_TOKENS_THINKING = 64000
+# 128K, streamed (scheduler audit 10/10/26 AI-17): both schedule models write
+# up to 128,000 output tokens. At 64K, Opus 5.5 medium's measured ~48k of
+# thinking left ~16k for rows and a summary, so a large roster's week was
+# cut into three to five calls, each paying the thinking again.
+SCHEDULE_MAX_TOKENS_THINKING = 128000
 
 
 def schedule_model_thinks(model) -> bool:

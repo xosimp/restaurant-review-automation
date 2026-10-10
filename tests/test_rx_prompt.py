@@ -328,7 +328,9 @@ def test_a_one_call_week_is_given_the_time_its_thinking_takes():
     # The thinking reserve is the effort in force's (AI cost audit 10/7/26
     # #34): THINKING_TOKENS_RESERVED is the largest, what a call is sized
     # for; its planned seconds read the effort the call runs at.
-    needed = (se.thinking_tokens_reserved() + 30 * WEEK_ROWS) / (se.ROW_TOKENS_PER_CALL / 360.0)
+    # At the MEASURED speed since 10/10/26 (scheduler audit AI-17: 120
+    # tokens a second, the slowest arm of the 10/7/26 eval).
+    needed = (se.thinking_tokens_reserved() + 30 * WEEK_ROWS) / se.ASSUMED_OUTPUT_TOKENS_PER_SECOND
     assert se.call_seconds(WEEK_ROWS) >= needed
     assert se.SCHEDULE_CALL_SECONDS >= se.call_seconds(WEEK_ROWS)
     clock = se.GenerationClock()
@@ -658,7 +660,9 @@ def test_a_calls_planned_time_reads_the_effort_in_force_and_its_size_never_grows
     assert high == pytest.approx(se._assumed_call_seconds(WEEK_ROWS, effort="high"))
     # The size of a call is planned at the largest reserve whatever the
     # effort, under the unchanged ceiling: a lower effort never grows a call.
-    assert se.SCHEDULE_TOKEN_CEILING == 64000
+    # 128K since 10/10/26 (scheduler audit AI-17: both schedule models write
+    # up to 128,000 tokens, streamed).
+    assert se.SCHEDULE_TOKEN_CEILING == 128000
     assert se.ROWS_PER_CALL_BY_TOKENS == (se.SCHEDULE_TOKEN_CEILING - max(by.values()) - se.SUMMARY_TOKENS) \
         // se.OUTPUT_TOKENS_PER_ROW
     assert se.SCHEDULE_CALL_SECONDS == int(round(se._assumed_call_seconds(se.CHUNK_ROWS_PER_CALL, effort="high")))

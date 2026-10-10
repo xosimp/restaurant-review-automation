@@ -100,7 +100,7 @@ HALLOWEEN_WEEK = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-
 
 def test_an_ordinary_week_has_no_reason_to_start_high():
     assert se.hard_week_reasons(WEEK) == []
-    assert se.hard_week_reasons(WEEK, roster_size=se.HARD_WEEK_ROSTER, owner_rules=se.HARD_WEEK_OWNER_RULES,
+    assert se.hard_week_reasons(WEEK, roster_size=250, owner_rules=se.HARD_WEEK_OWNER_RULES,
                                 prior_generations=4) == []
 
 
@@ -116,10 +116,13 @@ def test_a_dated_closure_in_the_week_is_a_hard_week():
     assert se.hard_week_reasons(WEEK, closed_dates=["2026-12-25"]) == []    # not this week
 
 
-@pytest.mark.parametrize("over", [0, 1])
-def test_a_big_roster_starts_on_t4(over):
-    n = se.HARD_WEEK_ROSTER + over
-    assert bool(se.hard_week_reasons(WEEK, roster_size=n)) is bool(over)
+def test_a_big_roster_starts_on_t4_only_on_the_evals_evidence():
+    # Scheduler audit 10/10/26 AI-3: "roster over 120" sent every big week
+    # to Opus at a size the code called untested. A size is a reason only
+    # with a stored eval verdict (schedule_eval.route_evidence).
+    assert se.hard_week_reasons(WEEK, roster_size=250) == []
+    (why,) = se.hard_week_reasons(WEEK, roster_size=250, roster_evidence="the eval showed T4 better")
+    assert "roster of 250" in why and "the eval showed T4 better" in why
 
 
 @pytest.mark.parametrize("over", [0, 1])
@@ -309,7 +312,9 @@ def test_the_call_planner_reads_the_routes_model_and_effort(monkeypatch):
         se._SCHED_RUN.get()["route"] = wf.Route("T4", "claude-opus-5-5", "low")
         return se.schedule_effort_in_force(), se.thinking_tokens_reserved()
     (effort, reserve), _run = _inside(body)
-    assert seen == [("claude-sonnet-5-5", "medium"), ("claude-opus-5-5", "medium")]
+    # Each read is the restaurant's own, then (nothing measured) the fleet's on
+    # the same model and effort (scheduler audit 10/10/26 AI-17).
+    assert seen == [("claude-sonnet-5-5", "medium")] * 2 + [("claude-opus-5-5", "medium")] * 2
     assert effort == "low" and reserve == se.THINKING_TOKENS_BY_EFFORT["low"]
 
 
@@ -391,7 +396,6 @@ def test_a_hard_week_is_recorded_as_pre_routed(db, monkeypatch):
 def test_the_evaluated_roster_does_not_start_on_opus():
     # Simple EJ's 67-person roster (prod, 10/7/26) is the week Sonnet 5.5
     # matched Opus on: a threshold under it sent every EJ's week to Opus.
-    assert se.HARD_WEEK_ROSTER >= 67 * 1.5
     assert not any("roster" in r for r in se.hard_week_reasons(WEEK, roster_size=67, owner_rules=0,
                                                                 prior_generations=2))
 
