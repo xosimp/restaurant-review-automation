@@ -95,9 +95,31 @@ EXPERIMENTS = (
      "until_powered": "solver",
      "arms": ({"key": "model", "label": "Model assignment", "weight": 1, "flags": {"solver": False}},
               {"key": "solver", "label": "Solver assignment", "weight": 1, "flags": {"solver": True}})},
+    # Where the draft comes from (scheduler audit 10/10/26 AI-1, AI-8,
+    # AI-11; cross-workstream contract #7 — schedule_fallback): the model's
+    # week, the last published week carried forward and repaired, or the
+    # week shaped in code and solved. Judged like any arm, on acceptance and
+    # outcomes. "code_shaped" weighs 0 — reachable by a pin or the env
+    # switch (SCHEDULE_DRAFT_SOURCE), never by the hash — until workstream
+    # F's solver-first draft lands and the eval (schedule_eval) shows it
+    # does not lose on the stored weeks (RM-21). Every week takes the
+    # model's draft until the experiment can conclude (until_powered). The
+    # arm keys are this experiment's own: SCHEDULE_EXPERIMENT_PIN="solver"
+    # (assign_v1's arm) must never pin a week's DRAFT to code.
+    {"key": "draft_v1",
+     "active": True,
+     "started": "2026-10-10",
+     "question": "Does a draft built without the model (carried forward, or shaped in code) do as well as the model's?",
+     "control": "model_draft",
+     "until_powered": "model_draft",
+     "arms": ({"key": "model_draft", "label": "The model's draft", "weight": 1, "flags": {"draft_source": "model"}},
+              {"key": "carried", "label": "Last published week, carried forward", "weight": 1,
+               "flags": {"draft_source": "carry_forward"}},
+              {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 0,
+               "flags": {"draft_source": "solver"}})},
 )
 # What a week gets from a flag no active experiment sets.
-DEFAULT_FLAGS = {"solver": True}
+DEFAULT_FLAGS = {"solver": True, "draft_source": "model"}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
 
@@ -293,6 +315,15 @@ def flag(arms, name, default=None) -> bool:
         if name in (a.get("flags") or {}):
             return bool(a["flags"][name])
     return bool(DEFAULT_FLAGS.get(name) if default is None else default)
+
+
+def value(arms, name, default=None):
+    """A flag's own value (draft_source names a source, not a yes/no); the
+    default when no arm sets it."""
+    for a in arms or []:
+        if name in (a.get("flags") or {}):
+            return a["flags"][name]
+    return DEFAULT_FLAGS.get(name) if default is None else default
 
 
 def record(restaurant_id, history_id, arms, quality_score=None, solver_applied=None, db_path=DB_PATH) -> None:

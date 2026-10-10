@@ -4477,7 +4477,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  hours_rule_reads: list = None,
                                  role_windows: dict = None,
                                  role_caps: dict = None,
-                                 contract: str = None) -> dict:
+                                 contract: str = None,
+                                 prepare_only: bool = False) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -4527,6 +4528,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     API refuses that schema it is asked once more against
                     the shape alone (schema_enums=False), and only then
                     with the CSV text contract.
+    prepare_only  — build the week's inputs and the exact request, and send
+                    nothing (scheduler audit 10/10/26): the week's figures
+                    for a draft made without the model (schedule_fallback)
+                    and the request a Message Batch sends (schedule_batch);
+                    no model call, no record of one.
     held_roles    — {person lower: roles they hold beyond their roster role}
                     (Constraints.held_roles): rows may carry them.
     generation_id — the generation this call belongs to: every call's full
@@ -5598,6 +5604,58 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # "compact" or "shape", "plain_" before it without the enums, "csv" for
     # the text fallback — the cost model reads each one's calls apart (#70).
     _contract = (_cbase if schema_enums else "plain_" + _cbase) if structured else "csv"
+    # The week's figures every answer carries back (and a draft made without
+    # the model needs): the dates, the budget and targets, SHIFT REQUIREMENTS,
+    # the roster, the bars the score judges by.
+    _week_facts = {
+        "week_dates": week_dates,
+        "week_days": week_days,
+        "projected_revenue": projected_revenue,
+        "hours_budget": hours_budget,
+        "labor_budget_dollars": labor_budget_dollars,
+        "labor_target": labor_target,
+        "daily_target_hours": _daily_target_map,
+        "revenue_basis": _plan.get("revenue_basis"),
+        # Which budget the hours are (D-1), the wage they were bought at and
+        # how much of it is assumed (D-2, E-24: `caveat`, `trim_ok`), and
+        # why a day's target moved off its weekday's (D-24).
+        "budget_basis": _plan.get("budget_basis"),
+        "daily_target_basis": _plan.get("daily_target_basis"),
+        "daily_target_reasons": _plan.get("daily_target_reasons") or {},
+        # SHIFT REQUIREMENTS for the whole week, every role, as rows with
+        # their reasons, and as {"date|daypart": {role: people}} — the firm
+        # numbers (soft asks out) the score judges coverage against (D-23,
+        # P-19). "date|late" carries the late segment (D-32).
+        "requirements": _week_requirements,
+        "requirements_by_date": {f"{d}|{p}": v for (d, p), v in _req.requirements_map(_week_requirements).items()},
+        # The staff list the prompt was actually built from, so the caller
+        # can check the model's rows against it rather than trusting that
+        # "use real employee names from the staff list" was obeyed.
+        "roster": sorted({e for e, _r in employees if e}),
+        # Carried back so the deterministic verification pass can check the
+        # finished CSV against the same numbers the model was given.
+        "operational_scores": _scores,
+        "strength_thresholds": dict(strength_thresholds or {}),
+        "leader_rules": list(leader_rules or []),
+        # The profiles the prompt was built from, so the deterministic
+        # quality pass judges the result against the same bars the model
+        # was given rather than a set that has drifted since.
+        "shift_profiles": list(shift_profiles or []),
+        # {(weekday, daypart): {role: typical people}} and who can flex
+        # between roles — from the one shared implementation, so the
+        # live-rescore path scores against identical numbers.
+        **_patterns,
+    }
+    if prepare_only:
+        # Nothing is sent (scheduler audit 10/10/26): the inputs and the
+        # exact request, for schedule_fallback and schedule_batch.
+        return dict(_week_facts, schedule_csv=EXPECTED_HEADER + "\n", rows=[], dropped_rows=[],
+                    summary=[], narrative=[], truncated=False, stop_reason=None, structured=bool(structured),
+                    complete_dates=[], partial_dates=[], salvaged=False, json_recovered=False,
+                    contract=(_cbase if schema_enums else "plain_" + _cbase) if structured else "csv",
+                    shape_rows=[], model_call=None, generation_id=generation_id, generation_seconds=0.0,
+                    generated_dates=list(_gen_dates), pinned_rows=[], pinned_dropped=[],
+                    request=dict(_call), prompt=prompt, prepared=True)
     _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract,
                 call_kind=call_kind, tier=_route.tier)
     _client = get_client(timeout=360.0)
@@ -5887,43 +5945,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # rows the merge dropped for writing over one.
         "pinned_rows": _pins_here,
         "pinned_dropped": _pin_dropped,
-        "week_dates": week_dates,
-        "week_days": week_days,
-        "projected_revenue": projected_revenue,
-        "hours_budget": hours_budget,
-        "labor_budget_dollars": labor_budget_dollars,
-        "labor_target": labor_target,
-        "daily_target_hours": _daily_target_map,
-        "revenue_basis": _plan.get("revenue_basis"),
-        # Which budget the hours are (D-1), the wage they were bought at and
-        # how much of it is assumed (D-2, E-24: `caveat`, `trim_ok`), and
-        # why a day's target moved off its weekday's (D-24).
-        "budget_basis": _plan.get("budget_basis"),
-        "daily_target_basis": _plan.get("daily_target_basis"),
-        "daily_target_reasons": _plan.get("daily_target_reasons") or {},
-        # SHIFT REQUIREMENTS for the whole week, every role, as rows with
-        # their reasons, and as {"date|daypart": {role: people}} — the firm
-        # numbers (soft asks out) the score judges coverage against (D-23,
-        # P-19). "date|late" carries the late segment (D-32).
-        "requirements": _week_requirements,
-        "requirements_by_date": {f"{d}|{p}": v for (d, p), v in _req.requirements_map(_week_requirements).items()},
-        # The staff list the prompt was actually built from, so the caller
-        # can check the model's rows against it rather than trusting that
-        # "use real employee names from the staff list" was obeyed.
-        "roster": sorted({e for e, _r in employees if e}),
-        # Carried back so the deterministic verification pass can check the
-        # finished CSV against the same numbers the model was given.
-        "operational_scores": _scores,
-        "strength_thresholds": dict(strength_thresholds or {}),
-        "leader_rules": list(leader_rules or []),
-        # The profiles the prompt was built from, so the deterministic
-        # quality pass judges the result against the same bars the model
-        # was given rather than a set that has drifted since.
-        "shift_profiles": list(shift_profiles or []),
-        # {(weekday, daypart): {role: typical people}} and who can flex
-        # between roles — from the one shared implementation, so the
-        # live-rescore path scores against identical numbers.
-        **_patterns,
+        **_week_facts,
     }
 
 

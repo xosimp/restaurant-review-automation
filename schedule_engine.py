@@ -1572,7 +1572,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "cache read rate": "the AI model's cache price",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model","cache read rate": "the AI model's cache price",
     "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
 
@@ -2278,7 +2278,29 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         unstaffable_dates=unstaffable,
         rules_constraints=constraints,
     )
+    # This week's arms, read before the draft (contract #7): where the draft
+    # comes from is one of them (schedule_fallback.draft_source — the
+    # SCHEDULE_DRAFT_SOURCE switch, else the draft_v1 arm, else the model).
+    # What the model cannot write is drafted in code from the same facts
+    # (schedule_fallback, AI-11).
+    _arms = []
+    try:
+        import schedule_experiments as _sx_b
+        _arms = _sx_b.arms_for(restaurant_id, next_week_dates[0])
+    except Exception as _sfx:
+        _soft_fail("experiment arm", _sfx, restaurant_id)
+    import schedule_fallback as _sfb
+    _fallback = {"source": _sfb.draft_source(restaurant_id, _arms), "restaurant_id": restaurant_id,
+                 "constraints": constraints, "roster_names": [n for n, _r in roster_pairs],
+                 "roster_roles": {n: r for n, r in roster_pairs}, "week_dates": next_week_dates,
+                 "plan_rows": list(manager_plan.get("rows") or []),
+                 "plan_dates": list(manager_plan.get("dates") or []),
+                 "open_times": constraints.open_times or {}, "close_times": constraints.close_times or {}}
+    # Handed in the kwargs and popped there, like the rules (the call's own
+    # keyword arguments never carry it to labor).
+    _gen_kwargs["draft_fallback"] = _fallback
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    result["experiment_arms"] = _arms
     result["generation_id"] = _generation_id
     result["manager_plan"] = manager_plan
     # The scorer, the solver and the optimizer judge every shift against
@@ -2569,7 +2591,7 @@ def schedule_learning_inputs(restaurant_id, restaurant, roster_pairs, shifts, sp
     return out
 
 
-def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
+def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     """Write the week (or a redo's dates) in as few model calls as fit, and
     keep everything a call finished.
 
@@ -2621,6 +2643,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     kept = [dict(r) for r in (kwargs.pop("prior_rows", None) or [])]
     unstaffable = dict(kwargs.pop("unstaffable_dates", None) or {})
     rules_c = kwargs.pop("rules_constraints", None)
+    fallback = kwargs.pop("draft_fallback", None) if fallback is None else fallback
+    kwargs.pop("draft_fallback", None)
     extra_rest = kwargs.pop("extra_after_rules", None)
     # The prompt leaves closed dates out of its SHIFT REQUIREMENTS table.
     kwargs["closed_dates"] = sorted(closed)
@@ -2694,6 +2718,11 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     merged, failure = None, None
     parts_kept = []
     labels = []
+    # A week drafted without the model (schedule_fallback — contract #7): no
+    # call is made at all; every date is drafted in code below.
+    chosen = (fallback or {}).get("source") or "model"
+    if redo is None and chosen != "model":
+        queue = []
     parallel_cap = parallel_calls()
     while queue:
         # The next calls to send together (scheduler audit 10/10/26 AI-4,
@@ -2899,6 +2928,42 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             break
         queue[0:0] = front
 
+    # The days the model did not write, drafted in code (scheduler audit
+    # 10/10/26 AI-11, AI-26): an outage, a paused AI budget, the run's cap, a
+    # refusal, the time running out, a call cut short or a day left empty
+    # used to leave the day empty — "no backstop staffs a day the model did
+    # not" — or the whole week unsaved. Now the last published week carried
+    # forward (else the week shaped in code) drafts them, the repair loop and
+    # the solver run on them as on any draft, and the review says which days
+    # were built without the model and why. A redo's unwritten day keeps the
+    # owner's rows instead (the caller puts them back); data that is not
+    # current is never papered over.
+    code_draft = None
+    if fallback is not None and redo is None:
+        import schedule_fallback as _sfb
+        if chosen != "model":
+            gaps = {d: "chosen" for d in want if d not in {x[0] for x in written if x[0] and x[3] and not x[4]}}
+        else:
+            gaps = {d: why for d, why in unwritten.items() if why in _sfb.FALLBACK_WHYS and d in set(want)}
+        if gaps:
+            facts = merged
+            if facts is None:
+                facts = _prepared_week(analysis, shifts, kwargs, rules_c, extra_rest, managers, kept, no_one, clock,
+                                       open_dates, generate_optimized_schedule)
+            code_draft = _code_draft(sorted(gaps), gaps, fallback, facts, shifts, chosen)
+            if code_draft and code_draft.get("rows"):
+                done_dates = sorted({r["date"] for r in code_draft["rows"] if r.get("date")})
+                for d in done_dates:
+                    unwritten.pop(d, None)
+                lines = [x for x in _part_lines({"rows": code_draft["rows"]}) if x[0] in set(done_dates)]
+                written.extend(lines)
+                written_rows.extend(_tuple_row(x) for x in lines if x[3])
+                parts_kept.append(({"pinned_rows": [], "pinned_dropped": [], "dropped_rows": []}, set(done_dates)))
+                code_draft["dates"] = done_dates
+                merged = merged or facts
+                if clock is not None:
+                    clock.days_streamed(done_dates)
+
     # A day is written whole or not at all: what one part wrote for a date
     # another part could not finish is not kept as though it were the day.
     kept_lines = [x for x in written if not x[0] or x[0] not in unwritten]
@@ -2948,6 +3013,19 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     gaps = sorted(unwritten)
     merged["unwritten_dates"] = [{"date": d, "day": _date_of(d).strftime("%A"), "why": unwritten[d]} for d in gaps]
     merged["generation_notes"] = [_unwritten_line(merged["unwritten_dates"])] if (gaps and redo is None) else []
+    # Where each day came from (contract #7): the model's, or drafted in code
+    # and why — said at the top of the review, never a "⚠" (the days are
+    # whole and swept by every rule like any other).
+    merged["draft_source"] = {"chosen": chosen, "source": "model", "code_dates": [], "why": {}}
+    if code_draft and code_draft.get("dates"):
+        merged["draft_source"] = {"chosen": chosen, "source": code_draft["source"] if chosen != "model" else "model",
+                                  "code_source": code_draft["source"], "code_dates": list(code_draft["dates"]),
+                                  "why": {d: code_draft["why"].get(d) for d in code_draft["dates"]},
+                                  "base": {k: (code_draft.get("base") or {}).get(k)
+                                           for k in ("source", "week_start", "week_end")},
+                                  "left_out": list(code_draft.get("dropped") or [])[:50],
+                                  "unassigned": len(code_draft.get("unassigned") or [])}
+        merged["generation_notes"].insert(0, code_draft["line"])
     # Dates the week leaves empty — closed, never traded, nobody able, not
     # written — are closed to every pass after this one, so no backstop
     # staffs a day the model did not. A redo's unwritten dates keep the
@@ -3014,6 +3092,77 @@ def assign_shape_slots(slots, context_rows, constraints, signals=None, weights=N
         (out["assigned"] if (r.get("employee") or "").strip() else out["unassigned"]).append(r)
     out["stats"] = {k: res.get(k) for k in ("status", "proved_optimal", "seconds", "slots", "infeasible", "notes")}
     return out
+
+
+def _prepared_week(analysis, shifts, kwargs, rules_c, extra_rest, managers, kept, no_one, clock, open_dates,
+                   generate):
+    """The week's figures — dates, budget and targets, SHIFT REQUIREMENTS,
+    roster, scoring bars — as labor builds them for a whole-week call, with
+    no call made (labor prepare_only): what a week drafted wholly in code is
+    swept and scored against. A failure keeps the bare week, said."""
+    t = {"dates": list(open_dates), "people": None, "label": None, "group": (0, 1), "what": "STAFF", "depth": 0,
+         "retry": False, "missed": None}
+    dk = _call_kwargs(t, kwargs, rules_c, extra_rest, managers, [], kept, None, no_one, clock, open_dates=open_dates)
+    try:
+        return generate(analysis, shifts, prepare_only=True, **dk)
+    except Exception as e:
+        _soft_fail("week inputs", e, kwargs.get("restaurant_id"))
+        week = sorted(open_dates or [])
+        return {"week_dates": week, "week_days": week_day_names(week), "hours_budget": 0, "daily_target_hours": {},
+                "requirements": [], "requirements_by_date": {}, "shift_profiles": [], "narrative": [],
+                "roster": sorted(n for n, _r in (kwargs.get("roster") or []) if n), "schedule_csv": "",
+                "rows": [], "generation_seconds": 0.0}
+
+
+def _code_draft(dates, why, fallback, facts, shifts, chosen):
+    """The days `dates` drafted without the model (schedule_fallback): the
+    last published week carried forward, else — or when the "solver"
+    source was chosen — SHIFT REQUIREMENTS shaped on the restaurant's usual
+    shifts and solved. {"rows", "source", "base", "dropped", "unassigned",
+    "why", "line"}, or None when neither could draft a row. Never raises."""
+    import schedule_fallback as _sfb
+    rid = fallback.get("restaurant_id")
+    c = fallback.get("constraints")
+    try:
+        rows, dropped, unassigned, used, base = [], [], [], None, {}
+        if chosen in ("model", "carry_forward"):
+            base = _sfb.base_week(rid, fallback.get("week_dates") or dates, shifts)
+            if base:
+                got = _sfb.carry_forward_rows(base, dates, c, fallback.get("roster_names"),
+                                              fallback.get("plan_dates"))
+                rows, dropped, used = got["rows"], got["dropped"], "carry_forward"
+        if not rows:
+            first = str(sorted(dates)[0])
+            since = (_date_of(first) - __import__("datetime").timedelta(days=56)).isoformat()
+            hist = list((base or {}).get("rows") or []) + [s for s in shifts or []
+                                                            if since <= str(s.get("date") or "")[:10] < first]
+            plan = [r for r in (fallback.get("plan_rows") or []) if r.get("date") in set(dates)]
+            roles = dict(fallback.get("roster_roles") or {})
+            signals, weights = None, None
+            try:
+                signals, weights = _quality_signals(rid, dict(facts or {}, constraints=c, roster=sorted(roles),
+                                                              roster_roles=roles))
+            except Exception as e:
+                _soft_fail("quality signals", e, rid)
+            secs = SHAPE_SOLVE_SECONDS
+            clock = current_clock()
+            if clock is not None:
+                secs = max(1.0, min(secs, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
+            got = _sfb.solver_rows(dates, (facts or {}).get("requirements_by_date") or {}, c, base_rows=hist,
+                                   context_rows=plan, open_times=fallback.get("open_times"),
+                                   close_times=fallback.get("close_times"), signals=signals, weights=weights,
+                                   roster_roles=roles or None, max_seconds=secs)
+            rows, unassigned, used = got["rows"], got["unassigned"], "solver"
+        if not rows:
+            return None
+        drafted = sorted({r["date"] for r in rows if r.get("date")})
+        reasons = [why.get(d) for d in drafted if why.get(d)]
+        main = max(set(reasons), key=reasons.count) if reasons else "other"
+        return {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
+                "why": dict(why), "line": _sfb.note_line(used, main, drafted, base if used == "carry_forward" else None)}
+    except Exception as e:
+        _soft_fail("code draft", e, rid)
+        return None
 
 
 def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock):
@@ -9104,7 +9253,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _solver_on = True
             try:
                 import schedule_experiments as _sx
-                result["experiment_arms"] = _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
+                # Read before the draft when the generation read them (the
+                # draft's own source is an arm — contract #7).
+                result["experiment_arms"] = result.get("experiment_arms") or \
+                    _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
                 _solver_on = _sx.flag(result["experiment_arms"], "solver")
             except Exception as _arx:
                 _soft_fail("experiment arm", _arx, restaurant_id)
@@ -9204,6 +9356,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"]["input_problems"] = [{k: _p.get(k) for k in ("source", "name")} for _p in _inprob]
             result["review"]["repair"] = {k: v for k, v in (result.get("repair") or {}).items() if k != "seconds"}
             result["review"]["unwritten_dates"] = result.get("unwritten_dates") or []
+            # Kept with the saved review: which days were built without the
+            # model, and why (contract #7, AI-11).
+            result["review"]["draft_source"] = _json_safe(result.get("draft_source") or {})
             result["review"]["unstaffable_dates"] = result.get("unstaffable_dates") or []
             # A staffing rule the owner set that the code could not read is
             # named, so the owner checks the draft against it — the model was
@@ -9933,6 +10088,10 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             unstaffable_dates=result.get("unstaffable_dates") or [],
             starting_point=result.get("starting_point") or {"no_history": False},
             redo=result.get("redo"),
+            # Where the draft came from (contract #7, AI-11): the model, or
+            # days built without it — which, from what, and why.
+            draft_source=_json_safe(result.get("draft_source") or {"chosen": "model", "source": "model",
+                                                                   "code_dates": [], "why": {}}),
             # The hours split by pay (E-7, P-6): what the hourly budget is
             # held to, and the salaried hours it never pays for.
             hours_hourly=result.get("hours_hourly"),

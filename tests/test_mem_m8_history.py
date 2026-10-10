@@ -177,6 +177,13 @@ HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 EXP = sx.EXPERIMENTS[0]
 
 
+@pytest.fixture
+def _assign_v1_alone(monkeypatch):
+    """The verdict tests read assign_v1 alone; draft_v1 (contract #7) is
+    tested in tests/test_sf10_e_fallback.py."""
+    monkeypatch.setattr(sx, "EXPERIMENTS", tuple(e for e in sx.EXPERIMENTS if e["key"] == EXP["key"]))
+
+
 def _csv(rows):
     return HEADER + "\n" + "\n".join(",".join(r) for r in rows)
 
@@ -249,7 +256,7 @@ def test_quality_is_the_published_versions_and_a_demo_account_is_not_read(db):
     assert solver["quality"]["mean"] == 80 and solver["restaurants"] == 1 and solver["acceptance"]["n"] == 1
 
 
-def test_the_verdict_is_stored_once_a_week(db):
+def test_the_verdict_is_stored_once_a_week(db, _assign_v1_alone):
     rid = _rid(db, "Stored Grill")
     _week(db, rid, _ws(0), "solver", 8)
     out = sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 5))
