@@ -4,7 +4,8 @@ import Foundation
 // server payload — GET /mobile/api/labor/publish-review?schedule_id= (the
 // twin of the web's /api/labor/publish-review) — drives the web's "Before
 // it goes out" and the phone's Send sheet, so the two can never disagree.
-// The contract (SHARED #6): {ok, schedule_id, week_start, week_end,
+// The shape is API_REFERENCE.md's "The pre-publish review" (I1, built to
+// SHARED contract #6): {ok, schedule_id, week_start, week_end, version,
 // verdict {tone, sentence}, must_fix [{key, text, day, fixes, override_allowed,
 // tier}], decide [{key, text, options [{label, scope, action, payload}]}],
 // numbers {labor_pct {value, low, high, basis, track_record}, cost,
@@ -124,9 +125,14 @@ struct PublishReview: Decodable, Equatable {
         var overrideAllowed = true
         var tier: String? = nil
         var hard = true
-        /// What the override's reason field asks ("Who covers? The owner
-        /// counts." for a manager gap — ARCH-30). Nil: the plain question.
+        /// What the override's field asks (`override.prompt`). Nil: the
+        /// plain question.
         var overridePrompt: String? = nil
+        /// A manager gap is sent past only by naming who runs the floor
+        /// (`override.needs == "covered_by"`, ARCH-30); `candidates` are the
+        /// people on the floor then and the managers (the owner counts).
+        var needsCoveredBy = false
+        var candidates: [String] = []
         /// "You sent past this in 3 of 4 weeks" (TRUST-28), when the server
         /// says so.
         var overriddenBefore: String? = nil
@@ -134,17 +140,25 @@ struct PublishReview: Decodable, Equatable {
         var id: String { key }
 
         enum CodingKeys: String, CodingKey {
-            case key, text, day, fixes, tier, hard, kind
+            case key, text, day, fixes, tier, hard, kind, override
             case overrideAllowed = "override_allowed"
             case overridePrompt = "override_prompt"
             case overriddenBefore = "overridden_before"
         }
+        enum OverrideKeys: String, CodingKey { case needs, candidates, prompt }
 
         init(key: String, text: String, day: String? = nil, fixes: [Action] = [], overrideAllowed: Bool = true,
              tier: String? = nil, hard: Bool = true, overridePrompt: String? = nil, overriddenBefore: String? = nil) {
             self.key = key; self.text = text; self.day = day; self.fixes = fixes
             self.overrideAllowed = overrideAllowed; self.tier = tier; self.hard = hard
             self.overridePrompt = overridePrompt; self.overriddenBefore = overriddenBefore
+            self.needsCoveredBy = Self.isManagerGap(key)
+        }
+
+        /// The gate's manager-gap keys: `rule:no_manager:…`,
+        /// `roster:no_manager_roster`.
+        static func isManagerGap(_ key: String) -> Bool {
+            key.hasPrefix("rule:no_manager") || key.hasPrefix("roster:no_manager")
         }
 
         init(from decoder: Decoder) throws {
@@ -168,6 +182,12 @@ struct PublishReview: Decodable, Equatable {
                 hard = true
             }
             overridePrompt = c.sfText(.overridePrompt)
+            needsCoveredBy = Self.isManagerGap(key)
+            if let o = try? c.nestedContainer(keyedBy: OverrideKeys.self, forKey: .override) {
+                if let needs = o.sfText(.needs) { needsCoveredBy = needs == "covered_by" }
+                candidates = o.setupTexts(.candidates)
+                overridePrompt = o.sfText(.prompt) ?? overridePrompt
+            }
             overriddenBefore = reviewWords((try? c.decodeIfPresent(LooseValue.self, forKey: .overriddenBefore)) ?? nil)
                 ?? Self.overriddenLine((try? c.decodeIfPresent(LooseValue.self, forKey: .overriddenBefore)) ?? nil)
         }
@@ -182,7 +202,7 @@ struct PublishReview: Decodable, Equatable {
         /// The question the reason field asks.
         var reasonPrompt: String {
             if let p = overridePrompt { return p }
-            if key.hasPrefix("rule:no_manager") { return "Who covers as manager? The owner counts." }
+            if needsCoveredBy { return "Who runs the floor then? The owner counts." }
             return "Why is it all right this week?"
         }
 
@@ -196,12 +216,17 @@ struct PublishReview: Decodable, Equatable {
         var key: String
         var text: String
         var options: [Action] = []
+        /// A publish-gate key (the budget, the notice rule, a late change):
+        /// Send needs an answer, sent back as an acknowledgement. Others (a
+        /// Crew shift leaner than usual) never hold the send.
+        var holds = false
+        var kind: String? = nil
         var id: String { key }
 
-        enum CodingKeys: String, CodingKey { case key, text, options }
+        enum CodingKeys: String, CodingKey { case key, text, options, holds, kind }
 
-        init(key: String, text: String, options: [Action] = []) {
-            self.key = key; self.text = text; self.options = options
+        init(key: String, text: String, options: [Action] = [], holds: Bool = false) {
+            self.key = key; self.text = text; self.options = options; self.holds = holds
         }
 
         init(from decoder: Decoder) throws {
@@ -212,6 +237,8 @@ struct PublishReview: Decodable, Equatable {
             text = t
             key = c.sfText(.key) ?? t
             options = c.setupList(Action.self, .options)
+            holds = c.sfBool(.holds) ?? false
+            kind = c.sfText(.kind)
         }
     }
 
@@ -226,9 +253,14 @@ struct PublishReview: Decodable, Equatable {
         var projected = false
         var text: String? = nil
         var salaried: Double? = nil
+        /// "All-in labor" / "Hourly labor" (TRUST-30) and the one grade both
+        /// clients colour by: over | under | no_target (TRUST-7).
+        var label: String? = nil
+        var grade: String? = nil
+        var target: Double? = nil
 
         enum CodingKeys: String, CodingKey {
-            case value, low, high, basis, projected, text, total, hourly, salaried
+            case value, low, high, basis, projected, text, total, hourly, salaried, label, grade, target
             case trackRecord = "track_record"
         }
 
@@ -253,6 +285,24 @@ struct PublishReview: Decodable, Equatable {
             projected = c.sfBool(.projected) ?? false
             text = c.sfText(.text)
             salaried = c.sfDouble(.salaried)
+            label = c.sfText(.label)
+            grade = c.sfText(.grade)
+            target = c.sfDouble(.target)
+        }
+    }
+
+    /// The week's quality graded against the restaurant's own recent weeks
+    /// (TRUST-29): the score, its grade, and why it was capped.
+    struct Quality: Decodable, Equatable {
+        var score: Int? = nil
+        var grade: String? = nil
+        var lead: String? = nil
+        var text: String? = nil
+        enum CodingKeys: String, CodingKey { case score, grade, lead, text }
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            score = c.sfInt(.score); grade = c.sfText(.grade); lead = c.sfText(.lead); text = c.sfText(.text)
         }
     }
 
@@ -262,9 +312,12 @@ struct PublishReview: Decodable, Equatable {
         var overtimeHours: Double? = nil
         var forecastSales: Figure? = nil
         var savings: Figure? = nil
+        /// `overtime.text` — what the overtime is, in words (null hours when
+        /// it was not priced: no tile, never a green zero).
+        var overtimeText: String? = nil
 
         enum CodingKeys: String, CodingKey {
-            case cost, savings
+            case cost, savings, overtime
             case laborPct = "labor_pct"
             case overtimeHours = "overtime_hours"
             case forecastSales = "forecast_sales"
@@ -279,6 +332,7 @@ struct PublishReview: Decodable, Equatable {
             overtimeHours = c.sfDouble(.overtimeHours)
             forecastSales = (try? c.decodeIfPresent(Figure.self, forKey: .forecastSales)) ?? nil
             savings = (try? c.decodeIfPresent(Figure.self, forKey: .savings)) ?? nil
+            overtimeText = ((try? c.decodeIfPresent(Figure.self, forKey: .overtime)) ?? nil)?.text
         }
 
         var isEmpty: Bool { laborPct?.value == nil && cost?.value == nil && overtimeHours == nil && forecastSales?.value == nil }
@@ -401,9 +455,12 @@ struct PublishReview: Decodable, Equatable {
         var predictorBase: Double? = nil
         var completeness: Double? = nil
         var text: String? = nil
+        /// The server's own sentences, when it sends them — said as sent.
+        var serverLines: [String] = []
 
         enum CodingKeys: String, CodingKey {
             case completeness, text
+            case serverLines = "lines"
             case keptShare = "kept_share"
             case keptTrend = "kept_trend"
             case predictorHit = "predictor_hit"
@@ -415,7 +472,17 @@ struct PublishReview: Decodable, Equatable {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             keptShare = c.sfDouble(.keptShare)
-            keptTrend = reviewWords((try? c.decodeIfPresent(LooseValue.self, forKey: .keptTrend)) ?? nil)
+            let trend = (try? c.decodeIfPresent(LooseValue.self, forKey: .keptTrend)) ?? nil
+            keptTrend = reviewWords(trend)
+            if keptTrend == nil, case .object(let o)? = trend {
+                // {direction, older, newer}: "88% → 94%, rising".
+                let older = Self.percent(reviewNumber(o["older"])), newer = Self.percent(reviewNumber(o["newer"]))
+                let dir = reviewWords(o["direction"])
+                if let older, let newer {
+                    keptTrend = "\(older)% \u{2192} \(newer)%" + (dir.map { ", \($0)" } ?? "")
+                }
+            }
+            serverLines = c.setupTexts(.serverLines)
             predictorHit = c.sfDouble(.predictorHit)
             predictorBase = c.sfDouble(.predictorBase)
             completeness = c.sfDouble(.completeness)
@@ -430,6 +497,7 @@ struct PublishReview: Decodable, Equatable {
 
         /// The lines the sheet says, each only when its figure came.
         var lines: [String] {
+            if !serverLines.isEmpty { return serverLines }
             var out: [String] = []
             if let kept = Self.percent(keptShare) {
                 var s = "Your recent drafts went out with \(kept)% of shifts unchanged"
@@ -499,9 +567,14 @@ struct PublishReview: Decodable, Equatable {
     var sure = Sure()
     var send = SendInfo()
     var error: String? = nil
+    var version: Int? = nil
+    var quality = Quality()
+    /// Worth a look, never a hold (`fyi`: quality notes, soft rules by kind
+    /// and day, reminders folded into one line).
+    var fyi: [Line] = []
 
     enum CodingKeys: String, CodingKey {
-        case ok, verdict, decide, numbers, changed, fragile, why, sure, send, error
+        case ok, verdict, decide, numbers, changed, fragile, why, sure, send, error, version, quality, fyi
         case scheduleId = "schedule_id"
         case weekStart = "week_start"
         case weekEnd = "week_end"
@@ -526,7 +599,13 @@ struct PublishReview: Decodable, Equatable {
         sure = ((try? c.decodeIfPresent(Sure.self, forKey: .sure)) ?? nil) ?? Sure()
         send = ((try? c.decodeIfPresent(SendInfo.self, forKey: .send)) ?? nil) ?? SendInfo()
         error = c.sfText(.error)
+        version = c.sfInt(.version)
+        quality = ((try? c.decodeIfPresent(Quality.self, forKey: .quality)) ?? nil) ?? Quality()
+        fyi = c.setupList(Line.self, .fyi)
     }
+
+    /// The decisions Send waits on, answered or not.
+    var holding: [Decision] { decide.filter(\.holds) }
 
     /// Read as the review only when it says so and names its week.
     var isUsable: Bool { ok && verdict != nil }
@@ -539,35 +618,71 @@ struct PublishReview: Decodable, Equatable {
 struct PublishOverride: Encodable, Equatable {
     let key: String
     let reason: String
+    /// Who runs the floor through a manager gap (ARCH-30): kept on the
+    /// override record with the published version.
+    var coveredBy: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case key, reason
+        case coveredBy = "covered_by"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(key, forKey: .key)
+        try c.encode(reason, forKey: .reason)
+        try c.encodeIfPresent(coveredBy, forKey: .coveredBy)
+    }
+}
+
+/// What the owner said when sending past one item: their reason and, for a
+/// manager gap, who runs the floor.
+struct PublishOverrideChoice: Equatable {
+    var reason: String
+    var coveredBy: String? = nil
 }
 
 /// The must-fix list as the sheet acts on it: what still holds Send, and
 /// the overrides to send with it. Pure, so it can be tested on its own.
 enum PublishGate {
+    /// Whether one choice is enough for its item: words for a hard item, a
+    /// name for a manager gap.
+    static func complete(_ item: PublishReview.MustFix, _ choice: PublishOverrideChoice?) -> Bool {
+        guard item.overrideAllowed, let choice else { return false }
+        if item.needsCoveredBy && (choice.coveredBy ?? "").trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        let words = choice.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !(item.needsReason && words.isEmpty && !item.needsCoveredBy)
+    }
+
     /// The items still holding Send: neither fixed (gone from the list) nor
-    /// overridden — and a hard item's override needs a reason.
-    static func open(_ items: [PublishReview.MustFix], overrides: [String: String]) -> [PublishReview.MustFix] {
-        items.filter { item in
-            guard item.overrideAllowed, let reason = overrides[item.key] else { return true }
-            return item.needsReason && reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
+    /// overridden with what the override needs.
+    static func open(_ items: [PublishReview.MustFix],
+                     overrides: [String: PublishOverrideChoice]) -> [PublishReview.MustFix] {
+        items.filter { !complete($0, overrides[$0.key]) }
     }
 
     /// The overrides to send: only for items still on the list, in its
-    /// order — an override for something since fixed is never sent.
-    static func overrides(_ items: [PublishReview.MustFix], _ chosen: [String: String]) -> [PublishOverride] {
+    /// order — an override for something since fixed is never sent. A
+    /// manager gap's reason, left blank, says who runs the floor (the gate
+    /// asks for a reason on every must-fix).
+    static func overrides(_ items: [PublishReview.MustFix],
+                          _ chosen: [String: PublishOverrideChoice]) -> [PublishOverride] {
         items.compactMap { item in
-            guard item.overrideAllowed, let reason = chosen[item.key] else { return nil }
-            let words = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-            if item.needsReason && words.isEmpty { return nil }
-            return PublishOverride(key: item.key, reason: String(words.prefix(300)))
+            guard complete(item, chosen[item.key]), let c = chosen[item.key] else { return nil }
+            let who = c.coveredBy?.trimmingCharacters(in: .whitespaces)
+            var words = c.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            if words.isEmpty, let who, !who.isEmpty, item.needsCoveredBy { words = "\(who) runs the floor" }
+            return PublishOverride(key: item.key, reason: String(words.prefix(300)),
+                                   coveredBy: item.needsCoveredBy ? who : nil)
         }
     }
 
     /// The Send button's words: "Fix 2 things first", or "Send to 21 staff
     /// (overriding 1 rule)".
-    static func sendLabel(open: Int, overriding: Int, reachable: Int, serverLabel: String?) -> String {
+    static func sendLabel(open: Int, overriding: Int, reachable: Int, serverLabel: String?,
+                          undecided: Int = 0) -> String {
         if open > 0 { return open == 1 ? "Fix 1 thing first" : "Fix \(open) things first" }
+        if undecided > 0 { return undecided == 1 ? "Decide 1 thing first" : "Decide \(undecided) things first" }
         let base = serverLabel ?? (reachable > 0 ? "Send to \(reachable) staff" : "Publish to the staff portal")
         guard overriding > 0 else { return base }
         return base + " (overriding \(overriding) rule\(overriding == 1 ? "" : "s"))"
@@ -613,9 +728,53 @@ extension LaborViewModel {
     /// The actions that change the rows on screen — the same edit, re-score
     /// and save as a hand edit. Everything else is the sheet's to send.
     nonisolated static let rowActions: Set<String> = [
+        "edit_rows", "optimize", "apply_fixes",
         "extend_shift", "set_end", "end_at", "retime", "set_times", "move_start",
         "reassign", "give_to", "swap_to", "remove_shift", "drop_shift", "add_shift", "add_person",
     ]
+
+    /// `edit_rows` {add: [row], remove: [match], change: [{match, set}]} —
+    /// the review's fix as edits on the week on screen, each the same edit,
+    /// re-score and save as a hand edit. Nil when every part was made.
+    func applyEditRows(_ p: [String: LooseValue]) async -> String? {
+        func objects(_ key: String) -> [[String: LooseValue]] {
+            guard case .list(let l)? = p[key] else { return [] }
+            return l.compactMap { if case .object(let o) = $0 { return o } else { return nil } }
+        }
+        for change in objects("change") {
+            var match: [String: LooseValue] = [:]
+            if case .object(let m)? = change["match"] { match = m }
+            var set: [String: LooseValue] = [:]
+            if case .object(let s)? = change["set"] { set = s }
+            guard let row = Self.rowFor(match, in: scheduleResult?.previewRows ?? []) else {
+                return "That shift is no longer on the week."
+            }
+            if let who = Self.payloadText(set, "employee"), who.lowercased() != (row.employee ?? "").lowercased() {
+                if let why = weekReadOnlyReason { return why }
+                await overrideEmployee(rowId: row.id, to: who)
+            }
+            let start = Self.payloadText(set, "shift_start"), end = Self.payloadText(set, "shift_end")
+            if start != nil || end != nil {
+                let now = Self.rowFor(match.merging(set.filter { $0.key == "employee" }) { _, new in new },
+                                      in: scheduleResult?.previewRows ?? []) ?? row
+                if let refusal = await editShiftTimes(rowId: now.id, start: start ?? now.shiftStart ?? "",
+                                                      end: end ?? now.shiftEnd ?? "") {
+                    return refusal
+                }
+            }
+        }
+        for match in objects("remove") {
+            guard let row = Self.rowFor(match, in: scheduleResult?.previewRows ?? []) else { continue }
+            if let why = weekReadOnlyReason { return why }
+            await removeShift(rowId: row.id)
+        }
+        for row in objects("add") {
+            if let refusal = await applyReviewAction(PublishReview.Action(label: "Add", action: "add_shift", payload: row)) {
+                return refusal
+            }
+        }
+        return nil
+    }
 
     /// Do one review action on the week on screen. Nil when it was made;
     /// otherwise the reason it was not (said under the button).
@@ -623,6 +782,15 @@ extension LaborViewModel {
         let p = action.payload
         let rows = scheduleResult?.previewRows ?? []
         switch action.action {
+        case "edit_rows":
+            return await applyEditRows(p)
+        case "optimize":
+            // Improve shows each change; nothing is kept until it is saved.
+            await optimize()
+            return optimizeError ?? "Cavnar AI\u{2019}s changes are on the week \u{2014} save them on the Labor screen, then send."
+        case "apply_fixes":
+            await applyFixes()
+            return applyFixesError ?? "The fixes are on the week \u{2014} save them on the Labor screen, then send."
         case "extend_shift", "set_end", "end_at", "retime", "set_times", "move_start":
             guard let row = Self.rowFor(p, in: rows) else { return "That shift is no longer on the week." }
             let start = Self.payloadText(p, "new_start") ?? row.shiftStart ?? ""

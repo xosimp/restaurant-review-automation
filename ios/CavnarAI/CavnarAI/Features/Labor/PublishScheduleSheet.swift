@@ -341,7 +341,16 @@ final class PublishScheduleViewModel {
     /// Each must-fix the owner sends past, by key, with their words — sent
     /// as `overrides: [{key, reason}]` and stored by key (TRUST-28). One by
     /// one: there is no "acknowledge all" (TRUST-2, TRUST-3).
-    var overrides: [String: String] = [:]
+    var overrides: [String: PublishOverrideChoice] = [:]
+    /// The `holds` decisions answered here (their keys go back with Send as
+    /// acknowledgements) — each needs an answer before the week goes out.
+    var acknowledged: Set<String> = []
+    /// A review tap that shows a shift in the week (`open`): the sheet closes
+    /// so the week is in view.
+    var dismissRequested = false
+    /// The rows on screen when they hold an edit no save has stored: the
+    /// review is asked about them (`POST labor/publish-review`), not the
+    /// stored copy.
     /// The review action running now (its id) and what each said back.
     var actionBusy: String?
     var actionNotes: [String: String] = [:]
@@ -349,6 +358,9 @@ final class PublishScheduleViewModel {
     var answered: [String: String] = [:]
     /// Edits the week on screen (Labor's view model) — a fix that moves a
     /// shift. Nil from History: those fixes say to open the week.
+    /// The Labor screen holds an edit no save has stored: Send would send
+    /// the stored copy, so the sheet says so above the review.
+    var hasUnsavedEdits = false
     var rowActionRunner: ((PublishReview.Action) async -> String?)?
     /// The version of the rows on screen after such a fix saved them — Send
     /// names it, so the week sent is the week just fixed (BUGSLIFE-11).
@@ -456,6 +468,20 @@ final class PublishScheduleViewModel {
     /// The items still holding Send.
     var openItems: [PublishReview.MustFix] { PublishGate.open(mustFix, overrides: overrides) }
 
+    /// The decisions Send waits on that have no answer yet.
+    var undecided: [PublishReview.Decision] {
+        guard check?.publishedAt == nil else { return [] }
+        return (review?.holding ?? []).filter { !acknowledged.contains($0.key) }
+    }
+
+    /// What Send acknowledges: each override's key and each answered
+    /// decision's, still on the lists.
+    var acknowledgeKeys: [String] {
+        let fromOverrides = PublishGate.overrides(mustFix, overrides).map(\.key)
+        let decided = (review?.holding ?? []).map(\.key).filter { acknowledged.contains($0) }
+        return fromOverrides + decided.filter { !fromOverrides.contains($0) }
+    }
+
     func load() async {
         isLoading = contacts.isEmpty
         errorMessage = nil
@@ -522,8 +548,12 @@ final class PublishScheduleViewModel {
     func loadReview() async {
         guard let scheduleId else { return }
         do {
-            let r: PublishReview = try await client.send(
-                "/mobile/api/labor/publish-review", query: ["schedule_id": String(scheduleId)], hapticOnError: false)
+            // The STORED week: Send sends what is stored, so the review is of
+            // that copy — a screen with an unsaved edit is said instead
+            // (`hasUnsavedEdits`), never reviewed as if it were the week.
+            let r: PublishReview = try await client.send("/mobile/api/labor/publish-review",
+                                                         query: ["schedule_id": String(scheduleId)],
+                                                         hapticOnError: false)
             review = r.isUsable ? r : nil
         } catch is CancellationError {
         } catch {
@@ -537,6 +567,8 @@ final class PublishScheduleViewModel {
     private func pruneOverrides() {
         let keys = Set(mustFix.map(\.key))
         overrides = overrides.filter { keys.contains($0.key) }
+        let holding = Set((review?.holding ?? []).map(\.key))
+        if review != nil { acknowledged = acknowledged.filter { holding.contains($0) } }
     }
 
     /// Run one of the review's taps: a fix that edits the week (Labor's own
@@ -545,6 +577,19 @@ final class PublishScheduleViewModel {
     /// shows what is left.
     func run(_ action: PublishReview.Action, decision: String? = nil) async {
         guard actionBusy == nil else { return }
+        // Answered on the sheet, sent with Send: an acknowledgement of a
+        // decision that holds the week (the budget, the notice rule).
+        if action.action == "acknowledge" {
+            let key = LaborViewModel.payloadText(action.payload, "key") ?? decision ?? ""
+            if !key.isEmpty { acknowledged.insert(key) }
+            if let decision { answered[decision] = action.buttonLabel }
+            Haptic.selection()
+            return
+        }
+        if action.action == "open" {
+            dismissRequested = true
+            return
+        }
         actionBusy = action.id
         defer { actionBusy = nil }
         var refusal: String?
@@ -588,11 +633,56 @@ final class PublishScheduleViewModel {
         var suggestion: [String: LooseValue]? = nil
     }
 
+    private struct StandbyBody: Encodable {
+        let body: [String: LooseValue]
+        func encode(to encoder: Encoder) throws { try body.encode(to: encoder) }
+    }
+
+    private struct PostAnswer: Decodable {
+        let ok: Bool
+        let error: String?
+        var suggestion: [String: LooseValue]? = nil
+    }
+
+    /// `post` {path, body}: the review's own write — a Crew answer or a
+    /// standby ask — to the phone's twin of the path, then the review is
+    /// read again. Only the two paths the review names.
+    private func postAction(_ p: [String: LooseValue]) async -> String? {
+        let path = LaborViewModel.payloadText(p, "path") ?? ""
+        var body: [String: LooseValue] = [:]
+        if case .object(let o)? = p["body"] { body = o }
+        do {
+            let r: PostAnswer
+            switch path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) {
+            case "labor/crew-matrix":
+                if body["history_id"] == nil, let id = scheduleId { body["history_id"] = .number(Double(id)) }
+                r = try await client.send("/mobile/api/labor/crew-matrix", method: .post, body: StandbyBody(body: body),
+                                          hapticOnError: false, retryTransient: false)
+                if r.ok, LaborViewModel.payloadText(body, "answer") == "add" {
+                    guard let row = r.suggestion else { return r.error ?? "Nobody can legally take it this week." }
+                    guard let runner = rowActionRunner else { return "Open the week on the Labor screen to add it." }
+                    return await runner(PublishReview.Action(label: "Add 1 this week", action: "add_shift", payload: row))
+                }
+            case "labor/standby/ask":
+                r = try await client.send("/mobile/api/labor/standby/ask", method: .post, body: StandbyBody(body: body),
+                                          hapticOnError: false, retryTransient: false)
+            default:
+                return "Open the week on the web to do this one."
+            }
+            return r.ok ? nil : (r.error ?? "That couldn\u{2019}t be saved.")
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "That couldn\u{2019}t be saved."
+        }
+    }
+
     /// The taps that are not an edit of the rows: the Crew stage's answers
     /// (keep the usual crew as a minimum, leaner is fine, one more this
     /// week) — the same route the Crew screen and the web use.
     private func post(_ action: PublishReview.Action) async -> String? {
         let p = action.payload
+        if action.action == "post" { return await postAction(p) }
         let crew: [String: String] = ["crew_hold": "hold", "crew_keep": "hold", "crew_lean": "lean",
                                       "crew_clear": "clear", "crew_add": "add"]
         var answer = crew[action.action]
@@ -720,8 +810,12 @@ final class PublishScheduleViewModel {
         /// A one-tap send the unattended check refused (re-audit 10/8/26
         /// #1): open the week and read it.
         var oneTapRefused: Bool? = nil
+        /// The tiered gate's must-fix keys (each needs an override with a
+        /// reason; a manager gap, who runs the floor): the rest are decisions.
+        var mustFixKeys: [String]? = nil
         enum CodingKeys: String, CodingKey {
             case blockers, notes
+            case mustFixKeys = "must_fix_keys"
             case oneTapRefused = "one_tap_refused"
             case needsAck = "needs_ack"
             case blockerKeys = "blocker_keys"
@@ -735,10 +829,19 @@ final class PublishScheduleViewModel {
             return (blockers ?? [], blockerKeys ?? [])
         }
 
-        /// The gate's blockers as must-fix items, hard unless it said not.
+        /// The gate's blockers as must-fix items, hard unless it said not
+        /// (or, from the tiered gate, unless it is not a must-fix key).
         var items: [PublishReview.MustFix] {
-            if let items = blockerItems, !items.isEmpty { return items.map(\.mustFix) }
-            return zip(blockerKeys ?? [], blockers ?? []).map { PublishReview.MustFix(key: $0.0, text: $0.1) }
+            var out: [PublishReview.MustFix]
+            if let items = blockerItems, !items.isEmpty {
+                out = items.map(\.mustFix)
+            } else {
+                out = zip(blockerKeys ?? [], blockers ?? []).map { PublishReview.MustFix(key: $0.0, text: $0.1) }
+            }
+            if let must = mustFixKeys {
+                out = out.map { var m = $0; m.hard = must.contains(m.key); return m }
+            }
+            return out
         }
     }
 
@@ -812,7 +915,12 @@ final class PublishScheduleViewModel {
             publishError = "Fix or override each item above first."
             return
         }
+        if !resending, !undecided.isEmpty {
+            publishError = "Answer each decision above first."
+            return
+        }
         let chosen = resending ? [] : PublishGate.overrides(items, overrides)
+        let ackKeys = resending ? [] : acknowledgeKeys
         isPublishing = true
         publishError = nil
         undoneNote = nil
@@ -820,7 +928,7 @@ final class PublishScheduleViewModel {
         do {
             let result: PublishResult = try await client.send(
                 "/mobile/api/labor/publish-schedule", method: .post,
-                body: PublishBody(scheduleId: scheduleId, acknowledge: !chosen.isEmpty, keys: chosen.map(\.key),
+                body: PublishBody(scheduleId: scheduleId, acknowledge: !ackKeys.isEmpty, keys: ackKeys,
                                   version: resending ? nil : version,
                                   resend: missingOnly ? "missing" : (resend ? "all" : nil),
                                   overrides: chosen))
@@ -832,6 +940,7 @@ final class PublishScheduleViewModel {
             } else if result.ok {
                 Haptic.success()
                 overrides = [:]
+                acknowledged = []
                 gateItems = []
                 unsentChanges = []
                 onSent?()
@@ -882,7 +991,7 @@ struct PublishScheduleSheet: View {
     init(scheduleId: Int? = nil, unsentChanges: [String] = [], hoursBudget: Double? = nil, version: Int? = nil,
          onSent: (() -> Void)? = nil, onVersion: ((Int) -> Void)? = nil,
          rowActionRunner: ((PublishReview.Action) async -> String?)? = nil,
-         versionProvider: (() -> Int?)? = nil) {
+         versionProvider: (() -> Int?)? = nil, hasUnsavedEdits: Bool = false) {
         self.hoursBudget = hoursBudget
         let vm = PublishScheduleViewModel()
         vm.scheduleId = scheduleId
@@ -891,6 +1000,7 @@ struct PublishScheduleSheet: View {
         vm.onSent = onSent
         vm.onVersion = onVersion
         vm.rowActionRunner = rowActionRunner
+        vm.hasUnsavedEdits = hasUnsavedEdits
         vm.versionProvider = versionProvider
         _viewModel = State(initialValue: vm)
     }
@@ -921,6 +1031,10 @@ struct PublishScheduleSheet: View {
                         // The decision, in the order an owner answers it
                         // (TRUST-27): the verdict, what must be fixed, what
                         // to decide, the numbers — then who it reaches.
+                        if viewModel.hasUnsavedEdits {
+                            ScheduleNotice(text: "Your last edit isn\u{2019}t saved. This checks and sends the week as it was last saved.",
+                                           tone: .cavnarAmber, symbol: "exclamationmark.triangle.fill")
+                        }
                         let review = viewModel.check?.publishedAt == nil ? viewModel.review : nil
                         if let verdict = review?.verdict, !verdict.sentence.isEmpty {
                             PublishVerdictCard(verdict: verdict)
@@ -940,10 +1054,10 @@ struct PublishScheduleSheet: View {
                         if viewModel.showsCrew {
                             PublishCrewCard(store: viewModel.crew, rows: nil, addRow: viewModel.crewAddRow)
                         }
-                        if let review, !review.numbers.isEmpty {
-                            PublishNumbersCard(numbers: review.numbers)
+                        if let review, !review.numbers.isEmpty || review.quality.score != nil {
+                            PublishNumbersCard(numbers: review.numbers, quality: review.quality)
                         }
-                        if let review, !review.fragile.isEmpty || !review.changed.isEmpty
+                        if let review, !review.fragile.isEmpty || !review.changed.isEmpty || !review.fyi.isEmpty
                             || !review.why.isEmpty || !review.sure.lines.isEmpty {
                             PublishReviewProof(review: review, busy: viewModel.actionBusy,
                                                notes: viewModel.actionNotes) { action in
@@ -998,6 +1112,7 @@ struct PublishScheduleSheet: View {
                 }
             }
             .task { await viewModel.load() }
+            .onChange(of: viewModel.dismissRequested) { _, now in if now { dismiss() } }
             .sheet(item: $viewModel.editingContact) { contact in
                 StaffContactSheet(viewModel: viewModel, contact: contact)
             }
@@ -1134,7 +1249,7 @@ struct PublishScheduleSheet: View {
     /// on its own, a hard one with a reason (TRUST-2/3).
     private var sendBlocked: Bool {
         viewModel.contacts.isEmpty || viewModel.isPublishing || !viewModel.canPublish
-            || !viewModel.openItems.isEmpty
+            || !viewModel.openItems.isEmpty || !viewModel.undecided.isEmpty
             || viewModel.replacedReason != nil
     }
 
@@ -1237,7 +1352,8 @@ struct PublishScheduleSheet: View {
                                                overriding: PublishGate.overrides(viewModel.mustFix,
                                                                                  viewModel.overrides).count,
                                                reachable: viewModel.reachableCount,
-                                               serverLabel: viewModel.review?.send.label))
+                                               serverLabel: viewModel.review?.send.label,
+                                               undecided: viewModel.undecided.count))
                 }
             }
             .frame(maxWidth: .infinity)

@@ -61,13 +61,14 @@ struct PublishVerdictCard: View {
 /// only the softer ones (the budget, the notice window) are amber.
 struct PublishMustFixCard: View {
     let items: [PublishReview.MustFix]
-    @Binding var overrides: [String: String]
+    @Binding var overrides: [String: PublishOverrideChoice]
     let busy: String?
     let notes: [String: String]
     let onRun: (PublishReview.Action) -> Void
 
     @State private var editing: String?
     @State private var draft = ""
+    @State private var coveredBy = ""
     @FocusState private var reasonFocused: Bool
 
     private var anyHard: Bool { items.contains(where: \.hard) }
@@ -109,12 +110,10 @@ struct PublishMustFixCard: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel((item.hard ? "Must fix: " : "Check: ") + item.text)
-            if let reason {
+            if let reason, PublishGate.complete(item, reason) {
                 // Sent past on purpose: said, with the words, and undoable.
                 HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                    CavnarMixedText(reason.isEmpty ? "You\u{2019}ll send past this."
-                                                   : "You\u{2019}ll send past this: \u{201C}\(reason)\u{201D}",
-                                    role: .secondary, color: .cavnarInk2)
+                    CavnarMixedText(Self.overrideLine(reason), role: .secondary, color: .cavnarInk2)
                     Spacer(minLength: 0)
                     Button {
                         Haptic.light()
@@ -136,7 +135,7 @@ struct PublishMustFixCard: View {
     @ViewBuilder
     private func actions(_ item: PublishReview.MustFix) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-            ForEach(item.fixes) { fix in
+            ForEach(item.fixes.filter { $0.action != "override" }) { fix in
                 Button {
                     onRun(fix)
                 } label: {
@@ -159,10 +158,13 @@ struct PublishMustFixCard: View {
                 Button {
                     Haptic.light()
                     draft = ""
+                    coveredBy = ""
                     editing = item.key
-                    reasonFocused = true
+                    reasonFocused = !item.needsCoveredBy
                 } label: {
-                    Text("Send anyway: I\u{2019}ll handle it").frame(maxWidth: .infinity)
+                    Text(item.fixes.first { $0.action == "override" }?.buttonLabel
+                         ?? (item.needsCoveredBy ? "Someone else runs the floor" : "Send anyway: I\u{2019}ll handle it"))
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
             } else if item.fixes.isEmpty {
@@ -172,12 +174,50 @@ struct PublishMustFixCard: View {
         }
     }
 
+    /// "You'll send past this: 'reason'" / "Erik runs the floor".
+    static func overrideLine(_ c: PublishOverrideChoice) -> String {
+        let words = c.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let who = c.coveredBy, !who.isEmpty {
+            return words.isEmpty || words == "\(who) runs the floor" ? "\(who) runs the floor."
+                                                                   : "\(who) runs the floor: \u{201C}\(words)\u{201D}"
+        }
+        return words.isEmpty ? "You\u{2019}ll send past this." : "You\u{2019}ll send past this: \u{201C}\(words)\u{201D}"
+    }
+
     private func reasonField(_ item: PublishReview.MustFix) -> some View {
         let words = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ready = !item.needsReason || !words.isEmpty
+        let who = coveredBy.trimmingCharacters(in: .whitespaces)
+        let ready = PublishGate.complete(item, PublishOverrideChoice(reason: words, coveredBy: who.isEmpty ? nil : who))
         return VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             Text(item.reasonPrompt).cavnarText(.label)
-            TextField(item.needsReason ? "Your reason" : "Your reason (optional)", text: $draft, axis: .vertical)
+            if item.needsCoveredBy {
+                // Who runs the floor (ARCH-30): one of the people on then or
+                // a manager — the owner counts — or a name typed.
+                if !item.candidates.isEmpty {
+                    AccountFlowLayout(spacing: 6) {
+                        ForEach(item.candidates, id: \.self) { name in
+                            Button {
+                                Haptic.selection()
+                                coveredBy = name
+                            } label: {
+                                AccountChip(text: name, muted: coveredBy != name)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(coveredBy == name ? .isSelected : [])
+                        }
+                    }
+                }
+                TextField("Who runs the floor", text: $coveredBy)
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarInk)
+                    .padding(CavnarSpace.s)
+                    .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                        .fill(Color.cavnarPaper2))
+            }
+            TextField(item.needsReason && !item.needsCoveredBy ? "Your reason" : "Your reason (optional)",
+                      text: $draft, axis: .vertical)
                 .font(.cavnar(.body))
                 .foregroundStyle(Color.cavnarInk)
                 .lineLimit(1...4)
@@ -190,7 +230,8 @@ struct PublishMustFixCard: View {
             HStack(spacing: CavnarSpace.xs) {
                 Button {
                     Haptic.medium()
-                    overrides[item.key] = String(words.prefix(300))
+                    overrides[item.key] = PublishOverrideChoice(reason: String(words.prefix(300)),
+                                                                coveredBy: who.isEmpty ? nil : who)
                     editing = nil
                     reasonFocused = false
                 } label: {
@@ -228,6 +269,9 @@ struct PublishDecideCard: View {
             ForEach(decisions) { d in
                 VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                     CavnarMixedText(d.text, role: .body, color: .cavnarInk)
+                    if d.holds && answered[d.key] == nil {
+                        Text("Send waits for your answer.").cavnarText(.caption)
+                    }
                     if let answer = answered[d.key] {
                         HStack(spacing: CavnarSpace.xxs) {
                             Image(systemName: "checkmark").foregroundStyle(Color.cavnarGreen)
@@ -272,6 +316,17 @@ struct PublishDecideCard: View {
 /// it; a saving is a projection and says so — never summed into anything.
 struct PublishNumbersCard: View {
     let numbers: PublishReview.Numbers
+    var quality: PublishReview.Quality? = nil
+
+    /// " · typical for you" — graded against the restaurant's own weeks.
+    static func gradeWord(_ g: String) -> String? {
+        switch g {
+        case "good": return " \u{00B7} better than your usual week"
+        case "typical": return " \u{00B7} typical for you"
+        case "weak": return " \u{00B7} weaker than your usual week"
+        default: return nil
+        }
+    }
 
     static func money(_ v: Double) -> String { "$" + v.commaFormatted }
 
@@ -290,7 +345,8 @@ struct PublishNumbersCard: View {
                                 GridItem(.flexible(), spacing: CavnarSpace.s)],
                       alignment: .leading, spacing: CavnarSpace.s) {
                 if let labor = numbers.laborPct, let v = labor.value {
-                    tile("Labor", Self.pct(v), sub: Self.range(labor))
+                    tile(labor.label ?? "Labor", Self.pct(v), sub: Self.range(labor) ?? labor.target.map { "target \(Self.pct($0))" },
+                         tone: labor.grade == "over" ? .cavnarRedText : (labor.grade == "under" ? .cavnarGreen : .cavnarInk))
                 }
                 if let cost = numbers.cost, let v = cost.value {
                     tile("Cost", Self.money(v), sub: cost.salaried.map { "+ \(Self.money($0)) salaried" })
@@ -305,6 +361,12 @@ struct PublishNumbersCard: View {
             }
             ForEach(Array(trustLines.enumerated()), id: \.offset) { _, line in
                 CavnarMixedText(line, role: .secondary)
+            }
+            if let ot = numbers.overtimeText { CavnarMixedText(ot, role: .secondary) }
+            if let score = quality?.score {
+                CavnarMixedText("Shift quality \(score)/100" + (quality?.grade.flatMap(Self.gradeWord) ?? ""),
+                                role: .secondary, color: .cavnarInk)
+                if let lead = quality?.lead ?? quality?.text { CavnarMixedText(lead, role: .caption) }
             }
             if let savings = numbers.savings, let v = savings.value, v > 0 {
                 HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
@@ -359,6 +421,7 @@ struct PublishReviewProof: View {
     @State private var showChanged = false
     @State private var showFragile = false
     @State private var showWhy = false
+    @State private var showFyi = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.m) {
@@ -386,6 +449,11 @@ struct PublishReviewProof: View {
                             CavnarMixedText(p.reason.isEmpty ? p.name : "\(p.name): \(p.reason)", role: .secondary)
                         }
                     }
+                }
+            }
+            if !review.fyi.isEmpty {
+                section("Worth a look", count: review.fyi.count, expanded: $showFyi) {
+                    ForEach(review.fyi) { line in lineRow(line) }
                 }
             }
             let sure = review.sure.lines

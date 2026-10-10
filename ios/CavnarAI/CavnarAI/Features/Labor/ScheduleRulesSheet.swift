@@ -43,6 +43,12 @@ struct ScheduleRulesSheet: View {
     @State private var showingClosers = false
     @State private var showingKitchen = false
     @State private var showingSectionNames = false
+    /// The POS schedule push (preview first), suggestions during service
+    /// and autopilot (J2) — FloorSettingsSheet.
+    @State private var showingFloor = false
+    /// The labor laws that hold the restaurant (J1's engine, RM-15).
+    @State private var showingLaws = false
+    @State private var floorStore = FloorStore()
     @State private var standingFor: StandingPerson?
     /// What "Suggest from history" filled in, said until the next save.
     @State private var floorNote: String?
@@ -145,6 +151,10 @@ struct ScheduleRulesSheet: View {
                         roleListSection("Patio", detail: "Roles the weather read can thin or thicken.",
                                         selection: $patioRoles)
                         budgetSection
+                        AccountSection(kicker: "On the floor") {
+                            AccountNavRow(label: "Suggestions, autopilot and the POS",
+                                          value: "Preview first", showsDivider: false) { showingFloor = true }
+                        }
                         reservationSection
                     }
 
@@ -216,6 +226,8 @@ struct ScheduleRulesSheet: View {
             KitchenStationsSheet(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
                 .presentationDetents([.large])
         }
+        .sheet(isPresented: $showingFloor) { FloorSettingsSheet(store: floorStore) }
+        .sheet(isPresented: $showingLaws) { ComplianceScreen() }
         .sheet(isPresented: $showingSectionNames) {
             FloorSectionsSheet()
                 .presentationDetents([.medium, .large])
@@ -261,6 +273,9 @@ struct ScheduleRulesSheet: View {
                 Text("Save to apply this pack and read its notes.")
                     .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
+            }
+            AccountSection(kicker: "Labor laws") {
+                AccountNavRow(label: "Which laws apply, pay owed, estimates", showsDivider: false) { showingLaws = true }
             }
         }
     }

@@ -280,6 +280,16 @@ struct StaffRequestsView: View {
     @State private var busy: Set<String> = []
     @State private var rowError: [String: String] = [:]
     @State private var postedLabel: String?
+    /// A claim or offer's yes that needs the person's written consent to a
+    /// short turnaround (409 needs_consent, MARKET-3): asked in the same
+    /// flow, and the same tap sent again with `consent_rest: true`.
+    @State private var consentAsk: ConsentRetry?
+
+    struct ConsentRetry: Identifiable {
+        let confirm: Confirm
+        let consent: StaffNeedsConsent
+        var id: String { consent.text }
+    }
     @State private var confirming: Confirm?
     @State private var pendingUndo: PendingUndo?
     @State private var undoTask: Task<Void, Never>?
@@ -400,6 +410,14 @@ struct StaffRequestsView: View {
             Button("Not now", role: .cancel) {}
         } message: { c in
             Text(c.message)
+        }
+        .confirmationDialog("Agree to a short turnaround?", isPresented: Binding(
+            get: { consentAsk != nil }, set: { if !$0 { consentAsk = nil } }),
+                            titleVisibility: .visible, presenting: consentAsk) { ask in
+            Button("I agree \u{2014} take it") { Task { await performConsented(ask.confirm) } }
+            Button("Not now", role: .cancel) {}
+        } message: { ask in
+            Text(ask.consent.text + (ask.consent.premium.map { " \($0)" } ?? ""))
         }
     }
 
@@ -665,6 +683,21 @@ struct StaffRequestsView: View {
 
     // MARK: Actions
 
+    /// The same yes or claim, sent again with the person's written consent
+    /// to the short turnaround (`consent_rest: true`).
+    private func performConsented(_ c: Confirm) async {
+        switch c {
+        case .offer(let o):
+            await act("offer\(o.id)", "/staff/api/offers/\(o.id)/respond", body: StaffConsentedBody(accept: true),
+                      posted: "It\u{2019}s on your schedule", retrying: c)
+        case .claim(let s):
+            await act("open\(s.id)", "/staff/api/open-shifts/\(s.id)/claim", body: StaffConsentedBody(),
+                      posted: "It\u{2019}s on your schedule", retrying: c)
+        default:
+            await perform(c)
+        }
+    }
+
     private func perform(_ c: Confirm) async {
         switch c {
         case .ask(let a):
@@ -672,7 +705,7 @@ struct StaffRequestsView: View {
                       posted: a.managerApproved ? "Swapped" : "Accepted — waiting on your manager")
         case .offer(let o):
             await act("offer\(o.id)", "/staff/api/offers/\(o.id)/respond", body: StaffAcceptBody(accept: true),
-                      posted: "It\u{2019}s on your schedule")
+                      posted: "It\u{2019}s on your schedule", retrying: c)
         case .declineAsk(let a):
             await act("ask\(a.id)", "/staff/api/shift-requests/\(a.id)/respond", body: StaffAcceptBody(accept: false),
                       posted: "Declined — \(a.employeeName) is told")
@@ -681,13 +714,14 @@ struct StaffRequestsView: View {
                       posted: "Declined — your manager is told")
         case .claim(let s):
             await act("open\(s.id)", "/staff/api/open-shifts/\(s.id)/claim", body: StaffEmptyBody(),
-                      posted: "It\u{2019}s on your schedule")
+                      posted: "It\u{2019}s on your schedule", retrying: c)
         }
     }
 
     /// One answer on one row: its error stays under that row; success is
     /// the posted check at the top of Waiting on you, never optimistic.
-    private func act(_ key: String, _ path: String, body: any Encodable, posted: String) async {
+    private func act(_ key: String, _ path: String, body: any Encodable, posted: String,
+                     retrying: Confirm? = nil) async {
         busy.insert(key)
         rowError[key] = nil
         defer { busy.remove(key) }
@@ -703,6 +737,13 @@ struct StaffRequestsView: View {
                 rowError[key] = r.error ?? "That didn\u{2019}t go through."
             }
         } catch {
+            if let consent = StaffNeedsConsent.from(error), let c = retrying, !(body is StaffConsentedBody) {
+                // Legal with their written yes to the short turnaround: asked
+                // here, in the same flow, never a dead end.
+                consentAsk = ConsentRetry(confirm: c, consent: consent)
+                Haptic.warning()
+                return
+            }
             rowError[key] = StaffErrorText.message(error)
         }
     }

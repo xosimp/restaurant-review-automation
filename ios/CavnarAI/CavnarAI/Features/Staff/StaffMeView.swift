@@ -59,6 +59,10 @@ struct StaffMeView: View {
                     }
                     weekSection
                     StaffAttendanceSection(store: store)
+                    // Consents, the short-turnaround agreement, the schedule
+                    // estimate and the group's other locations (MARKET-2/3/4,
+                    // MARKET-16) — only when there is something to say.
+                    StaffAgreementsSection()
                     noticesSection
                     languageSection
                     accountSection

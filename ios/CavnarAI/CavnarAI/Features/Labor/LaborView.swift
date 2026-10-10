@@ -65,6 +65,9 @@ struct LaborView: View {
     /// The Crew stage (TRUST-12): the draft against the usual crew.
     @State private var showingCrew = false
     @State private var confirmingStop = false
+    /// On the floor (J2): the live read, its moves, and the switches.
+    @State private var floorStore = FloorStore()
+    @State private var showingFloorSettings = false
     @State private var crewStore = CrewMatrixStore()
     @State private var showingMeasuredRatings = false
     /// A person a review line named (an unmatched name's suggestion).
@@ -126,6 +129,10 @@ struct LaborView: View {
                                 // background/border) — see heroCard's own
                                 // comment.
                                 heroCard(stats)
+                                // During service: labor to date, the
+                                // projected all-in %, and tonight's moves
+                                // with their one tap (J2 — On the floor).
+                                OnTheFloorCard(store: floorStore) { showingFloorSettings = true }
                                 // Groups, not thirteen equal rows (density
                                 // #28; iOS readability round 10/8/26):
                                 // NEEDS YOU — every request staff are waiting
@@ -535,7 +542,8 @@ struct LaborView: View {
                                  versionProvider: {
                                      (viewModel.rowsUnsaved || viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved)
                                          ? nil : viewModel.latestVersion
-                                 })
+                                 },
+                                 hasUnsavedEdits: viewModel.hasLocalEdits)
         }
         .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
             PublishScheduleSheet(scheduleId: draft.id)
@@ -599,6 +607,12 @@ struct LaborView: View {
             EditWhySheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showingMemory) { ScheduleMemoryScreen() }
+        .sheet(isPresented: $showingFloorSettings, onDismiss: { Task { await floorStore.load() } }) {
+            FloorSettingsSheet(store: floorStore)
+        }
+        // The live read refreshes with the screen (the server keeps a
+        // 15-minute read and reads afresh past it).
+        .task { await floorStore.load() }
         .sheet(isPresented: $showingCrew, onDismiss: {
             Task { await crewStore.load(historyId: viewModel.scheduleResult?.historyId) }
         }) {
