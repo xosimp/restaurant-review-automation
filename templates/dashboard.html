@@ -24246,13 +24246,15 @@ function publishScheduleNow(ack){
           result.textContent = d.note || 'Published to the staff portal.';
           toast('Published to the portal','success');
         } else {
-          var sent = d.sent || [], total = sent.length + (d.unreachable || []).length + (d.failed || []).length, by = {app: 0, text: 0, email: 0}, k;
+          /* `sending`: the people the Send's inline window did not reach -
+             the outbox tells them within the minute (ARCH-20). */
+          var sent = d.sent || [], going = (d.sending || []).length, total = sent.length + going + (d.unreachable || []).length + (d.failed || []).length, by = {app: 0, text: 0, email: 0}, k;
           for (k = 0; k < sent.length; k++) { var ch = sent[k].channel; if (ch === 'push') by.app++; else if (ch === 'sms') by.text++; else by.email++; }
           var parts = [];
           if (by.app) parts.push(by.app + ' in the app');
           if (by.text) parts.push(by.text + ' by text');
           if (by.email) parts.push(by.email + ' by email');
-          result.textContent = 'Sent to ' + sent.length + ' of ' + total + ' staff' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
+          result.textContent = 'Sent to ' + sent.length + ' of ' + total + ' staff' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + (going ? ' · ' + going + ' still sending' : '') + ((d.failed || []).length ? ' · ' + d.failed.length + ' email' + (d.failed.length === 1 ? '' : 's') + ' failed — retried, or Send to them' : '') + (d.acknowledged ? ' · warnings acknowledged' : '');
           toast('Schedule sent','success');
         }
         // The button keeps its sent state from here (psLabel), not the
