@@ -142,12 +142,22 @@ def test_the_prompt_states_minor_limits_as_checked_starting_values(db_path, rid)
 # ── L13: pack values are starting values ───────────────────────────────
 
 def test_a_pack_is_starting_values_never_rules_that_apply(db_path, rid):
+    # Illinois sets no rest rule of its own: the 10-hour rest is Chicago's
+    # ordinance, which only a covered Chicago employer is held to (schedule
+    # audit 10/10/26 MARKET-5) — the old IL pack applied it to everyone.
     update_restaurant(rid, {"jurisdiction": "IL"}, db_path=db_path)
     block = sr.prompt_block(sr.build_constraints(rid, WEEK, DAYS))
     assert "rules apply" not in block
-    assert "Starting values from the Illinois pack" in block
-    pack = sr.compliance(get_restaurant(rid, db_path))["_pack"]
-    assert any("Chicago ordinance" in n for n in pack["notes"])
+    comp = sr.compliance(get_restaurant(rid, db_path))
+    assert comp["min_rest_hours"] is None and comp["_pack"]["label"] == "Illinois"
+    # without a city on file, whether Chicago's ordinance covers it is a question, never assumed
+    assert any("Chicago" in n for n in comp["_pack"]["notes"])
+    assert any(q["key"] == "city" for q in comp["_pack"]["questions"])
+    # a covered Chicago employer gets the ordinance's values, said with their source, not as "the law"
+    update_restaurant(rid, {"compliance_profile_json": '{"state": "IL", "city": "Chicago", "employees": 400, '
+                                                      '"locations": 40}'}, db_path=db_path)
+    block = sr.prompt_block(sr.build_constraints(rid, WEEK, DAYS))
+    assert "rules apply" not in block and "Set from Illinois and Chicago public rules" in block
 
 
 # ── L14: a midnight close ──────────────────────────────────────────────
@@ -292,10 +302,15 @@ def test_an_edit_inside_the_notice_window_warns_of_predictability_pay():
 # ── M7: soft flags on an unattended publish ────────────────────────────
 
 def test_soft_flags_a_person_decides_hold_the_unattended_publish_only(db_path, rid):
-    sr.save_compliance(rid, {"meal_break_after_hours": 6}, db_path=db_path)
+    # Daily overtime is a cost a person decides on. (A meal break no longer
+    # is: the code places it inside the shift — schedule audit 10/10/26
+    # MARKET-6 — so a long shift with a meal rule holds nothing.)
+    sr.save_compliance(rid, {"daily_ot_hours": 8}, db_path=db_path)
     long_day = HEADER + (f"{WEEK[2]},Wednesday,Bob,Server,10:00am,9:30pm,11.5,\n"
                          f"{WEEK[2]},Wednesday,Mgr,Manager,10:00am,10:00pm,12.0,\n")
     hid = _history(db_path, rid, long_day)
     assert client_api.publish_blockers(rid, hid) == []                 # a person may send it
     held = client_api.publish_blockers(rid, hid, unattended=True)
-    assert held and all("meal break" in b for b in held)
+    assert held and all("daily overtime" in b for b in held)
+    sr.save_compliance(rid, {"daily_ot_hours": None, "meal_break_after_hours": 6}, db_path=db_path)
+    assert client_api.publish_blockers(rid, hid, unattended=True) == []

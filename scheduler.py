@@ -4334,8 +4334,19 @@ def run_auto_publish_schedules():
             # to take the newest future row, which could be a draft weeks
             # out, and to queue a regenerated copy of a week staff already
             # had (SCHED-28).
-            nxt = conn.execute("SELECT MIN(week_start) AS w FROM schedule_history WHERE restaurant_id=? AND week_start > ?",
-                               (r.id, local.date().isoformat())).fetchone()
+            # The earliest coming week no version of which went out: under a
+            # notice rule the nearer weeks are already with staff and the
+            # auto-draft wrote the first week that can still be published on
+            # time (schedule_engine.default_week_start, MARKET-1) — that one.
+            # The earliest week of any state used to be taken, so a published
+            # next week hid the drafted one for good. A nearer week still
+            # unsent is taken first, and the notice rule holds it (told).
+            nxt = conn.execute(
+                "SELECT MIN(h.week_start) AS w FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start > ? "
+                "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
+                "  AND p.week_start=h.week_start AND (p.published_at IS NOT NULL "
+                "  OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=p.id)))",
+                (r.id, local.date().isoformat())).fetchone()
             row = None
             if nxt and nxt["w"]:
                 # The week's CURRENT draft — the newest one no later draft

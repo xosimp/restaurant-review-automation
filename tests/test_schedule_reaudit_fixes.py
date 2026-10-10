@@ -56,15 +56,16 @@ def test_over_hours_fix_moves_only_the_excess_not_the_whole_week():
 # ── F2: a same-day double is not a rest breach ─────────────────────────
 
 def test_lunch_into_dinner_double_is_not_a_rest_gap():
+    rest10 = {**sr.DEFAULTS, "min_rest_hours": 10.0}       # an owner's rest rule (no default since 10/10/26)
     rows = [_row(WEEK[0], "Ana", "11:00am", "4:00pm", hours=5), _row(WEEK[0], "Ana", "4:00pm", "10:00pm", hours=6)]
-    assert [v["kind"] for v in sr.violations(rows, _c())] == []
-    ok, why = _c().rest_ok("Ana", rows[1], [rows[0]])
+    assert [v["kind"] for v in sr.violations(rows, _c(compliance=dict(rest10)))] == []
+    ok, why = _c(compliance=dict(rest10)).rest_ok("Ana", rows[1], [rows[0]])
     assert ok
     idx = sq._SwapIndex(rows, {}, {}, {"min_rest_hours": 10})
     assert idx.person_fits("Ana", rows[1], ignore_index=1)     # the swap index agrees
     # The overnight turnaround is still the rule, and an overlap is still wrong.
     nxt = _row(WEEK[1], "Ana", "7:00am", "3:00pm")
-    assert any(v["kind"] == "rest_gap" for v in sr.violations(rows + [nxt], _c()))
+    assert any(v["kind"] == "rest_gap" for v in sr.violations(rows + [nxt], _c(compliance=dict(rest10))))
     over = _row(WEEK[0], "Ana", "3:00pm", "9:00pm", hours=6)
     assert any(v["kind"] == "overlap" for v in sr.violations([rows[0], over], _c()))
 

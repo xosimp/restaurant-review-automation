@@ -1769,6 +1769,28 @@ existed:
 | Points | `.sfw1-pts` | `recommendation_items[].points` | "up to +6 points" in green, Space Grotesk, after the suggestion; the list sorts most valuable first |
 | Memory row | `.sfw1-mem .r` | `GET labor/schedule-memory`, `GET labor/ratings/suggested` | The learned-pattern row grown: sentence, `.mem-pill` status, a caption ("72% sure · 2 of 3 · last confirmed by hand 9/28/26"), actions at the end (Keep / Let it go / Make it a rule; Confirm N + a 1–5 `.chip-tog`) |
 
+### The compliance engine on the rules screen (web, 10/10/26 — RM-15)
+
+Labor → Rules, below Save rules (`#cmp-root`, `cmpLoad` / `cmpRender` in
+the last `<script>` of `dashboard.html`), saved on its own. Built from the
+rules screen's own pieces — `.lb2-sub` headers, `.lb2-form` fields,
+`.ac-input` / `.ac-select`, `.sr-actions`, `.cbtn` — with one new recessed
+box and one row:
+
+| Piece | Class | Reads | Look |
+|---|---|---|---|
+| Info box | `.cmp-box` | the horizon, the rest rule, the breaks basis, a conflict, the school-year prompt, counsel's list | `.rul-pack`'s recess (9px radius, `--sf-recess`, 13px ink2); a conflict or the school-year prompt in amber |
+| Law row | `.cmp-row` + `.cmp-tag` (`.on` / `.ask`) | `evaluation.jurisdictions[]`, `in_force[]`, the ledger's people, offers | name (ink, 600) — law — why on the left, a status pill on the right: "Applies" ember on `--hb-tint2`, "Needs an answer" amber, "Doesn't apply" ink3; a hairline between rows; the source as a small underlined "source" link (`.cmp-src`, 12px ink3) with the value's effective date M/D/YY |
+
+The staff portal's Me tab carries **Agreements** (`agreementsCard`): the
+`.card` with each pending consent's exact words over "I agree" / "No", a
+standing short-turnaround agreement with "Withdraw my agreement", the
+good-faith estimate's text over "I've read my estimate" / "Ask for a
+change", and the person's requests with their written answers. A claim
+that needs written consent asks with the existing `askConfirm` sheet
+("Agree to a short turnaround?" — the consent's words — "I agree — take
+it").
+
 ### The iPhone answer kit (iOS readability round, 10/8/26)
 
 **Web explains. iPhone decides.** Four layers on every phone screen — L0 the

@@ -461,7 +461,11 @@ class Problem:
         except (TypeError, ValueError):
             self.max_run = 0
         try:
-            self.need_rest = float(comp.get("min_rest_hours") or 0)
+            # No rule unless one is set; "off" is none (MARKET-3). Under a
+            # consent rule the solver still never plans a short turnaround —
+            # one is the person's to agree to, in writing, not a draft's.
+            self.need_rest = (float(comp.get("min_rest_hours") or 0)
+                              if _rules.rest_mode(comp) != "off" else 0.0)
         except (TypeError, ValueError):
             self.need_rest = 0.0
         try:
@@ -765,7 +769,9 @@ class Problem:
                         cap = min(cap, max(line - 0.06, draft[p].get(b, 0.0)))
                 if c is not None and self.key(n) in c.minors:
                     br = _rules.minor_rules(c.minor_bands.get(self.key(n)), c.jurisdiction)
-                    wk = br.get("max_weekly_school_week")
+                    # the school week's cap (the stricter), else the state's one
+                    # weekly cap (Oregon's 44 for 16-17s) — MARKET-5
+                    wk = br.get("max_weekly_school_week") or br.get("max_weekly_other_week")
                     if wk:
                         cap = min(cap, max(float(wk), draft[p].get(b, 0.0)))
                 caps[b] = cap
