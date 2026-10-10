@@ -22342,7 +22342,7 @@ function _schedHandleResult(data) {
   // then clears, once the real result is in hand.
   stopScheduleSteps();
   var _wkDone = document.getElementById('sched-week');
-  if (_wkDone) { _wkDone.innerHTML = cavnarPostedHtml('Schedule ready'); setTimeout(function(){ var w = document.getElementById('sched-week'); if (w) w.remove(); }, 2400); }
+  if (_wkDone) { _wkDone.innerHTML = cavnarPostedHtml('Schedule ready'); setTimeout(function(){ var w = document.getElementById('sched-week'); if (w) w.remove(); if (window.ssLeaveEmptyBuild) ssLeaveEmptyBuild('summary'); }, 2400); }
 
   _schedCsvCache = data.schedule_csv || '';
 
@@ -27000,9 +27000,18 @@ function ssRescoreOnOpen() {
   });
 }
 function studioOnReset() {
-  if (!_ssGenerating) return;
   _ssGenerating = false;
-  if (_ssOpen && _ssStage === 'build') studioGo('setup');
+  ssLeaveEmptyBuild('schedule');
+}
+// The Build stage is the Building view and nothing else, so once that view
+// is gone (finished, stopped, failed, lost) the Studio never stays on it:
+// an empty page with only the step bar (owner, 10/9/26). The argument is
+// where a week that exists goes: the Summary after a fresh generation, the week
+// itself after a reset; with no week, Setup. ssBuilding() can clear the
+// generating flag before a reset runs, so this never waits on the flag.
+function ssLeaveEmptyBuild(then) {
+  if (!_ssOpen || _ssStage !== 'build' || ssBuilding()) return;
+  studioGo(_ssHasDraft() ? (then || 'summary') : 'setup');
 }
 // ── Summary ────────────────────────────────────────────────────────────
 // The week's labor % as the server states it (schedule re-audit 10/4/26

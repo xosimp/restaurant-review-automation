@@ -338,3 +338,19 @@ def test_generate_puts_the_building_view_in_before_the_studio_switches_to_build(
     switch = src.index("if (window.studioOnGenerate) studioOnGenerate();")
     assert insert < switch
     assert 'id="sched-stop-btn"' in src[src.rindex("_wk.innerHTML = cavnarWeekHtml", 0, insert):insert]
+
+
+def test_the_studio_never_stays_on_an_empty_build_stage():
+    """Build is the Building view and nothing else: once it is gone
+    (finished, stopped, failed, lost) the Studio moves on - the reset no
+    longer waits on a generating flag ssBuilding() may already have
+    cleared, and the "Schedule ready" check's cleanup re-checks the stage
+    (owner, 10/9/26: the check played, then an empty page)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
+    reset = src[src.index("function studioOnReset()"):src.index("function ssLeaveEmptyBuild(")]
+    assert "if (!_ssGenerating) return;" not in reset and "ssLeaveEmptyBuild(" in reset
+    leave = src[src.index("function ssLeaveEmptyBuild("):][:600]
+    assert "ssBuilding()" in leave and "_ssStage !== 'build'" in leave
+    posted = src[src.index("cavnarPostedHtml('Schedule ready')"):][:300]
+    assert "ssLeaveEmptyBuild('summary')" in posted
