@@ -2547,7 +2547,17 @@ def _note_line(req):
 
 def _broadcast_open(restaurant_id, req, db_path, opener_line):
     who, when, role = (req.get("employee_name") or "").strip(), _when(req), req.get("role") or ""
-    takers = _who_could_take(restaurant_id, req, db_path)
+    # The best legal fit first, by name, once the managers' own offers have
+    # earned it (request_autonomy.auto_offer_open, schedule audit 10/10/26
+    # MARKET-25); they are not told twice by the board below.
+    named = None
+    try:
+        import request_autonomy as _ra_offer
+        named = _ra_offer.auto_offer_open(restaurant_id, req, db_path=db_path)
+    except Exception as e:
+        print(f"[shift_requests] automatic offer skipped rid={restaurant_id}: {e!r}")
+    takers = [n for n in _who_could_take(restaurant_id, req, db_path)
+              if not (named and _key(n) == _key(named.get("name")))]
     told = _tell_staff(restaurant_id, takers, f"Open shift: {when}",
                        [opener_line,
                         "It's yours if you want it — pick it up in the Cavnar AI app (Requests) before someone else does."],

@@ -12596,6 +12596,10 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         _demand.freeze_week_projection(rid, row["week_start"])
     except Exception as _fx:
         print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
+    # The week to the POS time clock where the owner turned that on — queued,
+    # never waited on (pos_schedule_push, schedule audit 10/10/26 MARKET-7).
+    import pos_schedule_push as _psp_pub
+    _psp_pub.after_publish(rid, schedule_id, actor=actor)
     note = None
     if not sent:
         note = ("Published to the staff portal. Nobody has the app, agreed to texts, or has an email "
@@ -12754,6 +12758,9 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
     _so_ch.record_overridden(rid, row["id"], locals().get("_changes_version"), review["blockers"], _acked,
                              reasons=override_reasons, actor=actor if isinstance(actor, dict) else None,
                              authority=_sv.authority_of(actor))
+    # The changed week to the POS time clock too (queued; MARKET-7).
+    import pos_schedule_push as _psp_ch
+    _psp_ch.after_publish(rid, row["id"], actor=actor)
     log_account_event(rid, "schedule_changes_sent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
                              f"{len(sent)} of {len(pending['people'])} told"

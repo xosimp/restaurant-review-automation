@@ -7444,6 +7444,12 @@ def _wrap(body, decorator):
     return decorator(view)
 
 
+# The schedule on the floor — the POS schedule push, live labor and its moves,
+# one-shift edits, people from sibling locations (floor_api; schedule audit
+# 10/10/26, J2): their bodies live there, the twins are mounted here.
+import floor_api as _floor_api  # noqa: E402
+_ROUTES += _floor_api.ROUTES
+
 for _path, _methods, _body_fn, _ep in _ROUTES:
     strategy_bp.add_url_rule("/api" + _path, endpoint=_ep, methods=_methods,
                              view_func=_wrap(_body_fn, login_required))
