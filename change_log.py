@@ -64,7 +64,7 @@ _K = {
     # The owner's targets: models.OWNER_TARGET_FIELDS, named once there.
     "target": tuple(_models.OWNER_TARGET_FIELDS),
     "never_say": ("never_say",),
-    "voice": ("voice_notes", "sign_off_name", "tone_preset", "response_language", "known_for", "vibe",
+    "voice": ("voice_notes", "reply_keywords", "sign_off_name", "tone_preset", "response_language", "known_for", "vibe",
               "neighborhood", "brand_name", "brand_color", "brand_logo_url", "email_theme"),
     "hours": ("open_times_json", "close_times_json", "hours_notes", "skip_holidays"),
     "profile": ("service_model", "concept", "bar_led", "ownership", "opened_year", "category"),
@@ -84,12 +84,14 @@ _K = {
                       "alert_negative_trend", "alert_no_response", "alert_quiet_end", "alert_quiet_start",
                       "alert_rating_floor", "alert_rating_threshold", "alert_resp_approved", "urgent_via_email",
                       "urgent_via_sms", "morning_brief_enabled", "morning_brief_hour", "briefing_level",
-                      "digest_day", "dsr_notify", "dsr_deadline_hour", "preshift_nudge_hour", "push_sound",
+                      "digest_day", "dsr_notify", "dsr_deadline_hour", "dsr_budget_mode", "preshift_nudge_hour", "push_sound",
                       "login_notify", "issue_texts", "staff_signin_notify", "marketing_emails_opt_out"),
     "rules": ("compliance_json", "cut_floor_default", "daypart_split", "delivery_pct", "foh_roles_json",
               "patio_roles_json", "jurisdiction", "quality_weights_json", "quality_tuning_json", "role_arrival_json",
               "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
               "role_minimums_json", "role_requirements_json", "kitchen_stations_json", "role_strength_json", "shift_leader_rules_json",
+              # Standing positions (schedule_dedicated: EJ's bar-tables bartender).
+              "dedicated_shifts_json",
               "section_count", "foh_sections_json", "sched_notes",
               # Role families, the roles with chosen closers, the salaried
               # weekly cap (schedule audit 10/3/26 F1).
@@ -566,6 +568,8 @@ FIELD_LABELS = {
     "auto_publish_schedule": "Auto-publish schedules", "auto_approve_5star": "Auto-approve 5-star replies",
     "auto_approve_4star": "Auto-approve 4-star replies", "auto_draft_schedule": "Auto-draft schedules",
     "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
+    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases",
+    "dsr_budget_mode": "Budget by day or week",
     "data_retention_months": "Review retention (months)", "timezone": "Time zone",
     "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",
 }

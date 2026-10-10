@@ -390,6 +390,7 @@ class Problem:
         prefs = {self.key(k): v or {} for k, v in (s.get("preferences") or {}).items()}
         learned_prefs = {self.key(k): v or {} for k, v in (s.get("learned_preferences") or {}).items()}
         self.pref_parts, self.desired, self.l_avoid, self.l_prefer, self.l_weight = [], [], [], [], []
+        self.usual = []
         for n in self.names:
             p = prefs.get(self.key(n)) or {}
             self.pref_parts.append({x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")})
@@ -400,7 +401,11 @@ class Problem:
             # What they keep dropping and picking up (schedule_intel.
             # behaviour_preferences), weighed as the scorer weighs it:
             # LEARNED_PREFERENCE_WEIGHT of a stated preference (L-19, D-36).
-            avoid, prefer, wt = sq._learned(learned_prefs.get(self.key(n)) or p.get("learned") or {})
+            _lp = learned_prefs.get(self.key(n)) or p.get("learned") or {}
+            avoid, prefer, wt = sq._learned(_lp)
+            # Their usual week, for somebody who never stated one (shift_quality
+            # USUAL_HOURS_BAND, at the learned weight).
+            self.usual.append(sq._usual_hours(_lp, p))
             self.l_avoid.append(avoid)
             self.l_prefer.append(prefer)
             self.l_weight.append(wt)
@@ -809,7 +814,7 @@ class Problem:
         # what one item is worth of the measure.
         self.n_pref = max(1, sum(1 for u in self.units if u.draft is not None
                                  and (self.pref_parts[u.draft] or self.l_avoid[u.draft] or self.l_prefer[u.draft]))
-                          + sum(1 for d in self.desired if d))
+                          + sum(1 for d in self.desired if d) + sum(1 for u in self.usual if u))
         tracked = {u.draft for u in self.units if u.draft is not None}
         self.n_tracked = max(1, len(tracked))
         owed = sum(float(m) for m in self.min_hours if m)
@@ -1865,6 +1870,12 @@ class Problem:
             band = want * (1 + sq.PREFERENCE_HOURS_BAND)
             if st.total[p] <= band + 1e-9 < st.total[p] + u.hours:
                 c += self.week_unit("preferences") / self.n_pref * 100.0
+        # Their usual week (learned): past it by the band, once.
+        usual = self.usual[p]
+        if usual:
+            band = usual * (1 + sq.USUAL_HOURS_BAND)
+            if st.total[p] <= band + 1e-9 < st.total[p] + u.hours:
+                c += self.week_unit("preferences") / self.n_pref * 100.0 * self.l_weight[p]
         # Overtime premium (only ever less than the draft's: the caps hold
         # anybody's hours under their line past what the draft gave them).
         if not self.salaried[p]:
@@ -1917,6 +1928,9 @@ class Problem:
             want = self.desired[p]
             if want and st.total[p] < want * (1 - sq.PREFERENCE_HOURS_BAND) - 1e-9 and st.total[p] > 0:
                 pen += self.week_unit("preferences") / self.n_pref * 100.0
+            usual = self.usual[p]
+            if usual and st.total[p] < usual * (1 - sq.USUAL_HOURS_BAND) - 1e-9:
+                pen += self.week_unit("preferences") / self.n_pref * 100.0 * self.l_weight[p]
             req = part_req if self.employment[p] == "part" else full_req
             if req and self.week_dates:
                 worked = st.dates[p]

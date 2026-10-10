@@ -2952,6 +2952,11 @@ PREFERENCE_HOURS_BAND = 0.2
 # prompt, so somebody who dropped Sunday nights every time kept being handed
 # them by every pass that chose by the score.
 LEARNED_PREFERENCE_WEIGHT = 0.5
+# A person's usual week from their clock-ins (models.get_prior_shift_pattern
+# avg_hours), for somebody who never stated the hours they want: their week
+# within USUAL_HOURS_BAND of it, at LEARNED_PREFERENCE_WEIGHT (owner,
+# 10/9/26: Steph drafted 6 shifts and Cory 2 against their usual ~5 and ~4).
+USUAL_HOURS_BAND = 0.3
 
 
 def _parts_words(parts) -> str:
@@ -2972,6 +2977,18 @@ def _learned(lp: dict) -> tuple:
     except (TypeError, ValueError):
         w = LEARNED_PREFERENCE_WEIGHT
     return _slots("avoid"), _slots("prefer"), max(0.0, min(1.0, w))
+
+
+def _usual_hours(lp, stated=None):
+    """A person's usual weekly hours from their clock-ins, when they never
+    stated the hours they want (a stated want is the one judged); else None."""
+    if stated and stated.get("desired_hours"):
+        return None
+    try:
+        u = float((lp or {}).get("usual_hours") or 0)
+    except (TypeError, ValueError):
+        return None
+    return u if u > 0 else None
 
 
 def dim_preferences(ctx: ShiftContext) -> DimensionResult | None:
@@ -3037,11 +3054,14 @@ def week_preferences(contexts: list) -> DimensionResult | None:
     working = set()
     for c in contexts:
         working.update(c.people)
+    # Somebody with a usual week and no shift this week is under it too.
+    working.update(n for n, lp in learned.items() if isinstance(lp, dict) and lp.get("usual_hours"))
     checked = met = 0.0
     misses, learned_misses, strained = [], [], set()
     for name in sorted(working):
         mine = [e for e in (ctx.week_assignments.get(name) or []) if e.get("date") and not e.get("prior")]
-        if not mine:
+        usual = _usual_hours(learned.get(name), prefs.get(name))
+        if not mine and not usual:
             continue
         p = prefs.get(name) or {}
         parts = [x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")]
@@ -3065,6 +3085,15 @@ def week_preferences(contexts: list) -> DimensionResult | None:
                 met += 1
             else:
                 misses.append(f"{name} asked for about {want:g}h and has {have:g}h")
+                strained.add(name)
+        if usual:
+            have = round(sum(float(e.get("hours") or 0) for e in mine), 1)
+            w = _learned(learned[name])[2]
+            checked += w
+            if abs(have - usual) <= usual * USUAL_HOURS_BAND:
+                met += w
+            else:
+                learned_misses.append(f"{name} usually works about {usual:g}h a week and has {have:g}h")
                 strained.add(name)
         if learned.get(name):
             avoid, prefer, w = _learned(learned[name])

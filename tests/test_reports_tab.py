@@ -26,7 +26,7 @@ def test_the_list_is_every_night_newest_first_with_older_on_request():
     assert "get('/api/dsr?limit=30'" in body and "data-dr-older=" in body
     row = SRC[SRC.index("function listRow(r){"):SRC.index("function loadList(before){")]
     assert 'data-dr="open" data-kind="night"' in row and "r.verdict" in row and "r.net" in row
-    assert re.search(r"\(week\|period\|list\)", SRC)                   # #dsr/list routes
+    assert re.search(r"\(week\|period\|list(?:\|budget)?\)", SRC)       # #dsr/list routes (and #dsr/budget, 10/9/26)
 
 
 # ── Owner, 9/30/26: the list reads as figures, the tab bar and pills ────────

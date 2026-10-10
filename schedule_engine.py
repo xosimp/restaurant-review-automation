@@ -5824,6 +5824,10 @@ def _flagged_for(rows: list, result: dict, viols=None) -> set:
             for v in (viols or []) if v.get("no_show")}
 
 
+# A usual week shorter than this is too thin to judge a draft against.
+USUAL_HOURS_MIN = 8.0
+
+
 def _learned_preferences_signal(raw: dict) -> dict:
     """schedule_intel.behaviour_preferences as the scorer and the solver read
     it (schedule audit 10/3/26 L-19): {name: {"avoid": [[weekday,
@@ -6141,6 +6145,18 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
     except Exception as _px:
         _soft_fail("learned preferences", _px, restaurant_id)
         learned = {}
+    # Each person's usual week from their clock-ins (prior_pattern avg_hours),
+    # judged for whoever never stated the hours they want (shift_quality
+    # USUAL_HOURS_BAND; owner, 10/9/26: the draft gave Steph 6 shifts and
+    # Cory 2 against their usual ~5 and ~4).
+    for n, pat in ((result or {}).get("prior_pattern") or {}).items():
+        try:
+            avg = float((pat or {}).get("avg_hours") or 0)
+        except (TypeError, ValueError):
+            avg = 0.0
+        if avg >= USUAL_HOURS_MIN and n not in signals.get("salaried", set()):
+            learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
+                                   "source": "their usual week"})["usual_hours"] = round(avg, 1)
     prefs = {n: dict(p) for n, p in (stated or {}).items() if isinstance(p, dict)}
     for n, lp in learned.items():
         prefs.setdefault(n, {"preferred_dayparts": [], "desired_hours": None})["learned"] = lp

@@ -69,3 +69,31 @@ def test_the_forecast_tab_shows_the_usual_crew_and_what_moved(monkeypatch):
     src = (Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
     assert "h += ssCrewHtml(d);" in src and "out.update(learned_crew(restaurant_id))" in \
         (Path(__file__).resolve().parents[1] / "schedule_engine.py").read_text()
+
+
+def _ctx(assign, learned, prefs=None):
+    import shift_quality as sq
+    import dataclasses
+    fields = {f.name for f in dataclasses.fields(sq.ShiftContext)}
+    kw = {"people": sorted(assign), "week_assignments": assign, "learned_preferences": learned,
+          "preferences": prefs or {}}
+    return sq.ShiftContext(**{k: v for k, v in kw.items() if k in fields}) if not [
+        f for f in dataclasses.fields(sq.ShiftContext)
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING and f.name not in kw] \
+        else None
+
+
+def test_the_score_judges_a_week_far_from_someones_usual_and_a_stated_want_wins():
+    import shift_quality as sq
+    shift = lambda d: {"date": d, "hours": 7.0, "daypart": "night"}  # noqa: E731
+    assign = {"Steph": [shift(f"2026-10-1{i}") for i in range(2, 8)], "Cory": [shift("2026-10-12")]}
+    learned = {"Steph": {"usual_hours": 34.0, "weight": 0.5}, "Cory": {"usual_hours": 27.0, "weight": 0.5}}
+    ctx = _ctx(assign, learned)
+    if ctx is None:
+        import pytest
+        pytest.skip("ShiftContext needs more fields than this test builds")
+    res = sq.week_preferences([ctx])
+    misses = " ".join(res.facts["learned_misses"])
+    assert "Cory usually works about 27h a week and has 7h" in misses
+    assert "Steph" not in misses, "42h is inside 30% of 34h"
+    assert sq._usual_hours({"usual_hours": 27}, {"desired_hours": 20}) is None, "a stated want is the one judged"
