@@ -283,6 +283,9 @@ class CpProblem(_solver.Problem):
                 continue
             for p in range(P):
                 why = self.fits(u, p)
+                if why is None and u.hours + float(self.fx_hours[p].get(u.bucket, 0.0) or 0.0) > \
+                        self.capf(p, u.bucket) + 0.05:
+                    why = _rules.LABELS["over_max_hours"]
                 if why is None:
                     for f in self.fx_units[p]:
                         if f.date == u.date or self._overlaps(u, f):
@@ -1081,10 +1084,16 @@ def assignment_reasons(prob, mdl, assignment, limit=400) -> list:
         for b, h in (prob.base_hours[p] or {}).items():
             hours[(p, b)] = hours.get((p, b), 0.0) + float(h or 0)
     on_date = {}
+    counts = {}
     for u in prob.units:
         p = assignment[u.id] if u.id < len(assignment) else None
         if p is not None:
             on_date.setdefault((p, u.date), []).append(u)
+            c_ = counts.setdefault(p, {"closing": 0, "weekend": 0, "hard": 0, "hours": 0.0})
+            for k in ("closing", "weekend", "hard"):
+                c_[k] += 1 if getattr(u, k) else 0
+            c_["hours"] += u.hours
+    mdl._counts = counts
     out = []
     for u in mdl.live:
         p = assignment[u.id]
@@ -1162,10 +1171,24 @@ def _marginal(prob, mdl, u, p, q, hours, on_date):
         diff = cq.get(k, 0.0) - cp_.get(k, 0.0)
         if diff > 0.01:
             parts.append((diff * Q, w))
+    counts = getattr(mdl, "_counts", {}) or {}
+    cp0, cq0 = counts.get(p) or {}, counts.get(q) or {}
+    for k, word in (("closing", "closes"), ("weekend", "weekend shifts"), ("hard", "busy shifts")):
+        if getattr(u, k) and cq0.get(k, 0) >= cp0.get(k, 0):
+            parts.append((K_CLOSE * Q * (1 + cq0.get(k, 0) - cp0.get(k, 0)),
+                          f"spreads the {word} ({prob.names[q]} has {cq0.get(k, 0)} this week, "
+                          f"{prob.names[p]} {cp0.get(k, 0) - 1})"))
+            break
+    hq_w, hp_w = cq0.get("hours", 0.0), cp0.get("hours", 0.0) - u.hours
+    if hq_w > hp_w + 2:
+        parts.append((Q * 0.5, f"{prob.names[q]} already has {hq_w:g}h this week, {prob.names[p]} {hp_w:g}h"))
     named = [t for t in parts if t[1]]
     total = sum(t[0] for t in parts)
+    ot = [t for t in named if "overtime" in t[1]]
+    if ot and any("weekly ceiling" in t[1] for t in named):
+        return ot[0][1], total
     if not named:
-        return "a better week overall", max(0.0, total)
+        return "an equal fit — the rest of the week decides who takes it", max(0.0, total)
     best = max(named, key=lambda t: t[0])
     return best[1], total
 
@@ -1207,18 +1230,32 @@ _RELAX = {
 }
 
 
-def _blocker(prob, u, q) -> tuple:
+def _blocker(prob, u, q, week_hours=None) -> tuple:
     """(kind, text) of the owner's rule keeping q off u, or None when it is
     a fact no owner can relax (a minor's hours, a certificate, a role they
-    do not hold, off the roster)."""
-    why = prob.fits(u, q) if q not in prob.dom[u.id] else None
+    do not hold, off the roster) or nothing keeps them off. `week_hours`
+    {(person, bucket): hours} is the solved week: their own maximum binds
+    on what they already work."""
     name = prob.names[q]
+    why = None
+    if q not in prob.dom[u.id]:
+        why = prob.reasons[u.id].get(name) or prob.fits(u, q)
+    elif week_hours is not None and week_hours.get((q, u.bucket), 0.0) + u.hours > prob.capf(q, u.bucket) + 0.05:
+        why = _rules.LABELS.get("over_max_hours")
     if why is None:
         return None
     hard = (_rules.LABELS.get("minor_late"), _rules.LABELS.get("minor_early"), _rules.LABELS.get("minor_hours"),
             _rules.LABELS.get("role_not_held"), _rules.LABELS.get("off_roster"), _rules.LABELS.get("inactive"))
     if why in hard or str(why).startswith("does not work") or str(why).startswith(_rules.LABELS.get("missing_cert", "~")):
         return None
+    if why == "already on another shift that day":
+        # a kept shift of the same role that day is the same need, not a
+        # rule; one of another role is the owner's to move
+        fam = prob.family(u.role_label)
+        other = next((f for f in prob.fx_units[q] if f.date == u.date), None)
+        if other is None or prob.family(other.role_label) == fam:
+            return None
+        return ("other_shift", f"{name} kept on {other.role_label} that day")
     if why == _rules.LABELS.get("over_max_hours"):
         mx = prob.maxh[q]
         return ("max_hours", f"{name}'s {mx:g}h maximum")
@@ -1252,13 +1289,24 @@ def _conflict_for_unit(prob, assignment, u, seed, seconds):
         q = assignment[v.id] if v.id < len(assignment) else None
         if q is not None and v.date == u.date and prob.family(v.role_label) != fam:
             others_day[q] = v
+    week_hours = {}
+    for w in prob.units:
+        q = assignment[w.id] if w.id < len(assignment) else None
+        if q is not None:
+            week_hours[(q, w.bucket)] = week_hours.get((q, w.bucket), 0.0) + w.hours
+    for q in range(len(prob.names)):
+        for b_, h in (prob.base_hours[q] or {}).items():
+            week_hours[(q, b_)] = week_hours.get((q, b_), 0.0) + float(h or 0)
     for v in units:
         for q in cands:
             if not v.roles <= prob.roles[q]:
                 continue
-            b = _blocker(prob, v, q) if q not in prob.dom[v.id] else None
-            if q not in prob.dom[v.id] and b is None:
-                continue
+            if assignment[v.id] == q:
+                b = None
+            else:
+                b = _blocker(prob, v, q, week_hours)
+                if b is None and q not in prob.dom[v.id]:
+                    continue
             var = m.new_bool_var(f"x{v.id}_{q}")
             xv[(v.id, q)] = var
             if b is not None:
