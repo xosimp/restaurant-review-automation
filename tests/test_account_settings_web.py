@@ -108,9 +108,17 @@ def test_hours_and_closures_round_trip(client, db_path, monkeypatch):
     })
     assert resp.get_json()["ok"] is True
     shown = client.get("/api/account-settings").get_json()["hours"]
-    # Unknown day names are dropped, closures are de-duplicated and sorted.
-    assert shown["open"] == {"Monday": "09:00", "Saturday": "10:00"}
-    assert shown["close"] == {"Monday": "22:00"}
+    # Unknown day names are dropped, closures are de-duplicated and sorted;
+    # each time is stored in the one spelling every reader parses
+    # (schedule_time.normalise_clock, BUGSGEN-20) — the web's selects read it
+    # back (cavTimeValue).
+    assert shown["open"] == {"Monday": "9:00am", "Saturday": "10:00am"}
+    assert shown["close"] == {"Monday": "10:00pm"}
+    # a time no reader can parse is named back and nothing is saved
+    bad = client.post("/api/account-settings/hours", json={"open": {"Monday": "9"}, "close": {"Monday": "22:00"}})
+    assert bad.status_code == 400 and "Monday's opening time" in bad.get_json()["error"]
+    assert client.get("/api/account-settings").get_json()["hours"]["open"] == {"Monday": "9:00am",
+                                                                                 "Saturday": "10:00am"}
     assert shown["closures"] == ["2026-11-26", "2026-12-25"]
 
 

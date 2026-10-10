@@ -307,12 +307,18 @@ def test_own_conflicts_reads_the_published_shifts_the_stored_availability_rules_
     _publish(db, rid, ["2026-10-09,Friday,Ben,Server,5:00pm,11:00pm,6,",
                        "2026-10-06,Tuesday,Ben,Server,11:00am,4:00pm,5,"])
     today = date(2026, 10, 2)
-    exp = ss.own_availability(rid, "Ben", db_path=db, today=today)["updated_at"]
-    res = ss.save_own_availability(rid, "Ben", exp, unavailable_days=["Friday"], db_path=db, today=today)
-    assert res["ok"]
+    # The stored availability as a manager set it: an employee's own cut
+    # now waits for a manager and starts after the weeks already built
+    # (schedule audit 10/10/26 MARKET-15), so it never rules out a shift
+    # staff already have.
+    models.save_staff_availability(rid, "Ben", ["Monday", "Tuesday", "Wednesday", "Thursday", "Saturday", "Sunday"],
+                                   ["Friday"], db_path=db)
     got = ss.own_conflicts(rid, "Ben", db_path=db, today=today)
     assert [(c["date"], c["shift_start"]) for c in got] == [("2026-10-09", "5:00pm")]
-    assert ss.conflicts_text(got) == res["conflicts_text"]
+    assert ss.conflicts_text(got).startswith("You're still on Fri 10/9/26 5:00pm")
+    exp = ss.own_availability(rid, "Ben", db_path=db, today=today)["updated_at"]
+    res = ss.save_own_availability(rid, "Ben", exp, unavailable_days=["Friday", "Saturday"], db_path=db, today=today)
+    assert res["ok"] and res["pending_change"]["effective_from"] == "2026-10-12"
 
 
 def test_the_link_page_shows_the_conflicts_after_a_save(db, monkeypatch):

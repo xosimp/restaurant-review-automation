@@ -294,9 +294,14 @@ struct ReviewPostOutcome: Decodable, Equatable {
     var postError: String? = nil
     var postStatus: String? = nil
     var postNote: String? = nil
+    /// What an approved request still leaves to do — time off over shifts
+    /// staff already have, a drop that leaves the floor short (schedule
+    /// audit 10/10/26 BUGSLIFE-5): said once more on the lock screen, and
+    /// kept in Waiting on you until it is handled.
+    var warning: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, error
+        case ok, error, warning
         case autoPosted = "auto_posted"
         case postError = "post_error"
         case postStatus = "post_status"

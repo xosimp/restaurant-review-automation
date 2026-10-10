@@ -982,6 +982,9 @@ NAME_STORES = (
     {"table": "staff_notices", "cols": ("employee_name",), "no_person_id": True},
     {"table": "staff_certs", "cols": ("employee_name",), "key": "employee_key", "unique": ("employee_key", "cert"),
      "fold": "newest", "no_person_id": True},
+    # An availability cut waiting on a manager or not yet in force
+    # (availability_changes, schedule audit 10/10/26 MARKET-15).
+    {"table": "staff_availability_changes", "cols": ("employee_name",), "no_person_id": True},
 )
 
 # Stores keyed only by a staff login (memberships.id), with no name to
@@ -1469,6 +1472,7 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
                 continue
             groups.setdefault((ext, name), []).append(r)
         latest = {}
+        role_of = {}                     # pid -> the role their rows in this pull work most
         # Oldest spelling first: a POS that renamed someone mid-window has
         # their older punches under the old name, and the newest spelling
         # is the one that should stand.
@@ -1479,7 +1483,11 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
             named = named and _looks_like_name(name, ext)
             payroll = next((str(x.get("employee_payroll_id") or "").strip() for x in grp
                             if str(x.get("employee_payroll_id") or "").strip()), None)
-            pid = _resolve_one(conn, idx, src, ext, payroll, name, named, day, out)
+            roles = [str(x.get("role") or "").strip() for x in grp if str(x.get("role") or "").strip()]
+            role = max(set(roles), key=roles.count) if roles else None
+            pid = _resolve_one(conn, idx, src, ext, payroll, name, named, day, out, role=role, role_of=role_of)
+            if pid is not None and role:
+                role_of.setdefault(pid, role)
             if pid is None:
                 for x in grp:
                     x["person_id"] = None
@@ -1502,7 +1510,21 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
     return out
 
 
-def _resolve_one(conn, idx, src, ext, payroll, name, named, day, out):
+def _same_name_display(idx, name, ext, role=None, other_roles=None) -> str:
+    """The name a second person who shares `name` in the POS is shown as
+    until the owner renames them: their role when it tells them apart from
+    every other person of that name ("Maria L. (Bar)" — schedule audit
+    10/10/26 BUGSGEN-23), else the end of their POS id ("Maria L. #1234").
+    Never a name somebody already has."""
+    others = set(other_roles or ())
+    if role and others and None not in others and role.casefold() not in {str(o).casefold() for o in others}:
+        alt = f"{name} ({role})"
+        if not idx.for_key(_nk(alt)):
+            return alt
+    return f"{name} #{str(ext)[-4:]}"
+
+
+def _resolve_one(conn, idx, src, ext, payroll, name, named, day, out, role=None, role_of=None):
     key = _nk(name)
     if ext:
         pid = idx.by_ext.get((src, ext))
@@ -1541,7 +1563,9 @@ def _resolve_one(conn, idx, src, ext, payroll, name, named, day, out):
         elif cands:
             # One spelling, two people in this POS (two Maria G.s): the new
             # one gets a name of its own the owner can change, and a question.
-            pid = _create_person(conn, idx, f"{name} #{str(ext)[-4:]}", f"pos:{src}", day)
+            pid = _create_person(conn, idx, _same_name_display(idx, name, ext, role,
+                                                               [(role_of or {}).get(c) for c in cands]),
+                                 f"pos:{src}", day)
             out["created"] += 1
             for c in cands:
                 _ask(conn, idx, pid, c, "same_name",
@@ -2048,7 +2072,75 @@ def _repoint_all(conn, rid, from_keys, from_pid, into_name, into_pid) -> dict:
     n = _rewrite_shifts_csv(conn, rid, set(keys), into_name, record=sig)
     if n:
         moved["shifts_csv"] = {"moved": n, "folded": [], "rows": sig}
+    # The weeks still to be worked — the live published copy and every
+    # unsent draft — follow the person too (schedule audit 10/10/26 ARCH-7,
+    # BUGSLIFE-4): a POS rename or the owner's mid-week left the staff app
+    # showing every day off, and drops, swaps, reminders and task sheets
+    # aimed at a name no login held any more.
+    weeks = []
+    n = _rewrite_schedule_weeks(conn, rid, set(keys), into_name, record=weeks)
+    if n:
+        moved["schedule_weeks"] = {"moved": n, "folded": [], "rows": weeks}
     return moved
+
+
+def _rewrite_schedule_weeks(conn, rid, keys, into_name, record=None) -> int:
+    """Rows under one of `keys` on every week that is not over and not
+    replaced — a published copy staff read and the drafts — renamed to
+    `into_name`, each week stored with a `rename` version (the conflict check
+    and unsent_changes read a rename as no change: schedule_versions). Not
+    an edit: edited_at is left alone, so an unedited draft still auto-
+    publishes. Past weeks keep their spelling (the learners read them through
+    canonical_rows). Returns rows renamed; `record` collects [history_id,
+    date, start, end, role, the name before] for an undo."""
+    import csv as _csv
+    import io as _io
+    from datetime import date as _date
+    try:
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(rid, naive=True).date().isoformat()
+    except Exception:
+        today = _date.today().isoformat()
+    try:
+        weeks = conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? "
+                             "AND superseded_by IS NULL AND substr(COALESCE(week_end, ''),1,10) >= ?",
+                             (rid, today)).fetchall()
+    except Exception as e:
+        if "no such" in str(e).lower():
+            return 0
+        raise
+    import schedule_versions as _sv
+    total = 0
+    for w in weeks:
+        rows = list(_csv.DictReader(_io.StringIO(w["schedule_csv"] or "")))
+        n = 0
+        for r in rows:
+            if (r.get("employee") or "").strip() and _nk(r.get("employee")) in keys and r.get("employee") != into_name:
+                if record is not None:
+                    record.append([w["id"], r.get("date") or "", r.get("shift_start") or "", r.get("shift_end") or "",
+                                   r.get("role") or "", r.get("employee")])
+                r["employee"] = into_name
+                n += 1
+        if not n:
+            continue
+        text = _schedule_csv_text(rows)
+        conn.execute("UPDATE schedule_history SET schedule_csv=? WHERE id=? AND restaurant_id=?", (text, w["id"], rid))
+        # A week with versions gets one more; one kept from before versions
+        # existed has no chain for a client to save against.
+        if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (w["id"],)).fetchone():
+            _sv._insert_version(conn, rid, w["id"], "rename", text, None, "rename", "system")
+        total += n
+    return total
+
+
+def _schedule_csv_text(rows) -> str:
+    """A week's rows as the stored CSV (schedule_versions.COLS order, the
+    one every writer uses)."""
+    import schedule_versions as _sv
+    lines = [",".join(_sv.COLS)]
+    for r in rows:
+        lines.append(",".join(str(r.get(c, "") or "").replace(",", ";").replace("\n", " ") for c in _sv.COLS))
+    return "\n".join(lines)
 
 
 def _shift_sig(r) -> list:
@@ -2412,6 +2504,37 @@ def unmerge_people(restaurant_id, merge_id, user=None, db_path=None) -> dict:
             if n:
                 _write_shifts_csv(conn, restaurant_id, rows)
                 restored["shifts_csv"] = n
+        # The weeks still to be worked: the rows the merge renamed, back
+        # (ARCH-7), each week with a `rename` version.
+        by_week = {}
+        for sg in (rec.get("schedule_weeks") or {}).get("rows") or []:
+            if isinstance(sg, list) and len(sg) >= 6:
+                by_week.setdefault(sg[0], {}).setdefault(tuple(sg[1:5]), []).append(sg[5])
+        if by_week:
+            import csv as _csv
+            import io as _io
+            import schedule_versions as _sv
+            n = 0
+            for hid_, sigs_ in by_week.items():
+                w = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=? "
+                                 "AND superseded_by IS NULL", (hid_, restaurant_id)).fetchone()
+                if not w:
+                    continue
+                rows = list(_csv.DictReader(_io.StringIO(w["schedule_csv"] or "")))
+                k = 0
+                for r in rows:
+                    sig_ = (r.get("date") or "", r.get("shift_start") or "", r.get("shift_end") or "", r.get("role") or "")
+                    if _nk(r.get("employee")) == into_key and sigs_.get(sig_):
+                        r["employee"] = sigs_[sig_].pop()
+                        k += 1
+                if k:
+                    text = _schedule_csv_text(rows)
+                    conn.execute("UPDATE schedule_history SET schedule_csv=? WHERE id=?", (text, hid_))
+                    if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (hid_,)).fetchone():
+                        _sv._insert_version(conn, restaurant_id, hid_, "rename", text, None, "unmerge", "system")
+                    n += k
+            if n:
+                restored["schedule_weeks"] = n
         # Identity: their aliases back, the merge's own alias gone, them live.
         for aid in undo.get("aliases") or []:
             conn.execute("UPDATE person_aliases SET person_id=? WHERE id=? AND restaurant_id=?", (a, aid, restaurant_id))

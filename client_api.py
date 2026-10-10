@@ -10531,6 +10531,19 @@ def staff_schedule_page(token):
         oc = getattr(_ss_av, "own_conflicts", None)
         if oc is not None:
             saved_conflicts = _ss_av.conflicts_text(oc(share["restaurant_id"], share["employee_name"]))
+    # Days they asked off that wait for a manager or start on a later date
+    # (schedule audit 10/10/26 MARKET-15): ticked as asked, and said.
+    pending_line = ""
+    try:
+        import availability_changes as _avc_pg
+        for ch in _avc_pg.mine(share["restaurant_id"], share["employee_name"]):
+            unavailable = list(unavailable) + [d for d, s in (ch.get("days") or {}).items()
+                                               if s.get("status") == "off" and d not in unavailable]
+            pending_line = ((f"Waiting for your manager: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."
+                             if ch["status"] == "pending" else
+                             f"Approved: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."))
+    except Exception as _pgx:
+        print(f"[schedule link] availability changes unread: {_pgx!r}")
 
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
@@ -10560,6 +10573,7 @@ def staff_schedule_page(token):
         note=saved_note,
         saved=request.args.get("saved") == "1",
         saved_conflicts=saved_conflicts,
+        pending_line=pending_line,
         all_days_blocked=request.args.get("error") == "all_days",
         throttled=request.args.get("error") == "throttled",
         stale=request.args.get("error") == "stale",
@@ -10744,18 +10758,31 @@ def _do_account_hours(rid, data, current_user=None):
     if current_user is not None and not is_principal(current_user):
         return {"ok": False, "error": "Only the account owner can change opening hours and closures."}, 403
 
-    def _clean_times(raw):
+    import schedule_time as _stime_h
+    bad = []
+
+    def _clean_times(raw, which):
+        # Each time in the one spelling every reader parses ("9:00pm" — the
+        # web sends "21:00", the phone "9:00pm"); one no reader can parse is
+        # named back, never stored for the close rules to drop silently
+        # (BUGSGEN-20).
         out = {}
         for day in _ACCOUNT_DAYS:
             v = (raw or {}).get(day)
             if isinstance(v, str) and v.strip():
-                out[day] = v.strip()[:12]
+                norm = _stime_h.normalise_clock(v.strip()[:20])
+                if norm is None:
+                    bad.append(f"{day}'s {which} time \u201c{v.strip()[:20]}\u201d")
+                else:
+                    out[day] = norm
         return _json_h.dumps(out) if out else None
 
-    update_restaurant(rid, {
-        "open_times_json": _clean_times((data or {}).get("open")),
-        "close_times_json": _clean_times((data or {}).get("close")),
-    })
+    opens = _clean_times((data or {}).get("open"), "opening")
+    closes = _clean_times((data or {}).get("close"), "closing")
+    if bad:
+        return {"ok": False, "error": "Nothing was saved: " + "; ".join(bad[:3])
+                + (" isn't a time" if len(bad) == 1 else " aren't times") + " we can read — use a time like 9:00pm."}, 400
+    update_restaurant(rid, {"open_times_json": opens, "close_times_json": closes})
     out = {"ok": True}
     # Closures are the scheduler's closed dates (schedule_rules.save_closures,
     # the list Labor -> Scheduling rules edits too). This box said "used when
@@ -11987,6 +12014,18 @@ def _live_week(restaurant_id, week_start, not_id):
         conn.close()
 
 
+def _in_restaurant_dayparts(fn):
+    """schedule_engine.in_restaurant_dayparts, read at call time."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        import schedule_engine as _se_dp
+        return _se_dp.in_restaurant_dayparts(fn)(*a, **k)
+    return wrapper
+
+
+@_in_restaurant_dayparts
 def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
     """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
     "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the
@@ -12515,6 +12554,14 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
     _so_pub.record_overridden(rid, schedule_id, locals().get("_pub_version"), review["blockers"], _acked,
                               reasons=override_reasons, actor=actor if isinstance(actor, dict) else None,
                               authority=locals().get("_pub_auth"))
+    # A replacement copy now live: the live requests on its dates follow it —
+    # a retimed shift carries its request, a removed one closes it and its
+    # requester is told (schedule audit 10/10/26 ARCH-9). Never blocks.
+    try:
+        import shift_requests as _srq_follow
+        _srq_follow.reconcile(rid)
+    except Exception as _fx:
+        _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # What the week's first publish says, into the observation log: every
     # change from the original draft by origin (the manager's, Cavnar AI's
     # kept ones, an admin's), and whether a person sent it (schedule audit

@@ -582,6 +582,14 @@ def published_day_shifts(restaurant_id, day, owner=None) -> tuple:
     week = _models_mod.get_published_week_csv(owner, restaurant_id) or {}
     iso = day.isoformat()
     shifts = [s for s in labor.timed_shifts_from_csv(week.get("schedule_csv") or "") if s["start"][:10] == iso]
+    # Somebody a manager let off their shift — an approved drop nobody has
+    # claimed, approved time off over it — is not on it: no sheet, no
+    # reminder (schedule audit 10/10/26 BUGSLIFE-12).
+    try:
+        import shift_requests
+        shifts = shift_requests.effective_timed_shifts(restaurant_id, day, shifts)
+    except Exception as e:
+        print(f"[task_sheets] releases not applied rid={restaurant_id}: {e!r}")
     return shifts, True
 
 
@@ -605,7 +613,14 @@ def _schedule_sig(restaurant_id, day, db_path=DB_PATH):
         conn.close()
     if not row:
         return "none", None
-    return f"{owner}:{ver or 0}:{row['edited_at'] or ''}:{row['published_at'] or ''}", owner
+    # What the requests and approved time off say about the day too: an
+    # approved drop changes who is on without a new version (BUGSLIFE-12).
+    try:
+        import shift_requests
+        rel = shift_requests.release_sig(restaurant_id, day, db_path=db_path)
+    except Exception:
+        rel = ""
+    return f"{owner}:{ver or 0}:{row['edited_at'] or ''}:{row['published_at'] or ''}" + (f":{rel}" if rel else ""), owner
 
 
 def _pick(sheet, shifts):

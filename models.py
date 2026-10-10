@@ -386,6 +386,10 @@ class Restaurant:
     section_count: Optional[int]         = None
     foh_sections_json: Optional[str]     = None   # ["Patio","Bar","Section 3"] — names for shift_sections (V12)
     daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
+    # Where lunch ends and dinner starts for a shift that covers neither
+    # core service window ("4:00pm"; NULL = 3:00pm) — schedule_time's
+    # daypart boundary (schedule audit 10/10/26 ARCH-12).
+    daypart_boundary: Optional[str]      = None
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
     # Minimum combined Operational Score per role on a shift, e.g.
@@ -631,6 +635,9 @@ class Restaurant:
     reply_keywords: Optional[str] = None   # reply_keywords: JSON list of search phrases worked into review replies
     reply_programs: Optional[str] = None   # reply_programs: JSON list of memberships pitched in happy guests' replies
     crew_answers_json: Optional[str] = None  # crew_matrix: {"role|Weekday|part": {"answer": "hold"|"lean", ...}} the Studio's Crew answers
+    # request_autonomy (schedule audit 10/10/26 MARKET-14/15): {"auto_approve": bool, "kinds": ["drop","swap"],
+    # "notice_hours": n, "max_quality_drop": n, "availability_approval": bool}. None = the defaults (off; approval on).
+    staff_request_policy_json: Optional[str] = None
 
     def reply_program_in(self, text) -> dict:
         """The membership program a reply names (reply_programs) — its name
@@ -1238,6 +1245,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "reply_keywords", "TEXT"),
         ("restaurants", "reply_programs", "TEXT"),
         ("restaurants", "crew_answers_json", "TEXT"),
+        # Drops and swaps that approve themselves once earned, and whether a
+        # staff availability cut waits on a manager (request_autonomy,
+        # schedule audit 10/10/26 MARKET-14/15).
+        ("restaurants", "staff_request_policy_json", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -1357,6 +1368,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_close_buffer_json", "TEXT"),
         ("restaurants", "section_count", "INTEGER"),
         ("restaurants", "daypart_split", "TEXT"),
+        ("restaurants", "daypart_boundary", "TEXT"),
         ("restaurants", "delivery_pct", "INTEGER"),
         ("restaurants", "role_minimums_json", "TEXT"),
         # Operational Score — see staff_capabilities and shift_strength().
@@ -4464,6 +4476,10 @@ def init_db(db_path: str = DB_PATH):
     # 9/29/26, trust_ledger).
     from automation_trust import init_automation_trust
     init_automation_trust(db_path)
+    # A cut in an employee's availability waiting on a manager, with the date
+    # it takes effect (availability_changes, schedule audit 10/10/26 MARKET-15).
+    from availability_changes import init_availability_changes
+    init_availability_changes(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
@@ -4973,7 +4989,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5003,7 +5019,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
-        "section_count","foh_sections_json","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
+        "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at", "aivis_city_json",
         "alert_hold_during_service", "preshift_nudge_hour",
@@ -5739,6 +5755,7 @@ def _restaurant_from_row(row) -> Restaurant:
         reply_keywords=row["reply_keywords"] if "reply_keywords" in row.keys() else None,
         reply_programs=row["reply_programs"] if "reply_programs" in row.keys() else None,
         crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
+        staff_request_policy_json=row["staff_request_policy_json"] if "staff_request_policy_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
@@ -5863,6 +5880,7 @@ def _restaurant_from_row(row) -> Restaurant:
         section_count=row["section_count"]           if "section_count" in row.keys() else None,
         foh_sections_json=row["foh_sections_json"]   if "foh_sections_json" in row.keys() else None,
         daypart_split=row["daypart_split"]            if "daypart_split" in row.keys() else None,
+        daypart_boundary=row["daypart_boundary"]      if "daypart_boundary" in row.keys() else None,
         delivery_pct=row["delivery_pct"]              if "delivery_pct" in row.keys() else None,
         role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
         role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,
@@ -8458,7 +8476,17 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # people (H2); the decider who recorded a colleague's
                        # in-person yes (LG-12).
                        ("decision_note", "TEXT"), ("escalated_at", "TEXT"), ("told_json", "TEXT"),
-                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT")):
+                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT"),
+                       # schedule audit 10/10/26: a claim held for a decider
+                       # because it creates overtime while a teammate has
+                       # room (BUGSLIFE-14); who decided — a manager or the
+                       # earned auto-approval — with its reasons, and a
+                       # manager's reversal of an automatic one (MARKET-14);
+                       # a notice owed after the week moved under a live
+                       # request, sent after the write commits (ARCH-9).
+                       ("held_claimant", "TEXT"), ("held_claim_at", "TEXT"), ("held_claim_note", "TEXT"),
+                       ("decided_how", "TEXT"), ("auto_reasons_json", "TEXT"),
+                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):
@@ -11214,6 +11242,17 @@ def backfill_history_hours(db_path: str = DB_PATH, max_seconds: float = 10.0) ->
     return done
 
 
+class JobNotPending(Exception):
+    """A generation's draft was not written because its async job is no
+    longer pending — stopped by the owner, or called dead by a poll — or a
+    Stop was pressed on it after an earlier save (save_schedule_history
+    `job_id`). `stop` says whether a Stop was asked."""
+
+    def __init__(self, job_id, status=None, stop=False):
+        super().__init__(f"job {job_id} is {status or 'gone'}")
+        self.job_id, self.status, self.stop = job_id, status, stop
+
+
 class DraftChanged(Exception):
     """The draft a redo was built from changed (or went) while it ran, so
     the redo is not saved over it (re-audit 10/4/26 PIPE-2). `current_csv`
@@ -11231,7 +11270,8 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            what_if: dict = None, db_path: str = DB_PATH,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
-                           economics: dict = None, stage_seconds: dict = None, base: tuple = None) -> int:
+                           economics: dict = None, stage_seconds: dict = None, base: tuple = None,
+                           job_id: str = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -11251,6 +11291,14 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     without its blockers. `base` = (history_id, schedule_csv) is the draft a
     redo was built from, as it read it: when that draft has changed or gone
     since, nothing is written and DraftChanged is raised (PIPE-2).
+
+    `job_id` is the generation's async job: the draft is written only while
+    that job is still pending and nobody pressed Stop on it — checked inside
+    this same transaction, so a Stop or a poll that called the job dead can
+    never cross the write (JobNotPending; schedule audit 10/10/26
+    BUGSLIFE-26) — and the job is marked as having saved (async_jobs.
+    saved_ref, its first draft's id) in the same commit, so a later Stop
+    knows a draft was saved (ops.stop_async_job, ARCH-2).
     """
     import json as _json_sh
     if hours_hourly is None or hours_salaried is None:
@@ -11277,6 +11325,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         q = quality or {}
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if job_id:
+                job = conn.execute("SELECT status, stop_requested_at FROM async_jobs WHERE job_id=?",
+                                   (str(job_id),)).fetchone()
+                if job is not None and (job["status"] != "pending" or job["stop_requested_at"]):
+                    raise JobNotPending(str(job_id), job["status"], bool(job["stop_requested_at"]))
             if base is not None:
                 now = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
                                    (int(base[0]), restaurant_id)).fetchone()
@@ -11304,6 +11357,9 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                 conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
                              "AND id<>? AND published_at IS NULL AND superseded_by IS NULL",
                              (new_id, restaurant_id, week_start, new_id))
+            if job_id:
+                conn.execute("UPDATE async_jobs SET saved_ref=COALESCE(saved_ref, ?) WHERE job_id=?",
+                             (new_id, str(job_id)))
             conn.commit()
         except BaseException:
             conn.rollback()

@@ -358,16 +358,16 @@ def _business_day(restaurant, local) -> date:
 
 
 def _due(day, shift_start):
-    """The datetime a shift listed for `day` starts — a start before the
-    business day's first hour is after midnight (intraday.coverage_gaps)."""
-    from time_utils import BUSINESS_DAY_START_HOUR
-    mins = _minutes(shift_start)
+    """The datetime a shift listed for `day` starts, placed on its business
+    date's night by the one rule (schedule_time.start_of): a start before
+    4am is after midnight, a 4:30am baker is that morning — the rules, the
+    sweep and the no-show watch read one timeline (ARCH-12; this used the
+    5am business-day turnover and put the baker on the next day)."""
+    import schedule_time as _stime
+    mins = _stime.start_of({"shift_start": shift_start})
     if mins is None:
         return None
-    due = datetime.combine(day, datetime.min.time()) + timedelta(minutes=mins)
-    if mins // 60 < BUSINESS_DAY_START_HOUR:
-        due += timedelta(days=1)
-    return due
+    return datetime.combine(day, datetime.min.time()) + timedelta(minutes=mins)
 
 
 def _shift_end(day, row, due):

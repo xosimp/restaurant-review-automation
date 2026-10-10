@@ -1112,7 +1112,7 @@ SETTINGS_FIELDS = (
     "timezone", "module_reviews", "module_labor", "module_inventory", "module_marketing",
     "google_place_id", "yelp_business_id", "reviews_live", "digest_day", "digest_enabled",
     "hourly_rate", *_SETTINGS_TARGETS, "week_start_day", "monthly_revenue_target", "weekly_revenue_target",
-    "hours_notes", "sched_notes", "section_count", "delivery_pct", "daypart_split", "role_minimums_json",
+    "hours_notes", "sched_notes", "section_count", "delivery_pct", "daypart_split", "daypart_boundary", "role_minimums_json",
     "cut_floor_default", "role_rates_json", "close_times_json", "role_close_buffer_json",
     "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "skip_holidays", "custom_competitors",
     "menu_notes", "menu_url", "pos_system", "inventory_frequency", "delivery_days", "inventory_notes",
@@ -1133,7 +1133,8 @@ _SETTINGS_NAMES = {
     "week_start_day": "Payroll week start", "monthly_revenue_target": "Monthly revenue target",
     "weekly_revenue_target": "Weekly revenue target", "hours_notes": "Hours & shift rules",
     "sched_notes": "Scheduling notes", "section_count": "Dining sections", "delivery_pct": "Delivery %",
-    "daypart_split": "Daypart split", "role_minimums_json": "Role minimums",
+    "daypart_split": "Daypart split", "daypart_boundary": "Lunch/dinner boundary",
+    "role_minimums_json": "Role minimums",
     "cut_floor_default": "Never cut below", "role_rates_json": "Per-role hourly rates",
     "close_times_json": "Close time per day", "role_close_buffer_json": "Role after-close allowance",
     "neighborhood": "Neighborhood", "vibe": "Vibe", "known_for": "Known for", "voice_notes": "Brand voice notes",
@@ -1263,10 +1264,28 @@ def _settings_close_times(data, key):
         if not name:
             raise _SettingsError(f"{_label(key)}: “{day}” isn't a day name. Use Sunday to Saturday.")
         text = str(value or "").strip()
-        if not _re.match(r"^\d{1,2}(:\d{2})?\s*([ap]\.?m\.?)?$", text, _re.I):
+        # Stored in the one spelling every reader parses (schedule_time,
+        # BUGSGEN-20); a bare "9" (morning or night?) is refused, not guessed.
+        import schedule_time as _stime_s
+        norm = _stime_s.normalise_clock(text) if len(text) <= 20 else None
+        if norm is None:
             raise _SettingsError(f"{_label(key)}: “{text}” for {name} isn't a time like 9:00pm or 21:00.")
-        out[name] = text
+        out[name] = norm
     return _json.dumps(out) if out else None
+
+
+def _settings_daypart_boundary(data, key):
+    """Where lunch ends and dinner starts (schedule_time.daypart_scope,
+    ARCH-12): blank is 3:00pm; a time from 12:00pm to 6:00pm, stored in the
+    rows' own spelling."""
+    import schedule_time as _stime_b
+    text = _settings_str(data, key)
+    if not text:
+        return None
+    m = _stime_b.split_minutes(text)
+    if m is None:
+        raise _SettingsError(f"{_label(key)}: “{text}” isn't a time from 12:00pm to 6:00pm (blank is 3:00pm).")
+    return _stime_b.fmt_minutes(m)
 
 
 def _settings_email(data, key):
@@ -1351,6 +1370,7 @@ _SETTINGS_PARSERS = {
     # 0% is a real answer ("no delivery"); the page used to send it as null.
     "delivery_pct": lambda d, k: _settings_number(d, k, 0, 100, blank=None, integer=True),
     "daypart_split": lambda d, k: _settings_str(d, k)[:200] or None,
+    "daypart_boundary": _settings_daypart_boundary,
     "role_minimums_json": lambda d, k: _settings_role_numbers(d, k, 0, 50, integer=True),
     "role_rates_json": lambda d, k: _settings_role_numbers(d, k, 2.0, 250.0, integer=False),
     "close_times_json": _settings_close_times,

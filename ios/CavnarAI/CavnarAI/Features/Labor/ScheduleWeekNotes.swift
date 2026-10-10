@@ -367,7 +367,13 @@ struct SaveConflictSheet: View {
                                     await viewModel.keepMineAfterConflict()
                                     dismiss()
                                 }
-                            } label: { Text("Keep my edits").frame(maxWidth: .infinity) }
+                            } label: {
+                                // A staff cover or swap on a shift you also
+                                // changed: keeping yours there undoes it
+                                // (BUGSLIFE-16) — a deliberate second tap.
+                                Text(conflict.staffConflict == true ? "Keep mine on those shifts too" : "Keep my edits")
+                                    .frame(maxWidth: .infinity)
+                            }
                                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isReloadingAfterConflict))
                                 .disabled(viewModel.isReloadingAfterConflict)
                         }

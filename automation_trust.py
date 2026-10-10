@@ -17,7 +17,9 @@ approval) toward KEEPING it — never toward earning it, so the rule still
 cannot grade itself into trust. A band that lapses is not dropped silently:
 the trust payload names it (`lapsed`) so the owner is asked again.
 
-Scopes: "reply_band" (subject "3" / "4" / "5"). Pure SQL, no model.
+Scopes: "reply_band" (subject "3" / "4" / "5"); "shift_request" (subject
+"drop" / "swap" — request_autonomy: earned by the manager's own approvals,
+lapsed at once by a reversal of an automatic one). Pure SQL, no model.
 """
 import json
 from datetime import datetime
@@ -29,7 +31,7 @@ from models import DB_PATH
 # retract or edit it, weighted below a person's own approval.
 WEAK_CREDIT_DAYS = 7
 WEAK_CREDIT_WEIGHT = 0.5
-SCOPES = ("reply_band",)
+SCOPES = ("reply_band", "shift_request")
 
 
 def get_conn(db_path=None):
@@ -157,9 +159,13 @@ def lapsed_items(restaurant_id, db_path=DB_PATH) -> list:
             if st["state"] != "lapsed":
                 continue
             when = mdy(str(st["lapsed_at"] or "")[:10]) if st.get("lapsed_at") else ""
-            text = (f"{subject}-star replies went back to you for approval on {when}"
-                    + (f" ({st['lapse_reason']})" if st.get("lapse_reason") else "")
-                    + ". Approve a few more as they come and they will post on their own again.")
+            why = f" ({st['lapse_reason']})" if st.get("lapse_reason") else ""
+            if scope == "shift_request":
+                text = (f"Shift {subject}s went back to you for approval on {when}{why}. Approve a few more "
+                        "yourself and they will approve themselves again.")
+            else:
+                text = (f"{subject}-star replies went back to you for approval on {when}{why}"
+                        ". Approve a few more as they come and they will post on their own again.")
             out.append({"scope": scope, "subject": subject, "lapsed_on": when, "reason": st.get("lapse_reason"),
                         "text": text})
     return out

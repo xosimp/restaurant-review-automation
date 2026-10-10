@@ -34,6 +34,12 @@ def env(db_path, monkeypatch):
     import strategy_jobs
     monkeypatch.setattr(strategy_jobs, "_reach", lambda *a, **k: told.append((a, k)) or 1)
     rid = create_restaurant(Restaurant(name="Maple & Rye", owner_email="o@x.test"), db_path=db_path)
+    # These are the availability mechanics: a cut needs no approval here and,
+    # with nothing built, is in force at once. The approval and the date a
+    # cut starts are tests/test_sf10_d2_availability.py (schedule audit
+    # 10/10/26 MARKET-15).
+    import request_autonomy
+    request_autonomy.save_policy(rid, {"availability_approval": False}, db_path=db_path)
     return {"rid": rid, "db": db_path, "told": told}
 
 
@@ -174,20 +180,23 @@ def test_a_managers_save_keeps_an_employees_dates_on_days_still_blocked(env):
 
 # ── LG-35: published shifts the new availability rules out ─────────────────
 
-def test_saving_names_the_published_shifts_still_on_and_tells_the_deciders_once(env):
+def test_a_cut_starts_after_the_week_staff_already_have(env):
+    """MARKET-15 (10/10/26): an employee's cut never reshapes a week already
+    built — it takes effect from the first week nobody has built, so the
+    published shifts stand (it used to rule them out at once and send the
+    managers chasing cover); the next week is drafted without them."""
     _publish(env, ["2026-10-09,Friday,Ben,Server,5:00pm,11:00pm,6,",
                    "2026-10-06,Tuesday,Ben,Server,11:00am,4:00pm,5,",
                    "2026-10-09,Friday,Ana,Server,5:00pm,11:00pm,6,"])
     res = _save(env, week=_week(Friday={"status": "off"}, Tuesday={"status": "window", "earliest": "17:00"}))
-    assert res["ok"]
-    assert [(c["date"], c["shift_start"]) for c in res["conflicts"]] == [("2026-10-06", "11:00am"), ("2026-10-09", "5:00pm")]
-    assert res["conflicts_text"] == "You're still on Tue 10/6/26 11:00am and Fri 10/9/26 5:00pm — ask to drop them."
-    assert len(env["told"]) == 1 and res["managers_told"] == 1
-    args, kw = env["told"][0]
-    assert kw["deciders"] is True and "Ben" in args[2] and "Fri 10/9/26 5:00pm" in args[3]
-    # The same availability saved again is not news to the managers.
-    again = _save(env, week=_week(Friday={"status": "off"}, Tuesday={"status": "window", "earliest": "17:00"}))
-    assert len(again["conflicts"]) == 2 and len(env["told"]) == 1
+    assert res["ok"] and res["conflicts"] == [] and env["told"] == []
+    assert res["pending_change"]["effective_from"] == "2026-10-12" and res["pending_change"]["status"] == "approved"
+    built = sr.build_constraints(env["rid"], WEEK_OCT5, DAYS, db_path=env["db"])
+    assert built.can_work("Ben", "2026-10-09")[0] and built.window_ok("Ben", "2026-10-06", "11:00am", "4:00pm")[0]
+    nxt = ["2026-10-%d" % d for d in range(12, 19)]
+    after = sr.build_constraints(env["rid"], nxt, DAYS, db_path=env["db"])
+    assert not after.can_work("Ben", "2026-10-16")[0]
+    assert not after.window_ok("Ben", "2026-10-13", "11:00am", "4:00pm")[0]
 
 
 def test_a_shift_outside_the_dates_is_not_a_conflict(env):
@@ -236,8 +245,11 @@ def test_the_route_needs_the_version_and_answers_conflicts(env, monkeypatch):
     _publish(env, ["2026-10-05,Monday,Ben,Server,5:00pm,11:00pm,6,"])
     body, st = _call(staff_routes.api_availability_save, user,
                      {"updated_at": None, "week": _week(Monday={"status": "off"}), "notes": ""})
-    assert st == 200 and body["ok"] and body["unavailable_days"] == ["Monday"] and body["updated_at"]
-    assert body["conflicts_text"].startswith("You're still on Mon 10/5/26 5:00pm")
+    # The cut starts after the week staff have (MARKET-15): said, and the
+    # Monday they are on stands.
+    assert st == 200 and body["ok"] and body["updated_at"] and body["unavailable_days"] == []
+    assert body["pending_change"]["effective_from"] == "2026-10-12" and body["message"]
+    assert body["conflicts_text"] == ""
     body, st = _call(staff_routes.api_availability_save, user, ["not", "an", "object"])
     assert st == 400
 

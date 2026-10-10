@@ -6308,7 +6308,7 @@ def break_window(shift_start: str, shift_end: str, meal_break_after_hours) -> st
 
 
 def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_after_hours=None,
-                             restaurant_id=None) -> list:
+                             restaurant_id=None, spellings=None) -> list:
     """One employee's own shifts, pulled out of the generated schedule CSV.
 
     The CSV is the schedule's source of truth (see generate_optimized_schedule's
@@ -6320,6 +6320,11 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     With `restaurant_id`, a shift a manager put in a floor section carries
     `section` ("Patio" — models.shift_sections, employee audit V12); a
     restaurant that names no sections gets no key at all.
+
+    `spellings` (people.spellings: every folded spelling of the one person
+    the name means) matches a row written under a spelling from before a
+    rename too (schedule audit 10/10/26 BUGSLIFE-4: the person's live week
+    read as all days off).
     """
     import csv as _csv
     import io as _io
@@ -6327,6 +6332,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     target = (employee_name or "").strip().lower()
     if not schedule_csv or not target:
         return []
+    names = {" ".join(target.split())} | {" ".join(str(s or "").lower().split()) for s in (spellings or ())}
     sections = {}
     if restaurant_id:
         try:
@@ -6340,7 +6346,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
         reader = _csv.DictReader(_io.StringIO(schedule_csv))
         for row in reader:
             name = (row.get("employee") or "").strip()
-            if name.lower() != target:
+            if " ".join(name.lower().split()) not in names:
                 continue
             try:
                 hours = float(row.get("scheduled_hours") or 0)
