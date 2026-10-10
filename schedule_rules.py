@@ -1076,6 +1076,10 @@ class Constraints:
     # [{"kind": "avoid"|"prefer", "a", "b", "text", "private"}].
     owner_pairs: list = field(default_factory=list)
     rule_floor_sources: dict = field(default_factory=dict)  # {(role lower, day, daypart): rule text}
+    # Floors the owner kept in the Studio's Crew stage that still stand as
+    # kept (crew_matrix.floor_sources): {(job code lower, day, daypart):
+    # "M/D/YY"} — a coverage_floor breach names its source (TRUST-9).
+    crew_floor_sources: dict = field(default_factory=dict)
     tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
     # ── schedule audit 10/3/26: the facts the fix round added ──────────
     # A per-person setting or a source that could not be read (P-1): one bad
@@ -1976,6 +1980,12 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
+    try:
+        import crew_matrix as _cm
+        c.crew_floor_sources = _cm.floor_sources(restaurant, c.role_floors)
+    except Exception as exc:
+        c.crew_floor_sources = {}
+        _input_problem(c, "crew answers", exc)
     # The owner's role families and the salaried weekly cap (F1: D-13, E-12).
     c.role_families = role_families(restaurant)
     c.salaried_cap = salaried_cap_set(restaurant)
@@ -4084,7 +4094,17 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                     events.append((s_, 1, i)); events.append((e_, -1, i))
             events.sort(key=lambda ev: (ev[0], ev[1]))
             running, peak, active, worst = 0, 0, [], []
+            # How far over, for how long (people over the cap x half hours):
+            # the severity a change is judged by (regressions), so a fill
+            # that keeps one more on past the section count for an hour reads
+            # as worse even on a night already over it (schedule audit
+            # 10/10/26 LOGIC-23).
+            over_minutes, last_t = 0, None
+            cap_n = int(c.section_cap)
             for t, delta, i in events:
+                if last_t is not None and running > cap_n:
+                    over_minutes += (running - cap_n) * (t - last_t)
+                last_t = t
                 if delta > 0:
                     active.append(i)
                 else:
@@ -4092,9 +4112,11 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                 running += delta
                 if running > peak:
                     peak, worst = running, list(active)
-            if peak > int(c.section_cap) and worst:
+            if peak > cap_n and worst:
                 latest = max(worst, key=lambda i: parse_minutes(rows[i].get("shift_start", "")) or 0)
-                out.append(_v("over_section_cap", latest, rows[latest], f"{peak} on the floor at once, {int(c.section_cap)} sections"))
+                out.append(_v("over_section_cap", latest, rows[latest],
+                              f"{peak} on the floor at once, {cap_n} sections",
+                              severity=round(max(over_minutes / 30.0, float(peak - cap_n)), 2), peak=peak))
 
     # The most of a role on at once by the owner's RESTAURANT HOURS & SHIFT
     # RULES ("Servers: maximum 5 at once" — PROMPT-1), per date and family,
@@ -4676,13 +4698,14 @@ def _floor_test(c, day, rows, role, need, part) -> dict:
     return floor_shortfall(rows, role, need, part, open_m, close_m, families=c.role_families)
 
 
-def _floor_breaches(c, d, day, items, counted) -> list:
-    """coverage_floor for one trading day: each role family's floors for a
-    daypart (its job codes' floors added up, as the scorer adds them) held
-    by floor_shortfall. Severity is the people missing summed over the short
-    half hours, so a change that leaves the floor short for longer, or by
-    more, reads as worse and one that closes part of it as better."""
-    out = []
+def floor_needs(c, day) -> dict:
+    """{(role family, daypart): (people, job code)} \u2014 each family's floors for
+    one weekday, its job codes' floors added up (as the scorer adds them),
+    named by the code with the largest share. The ONE grouping the
+    coverage_floor breach and the floors stage (schedule_engine.
+    _ensure_role_floors) both hold a day to \u2014 the stage counted one code's
+    floor at a time and stopped while the sweep still reported the family
+    short (schedule audit 10/10/26 BUGSGEN-3)."""
     by_fam = {}
     for role in sorted(c.role_floors or {}, key=str.lower):
         for part in ("morning", "night"):
@@ -4690,8 +4713,36 @@ def _floor_breaches(c, d, day, items, counted) -> list:
             if need <= 0:
                 continue
             fam = c.family(role)
-            entry = by_fam.setdefault((fam, part), [0, role])
+            entry = by_fam.setdefault((fam, part), [0, role, 0])
             entry[0] += need
+            if need > entry[2]:
+                entry[1], entry[2] = role, need
+    return {k: (v[0], v[1]) for k, v in by_fam.items()}
+
+
+def floor_source(c, fam, day, part) -> tuple:
+    """(kind, words) for where a family's floor on a weekday and daypart came
+    from: ("rule", the owner's rule text) for a floor read from their notes,
+    ("crew", "M/D/YY") for one kept in the Studio's Crew stage that still
+    stands as it was kept, else ("setting", "")."""
+    for (role_low, d, p), text in (c.rule_floor_sources or {}).items():
+        if d == day and p == part and c.family(role_low) == fam:
+            return "rule", text
+    for (role_low, d, p), when in (getattr(c, "crew_floor_sources", None) or {}).items():
+        if d == day and p == part and c.family(role_low) == fam:
+            return "crew", when
+    return "setting", ""
+
+
+def _floor_breaches(c, d, day, items, counted) -> list:
+    """coverage_floor for one trading day: each role family's floors for a
+    daypart (floor_needs) held by floor_shortfall. Severity is the people
+    missing summed over the short half hours, so a change that leaves the
+    floor short for longer, or by more, reads as worse and one that closes
+    part of it as better. A floor kept in Crew says so (TRUST-9): the owner
+    reads which minimum is theirs from Crew and where to change it."""
+    out = []
+    by_fam = floor_needs(c, day)
     if not by_fam:
         return out
     rows = [r for _i, r in counted]
@@ -4704,14 +4755,19 @@ def _floor_breaches(c, d, day, items, counted) -> list:
         i0, r0 = (mine or counted or items)[0]
         word = "lunch/day" if part == "morning" else "dinner/night"
         src = (c.rule_floor_sources or {}).get((role_low, day, part))
+        kind, words = ("rule", src) if src else floor_source(c, fam, day, part)
         mins = int(held["short_minutes"])
         dur = f"{mins // 60}h" + (f" {mins % 60}m" if mins % 60 else "") if mins >= 60 else f"{mins}m"
+        tail = ""
+        if kind == "rule" and words:
+            tail = f" (your rule: \u201c{words[:120]}\u201d)"
+        elif kind == "crew":
+            tail = f" (kept in Crew on {words}: people on at once)"
         out.append(_v("coverage_floor", i0, r0,
                       f"{held['on_at_worst']} {role} on at {_fmt_minutes(held['worst_at'] % (24 * 60))} {day} "
-                      f"({word}, short for {dur}), your floor is {need}"
-                      + (f" (your rule: \u201c{src[:120]}\u201d)" if src else ""),
+                      f"({word}, short for {dur}), your floor is {need}" + tail,
                       floor_role=role_low, daypart=part, severity=float(held.get("missing") or 1),
-                      worst_at=held["worst_at"], minutes=mins, day_level=True))
+                      worst_at=held["worst_at"], minutes=mins, day_level=True, floor_source=kind))
     return out
 
 
@@ -5185,7 +5241,15 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                # the hours a role works and the most of it on at once, by the
                # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1): the
                # owner's staffing rules, ranked with the floors
-               "role_window": TIER_COVERAGE, "over_role_max": TIER_COVERAGE}
+               "role_window": TIER_COVERAGE, "over_role_max": TIER_COVERAGE,
+               # More servers on at once than there are sections — the
+               # owner's own "most on at once", ranked with over_role_max:
+               # with no tier no stage's judge saw a pass push a night past
+               # the section count, and the section-cap trim later cut some
+               # other row (schedule audit 10/10/26 LOGIC-23). Soft, so a
+               # floor or close fill (same rank) may still need it; every pass
+               # ranked below the floors is refused one that makes it worse.
+               "over_section_cap": TIER_COVERAGE}
 # Breaches named on several rows that are one breach at its worst row.
 _WORST_OF = frozenset({"over_max_hours", "long_run", "under_min_hours", "minor_week_hours", "minor_hours",
                        "daily_ot", "payroll_tail_full"})

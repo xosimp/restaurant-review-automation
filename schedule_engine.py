@@ -4394,6 +4394,8 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
             close_times=(getattr(c, "close_times", None) or None) if c is not None else None,
             section_cap=int(getattr(c, "section_cap", 0) or 0) if c is not None else 0,
             cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None,
+            # The Crew answers bound into the baseline, named as reasons.
+            crew_answers=result.get("crew_answers") or None,
             # The hours and ceilings the owner's hours notes state (PROMPT-1).
             **_limit_kwargs(c))
     except Exception as exc:
@@ -5095,13 +5097,24 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     daypart, doubled on that restaurant's busy days, with a 15-hour
     fallback shift). Only ever adds a shift for somebody who already works
     that role (this week, on the roster, or holding it), never invents a
-    person. Times come from another shift of that role in the same daypart
-    this week when one exists, else the daypart's slice of the opening hours.
+    person.
 
-    Who counts toward a floor is who is on the floor for that daypart
-    (shift_quality.present_dayparts — the rule sweep's and the score's own
-    count), by role family, never somebody whose row will not stand (time
-    off, a double booking). Each person added is one the code may choose
+    It fills until the hard rule itself is met — the SAME test the
+    coverage_floor breach makes (schedule_rules.floor_needs +
+    _floor_test → shift_quality.floor_shortfall): each role family's floors
+    for the daypart added up across its job codes, held by that many of the
+    family on at EVERY half hour of the core window. It used to count one
+    code's floor at a time against the family members merely present
+    (an hour in the core window), so servers 4-8pm and 7-10pm "met" a dinner
+    floor of 2 that the sweep held short from 5:30, and "Server AM" night 1
+    plus "Server PM" night 2 was never filled to 3 — the hard breach went on
+    to the optimizer, a paid rewrite or a held publish (schedule audit
+    10/10/26 BUGSGEN-3). Each added shift covers the half hours still short:
+    a shift of the family this week that covers the most of them, else one
+    built over them (at least four hours), clipped to the close.
+
+    Who counts is never somebody whose row will not stand (time off, a
+    double booking). Each person added is one the code may choose
     (Constraints.fillable) whose own week the row keeps legal — a minor's
     hours, rest including last week's published tail, the run of days, the
     hours maximum (Constraints.can_add) — and the row may not open a manager
@@ -5121,41 +5134,19 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     if not floors:
         return preview_rows, 0, {}
     scorer = scorer_for(preview_rows) if scorer_for else None
-    from models import get_staff_availability
     if constraints is None:
         constraints = _rules.build_constraints(restaurant_id, week_dates, week_days)
     c = constraints
-    _avail_rows = get_staff_availability(restaurant_id) or []
-    notes_restricted = {a.get("employee_name") for a in _avail_rows
-                        if a.get("employee_name") and (a.get("notes") or "").strip()
-                        and _name_key(a.get("employee_name")) not in c.daypart_avail}
-
-    role_people = {}
-    working_on_date = {}
-    hours_by_employee = {}
-    templates = {}
-    for r in preview_rows:
-        emp, role, date = (r.get("employee") or "").strip(), (r.get("role") or "").strip(), r.get("date")
-        if not (emp and date):
-            continue
-        working_on_date.setdefault(date, set()).add(emp)
-        hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + _row_hours_value(r)
-        if role:
-            key = _role_key(role, c)
-            role_people.setdefault(key, set()).add(emp)
-            part = _rules.daypart_of(r.get("shift_start", ""))
-            if part in ("morning", "night") and r.get("shift_start") and r.get("shift_end"):
-                templates.setdefault((key, part), (r["shift_start"], r["shift_end"]))
-    for name, role in (getattr(c, "roster_roles", None) or {}).items():
-        if name and role:
-            role_people.setdefault(_role_key(role, c), set()).add(name)
-    _display = {_name_key(n): n for n in (getattr(c, "roster_names", None) or [])}
-    for _low, _held in (getattr(c, "held_roles", None) or {}).items():
-        if _display.get(_low):
-            for _hr in _held or ():
-                role_people.setdefault(_role_key(_hr, c), set()).add(_display[_low])
+    # The floors to fill to are the caller's (the generation passes the
+    # Constraints' own); the rule's test reads them from a Constraints, so a
+    # different map gets a copy for the test alone — what a row may break
+    # is still judged by the caller's Constraints.
+    fc = c
+    if floors is not c.role_floors:
+        fc = copy.copy(c)
+        fc.role_floors = floors
+    book = _fill_book(preview_rows, restaurant_id, c)
     skip = _will_not_stand(preview_rows, c)
-    _rel = getattr(c, "reliability", None) or {}
 
     rows_added = 0
     added_dates = {}
@@ -5166,51 +5157,171 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     for date, day_name in zip(week_dates, week_days):
         if date in _closed or (only_dates is not None and date not in only_dates):
             continue
-        for role_name in floors:
-            key = _role_key(role_name, c)
-            for part, _window in _daypart_windows(c, day_name):
-                need = _rules.floor_for(floors, role_name, day_name, part)
-                if not need:
+        for (fam, part), (need, role_name) in sorted(_rules.floor_needs(fc, day_name).items()):
+            tried = set()
+            for _attempt in range(40):
+                counted = [r for r in preview_rows if r.get("date") == date and id(r) not in skip]
+                short = _floor_short_slots(fc, day_name, counted, role_name, need, part)
+                if not short:
+                    break
+                got = _slot_fill(preview_rows, date, day_name, role_name, part, short, c, close_times, role_buffers,
+                                 book, tried, scorer, f"added — {role_name} floor")
+                if got is None:
+                    break
+                employee, new_row = got
+                preview_rows.append(new_row)
+                after = _floor_short_slots(fc, day_name, counted + [new_row], role_name, need, part)
+                if sum(after.values()) >= sum(short.values()):
+                    # It did not close any of it (never expected: the shift
+                    # covers a short half hour and its person was off): not
+                    # kept, and that person is not asked again here.
+                    preview_rows.pop()
+                    tried.add(employee)
                     continue
-                tried = set()
-                for _attempt in range(40):
-                    on = {_name_key(r.get("employee")) for r in preview_rows
-                          if r.get("date") == date and id(r) not in skip and _name_key(r.get("employee"))
-                          and _role_key(r.get("role"), c) == key and part in _present(r)}
-                    if len(on) >= need:
-                        break
-                    pool = set(role_people.get(key, set())) - working_on_date.get(date, set()) - tried
-                    pool = {e for e in pool if e not in notes_restricted or _name_key(e) in c.time_windows}
-                    if not pool:
-                        break
-                    start, end = templates.get((key, part)) or _daypart_fallback(c, day_name, part)
-                    probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
-                             "shift_start": start, "shift_end": end, "scheduled_hours": "0",
-                             "notes": f"added — {role_name} floor"}
-                    _enforce_close_time(probe, day_name, close_times, role_buffers)
-                    sp = _span_minutes(probe)
-                    # A template that does not produce a sane shift, or one
-                    # that would not count toward this daypart's floor.
-                    if probe.get("needs_review") or not sp or part not in _present(probe):
-                        break
-                    probe["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
-                    # The fewest hours so far, and among those the most reliable,
-                    # is the order; the score chooses among the first few
-                    # legal ones (_fill_pick).
-                    ordered = sorted(pool, key=lambda e: (hours_by_employee.get(e, 0.0),
-                                                          float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
-                    legal, refused = _legal_fills(c, preview_rows, [(e, dict(probe, employee=e)) for e in ordered],
-                                                  date, coverage=True)
-                    tried |= refused
-                    if not legal:
-                        continue
-                    employee, new_row = _fill_pick(scorer, preview_rows, legal)
-                    preview_rows.append(new_row)
-                    working_on_date.setdefault(date, set()).add(employee)
-                    hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + _row_hours_value(new_row)
-                    rows_added += 1
-                    added_dates[date] = added_dates.get(date, 0) + 1
+                book["working"].setdefault(date, set()).add(employee)
+                book["hours"][employee] = book["hours"].get(employee, 0.0) + _row_hours_value(new_row)
+                rows_added += 1
+                added_dates[date] = added_dates.get(date, 0) + 1
     return preview_rows, rows_added, added_dates
+
+
+def _floor_short_slots(c, day_name, rows, role, need, part) -> dict:
+    """{minute: people short} at each half hour of the core window where
+    fewer than `need` of `role`'s family are on — the half hours the
+    coverage_floor rule (_floor_test) holds short; {} when the floor holds."""
+    import shift_quality as _sqf
+    open_m = _rules.parse_minutes((c.open_times or {}).get(day_name, "") or "")
+    close_m = _rules.parse_minutes((c.close_times or {}).get(day_name, "") or "")
+    slots = _sqf.floor_slots(part, open_m, close_m)
+    if not slots or need <= 0:
+        return {}
+    on = _sqf.concurrent_on(rows, part, role, open_m, close_m, families=c.role_families)["slots"]
+    return {t: int(need) - int(on.get(t, 0)) for t in slots if int(on.get(t, 0)) < int(need)}
+
+
+def _fill_book(rows, restaurant_id, c) -> dict:
+    """Who may be added and what is already on, for a fill pass: {"people":
+    {role family: names who work it this week, on the roster or hold it},
+    "working": {date: names on}, "hours": {name: hours}, "templates":
+    {role family: [(start, end, date)]}, "restricted": names whose free-text
+    availability note no rule reads}."""
+    from models import get_staff_availability
+    _avail_rows = get_staff_availability(restaurant_id) or []
+    restricted = {a.get("employee_name") for a in _avail_rows
+                  if a.get("employee_name") and (a.get("notes") or "").strip()
+                  and _name_key(a.get("employee_name")) not in c.daypart_avail}
+    people, working, hours, templates = {}, {}, {}, {}
+    for r in rows:
+        emp, role, date = (r.get("employee") or "").strip(), (r.get("role") or "").strip(), r.get("date")
+        if not (emp and date):
+            continue
+        working.setdefault(date, set()).add(emp)
+        hours[emp] = hours.get(emp, 0.0) + _row_hours_value(r)
+        if role:
+            key = _role_key(role, c)
+            people.setdefault(key, set()).add(emp)
+            if r.get("shift_start") and r.get("shift_end"):
+                tpl = (r["shift_start"], r["shift_end"], date)
+                if tpl not in templates.setdefault(key, []):
+                    templates[key].append(tpl)
+    for name, role in (getattr(c, "roster_roles", None) or {}).items():
+        if name and role:
+            people.setdefault(_role_key(role, c), set()).add(name)
+    _display = {_name_key(n): n for n in (getattr(c, "roster_names", None) or [])}
+    for _low, _held in (getattr(c, "held_roles", None) or {}).items():
+        if _display.get(_low):
+            for _hr in _held or ():
+                people.setdefault(_role_key(_hr, c), set()).add(_display[_low])
+    return {"people": people, "working": working, "hours": hours, "templates": templates,
+            "restricted": restricted}
+
+
+def _slot_fill(rows, date, day_name, role_name, part, short, c, close_times, role_buffers, book, tried,
+               scorer, note):
+    """(employee, row) — one legal shift of `role_name` on `date` covering
+    the most of the `short` half hours ({minute: people short}), for the
+    fewest-hours legal person (_legal_fills, coverage rank: past the
+    overtime line only when nobody can without), or None. Times: the
+    family's shift this week covering the most of them (this date's first),
+    else one built over them, four hours at the least, clipped to close."""
+    key = _role_key(role_name, c)
+    minutes = sorted(short)
+
+    def _covers(start, end):
+        sp = _span_minutes({"shift_start": start, "shift_end": end})
+        return sum(1 for m in minutes if sp and sp[0] <= m < sp[1])
+    tpls = sorted(book["templates"].get(key) or [],
+                  key=lambda t: (-_covers(t[0], t[1]), t[2] != date,
+                                 (_span_minutes({"shift_start": t[0], "shift_end": t[1]}) or (0, 0))[1]
+                                 - (_span_minutes({"shift_start": t[0], "shift_end": t[1]}) or (0, 0))[0]))
+    options = [(t[0], t[1]) for t in tpls if _covers(t[0], t[1])][:2]
+    lo, hi = minutes[0], minutes[-1] + _SLOT_MIN
+    lo = min(lo, hi - 4 * 60)
+    options.append((_format_minutes_to_time(lo), _format_minutes_to_time(hi)))
+    for start, end in options:
+        probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
+                 "shift_start": start, "shift_end": end, "scheduled_hours": "0", "notes": note}
+        _enforce_close_time(probe, day_name, close_times, role_buffers)
+        sp = _span_minutes(probe)
+        if probe.get("needs_review") or not sp or not any(sp[0] <= m < sp[1] for m in minutes):
+            continue
+        probe["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
+        pool = set(book["people"].get(key, set())) - book["working"].get(date, set()) - tried
+        pool = {e for e in pool if e not in book["restricted"] or _name_key(e) in c.time_windows}
+        if not pool:
+            return None
+        _rel = getattr(c, "reliability", None) or {}
+        ordered = sorted(pool, key=lambda e: (book["hours"].get(e, 0.0),
+                                              float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
+        legal, refused = _legal_fills(c, rows, [(e, dict(probe, employee=e)) for e in ordered], date,
+                                      coverage=True)
+        if not legal:
+            continue
+        return _fill_pick(scorer, rows, legal)
+    return None
+
+
+def crew_add_suggestion(restaurant_id, rows: list, date: str, role: str, part: str, constraints=None):
+    """(row, their week's hours with it) — one legal shift of `role` on
+    `date` that covers the shift's core window, for the Studio's Crew "Add 1
+    this week" (TRUST-9): the floors stage's own choice of times and person
+    (_slot_fill — legal, no new breach, overtime only when nobody else can),
+    asked as if the shift's floor were one more than the role has on at
+    once through it. None when nobody can take it. Nothing is saved."""
+    import shift_quality as _sqf
+    rows = [dict(r) for r in rows or []]
+    try:
+        day_name = _date_of(date).strftime("%A")
+    except (TypeError, ValueError):
+        return None
+    if constraints is None:
+        dates = sorted({r.get("date") for r in rows if r.get("date")} | {date})
+        constraints = _rules.build_constraints(restaurant_id, dates, [_weekday_name(d) for d in dates])
+    c = constraints
+    if date in set(getattr(c, "closed_dates", None) or ()):
+        return None
+    skip = _will_not_stand(rows, c)
+    counted = [r for r in rows if r.get("date") == date and id(r) not in skip]
+    open_m = _rules.parse_minutes((c.open_times or {}).get(day_name, "") or "")
+    close_m = _rules.parse_minutes((c.close_times or {}).get(day_name, "") or "")
+    figs = _sqf.concurrent_on(counted, part, role, open_m, close_m, families=c.role_families, by_family=False)
+    slots = _sqf.floor_slots(part, open_m, close_m) or sorted(figs["slots"])
+    if not slots:
+        return None
+    level = figs["held"] if figs["held"] is not None else figs["peak"]
+    short = {t: 1 for t in slots if int(figs["slots"].get(t, 0)) <= int(level or 0)}
+    if not short:
+        return None
+    book = _fill_book(rows, restaurant_id, c)
+    got = _slot_fill(rows, date, day_name, role, part, short, c, c.close_times or {}, c.role_buffers or {}, book,
+                     set(), None, f"added — one more {role} this week")
+    if not got:
+        return None
+    employee, row = got
+    hours = round(book["hours"].get(employee, 0.0) + _row_hours_value(row), 1)
+    out = {k: row.get(k, "") for k in ("date", "day", "employee", "role", "shift_start", "shift_end",
+                                       "scheduled_hours", "notes")}
+    return out, hours
 
 
 def _ensure_station_coverage(preview_rows: list, week_dates: list, week_days: list,
@@ -5569,7 +5680,8 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         close_times=c.close_times or None, section_cap=int(getattr(c, "section_cap", 0) or 0),
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
-        standard_needs=standard_needs or None, **_limit_kwargs(c))
+        standard_needs=standard_needs or None, crew_answers=(patterns or {}).get("crew_answers") or None,
+        **_limit_kwargs(c))
 
 
 def learned_worse_levers(restaurant_id) -> dict:
@@ -8843,14 +8955,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _off = sorted(n for n in (result.get("operational_scores") or {}) if not _known(n)) if _roster_low else []
             result["ratings_off_roster"] = _off
             # The section cap against what this restaurant's own history
-            # runs: every requirement is held to the cap, and where the
-            # history runs over it the owner is told the cap is probably
-            # wrong, rather than every such shift quietly scoring short.
+            # runs ON AT ONCE (labor.concurrent_patterns — the cap's unit,
+            # LOGIC-7): the half-hour needs are held to the cap, and where the
+            # history runs more on at once than it the owner is told the cap
+            # is probably wrong, rather than every such shift scoring short.
             try:
                 import staffing_curve as _stc
                 _cap_roles = getattr(_constraints, "foh_roles", None) or {"server"}
-                _conf = _stc.cap_conflicts(result.get("typical_headcount") or {},
-                                           getattr(_constraints, "section_cap", 0), _cap_roles)
+                _conf = _stc.cap_conflicts(result.get("concurrent") or {},
+                                           getattr(_constraints, "section_cap", 0), _cap_roles,
+                                           getattr(_constraints, "role_families", None) or None)
                 result["section_cap_conflicts"] = _conf
                 _line = _stc.cap_conflict_line(
                     _conf, "servers" if set(_cap_roles) == {"server"} else "front-of-house staff")

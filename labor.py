@@ -3417,7 +3417,116 @@ def _role_family(role, families=None) -> str:
     return role_family(role, families)
 
 
-def historical_patterns(shifts: list, published_rows: list = None, salaried=None, close_times: dict = None) -> dict:
+def _wmedian(pairs) -> int:
+    """The lower weighted median of [(value, weight)]: the smallest value
+    with at least half the weight at or under it — so more than half the
+    (weighted) nights are at or above it. 0 for none."""
+    pairs = sorted((int(v), float(w)) for v, w in pairs if v is not None)
+    total = sum(w for _v, w in pairs)
+    if not pairs or total <= 0:
+        return 0
+    cum = 0.0
+    for v, w in pairs:
+        cum += w
+        if cum >= total / 2.0 - 1e-9:
+            return v
+    return pairs[-1][0]
+
+
+def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict = None,
+                        families: dict = None) -> dict:
+    """The usual crew in the ONE headcount unit — people on at once at a
+    half hour (schedule audit 10/10/26, contract #2: LOGIC-2, BUGSGEN-1/2) —
+    from the same rows the usual distinct crew is counted from.
+
+    {"concurrent": {(weekday, daypart): {job code: {"held", "peak", "slots":
+    {minute: people}}}}, "concurrent_family": the same per role family,
+    "concurrent_trends": [{day, part, role, now, was, since, direction}]}.
+
+    Per weekday, its latest TYPICAL_WEEKS dates (a date the role was missing
+    is 0), each date counted by shift_quality.concurrent_groups: `held` the
+    fewest of the role on at any half hour of the core window (the number a
+    staffing floor is tested against), `peak` the most on at once over the
+    daypart, `slots` the count at each half hour. Each figure is the lower
+    recency-weighted median across the dates — more than half the
+    (recency-weighted) nights run at least that — so a floor set from
+    `held` is one the restaurant's own usual night keeps. A held level that
+    moved and stayed moved (the distinct crew's TREND_* rules) takes the
+    recent level: the lower median of the last TREND_SIDE dates."""
+    from shift_quality import concurrent_groups, floor_slots, _slot_minutes as _sm
+    by_date = {}
+    for r in rows or []:
+        d = str(r.get("date") or "").strip()[:10]
+        if d:
+            by_date.setdefault(d, []).append(r)
+    by_day = {}
+    for d in by_date:
+        try:
+            by_day.setdefault(datetime.strptime(d, "%Y-%m-%d").strftime("%A"), []).append(d)
+        except (TypeError, ValueError):
+            continue
+    conc, fam_out, trends = {}, {}, []
+    for day, dlist in by_day.items():
+        dates = sorted(dlist)[-TYPICAL_WEEKS:]
+        weight = {d: i + 1 for i, d in enumerate(dates)}
+        open_m = _sm((open_times or {}).get(day) or "")
+        close_m = _sm((close_times or {}).get(day) or "")
+        for part in ("morning", "night"):
+            has_window = bool(floor_slots(part, open_m, close_m))
+            per = {d: concurrent_groups(by_date[d], part, open_m, close_m, families) for d in dates}
+            for kind, sink in (("role", conc), ("family", fam_out)):
+                names = {}
+                for d in dates:
+                    for k in per[d][kind]:
+                        names.setdefault(str(k).casefold(), k)
+                slot_out = {}
+                for low, name in names.items():
+                    figs = {d: next((v for k, v in per[d][kind].items() if str(k).casefold() == low), None)
+                            for d in dates}
+                    # A date the role was missing is 0 on it; a weekday that
+                    # serves none of the core window has no held figure.
+                    held_by = {d: int((figs[d] or {}).get("held") or 0) for d in dates} if has_window else {}
+                    peak_by = {d: int((figs[d] or {}).get("peak") or 0) for d in dates}
+                    minutes = sorted({m for f in figs.values() if f for m in f["slots"]})
+                    slots = {m: _wmedian([((figs[d] or {}).get("slots", {}).get(m, 0), weight[d]) for d in dates])
+                             for m in minutes}
+                    held = _wmedian([(v, weight[d]) for d, v in held_by.items()]) if held_by else None
+                    peak = _wmedian([(v, weight[d]) for d, v in peak_by.items()])
+                    if kind == "role" and held_by:
+                        t = _held_trend(held_by, [d for d in dates if d in held_by])
+                        if t:
+                            held = t["now"]
+                            trends.append(dict(t, day=day, part=part, role=name))
+                    if peak or held:
+                        slot_out[name] = {"held": held, "peak": peak, "slots": {m: n for m, n in slots.items() if n}}
+                if slot_out:
+                    sink[(day, part)] = slot_out
+    return {"concurrent": conc, "concurrent_family": fam_out,
+            "concurrent_trends": [t for t in trends if t["now"] != t["was"]]}
+
+
+def _held_trend(values: dict, dates: list):
+    """A held level that moved and stayed moved, by the distinct crew's own
+    rules (TREND_SIDE, TREND_MIN_MOVE, TREND_HOLD): {now, was, since,
+    direction} — `now` the lower median of the recent dates, `was` of the
+    ones before — or None."""
+    if len(dates) < TREND_SIDE + 3:
+        return None
+    recent, prior = dates[-TREND_SIDE:], dates[-2 * TREND_SIDE:-TREND_SIDE]
+    r = [int(values.get(d) or 0) for d in recent]
+    p = [int(values.get(d) or 0) for d in prior]
+    mr, mp = sum(r) / float(len(r)), sum(p) / float(len(p))
+    move = mr - mp
+    if abs(move) < TREND_MIN_MOVE:
+        return None
+    if sum(1 for x in r if (x > mp if move > 0 else x < mp)) < TREND_HOLD:
+        return None
+    return {"now": _wmedian([(x, 1) for x in r]), "was": _wmedian([(x, 1) for x in p]), "since": recent[0],
+            "direction": "up" if move > 0 else "down"}
+
+
+def historical_patterns(shifts: list, published_rows: list = None, salaried=None, close_times: dict = None,
+                        open_times: dict = None, families: dict = None) -> dict:
     """What this restaurant's own history says about how it staffs.
 
     Two signals the Shift Quality Engine needs and that only the shift data
@@ -3640,12 +3749,21 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 match = next((r for r in slot if r.strip().lower() == role.strip().lower()), role)
                 slot[match] = max(int(slot.get(match, 0) or 0), int(n))
 
+    # The same crew in people on at once (contract #2): the punches and, for
+    # the people who never punch, their published shifts — different people,
+    # one floor, so counted together.
+    concurrent = concurrent_patterns(list(punch_rows) + list(pub_rows), open_times=open_times,
+                                     close_times=close_times, families=families)
     return {
         "typical_headcount": typical,
         # The roles and shifts whose usual crew has moved and held
         # (_trend): [{day, part, role, now, was, since, direction}] — the
         # typical above already uses `now` for them.
         "headcount_trends": [t for t in trends if t["now"] != t["was"]],
+        # People on at once (concurrent_patterns): the unit every floor, cap
+        # and the Crew stage read — never mixed with typical_headcount's
+        # different-people count.
+        **concurrent,
         # Cross-trained means two ROLES, not two job codes of one: a server
         # who works "Server AM" and "Server PM" is not cross-trained (D-13).
         "cross_trained": {n: sorted(r) for n, r in roles_by_employee.items()
@@ -3723,10 +3841,18 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
     less the salaried (D-4), the published weeks for the people who never
     punch (L-1), the late segment by the restaurant's close times (D-32),
     and the manager's settled headcount adjustments on top
-    (apply_learned_headcount)."""
+    (apply_learned_headcount). It carries the same crew in people on at once
+    (`concurrent`, `concurrent_family`, `concurrent_trends` —
+    concurrent_patterns, contract #2), and the owner's Crew answers bound
+    into it (crew_matrix.bind_answers): a "Leaner is fine" in force holds
+    that shift's usual crew to what the owner accepted, so the requirement,
+    the score, the top-up and the trim all read it (LOGIC-6, TRUST-8) —
+    `crew_answers` says which, for the requirement's reason."""
     if shifts is None:
         shifts = load_shifts_for_restaurant(restaurant_id) or []
     salaried = set()
+    r = None
+    open_times, families = {}, {}
     try:
         from models import get_restaurant, salaried_keys, get_close_times
         r = get_restaurant(restaurant_id)
@@ -3734,11 +3860,24 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
         salaried = set(salaried_keys(r))
         if close_times is None:
             close_times = get_close_times(restaurant_id)
+        try:
+            open_times = json.loads(getattr(r, "open_times_json", None) or "{}") or {}
+        except (TypeError, ValueError):
+            open_times = {}
+        families = _restaurant_role_families(restaurant_id)
     except Exception as e:
         print(f"[labor] baseline settings unreadable for {restaurant_id}: {e}")
     patterns = historical_patterns(shifts, published_rows=published_rows_for_baseline(restaurant_id, before),
-                                   salaried=salaried, close_times=close_times or {})
+                                   salaried=salaried, close_times=close_times or {},
+                                   open_times=open_times if isinstance(open_times, dict) else {},
+                                   families=families or None)
     patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
+    if r is not None:
+        try:
+            import crew_matrix as _cm
+            _cm.bind_answers(r, patterns, today=before)
+        except Exception as e:
+            print(f"[labor] crew answers not bound for {restaurant_id}: {e}")
     return patterns
 
 
@@ -5343,6 +5482,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # (schedule re-audit 10/4/26 PROMPT-1).
         role_windows=role_windows or None,
         role_caps=role_caps or None,
+        # The shifts the owner said "leaner is fine" about in Crew — the
+        # usual crew above is already held to it (crew_matrix.bind_answers);
+        # this names it as the reason.
+        crew_answers=_patterns.get("crew_answers") or None,
     )
     _requirements_block = _req.requirements_block(
         _req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs),

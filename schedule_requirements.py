@@ -238,7 +238,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        demand_curve: dict = None, open_times: dict = None, close_times: dict = None,
                        section_cap: int = 0, cap_roles=None, date_demand: dict = None, splh_hold: dict = None,
                        adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None,
-                       role_windows: dict = None, role_caps: dict = None) -> list:
+                       role_windows: dict = None, role_caps: dict = None, crew_answers: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -267,11 +267,18 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 (staffing_curve.half_hour_needs, interpolated from the hourly
                 readings), the same needs the coverage-by-the-hour score
                 judges. Without it nothing changes.
-    section_cap / cap_roles — the section count and the roles it counts: no
-                requirement, whole-shift or half-hour, asks for more of them
-                than the cap (staffing_curve.cap_requirement). A borrowed
-                figure held down by the cap is no longer the lent figure,
-                so it is not marked borrowed.
+    section_cap / cap_roles — the section count and the roles it counts (by
+                role family): no half-hour need — people on at once — asks
+                for more of them than the cap (staffing_curve.
+                cap_requirement). The whole-shift number is different people
+                across the daypart, a unit the cap does not limit (staggered
+                starts fit more people than sections), so it is never cut to
+                the cap (schedule audit 10/10/26 LOGIC-7).
+    crew_answers — {(weekday, daypart): {role: {"people", "was", "since"}}}
+                (staffing_baseline's `crew_answers`, crew_matrix.bind_answers):
+                the shifts the owner said "leaner is fine" about in Crew,
+                whose usual crew is already held to what they accepted —
+                named as the reason.
     date_demand — {date: {"ratio", "pct", "reasons"}}
                 (schedule_economics.date_demand): how far each date sits
                 from a typical night of its weekday, and why.
@@ -369,21 +376,24 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     v[5].append(f"{delta:+d} {a['reason']}")
             # Held to the owner's hours and ceilings by role (PROMPT-1).
             _apply_limits(need, day, part, role_windows, role_caps)
-            # Held under the section cap, as the scorer holds it.
+            # A shift the owner said "leaner is fine" about in Crew carries
+            # it as its reason (crew_matrix.bind_answers already held the
+            # usual crew to what they accepted).
+            for role_c, bound in ((crew_answers or {}).get((day, part)) or {}).items():
+                v = need.get(role_c.strip().lower())
+                if v is not None and int(bound.get("was") or 0) > int(bound.get("people") or 0):
+                    from time_utils import mdy as _mdy_c
+                    v[5].append(f"leaner is fine (you, {_mdy_c(bound.get('since'))}; usual "
+                                f"{int(bound.get('was') or 0)})")
+            # The section cap is NOT applied here: it counts people on at
+            # once, and these are the different people on the floor for the
+            # daypart — six staggered servers who are never more than five on
+            # at once fit five sections, and holding the six to five left the
+            # sixth never asked for and told the owner the cap was "probably
+            # wrong" when it was not (schedule audit 10/10/26 LOGIC-7). The
+            # cap holds over the half-hour needs below, which ARE people on
+            # at once, and the sweep's over_section_cap holds the draft.
             held = {}
-            if section_cap:
-                capped, held = _curve.cap_requirement({v[0]: v[1] for v in need.values()}, section_cap, cap_roles)
-                for k, v in need.items():
-                    # The cap takes the soft ask first: the firm part (what
-                    # the shift needs without the ask) is held to the cap
-                    # too, and only what is left over it is still "asked".
-                    # Lowering `required` alone left the ask whole, so a
-                    # Friday of 4 usual servers under a 4-section cap scored
-                    # firm 3 — full coverage with 3 (schedule re-audit
-                    # 10/4/26 SQ-10).
-                    firm = v[1] - v[4]
-                    v[1] = int(capped.get(v[0], v[1]))
-                    v[4] = max(0, v[1] - min(firm, v[1]))
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
             if not need:
@@ -398,7 +408,15 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 needs = {m: n for m, n in _curve.half_hour_needs(curve_here, typical_here, *whole).items()
                          if lo <= m < hi}
                 if section_cap:
-                    needs = {m: _curve.cap_requirement(n, section_cap, cap_roles)[0] for m, n in needs.items()}
+                    # People on at once at each half hour: the unit the
+                    # section count is in.
+                    capped_needs = {}
+                    for m, n in needs.items():
+                        capped_n, trimmed = _curve.cap_requirement(n, section_cap, cap_roles)
+                        capped_needs[m] = capped_n
+                        for r_t, k_t in trimmed.items():
+                            held[r_t] = max(held.get(r_t, 0), k_t)
+                    needs = capped_needs
                 if roles is not None:
                     needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in roles} for m, rn in needs.items()}
                 half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1
@@ -436,7 +454,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     entry["firm"] = required - asked
                 if why:
                     entry["reason"] = "; ".join(why)
-                if _k in lent and typical and typical > floor and name not in held:
+                if _k in lent and typical and typical > floor:
                     entry["borrowed"] = True
                 roles_out.append(entry)
             reasons = _row_reasons(factor, ratio, hold, why_date, held)
@@ -446,7 +464,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if half:
                 row["half_hours"] = half
             if held:
-                row["held_to_cap"] = {"cap": int(section_cap), "trimmed": held}
+                row["held_to_cap"] = {"cap": int(section_cap), "trimmed": held, "unit": "on_at_once"}
             out.append(row)
         late = _late_row(d, day, (late_headcount or {}).get(day) or {}, close_times, ratio,
                          ((splh_hold or {}).get(day) or {}).get(LATE_PART), why_date, roles, section_cap, cap_roles,
@@ -482,7 +500,8 @@ def _row_reasons(factor, ratio, hold, why_date, held) -> list:
             pass
         out.append(f"usual crew {moved:+d}%{bounded} — " + "; ".join(bits) if bits else f"usual crew {moved:+d}%")
     if held:
-        out.append("held to the section cap (" + ", ".join(f"{r} -{n}" for r, n in sorted(held.items())) + ")")
+        out.append("on at once held to the section count (" + ", ".join(f"{r} -{n}" for r, n in sorted(held.items()))
+                   + ")")
     return out
 
 
