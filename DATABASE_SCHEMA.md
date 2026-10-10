@@ -625,6 +625,8 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `shift_sections` | 730 (`RETAIN_SHIFT_SECTIONS_DAYS`) | `date` | 168 | — |
 | `staff_translations` | 90 (`RETAIN_STAFF_TRANSLATIONS_DAYS`; a cache — a miss re-translates) | `created_at` | 7 | — |
 | `schedule_model_calls` | 90 (`RETAIN_SCHEDULE_MODEL_CALLS_DAYS`; every schedule call's full input and answer, for replay — 180 until AI cost audit 10/7/26 #94) | `created_at` | 90 | — |
+| `jobs` | 14 (`RETAIN_JOBS_DAYS`; the durable job queue's rows — job_queue, scheduler audit 10/10/26 RM-7) | `created_at` | 7 | — |
+| `generation_watchers` | 7 (`RETAIN_GENERATION_WATCHERS_DAYS`; taken when the draft lands — a row left is a job that never finished) | `created_at` | 2 | — |
 | `schedule_generation_metrics` | 365 (`RETAIN_SCHEDULE_METRICS_DAYS`; one row a schedule generation — cost, model-row survival, stage attribution, the eval's post-model context) | `created_at` | 90 | — |
 | `schedule_check_snapshots` | 90 (`RETAIN_SCHEDULE_MODEL_CALLS_DAYS`; what each saved week was checked and scored against, the other half of a replay — schedule audit 10/10/26 ARCH-35) | `created_at` | 90 | — |
 | `ai_batch_jobs`, `ai_batch_items` | 30 (`RETAIN_AI_BATCHES_DAYS`; the Message Batches queue — every answer is in `ai_usage` / `ai_calls` within a day) | `submitted_at`, `created_at` | 7 | — |

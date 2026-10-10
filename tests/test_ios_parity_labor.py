@@ -50,7 +50,6 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(auth, "DB_PATH", db_path)
     auth.init_auth(db_path=db_path)
-    se._GEN_WATCHERS.clear()
     return db_path
 
 
@@ -144,7 +143,7 @@ def test_a_job_that_saved_no_week_pushes_nothing(db, pushed, status, result):
     ops.claim_async_job("job-d", "schedule", rid)
     ops.finish_async_job("job-d", status, result)
     assert se.notify_generation_watchers("job-d", rid) == 0 and pushed == []
-    assert "job-d" not in se._GEN_WATCHERS
+    assert se.generation_watchers("job-d") == {}
 
 
 def test_the_pool_tells_the_watchers_when_its_job_ends(db, pushed, monkeypatch):
@@ -216,7 +215,7 @@ def test_a_press_is_watched_by_the_login_that_pressed(db, monkeypatch):
     r = c.post("/mobile/api/labor/generate-schedule", headers=h, json={})
     assert r.status_code == 200
     job = r.get_json()["job_id"]
-    assert started == [job] and se._GEN_WATCHERS[job] == {uid: True}
+    assert started == [job] and se.generation_watchers(job) == {uid: True}
 
 
 def test_a_press_for_another_week_names_the_run_in_the_way(db, monkeypatch):

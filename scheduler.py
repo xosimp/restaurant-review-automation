@@ -4651,7 +4651,8 @@ def _minute_duties():
     extra time is harmless.
 
     Runs as the `minute_duties` job (ops.run_job) — it wrote no job run at
-    all (#31) — and returns the standard counts over its nine duties."""
+    all (#31) — and returns the standard counts over its ten duties (the tenth,
+    since 10/10/26, starts the job queue's claimable rows — job_queue.tick)."""
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
 
     def _duty(fn, job):
@@ -4736,6 +4737,14 @@ def _minute_duties():
     wo = _duty(_webhook_outbox, job="webhook_outbox_reaper")
     if wo and (wo.get("submitted") or wo.get("expired")):
         log.info(f"Webhook outbox: {wo}")
+
+    # The durable job queue (job_queue, scheduler audit 10/10/26 RM-7): rows
+    # no drain could take when they arrived (every slot busy, a row a deploy
+    # left running whose lease ran out) are started in the consuming process.
+    def _queue_tick():
+        import job_queue as _jq
+        return _jq.tick()
+    _duty(_queue_tick, job="job_queue_tick")
     return c
 
 
@@ -5717,8 +5726,11 @@ def scheduler_loop():
             # when they change (scheduler audit 10/10/26, SCALE-15: Mondays
             # only, the tail a week behind).
             if _due(now, 4) and _ops.claim_period("schedule_outcomes", str(today)):
-                from strategy_jobs import run_schedule_outcomes
-                _ops.run_job("schedule_outcomes", run_schedule_outcomes)
+                from strategy_jobs import run_schedule_outcomes, learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (SCALE-25): drained by the queue's consumers in
+                # parallel and fairly, not swept inline on this thread.
+                _ops.run_job("schedule_outcomes", learner_pass("schedule_outcomes", run_schedule_outcomes))
 
             # 5am daily, once the 3am POS sync (45 minutes at most) is in —
             # what last night taught about the people: attendance from the
@@ -5726,8 +5738,11 @@ def scheduler_loop():
             # schedule patterns, the quarterly summaries (memory audit
             # 9/29/26). Sends nothing.
             if _due(now, 5) and _ops.claim_period("people_nightly", str(today)):
-                from strategy_jobs import run_people_nightly
-                _ops.run_job("people_nightly", run_people_nightly)
+                from strategy_jobs import run_people_nightly, learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (SCALE-25): drained by the queue's consumers in
+                # parallel and fairly, not swept inline on this thread.
+                _ops.run_job("people_nightly", learner_pass("people_nightly", run_people_nightly))
 
             # 6am daily, once people_nightly has kept the standing patterns
             # and last night's attendance current — what each restaurant's
@@ -5735,8 +5750,11 @@ def scheduler_loop():
             # confidence and status (schedule_memory, schedule audit 10/3/26
             # L-29). Sends nothing.
             if _due(now, 6) and _ops.claim_period("schedule_memory", str(today)):
-                from strategy_jobs import run_schedule_memory
-                _ops.run_job("schedule_memory", run_schedule_memory)
+                from strategy_jobs import run_schedule_memory, learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (SCALE-25): drained by the queue's consumers in
+                # parallel and fairly, not swept inline on this thread.
+                _ops.run_job("schedule_memory", learner_pass("schedule_memory", run_schedule_memory))
 
             # Monday 7am, after the outcomes (4am) and the memory (6am) have
             # read the week — the Schedule Learning Scorecard: one row per
@@ -5768,7 +5786,12 @@ def scheduler_loop():
             # back, so a later tick in the hour starts it.
             if _ops.claim_period("auto_draft_schedule", f"{today}-{now.hour}"):
                 from strategy_jobs import run_auto_draft_schedules
-                if not _ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now):
+                # Each draft a `scheduled` job_queue row when the queue is on
+                # (SCALE-13): the pass claims and enqueues in seconds instead
+                # of holding the AI lane up to 40 minutes an hour.
+                import job_queue as _jq_ad
+                if not _ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now,
+                                        enqueue=_jq_ad.enabled()):
                     _ops.release_period("auto_draft_schedule", f"{today}-{now.hour}")
 
             # Monday 7am local — the agent files the week's three actions.

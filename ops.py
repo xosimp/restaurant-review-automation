@@ -1006,6 +1006,9 @@ def _async_conn():
 # for a job that set none. A job still pending past it is dead, whatever
 # process owned it.
 JOB_MAX_MINUTES = 45
+# A job the queue will resume after a restart (sweep_stale_jobs) has this
+# long from the boot before a poll calls it dead.
+RESUME_DEADLINE_SECONDS = 20 * 60
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
@@ -1024,14 +1027,34 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
     jobs are dead whatever their age. Only jobs older than ten minutes used
     to be swept, and a press in the next ten minutes joined the dead one
     (SCHED-25 / DATA-9).
+
+    A job the durable queue will run again (job_queue — scheduler audit
+    10/10/26 SCALE-2, RM-7: a queued row, or a running one with tries left)
+    is NOT dead: the next consumer resumes it from its checkpoints, reading
+    the model answers its earlier try paid for. It stays pending, its
+    deadline pushed RESUME_DEADLINE_SECONDS out so a poll does not call it
+    dead while it restarts.
     """
     try:
+        resumable = []
+        try:
+            import job_queue as _jq_sweep
+            if _jq_sweep.enabled():
+                resumable = [str(x) for x in _jq_sweep.resumable_external_ids()]
+        except Exception as e:
+            log.warning(f"sweep_stale_jobs: the queue could not be read ({e}); every pending job is failed")
+            resumable = []
         conn = _async_conn()
+        keep = (" AND job_id NOT IN (" + ",".join("?" * len(resumable)) + ")") if resumable else ""
         cur = conn.execute(
             "UPDATE async_jobs SET status='error', result_json=? "
-            "WHERE status='pending' AND created_at <= datetime('now', ?)",
-            ('{"ok": false, "error": "Generation was interrupted — please try again."}',
-             f"-{int(older_than_minutes)} minutes"))
+            "WHERE status='pending' AND created_at <= datetime('now', ?)" + keep,
+            ['{"ok": false, "error": "Generation was interrupted — please try again."}',
+             f"-{int(older_than_minutes)} minutes"] + resumable)
+        if resumable:
+            conn.execute("UPDATE async_jobs SET deadline_at=datetime('now', ?) WHERE status='pending' "
+                         "AND job_id IN (" + ",".join("?" * len(resumable)) + ")",
+                         [f"+{int(RESUME_DEADLINE_SECONDS)} seconds"] + resumable)
         conn.commit()
         n = cur.rowcount or 0
         conn.close()
@@ -2767,6 +2790,12 @@ _RETENTION_DAYS = {
     # record_check_snapshot, schedule audit 10/10/26 ARCH-35): the other
     # half of a replay, kept as long as the calls it replays with.
     "schedule_check_snapshots": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
+    # The durable job queue (job_queue — scheduler audit 10/10/26 RM-7):
+    # a finished row is read by the Jobs page and the queue-wait p95 (an hour);
+    # two weeks reads what a week of passes did. The generation watchers are
+    # taken when their draft lands; a row left is a job that never finished.
+    "jobs": int(os.getenv("RETAIN_JOBS_DAYS", "14")),
+    "generation_watchers": int(os.getenv("RETAIN_GENERATION_WATCHERS_DAYS", "7")),
     # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
     # batch answers within 24 hours and every answer is in ai_usage and
     # ai_calls by then — a month is enough to read what a batch did.
@@ -2853,7 +2882,7 @@ _RETENTION_COLUMN = {
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
     "schedule_model_calls": "created_at", "schedule_generation_metrics": "created_at",
-    "schedule_check_snapshots": "created_at",
+    "schedule_check_snapshots": "created_at", "jobs": "created_at", "generation_watchers": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
@@ -2989,6 +3018,8 @@ _RETENTION_FLOOR_DAYS = {
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
     "schedule_model_calls": 90, "schedule_check_snapshots": 90,
+    # The queue's rows: job_queue.stats reads an hour; a week of passes.
+    "jobs": 7, "generation_watchers": 2,
     # schedule_metrics.summary reads 90 days of generations.
     "schedule_generation_metrics": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a

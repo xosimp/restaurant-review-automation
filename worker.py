@@ -30,10 +30,23 @@ as a separate service. Railway volumes cannot be shared between services
 open an empty ./reviews.db of its own, win its own lease in it, and — once the
 web process stopped scheduling — leave every real job unrun. See
 docs/ops/RAILWAY_SCHEDULER_SPLIT.md for the exact start command and rollback.
+
+THE JOB QUEUE (scheduler audit 10/10/26 RM-7, SCALE-1, SCALE-10, SCALE-25)
+--------------------------------------------------------------------------
+With QUEUE_WORKER=1 this process is also the job queue's consumer
+(job_queue.run_worker): schedule generations — owners' presses and the
+auto-draft — and the nightly learners' per-restaurant passes run HERE, off
+the web process's four request threads and its GIL; the web process only
+enqueues (and consumes after all if this process's heartbeat goes stale, so
+a press is never stranded). Without it the web process consumes its own
+queue, as one process. On SIGTERM the rows this process is running are handed
+back to the queue (job_queue.shutdown) before the lease is released, so the
+next process resumes them from their checkpoints at once.
 """
 import logging
 import signal
 import sys
+import threading
 import time
 
 # Configured in main() by logging_setup, the web process's handler: JSON lines
@@ -41,6 +54,7 @@ import time
 log = logging.getLogger("worker")
 
 _stopping = False
+_STOP = threading.Event()
 
 
 def _handle_stop(signum, _frame):
@@ -53,6 +67,14 @@ def _handle_stop(signum, _frame):
     global _stopping
     _stopping = True
     log.info("received signal %s — shutting down", signum)
+    _STOP.set()
+    try:
+        # Running queue rows go back first, so the next process resumes them
+        # from their checkpoints instead of waiting out their leases.
+        import job_queue
+        job_queue.shutdown()
+    except Exception:
+        log.exception("could not hand the running queue jobs back")
     try:
         import ops
         ops.shutdown_scheduler()
@@ -84,12 +106,27 @@ def main():
     ensure_columns()
     log.info("schema ready")
 
+    # The job queue's consumer, when this process is the worker
+    # (QUEUE_WORKER=1): generations and learners run here, not in the web
+    # process. Started before the scheduler check: an owner's press is
+    # consumed wherever this runs (it sends only what the press asked for).
+    import job_queue
+    consumer = None
+    if job_queue.mode() == "worker":
+        job_queue.register_shutdown()
+        consumer = threading.Thread(target=job_queue.run_worker, kwargs={"stop": _STOP}, daemon=True,
+                                    name="queue-worker")
+        consumer.start()
+        log.info("job queue consumer started (QUEUE_WORKER=1)")
+
     # Imported after init_db so a job module reading schema at import time
     # sees a migrated database.
     from scheduler import scheduler_loop, scheduling_allowed, _LEASE_KEEPER
     if not scheduling_allowed():
         log.error("not on Railway — refusing to run the scheduler (set ALLOW_LOCAL_SCHEDULER=1 "
                   "to override; jobs send real email and SMS)")
+        if consumer is not None:
+            _STOP.wait()
         return
 
     # Runs a previous process left open are closed as interrupted (#150),

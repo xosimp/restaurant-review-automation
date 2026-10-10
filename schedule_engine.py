@@ -527,9 +527,18 @@ def generation_scope(job_id, priority=GEN_PRIORITY_PRESS, restaurant_id=None):
     generation queued behind two others does not spend its time waiting.
     submit_generation runs an owner's job inside it; the auto-draft enters it
     itself (strategy_jobs._draft_one) at GEN_PRIORITY_BACKGROUND, so a press
-    takes the next free slot ahead of it (AI cost audit 10/7/26 #5)."""
-    _GEN_SLOTS.acquire(priority, job_id=job_id,
-                       timeout=GEN_BACKGROUND_WAIT_SECONDS if priority > GEN_PRIORITY_PRESS else None)
+    takes the next free slot ahead of it (AI cost audit 10/7/26 #5).
+
+    Inside a queue job of the generation group (job_queue — scheduler audit
+    10/10/26 RM-7, SCALE-24, ARCH-22) the slot IS the claimed row: the queue
+    counts running rows across every process, orders presses before drafts
+    and keeps one generation per restaurant, so no in-process slot is
+    taken. The in-process slots remain for a direct call (a script, a test)."""
+    import job_queue as _jq_scope
+    _queued = _jq_scope.in_group("generation")
+    if not _queued:
+        _GEN_SLOTS.acquire(priority, job_id=job_id,
+                           timeout=GEN_BACKGROUND_WAIT_SECONDS if priority > GEN_PRIORITY_PRESS else None)
     try:
         clock = GenerationClock(job_id)
         token = _CLOCK.set(clock)
@@ -542,7 +551,8 @@ def generation_scope(job_id, priority=GEN_PRIORITY_PRESS, restaurant_id=None):
         finally:
             _CLOCK.reset(token)
     finally:
-        _GEN_SLOTS.release(job_id)
+        if not _queued:
+            _GEN_SLOTS.release(job_id)
 
 
 def _restaurant_split(restaurant_id):
@@ -560,7 +570,17 @@ def promote_generation(job_id) -> str:
     10/7/26 #1): a queued auto-draft it joined now waits as a press — ahead of
     other drafts, with no 30-minute give-up — rather than failing the owner
     with "No generation slot came free". Called from the shared generate
-    body's joined branches (mobile_api.mobile_generate_schedule)."""
+    body's joined branches (mobile_api.mobile_generate_schedule).
+
+    A queued generation (job_queue) is promoted in the database — its row
+    goes on as interactive with its give-up lifted, whichever process will
+    run it (ARCH-22: the promotion used to reach only the web process's
+    memory while the auto-draft waited in another)."""
+    import job_queue as _jq_p
+    if _jq_p.enabled():
+        state = _jq_p.promote(job_id)
+        if state != "pending":
+            return state
     return _GEN_SLOTS.promote(job_id)
 
 
@@ -576,7 +596,20 @@ def submit_generation(job_id, restaurant_id, prior_draft_id=None, rejection=None
     owner's redo or the draft this press throws away: recorded only once the
     job has finished with its own draft in force (_settle_rejection,
     ARCH-18) — never at the press, so a press stopped or failed teaches the
-    learners nothing."""
+    learners nothing.
+
+    With the job queue on (job_queue.mode() — the default; JOB_QUEUE=0 is
+    the old pool), the press is a durable `schedule_generate` row (RM-7):
+    an interactive row ahead of every scheduled draft, run by this process's
+    consumer or by worker.py's (QUEUE_WORKER=1), resumed after a deploy from
+    its checkpoints without paying again for an answer already stored
+    (SCALE-2, schedule_resume). The owner's attribution travels in the row
+    (ai_utils.attribution_for_thread, #148). Returns a Future resolved when
+    the row finishes in this process."""
+    import job_queue as _jq
+    if _jq.enabled():
+        return _enqueue_generation(job_id, restaurant_id, prior_draft_id=prior_draft_id, rejection=rejection,
+                                   **job_kwargs)
     global _gen_pool
     import concurrent.futures
     import ai_utils as _ai
@@ -615,10 +648,12 @@ def submit_generation(job_id, restaurant_id, prior_draft_id=None, rejection=None
 
 # Who asked for each running generation (iOS parity #16, 10/7/26): the
 # logins whose press started or joined it, told by push when the draft lands
-# — a draft takes minutes, and the owner is told they can leave. In memory
-# on purpose: a restart loses the job itself too, and the gunicorn worker
-# count is 1 (CLAUDE.md). {job_id: {user_id: may publish}}.
-_GEN_WATCHERS = {}
+# — a draft takes minutes, and the owner is told they can leave. Rows in
+# `generation_watchers` (job_queue's tables) since scheduler audit 10/10/26
+# (SCALE-24, ARCH-22): the press is remembered by the web process and the
+# draft lands wherever the queue ran it — worker.py, or this process after a
+# deploy resumed it — so the memory dict pushed nobody across processes and
+# forgot everyone at a restart.
 _GEN_WATCHERS_LOCK = threading.Lock()
 
 
@@ -636,15 +671,49 @@ def watch_generation(job_id, user) -> None:
         return
     from permissions import has_permission, SCHEDULE_PUBLISH
     may = bool(user.get("is_admin")) or has_permission(user, SCHEDULE_PUBLISH)
-    with _GEN_WATCHERS_LOCK:
-        _GEN_WATCHERS.setdefault(str(job_id), {})[uid] = may
+    import models as _m_w
+    conn = _m_w.get_conn()
+    try:
+        conn.execute("INSERT INTO generation_watchers (job_id, user_id, may_publish) VALUES (?,?,?) "
+                     "ON CONFLICT(job_id, user_id) DO UPDATE SET may_publish=excluded.may_publish",
+                     (str(job_id), uid, 1 if may else 0))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def generation_watchers(job_id) -> dict:
+    """The logins waiting on `job_id` ({user_id: may publish}), unchanged."""
+    import models as _m_w
+    conn = _m_w.get_conn()
+    try:
+        rows = conn.execute("SELECT user_id, may_publish FROM generation_watchers WHERE job_id=?",
+                            (str(job_id),)).fetchall()
+    finally:
+        conn.close()
+    return {int(r["user_id"]): bool(r["may_publish"]) for r in rows}
 
 
 def take_generation_watchers(job_id) -> dict:
     """The logins waiting on `job_id` ({user_id: may publish}), forgotten as
-    they are handed out."""
+    they are handed out — read and deleted in one write transaction, so two
+    processes finishing one job never push one login twice."""
+    import models as _m_w
     with _GEN_WATCHERS_LOCK:
-        return _GEN_WATCHERS.pop(str(job_id), {})
+        conn = _m_w.get_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute("SELECT user_id, may_publish FROM generation_watchers WHERE job_id=?",
+                                (str(job_id),)).fetchall()
+            if rows:
+                conn.execute("DELETE FROM generation_watchers WHERE job_id=?", (str(job_id),))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return {int(r["user_id"]): bool(r["may_publish"]) for r in rows}
 
 
 def notify_generation_watchers(job_id, restaurant_id, exclude=None) -> int:
@@ -689,6 +758,93 @@ def notify_generation_watchers(job_id, restaurant_id, exclude=None) -> int:
     except Exception as e:
         _ops.capture(e, job="schedule_drafted_push", context=f"restaurant_id={restaurant_id} job={job_id}")
         return 0
+
+
+# ── generations on the job queue (scheduler audit 10/10/26 RM-7) ──────────
+
+_SECRET_USER_KEYS = ("password", "token", "secret", "hash", "totp", "session", "code", "pin")
+
+
+def _row_safe_user(user):
+    """The pressing login as a queue row may keep it: who they are and what
+    they may do (schedule_versions.authority_of reads role and permissions),
+    never a credential-looking field."""
+    if not isinstance(user, dict):
+        return None
+    return {k: v for k, v in user.items()
+            if not any(w in str(k).lower() for w in _SECRET_USER_KEYS)
+            and isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+
+
+def _enqueue_generation(job_id, restaurant_id, prior_draft_id=None, rejection=None, **job_kwargs):
+    """An owner's press as a `schedule_generate` queue row (interactive),
+    keyed on its async job id so a second enqueue of the same press is the
+    same row. Returns a Future resolved when this process runs it."""
+    import job_queue as _jq
+    import ai_utils as _ai
+    rej = dict(rejection) if rejection else None
+    if rej and rej.get("user") is not None:
+        rej["user"] = _row_safe_user(rej["user"])
+    try:
+        attribution = _ai.attribution_for_thread()
+    except Exception:
+        attribution = {}
+    payload = {"job_id": str(job_id), "restaurant_id": restaurant_id, "prior_draft_id": prior_draft_id,
+               "rejection": rej, "kwargs": dict(job_kwargs), "attribution": attribution}
+    qid, _created = _jq.enqueue("schedule_generate", payload, restaurant_id=restaurant_id,
+                                external_id=str(job_id), idempotency_key=f"schedule_generate:{job_id}", wake=False)
+    fut = _jq.local_future(qid)
+    _jq.kick("generation")
+    return fut
+
+
+def run_queued_generation(job):
+    """job_queue's handler for `schedule_generate`: the owner's generation,
+    as submit_generation's pool thread ran it — the slot is the claimed row
+    (generation_scope), the clock, the job, then the rejection settled and
+    the watchers pushed. A RESUMED row (a deploy killed its earlier try)
+    finishes from its saved checkpoint when it reached one, and otherwise
+    runs again reading the answers that try already paid for
+    (schedule_resume). The job reports its own failures into its async row;
+    the queue row is done either way (a failed generation is never re-paid
+    by a retry)."""
+    import schedule_resume as _sres
+    p = job.payload
+    job_id, restaurant_id = p.get("job_id"), p.get("restaurant_id")
+    resumed = job.resumed
+    if resumed:
+        if _sres.finish_from_checkpoint(job):
+            _settle_rejection(job_id, restaurant_id, p.get("rejection"))
+            notify_generation_watchers(job_id, restaurant_id)
+            return {"resumed": "saved"}
+        if not _ops.job_still_pending(job_id):
+            # Stopped by the owner or called dead meanwhile: nothing to run.
+            take_generation_watchers(job_id)
+            return {"resumed": "not_pending"}
+        _sres.extend_deadline(job_id)
+    try:
+        with _sres.resuming(job_id if resumed else None):
+            with generation_scope(job_id, restaurant_id=restaurant_id) as clock:
+                clock.prior_draft_id = p.get("prior_draft_id")
+                _run_schedule_job(job_id, restaurant_id, **(p.get("kwargs") or {}))
+    except Exception as e:
+        _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
+    finally:
+        _settle_rejection(job_id, restaurant_id, p.get("rejection"))
+        notify_generation_watchers(job_id, restaurant_id)
+    state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
+    res = state.get("result") if isinstance(state.get("result"), dict) else {}
+    return {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}
+
+
+def on_queued_generation_expired(job):
+    """A press's row that never started before its deadline (only a row
+    given one): the owner's poll is told, the watch dropped."""
+    p = job.payload
+    take_generation_watchers(p.get("job_id"))
+    _ops.finish_async_job(p.get("job_id"), "error", {"ok": False, "error": "The schedule couldn't be started in "
+                                                                            "time — try again."})
 
 
 def generation_request(restaurant_id, week_start=None, dates=None, history_id=None, instruction=None,
@@ -1230,6 +1386,11 @@ class _StageClock:
             yield
         finally:
             self.add(name, time.monotonic() - t)
+        # Reached and finished: the queue job's stage boundary (job_queue.
+        # checkpoint — RM-7), so a resumed try and the Jobs page know how far
+        # the last one got. A no-op outside a queue job; never raises.
+        import job_queue as _jq_stage
+        _jq_stage.checkpoint(name)
 
     def add(self, name, secs) -> None:
         self.seconds[name] = round(self.seconds.get(name, 0.0) + max(0.0, float(secs or 0)), 3)
@@ -11327,6 +11488,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         # sweep, its rules and its quality.
         result["rows"] = preview_rows
         _rules_now = _gate_rules(result)
+        if _fallback is None and _history_id:
+            # The job's commit point, as a queue checkpoint (scheduler audit
+            # 10/10/26 SCALE-2, RM-7): a try a deploy kills from here on —
+            # in the quality gate's fill or rewrite — is finished by the next
+            # try with this draft and this answer (schedule_resume), never
+            # generated and paid for again. A no-op outside the queue.
+            try:
+                import schedule_resume as _sres
+                _sres.checkpoint_saved(_history_id, _json_ready(_payload),
+                                       week_start=(result.get("week_dates") or [None])[0] or week_start)
+            except Exception as _cpx:
+                print(f"[schedule] saved checkpoint not kept: {_cpx!r}")
         if _fallback:
             # Kept only with no more hard breaches and no more unmanaged
             # minutes than the draft (P-43: it was kept on the score alone);

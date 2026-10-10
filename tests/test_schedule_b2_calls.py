@@ -756,8 +756,14 @@ def test_the_generate_route_queues_on_the_pool_and_starts_no_thread_of_its_own(d
     body = app.test_client().post("/mobile/api/labor/generate-schedule", headers=headers, json={}).get_json()
     assert body["ok"] and ran.wait(10), "the job ran"
     name, clocked = seen[0]
-    assert name.startswith("schedule-gen") and clocked               # on the bounded pool, inside its clock
-    assert se._gen_pool._max_workers == se.SCHEDULE_GEN_WORKERS
+    # On the job queue's bounded generation pool (scheduler audit 10/10/26
+    # RM-7: a durable row first, then this process's consumer), inside its
+    # clock; the pool is the group's concurrency, a count of claimed rows.
+    import job_queue
+    assert name.startswith("queue-generation") and clocked
+    assert job_queue._pools["generation"]._max_workers == job_queue.group_concurrency("generation")
+    assert job_queue.group_concurrency("generation") == se.SCHEDULE_GEN_WORKERS
+    assert job_queue.row_for(body["job_id"])["kind"] == "schedule_generate"
     assert "threading.Thread(" not in inspect.getsource(mobile_api.mobile_generate_schedule)
 
 

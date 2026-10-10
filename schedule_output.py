@@ -952,7 +952,9 @@ _CALLS_DDL = """CREATE TABLE IF NOT EXISTS schedule_model_calls (
     shared_z       BLOB,
     answer_z       BLOB,
     call_kind      TEXT,
-    tier           TEXT
+    tier           TEXT,
+    job_id         TEXT,
+    call_key       TEXT
 )"""
 
 # What a generated week was checked and scored against (schedule audit
@@ -998,6 +1000,15 @@ def init_schedule_output(db_path=None):
         # calls by tier (AI orchestration, 10/7/26).
         if "tier" not in cols:
             conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN tier TEXT")
+        # The queue job a call ran for and what its answer answers
+        # (schedule_batch.call_key): a generation the queue runs again after
+        # a deploy reads the answers its earlier try already paid for
+        # (scheduler audit 10/10/26 SCALE-2, SCALE-22 — schedule_resume).
+        if "job_id" not in cols:
+            conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN job_id TEXT")
+        if "call_key" not in cols:
+            conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN call_key TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_job ON schedule_model_calls(job_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_created ON schedule_model_calls(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_gen ON schedule_model_calls(generation_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_hist ON schedule_model_calls(history_id)")
@@ -1169,7 +1180,7 @@ SHARED_INPUTS = ("analysis", "shifts")
 def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=None, week_start=None,
                 dates=None, ai_call_id=None, model=None, effort=None, contract=None, stop_reason=None,
                 outcome=None, error=None, seconds=None, usage=None, rows=None, answer_chars=None,
-                db_path=None, call_kind=None, tier=None):
+                db_path=None, call_kind=None, tier=None, job_id=None):
     """Store one schedule call: the exact request (model, max_tokens, system,
     messages, thinking, output_config with its schema), the generator's
     arguments (`inputs`, encoded so a replay rebuilds them), and the answer
@@ -1178,6 +1189,11 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
     that cannot be replayed, never a failed generation."""
     from ai_utils import guest_names_in
     req = dict(request or {})
+    try:
+        import schedule_batch as _sb_key
+        _key = _sb_key.call_key(req)
+    except Exception:
+        _key = None
     prompt_text = json.dumps(req.get("messages") or [], default=str)
     names = guest_names_in(prompt_text)
     req = _scrub(encode(req), names)
@@ -1198,18 +1214,71 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
         cur = conn.execute(
             "INSERT INTO schedule_model_calls (restaurant_id, generation_id, week_start, dates_json, ai_call_id, "
             "model, effort, contract, stop_reason, outcome, error, seconds, usage_json, rows, answer_chars, "
-            "request_z, inputs_z, shared_z, answer_z, call_kind, tier) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "request_z, inputs_z, shared_z, answer_z, call_kind, tier, job_id, call_key) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, generation_id, week_start, json.dumps(list(dates or [])), ai_call_id, model, effort,
              contract, stop_reason, outcome, (str(error)[:500] if error else None), seconds,
              json.dumps(usage or {}), rows, answer_chars, _z(req),
              _z(enc_inputs) if enc_inputs is not None else None,
              _z(shared) if shared else None,
              zlib.compress(_scrub(str(answer), names).encode("utf-8", "replace")) if answer else None,
-             call_kind if call_kind in CALL_KINDS else None, (str(tier)[:16] if tier else None)))
+             call_kind if call_kind in CALL_KINDS else None, (str(tier)[:16] if tier else None),
+             (str(job_id)[:64] if job_id else None), _key))
         conn.commit()
         return cur.lastrowid
     finally:
         conn.close()
+
+
+# A stored answer a resumed generation may read again (schedule_resume): one
+# the model finished, or cut short (its finished days are kept the same way
+# the first time), never an error, a refusal or JSON that did not parse.
+REUSABLE_OUTCOMES = ("ok", "truncated", "salvaged")
+
+
+def stored_answers(job_id, db_path=None) -> list:
+    """Every reusable answer the queue job `job_id` already paid for, oldest
+    first: [{id, call_key, model, stop_reason, answer, usage}] (the answer
+    text decompressed, whether kept inline or in the blob store)."""
+    if not job_id:
+        return []
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, call_key, model, stop_reason, outcome, usage_json, answer_z FROM schedule_model_calls "
+            "WHERE job_id=? AND call_key IS NOT NULL ORDER BY id", (str(job_id),)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        if r["outcome"] not in REUSABLE_OUTCOMES:
+            continue
+        try:
+            usage = json.loads(r["usage_json"] or "{}")
+        except (TypeError, ValueError):
+            usage = {}
+        if usage.get("resumed"):
+            continue                 # an answer this generation already read again
+        text = _answer_text(r["answer_z"])
+        if not text:
+            continue
+        out.append({"id": r["id"], "call_key": r["call_key"], "model": r["model"],
+                    "stop_reason": r["stop_reason"], "answer": text, "usage": usage})
+    return out
+
+
+def _answer_text(blob) -> str:
+    if not blob:
+        return ""
+    try:
+        import blob_store
+        blob = blob_store.resolve(blob)
+    except ImportError:
+        pass
+    try:
+        return zlib.decompress(blob).decode("utf-8")
+    except Exception:
+        return ""
 
 
 def link_calls(restaurant_id, history_id, generation_id, db_path=None, conn=None) -> int:
