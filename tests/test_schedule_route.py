@@ -224,16 +224,28 @@ def test_a_run_at_its_caps_keeps_its_draft(monkeypatch):
 def test_the_rewrite_runs_on_the_next_rung(db, monkeypatch):
     rid = _restaurant(db)
     _route_ordinary(monkeypatch)
+    # The gate's rewrite is a pass of the same job (schedule_job — scheduler
+    # audit 10/10/26 ARCH-16: no re-entry into the job): escalated first,
+    # then drafted with the gate's focus over its dates alone.
+    import schedule_job as sj
     seen = []
-    monkeypatch.setattr(se, "_run_schedule_job", lambda *a, **k: seen.append((se.schedule_route().tier, k)))
-    fallback = {"history_id": 1, "payload": {}}
+
+    def build(job, spec):
+        seen.append((se.schedule_route().tier, spec))
+        raise RuntimeError("no draft in this test")
+    monkeypatch.setattr(sj, "_build_pass", build)
+    held = sj.Candidate(spec=sj.PassSpec(kind="week"), result={"week_dates": WEEK}, rows=[],
+                        payload={"schedule_csv": "", "gate": {"ran": True}}, timer=se._StageClock())
 
     def body():
         _route(rid)
-        se._gate_model_rewrite(None, rid, WEEK[0], GATE, fallback, None, None)
-    _inside(body, rid)
-    ((tier, kw),) = seen
-    assert tier == "T4" and kw["focus"] == GATE["focus"] and kw["dates"] == GATE["dates"] and kw["gate"] is False
+        job = sj.GenerationRun(sj.Request(None, rid), None)
+        return sj._gate_rewrite(job, GATE, sj.InForce(held, dict(held.payload)))
+    kept, _run = _inside(body, rid)
+    ((tier, spec),) = seen
+    assert tier == "T4" and spec.focus == GATE["focus"] and spec.dates == GATE["dates"]
+    assert spec.kind == "gate_rewrite" and spec.base.history_id is None          # held in memory, never saved
+    assert kept is held and kept.payload["gate"]["kept"] == "original"           # a failed rewrite keeps the draft
 
 
 # ── the SCHEDULE_MODEL pin ─────────────────────────────────────────────────

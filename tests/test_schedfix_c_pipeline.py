@@ -67,14 +67,17 @@ def _stop_harness(monkeypatch, db, job, gates=True):
             "reason": "1 busy day still had a staffing hole after repair"}
 
     def gate_then_stop(result):
-        # The owner presses Stop while the gate decides — after the first save.
-        assert ops.stop_async_job(job, {"ok": False, "stopped": True, "error": se.STOPPED_MESSAGE}) == "stopping"
+        # The owner presses Stop while the gate decides. The gate's passes
+        # are held in memory and only the winner is saved, once (scheduler
+        # audit 10/10/26 ARCH-17): nothing is saved yet, so the route itself
+        # finishes the job and "Stopped — nothing was saved" is true.
+        assert ops.stop_async_job(job, {"ok": False, "stopped": True, "error": se.STOPPED_MESSAGE}) == "stopped"
         return dict(gate)
     monkeypatch.setattr(se, "_quality_gate", gate_then_stop if gates else (lambda result: None))
     return rid, calls
 
 
-def test_stop_during_the_gate_puts_the_owners_draft_back_and_says_so(db, monkeypatch):
+def test_stop_during_the_gate_saves_nothing_and_the_owners_draft_was_never_replaced(db, monkeypatch):
     rid, calls = _stop_harness(monkeypatch, db, "stop-gate")
     prior = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 42, 0, 30, _csv(_week_answer()), [], db_path=db)
     with se.generation_scope("stop-gate") as clock:
@@ -82,25 +85,63 @@ def test_stop_during_the_gate_puts_the_owners_draft_back_and_says_so(db, monkeyp
         se._run_schedule_job("stop-gate", rid)
     job = ops.read_async_job("stop-gate", restaurant_id=rid)
     assert job["status"] == "error" and job["result"]["stopped"] is True
-    assert job["result"]["restored_history_id"] == prior
-    assert job["result"]["error"] == se.STOPPED_RESTORED_MESSAGE and "nothing was saved" not in job["result"]["error"]
+    assert job["result"]["error"] == se.STOPPED_MESSAGE and "restored_history_id" not in job["result"]
     hist = _history(db, rid)
-    assert next(h for h in hist if h["id"] == prior)["superseded_by"] is None          # A is in force again
-    assert all(h["superseded_by"] == prior for h in hist if h["id"] != prior)          # B (and any rewrite) not
+    assert [h["id"] for h in hist] == [prior] and hist[0]["superseded_by"] is None    # A in force throughout
     assert len(calls) == 1, "no paid rewrite after the Stop"
 
 
-def test_stop_during_the_gate_with_no_draft_before_keeps_the_saved_one_and_says_so(db, monkeypatch):
+def test_stop_during_the_gate_with_no_draft_before_saves_nothing(db, monkeypatch):
     rid, calls = _stop_harness(monkeypatch, db, "stop-keep")
     with se.generation_scope("stop-keep"):
         se._run_schedule_job("stop-keep", rid)
     job = ops.read_async_job("stop-keep", restaurant_id=rid)
+    assert job["status"] == "error" and job["result"]["stopped"] is True
+    assert job["result"]["error"] == se.STOPPED_MESSAGE
+    assert _history(db, rid) == []
+    assert len(calls) == 1
+
+
+def _stop_during_the_save(monkeypatch, job):
+    """The owner's Stop lands while the job's one save is written: the save
+    goes through first (its job check passed), then the Stop becomes a
+    request the job answers (ARCH-2)."""
+    real = se._save_durably
+
+    def save_then_stop(*a, **k):
+        hid = real(*a, **k)
+        assert ops.stop_async_job(job, {"ok": False, "stopped": True, "error": se.STOPPED_MESSAGE}) == "stopping"
+        return hid
+    monkeypatch.setattr(se, "_save_durably", save_then_stop)
+
+
+def test_a_stop_that_lands_during_the_save_puts_the_owners_draft_back_and_says_so(db, monkeypatch):
+    rid, _calls = _stop_harness(monkeypatch, db, "stop-save", gates=False)
+    prior = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 42, 0, 30, _csv(_week_answer()), [], db_path=db)
+    _stop_during_the_save(monkeypatch, "stop-save")
+    with se.generation_scope("stop-save") as clock:
+        clock.prior_draft_id = prior
+        se._run_schedule_job("stop-save", rid)
+    job = ops.read_async_job("stop-save", restaurant_id=rid)
+    assert job["status"] == "error" and job["result"]["stopped"] is True
+    assert job["result"]["restored_history_id"] == prior
+    assert job["result"]["error"] == se.STOPPED_RESTORED_MESSAGE and "nothing was saved" not in job["result"]["error"]
+    hist = _history(db, rid)
+    assert next(h for h in hist if h["id"] == prior)["superseded_by"] is None          # A is in force again
+    assert all(h["superseded_by"] == prior for h in hist if h["id"] != prior)          # B is not
+
+
+def test_a_stop_that_lands_during_the_save_with_no_draft_before_keeps_it_and_says_so(db, monkeypatch):
+    rid, _calls = _stop_harness(monkeypatch, db, "stop-save-keep", gates=False)
+    _stop_during_the_save(monkeypatch, "stop-save-keep")
+    with se.generation_scope("stop-save-keep"):
+        se._run_schedule_job("stop-save-keep", rid)
+    job = ops.read_async_job("stop-save-keep", restaurant_id=rid)
     assert job["status"] == "done" and job["result"]["stopped"] is True
     assert job["result"]["review"]["lines"][0] == se.STOPPED_KEPT_LINE
     first = job["result"]["history_id"]
     hist = _history(db, rid)
-    assert next(h for h in hist if h["id"] == first)["superseded_by"] is None
-    assert len(calls) == 1
+    assert [h["id"] for h in hist] == [first] and hist[0]["superseded_by"] is None
 
 
 def test_stop_after_the_last_model_call_is_honoured_and_said_as_stopped(db, monkeypatch):

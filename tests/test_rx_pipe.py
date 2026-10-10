@@ -281,15 +281,38 @@ def test_a_failure_after_the_save_names_the_saved_draft(db, monkeypatch):
     monkeypatch.setattr(labor, "generate_optimized_schedule",
                         _gen([[_line(d, "Ana" if i % 2 else "Bo") for i, d in enumerate(WEEK)]], []))
 
-    def boom(result):
-        raise KeyError("date")
-    monkeypatch.setattr(se, "_quality_gate", boom)
-    finished = _finish(monkeypatch)
+    # Since the scheduler audit 10/10/26 (ARCH-17) the quality gate runs
+    # before the job's one save; what can fail after it is the finish
+    # itself — the first write of the finished payload to the job store.
+    finished, tries = {}, []
+
+    def finish(j, status, result):
+        tries.append(status)
+        if len(tries) == 1:
+            raise KeyError("date")
+        finished.update(status=status, result=result)
+    monkeypatch.setattr(se._ops, "finish_async_job", finish)
     se._run_schedule_job("after-save", rid)
     res = finished["result"]
     assert finished["status"] == "done" and res["history_id"] and res["history_id"] != prev
     assert "nothing was saved" not in json.dumps(res)
     assert res["review"]["lines"][0].startswith("Cavnar AI saved this draft but couldn't finish its last step")
+
+
+def test_a_gate_that_crashes_leaves_the_draft_saved_as_it_was(db, monkeypatch):
+    # The quality gate is an improvement on a sound draft (ARCH-17: it runs
+    # before the save now): a crash in it never costs the owner the week.
+    rid = _build_harness(monkeypatch, db)
+    monkeypatch.setattr(labor, "generate_optimized_schedule",
+                        _gen([[_line(d, "Ana" if i % 2 else "Bo") for i, d in enumerate(WEEK)]], []))
+
+    def boom(result):
+        raise KeyError("date")
+    monkeypatch.setattr(se, "_quality_gate", boom)
+    finished = _finish(monkeypatch)
+    se._run_schedule_job("gate-crash", rid)
+    res = finished["result"]
+    assert finished["status"] == "done" and res["history_id"] and res["gate"] == {"ran": False}
 
 
 def test_a_saved_draft_whose_payload_failed_is_named_not_called_unsaved(monkeypatch):
