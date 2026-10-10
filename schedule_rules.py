@@ -5007,6 +5007,24 @@ def counts_as_manager(c: "Constraints", row: dict) -> bool:
 # last manager scheduled off hours before the end of the night is still one.
 CLOSING_MANAGER_STAYS_MINUTES = 60
 
+# The opening manager is in about an hour before the doors open (owner,
+# 10/10/26: Erik is Simple EJ's only manager on Tuesdays and "gets there
+# around an hour before open" - the kitchen's 8:45am prep before him "is
+# fine and shouldn't raise an alarm"). So a stretch BEFORE the open, at the
+# start of the day, that ends when a manager arrives at least this long
+# before the open, is prep before the opening manager - not a gap. A
+# manager arriving later than that, or a gap after one has arrived, still is.
+OPENING_MANAGER_LEAD_MINUTES = 60
+
+
+def opening_prep(gap, manager_starts, open_min) -> bool:
+    """Whether uncovered minutes `gap` (start, end) are the prep before the
+    opening manager: they end where a manager's cover starts, and that start
+    is at least OPENING_MANAGER_LEAD_MINUTES before the open (`open_min`,
+    minutes past midnight; None when no opening time is on file)."""
+    return (open_min is not None and gap[1] in set(manager_starts)
+            and gap[1] <= open_min - OPENING_MANAGER_LEAD_MINUTES)
+
 
 def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
     """{date: [(start_min, end_min, row_index)]} — each stretch the
@@ -5064,11 +5082,14 @@ def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
                 mgr.append((s + off * 24 * 60, e + off * 24 * 60))
         mgr_cover = _merge(mgr)
         mgr_ends = {e for _s, e in mgr_cover}
+        mgr_starts = {s for s, _e in mgr_cover}
         block_ends = {e for _s, e in staffed}
         gaps = [(s, e) for s, e in _uncovered(staffed, mgr_cover) if e - s > 0
                 # The closing manager's end-of-night stretch (above): it opens
                 # where a manager's cover ends and runs to the end of the block.
-                and not (s in mgr_ends and e in block_ends and e - s <= CLOSING_MANAGER_STAYS_MINUTES)]
+                and not (s in mgr_ends and e in block_ends and e - s <= CLOSING_MANAGER_STAYS_MINUTES)
+                # The prep before the opening manager (above).
+                and not opening_prep((s, e), mgr_starts, o)]
         if not gaps:
             continue
         pinned = []

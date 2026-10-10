@@ -209,3 +209,22 @@ def test_a_leader_rule_on_an_am_or_pm_job_keeps_to_its_half_of_the_day():
     assert models.leader_rule_daypart("Host AM") == "morning"
     assert models.leader_rule_daypart("Server PM") == "night"
     assert models.leader_rule_daypart("Bartender") is None
+
+
+def test_prep_before_an_opening_manager_in_an_hour_ahead_of_the_open_is_no_gap():
+    # Owner, 10/10/26: Erik is the only manager on Tuesdays and "gets there
+    # around an hour before open" - the kitchen's 8:45am prep before him is
+    # fine and shouldn't raise an alarm.
+    c = _c(open_times={"Tuesday": "11:00"}, close_times={"Tuesday": "23:00"})
+    rows = [_row(1, "Ben", "8:45am", "3:00pm", 6.25), _row(1, "Ann", "11:00am", "4:00pm", 5),
+            _row(1, "Erik", "10:00am", "11:00pm", 13)]
+    assert "no_manager" not in _kinds(rows, c) and sr.manager_gaps(rows, c) == {}
+    # A manager in later than an hour before the open leaves the prep a gap.
+    late = rows[:2] + [_row(1, "Erik", "10:30am", "11:00pm", 12.5)]
+    assert sr.manager_gaps(late, c)[WEEK[1]][0][:2] == (8 * 60 + 45, 10 * 60 + 30)
+    # Without an opening time on file nothing says when the doors open.
+    assert sr.manager_gaps(rows, _c())
+    # A gap after the opening manager arrived is still a gap.
+    mid = [_row(1, "Ben", "8:45am", "10:00pm", 13), _row(1, "Erik", "10:00am", "3:00pm", 5),
+           _row(1, "Andrew", "4:00pm", "11:00pm", 7)]
+    assert sr.manager_gaps(mid, c)[WEEK[1]][0][:2] == (15 * 60, 16 * 60)

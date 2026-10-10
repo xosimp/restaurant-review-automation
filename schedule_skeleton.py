@@ -731,6 +731,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         return best
 
     marked = {d: [] for d in planned}
+    opens = {d: _clock((open_times or {}).get(_weekday(d))) for d in planned}
 
     def step(d):
         """One move on `d`: the latest gap's closing leg to the best legal
@@ -739,7 +740,9 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         S, E = windows[d]["start"], windows[d]["end"]
         cov = coverage(d)
         gaps = [g for g in _rules._uncovered([(S, E)], cov) if g[1] > g[0]
-                and not any(m0 <= g[0] and g[1] <= m1 for m0, m1, _w in marked[d])]
+                and not any(m0 <= g[0] and g[1] <= m1 for m0, m1, _w in marked[d])
+                # prep before an opening manager in an hour ahead of the open
+                and not _rules.opening_prep(g, [m0 for m0, _m1 in cov], opens.get(d))]
         if not gaps:
             return False
         gap = max(gaps, key=lambda g: g[1])         # the close first: a manager at close matters most
@@ -785,7 +788,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         cov = coverage(d)
         for m0, m1, why in marked[d]:
             for a, b in _rules._uncovered([(m0, m1)], cov):
-                if b > a:
+                if b > a and not _rules.opening_prep((a, b), [s0 for s0, _e0 in cov], opens.get(d)):
                     uncovered.append({"date": d, "day": _weekday(d), "from": _fmt(a), "to": _fmt(b),
                                       "start": a, "end": b, "minutes": b - a, "why": why})
 

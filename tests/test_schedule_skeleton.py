@@ -811,3 +811,18 @@ def test_any_time_work_days_count_as_the_managers_days_and_lean_the_split_toward
     plan = sk.plan_manager_coverage(c, WEEK)
     assert "Erik" not in plan["unknown_pattern"]
     assert "Erik" not in plan["unknown_availability"]
+
+
+def test_the_prep_before_an_opening_manager_in_an_hour_early_is_not_called_uncovered():
+    # Owner, 10/10/26: Erik is the only manager on Tuesdays, in about an hour
+    # before the 11am open; the kitchen's 8:45am prep before him is fine.
+    standing = {"erik": [{"day": "Tuesday", "start": "10:00am", "end": "11:00pm"}]}
+    off = {k: {"Tuesday"} for k in ("jim", "anthony", "andrew")}
+    history = [{"date": d, "day": "Tuesday", "employee": "Ben", "role": "Line Cook", "shift_start": "8:45am",
+                "shift_end": "3:00pm", "scheduled_hours": "6.25"} for d in ("2026-09-22", "2026-09-29")]
+    c = _c(standing_shifts=standing, unavailable_days=off)
+    plan = sk.plan_manager_coverage(c, WEEK, history=history)
+    assert _window(plan, "2026-10-06")[0] == 8 * 60 + 45          # the day still starts with the prep
+    assert not [u for u in plan["uncovered"] if u["date"] == "2026-10-06"]
+    assert [(r["shift_start"], r["shift_end"]) for r in _on(plan, "2026-10-06", "Erik")] == [("10:00am", "11:00pm")]
+    assert not [x for x in sk.review_lines(plan) if "Tuesday" in x and x.startswith("No manager")]
