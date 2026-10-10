@@ -3669,12 +3669,11 @@ def mobile_generate_schedule(current_user):
     if not dates:
         try:
             import schedule_versions as _sv_open
-            from schedule_engine import _week_monday
-            from time_utils import restaurant_now_by_id
-            from labor import get_week_start_day
+            # The week the job will write (schedule_engine.generation_request:
+            # the named one, else the first that can be published on time).
+            from schedule_engine import generation_request as _gen_req_open
             _discarded = _sv_open.open_draft_for_week(
-                rid, _week_monday(restaurant_now_by_id(rid, naive=True), week_start,
-                                  start_day=get_week_start_day(rid)).strftime("%Y-%m-%d"))
+                rid, _gen_req_open(rid, week_start=week_start)["week_start"])
         except Exception as _odx:
             _ops.capture(_odx, job="schedule_rejection", context=f"restaurant_id={rid} (open draft)")
     _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}
@@ -8639,6 +8638,15 @@ def mobile_score_schedule(current_user):
                         from time_utils import restaurant_now_by_id as _rnow_w
                         _late_warning = _sr_w.late_change_warning(
                             _sr_w.compliance(rid), pending["dates"], _rnow_w(rid, naive=True).date())
+                        # Where a predictive-scheduling law covers the
+                        # restaurant the change is PRICED per changed shift
+                        # before it is sent (schedule audit 10/10/26
+                        # MARKET-2): the sentence names the sum, and the rows
+                        # come back for the review.
+                        import strategy_routes as _sr_pp
+                        _pp_resp = _sr_pp._predictability_preview(rid, saved, rows)
+                        if _pp_resp and _pp_resp.get("text"):
+                            _late_warning = _pp_resp["text"]
             except Exception as _nx:
                 print(f"[schedule] unsent-changes check failed: {_nx}")
         # The rescored verdict is on the manager's screen: its
@@ -8660,6 +8668,9 @@ def mobile_score_schedule(current_user):
                        # never sent). Nobody has been told yet.
                        unsent_changes=locals().get("_resp_unsent"),
                        late_change_warning=locals().get("_late_warning"),
+                       # The priced changes (predictability_pay.preview) when a
+                       # predictive-scheduling law covers the restaurant.
+                       predictability_pay=locals().get("_pp_resp"),
                        # The one-tap "why" for a big change in the first weeks
                        # (L-35): [{key, kind, text, options: [{answer, label}],
                        # date, employee, role, daypart}] — answered at

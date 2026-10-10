@@ -11798,6 +11798,20 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .rul-pack li{margin:2px 0 2px 16px}
 .rul-pack .cc{margin-top:6px;color:var(--ink3);font-style:italic}
 .rul-from{color:var(--ember)!important}
+/* The compliance engine on the rules screen (schedule audit 10/10/26
+   RM-15): which laws hold the restaurant and why, each value with its
+   source; the ledger, estimates, answers and offers for whoever sends. */
+.cmp-row{display:flex;gap:10px;align-items:baseline;justify-content:space-between;padding:7px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2);line-height:1.5}
+.cmp-row:first-child{border-top:none}
+.cmp-row .t{color:var(--ink);font-weight:600}
+.cmp-row .w{flex:1;min-width:0}
+.cmp-tag{flex:none;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--sf-recess);color:var(--ink3)}
+.cmp-tag.on{background:var(--hb-tint2);color:var(--ember)}
+.cmp-tag.ask{color:var(--amber)}
+.cmp-src{font-size:12px;color:var(--ink3)}
+.cmp-src a{color:var(--ink3);text-decoration:underline}
+.cmp-box{margin-top:8px;padding:10px 12px;border-radius:9px;background:var(--sf-recess);font-size:13px;color:var(--ink2);line-height:1.55}
+.cmp-box textarea{width:100%;min-height:90px}
 .rul-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--hb-line2)}
 .rul-row:first-child{border-top:none}
 .rul-row .role{flex:0 0 150px;font-weight:600;color:var(--ink)}
@@ -36557,8 +36571,12 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // Labor standards save one role at a time, apart from Save rules (D-25).
     if(window.sfw2RulesStandards)h+=sfw2RulesStandards();
     if(!ro)h+='<div class="sr-actions" style="margin-top:16px"><button type="button" class="cbtn cbtn-primary" onclick="saveRules(this)">Save rules</button><span class="ac-status" id="rules-status"></span></div>';
+    // The compliance engine (schedule audit 10/10/26 RM-15): which laws
+    // hold the restaurant and why, saved on its own (cmp-*).
+    h+='<div id="cmp-root"></div>';
     el.innerHTML=h;
     if(window.sfw2RulesAfter)sfw2RulesAfter(d,ro);
+    if(window.cmpLoad)cmpLoad();
   };
   // A role the floors suggestion names that has no row yet (cav-sfw2).
   window.sfw2AddFloorRow=function(role){var box=document.getElementById('rul-floors');if(!box)return null;box.insertAdjacentHTML('beforeend',_rulFloorHtml(role,{},false));return box.lastElementChild;};
@@ -43206,6 +43224,192 @@ function sfw2RuleCheck(chk) {
     if(window.MutationObserver)new MutationObserver(function(){scan(panel);}).observe(panel,{childList:true,subtree:true});
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+<script>
+// The compliance engine on the rules screen (schedule audit 10/10/26 RM-15,
+// MARKET-1..6, LEARNING-18). Where the restaurant is and how big the
+// business is decide which laws hold it; each value in force says its
+// source and date. Whoever sends schedules also sees the predictability-pay
+// ledger, the good-faith estimates, the requests owed a written answer and
+// the access-to-hours offers. ES5 only, colours from CSS variables.
+(function(){
+  var _cmp = null;
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function md(x){return window.mdy?window.mdy(x):esc(x||'');}
+  function jget(url,cb){fetch(url,{credentials:'same-origin'}).then(apiJson).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
+  function jsend(url,body,cb){fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(apiJson).then(cb).catch(function(){cb({ok:false,error:'Network error'});});}
+  function busy(btn,label){return (btn&&window.cbtnBusy)?cbtnBusy(btn,label||'Saving…'):function(){};}
+  function money(n){return '$'+(Math.round((+n||0)*100)/100).toFixed(2);}
+  var STATUS={applies:['Applies','on'],not_covered:['Doesn’t apply',''],outside:['Doesn’t apply',''],unknown:['Needs an answer','ask']};
+  var WORDS={notice_days:'Schedule notice (days)',min_rest_hours:'Rest between shifts (hours)',rest_mode:'Rest rule',
+    rest_premium_multiplier:'Short-rest pay rate',rest_premium_flat:'Short-rest premium ($)',rest_premium_scope:'Premium paid on',
+    daily_ot_hours:'Daily overtime after (hours)',daily_dt_hours:'Double time after (hours)',seventh_day_ot:'Seventh-day premium',
+    meal_break_after_hours:'Meal break after (hours)',meal_breaks:'Meal breaks',rest_breaks:'Rest breaks',break_premium:'Missed-break premium',
+    predictability_pay:'Predictability pay',good_faith_estimate:'Good-faith estimate',change_requests:'Written answers to requests',
+    access_to_hours:'Access to hours',records_years:'Records kept (years)',break_penalty:'Missed-meal penalty',
+    split_shift:'Split-shift premium',spread_of_hours:'Spread of hours'};
+  function valueText(k,v){
+    if(v===true)return 'yes';if(v===false)return 'no';
+    if(v===null||v===undefined)return '—';
+    if(typeof v!=='object')return String(v);
+    if(k==='meal_breaks'&&v.length)return v.map(function(m){return m.minutes+' min'+(m.min_hours?' past '+m.min_hours+'h':'')+(m.start_by?', begun by hour '+m.start_by:'');}).join('; ');
+    if(k==='rest_breaks')return v.minutes+' min per '+v.per_hours+'h, paid';
+    if(k==='records_years')return String(v);
+    if(k==='predictability_pay')return 'inside '+(v.window_days||14)+' days of the shift — see the ledger below';
+    return 'see the source';
+  }
+  window.cmpLoad=function(){
+    var root=document.getElementById('cmp-root');if(!root)return;
+    root.innerHTML='<div class="lb2-sub">Where you are, and the laws that hold you<small>public rules with their sources — not legal advice</small></div><div class="cmp-box">Reading the rules that apply here…</div>';
+    jget('/api/labor/compliance',function(d){_cmp=d;cmpRender();});
+  };
+  function cmpRender(){
+    var root=document.getElementById('cmp-root'),d=_cmp,h,i,k;if(!root||!d)return;
+    if(!d.ok){root.innerHTML='<div class="cmp-box">'+esc(d.error||'The compliance rules didn’t load.')+'</div>';return;}
+    var ev=d.evaluation||{},p=ev.profile||{},ro=!d.can_edit;
+    h='<div class="lb2-sub">Where you are, and the laws that hold you<small>public rules with their sources — not legal advice; reviewed '+md(d.library&&d.library.reviewed_on)+'</small></div>';
+    // the profile coverage is decided on
+    h+='<div class="lb2-form" style="margin-top:0"><div class="ac-field"><label>State</label><select class="ac-select" id="cmp-state"'+(ro?' disabled':'')+'><option value="">—</option>';
+    for(i=0;i<(d.states||[]).length;i++)h+='<option value="'+esc(d.states[i].code)+'"'+(d.states[i].code===p.state?' selected':'')+'>'+esc(d.states[i].label)+'</option>';
+    h+='</select></div><div class="ac-field w"><label>City</label><input class="ac-input" id="cmp-city" maxlength="80" value="'+esc(p.city||'')+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>Employees, all locations</label><input class="ac-input ac-num" id="cmp-emp" type="number" min="0" value="'+esc(p.employees==null?'':p.employees)+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>Locations</label><input class="ac-input ac-num" id="cmp-loc" type="number" min="1" value="'+esc(p.locations==null?'':p.locations)+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>Employees in this city</label><input class="ac-input ac-num" id="cmp-here" type="number" min="0" value="'+esc(p.employees_here==null?'':p.employees_here)+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>Kind</label><select class="ac-select" id="cmp-kind"'+(ro?' disabled':'')+'><option value="">—</option>';
+    var kinds={full_service:'Full service',fast_food:'Fast food',other:'Other'};
+    for(k in kinds)if(kinds.hasOwnProperty(k))h+='<option value="'+k+'"'+(p.kind===k?' selected':'')+'>'+kinds[k]+'</option>';
+    h+='</select></div></div>';
+    if(p.suggested&&!p.confirmed)h+='<div class="cmp-box">From '+esc(p.suggested.from)+': '+esc(p.suggested.city)+', '+esc(p.suggested.state)+'. '+(ro?'':'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cmpUseSuggestion()">Use it</button>')+'</div>';
+    if(!ro)h+='<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary" onclick="cmpSaveProfile(this)">Save where you are</button><span class="ac-status" id="cmp-status"></span></div>';
+    // which laws, and why
+    h+='<div class="cmp-box" style="margin-top:12px">';
+    var js=ev.jurisdictions||[];
+    for(i=0;i<js.length;i++){var j=js[i],st=STATUS[j.status]||[j.status,''];
+      h+='<div class="cmp-row"><div class="w"><span class="t">'+esc(j.label)+'</span> — '+esc(j.law||'')+'<div>'+esc(j.why||'')+'</div>'+
+        ((j.sources||[]).length?'<div class="cmp-src"><a href="'+esc(j.sources[0])+'" target="_blank" rel="noopener">source</a></div>':'')+'</div><span class="cmp-tag '+st[1]+'">'+esc(st[0])+'</span></div>';}
+    if(!js.length)h+='Pick the state to see which rules hold you.';
+    h+='</div>';
+    // what is in force, each with its source
+    var inf=d.in_force||[];
+    if(inf.length){h+='<div class="cmp-box">';
+      for(i=0;i<inf.length;i++){var v=inf[i];
+        h+='<div class="cmp-row"><div class="w"><span class="t">'+esc(WORDS[v.key]||v.key.replace(/_/g,' '))+'</span>: '+esc(valueText(v.key,v.value))+
+          '<div class="cmp-src">'+esc(v.by_label||v.by)+(v.effective?' · from '+md(v.effective):'')+' · <a href="'+esc(v.source)+'" target="_blank" rel="noopener">source</a>'+(v.note?' · '+esc(v.note):'')+'</div></div></div>';}
+      h+='</div>';}
+    // the draft horizon
+    var hz=d.horizon||{};
+    if(hz.notice_days)h+='<div class="cmp-box">With '+esc(hz.notice_days)+' days’ notice, drafts are made for the week of '+md(hz.week_start)+' — '+esc(hz.weeks_ahead)+' weeks out — so they can go out on time. The weeks before it are with staff: a change to them is priced below before you send it.</div>';
+    // rest
+    var rs=d.rest||{};
+    h+='<div class="cmp-box"><span class="t">Rest between shifts:</span> '+(rs.mode==='off'?'no rule':(rs.hours+'h'+(rs.mode==='consent_premium'?', shorter only with the person’s written agreement, paid '+(rs.flat?'$'+rs.flat+' a time':rs.multiplier+'x'+(rs.scope==='shift'?' for that shift':' for the hours inside it')):', a ban')))+'.';
+    if(!ro)h+=' <select class="ac-select" id="cmp-rest-mode" aria-label="Rest rule" onchange="cmpSaveRestMode(this)"><option value="">as the law or your hours say</option><option value="hard"'+(rs.mode==='hard'?' selected':'')+'>a ban</option><option value="consent_premium">with written agreement and a premium</option><option value="off">off</option></select>';
+    h+='</div>';
+    var cf=d.conflicts||[];
+    for(i=0;i<cf.length;i++)h+='<div class="cmp-box" style="color:var(--amber)">'+esc(cf[i].text)+'</div>';
+    // breaks
+    var bk=d.breaks||{};
+    if(bk.basis)h+='<div class="cmp-box"><span class="t">Breaks:</span> placed inside long shifts, staggered off the rush — '+esc(bk.basis)+(bk.source?' <span class="cmp-src"><a href="'+esc(bk.source)+'" target="_blank" rel="noopener">source</a></span>':'')+'</div>';
+    // the school calendar
+    var cal=d.school_calendar||{},yrs=cal.years||[];
+    h+='<div class="lb2-sub">School calendar<small>minors’ school-day hours follow it — '+esc(d.school_basis||'')+'</small></div>';
+    if(d.school_calendar_prompt&&d.school_calendar_prompt.ask)h+='<div class="cmp-box" style="color:var(--amber)">'+esc(d.school_calendar_prompt.text)+'</div>';
+    h+='<div class="lb2-form" style="margin-top:0"><div class="ac-field w"><label>District</label><input class="ac-input" id="cmp-district" maxlength="80" value="'+esc(cal.district||'')+'"'+(ro?' disabled':'')+'></div>';
+    var y0=yrs.length?yrs[yrs.length-1]:{};
+    h+='<div class="ac-field"><label>First day of school</label><input class="ac-input" type="date" id="cmp-ystart" value="'+esc(y0.start||'')+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>Last day</label><input class="ac-input" type="date" id="cmp-yend" value="'+esc(y0.end||'')+'"'+(ro?' disabled':'')+'></div></div>';
+    var br=(y0.breaks||[]).map(function(b){return b.start+' '+b.end+(b.label?' '+b.label:'');}).join('\n');
+    h+='<div class="ac-field w"><label>Breaks, one a line: first-day last-day label (e.g. 2026-12-21 2027-01-01 Winter)</label><textarea class="ac-input" id="cmp-breaks" rows="3"'+(ro?' disabled':'')+'>'+esc(br)+'</textarea></div>';
+    if(!ro)h+='<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary" onclick="cmpSaveCalendar(this)">Save the school year</button><span class="ac-status" id="cmp-cal-status"></span></div>';
+    var ms=d.minor_seasons||{},mk=[];for(k in ms)if(ms.hasOwnProperty(k))mk.push(k);
+    if(mk.length){h+='<div class="cmp-box">';for(i=0;i<mk.length;i++){var s=ms[mk[i]];h+='<div class="cmp-row"><span class="t">'+esc(mk[i])+'</span><span>'+(s.term!=null?s.term+'h a school week':'—')+' · '+(s['break']!=null?s['break']+'h a week off school':'—')+'</span></div>';}h+='</div>';}
+    if(d.can_send)h+=cmpSenderHtml(d);
+    var ext=(d.library&&d.library.external)||[];
+    if(ext.length){h+='<div class="cmp-box"><span class="t">Not stated here — for counsel:</span>';for(i=0;i<ext.length;i++)h+='<div class="cmp-src">'+esc(ext[i].what)+' — '+esc(ext[i].why)+'</div>';h+='</div>';}
+    root.innerHTML=h;
+  }
+  function cmpSenderHtml(d){
+    var h='',i,led=d.ledger||{},est=d.estimates||{},reqs=d.requests||[],offs=d.access_offers||[];
+    h+='<div class="lb2-sub">Predictability pay<small>each change to a posted week inside the notice window, priced, the last 90 days</small></div>';
+    h+='<div class="cmp-box">'+(led.rows?esc(led.owed)+' owed, '+esc(led.exempt)+' exempt — '+money(led.total)+' in all.':'Nothing on the ledger.');
+    var bp=led.by_person||[];for(i=0;i<bp.length&&i<6;i++)h+='<div class="cmp-row"><span class="t">'+esc(bp[i].employee)+'</span><span>'+money(bp[i].amount)+'</span></div>';
+    h+='<div class="sr-actions"><a class="cbtn cbtn-secondary cbtn-sm" href="/api/labor/compliance/ledger?format=csv&amp;mark=1">Download for payroll</a></div></div>';
+    if(est.required||(est.people||[]).length){
+      h+='<div class="lb2-sub">Good-faith estimates<small>'+(est.law?esc(est.law)+' asks for one at hire':'a written estimate of each person’s hours')+'</small></div><div class="cmp-box">';
+      var pe=est.people||[];
+      for(i=0;i<pe.length&&i<40;i++){var x=pe[i];
+        h+='<div class="cmp-row"><div class="w"><span class="t">'+esc(x.employee)+'</span>'+(x.estimate?' — issued '+md((x.estimate.issued_at||'').slice(0,10))+(x.estimate.acknowledged_at?', signed':', not signed yet'):(x['new']?' — new, none yet':' — none yet'))+'</div><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cmp-emp="'+esc(x.employee)+'" onclick="cmpDraftEstimate(this)">'+(x.estimate?'Revise':'Write it')+'</button></div>';}
+      h+='<div id="cmp-est-edit"></div></div>';
+    }
+    if(reqs.length){h+='<div class="lb2-sub">Requests owed a written answer</div><div class="cmp-box">';
+      for(i=0;i<reqs.length&&i<20;i++){var r=reqs[i];
+        h+='<div class="cmp-row"><div class="w"><span class="t">'+esc(r.employee_name)+'</span>: '+esc(r.body)+(r.due_at?'<div class="cmp-src'+(r.overdue?'" style="color:var(--red)':'')+'">answer due '+md(r.due_at.slice(0,10))+'</div>':'')+
+          (r.status==='open'?'<div><select class="ac-select" id="cmp-dec-'+r.id+'"><option value="granted">Granted</option><option value="modified">Modified</option><option value="declined">Declined</option></select> <input class="ac-input" id="cmp-ans-'+r.id+'" maxlength="1000" placeholder="Your answer, in writing"> <button type="button" class="cbtn cbtn-secondary cbtn-sm" data-cmp-req="'+r.id+'" onclick="cmpAnswer(this)">Send answer</button></div>':'<div>'+esc(r.status)+': '+esc(r.answer||'')+'</div>')+'</div></div>';}
+      h+='</div>';}
+    var hc=d.hire_check||{};
+    if(hc.rule){h+='<div class="lb2-sub">Extra hours to current staff first<small>'+esc(hc.text||'')+'</small></div><div class="lb2-form" style="margin-top:0">'+
+      '<div class="ac-field"><label>Date</label><input class="ac-input" type="date" id="cmp-o-date"></div><div class="ac-field"><label>Start</label><input class="ac-input" id="cmp-o-start" placeholder="5:00pm"></div>'+
+      '<div class="ac-field"><label>End</label><input class="ac-input" id="cmp-o-end" placeholder="10:00pm"></div><div class="ac-field"><label>Role</label><input class="ac-input" id="cmp-o-role" placeholder="Server"></div>'+
+      '<div class="ac-field"><label>Open for (hours)</label><input class="ac-input ac-num" type="number" min="1" id="cmp-o-win" placeholder="'+esc(hc.rule.post_hours||hc.rule.accept_hours||'')+'"></div></div>'+
+      '<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary" onclick="cmpOffer(this)">Offer to current staff</button><span class="ac-status" id="cmp-o-status"></span></div>';
+      for(i=0;i<offs.length&&i<10;i++)h+='<div class="cmp-row"><span>'+md(offs[i].shift_date)+' '+esc(offs[i].shift_start||'')+'–'+esc(offs[i].shift_end||'')+' '+esc(offs[i].role||'')+'</span><span class="cmp-tag">'+esc(offs[i].status.replace(/_/g,' '))+'</span></div>';}
+    return h;
+  }
+  function num(id){var v=(document.getElementById(id)||{}).value;return v===''||v==null?null:+v;}
+  window.cmpUseSuggestion=function(){var p=(_cmp&&_cmp.evaluation&&_cmp.evaluation.profile)||{},s=p.suggested||{};var st=document.getElementById('cmp-state'),c=document.getElementById('cmp-city');if(st&&s.state)st.value=s.state;if(c&&s.city)c.value=s.city;};
+  window.cmpSaveProfile=function(btn){
+    var done=busy(btn),body={state:document.getElementById('cmp-state').value||null,city:document.getElementById('cmp-city').value||null,
+      employees:num('cmp-emp'),locations:num('cmp-loc'),employees_here:num('cmp-here'),kind:document.getElementById('cmp-kind').value||null};
+    jsend('/api/labor/compliance/profile',body,function(d){done();if(!d.ok){toast(d.error||'Could not save that','error');return;}_cmp=d;cmpRender();toast('Saved — the rules that hold you are below','success');});
+  };
+  window.cmpSaveRestMode=function(sel){
+    var v=sel.value,body=v?{rules:{rest_mode:v}}:{rules_default:['rest_mode']};
+    jsend('/api/labor/rules',body,function(d){if(!d.ok){toast(d.error||'Could not save that','error');return;}toast('Rest rule saved','success');cmpLoad();});
+  };
+  window.cmpSaveCalendar=function(btn){
+    var lines=(document.getElementById('cmp-breaks').value||'').split('\n'),breaks=[],i;
+    for(i=0;i<lines.length;i++){var p=lines[i].replace(/^\s+|\s+$/g,'').split(/\s+/);if(p.length>=2&&p[0])breaks.push({start:p[0],end:p[1],label:p.slice(2).join(' ')});}
+    var s=document.getElementById('cmp-ystart').value,e=document.getElementById('cmp-yend').value,years=[];
+    var keep=((_cmp&&_cmp.school_calendar&&_cmp.school_calendar.years)||[]).slice(0,-1);
+    for(i=0;i<keep.length;i++)years.push(keep[i]);
+    if(s||e)years.push({start:s,end:e,breaks:breaks});
+    var done=busy(btn);
+    jsend('/api/labor/compliance/school-calendar',{district:document.getElementById('cmp-district').value,years:years},function(d){done();if(!d.ok){toast(d.error||'Could not save that','error');return;}_cmp=d;cmpRender();toast('School year saved','success');});
+  };
+  window.cmpDraftEstimate=function(btn){
+    var who=btn.getAttribute('data-cmp-emp'),done=busy(btn,'Drafting…');
+    jsend('/api/labor/compliance/estimates/draft',{employee:who},function(d){done();if(!d.ok){toast(d.error||'Could not draft it','error');return;}
+      var e=d.estimate,box=document.getElementById('cmp-est-edit');if(!box)return;box._est=e;
+      box.innerHTML='<div class="cmp-box"><span class="t">'+esc(e.employee)+'</span> — from '+esc((e.basis||[]).join(', '))+
+        '<div class="lb2-form"><div class="ac-field"><label>Hours a week, low</label><input class="ac-input ac-num" type="number" id="cmp-e-lo" value="'+esc(e.hours_low==null?'':e.hours_low)+'"></div>'+
+        '<div class="ac-field"><label>High</label><input class="ac-input ac-num" type="number" id="cmp-e-hi" value="'+esc(e.hours_high==null?'':e.hours_high)+'"></div></div>'+
+        '<textarea class="ac-input" id="cmp-e-text">'+esc(e.text)+'</textarea><div class="sr-actions"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="cmpIssueEstimate(this)">Issue it</button></div></div>';});
+  };
+  window.cmpIssueEstimate=function(btn){
+    var box=document.getElementById('cmp-est-edit'),e=box&&box._est;if(!e)return;
+    e.hours_low=num('cmp-e-lo');e.hours_high=num('cmp-e-hi');e.text=document.getElementById('cmp-e-text').value;
+    var done=busy(btn,'Issuing…');
+    jsend('/api/labor/compliance/estimates',{estimate:e},function(d){done();if(!d.ok){toast(d.error||'Could not issue it','error');return;}toast('Issued — '+e.employee+' signs for it in the app','success');cmpLoad();});
+  };
+  window.cmpAnswer=function(btn){
+    var id=btn.getAttribute('data-cmp-req'),done=busy(btn,'Sending…');
+    jsend('/api/labor/compliance/requests/'+id+'/answer',{decision:document.getElementById('cmp-dec-'+id).value,answer:document.getElementById('cmp-ans-'+id).value},function(d){done();if(!d.ok){toast(d.error||'Could not send that','error');return;}toast('Answered in writing','success');cmpLoad();});
+  };
+  window.cmpOffer=function(btn){
+    var done=busy(btn,'Posting…'),body={date:document.getElementById('cmp-o-date').value,shift_start:document.getElementById('cmp-o-start').value,
+      shift_end:document.getElementById('cmp-o-end').value,role:document.getElementById('cmp-o-role').value,hours_window:num('cmp-o-win')};
+    jsend('/api/labor/compliance/offer-hours',body,function(d){done();if(!d.ok){toast(d.error||'Could not post that','error');return;}toast('Offered to your current staff until '+md((d.offer.closes_at||'').slice(0,10)),'success');cmpLoad();});
+  };
+  // Generate's default week under a notice rule is the first one that can
+  // still go out on time (MARKET-1): the picker's default option says so.
+  function relabelPick(){
+    var pick=document.getElementById('sched-week-pick');if(!pick)return;
+    jget('/api/labor/compliance?brief=1',function(d){
+      var hz=d&&d.ok&&d.horizon,i;if(!hz||!hz.notice_days||hz.weeks_ahead<2)return;
+      for(i=0;i<pick.options.length;i++)if(pick.options[i].value==='next')pick.options[i].text='Week of '+md(hz.week_start)+' — first on time';
+    });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',relabelPick);else relabelPick();
 })();
 </script>
 </body>

@@ -71,6 +71,7 @@ def test_a_fix_is_never_a_trade_of_one_breach_for_another():
     breach."""
     names = ["Ann", "Bob"]
     c = cons(names, blocked_dates={"ann": {TUE: "on approved time off"}})
+    c.compliance["min_rest_hours"] = 10            # the owner's rest rule (no default since 10/10/26 MARKET-3)
     rows = [row(TUE, "Ann", "8:00am", "2:00pm"), row(MON, "Bob", "6:00pm", "1:00am")]
     out = _fix(rows, c, **_sig(names, typical_headcount={("Tuesday", "morning"): {"Server": 1}}))
     assert out["rows"][0]["employee"] == "Ann" and not out["fixes"]

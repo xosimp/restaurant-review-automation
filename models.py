@@ -653,6 +653,16 @@ class Restaurant:
             return ""  # schedule_dedicated: [{"label", "family", "parts": {daypart: [days]}, "waive_words"}]
     cut_floor_default: int           = 2     # the fewest people a cut suggestion leaves in a role with no floor set (1..10; schedule_rules.cut_floor)
     jurisdiction: Optional[str]      = None  # compliance_packs code (CA, NY, …) applied under the owner's own rules
+    # What coverage under a jurisdiction is decided on (compliance_packs.profile,
+    # schedule audit 10/10/26 RM-15): {"state", "city", "employees" (the whole
+    # business, worldwide), "locations", "employees_here", "kind", "franchise",
+    # "confirmed_at", "confirmed_by"} — Simple EJ's (St. Charles, IL) is held
+    # to Illinois, and told Chicago's Fair Workweek does not cover it.
+    compliance_profile_json: Optional[str] = None
+    # The school district's calendar the minors' school-day limits read
+    # (school_calendar, LEARNING-18): {"district", "years": [{"start", "end",
+    # "breaks": [{"start", "end", "label"}]}], "updated_at", "updated_by"}.
+    school_calendar_json: Optional[str] = None
     role_arrival_json: Optional[str] = None  # {"Server": 5} minutes before their own shift start a role clocks in (attendance.clock_in_leads)
     role_close_min_json: Optional[str] = None  # {"Bartender": 60} the last of a role stays until N minutes after close
     role_requirements_json: Optional[str] = None  # {"Bartender": ["alcohol"]} certifications a role needs
@@ -1243,6 +1253,10 @@ def ensure_columns(db_path: str = DB_PATH):
         # staffing requirement.
         ("restaurants", "cut_floor_default", "INTEGER DEFAULT 2"),
         ("restaurants", "jurisdiction", "TEXT"),
+        # The compliance profile and the school calendar (schedule audit
+        # 10/10/26 RM-15, LEARNING-18).
+        ("restaurants", "compliance_profile_json", "TEXT"),
+        ("restaurants", "school_calendar_json", "TEXT"),
         ("restaurants", "role_arrival_json", "TEXT"),
         ("restaurants", "role_close_min_json", "TEXT"),
         ("restaurants", "role_requirements_json", "TEXT"),
@@ -4583,6 +4597,16 @@ def init_db(db_path: str = DB_PATH):
     # (staff_comms, employee audit fix B5).
     from staff_comms import init_staff_comms
     init_staff_comms(db_path)
+    # The compliance records (schedule audit 10/10/26 RM-15): staff's
+    # written consents, the predictability-pay and rest-premium ledger, the
+    # good-faith estimates, the written answers to change requests and the
+    # access-to-hours offers — at boot, never on a request path.
+    from staff_consent import init_staff_consent
+    init_staff_consent(db_path)
+    from predictability_pay import init_compliance_pay
+    init_compliance_pay(db_path)
+    from fair_workweek import init_fair_workweek
+    init_fair_workweek(db_path)
     import people as _people_boot
     _people_boot.init_people(db_path)
     # What staff can look up and the day's brief a manager approves: the
@@ -4964,7 +4988,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default",
-        "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
+        "jurisdiction","compliance_profile_json","school_calendar_json","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
@@ -5731,6 +5755,8 @@ def _restaurant_from_row(row) -> Restaurant:
         crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
+        compliance_profile_json=row["compliance_profile_json"] if "compliance_profile_json" in row.keys() else None,
+        school_calendar_json=row["school_calendar_json"] if "school_calendar_json" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
         role_close_min_json=row["role_close_min_json"] if "role_close_min_json" in row.keys() else None,
         role_requirements_json=row["role_requirements_json"] if "role_requirements_json" in row.keys() else None,

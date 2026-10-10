@@ -590,19 +590,24 @@ def notify_generation_watchers(job_id, restaurant_id, exclude=None) -> int:
 
 
 def generation_request(restaurant_id, week_start=None, dates=None, history_id=None, instruction=None,
-                       today=None) -> dict:
+                       today=None, publish_lag_days=0) -> dict:
     """What one press of Generate asks for, as the job store keeps it
     (ops.claim_async_job `request` — re-audit 10/4/26 UI-8): the week's
-    Monday (from week_start, else a redo's first date, else next week), the
-    days redone, the draft they belong to, the owner's words. A press joins
-    a running generation only when this is the same."""
+    first day (from week_start, else a redo's first date, else the first
+    week that can still be published on time — default_week_start, MARKET-1),
+    the days redone, the draft they belong to, the owner's words. A press
+    joins a running generation only when this is the same."""
     if today is None:
         from time_utils import restaurant_now_by_id
         today = restaurant_now_by_id(restaurant_id, naive=True)
     days = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]}) or None
     from labor import get_week_start_day
-    monday = _week_monday(today, week_start or (days[0] if days else None),
-                          start_day=get_week_start_day(restaurant_id)).strftime("%Y-%m-%d")
+    if week_start or days:
+        monday = _week_monday(today, week_start or days[0],
+                              start_day=get_week_start_day(restaurant_id)).strftime("%Y-%m-%d")
+    else:
+        from models import get_restaurant as _gr_req
+        monday = default_week_start(_gr_req(restaurant_id), today, publish_lag_days).strftime("%Y-%m-%d")
     try:
         hid = int(history_id) if (days and history_id not in (None, "")) else None
     except (TypeError, ValueError):
@@ -1150,6 +1155,28 @@ def _week_monday(today, week_start=None, start_day=0):
     return today + _t(days=days_ahead)
 
 
+def default_week_start(restaurant, today, publish_lag_days=0):
+    """The first day of the week a draft targets when nobody named one: the
+    first week that can still be published ON TIME under the notice rule in
+    force (schedule_rules.first_publishable_week), else next week, on the
+    restaurant's own week start. Under a 14-day predictive-scheduling notice
+    every draft used to target next week, which is always 1-7 days out, so
+    every auto-publish was held (schedule audit 10/10/26 MARKET-1); the
+    nearer weeks are live — changing them is priced (predictability_pay).
+    `today` is a datetime (the return keeps its type, as _week_monday's
+    does); `publish_lag_days` is the auto-draft's day before its publish."""
+    from datetime import datetime as _dtw, timedelta as _tw
+    sd = week_start_day_of(restaurant)
+    try:
+        notice = (_rules.compliance(restaurant) or {}).get("notice_days")
+    except Exception as e:
+        _soft_fail("notice rule for the draft week", e, getattr(restaurant, "id", None))
+        notice = None
+    first = _rules.first_publishable_week(today, sd, notice, publish_lag_days)
+    base = today if isinstance(today, _dtw) else _dtw.combine(today, _dtw.min.time())
+    return base + _tw(days=(first - base.date()).days)
+
+
 def week_start_day_of(restaurant) -> int:
     """The weekday a restaurant's schedule week starts on (0 = Monday) —
     restaurants.week_start_day, its payroll week (_week_monday)."""
@@ -1211,7 +1238,9 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
     # with the label that says whose target it is.
     tgt = _thr.target_for(restaurant, "labor")
     target = tgt["pct"]
-    monday = _week_monday(restaurant_now(restaurant, naive=True), week_start, start_day=week_start_day_of(restaurant))
+    _now_fp = restaurant_now(restaurant, naive=True)
+    monday = (_week_monday(_now_fp, week_start, start_day=week_start_day_of(restaurant)) if week_start
+              else default_week_start(restaurant, _now_fp))
     dates = week_dates_from(monday)
     monthly = float(getattr(restaurant, "monthly_revenue_target", 0) or 0)
     revenue = {"value": None, "source": None}
@@ -1467,6 +1496,8 @@ _INPUT_WORDS = {
     "assumed stays": "the closing manager's assumed stay",
     # The shape contract's slot filling (AI cost audit 10/7/26 #69, off by default).
     "shape slot assignment": "who fills each slot the draft asked for",
+    # The notice rule that sets which week a draft targets (MARKET-1).
+    "notice rule for the draft week": "your schedule notice rule",
     "staff_availability": "staff availability", "staffing_baseline": "the usual crew from past weeks",
     "salaried_week": "the salaried staff's share of the budget", "signals_by_date": "the week's dated events",
     "pairs": "who works well together", "reliability": "attendance", "learned": "the habits learned from your edits",
@@ -1615,7 +1646,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     from time_utils import restaurant_now
     today = restaurant_now(restaurant, naive=True)
     _start_day = week_start_day_of(restaurant)
-    monday = _week_monday(today, week_start, start_day=_start_day)
+    # No week named: the first one that can still be published on time
+    # under the notice rule in force (MARKET-1) — next week without one.
+    monday = (_week_monday(today, week_start, start_day=_start_day) if week_start
+              else default_week_start(restaurant, today))
     next_week_dates = week_dates_from(monday)
     week_days = week_day_names(next_week_dates)
     # Everything the rules need to know about who can work when, gathered
@@ -6127,6 +6161,10 @@ def _quality_signals(restaurant_id, result, **extra):
         signals["hours_exempt"] = sorted(n.strip().lower() for n in (c.roster_names or [])
                                          if not _rules.hours_rules_apply(c, n))
         signals["weekly_ceiling"] = c.compliance.get("weekly_hours_ceiling")
+        # The meal breaks placed inside long shifts (breaks.plan_day): the
+        # coverage-by-the-hour score takes a person off the floor for their
+        # meal (schedule audit 10/10/26 MARKET-6).
+        signals["break_rules"] = getattr(c, "break_rules", None)
         # Keyed by display name, which is what the contexts carry; the
         # constraints key by lowercase. (An earlier version built this and
         # then overwrote it with an empty dict.)
@@ -10334,7 +10372,16 @@ def _rules_for_swaps(c) -> dict:
         "blocked_dates": blocked, "daypart_avail": dayparts, "caps": caps,
         "hours_limits": c.hours_limits, "base_hours": base, "base_rows": c.base_rows,
         "weekly_ceiling": c.compliance.get("weekly_hours_ceiling"),
-        "min_rest_hours": c.compliance.get("min_rest_hours"),
+        # The rest rule as it holds (off, or "off" by mode, is no rule) and,
+        # under a consent rule, who agreed in writing to a short turnaround
+        # (MARKET-3) — the swap index allows theirs, as the sweep does.
+        "min_rest_hours": (c.compliance.get("min_rest_hours") if _rules.rest_mode(c.compliance) != "off" else None),
+        "rest_waived": ({k: {"standing": bool(v.get("standing")), "dates": sorted(v.get("dates") or ())}
+                         for k, v in (getattr(c, "rest_waivers", None) or {}).items()}
+                        if _rules.rest_mode(c.compliance) == "consent_premium" else {}),
+        # Owners and managers keep their own turnaround (rest_rule_applies):
+        # the sweep never held them to it, and the swap index did.
+        "rest_exempt": sorted(k for k in (c.managers or {})),
         "inactive": sorted(c.inactive),
         # the sweep's per-person rules, so a swap or fix can never hand a
         # minor a late close or a bar shift to someone uncertified (SCHED-6)

@@ -235,7 +235,7 @@ def test_the_draft_runs_on_each_restaurants_own_day(db, monkeypatch):
     import ops
     import strategy_jobs
     ran = []
-    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid: ran.append(rid))
+    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid, **k: ran.append(rid))
     monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "error"})
     thu = _rid(db, name="Thu", module_labor=1)
@@ -259,7 +259,7 @@ def test_the_draft_day_is_the_restaurants_own_calendar(db, monkeypatch):
     import ops
     import strategy_jobs
     ran = []
-    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid: ran.append(rid))
+    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid, **k: ran.append(rid))
     monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "error"})
     london = _rid(db, name="London", module_labor=1, timezone="Europe/London")

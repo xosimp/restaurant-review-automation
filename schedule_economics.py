@@ -100,7 +100,8 @@ def _daypart(r):
 
 def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0,
                 base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None,
-                salaried=None, person_rates=None, role_typical=None, rounded: bool = True) -> dict:
+                salaried=None, person_rates=None, role_typical=None, rounded: bool = True,
+                daily_dt_hours: float = None, seventh_day_ot: bool = False, rest_rule: dict = None) -> dict:
     """Dollars for the week with every overtime hour at the multiplier.
 
     Weekly overtime is counted per PAYROLL week: `bucket(date)` names the
@@ -125,7 +126,17 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     the owner's role rate still beats the typical one.
 
     rounded False keeps the cents: the optimizer and the solver weigh a
-    half-hour move by what it costs (schedule audit 10/3/26 P-32)."""
+    half-hour move by what it costs (schedule audit 10/3/26 P-32).
+
+    Jurisdiction premiums (schedule audit 10/10/26 MARKET-5, MARKET-3):
+    `daily_dt_hours` — hours past it in one workday at double time
+    (California: past 12); `seventh_day_ot` — a person working all seven
+    days of a payroll week is paid 1.5x for the seventh day's first 8 hours
+    and 2x past 8 (California Labor Code 510); `rest_rule` — {"need",
+    "multiplier" | "flat", "scope": "hours_inside" | "shift" | "instance",
+    "waived": fn(name, date) -> bool}: a short turnaround the person agreed
+    to in writing is paid its premium. `premiums` in the result breaks them
+    out (double_time, seventh_day, rest)."""
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
@@ -133,7 +144,12 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
         daily = float(daily_ot_hours or 0)
     except (TypeError, ValueError):
         daily = 0.0
+    try:
+        dt_line = float(daily_dt_hours or 0)
+    except (TypeError, ValueError):
+        dt_line = 0.0
     per_person = {}
+    raw_rows = {}
     for r in rows or []:
         n = (r.get("employee") or "").strip()
         if not n or " ".join(n.lower().split()) in sal:
@@ -142,9 +158,29 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
         rate = ((person_rates or {}).get(" ".join(n.lower().split())) or rates.get(role)
                 or (role_typical or {}).get(role) or blended)
         per_person.setdefault(n, []).append((r.get("date") or "", _minutes(r.get("shift_start", "")) or 0, _hours(r), rate))
+        raw_rows.setdefault(n, []).append(r)
     straight = premium = ot_hours = 0.0
+    extra = {"double_time": 0.0, "seventh_day": 0.0, "rest": 0.0}
     for n, items in per_person.items():
         items.sort()
+        # The seventh consecutive day of a payroll week (all seven worked):
+        # its date, per bucket.
+        seventh = set()
+        if seventh_day_ot:
+            by_b = {}
+            for d, _s, _h, _rt in items:
+                k = ""
+                if bucket is not None and d:
+                    try:
+                        k = bucket(d) or ""
+                    except Exception:
+                        k = ""
+                by_b.setdefault(k, set()).add(d)
+            for ds in by_b.values():
+                if len(ds) >= 7:
+                    seventh.add(max(ds))
+        if rest_rule and rest_rule.get("need"):
+            extra["rest"] += _rest_premium_dollars(n, raw_rows.get(n) or [], items, rest_rule)
         base = (base_hours or {}).get(n.lower(), 0) or 0
         if isinstance(base, dict):
             if bucket is None:
@@ -156,11 +192,24 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
         day_used = {}
         for d, _s, h, rate in items:
             daily_ot = 0.0
-            if daily > 0:
-                used = day_used.get(d, 0.0)
-                daily_ot = max(0.0, h - max(0.0, daily - used))
+            dt = 0.0
+            used = day_used.get(d, 0.0)
+            if d in seventh:
+                # 1.5x for the seventh day's first 8 hours, 2x past 8.
+                first8 = max(0.0, min(h, 8.0 - used))
+                past8 = h - first8
+                straight += h * rate
+                premium += first8 * rate * (multiplier - 1.0) + past8 * rate * 1.0
+                extra["seventh_day"] += first8 * rate * (multiplier - 1.0) + past8 * rate * 1.0
+                ot_hours += h
                 day_used[d] = used + h
-            weekly_part = h - daily_ot
+                continue
+            if dt_line > 0:
+                dt = max(0.0, h - max(0.0, dt_line - used))
+            if daily > 0:
+                daily_ot = max(0.0, h - max(0.0, daily - used)) - dt
+            day_used[d] = used + h
+            weekly_part = h - daily_ot - dt
             key = ""
             if bucket is not None and d:
                 try:
@@ -172,14 +221,56 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
             reg = min(weekly_part, room)
             ot = daily_ot + (weekly_part - reg)
             straight += h * rate
-            premium += ot * rate * (multiplier - 1.0)
-            ot_hours += ot
+            premium += ot * rate * (multiplier - 1.0) + dt * rate * 1.0
+            extra["double_time"] += dt * rate * 1.0
+            ot_hours += ot + dt
             so_far[key] = have + weekly_part
+    premium += extra["rest"]
     if not rounded:
         return {"straight": straight, "overtime_premium": premium, "overtime_hours": ot_hours,
-                "total": straight + premium, "multiplier": multiplier}
+                "total": straight + premium, "multiplier": multiplier, "premiums": extra}
     return {"straight": round(straight, 0), "overtime_premium": round(premium, 0), "overtime_hours": round(ot_hours, 1),
-            "total": round(straight + premium, 0), "multiplier": multiplier}
+            "total": round(straight + premium, 0), "multiplier": multiplier,
+            "premiums": {k: round(v, 0) for k, v in extra.items()}}
+
+
+def _rest_premium_dollars(name, rows, items, rule) -> float:
+    """The rest premium one person's consented short turnarounds owe
+    (priced_cost's rest_rule)."""
+    from datetime import datetime as _dt, timedelta as _td
+    need = float(rule.get("need") or 0)
+    waived = rule.get("waived")
+    spans = []
+    for r in rows:
+        s, e = _minutes(r.get("shift_start", "")), _minutes(r.get("shift_end", ""))
+        try:
+            day = _dt.strptime(str(r.get("date"))[:10], "%Y-%m-%d")
+        except (TypeError, ValueError):
+            continue
+        if s is None or e is None:
+            continue
+        start = day + _td(minutes=s)
+        end = day + _td(minutes=e + (24 * 60 if e <= s else 0))
+        spans.append((start, end, r))
+    spans.sort(key=lambda t: t[0])
+    total = 0.0
+    rate_by_date = {d: rt for d, _s, _h, rt in items}
+    for (s0, e0, r0), (s1, e1, r1) in zip(spans, spans[1:]):
+        if r0.get("date") == r1.get("date"):
+            continue
+        gap = (s1 - e0).total_seconds() / 3600.0
+        if gap < 0 or gap >= need - 0.01:
+            continue
+        if not (waived and waived(name, r1.get("date"))):
+            continue
+        later_h = (e1 - s1).total_seconds() / 3600.0
+        rate = rate_by_date.get(r1.get("date")) or 0.0
+        if rule.get("flat"):
+            total += float(rule["flat"])
+        elif rule.get("multiplier"):
+            hrs = later_h if rule.get("scope") == "shift" else max(0.0, min(need - gap, later_h))
+            total += hrs * rate * (float(rule["multiplier"]) - 1.0)
+    return total
 
 
 def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
@@ -209,7 +300,27 @@ def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
             "base_hours": ({n: dict(v) for n, v in (getattr(c, "base_hours", None) or {}).items()}
                            if c is not None else {}),
             "bucket": c.bucket if c is not None else None,
-            "daily_ot_hours": (getattr(c, "compliance", None) or {}).get("daily_ot_hours") if c is not None else None}
+            "daily_ot_hours": (getattr(c, "compliance", None) or {}).get("daily_ot_hours") if c is not None else None,
+            # Jurisdiction premiums (MARKET-5, MARKET-3): double time past a
+            # daily line, the seventh day of a workweek, and the rest
+            # premium a consented short turnaround owes.
+            "daily_dt_hours": (getattr(c, "compliance", None) or {}).get("daily_dt_hours") if c is not None else None,
+            "seventh_day_ot": bool((getattr(c, "compliance", None) or {}).get("seventh_day_ot")) if c is not None else False,
+            "rest_rule": _rest_rule_of(c)}
+
+
+def _rest_rule_of(c):
+    """priced_cost's rest_rule from a Constraints under a consent rest rule,
+    else None."""
+    if c is None:
+        return None
+    import schedule_rules as _sr
+    comp = getattr(c, "compliance", None) or {}
+    if _sr.rest_mode(comp) != "consent_premium":
+        return None
+    return {"need": float(comp.get("min_rest_hours") or 0), "multiplier": comp.get("rest_premium_multiplier"),
+            "flat": comp.get("rest_premium_flat"), "scope": comp.get("rest_premium_scope") or "hours_inside",
+            "waived": lambda name, d: c.rest_waived(name, d)}
 
 
 def stored_blended_rate(restaurant_id, history_id):
@@ -238,7 +349,9 @@ def price_week(rows: list, pricing: dict, rounded: bool = True) -> dict:
     return priced_cost(rows, p.get("role_rates") or {}, p.get("blended_rate"), ceiling=p.get("ceiling") or 40.0,
                        base_hours=p.get("base_hours"), bucket=p.get("bucket"), daily_ot_hours=p.get("daily_ot_hours"),
                        salaried=p.get("salaried"), person_rates=p.get("person_rates"),
-                       role_typical=p.get("role_typical"), rounded=rounded)
+                       role_typical=p.get("role_typical"), rounded=rounded,
+                       daily_dt_hours=p.get("daily_dt_hours"), seventh_day_ot=bool(p.get("seventh_day_ot")),
+                       rest_rule=p.get("rest_rule"))
 
 
 def _hourly_hours(rows: list, salaried=None) -> float:

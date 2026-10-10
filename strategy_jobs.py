@@ -1274,12 +1274,15 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
         if (getattr(r, "external_scheduling_tool", None) or "").strip():
             _bump("skipped")
             return
-        # The week it would write, as the job reads it (schedule_engine.
-        # _week_monday of the restaurant's own today, on its own week start):
-        # next week.
+        # The week it writes: the first one that can still be published on
+        # time — its auto-publish goes the day after the draft — under the
+        # notice rule in force (schedule_engine.default_week_start). Next
+        # week without a notice rule; two or three weeks out under a 14-day
+        # predictive-scheduling notice, which next week never met (schedule
+        # audit 10/10/26 MARKET-1).
         from datetime import datetime as _dt_ad
-        target = _se._week_monday(_dt_ad.strptime(local[r.id][1], "%Y-%m-%d"),
-                                  start_day=_se.week_start_day_of(r)).strftime("%Y-%m-%d")
+        target = _se.default_week_start(r, _dt_ad.strptime(local[r.id][1], "%Y-%m-%d"),
+                                        publish_lag_days=1).strftime("%Y-%m-%d")
         conn = get_conn(db_path)
         try:
             if _week_has_schedule(conn, r.id, target):
@@ -1293,7 +1296,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
             _bump("skipped")               # attempted earlier today — never a second paid try
             return
         try:
-            _draft_one(r, db_path, _se, _bump, period=local[r.id][1])
+            _draft_one(r, db_path, _se, _bump, period=local[r.id][1], week_start=target)
         except Exception:
             _bump("failed")
             raise
@@ -1308,7 +1311,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
                    drafted=counts["drafted"], complete=not ran_out)
 
 
-def _draft_one(r, db_path, _se, _bump, period=None):
+def _draft_one(r, db_path, _se, _bump, period=None, week_start=None):
     """One restaurant's auto-draft and, when it saved, the owner's nudge.
 
     Claimed like an owner's press (ops.claim_async_job): it used to start a
@@ -1328,7 +1331,8 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     _today = _dt_req.strptime(period, "%Y-%m-%d") if period else None
     try:
         job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id,
-                                             request=generation_request(r.id, today=_today))
+                                             request=generation_request(r.id, today=_today, week_start=week_start,
+                                                                        publish_lag_days=1))
     except ops.JobBusy:
         job_id, joined = None, True
     if joined:
@@ -1349,7 +1353,9 @@ def _draft_one(r, db_path, _se, _bump, period=None):
         # presses Generate takes the next free slot ahead of queued drafts.
         try:
             with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
-                _se._run_schedule_job(job_id, r.id)
+                # The week claimed above (the horizon's, MARKET-1); a call
+                # naming none drafts the default week, as the job always did.
+                _se._run_schedule_job(job_id, r.id, **({"week_start": week_start} if week_start else {}))
         except _se.GenerationSlotTimeout:
             # Every slot stayed busy (owners' presses first): the job is closed,
             # the day handed back, and the next hourly pass tries again.
@@ -1401,8 +1407,20 @@ def _draft_one(r, db_path, _se, _bump, period=None):
                 import strategy_routes as _sr_safe
                 _data = {"schedule_id": int(_sid),
                          "one_tap_safe": bool(not gaps and _sr_safe.draft_one_tap_safe(r.id, int(_sid)))}
+            # Under a notice rule the draft is two or three weeks out
+            # (MARKET-1): the title names its week, never "next week".
+            _which = "Next week's schedule"
+            try:
+                from datetime import datetime as _dt_w
+                from time_utils import mdy as _mdy_w
+                if week_start:
+                    _plain_next = _se._week_monday(_today or _dt_w.now(), start_day=_se.week_start_day_of(r))
+                    if _plain_next.strftime("%Y-%m-%d") != str(week_start)[:10]:
+                        _which = f"The schedule for the week of {_mdy_w(week_start)}"
+            except Exception:
+                pass
             push.fire_push(r.id, "schedule_drafted",
-                           "Next week's schedule is drafted" if not gaps else "Next week's schedule is partly drafted",
+                           f"{_which} is drafted" if not gaps else f"{_which} is partly drafted",
                            body, data=_data, db_path=db_path, user_ids=audience)
             told.update(audience)
         except Exception as e:
@@ -2170,16 +2188,36 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
         rate = float(rates.get("_default") or getattr(restaurant, "hourly_rate", None) or 0) or None
     dollars = round(hours * rate) if rate else None
     end_label = who["shift_end"] or "close"
-    # A notice rule in force means a same-day cut may carry predictability
-    # pay the saving does not net out — said, not computed (NS5 H6).
+    # Where a predictive-scheduling law covers the restaurant the same-day
+    # cut's predictability pay is PRICED and netted out of the saving
+    # (schedule audit 10/10/26 MARKET-2): Chicago owes half the hours not
+    # worked on under 24 hours' notice, Seattle half, New York City $75 a
+    # cut. An owner's own notice rule with no law behind it keeps the
+    # sentence to check (NS5 H6) — no sum is invented.
+    premium = {"amount": 0.0, "law": None}
+    try:
+        import predictability_pay as _pp_cut
+        shift_h = round((who["_end"] - who["_start"]) / 60.0, 2) if who.get("_start") is not None else hours
+        premium = _pp_cut.cut_premium(restaurant.id, who["employee"], role, local.date().isoformat(), hours, shift_h,
+                                      db_path=None if db_path == DB_PATH else db_path)
+    except Exception as _pcx:
+        print(f"[pulse cut] predictability pay not priced rid={restaurant.id}: {_pcx!r}")
     try:
         notice = _sr.compliance(restaurant).get("notice_days")
     except Exception:
         notice = None
-    pay_caveat = bool(notice)
-    saving = (f"saves about {hours:g}h" + (f" (~${dollars:,.0f})" if dollars else "")
-              + (" in wages, before any predictability pay a same-day change may owe under your notice rule"
-                 " — check with counsel" if pay_caveat else ""))
+    pay_caveat = bool(notice) and not premium.get("law")
+    owed = float(premium.get("amount") or 0)
+    if premium.get("law") and owed > 0 and dollars:
+        saving = (f"saves about {hours:g}h (~${dollars:,.0f}) in wages, less ${owed:,.0f} predictability pay "
+                  f"under {premium['law']} — about ${max(0, dollars - owed):,.0f} net")
+        dollars = round(max(0.0, dollars - owed))
+    elif premium.get("law") and owed > 0:
+        saving = (f"saves about {hours:g}h, and owes ${owed:,.0f} predictability pay under {premium['law']}")
+    else:
+        saving = (f"saves about {hours:g}h" + (f" (~${dollars:,.0f})" if dollars else "")
+                  + (" in wages, before any predictability pay a same-day change may owe under your notice rule"
+                     " — check with counsel" if pay_caveat else ""))
     from shift_quality import role_words as _rw
     text = (f"{len(people)} {_rw(role, len(people))} on at {_clock(PULSE_CUT_HOUR)} "
             f"against a floor of {floor}: letting {who['employee']} (on till {end_label}) go at "
@@ -2189,6 +2227,7 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
         text = f"{text} {_guard['caution']}"
     return {"text": text, "employee": who["employee"], "role": role, "cut_at": _clock(PULSE_CUT_HOUR),
             "hours": hours, "dollars": dollars, "on": len(people), "floor": floor, "pay_caveat": pay_caveat,
+            "predictability_pay": round(owed, 2) if premium.get("law") else None,
             "key": f"pulse_cut:{local.date().isoformat()}:{_ss.name_key(who['employee'])}"}
 
 

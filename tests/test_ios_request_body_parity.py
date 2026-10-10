@@ -1826,6 +1826,12 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # Sent only on the second tap, after a 409 needs_consent (a clopen under a
+    # consent rest rule, schedule audit 10/10/26 MARKET-3): the web portal
+    # sends it; the iPhone staff app does not handle the 409 yet — an iOS
+    # follow-up (J1 report), the claim simply stays refused there.
+    ("/staff/api/offers/<int:offer_id>/respond", "consent_rest"): "the second tap after a 409 needs_consent; iOS follow-up",
+    ("/staff/api/open-shifts/<int:request_id>/claim", "consent_rest"): "the second tap after a 409 needs_consent; iOS follow-up",
     # optional, and the web leaves it out too
     ("/mobile/api/account/alert-settings", "alert_max_per_day"): _WEB_TOO + " (the web stopped sending it; kept as stored)",
     ("/mobile/api/account/alert-settings", "expected_version"): _WEB_TOO + " (models' optional row_version check)",

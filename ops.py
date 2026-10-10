@@ -2641,7 +2641,28 @@ _RETENTION_DAYS = {
     # scope, rewritten on every new version — a row not rebuilt in a month
     # is a scope nobody reads any more (a login that left, a changed role).
     "context_sections":   int(os.getenv("RETAIN_CONTEXT_SECTIONS_DAYS", "30")),
+    # The compliance records (schedule audit 10/10/26 RM-15, MARKET-4):
+    # staff's written consents, the predictability-pay and rest-premium
+    # ledger, good-faith estimates, the written answers to change requests
+    # and the access-to-hours offers — three years, what Chicago, New York
+    # City, Seattle, San Francisco, Oregon, Evanston, Berkeley and
+    # Emeryville require scheduling records be kept (compliance_packs
+    # records_years). The floor is the same: never shorter.
+    "staff_consents":        int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "compliance_pay_ledger": int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "good_faith_estimates":  int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "fww_requests":          int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "fww_access_offers":     int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
 }
+
+# Three years: how long a restaurant a predictive-scheduling law covers keeps
+# its scheduling records (compliance_packs records_years). The staff
+# communications, offers and attendance below are kept two years for
+# everyone; a restaurant under such a law keeps them three (`_records_held`,
+# MARKET-4) — a chain on Cavnar AI used to lose them a year early.
+RECORDS_HOLD_DAYS = 1095
+_RETENTION_HOLD_TABLES = frozenset({"attendance_events", "shift_offers", "staff_announcements",
+                                    "staff_announcement_recipients", "staff_thread_messages", "staff_running_late"})
 
 # Each table's own timestamp column — they do not agree on a name.
 _RETENTION_COLUMN = {
@@ -2684,6 +2705,8 @@ _RETENTION_COLUMN = {
     "context_sections": "built_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
+    "staff_consents": "created_at", "compliance_pay_ledger": "created_at", "good_faith_estimates": "created_at",
+    "fww_requests": "created_at", "fww_access_offers": "created_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2810,6 +2833,9 @@ _RETENTION_FLOOR_DAYS = {
     # A Live Activity lasts a night at most (a service) — a few days covers
     # the longest one; a live session re-registers its tokens on every open.
     "live_activity_runs": 7, "live_activity_tokens": 31,
+    # The compliance records: three years, never less (RM-15, MARKET-4).
+    "staff_consents": 1095, "compliance_pay_ledger": 1095, "good_faith_estimates": 1095,
+    "fww_requests": 1095, "fww_access_offers": 1095,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -3260,7 +3286,31 @@ def _thin_drafts(conn, deadline):
     return out
 
 
-def _prune_schedules(conn, deadline, refused=None):
+def _records_held(conn) -> list:
+    """The restaurants a predictive-scheduling law covers today, whose
+    scheduling records are kept three years (compliance_packs
+    records_hold_days ≥ RECORDS_HOLD_DAYS). Read once per pass; a failure
+    holds nobody back from the usual windows (logged)."""
+    try:
+        from types import SimpleNamespace
+        import compliance_packs
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(restaurants)")}
+        want = [c for c in ("id", "jurisdiction", "compliance_profile_json", "aivis_city_json", "mailing_address")
+                if c in cols]
+        if "compliance_profile_json" not in want:
+            return []
+        out = []
+        for row in conn.execute(f"SELECT {', '.join(want)} FROM restaurants WHERE compliance_profile_json IS NOT NULL"):
+            r = SimpleNamespace(**{k: row[k] for k in want})
+            if compliance_packs.records_hold_days(r) >= RECORDS_HOLD_DAYS:
+                out.append(int(row["id"]))
+        return out
+    except Exception as e:
+        log.error(f"records hold not read: {e}")
+        return []
+
+
+def _prune_schedules(conn, deadline, refused=None, held=None):
     """Old schedule states, never a published week (#72): intermediate saves
     of weeks past SCHEDULE_VERSIONS_KEEP_DAYS (each week keeps its newest
     version, every published one and its generated draft — the diff the
@@ -3268,7 +3318,9 @@ def _prune_schedules(conn, deadline, refused=None):
     never published or shared, past SUPERSEDED_DRAFTS_KEEP_DAYS. First, the
     detail of superseded drafts and old intermediate versions is thinned
     (_thin_drafts). A window under its floor is refused (appended to
-    `refused`). Returns {table: rows}."""
+    `refused`). `held`: restaurants under a predictive-scheduling law, whose
+    intermediate versions (a cover, a swap, an edit sent to staff) are kept
+    RECORDS_HOLD_DAYS (MARKET-4). Returns {table: rows}."""
     out = {}
     try:
         out.update(_thin_drafts(conn, deadline))
@@ -3284,12 +3336,15 @@ def _prune_schedules(conn, deadline, refused=None):
             refused.append(st)
     versions_days = retention_days("schedule_versions")
     if versions_days:
-        n = _chunked_delete(
-            conn, "schedule_versions",
-            "created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
-            "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
-            "               WHERE v2.history_id = schedule_versions.history_id)",
-            (f"-{versions_days} days",), deadline)
+        where = ("created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
+                 "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
+                 "               WHERE v2.history_id = schedule_versions.history_id)")
+        args = [f"-{versions_days} days"]
+        if held and versions_days < RECORDS_HOLD_DAYS:
+            where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "
+                      "AND created_at >= datetime('now', ?))")
+            args += list(held) + [f"-{RECORDS_HOLD_DAYS} days"]
+        n = _chunked_delete(conn, "schedule_versions", where, tuple(args), deadline)
         if n:
             out["schedule_versions"] = n
     drafts_days = retention_days("superseded_drafts")
@@ -3411,6 +3466,7 @@ def prune_ledgers(db_path=None):
     # newsletter results — never pruned, so what the raw rows said
     # outlives them.
     rolled = _run_rollups(db_path)
+    held = _records_held(conn)
 
     try:
         for table in list(_RETENTION_DAYS):
@@ -3435,8 +3491,14 @@ def prune_ledgers(db_path=None):
                 # A table may keep some rows for good whatever their age
                 # (_RETENTION_ONLY: rec_events keeps every answer).
                 only = _RETENTION_ONLY.get(table)
-                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""),
-                                    (f"-{days} days",), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
+                where, args = f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""), [f"-{days} days"]
+                # A restaurant a predictive-scheduling law covers keeps these
+                # three years (MARKET-4).
+                if table in _RETENTION_HOLD_TABLES and held and days < RECORDS_HOLD_DAYS:
+                    where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "
+                              f"AND {col} >= datetime('now', ?))")
+                    args += list(held) + [f"-{RECORDS_HOLD_DAYS} days"]
+                n = _chunked_delete(conn, table, where, tuple(args), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
                 if n:
                     deleted[table] = n
                 if n >= RETENTION_PASS_MAX_ROWS:
@@ -3467,7 +3529,7 @@ def prune_ledgers(db_path=None):
                 pass
             log.debug(f"prune_ledgers skipped inventory_history: {e}")
         try:
-            deleted.update(_prune_schedules(conn, deadline, refused=refused))
+            deleted.update(_prune_schedules(conn, deadline, refused=refused, held=held))
         except Exception as e:
             try:
                 conn.rollback()
