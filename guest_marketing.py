@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS guest_newsletters (
     completed_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_guest_newsletters_open ON guest_newsletters(completed_at, restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_guest_newsletters_rid ON guest_newsletters(restaurant_id, created_at);
 CREATE TABLE IF NOT EXISTS guest_newsletter_recipients (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     newsletter_id  INTEGER NOT NULL,
@@ -182,6 +183,7 @@ CREATE TABLE IF NOT EXISTS guest_optin_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_gor_phone ON guest_optin_requests(phone, requested_at);
 CREATE INDEX IF NOT EXISTS idx_gor_ip ON guest_optin_requests(ip, requested_at);
+CREATE INDEX IF NOT EXISTS idx_gor_rid ON guest_optin_requests(restaurant_id, status, requested_at);
 -- "Which restaurant did you mean?" — asked when one YES could answer more
 -- than one restaurant. A bare restaurant name counts only as the answer to
 -- an open question for that phone (MB-1 / #6); it never opts anyone in on

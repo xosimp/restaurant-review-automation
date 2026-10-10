@@ -433,10 +433,16 @@ def _fn(name):
 
 
 def _channels_line():
+    """The channel map as the page sets it: the bootstrap line that renders
+    it (window.CAV_BOOT.mktChannel — the main script holds no Jinja since
+    the scheduler audit of 10/10/26, SCALE-28) and the script's own line."""
     import jinja2
     import marketing
-    line = next(ln for ln in _src().splitlines() if ln.startswith("var _MKT_CHANNEL = "))
-    return jinja2.Template(line).render(ctypes=marketing.CONTENT_TYPES)
+    lines = _src().splitlines()
+    boot = next(ln for ln in lines if ln.startswith("window.CAV_BOOT.mktChannel = "))
+    own = next(ln for ln in lines if ln.startswith("var _MKT_CHANNEL = "))
+    return "window.CAV_BOOT = window.CAV_BOOT || {};\n" + jinja2.Template(boot).render(
+        ctypes=marketing.CONTENT_TYPES) + "\n" + own
 
 
 STUB = r"""

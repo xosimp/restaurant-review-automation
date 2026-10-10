@@ -1277,7 +1277,15 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
             continue
         now_l = (restaurant_now(r, naive=True) if at is None
                  else at.astimezone(restaurant_tz(r)).replace(tzinfo=None))
-        if now_l.weekday() == auto_draft_weekday(r) and now_l.hour >= AUTO_DRAFT_HOUR:
+        # The draft day, and the day after it as the fallback (scheduler
+        # audit 10/10/26, SCALE-3): a generation that failed, or died with a
+        # deploy, on the draft day used to leave the restaurant without a
+        # draft that week — the next day was not its weekday. The fallback
+        # day writes the same week (it is never the week's first day:
+        # auto_draft_days keeps the draft day off the week's eve) and only
+        # while that week still has nothing (_week_has_schedule, below).
+        day = auto_draft_weekday(r)
+        if now_l.hour >= AUTO_DRAFT_HOUR and now_l.weekday() in (day, (day + 1) % 7):
             local[r.id] = (r, now_l.date().isoformat())
     by_id = {v[0].id: v[0] for v in local.values()}
     counts["failed"] = 0
@@ -1297,20 +1305,39 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
         from datetime import datetime as _dt_ad
         target = _se._week_monday(_dt_ad.strptime(local[r.id][1], "%Y-%m-%d"),
                                   start_day=_se.week_start_day_of(r)).strftime("%Y-%m-%d")
+        # A week this job already drafted is done, even if the owner then
+        # removed the draft: the fallback day never drafts it again.
+        if ops.period_claimed(f"auto_draft_done:{r.id}", target):
+            _bump("skipped")
+            return
         conn = get_conn(db_path)
         try:
             if _week_has_schedule(conn, r.id, target):
                 _bump("skipped")
                 return
+            # Today's try ended without a draft — failed, refused, past its
+            # deadline, or killed by a deploy (the boot sweep closes a dead
+            # job as an error, ops.sweep_stale_jobs): today's claim is handed
+            # back so this pass tries again, inside the week's attempt budget
+            # (SCALE-3). It used to keep the day and wait for next week.
+            if _auto_draft_ended_undone(conn, r.id):
+                ops.release_period(f"auto_draft:{r.id}", local[r.id][1])
         finally:
             conn.close()
         # The restaurant's own date: the server's is UTC, which turned over
         # at 7pm in Chicago and allowed a second paid try the same evening.
         if not ops.claim_period(f"auto_draft:{r.id}", local[r.id][1]):
-            _bump("skipped")               # attempted earlier today — never a second paid try
+            _bump("skipped")               # running, or tried earlier today
+            return
+        # At most AUTO_DRAFT_ATTEMPTS paid tries for one week, across the
+        # draft day and the fallback day — a generation that fails every
+        # time is not paid for every hour.
+        attempt = _claim_auto_draft_attempt(r.id, target)
+        if attempt is None:
+            _bump("skipped")
             return
         try:
-            _draft_one(r, db_path, _se, _bump, period=local[r.id][1])
+            _draft_one(r, db_path, _se, _bump, period=local[r.id][1], target=target, attempt=attempt)
         except Exception:
             _bump("failed")
             raise
@@ -1325,7 +1352,37 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
                    drafted=counts["drafted"], complete=not ran_out)
 
 
-def _draft_one(r, db_path, _se, _bump, period=None):
+def _auto_draft_ended_undone(conn, restaurant_id) -> bool:
+    """Whether this restaurant's newest auto-draft job of the last day ended
+    without a draft: closed as anything but `done` (a failure, a deadline,
+    or the boot sweep's "interrupted" for a job a deploy killed)."""
+    try:
+        row = conn.execute("SELECT status FROM async_jobs WHERE restaurant_id=? AND kind='schedule' "
+                           "AND job_id LIKE 'auto-%' AND created_at >= datetime('now', '-1 day') "
+                           "ORDER BY created_at DESC, rowid DESC LIMIT 1", (restaurant_id,)).fetchone()
+    except Exception:
+        return False
+    return bool(row) and row["status"] not in ("pending", "done")
+
+
+def _claim_auto_draft_attempt(restaurant_id, target):
+    """The next of the week's AUTO_DRAFT_ATTEMPTS paid tries (its number),
+    or None when every one is spent. Claimed before the paid run, like the
+    day itself, so two passes never spend one twice."""
+    import ops
+    for n in range(AUTO_DRAFT_ATTEMPTS):
+        if ops.claim_period(f"auto_draft_attempt:{restaurant_id}", f"{target}#{n}"):
+            return n
+    return None
+
+
+def _release_auto_draft_attempt(restaurant_id, target, attempt):
+    import ops
+    if target is not None and attempt is not None:
+        ops.release_period(f"auto_draft_attempt:{restaurant_id}", f"{target}#{attempt}")
+
+
+def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None):
     """One restaurant's auto-draft and, when it saved, the owner's nudge.
 
     Claimed like an owner's press (ops.claim_async_job): it used to start a
@@ -1352,6 +1409,7 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     if joined:
         if period:
             ops.release_period(f"auto_draft:{r.id}", period)
+        _release_auto_draft_attempt(r.id, target, attempt)      # nothing was paid for
         _bump("skipped")
         return
     # An owner whose press joined this run is told once, however it ends —
@@ -1378,6 +1436,7 @@ def _draft_one(r, db_path, _se, _bump, period=None):
                                                                          "it will try again within the hour."})
             if period:
                 ops.release_period(f"auto_draft:{r.id}", period)
+            _release_auto_draft_attempt(r.id, target, attempt)  # no model call was made
             _bump("skipped")
             return
         # _run_schedule_job reports its own failures into the job row rather
@@ -1385,7 +1444,16 @@ def _draft_one(r, db_path, _se, _bump, period=None):
         # an owner a draft is waiting when none was saved is worse than silence.
         state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
         if state.get("status") != "done":
+            # Ended without a draft (SCALE-3): the day is handed back so a
+            # later pass — today, or the fallback day — tries again while
+            # the week's attempts last; the last one tells the owner.
+            if period:
+                ops.release_period(f"auto_draft:{r.id}", period)
+            if attempt is not None and attempt >= AUTO_DRAFT_ATTEMPTS - 1:
+                _tell_auto_draft_gave_up(r, db_path, target)
             return
+        if target:
+            ops.claim_period(f"auto_draft_done:{r.id}", target)
         _bump("drafted")
         try:
             import notify, push
@@ -1438,8 +1506,39 @@ def _draft_one(r, db_path, _se, _bump, period=None):
         _watch.notify_generation_watchers(job_id, r.id, exclude=told)
 
 
+def _tell_auto_draft_gave_up(r, db_path, target):
+    """Every paid try at the week's draft ended without one: the owner is
+    told, once, to generate it — never left to find no draft on the day the
+    week was due (SCALE-3). The drafted notice's channel and audience (the
+    logins that can publish). Never raises."""
+    try:
+        import notify, push, morning_brief
+        from permissions import has_permission, SCHEDULE_PUBLISH
+        import ops
+        if not ops.claim_marker("auto_draft_gave_up", f"{r.id}:{target}"):
+            return
+        if not notify.briefing_allowed(r.id, "schedule_drafted", db_path):
+            return
+        audience = {u["id"] for u in morning_brief.recipients(r.id, db_path)
+                    if has_permission(u, SCHEDULE_PUBLISH)}
+        if not audience:
+            return
+        from time_utils import mdy
+        notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
+        push.fire_push(r.id, "schedule_drafted", "Next week's schedule couldn't be drafted",
+                       f"The automatic draft for the week of {mdy(target)} didn't finish after "
+                       f"{AUTO_DRAFT_ATTEMPTS} tries. Generate it from the Labor tab.",
+                       data={}, db_path=db_path, user_ids=audience)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="auto_draft_schedule_gave_up", context=f"restaurant_id={getattr(r, 'id', None)}")
+
+
 AUTO_DRAFT_CURSOR_KEY = "auto_draft_schedule_cursor"
 AUTO_DRAFT_HOUR = 6                 # local; the day is the owner's (models.auto_draft_weekday)
+# Paid tries at one week's draft, across the draft day and the day after
+# (SCALE-3): a try that ends without a draft hands its day back.
+AUTO_DRAFT_ATTEMPTS = 3
 AUTO_DRAFT_MAX_SECONDS = 40 * 60
 AUTO_DRAFT_WORKERS = 3              # each draft is minutes of model wait; three share the pass
 
@@ -1560,7 +1659,7 @@ def run_labor_reminders(db_path=DB_PATH):
 
 
 def run_schedule_outcomes(db_path=DB_PATH):
-    """Monday: record what each published week actually did, by daypart
+    """Daily: record what each published week actually did, by daypart
     (schedule_intel.record_outcomes — the punches beside the plan, L-12),
     score each ended week as it ran beside its planned score
     (record_as_run_quality, L-29), and read every recommendation the manager
@@ -1568,9 +1667,20 @@ def run_schedule_outcomes(db_path=DB_PATH):
     (measure_recommendations_as_run, L-34) as well as the watched nights'
     issue share (measure_accepted_recommendations), for every Labor
     restaurant. A failing step is captured and counts the restaurant as
-    failed; the steps after it still run."""
+    failed; the steps after it still run.
+
+    Daily and incremental (scheduler audit 10/10/26, SCALE-15/16,
+    LEARNING-22): it ran on Mondays only, on one worker, re-reading twelve
+    weeks of outcomes and re-scoring the last four weeks as run every time —
+    about 1,000 small or 15 large restaurants a pass, the rest a week behind.
+    Now each week is read when its numbers are in and again only when they
+    change (`only_changed` — schedule_intel.week_fingerprint), on
+    OUTCOMES_WORKERS workers, every restaurant inside one read_scope (its
+    restaurant row, client_data and shift history read once for every week
+    it scores) with its observations written in one transaction."""
     import schedule_intel
     import scheduler as _sched
+    import models as _models_oc
     # Bounded and resumable (SCHED-27): a wall-clock bound and a cursor, so a
     # pass that runs out of time is picked up where it stopped instead of
     # starving the same tail every Monday. The prefix cursor and the bound
@@ -1581,10 +1691,16 @@ def run_schedule_outcomes(db_path=DB_PATH):
     lock = threading.Lock()
 
     def _one(rid):
+        with _models_oc.read_scope():
+            _one_scoped(rid)
+
+    def _one_scoped(rid):
         with lock:
             tally["attempted"] += 1
         try:
-            written["n"] += schedule_intel.record_outcomes(rid, db_path=db_path).get("written", 0)
+            got = schedule_intel.record_outcomes(rid, db_path=db_path, only_changed=True).get("written", 0)
+            with lock:
+                written["n"] += got
         except Exception:
             with lock:
                 tally["failed"] += 1
@@ -1593,7 +1709,8 @@ def run_schedule_outcomes(db_path=DB_PATH):
         # The ended weeks as they ran, then each carried-out recommendation
         # read against them (rec_ledger outcome), now that the nights are
         # recorded — each on its own, a failure captured and counted.
-        for step, fn in (("as_run_quality", schedule_intel.record_as_run_quality),
+        for step, fn in (("as_run_quality", lambda r, db_path: schedule_intel.record_as_run_quality(
+                             r, db_path=db_path, only_changed=True)),
                          ("as_run_recommendations", schedule_intel.measure_recommendations_as_run),
                          ("accepted_recommendations", schedule_intel.measure_accepted_recommendations)):
             try:
@@ -1607,13 +1724,17 @@ def run_schedule_outcomes(db_path=DB_PATH):
                 tally["failed"] += 1
 
     _done, ran_out = _sched.resumable_sweep(OUTCOMES_CURSOR_KEY, sorted(by_id), _one, OUTCOMES_MAX_SECONDS,
-                                            workers=1, job="schedule_outcomes")
+                                            workers=OUTCOMES_WORKERS, job="schedule_outcomes")
     return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
                    hit_bound=ran_out, rows=written["n"])
 
 
 OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
 OUTCOMES_MAX_SECONDS = 20 * 60
+# Restaurants read at once (SCALE-15): each is a run of reads and one write
+# transaction per step, so two share the single SQLite writer without
+# waiting on each other for long.
+OUTCOMES_WORKERS = 2
 
 
 def run_schedule_memory(db_path=DB_PATH):
@@ -1633,6 +1754,13 @@ def run_schedule_memory(db_path=DB_PATH):
     lock = threading.Lock()
 
     def _one(rid):
+        # One read of the restaurant, its client_data and its shift history
+        # for everything the consolidate reads (SCALE-6, LEARNING-22).
+        import models as _models_mem
+        with _models_mem.read_scope():
+            _one_scoped(rid)
+
+    def _one_scoped(rid):
         with lock:
             tally["attempted"] += 1
         try:
@@ -1649,7 +1777,7 @@ def run_schedule_memory(db_path=DB_PATH):
             tally["memories"] += int(s.get("created") or 0) + int(s.get("updated") or 0)
 
     _done, ran_out = _sched.resumable_sweep(MEMORY_CURSOR_KEY, sorted(by_id), _one, MEMORY_MAX_SECONDS,
-                                            workers=1, job="schedule_memory")
+                                            workers=MEMORY_WORKERS, job="schedule_memory")
     if ran_out:
         import ops
         ops.capture(RuntimeError(f"schedule_memory stopped at its {MEMORY_MAX_SECONDS}s bound; the rest lead "
@@ -1660,6 +1788,7 @@ def run_schedule_memory(db_path=DB_PATH):
 
 MEMORY_CURSOR_KEY = "schedule_memory_cursor"
 MEMORY_MAX_SECONDS = 20 * 60
+MEMORY_WORKERS = 2
 
 
 def run_people_nightly(db_path=DB_PATH, today=None):
@@ -1690,6 +1819,10 @@ def run_people_nightly(db_path=DB_PATH, today=None):
     try:
         people.backfill_people(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
         shift_facts.backfill_from_csv(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+        # The restaurants still on their shifts file: shift_facts made their
+        # record, bounded (scheduler audit 10/10/26, SCALE-5); a sync or an
+        # upload adopts the rest as it lands.
+        shift_facts.adopt_pending(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
     except Exception as e:
         import ops
         ops.capture(e, job="people_nightly", context="backfill")

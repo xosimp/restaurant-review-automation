@@ -640,12 +640,11 @@ def _live_labor(facts, report, restaurant):
     try:
         from dsr import store
         from dsr.block_labor import POS_PAY_MIN_SHARE, _pos_pay_share
-        from labor import load_shifts
-        from models import get_client_data
+        from labor import shift_history
         rid = report.get("restaurant_id") or getattr(restaurant, "id", None)
         day = str(report.get("business_date"))[:10]
-        raw = (get_client_data(rid) or {}).get("shifts_csv") or ""
-        rows = [r for r in (load_shifts(csv_string=raw) if raw.strip() else []) if str(r.get("date") or "")[:10] == day]
+        # That one day, read as a window (SCALE-5) — never the whole history.
+        rows = [r for r in shift_history(rid, since=day, until=day) if str(r.get("date") or "")[:10] == day]
         share = _pos_pay_share(rows)
         if share is None or share < POS_PAY_MIN_SHARE:
             return facts

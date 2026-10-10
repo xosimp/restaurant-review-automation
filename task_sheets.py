@@ -125,6 +125,7 @@ def init_schema(conn):
         updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_task_lines_sheet ON task_sheet_lines(sheet_id, active, sort_order)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_lines_rid ON task_sheet_lines(restaurant_id, active)")
     conn.execute("""CREATE TABLE IF NOT EXISTS task_assignments (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),

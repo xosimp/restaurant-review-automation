@@ -8751,7 +8751,13 @@ def mobile_score_schedule(current_user):
         from permissions import answer_authority as _aa_pq2
         present_quality(rid, quality, user_id=current_user.get("id"), authority=_aa_pq2(current_user))
         from models import capability_version
-        return jsonify(ok=True, quality=quality, what_if=what_if, saved=bool(saved),
+        # Only what changed since the answer the client holds, when it asks
+        # (SCALE-29: 130-440 KB of quality on every drag).
+        from schedule_engine import quality_payload as _qp
+        _qbody = _qp(prepared, quality, want_delta=bool(data.get("delta")), base_etag=data.get("quality_etag"))
+        return jsonify(ok=True, what_if=what_if, saved=bool(saved),
+                       quality=_qbody.get("quality"), quality_delta=_qbody.get("quality_delta"),
+                       quality_etag=_qbody.get("quality_etag"),
                        violations=violations or [], review=review,
                        history_id=saved or None,
                        # The version these rows now are: the client keeps it

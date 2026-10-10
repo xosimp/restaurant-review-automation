@@ -656,6 +656,71 @@ def latest_rows(conn, history_id) -> list:
     return rows_from_csv(row[0] if row else "")
 
 
+# What a version keeps of its Shift Quality evaluation in quality_json — the
+# headline every reader of versions reads (the score for the version list,
+# the recommendations an edit may carry out, the dimensions) — with the whole
+# evaluation in quality_blobs under quality_ref (SCALE-4).
+QUALITY_HEAD_KEYS = ("checked", "score", "raw_score", "band", "recommendations")
+
+
+def quality_headline(quality) -> dict:
+    """The small part of an evaluation a version keeps inline."""
+    q = quality if isinstance(quality, dict) else {}
+    out = {k: q.get(k) for k in QUALITY_HEAD_KEYS if k in q}
+    conf = q.get("confidence")
+    if isinstance(conf, dict) and conf.get("level"):
+        out["confidence"] = {"level": conf.get("level")}
+    for k in ("weaknesses", "strengths"):
+        if isinstance(q.get(k), list):
+            out[k] = [str(x)[:200] for x in q[k][:2]]
+    if isinstance(q.get("week_dimensions"), list):
+        out["week_dimensions"] = [{"key": d.get("key"), "score": d.get("score")}
+                                  for d in q["week_dimensions"] if isinstance(d, dict) and d.get("key")]
+    out["headline"] = True
+    return out
+
+
+def _quality_text(quality) -> str:
+    try:
+        return json.dumps(quality, sort_keys=True, default=str)
+    except TypeError:                   # a dict with keys of mixed types
+        return json.dumps(quality, default=str)
+
+
+def store_quality(conn, restaurant_id, quality) -> tuple:
+    """(headline JSON, ref) for one evaluation: the whole of it stored once,
+    compressed, under the hash of its content (the restaurant's own — two
+    restaurants never share a row), on the caller's connection and
+    transaction. (None, None) for no evaluation."""
+    if not quality:
+        return None, None
+    import hashlib
+    import zlib
+    raw = _quality_text(quality)
+    ref = hashlib.sha256(f"{int(restaurant_id)}:{raw}".encode("utf-8")).hexdigest()[:40]
+    conn.execute("INSERT OR IGNORE INTO quality_blobs (hash, restaurant_id, body, raw_bytes) VALUES (?,?,?,?)",
+                 (ref, int(restaurant_id), zlib.compress(raw.encode("utf-8"), 6), len(raw)))
+    return json.dumps(quality_headline(quality)), ref
+
+
+def version_quality(conn, quality_json, quality_ref=None) -> dict:
+    """A version's whole evaluation: the stored detail its quality_ref names,
+    else what quality_json holds (a version from before 10/10/26 holds it
+    whole; a thinned one only its headline). {} for none."""
+    if quality_ref:
+        try:
+            import zlib
+            row = conn.execute("SELECT body FROM quality_blobs WHERE hash=?", (quality_ref,)).fetchone()
+            if row is not None:
+                return json.loads(zlib.decompress(row[0]).decode("utf-8")) or {}
+        except Exception as e:
+            log.warning("quality detail %s unreadable: %s", quality_ref, e)
+    try:
+        return json.loads(quality_json or "null") or {}
+    except (TypeError, ValueError):
+        return {}
+
+
 def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None,
                     saved_authority=None, row_origins=None):
     last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
@@ -683,11 +748,14 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
         saved_by = f"{SUPPORT_PREFIX}{_via.get('admin') or _via.get('admin_id')} (as {saved_by or 'the owner'})"
         saved_authority = "admin"        # whoever the caller named: the admin's hand
         open_recs = []                   # nor is it the owner carrying advice out
+    # The headline inline, the whole evaluation stored once by its content
+    # (SCALE-4); an evaluation identical to one already stored costs nothing.
+    head, ref = store_quality(conn, restaurant_id, quality)
     cur = conn.execute(
         "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
-        "diff_json, saved_by, saved_authority, row_origins_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "quality_ref, diff_json, saved_by, saved_authority, row_origins_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (restaurant_id, history_id, version, reason, schedule_csv,
-         json.dumps(quality) if quality else None, json.dumps(d) if d else None,
+         head, ref, json.dumps(d) if d else None,
          (saved_by or "").strip()[:120] or None, saved_authority,
          json.dumps(row_origins) if row_origins else None))
     row_id = cur.lastrowid
@@ -1609,7 +1677,29 @@ def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_id
     people (a rename reads old weeks anew). A week nothing has touched since
     is read back, not replayed: the nightly learners, the generation and the
     acceptance read used to rebuild all 24 weeks from their CSV versions on
-    every call."""
+    every call.
+
+    Replayed once per read_scope (scheduler audit 10/10/26, LEARNING-23): a
+    generation replayed 24 weeks of saved versions four to six times — the
+    patterns for the draft, the likely edits, the learned headcount on every
+    baseline, the edit predictor — and the nightly memory once per learner.
+    Inside a generation, the Studio's inputs build or one restaurant of a
+    nightly sweep, the first answer is kept and later callers get a copy."""
+    import copy as _copy_lw
+    key = ("learning_weeks", int(restaurant_id), int(weeks),
+           tuple(sorted(int(h) for h in history_ids if h)) if history_ids is not None else None,
+           bool(include_unlooked), str(today) if today else None, db_path)
+    store = _models_mod.read_scope_store()
+    if store is None:
+        return _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today)
+    if key in store:
+        return _copy_lw.deepcopy(store[key])
+    out = _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today)
+    store[key] = _copy_lw.deepcopy(out)
+    return out
+
+
+def _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today) -> list:
     today = today or date.today()
     ids, sigs = _record_plan(restaurant_id, int(weeks) * 7, history_ids, db_path)
     cached = _load_records(restaurant_id, sigs, db_path)

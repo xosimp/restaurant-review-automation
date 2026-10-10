@@ -64,7 +64,57 @@ def _daypart(r):
 
 # ── outcomes per published week ───────────────────────────────────────────
 
-def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
+# A week's late reviews (REVIEW_LAG_DAYS) and late punches land within this
+# many days of its end: until then the outcomes job re-reads it every day;
+# after it, only when its inputs change (week_fingerprint).
+WEEK_SETTLE_DAYS = 14
+# A week whose POS days are not marked final in labor_daily_history is read
+# as run this many days after it ended (an upload with no daily history).
+AS_RUN_FINAL_AFTER_DAYS = 2
+
+
+def week_fingerprint(conn, restaurant_id, week_start, week_end, schedule_csv, step="as_run") -> str:
+    """What a read of one ended week depends on, as a short hash: the plan
+    (the published CSV) and the punches (shift_facts — count, hours, newest
+    arrival); for the outcomes step also the day's sales and labor
+    (labor_daily_history, rewritten as a day is re-read) and the attendance
+    record. Two reads with the same fingerprint read the same week."""
+    import hashlib
+    parts = [hashlib.sha1((schedule_csv or "").encode("utf-8")).hexdigest()]
+    for sql in (("SELECT COUNT(*), TOTAL(actual_hours), MAX(ingested_at) FROM shift_facts "
+                 "WHERE restaurant_id=? AND business_date BETWEEN ? AND ?"),) + ((
+                ("SELECT COUNT(*), TOTAL(sales), TOTAL(labor_pct), MAX(saved_at) FROM labor_daily_history "
+                 "WHERE restaurant_id=? AND date BETWEEN ? AND ?"),
+                ("SELECT COUNT(*), MAX(id) FROM attendance_events "
+                 "WHERE restaurant_id=? AND business_date BETWEEN ? AND ?")) if step == "outcomes" else ()):
+        try:
+            parts.append(repr(tuple(conn.execute(sql, (restaurant_id, week_start, week_end)).fetchone())))
+        except Exception:
+            parts.append("?")          # a table that is not there reads as itself, every time
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def _week_read(conn, history_id, step):
+    try:
+        row = conn.execute("SELECT fingerprint FROM schedule_week_reads WHERE history_id=? AND step=?",
+                           (history_id, step)).fetchone()
+    except Exception:
+        return None
+    return row["fingerprint"] if row else None
+
+
+def _mark_week_read(restaurant_id, history_id, step, fingerprint, db_path=DB_PATH) -> None:
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO schedule_week_reads (history_id, step, restaurant_id, fingerprint) VALUES (?,?,?,?) "
+                     "ON CONFLICT(history_id, step) DO UPDATE SET fingerprint=excluded.fingerprint, "
+                     "read_at=datetime('now')", (history_id, step, restaurant_id, fingerprint))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=False) -> dict:
     """For every published week that has ended, one row per date and
     daypart: scheduled hours and people (from the published CSV — the PLAN),
     and beside them what HAPPENED (schedule audit 10/3/26 L-12 — the record
@@ -90,18 +140,33 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     split used to fall back to a stated 0.4, so every restaurant without
     intraday data was recorded as doing 40% of its sales before 3pm — a
     dinner-only bar included — and peer benchmarks and the schedule
-    prompt's sales per labor hour read it as measured."""
+    prompt's sales per labor hour read it as measured.
+
+    `only_changed` (the daily outcomes job — scheduler audit 10/10/26,
+    SCALE-15/16): a week is read while it is settling (WEEK_SETTLE_DAYS
+    after its end — its late reviews and punches) and after that only when
+    its inputs changed (week_fingerprint), never all twelve again."""
     from schedule_versions import rows_from_csv
     today = today or date.today()
     conn = get_conn(db_path)
     written = 0
     pending = []
+    read = []
     try:
         weeks = conn.execute(
             "SELECT id, week_start, week_end, schedule_csv, labor_target FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
             "AND week_end < ? ORDER BY id DESC LIMIT ?", (restaurant_id, today.isoformat(), OUTCOME_WEEKS)).fetchall()
+        if only_changed:
+            settling = (today - timedelta(days=WEEK_SETTLE_DAYS)).isoformat()
+            kept = []
+            for w in weeks:
+                fp = week_fingerprint(conn, restaurant_id, w["week_start"], w["week_end"], w["schedule_csv"], "outcomes")
+                if str(w["week_end"] or "") >= settling or _week_read(conn, w["id"], "outcomes") != fp:
+                    kept.append(w)
+                    read.append((w["id"], fp))
+            weeks = kept
         if not weeks:
-            return {"written": 0}
+            return {"written": 0, "weeks": 0}
         share = _morning_share(conn, restaurant_id)
         # Issues are stamped in UTC; the schedule's dates and dayparts are
         # the restaurant's own. A 7pm Central no-show is 00:00 UTC the next
@@ -203,10 +268,15 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     finally:
         conn.close()
     # What was measured, into the observation log (schedule_memory — after
-    # the outcome rows are committed, on its own connections).
-    for w, d, part, e, a, labor_part, sales in pending:
-        _observe_actuals(restaurant_id, w, d, part, e, a, labor_part, sales, db_path)
-    return {"written": written}
+    # the outcome rows are committed), in one transaction for the whole
+    # restaurant (SCALE-26: it was a commit per fact).
+    import schedule_memory as _sm_b
+    with _sm_b.observe_batch(restaurant_id, db_path=None if db_path in (None, DB_PATH) else db_path):
+        for w, d, part, e, a, labor_part, sales in pending:
+            _observe_actuals(restaurant_id, w, d, part, e, a, labor_part, sales, db_path)
+    for hid, fp in read:
+        _mark_week_read(restaurant_id, hid, "outcomes", fp, db_path)
+    return {"written": written, "weeks": len(weeks)}
 
 
 class _Actuals:
@@ -1840,10 +1910,14 @@ def as_run_rows(restaurant_id, week_start, week_end, plan_rows, db_path=DB_PATH)
 def _planned_quality(conn, history_id):
     """The quality the published week carried when it was first sent (the
     first `published` version's), else the latest stored for the week."""
-    row = conn.execute("SELECT quality_json FROM schedule_versions WHERE history_id=? AND reason='published' AND "
-                       "quality_json IS NOT NULL ORDER BY version LIMIT 1", (history_id,)).fetchone()
-    if row is None:
-        row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+    from schedule_versions import version_quality
+    row = conn.execute("SELECT quality_json, quality_ref FROM schedule_versions WHERE history_id=? AND "
+                       "reason='published' AND quality_json IS NOT NULL ORDER BY version LIMIT 1",
+                       (history_id,)).fetchone()
+    if row is not None:
+        # The whole evaluation (its detail is stored by reference — SCALE-4).
+        return version_quality(conn, row["quality_json"], row["quality_ref"])
+    row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=?", (history_id,)).fetchone()
     try:
         return json.loads(row["quality_json"] or "null") or {} if row else {}
     except (TypeError, ValueError):
@@ -1862,16 +1936,43 @@ def _shift_reading(s) -> dict:
             "hard_breaches": len(s.get("hard_breaches") or []), "unrated": _unrated(s)}
 
 
-def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_RUN_WEEKS) -> int:
+def _pos_week_final(conn, restaurant_id, week_end, today) -> bool:
+    """Whether the week's last POS day is final: its labor_daily_history row
+    is (FINAL_SQL), or — a restaurant with no daily history for it —
+    AS_RUN_FINAL_AFTER_DAYS have passed since the week ended."""
+    try:
+        row = conn.execute("SELECT COALESCE(final, 1) AS f FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                           (restaurant_id, week_end)).fetchone()
+    except Exception:
+        row = None
+    if row is not None:
+        return bool(row["f"])
+    try:
+        ended = datetime.strptime(str(week_end)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return True
+    return (today - ended).days >= AS_RUN_FINAL_AFTER_DAYS
+
+
+def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_RUN_WEEKS, only_changed=False) -> int:
     """Each published week that has ended (the newest `weeks`), scored as it
     ran, beside its planned score — per shift into the observation log
     (sq_as_run, sq_planned; phase as_run; keyed by week, date and daypart,
     so a re-read replaces them), the week-level measures too. Returns the
-    shifts recorded; a week with no punch records nothing."""
+    shifts recorded; a week with no punch records nothing.
+
+    `only_changed` (the daily outcomes job — scheduler audit 10/10/26,
+    SCALE-16): a week is scored once its last POS day is final, and again
+    only when its punches or its plan change (week_fingerprint) — it was
+    re-scored on four Mondays in a row with the same inputs. Every week of
+    one restaurant reads one inputs snapshot (models.read_scope, SCALE-6)
+    and its observations are written in one transaction (SCALE-26)."""
     import schedule_memory as _sm
+    import models as _models_rq
     from schedule_versions import rows_from_csv
     today = today or date.today()
     conn = get_conn(db_path)
+    marks = {}
     try:
         hist = conn.execute(
             "SELECT id, week_start, week_end, schedule_csv FROM schedule_history h WHERE restaurant_id=? AND "
@@ -1879,11 +1980,30 @@ def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_R
             "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
             "n.published_at IS NOT NULL AND n.id > h.id) ORDER BY week_start DESC LIMIT ?",
             (restaurant_id, today.isoformat(), int(weeks))).fetchall()
+        if only_changed:
+            kept = []
+            for h in hist:
+                if not _pos_week_final(conn, restaurant_id, h["week_end"], today):
+                    continue
+                fp = week_fingerprint(conn, restaurant_id, h["week_start"], h["week_end"], h["schedule_csv"], "as_run")
+                if _week_read(conn, h["id"], "as_run") != fp:
+                    kept.append(h)
+                    marks[h["id"]] = fp
+            hist = kept
         planned = {h["id"]: _planned_quality(conn, h["id"]) for h in hist}
     finally:
         conn.close()
     n = 0
     db = None if db_path in (None, DB_PATH) else db_path
+    with _models_rq.read_scope(), _sm.observe_batch(restaurant_id, db_path=db):
+        n = _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, rows_from_csv)
+    for hid, fp in marks.items():
+        _mark_week_read(restaurant_id, hid, "as_run", fp, db_path)
+    return n
+
+
+def _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, rows_from_csv) -> int:
+    n = 0
     for h in hist:
         rows = as_run_rows(restaurant_id, h["week_start"], h["week_end"], rows_from_csv(h["schedule_csv"] or ""),
                            db_path)
@@ -2018,7 +2138,7 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
         if not acc:
             return 0
         vers = conn.execute(
-            "SELECT v.history_id, v.created_at, v.quality_json, h.week_start, h.week_end FROM schedule_versions v "
+            "SELECT v.history_id, v.created_at, v.quality_json, v.quality_ref, h.week_start, h.week_end FROM schedule_versions v "
             "JOIN schedule_history h ON h.id=v.history_id WHERE h.restaurant_id=? AND h.published_at IS NOT NULL "
             "AND h.week_end < ? AND v.quality_json IS NOT NULL AND v.created_at >= datetime('now', ?) "
             "ORDER BY v.created_at", (restaurant_id, today.isoformat(), f"-{AS_RUN_LOOKBACK_DAYS + 14} days")).fetchall()
@@ -2056,6 +2176,15 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
                 made = (v, q)
         hid = made[0]["history_id"] if made else None
         q = made[1] if made else {}
+        if made and made[0]["quality_ref"]:
+            # The whole evaluation the recommendation was made on (its
+            # headline only is inline — SCALE-4).
+            from schedule_versions import version_quality
+            _c = get_conn(db_path)
+            try:
+                q = version_quality(_c, made[0]["quality_json"], made[0]["quality_ref"]) or q
+            finally:
+                _c.close()
         date_s = day if re.match(r"^\d{4}-\d{2}-\d{2}$", str(day or "")) else None
         weekday = _weekday(date_s) if date_s else day
         if date_s and part is None:
@@ -2665,6 +2794,21 @@ def init_schedule_intel(db_path: str = DB_PATH):
     except sqlite3.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
+    # What the daily outcomes job last read of each ended week, by step
+    # (scheduler audit 10/10/26, SCALE-15/16): the fingerprint of the
+    # week's inputs then (week_fingerprint), so a week is read when its
+    # numbers are in and again only when they change — it used to be
+    # re-scored on four Mondays in a row. One row per published week and
+    # step, kept with the week (delete_restaurant takes them with it).
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_week_reads (
+        history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+        step           TEXT    NOT NULL,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        fingerprint    TEXT    NOT NULL,
+        read_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (history_id, step)
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_week_reads_rid ON schedule_week_reads(restaurant_id, step)")
     conn.commit()
     try:
         _normalise_tenure_dates(conn)

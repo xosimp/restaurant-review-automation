@@ -163,7 +163,7 @@ JOBS = {
         label="Marketing metrics", description="Refresh Instagram / Facebook post metrics",
         target=("scheduler", "run_marketing_metrics_sync"), max_minutes=40, retry=True),
     "schedule_outcomes": dict(
-        cadence="Mon 4am CT", sla_minutes=_W, sends=False, runnable=True,
+        cadence="4am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Schedule outcomes", description="Record what each published week actually did, by daypart",
         target=("strategy_jobs", "run_schedule_outcomes"), max_minutes=30, retry=True),
     "schedule_scorecard": dict(

@@ -4232,6 +4232,37 @@ def run_quarterly_summaries():
 
 
 AUTO_PUBLISH_UNDO_MINUTES = 120
+# Bounded and resumable (scheduler audit 10/10/26, ARCH-23 / BUGSLIFE-24):
+# the pass was one serial loop over every restaurant, each due one paying
+# for a publish review (the week's rules and a full sweep) — at thousands of
+# restaurants sharing a publish day the 9am pass held the scheduler tick, and
+# a crash part-way left the rest unreached until the window closed. A worker
+# pool, a wall-clock bound inside the job's 20 minutes and a cursor, as the
+# auto-draft has; each restaurant is claimed for its day only when its turn
+# comes, so the ones a bounded or interrupted pass never reached are the next
+# hourly pass's.
+AUTO_PUBLISH_CURSOR_KEY = "auto_publish_schedule_cursor"
+AUTO_PUBLISH_MAX_SECONDS = int(os.getenv("AUTO_PUBLISH_MAX_SECONDS", str(15 * 60)))
+AUTO_PUBLISH_WORKERS = int(os.getenv("AUTO_PUBLISH_WORKERS", "2"))
+AUTO_PUBLISH_HOUR, AUTO_PUBLISH_UNTIL = 9, 14
+
+
+def _drafted_today(generated_at, local_day, r) -> bool:
+    """Whether a draft was made on `local_day` in the restaurant's own zone:
+    a draft made on the publish day itself (the auto-draft's fallback day,
+    SCALE-3) has had no day for the owner to read it."""
+    if not generated_at:
+        return False
+    try:
+        from time_utils import restaurant_tz
+        at = parse_stored_dt(generated_at)
+        if at is None:
+            return False
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        return at.astimezone(restaurant_tz(r)).date() == local_day
+    except Exception:
+        return False
 
 
 def run_auto_publish_schedules():
@@ -4239,26 +4270,63 @@ def run_auto_publish_schedules():
     default Thursday draft; models.auto_publish_weekday): queue the draft to go to staff
     AUTO_PUBLISH_UNDO_MINUTES later, with those two hours as the undo window — for owners who turned it on AND
     whose last SCHEDULE_PUBLISH_TRUST_MIN published schedules went out
-    unedited. The draft must be this coming week's, untouched, and not yet
-    shared. Nothing is sent here; delayed.run_due sends it, and the owner
-    is told now so "undo" is a real choice."""
+    unedited. The draft must be this coming week's, untouched, not yet
+    shared, and made before today (a draft the auto-draft's fallback day
+    made this morning waits for its owner). Nothing is sent here;
+    delayed.run_due sends it, and the owner is told now so "undo" is a real
+    choice. Bounded and resumable (resumable_sweep, AUTO_PUBLISH_*)."""
     import delayed
     from models import (get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH,
                         auto_publish_weekday)
     from time_utils import restaurant_now
-    queued = skipped = failed = 0
+    counts = {"queued": 0, "skipped": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def _bump(key):
+        with lock:
+            counts[key] += 1
+
+    due = {}
     for r in get_all_restaurants():
         if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
             continue
         if not _served_client(r):
             continue
         local = restaurant_now(r, naive=True)
-        if local.weekday() != auto_publish_weekday(r) or not local_due(r, 9, claim_key="auto_publish_schedule"):
-            skipped += 1
+        if local.weekday() != auto_publish_weekday(r):
+            counts["skipped"] += 1
             continue
+        if local.hour >= AUTO_PUBLISH_UNTIL:
+            # Its window closed with the day unclaimed: recorded (#131).
+            note_missed_window("auto_publish_schedule", r.id, local.date().isoformat())
+        if not (AUTO_PUBLISH_HOUR <= local.hour < AUTO_PUBLISH_UNTIL):
+            counts["skipped"] += 1
+            continue
+        due[r.id] = r
+
+    def _one(rid):
+        r = due[rid]
+        # Claimed when its turn comes, never for the whole list up front.
+        if not local_due(r, AUTO_PUBLISH_HOUR, until=AUTO_PUBLISH_UNTIL, claim_key="auto_publish_schedule"):
+            _bump("skipped")
+            return
+        local = restaurant_now(r, naive=True)
+        try:
+            queued = _publish_one(r, local)
+        except Exception as e:
+            # Nothing was queued: the day is handed back so a later pass in
+            # the window tries again, instead of the restaurant waiting a week.
+            _ops.release_period(f"auto_publish_schedule:{r.id}", local.date().isoformat())
+            _bump("failed")
+            _ops.capture(e, job="auto_publish_schedule", context=f"restaurant_id={r.id}")
+            return
+        _bump("queued" if queued else "skipped")
+
+    def _publish_one(r, local):
+        """True when the week was queued; False when it was held or skipped.
+        Raises only when nothing was queued."""
         if schedule_publish_trust(r.id) < SCHEDULE_PUBLISH_TRUST_MIN:
-            skipped += 1
-            continue
+            return False
         conn = get_conn()
         try:
             # The coming week only — the earliest week_start after today —
@@ -4280,7 +4348,7 @@ def run_auto_publish_schedules():
                 # redo, the quality gate's rewrite — never goes out over the
                 # week the owner took over.
                 row = conn.execute(
-                    "SELECT h.id, h.week_start, COALESCE(h.edited_at, (SELECT MAX(e.edited_at) FROM schedule_history e "
+                    "SELECT h.id, h.week_start, h.generated_at, COALESCE(h.edited_at, (SELECT MAX(e.edited_at) FROM schedule_history e "
                     "WHERE e.restaurant_id=h.restaurant_id AND e.week_start=h.week_start)) AS edited_at "
                     "FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
                     "AND h.superseded_by IS NULL AND (h.schedule_csv IS NOT NULL AND h.schedule_csv != '') "
@@ -4291,12 +4359,14 @@ def run_auto_publish_schedules():
         finally:
             conn.close()
         if not row:
-            skipped += 1
-            continue
+            return False
         if row["edited_at"]:
             # The owner has taken this week over; it goes out when they send it.
-            skipped += 1
-            continue
+            return False
+        if _drafted_today(row["generated_at"], local.date(), r):
+            # Drafted this morning (the auto-draft's fallback day): its
+            # drafted notice asked the owner to review and send it.
+            return False
         # Never unread: a week with flagged rows, a hard rule breach, a
         # setting the rules could not read, or a quality check that could
         # not run waits for a human, and the owner is told why instead of
@@ -4316,7 +4386,6 @@ def run_auto_publish_schedules():
             _ops.capture(e, job="auto_publish_schedule_check", context=f"restaurant_id={r.id}")
             blockers = ["The publish check could not run"]
         if blockers:
-            skipped += 1
             try:
                 from strategy_jobs import _reach
                 _reach(r.id, "schedule_publish_held",
@@ -4327,11 +4396,11 @@ def run_auto_publish_schedules():
                        subject=f"Next week's schedule is waiting on you — {r.name}")
             except Exception as e:
                 _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
-            continue
+            return False
+        action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
+                                  AUTO_PUBLISH_UNDO_MINUTES,
+                                  label=f"Publishing the week of {mdy(row['week_start'])} to staff")
         try:
-            action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
-                                      AUTO_PUBLISH_UNDO_MINUTES,
-                                      label=f"Publishing the week of {mdy(row['week_start'])} to staff")
             from strategy_jobs import _reach, _clock
             # The real send time. The job's window runs 9am to 2pm local, so
             # a late pass queued it for up to 3:59pm while the notice still
@@ -4350,12 +4419,17 @@ def run_auto_publish_schedules():
                    # It carries Undo: only to the people the cancel route
                    # lets undo it (F3-13).
                    permissions=[__import__("permissions").SCHEDULE_PUBLISH])
-            queued += 1
         except Exception as e:
-            failed += 1
-            _ops.capture(e, job="auto_publish_schedule", context=f"restaurant_id={r.id}")
-    return {"queued": queued, "skipped": skipped, "attempted": queued + failed, "ok": queued, "failed": failed,
-            "hit_bound": False}
+            # Queued all the same: the day is not handed back (a second pass
+            # would queue the week twice).
+            _ops.capture(e, job="auto_publish_schedule_notice", context=f"restaurant_id={r.id}")
+        return True
+
+    _done, ran_out = resumable_sweep(AUTO_PUBLISH_CURSOR_KEY, sorted(due), _one, AUTO_PUBLISH_MAX_SECONDS,
+                                     workers=AUTO_PUBLISH_WORKERS, job="auto_publish_schedule")
+    return {"queued": counts["queued"], "skipped": counts["skipped"],
+            "attempted": counts["queued"] + counts["failed"], "ok": counts["queued"], "failed": counts["failed"],
+            "hit_bound": bool(ran_out), "due": len(due), "reached": int(_done)}
 
 
 def run_restore_drill():
@@ -5612,8 +5686,11 @@ def scheduler_loop():
                 from strategy_jobs import run_quality_calibration
                 _ops.run_job("quality_calibration", run_quality_calibration)
 
-            # Monday 4am — what each published week actually did, by daypart.
-            if _due(now, 4) and now.weekday() == 0 and _ops.claim_period("schedule_outcomes", str(today)):
+            # 4am daily — what each published week actually did, by daypart,
+            # each ended week read when its numbers are in and again only
+            # when they change (scheduler audit 10/10/26, SCALE-15: Mondays
+            # only, the tail a week behind).
+            if _due(now, 4) and _ops.claim_period("schedule_outcomes", str(today)):
                 from strategy_jobs import run_schedule_outcomes
                 _ops.run_job("schedule_outcomes", run_schedule_outcomes)
 

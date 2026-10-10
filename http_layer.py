@@ -285,7 +285,7 @@ def traffic_class(path) -> str:
         return "mobile"
     if p in ("/health", "/api/status") or p == "/status" or p.startswith("/status/"):
         return "probe"
-    if p.startswith("/static/") or p.startswith("/.well-known/") or p in _STATIC_PATHS:
+    if p.startswith("/static/") or p.startswith("/b/") or p.startswith("/.well-known/") or p in _STATIC_PATHS:
         return "static"
     if p.startswith(_WEBHOOK_PREFIXES):
         return "webhook"
