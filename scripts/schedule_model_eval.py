@@ -40,7 +40,21 @@ legally work, left out of the week (never filled illegally). Without --live noth
 cost (from the stored calls' own token counts) are printed. A live run's calls
 are metered in ai_usage as action "schedule_model_eval" against no restaurant.
 
-Reads the database — a copy of production's, for real weeks. Saves nothing.
+Reads the database — a copy of production's, for real weeks. Saves nothing,
+except the frozen-set modes below (scheduler audit 10/10/26 RM-1):
+
+    python3 scripts/schedule_model_eval.py --freeze golden-v1 --ids 7012,7020
+    python3 scripts/schedule_model_eval.py --set golden-v1 --runs 3 --store
+    python3 scripts/schedule_model_eval.py --set golden-v1 --tiers T3,T4 --live --verdict T4,T3
+
+--freeze copies generations (their calls, the post-model context
+schedule_generation_metrics kept, the published week) into the retention-
+exempt schedule_eval_items; --set runs production, the code arms
+(carry_forward, solver — no model) and, with --live, the model arms on it,
+RUNS_PER_ARM times each, through the production post-model path
+(schedule_engine.post_model_rows) scored against the published week, and
+reports means with 90% intervals clustered by restaurant; --verdict stores
+the paired verdict per roster band that the pre-router reads.
 """
 import argparse
 import copy
@@ -523,6 +537,124 @@ def estimate(weeks, arms) -> dict:
     return out
 
 
+# ── the frozen golden set (scheduler audit 10/10/26 RM-1) ──────────────────
+
+SET_METRICS = ("published_f1", "published_precision", "published_recall", "hours_l1_share", "hard",
+               "manager_minutes", "quality", "cost")
+
+
+def _item_ctx(item) -> dict:
+    """What assign_open_slots reads, from a frozen item's own context — no
+    database: the eval set outlives the restaurant's rows."""
+    ctx = item.get("context") or {}
+    res = ctx.get("result") or {}
+    return {"restaurant_id": item.get("restaurant_id"), "constraints": ctx.get("constraints"),
+            "roster_roles": res.get("roster_roles") or {}, "daily_target_hours": res.get("daily_target_hours")}
+
+
+def arm_rows(item, arm, call_model=None) -> tuple:
+    """(rows, cost, seconds, error) one arm writes for one frozen item: the
+    stored answers ("production"), a code arm (schedule_eval.CODE_ARMS — no
+    model), or a model arm replaying the item's calls."""
+    import schedule_eval as se_
+    calls = item.get("calls") or []
+    t0 = time.time()
+    if arm["name"] in se_.CODE_ARMS:
+        try:
+            return se_.code_arm_rows(arm["name"], item), 0.0, round(time.time() - t0, 1), None
+        except Exception as e:
+            return [], 0.0, round(time.time() - t0, 1), f"{type(e).__name__}: {e}"[:300]
+    results = production_result(calls) if arm["name"] == PRODUCTION else \
+        [replay_call(call, arm, call_model or default_call_model) for call in calls]
+    rows = _merge_rows(calls, results)
+    signals = (item.get("context") or {}).get("signals")
+    rows, _unstaffed = assign_open_slots(_item_ctx(item), rows,
+                                         signals=signals if signals is not None else
+                                         {"roster": list(getattr(_item_ctx(item)["constraints"], "roster_names",
+                                                                 None) or [])})
+    errors = [r["error"] for r in results if r.get("error")]
+    return (rows, round(sum(float(r.get("cost") or 0) for r in results), 4),
+            round(sum(float(r.get("seconds") or 0) for r in results), 1), errors[0] if errors else None)
+
+
+def run_set(items, arms, runs=None, call_model=None, live=False, run_key=None, version=None, store=False,
+            baseline=PRODUCTION, db_path=None) -> dict:
+    """Every arm on every frozen item, `runs` times (schedule_eval.RUNS_PER_ARM
+    by default), each run's rows scored through the production post-model
+    path against the published week (schedule_eval.score_arm). Model arms
+    run only when `live` (or with an injected call_model); "production" and
+    the code arms always. Returns {"arms": {arm: {metric: mean ± 90% CI}},
+    "pairs": {arm: {metric: diff vs baseline}}, "short": [...], "runs": [...]}."""
+    import schedule_eval as se_
+    runs = int(runs or se_.RUNS_PER_ARM)
+    plan = [a for a in arms if a["name"] in (PRODUCTION,) + se_.CODE_ARMS or live or call_model is not None]
+    out_runs = []
+    for item in items:
+        for arm in plan:
+            for i in range(runs):
+                rows, cost, secs, err = arm_rows(item, arm, call_model=call_model)
+                m = se_.score_arm(rows, item) if not err or rows else {"error": err}
+                m.update(cost=cost, seconds=secs, error=err)
+                rec = {"arm": arm["name"], "item_key": item["item_key"], "restaurant_id": item.get("restaurant_id"),
+                       "run_index": i, "metrics": m}
+                out_runs.append(rec)
+                if store and run_key:
+                    se_.record_run(run_key, version, item["item_key"], arm["name"], i, m, cost_usd=cost,
+                                   seconds=secs, db_path=db_path)
+    names = [a["name"] for a in plan]
+    report = {"arms": {n: {k: se_.summarize_arm(out_runs, n, k) for k in SET_METRICS} for n in names},
+              "pairs": {n: {k: se_.summarize_pair(out_runs, n, baseline, k) for k in SET_METRICS}
+                        for n in names if n != baseline},
+              "short": se_.runs_short(out_runs, names, [it["item_key"] for it in items]), "runs": out_runs}
+    return report
+
+
+def record_verdicts(report, items, arm_a, arm_b, metric=None, version=None, run_key=None, db_path=None) -> list:
+    """One schedule_eval verdict per roster-size band the items span, of
+    arm_a against arm_b on `metric` (schedule_eval.ROUTE_METRIC by default):
+    what the router reads (AI-3). Not recorded while any arm is short of
+    its runs."""
+    import schedule_eval as se_
+    if report.get("short"):
+        raise ValueError("not every arm ran RUNS_PER_ARM times on every item — no verdict")
+    metric = metric or se_.ROUTE_METRIC
+
+    def resolve(label):
+        # A tier label ("T4") names the tier's arm ("T4:claude-opus-5-5/medium/stored").
+        names = list(report["arms"])
+        if label in names:
+            return label
+        hits = [n for n in names if n.startswith(f"{label}:")]
+        if len(hits) != 1:
+            raise ValueError(f"{label!r} names {len(hits)} arms of this run")
+        return hits[0]
+    name_a, name_b = resolve(arm_a), resolve(arm_b)
+    out = []
+    bands = {}
+    for it in items:
+        bands.setdefault(se_.band_of(it.get("roster_size")), set()).add(it["item_key"])
+    for band, keys in sorted(bands.items()):
+        runs = [r for r in report["runs"] if r["item_key"] in keys]
+        out.append(se_.record_verdict(metric, arm_a, arm_b, band, se_.summarize_pair(runs, name_a, name_b, metric),
+                                      version=version, run_key=run_key, db_path=db_path))
+    return out
+
+
+def _print_set(report):
+    print("arm".ljust(28) + "".join(f"{k:>22}" for k in ("published_f1", "hours_l1_share", "hard", "quality",
+                                                           "cost")))
+    for name, s in report["arms"].items():
+        cells = []
+        for k in ("published_f1", "hours_l1_share", "hard", "quality", "cost"):
+            v = s.get(k) or {}
+            ci = v.get("ci90")
+            cells.append(("-" if v.get("mean") is None else f"{v['mean']:.3f}")
+                         + (f" [{ci[0]:.3f},{ci[1]:.3f}]" if ci else ""))
+        print(name.ljust(28) + "".join(f"{c:>22}" for c in cells))
+    if report.get("short"):
+        print(f"\n{len(report['short'])} arm-week(s) short of the runs a decision needs")
+
+
 def _print(report):
     cols = ("weeks", "completed", "hard_before", "hard_after", "manager_minutes_before", "manager_minutes_after",
             "full_time_under_min", "rows_repaired", "quality", "unmet", "input_tokens", "output_tokens",
@@ -558,7 +690,51 @@ def main(argv=None):
     ap.add_argument("--repair", help="module:function(rows, constraints, roster_roles) -> rows")
     ap.add_argument("--live", action="store_true", help="make the calls (costs money); otherwise plan only")
     ap.add_argument("--json", help="write the full report here")
+    ap.add_argument("--freeze", metavar="VERSION",
+                    help="copy the --ids generations (with their published weeks) into the frozen set VERSION")
+    ap.add_argument("--set", metavar="VERSION", help="run the arms on the frozen set VERSION instead of stored weeks")
+    ap.add_argument("--tags", help="only the set's items carrying all these tags (comma-separated)")
+    ap.add_argument("--runs", type=int, help="runs per arm per week (default schedule_eval.RUNS_PER_ARM, 3)")
+    ap.add_argument("--code-arms", default="carry_forward,solver",
+                    help="no-model arms to run on the set (schedule_eval.CODE_ARMS)")
+    ap.add_argument("--store", action="store_true", help="keep each run in schedule_eval_runs")
+    ap.add_argument("--verdict", help="A,B: record A against B per roster-size band (the router reads T4,T3)")
     args = ap.parse_args(argv)
+
+    if args.freeze:
+        import schedule_eval as se_
+        ids = [int(x) for x in (args.ids or "").split(",") if x.strip()]
+        if not ids:
+            ap.error("--freeze needs --ids")
+        got = se_.freeze(args.freeze, ids)
+        print(f"frozen {len(got['frozen'])} week(s) into {args.freeze}; skipped {len(got['skipped'])}")
+        for s in got["skipped"]:
+            print(f"  {s['history_id']}: {s['why']}")
+        return
+    if args.set:
+        import schedule_eval as se_
+        items = se_.load_items(args.set, tags=[t for t in (args.tags or "").split(",") if t.strip()] or None)
+        if not items:
+            ap.error(f"no items in the frozen set {args.set!r}")
+        prompts = [p.strip() for p in args.prompts.split(",") if p.strip()]
+        arms = [{"name": PRODUCTION}] + [{"name": a.strip()} for a in args.code_arms.split(",") if a.strip()]
+        if args.tiers:
+            arms += tier_arms([t.strip() for t in args.tiers.split(",") if t.strip()], prompts)
+        elif args.live:
+            arms += arms_from([m.strip() for m in args.models.split(",") if m.strip()],
+                              [e.strip() for e in args.efforts.split(",") if e.strip()], prompts)
+        run_key = f"{args.set}:{int(time.time())}"
+        report = run_set(items, arms, runs=args.runs, live=args.live, run_key=run_key, version=args.set,
+                         store=args.store)
+        _print_set(report)
+        if args.verdict:
+            a, _, b = args.verdict.partition(",")
+            for v in record_verdicts(report, items, a.strip(), b.strip(), version=args.set, run_key=run_key):
+                print(f"verdict {v['arm_a']} vs {v['arm_b']} {v['band_lo']}-{v['band_hi']}: {v['winner'] or 'none'}")
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(report, f, indent=1, default=str)
+        return
 
     history_ids = [int(x) for x in (args.ids or "").split(",") if x.strip()]
     weeks = load_weeks(restaurant_ids=args.restaurant, history_ids=history_ids or None, weeks=args.weeks)

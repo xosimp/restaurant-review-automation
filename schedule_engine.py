@@ -4146,6 +4146,41 @@ def _not_redone_line(dates) -> str:
 REDO_RERUNS_MAX = 2
 
 
+def _record_generation_metrics(restaurant_id, history_id, result, metrics_in, kind="week", kept_dates=(),
+                               seconds=None, final_rows=None):
+    """One schedule_metrics row for a saved generation: its cost, the
+    model's rows' survival into the saved week, which stage changed what,
+    the role violations in the model's rows, and the post-model context the
+    eval replays. Soft: a metrics row lost is never a failed week."""
+    if not metrics_in or not history_id:
+        return None
+    try:
+        import schedule_metrics as _sm
+        x = metrics_in.get("ctx")
+        ds = result.get("draft_source") or {}
+        model_rows = _sm.model_rows_of(metrics_in.get("rows"), kept_dates=kept_dates,
+                                       code_dates=ds.get("code_dates") or (),
+                                       source=ds.get("source") if kind in ("week", "redo") else "model")
+        if kind == "gate_fill":
+            model_rows = []                    # the fill is code's work on the saved rows
+        blob = None
+        if x is not None:
+            blob = _sm.snapshot(result, x.c, restaurant=x.restaurant, close_times=x.close_times,
+                                role_buffers=x.role_buffers, signals=x.signals, weights=x.weights,
+                                requirements=x.requirements, curve=x.curve, solver_on=x.solver_on,
+                                model_rows=model_rows, editable=x.editable)
+        return _sm.record(restaurant_id, history_id, result.get("generation_id"),
+                          (result.get("week_dates") or [None])[0], kind, draft_source=ds.get("source"),
+                          roster_size=len(result.get("roster") or []), model_rows=model_rows,
+                          final_rows=final_rows if final_rows is not None else (result.get("rows") or []),
+                          loop=metrics_in.get("loop"), constraints=getattr(x, "c", None), seconds=seconds,
+                          context=blob)
+    except Exception as e:
+        print(f"[schedule] generation metrics not recorded for history {history_id}: {e!r}")
+        _ops.capture(e, job="schedule_metrics", context=f"restaurant_id={restaurant_id}")
+        return None
+
+
 def _redo_base_moved(moved, base_rows, dates, answer, reruns):
     """What a redo does when the draft it was built from changed while the
     model wrote (models.DraftChanged — re-audit 10/4/26 PIPE-2): "again"
@@ -8905,6 +8940,71 @@ def repair_week(rows, x: RepairContext) -> dict:
     return _net_repair(state, prof, x, ledger, converged, restored)
 
 
+def post_model_rows(rows, ctx, restaurant_id=None, gate=True, max_seconds=REPAIR_MAX_SECONDS) -> dict:
+    """The production post-model path on any rows, offline (scheduler audit
+    10/10/26 AI-7, RM-1): the ranked repair loop with the generation's own
+    RepairContext — the Constraints, signals and weights, requirements,
+    curve, close times and budget it was scored in (schedule_metrics'
+    snapshot, `ctx`, decoded) — then, when the finished week trips the
+    quality gate, the gate's fill in code: the gate's dates through the
+    loop again, kept only when it leaves no more hard breaches and no lower
+    quality. No model call (the gate's model rewrite is an arm of its own).
+    {"rows", "violations", "quality", "gate", "loop"}."""
+    import types as _types
+    import shift_quality as _sq
+    c = ctx.get("constraints")
+    result = dict(ctx.get("result") or {})
+    result["constraints"] = c
+    if c is not None and result.get("roster_roles") and not getattr(c, "roster_roles", None):
+        # Not a dataclass field, so not in the snapshot's Constraints: the
+        # job sets it on them as repair_rows does.
+        c.roster_roles = dict(result["roster_roles"])
+    rest = ctx.get("restaurant")
+    restaurant = _types.SimpleNamespace(**rest) if isinstance(rest, dict) else None
+    signals, weights = ctx.get("signals"), ctx.get("weights")
+
+    def _ctx(editable):
+        return RepairContext(restaurant_id, result, c, editable=editable, restaurant=restaurant,
+                             close_times=ctx.get("close_times") or {}, role_buffers=ctx.get("role_buffers") or {},
+                             signals=signals, weights=weights, requirements=ctx.get("requirements") or [],
+                             curve=ctx.get("curve") or {}, clock=None, solver_on=ctx.get("solver_on", True),
+                             max_seconds=max_seconds, searches=signals is not None)
+
+    def _score(rs):
+        viols = _rules.violations(rs, c)
+        q = {"checked": False}
+        if signals is not None:
+            try:
+                q = _sq.score_rows(rs, profiles=result.get("shift_profiles") or None, weights=weights,
+                                   **dict(signals))
+            except Exception as e:
+                print(f"[schedule] eval scoring skipped: {e!r}")
+        return viols, q
+
+    def _clean(rs):
+        return [{k: v for k, v in r.items() if k != "_rid"} for r in rs]
+    editable = set(ctx["editable"]) if ctx.get("editable") else None
+    loop = repair_week([dict(r) for r in rows or []], _ctx(editable))
+    final = _clean(loop["rows"])
+    viols, quality = _score(final)
+    out = {"rows": final, "violations": viols, "quality": quality, "gate": None, "loop": loop}
+    g = _quality_gate({"quality": quality, "rule_violations": viols, "rows": final, "constraints": c}) \
+        if gate else None
+    if not g:
+        return out
+    again = repair_week([dict(r) for r in final], _ctx(set(g["dates"])))
+    filled = _clean(again["rows"])
+    v2, q2 = _score(filled)
+    hard = sum(1 for v in viols if v.get("hard"))
+    hard2 = sum(1 for v in v2 if v.get("hard"))
+    better = hard2 <= hard and (not quality.get("checked") or not q2.get("checked")
+                                or float(q2.get("score") or 0) >= float(quality.get("score") or 0))
+    out["gate"] = {"dates": g["dates"], "reason": g["reason"], "kept": bool(better)}
+    if better:
+        out.update(rows=filled, violations=v2, quality=q2, loop=again)
+    return out
+
+
 def repair_rows(rows, c, roster_roles=None, hours_budget=None) -> list:
     """The job's ranked repair loop as one call over `rows` with the week's
     rules `c` and nothing else a generation reads — what the model-replay
@@ -9403,6 +9503,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     try:
         _pinned, _base_rows, _kept_rows = [], [], []
         _base_csv = None
+        _metrics_in = None
         redo = bool(dates and base_history_id)
         if redo:
             from models import get_schedule_history_detail as _gshd
@@ -9714,8 +9815,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                restaurant=_restaurant_for_sched, close_times=_close_times,
                                role_buffers=_role_close_buffers, signals=_pass_sig, weights=_pass_w,
                                requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on)
+            # The model's own rows as they came in, and the context they are
+            # repaired in — for the generation's metrics and the eval's
+            # replay (scheduler audit 10/10/26 AI-2, AI-23, RM-1).
+            _metrics_in = {"rows": [dict(r) for r in preview_rows], "ctx": _repair_ctx, "loop": None}
             with _timer.stage("repair"):
                 _loop = repair_week(preview_rows, _repair_ctx)
+            _metrics_in["loop"] = _loop
             for _k, _s in (_loop.get("seconds") or {}).items():
                 _timer.add(f"repair.{_k}", _s)
             preview_rows = _loop["rows"]
@@ -10434,6 +10540,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except Exception as _lx:
                 print(f"[schedule] model calls not linked to history {_history_id}: {_lx}")
                 _ops.capture(_lx, job="schedule_model_calls", context=f"restaurant_id={restaurant_id}")
+            # What the generation cost and what the model's rows were worth
+            # (schedule_metrics — AI-2's cost per accepted week, AI-23's
+            # role violations, stage attribution, the eval's context).
+            _record_generation_metrics(restaurant_id, _history_id, result, _metrics_in,
+                                       kind=("gate_fill" if _gate_fill is not None else
+                                             "gate_rewrite" if (focus and redo) else
+                                             "redo" if redo else "week"),
+                                       kept_dates=(set(result.get("week_dates") or []) - set(dates or []))
+                                       if redo else (), seconds=sum(_timer.seconds.values()),
+                                       final_rows=preview_rows)
             # A whole week built discharges "next week's schedule isn't
             # built"; a partial redo of a few days does not, nor a week with
             # days the generation could not write (P-34).
