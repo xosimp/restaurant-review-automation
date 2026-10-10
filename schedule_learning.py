@@ -308,6 +308,7 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     for w in week_edits:
         before, sb = _slot_heads(w["base"])
         after, sa = _slot_heads(w["final"])
+        asked = w.get("asked") or {}
         for src in (sb, sa):
             for rl, c in src.items():
                 for k, v in c.items():
@@ -316,7 +317,14 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         traded.append((w, {(_weekday(d), part) for (d, part, _rl) in set(before) | set(after)}))
         per = {}
         for k in set(before) | set(after):
-            delta = len(after.get(k, ())) - len(before.get(k, ()))
+            # The residual against what the draft was ASKED for (schedule
+            # audit 10/10/26 LEARNING-3), where the week kept it: a draft
+            # that came in one short of its requirement and was filled by
+            # the manager taught "+1" on top of a requirement that was
+            # already right. A week saved before the requirement was kept
+            # reads against its draft, as before.
+            was = asked[k] if k in asked else len(before.get(k, ()))
+            delta = len(after.get(k, ())) - was
             if delta:
                 d, part, rl = k
                 slot = (_weekday(d), part, rl)
@@ -367,6 +375,7 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         out.append({"kind": "headcount_add" if delta > 0 else "headcount_cut", "employee": "", "role": role,
                     "day": day, "daypart": part, "delta": int(delta), "times": n, "text": text,
                     "opportunities": of, "rate": rate, "confidence": conf,
+                    "first_week_start": min((s_ for _d, _h, _w, s_ in hits), default=""),
                     "last_week": max((h for d, h, _w, _s in hits), default=0),
                     "last_week_start": max((s_ for _d, _h, _w, s_ in hits), default="")})
     return out
@@ -522,9 +531,59 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
     longer shows it, and a live pattern its standing row has retired
     (without newer evidence) no longer applies. One being re-tested
     (status 'retest', L-30) is left out of the draft once on purpose."""
+    return {slot: {role: v["delta"] for role, v in roles.items()}
+            for slot, roles in learned_headcount(restaurant_id, weeks, min_weeks, db_path).items()}
+
+
+# The manager's settled level on a slot: the median of their final heads in
+# the newest weeks that slot ran (at most this many, and only weeks since the
+# pattern began when it is a live one).
+SETTLED_WEEKS = 4
+
+
+def _settled_levels(week_edits) -> dict:
+    """{(weekday, daypart, role lower): [(week_start, heads)], newest first}
+    — the people of each role the manager finished each slot with, in every
+    week the slot ran (LEARNING-3)."""
+    out = {}
+    for w in week_edits:
+        before, _sb = _slot_heads(w.get("base") or [])
+        after, _sa = _slot_heads(w.get("final") or [])
+        per = {}
+        for (d, part, rl) in set(before) | set(after):
+            per.setdefault((_weekday(d), part, rl), []).append(len(after.get((d, part, rl), ())))
+        for k, v in per.items():
+            out.setdefault(k, []).append((str(w.get("week_start") or ""), sum(v) / float(len(v))))
+    for k in out:
+        out[k].sort(reverse=True)
+    return out
+
+
+def _settled(levels, key, since=""):
+    vals = [h for ws, h in levels.get(key) or [] if ws >= (since or "")][:SETTLED_WEEKS] or \
+        [h for _ws, h in levels.get(key) or []][:SETTLED_WEEKS]
+    if not vals:
+        return None
+    vals = sorted(vals)
+    mid = len(vals) // 2
+    return vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+
+
+def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_PATH) -> dict:
+    """{(weekday, daypart): {role: {delta, settled}}} — learned_headcount_
+    adjustments with, beside each delta, the level the manager settled on
+    there (`settled`, the median of their final heads in the newest weeks
+    the slot ran — since the pattern began, for a live one). The
+    requirements table applies a delta only while its own baseline is short
+    of that level (labor.apply_learned_headcount — schedule audit 10/10/26
+    LEARNING-3): once the punches have absorbed the manager's extra server
+    the baseline already carries them, and adding the delta again asked for
+    a sixth server the manager never wanted."""
     from schedule_intel import dismissed_patterns, pattern_key
     import schedule_versions as _sv
-    pats = headcount_patterns(learning_weeks(restaurant_id, weeks, db_path), min_weeks)
+    recs = learning_weeks(restaurant_id, weeks, db_path)
+    pats = headcount_patterns(recs, min_weeks)
+    levels = _settled_levels(recs)
     dismissed = dismissed_patterns(restaurant_id, db_path)
     try:
         standing = {s_["key"]: s_ for s_ in _sv.standing_patterns(restaurant_id, db_path=db_path)
@@ -537,8 +596,10 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
         k = pattern_key(p)
         if k in dismissed or _sv.suppressed(p, standing.get(k), standing):
             continue
-        out.setdefault((p["day"], p["daypart"]), {})[p["role"]] = p["delta"]
-        live_slots.add((p["day"], p["daypart"], (p["role"] or "").strip().lower()))
+        slot = (p["day"], p["daypart"], (p["role"] or "").strip().lower())
+        out.setdefault((p["day"], p["daypart"]), {})[p["role"]] = {
+            "delta": p["delta"], "settled": _settled(levels, slot, since=p.get("first_week_start"))}
+        live_slots.add(slot)
     for k, s_ in standing.items():
         if s_["status"] != "active" or k in dismissed or s_.get("delta") in (None, ""):
             continue
@@ -550,9 +611,29 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
         except (TypeError, ValueError):
             continue
         if delta:
-            out.setdefault((s_["day"], s_["daypart"]), {})[s_["role"]] = delta
+            out.setdefault((s_["day"], s_["daypart"]), {})[s_["role"]] = {"delta": delta,
+                                                                         "settled": _settled(levels, slot)}
             live_slots.add(slot)
     return out
+
+
+def headcount_to_apply(base, delta, settled) -> int:
+    """How many of a learned headcount `delta` a requirement whose own
+    baseline is `base` still needs (LEARNING-3, RM-5): an add only while the
+    baseline is below the level the manager settled on — never past it — and
+    a cut only while it is above. With no settled level read, the delta."""
+    try:
+        base, delta = int(base or 0), int(round(float(delta or 0)))
+    except (TypeError, ValueError):
+        return 0
+    if settled is None:
+        return delta
+    target = int(round(float(settled)))
+    if delta > 0:
+        return max(0, min(delta, target - base))
+    if delta < 0:
+        return min(0, max(delta, target - base))
+    return 0
 
 
 # ── implicit recommendation acceptance ───────────────────────────────────

@@ -9261,7 +9261,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                # reopened week and the edit line (SQ-6).
                                "blended_rate": result.get("blended_rate"),
                                "daily_target_hours": result.get("daily_target_hours") or {},
-                               "demand_data_through": result.get("demand_data_through")},
+                               "demand_data_through": result.get("demand_data_through"),
+                               # What the draft was ASKED for, kept with the
+                               # week (schedule audit 10/10/26 LEARNING-3):
+                               # the learned headcount is the manager's
+                               # settled heads less this, never less the draft.
+                               "requirements_by_date": _json_safe(result.get("requirements_by_date") or {}),
+                               # Which code and which arms made it (LEARNING-7,
+                               # RM-4: the scorecard attributes a week to them).
+                               "generation": {"commit": (os.getenv("RAILWAY_GIT_COMMIT_SHA")
+                                                         or os.getenv("GIT_COMMIT") or "")[:12] or None,
+                                              "arms": [{"experiment": a.get("experiment"), "arm": a.get("arm")}
+                                                       for a in (result.get("experiment_arms") or [])]}},
                     stage_seconds=_timer.as_dict(),
                     base=(int(base_history_id), _base_csv) if redo else None,
                 )

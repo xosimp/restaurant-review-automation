@@ -1032,7 +1032,8 @@ class _WeekData:
             for i in range(0, len(ids), 400):
                 chunk = ids[i:i + 400]
                 marks = ",".join("?" for _ in chunk)
-                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by FROM schedule_history "
+                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json "
+                                      f"FROM schedule_history "
                                       f"WHERE restaurant_id=? AND id IN ({marks})", (restaurant_id, *chunk)):
                     hist[h["id"]] = dict(h)
                     if h["week_start"]:
@@ -1043,7 +1044,8 @@ class _WeekData:
             for i in range(0, len(wk), 400):
                 chunk = wk[i:i + 400]
                 marks = ",".join("?" for _ in chunk)
-                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by FROM schedule_history "
+                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json "
+                                      f"FROM schedule_history "
                                       f"WHERE restaurant_id=? AND week_start IN ({marks})", (restaurant_id, *chunk)):
                     hist.setdefault(h["id"], dict(h))
             self.hist = hist
@@ -1083,6 +1085,28 @@ class _WeekData:
         if v["id"] not in self._rows:
             self._rows[v["id"]] = canonical_rows(self.rid, [rows_from_csv(v["schedule_csv"])], mapping=self.canon)[0]
         return self._rows[v["id"]]
+
+    def asked(self, chain) -> dict:
+        """{(date, daypart, role lower): people} — the requirement each draft
+        of the chain was ASKED for (schedule_history.economics_json
+        requirements_by_date, kept with the week since 10/10/26 —
+        LEARNING-3), the newest draft's word on a date over an older one's.
+        {} for a week saved before it was kept."""
+        out = {}
+        for hid in chain:
+            raw = (self.hist.get(hid) or {}).get("economics_json")
+            try:
+                req = (json.loads(raw or "{}") or {}).get("requirements_by_date") or {}
+            except (TypeError, ValueError):
+                req = {}
+            for k, roles in (req.items() if isinstance(req, dict) else []):
+                d, _sep, part = str(k).partition("|")
+                for role, n in (roles or {}).items() if isinstance(roles, dict) else []:
+                    try:
+                        out[(d[:10], part, " ".join(str(role).split()).lower())] = int(n)
+                    except (TypeError, ValueError):
+                        continue
+        return out
 
     def generated(self, hid):
         return next((v for v in self.versions.get(hid) or [] if v["reason"] == "generated"), None)
@@ -1365,7 +1389,9 @@ def _record(data: _WeekData, hid: int, today=None):
             "publish_authority": (pub or {}).get("saved_authority"),
             "published_by_person": legacy_pub or _person_published(pub, data.auto_ids),
             "generated_at": (gen or {}).get("created_at"), "week_date": wd,
-            "age_days": max(0, (today - wd).days) if wd else 0}
+            "age_days": max(0, (today - wd).days) if wd else 0,
+            # What the draft was asked for per date × daypart × role (LEARNING-3).
+            "asked": data.asked(comp["chain"])}
 
 
 def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_ids=None, include_unlooked=False,
@@ -1788,7 +1814,27 @@ def _slot_rows(p, rows) -> list:
                    r.get("shift_end") or "") for r in rows if _on_slot(p, r))
 
 
-def _week_verdict(p, draft, final, edited):
+def _asked_heads(p, asked, draft_heads) -> dict:
+    """The draft's heads on a headcount pattern's slot, read as what the
+    draft was ASKED for where the week kept its requirement (LEARNING-3): a
+    draft the model left one short, filled by the manager, is the
+    requirement kept — not the manager adding still more."""
+    if not asked:
+        return draft_heads
+    out = dict(draft_heads)
+    rl = " ".join(str(p.get("role") or "").split()).lower()
+    for (d, part, role), n in asked.items():
+        if part != p.get("daypart") or role != rl:
+            continue
+        try:
+            if datetime.strptime(d, "%Y-%m-%d").strftime("%A") == p.get("day"):
+                out[d] = int(n)
+        except ValueError:
+            continue
+    return out
+
+
+def _week_verdict(p, draft, final, edited, asked=None):
     """What one published week says about a standing pattern:
       "confirmed"  the manager's own hand kept it — the draft had not already
                    carried it, or they edited that slot and kept it
@@ -1804,7 +1850,7 @@ def _week_verdict(p, draft, final, edited):
     if kind in _HEADCOUNT_KINDS:
         if draft is None:
             return None
-        hd, hf = _heads(p, draft), _heads(p, final)
+        hd, hf = _asked_heads(p, asked, _heads(p, draft)), _heads(p, final)
         dates = set(hd) | set(hf)
         if not dates:
             return None
@@ -2317,7 +2363,7 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                     continue
                 if u["retest_weeks"] >= RETEST_MAX_WEEKS:
                     u["retest_since"], u["retest_end"] = None, True
-            verdict = _week_verdict(p, draft, final, edited)
+            verdict = _week_verdict(p, draft, final, edited, asked=rec.get("asked"))
             if verdict in ("kept", "confirmed"):
                 u["applied"] += 1
                 u["hits"] += 1
