@@ -2584,7 +2584,7 @@ final class LaborViewModel {
     // the summary can say the score is no longer the generated one.
     var overriddenRows: Set<String> = []
 
-    private struct ScoreBody: Encodable {
+    struct ScoreBody: Encodable {
         let rows: [ScheduleRow]
         let dailyTargetHours: [String: Double]
         let save: Bool
@@ -2599,12 +2599,70 @@ final class LaborViewModel {
         var cavnarChanges: [CavnarRemovedRow]? = nil
         /// Ask the rescore to look for a better arrangement (D2, P-36).
         var whatIf: Bool? = nil
+        /// A save's own key (`saveKey`): the server answers a repeat of the
+        /// same save from the first one instead of saving again
+        /// (schedule audit 10/10/26 BUGSLIFE-22). Nil on a re-score.
+        var idempotencyKey: String? = nil
         enum CodingKeys: String, CodingKey {
             case rows, save, version
             case dailyTargetHours = "daily_target_hours"
             case historyId = "history_id"
             case cavnarChanges = "cavnar_changes"
             case whatIf = "what_if"
+            case idempotencyKey = "idempotency_key"
+        }
+    }
+
+    /// The 409 a save answers while the same save (same key) is still
+    /// being made (BUGSLIFE-22).
+    struct SaveInProgress: Decodable {
+        let inProgress: Bool?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case error
+            case inProgress = "in_progress"
+        }
+    }
+
+    /// One key per distinct save — the week, the version its rows came from,
+    /// the rows, the daily targets and what Cavnar AI took out — so the
+    /// client's own retry of a request that died in transit, or Save tapped
+    /// again after an answer was lost, is answered from the save the server
+    /// already made: never a second "edited" version, never the learning
+    /// capture twice, never the owner's own save refused as a conflict
+    /// (BUGSLIFE-22). A different edit, or the same rows on a newer version,
+    /// is a different key.
+    static func saveKey(_ body: ScoreBody) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(body) else { return nil }
+        return APIClient.idempotencyKey(path: "/mobile/api/labor/schedule/score", fileData: data)
+    }
+
+    /// How many times a save answered "still being made" is asked again
+    /// (two seconds apart) before the owner is told.
+    static let saveInProgressWaits = 3
+
+    static func saveInProgress(_ error: APIClient.APIError) -> Bool {
+        guard error.status == 409, let body = error.body,
+              let busy = try? JSONDecoder().decode(SaveInProgress.self, from: body) else { return false }
+        return busy.inProgress == true
+    }
+
+    /// The re-score / save request. Retried once on a transient failure
+    /// (APIClient) — safe for a save because it carries its key; a save the
+    /// server is still making is asked again a few times, then said.
+    private func sendScore(_ body: ScoreBody) async throws -> ScoreResponse {
+        var waits = 0
+        while true {
+            do {
+                return try await client.send("/mobile/api/labor/schedule/score", method: .post, body: body,
+                                             hapticOnError: false, retryTransient: true)
+            } catch let error as APIClient.APIError
+                        where body.idempotencyKey != nil && Self.saveInProgress(error) && waits < Self.saveInProgressWaits {
+                waits += 1
+                try await Task.sleep(for: .seconds(2))
+            }
         }
     }
 
@@ -4082,14 +4140,14 @@ final class LaborViewModel {
         // stale rows overwrite somebody else's newer edit (UI-1). None known
         // (an older cached week) is refused by the server as a conflict,
         // which offers keep or reload — never a silent overwrite.
+        var body = ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
+                             historyId: result.historyId,
+                             version: save ? latestVersion : nil,
+                             cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil)
+        // A save carries its key, so a retry of it lands once (BUGSLIFE-22).
+        if save { body.idempotencyKey = Self.saveKey(body) }
         do {
-            let response: ScoreResponse = try await client.send(
-                "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
-                                historyId: result.historyId,
-                                version: save ? latestVersion : nil,
-                                cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil),
-                hapticOnError: false, retryTransient: true)
+            let response: ScoreResponse = try await sendScore(body)
             guard response.ok, let quality = response.quality else {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
                 return
