@@ -3003,21 +3003,32 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
         return None
     busy = DEMAND_RANK.get(ctx.profile.demand or "normal", 1) >= DEMAND_RANK[HARD_DEMAND]
     at_risk, exposed = [], []
+    # Graded, and on the shift's own weekday (scheduler audit 10/10/26
+    # LEARNING-14, attendance_risk.exposure): a person's rate on this
+    # weekday (staff_settings' weekday_rates, shrunk toward their own), its
+    # weight rising from GRADED_FROM to 1 at UNRELIABLE_RATE — 19% used to
+    # weigh nothing and 20% everything.
+    from attendance_risk import exposure as _exposure
     for role, names in on_role.items():
         for n in names:
-            rate = float((ctx.reliability.get(n) or {}).get("no_show_rate") or 0)
-            if rate < UNRELIABLE_RATE:
+            rel = ctx.reliability.get(n) or {}
+            rate = float((rel.get("weekday_rates") or {}).get(ctx.day, rel.get("no_show_rate")) or 0)
+            w = _exposure(rate)
+            if w <= 0:
                 continue
-            at_risk.append(n)
+            if rate >= UNRELIABLE_RATE:
+                at_risk.append(n)
             if len(names) == 1 or busy:
-                exposed.append((n, role, rate, len(names)))
+                exposed.append((n, role, rate, len(names), w))
     # Lateness at the edges of a role's day (schedule audit 10/3/26 D-44):
     # reliability read no-shows only, so chronic lateness never weighed on
     # who opens or closes. Somebody with a lateness risk alone at their
     # role's first start or last finish counts against the shift too.
     late = _late_at_the_edges(ctx)
     late_only = {n.lower() for n, *_ in late} - {n.lower() for n, *_ in exposed}
-    score = _pct(len(known) - len(exposed) - len(late_only), len(known))
+    weight = sum(w for *_x, w in exposed)
+    score = _pct(len(known) - weight - len(late_only), len(known))
+    exposed = [(n, r, rt, c) for n, r, rt, c, w in sorted(exposed, key=lambda x: (-x[4], x[0]))]
     res = DimensionResult(key="reliability", label="Reliability", score=score,
                           weight=DEFAULT_WEIGHTS["reliability"],
                           facts={"at_risk": at_risk, "exposed": [{"name": n, "role": r, "no_show_rate": rt}
@@ -3027,7 +3038,10 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
                                  "checked": len(known)})
     for n, role, rate, count in exposed[:2]:
         why = "alone on " + role.lower() if count == 1 else "on a busy shift"
-        res.weaknesses.append(f"{n} has missed {int(round(rate * 100))}% of scheduled shifts and is {why}.")
+        on_day = ctx.day in ((ctx.reliability.get(n) or {}).get("weekday_rates") or {})
+        res.weaknesses.append(f"{n} has missed " + (f"about {int(round(rate * 100))}% of their {ctx.day} shifts"
+                                                    if on_day else f"{int(round(rate * 100))}% of scheduled shifts")
+                              + f" and is {why}.")
     for n, role, edge, rate in late[:2]:
         res.weaknesses.append(f"{n} is late to {int(round(rate * 100))}% of their clocked shifts and is the only "
                               f"{role_words(role)} {'opening' if edge == 'opens' else 'closing'}.")

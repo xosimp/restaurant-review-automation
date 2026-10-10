@@ -9692,10 +9692,31 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["overtime_forecast"] = _ot
                 for _o in _ot[:3]:
                     result["review"]["lines"].append(_o["text"])
-                _sb = _sl.standby_days(restaurant_id, result.get("week_dates") or [], rows=preview_rows)
+                # Expected attendance against each shift's requirement (RM-18):
+                # a busy shift likely to come up short asks for a standby.
+                _busy_sb = set()
+                try:
+                    import schedule_requirements as _req_sb
+                    _busy_sb = _req_sb.busy_shifts(result.get("week_dates") or [],
+                                                   result.get("shift_profiles") or None,
+                                                   result.get("demand_by_day") or {},
+                                                   result.get("demand_by_date") or {})
+                except Exception as _bx:
+                    print(f"[schedule] busy shifts unread for the standby: {_bx}")
+                _sb = _sl.standby_days(restaurant_id, result.get("week_dates") or [], rows=preview_rows,
+                                       requirements=result.get("shift_requirements") or result.get("requirements"),
+                                       busy=_busy_sb)
                 result["standby_days"] = _sb
                 for _d in _sb:
                     _who = (_d.get("standby") or {})
+                    _sh = _d.get("standby_shift")
+                    if _sh:
+                        result["review"]["lines"].append(
+                            f"A standby is needed on {_sh['text']}."
+                            + (f" {_who['employee']} ({_who['role'] or 'same role'}) is off and could be on call"
+                               if _who.get("employee") else " Nobody in the role is free to be on call")
+                            + " — or add one more if the budget has room.")
+                        continue
                     result["review"]["lines"].append(
                         f"Worth a standby on {_d['day']} {_mdy(_d['date'])}: about a "
                         f"{int(round(_d['chance_of_a_no_show'] * 100))}% chance somebody scheduled doesn't show, "

@@ -2528,12 +2528,22 @@ def _week_rows(restaurant_id, week_dates, db_path=DB_PATH) -> list:
     return rows_from_csv(row["schedule_csv"]) if row else []
 
 
-def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db_path=DB_PATH) -> list:
+def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db_path=DB_PATH,
+                 requirements=None, busy=None) -> list:
     """The dates in `week_dates` where the people scheduled are most likely
     to lose one to a no-show: each person's no-show rate on that weekday
     (their overall rate when the weekday is too thin; nothing when they have
     no clocked record), combined as the chance at least one misses. `rows`
-    is the draft; without it, the stored week starting week_dates[0]."""
+    is the draft; without it, the stored week starting week_dates[0].
+
+    With the week's `requirements` (the SHIFT REQUIREMENTS rows) and its
+    `busy` shifts ({(date, daypart)}), each date also carries `shifts` —
+    per daypart and role family, the expected heads and P(fewer turn up
+    than the shift needs) (attendance_risk.shift_risks, every person at
+    their own weekday rate shrunk in a hierarchy) — and `standby_required`
+    when a busy shift's P(short) reaches attendance_risk.STANDBY_RISK: a
+    standby requirement, listed first, the standby in that shift's role
+    (scheduler audit 10/10/26 RM-18, LEARNING-14)."""
     rows = _week_rows(restaurant_id, week_dates, db_path) if rows is None else rows
     if not rows:
         return []
@@ -2591,7 +2601,30 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
                                    "record count at this restaurant's overall rate; every rate is smoothed "
                                    "toward it."),
                     "people": [{"employee": n, "no_show_rate": round(p, 2), "basis": b} for n, p, b in top]})
-    out.sort(key=lambda x: (-x["chance_of_a_no_show"], x["date"]))
+    if requirements:
+        import attendance_risk as _ar
+        risks = _ar.shift_risks(rows, requirements, _ar.rates(restaurant_id, db_path=db_path if db_path != DB_PATH
+                                                              else None), busy=busy)
+        needed = {(x["date"], x["daypart"], x["role"]) for x in _ar.standby_needed(risks)}
+        by_d = {}
+        for x in risks:
+            by_d.setdefault(x["date"], []).append(dict(x, standby_required=(x["date"], x["daypart"], x["role"]) in needed,
+                                                       text=_ar.words(x)))
+        have = {e["date"] for e in out}
+        for d, xs in by_d.items():
+            if d not in have and any(x["standby_required"] for x in xs):
+                out.append({"date": d, "day": _weekday(d), "scheduled": len(by_date.get(d) or {}), "no_record": 0,
+                            "expected_no_shows": None, "chance_of_a_no_show": 0.0, "base_rate": round(base, 3),
+                            "assumption": ("Assumes no-shows are independent of each other."), "people": []})
+        for e in out:
+            xs = sorted(by_d.get(e["date"]) or [], key=lambda x: (-x["p_short"], x["daypart"], x["role"]))
+            e["shifts"] = xs[:3]
+            e["standby_required"] = any(x["standby_required"] for x in xs)
+            if e["standby_required"]:
+                e["standby_shift"] = next(x for x in xs if x["standby_required"])
+    out.sort(key=lambda x: (not x.get("standby_required"),
+                            -((x.get("standby_shift") or {}).get("p_short") or 0.0),
+                            -x["chance_of_a_no_show"], x["date"]))
     out = out[:limit]
     for day in out:
         day["standby"] = _standby_person(restaurant_id, day, rows, tally, db_path, base=base)
@@ -2606,6 +2639,11 @@ def _standby_person(restaurant_id, day, rows, tally, db_path, base=0.0):
     d = day["date"]
     working = {(r.get("employee") or "").strip() for r in rows if (r.get("date") or "")[:10] == d}
     risky = (day.get("people") or [{}])[0].get("employee")
+    sh = day.get("standby_shift") or {}
+    if sh.get("people"):
+        # The standby a shift's requirement asks for is in that shift's role
+        # (RM-18): its likeliest absence's own role.
+        risky = max(sh["people"], key=lambda p: (p.get("miss") or 0, p.get("employee") or ""))["employee"]
     shift = next((r for r in rows if (r.get("date") or "")[:10] == d
                   and (r.get("employee") or "").strip() == risky), None) if risky else None
     role = (shift or {}).get("role") or ""

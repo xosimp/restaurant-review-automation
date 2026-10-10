@@ -214,13 +214,17 @@ def _role_counts(rows) -> dict:
     return {d: {r: len(p) for r, p in roles.items()} for d, roles in out.items()}
 
 
-def role_event_lifts(restaurant_id, label, sales_lift_pct=None, db_path=DB_PATH, rows=None) -> dict:
+def role_event_lifts(restaurant_id, label, sales_lift_pct=None, db_path=DB_PATH, rows=None,
+                     family_prior: dict = None) -> dict:
     """{role lower: {"ratio", "raw", "n", "prior"}} — how many of each role a
     label's nights ran against that role on ordinary same weekdays (the
     BASELINE_WEEKS before each), over the label's newest ROLE_MAX_NIGHTS
-    measured nights with punches; each shrunk toward the night's sales
-    lift (`sales_lift_pct`, the every-role-alike prior) by ROLE_SHRINK
-    nights. {} when nothing is measured. The by-role heads are what the
+    measured nights with punches; each shrunk toward its prior by
+    ROLE_SHRINK nights: the night's sales lift (`sales_lift_pct`, every
+    role alike) times how the role's family moves on event nights at
+    similar restaurants (`family_prior` {family: factor} —
+    intelligence.schedule_priors.role_lift_prior, LEARNING-27; read here
+    when None). {} when nothing is measured. The by-role heads are what the
     managers ran (event_memory._staffing_on) — read against the same
     managers' ordinary nights, so a habit common to both cancels."""
     try:
@@ -253,12 +257,20 @@ def role_event_lifts(restaurant_id, label, sales_lift_pct=None, db_path=DB_PATH,
                 base = _median([counts[x].get(role, 0) for x in base_days])
                 if base and base > 0:
                     ratios.setdefault(role, []).append(here.get(role, 0) / float(base))
+        if family_prior is None:
+            try:
+                from intelligence import schedule_priors as _sp
+                family_prior = _sp.role_lift_prior(restaurant_id, db_path=db_path) or {}
+            except Exception:
+                family_prior = {}
+        from intelligence.staffing import family_of
         out = {}
         for role, rs in ratios.items():
             raw = _median(rs)
             n = len(rs)
-            shrunk = (n * raw + ROLE_SHRINK * prior) / (n + ROLE_SHRINK)
-            out[role] = {"ratio": round(shrunk, 3), "raw": round(raw, 3), "n": n, "prior": round(prior, 3)}
+            pr = prior * float((family_prior or {}).get(family_of(role), 1.0))
+            shrunk = (n * raw + ROLE_SHRINK * pr) / (n + ROLE_SHRINK)
+            out[role] = {"ratio": round(shrunk, 3), "raw": round(raw, 3), "n": n, "prior": round(pr, 3)}
         return out
     except Exception as e:
         print(f"[demand_drivers] role lifts unavailable for {restaurant_id} {label}: {e}")

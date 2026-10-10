@@ -759,6 +759,17 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 labels = [e.get("label") for e in (fc.get("effects") or []) if e and e.get("label")]
                 occ_parts = ctx.label_split(labels, occasion)
                 role_lifts = ctx.role_lifts(labels, fc.get("effect_pct"))
+            else:
+                # A holiday this restaurant has no night of its own for yet
+                # starts from similar restaurants' (LEARNING-27: a first
+                # Christmas was planned as a typical night).
+                hp = ctx.holiday_prior(d)
+                if hp:
+                    occasion = 1.0 + float(hp["pct"]) / 100.0
+                    entry["sources"].append("cohort_prior")
+                    entry["reasons"].append(f"{hp['name']}: similar restaurants' holidays ran a median "
+                                            f"{float(hp['pct']):+.0f}% (no {hp['name']} of your own measured yet)")
+                    entry["labels"].append(f"{hp['name']} ({float(hp['pct']):+.0f}% at similar restaurants)")
         # The forecast's trend and season (demand_model): how far a typical
         # night of this weekday is moving — never on the owner's own budget.
         trend_f, busy_f = 1.0, 1.0
@@ -893,6 +904,28 @@ class _DemandContext:
             return [f["label"] for f in fl if f.get("kind") in ("event", "holiday", "campaign")]
         except Exception:
             return []
+
+    def holiday_prior(self, d):
+        """{"pct", "name"} for a holiday on `d` with no measured night of its
+        own here, from the cohort (intelligence.schedule_priors.event_prior,
+        behind MIN_COHORT), or None."""
+        try:
+            import event_memory as _em
+            fl = (_em.flags_for(self.rid, [d], db_path=None if self.db == DB_PATH else self.db,
+                                known_before=True).get(d)) or []
+            hol = next((f for f in fl if f.get("kind") == "holiday"), None)
+            if not hol:
+                return None
+            own = _em.measured_effect(self.rid, hol["label"], db_path=None if self.db == DB_PATH else self.db)
+            if own and own.get("n"):
+                return None
+            from intelligence import schedule_priors as _sp
+            pct = self._once(("holiday_prior",), lambda: _sp.event_prior(self.rid, "holiday", db_path=self.db))
+            if pct is None or abs(float(pct)) < 5.0:
+                return None
+            return {"pct": float(pct), "name": str(hol.get("raw") or hol["label"])}
+        except Exception:
+            return None
 
     def label_split(self, labels, occasion):
         """{part: factor} from the labels' own nights measured per daypart,
