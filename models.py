@@ -2240,6 +2240,12 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN food_cost_json TEXT",
+        # Where the shift history lives (scheduler audit 10/10/26, SCALE-5):
+        # 'facts' once shift_facts holds every row whole (shift_facts.adopt),
+        # and from then on shifts_csv is an export rebuilt on demand
+        # (get_client_data) when a sync or upload left it stale.
+        "ALTER TABLE client_data ADD COLUMN shifts_store TEXT",
+        "ALTER TABLE client_data ADD COLUMN shifts_stale INTEGER NOT NULL DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS labor_daily_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL,
@@ -10547,6 +10553,11 @@ def save_client_data(restaurant_id: int, data_type: str,
             SET {data_type}_csv=?, {data_type}_source=?, updated_at=datetime('now')
             WHERE restaurant_id=?
         """, (csv_content, source, restaurant_id))
+        if data_type == "shifts":
+            # The file just written is current (SCALE-5); a restaurant on
+            # shift_facts keeps reading its facts, which its callers keep
+            # in step (shift_facts.ingest, rewrite_window_from_csv, replace_all).
+            conn.execute("UPDATE client_data SET shifts_stale=0 WHERE restaurant_id=?", (restaurant_id,))
     else:
         conn.execute(f"""
             INSERT INTO client_data (restaurant_id, {data_type}_csv, {data_type}_source)
@@ -10579,29 +10590,61 @@ def save_client_data(restaurant_id: int, data_type: str,
 
 
 def get_client_data(restaurant_id: int,
-                    db_path: str = DB_PATH) -> Optional[dict]:
+                    db_path: str = DB_PATH, with_shifts: bool = True) -> Optional[dict]:
     """Get client's CSV data. Returns None if not set.
 
     Read once per read_scope (SCALE-7): the row carries the whole shift
     history, and one inputs build read it a dozen times. Each caller gets
     its own dict (the values are shared, and strings). Never memoised in a
-    request: several routes write client_data with their own SQL."""
+    request: several routes write client_data with their own SQL.
+
+    `with_shifts=False` leaves the shift history out of the read (the row's
+    other columns, and `has_shifts`) — what a caller that only needs the
+    inventory or the store wants. With it, a restaurant whose shift record
+    is shift_facts (SCALE-5) gets `shifts_csv` as the export of its facts,
+    rebuilt here when a sync or upload left it stale, and stored."""
     store = _READ_SCOPE.get()
-    key = ("client_data", int(restaurant_id), db_path) if store is not None else None
+    key = ("client_data", int(restaurant_id), db_path, bool(with_shifts)) if store is not None else None
     if key is not None and key in store:
         hit = store[key]
         return dict(hit) if hit is not None else None
     conn = get_conn(db_path)
-    row = conn.execute(
-        "SELECT * FROM client_data WHERE restaurant_id=?",
-        (restaurant_id,)
-    ).fetchone()
-    conn.close()
+    try:
+        if with_shifts:
+            row = conn.execute("SELECT * FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        else:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(client_data)").fetchall() if r[1] != "shifts_csv"]
+            row = conn.execute(f"SELECT {', '.join(cols)}, (shifts_csv IS NOT NULL AND shifts_csv != '') "
+                               "AS has_shift_file FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
     out = dict(row) if row else None
+    if out is not None and not with_shifts:
+        out["has_shifts"] = bool(out.pop("has_shift_file", 0)) or out.get("shifts_store") == "facts"
+    if out is not None and with_shifts and out.get("shifts_store") == "facts" and out.get("shifts_stale"):
+        out["shifts_csv"] = _refresh_shift_export(restaurant_id, db_path)
+        out["shifts_stale"] = 0
+    if out is not None and with_shifts:
+        out["has_shifts"] = bool(out.get("shifts_csv")) or out.get("shifts_store") == "facts"
     if key is not None:
         store[key] = out
         return dict(out) if out is not None else None
     return out
+
+
+def _refresh_shift_export(restaurant_id, db_path=DB_PATH) -> str:
+    """The shift history export rebuilt from shift_facts and stored (SCALE-5):
+    only when something reads the whole file, never by a sync."""
+    import shift_facts as _sf_exp
+    text = _sf_exp.export_csv(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_stale=0 WHERE restaurant_id=?",
+                     (text, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return text
 
 
 def reset_user_password(user_id: int, new_password: str,

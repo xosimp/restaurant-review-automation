@@ -1798,6 +1798,10 @@ def run_people_nightly(db_path=DB_PATH, today=None):
     try:
         people.backfill_people(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
         shift_facts.backfill_from_csv(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+        # The restaurants still on their shifts file: shift_facts made their
+        # record, bounded (scheduler audit 10/10/26, SCALE-5); a sync or an
+        # upload adopts the rest as it lands.
+        shift_facts.adopt_pending(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
     except Exception as e:
         import ops
         ops.capture(e, job="people_nightly", context="backfill")

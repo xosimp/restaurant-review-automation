@@ -74,13 +74,13 @@ def _history_row(ctx):
 def _shifts(ctx):
     """(every shift row in the synced/uploaded file, whether a file exists)."""
     from models import get_client_data
-    from labor import load_shifts
-    data = get_client_data(ctx.restaurant_id, db_path=ctx.db_path) or {}
-    raw = data.get("shifts_csv") or ""
-    if not raw.strip():
+    from labor import shift_history
+    data = get_client_data(ctx.restaurant_id, db_path=ctx.db_path, with_shifts=False) or {}
+    if not data.get("has_shifts"):
         return [], False
     try:
-        return load_shifts(csv_string=raw), True
+        # The one reader (SCALE-5): shift_facts once they are the record.
+        return shift_history(ctx.restaurant_id, db_path=ctx.db_path), True
     except Exception as e:
         log.warning("dsr labor: shifts unreadable rid=%s: %s", ctx.restaurant_id, e)
         return [], True
