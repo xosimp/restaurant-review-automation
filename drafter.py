@@ -459,11 +459,18 @@ def reply_context(restaurant=None, *, restaurant_id=None, review_id=None, review
     try:
         import reply_programs as _rp_ctx
         programs_said = _rp_ctx.offer_text(restaurant) if restaurant is not None else ""
+        # A program's name is the restaurant's own word, never a person:
+        # "Charlie" in Charlie's Crew was refused as "names a person in
+        # public" (10/10/26).
+        program_names = [p["name"] for p in _rp_ctx.of(restaurant)] if restaurant is not None else []
     except Exception:
-        programs_said = ""
+        programs_said, program_names = "", []
     owner_said = " ".join(x for x in (voice_notes or "", r_get("menu_notes"), programs_said) if x)
     names = {n for n in (reviewer_name, author, author.split()[0] if author else "",
                          restaurant_name or r_get("name"), sign_off or r_get("sign_off_name")) if n}
+    for pn in program_names:
+        names.add(pn)
+        names.update(w for w in re.findall(r"[A-Z][a-z]+", pn))
     tenants = set()
     if rid:
         try:

@@ -130,3 +130,18 @@ def test_both_routes_exist_and_the_drafter_uses_it():
     d = (root / "drafter.py").read_text()
     assert "_rp.prompt_note(_prog, platform)" in d and "_rp.check(draft, _rp_all, _prog, rating" in d
     assert "programs_said" in d                                              # every path's offer source
+
+
+def test_a_programs_name_is_never_read_as_a_person():
+    import drafter
+    r = Restaurant(name="Simple EJ's", owner_email="e@x.test", reply_programs=json.dumps([CREW, CLUB]))
+    reply = ("Jesse, Dannie taking such great care of your kids is what we love to hear! If you haven't already, "
+             "check out Charlie's Crew: kids under 12 eat free Monday through Friday, 4 to 6pm. simpleejs.com/loyalty "
+             "Erik & Jim")
+    reason, _ = drafter.check_reply(reply, restaurant=r, review_text="Dannie our server was amazing with the kids",
+                                    reviewer_name="Jesse", sign_off="Erik & Jim")
+    assert reason is None, reason
+    # A real person nobody named is still caught.
+    reason, _ = drafter.check_reply("Thanks! Ask for Marcus next time. Erik & Jim", restaurant=r,
+                                    review_text="Great night", sign_off="Erik & Jim")
+    assert reason and "person" in reason
