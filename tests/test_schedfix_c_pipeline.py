@@ -273,6 +273,141 @@ def test_a_saved_week_keeps_the_rules_it_was_checked_against(db, monkeypatch):
     assert se.replay_checks(rid, hid)["review"]["hard"] == replay["review"]["hard"]
 
 
+# ── SCALE-9: a large week never overflows the solver's search ───────────────
+
+def test_the_solver_searches_a_thousand_unit_week_without_recursion():
+    """250 people, about 1,120 shifts in one role: the depth-first search
+    recursed once per assigned unit and raised RecursionError (the scale
+    audit's repro), so the solver never ran for a large restaurant. It is an
+    explicit stack now."""
+    import random
+    import schedule_solver as ss
+    import shift_quality as sq
+    rng = random.Random(9)
+    names = [f"Emp{i:03d}" for i in range(250)]
+    rows = []
+    for d in WEEK:
+        for j in range(160):
+            start, end = ("11:00am", "4:00pm") if j % 2 else ("4:00pm", "11:00pm")
+            h = sr.hours_text(sr.span_hours({"date": d, "shift_start": start, "shift_end": end}))
+            rows.append({"date": d, "day": sq._day_name(d), "employee": names[(j * 7 + WEEK.index(d) * 3) % 250],
+                         "role": "Server", "shift_start": start, "shift_end": end, "scheduled_hours": h,
+                         "notes": ""})
+    c = sr.Constraints(restaurant_id=1, week_dates=list(WEEK), week_days=list(DAYS), roster_names=list(names),
+                       active={n.lower() for n in names})
+    sig = {"roster": names, "roster_roles": {n: "Server" for n in names},
+           "scores": {n: rng.randint(1, 5) for n in names}}
+    res = ss.solve(rows, c, signals=sig, max_seconds=2.0)
+    assert len(rows) == 1120
+    assert res["status"] in ("optimal", "time_limit", "no_solution_in_time"), res.get("status")
+    import inspect
+    assert "self._dfs(" not in inspect.getsource(ss._Search._dfs)
+
+
+class _Chain:
+    """The search's own bookkeeping over a chain of units, each with a few
+    values (some refuted by forward checking), for driving _Search._dfs."""
+
+    def __init__(self, n, seed):
+        import random
+        import types
+        rng = random.Random(seed)
+        self.static = [{p: rng.randint(0, 9) for p in range(rng.choice((1, 2, 3)))} for _ in range(n)]
+        self.dom = [set(v) for v in self.static]
+        self.minc = [min(v.values()) for v in self.static]
+        self.bad = {(u, p) for u in range(n) for p in self.dom[u] if rng.random() < 0.15}
+        self.assign = [None] * n
+        self.g, self.lb, self.best = 0, sum(self.minc), float("inf")
+        self.stop = self.cut = False
+        self.nodes, self.log = 0, []
+        self.prob = types.SimpleNamespace(units=list(range(n)), leaf_penalty=lambda persons, st: 0,
+                                          dynamic=lambda unit, p, st: 0)
+        self.st = None
+
+    def _tick(self):
+        self.nodes += 1
+        self.log.append(("tick",))
+
+    def _select(self, free):
+        return next((u for u in free if self.assign[u] is None), None)
+
+    def _assign(self, u, p, c):
+        self.assign[u] = p
+        self.g += c
+        self.lb -= self.minc[u]
+        self.log.append(("assign", u, p))
+        return (u, p) not in self.bad, c
+
+    def _unassign(self, u, p, rec):
+        self.assign[u] = None
+        self.g -= rec
+        self.lb += self.minc[u]
+        self.log.append(("unassign", u, p))
+
+    def _record(self, cost):
+        self.best = cost
+        self.log.append(("best", cost))
+
+
+def _recursive_dfs(self, free, persons, disc):
+    """The search as it was before SCALE-9 (one Python frame per unit) — the
+    reference the explicit stack must match node for node."""
+    self._tick()
+    if self.stop:
+        return
+    u = self._select(free)
+    if u is None:
+        total = self.g + self.prob.leaf_penalty(persons, self.st)
+        if total < self.best - 1e-9:
+            self._record(total)
+        return
+    unit = self.prob.units[u]
+    vals = sorted(((self.static[u][p] + self.prob.dynamic(unit, p, self.st), p) for p in self.dom[u]))
+    rest_lb = self.lb - self.minc[u]
+    taken = 0
+    for c, p in vals:
+        if self.stop:
+            break
+        if self.g + c + rest_lb >= self.best - 1e-9:
+            break
+        ok, rec = self._assign(u, p, c)
+        if not ok:
+            self._unassign(u, p, rec)
+            continue
+        if taken and disc is not None and disc <= 0:
+            self._unassign(u, p, rec)
+            self.cut = True
+            break
+        if self.g + self.lb < self.best - 1e-9:
+            _recursive_dfs(self, free, persons, None if disc is None else disc - (1 if taken else 0))
+        taken += 1
+        self._unassign(u, p, rec)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_the_explicit_stack_visits_exactly_the_nodes_the_recursion_did(seed):
+    import schedule_solver as ss
+    for disc in (None, 0, 1, 3):
+        a, b = _Chain(9, seed), _Chain(9, seed)
+        _recursive_dfs(a, list(range(9)), set(), disc)
+        a._enter = None
+        b._enter = ss._Search._enter.__get__(b)
+        ss._Search._dfs(b, list(range(9)), set(), disc)
+        assert b.log == a.log and (b.best, b.cut) == (a.best, a.cut), (seed, disc)
+        assert all(x is None for x in b.assign)                      # every frame undid its own work
+
+
+def test_the_explicit_stack_goes_deeper_than_python_can_recurse():
+    import sys
+    import schedule_solver as ss
+    n = sys.getrecursionlimit() * 3
+    b = _Chain(n, 1)
+    b.bad = set()
+    b._enter = ss._Search._enter.__get__(b)
+    ss._Search._dfs(b, list(range(n)), set(), 0)
+    assert b.best < float("inf") and ("best", b.best) in b.log
+
+
 # ── BUGSGEN-10: an after-midnight manager stretch survives a Studio edit ────
 
 def test_refresh_review_keeps_a_manager_stretch_after_midnight():
