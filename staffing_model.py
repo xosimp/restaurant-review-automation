@@ -34,9 +34,12 @@ measure() reads the last MODEL_WEEKS weeks of tickets and punches:
                 whose outcome is not validated can only lower it
                 (requirement_provenance.cap_unvalidated — LEARNING-5). The
                 owner's own standard (labor_standards_json) wins.
-  fixed         per family and daypart, the fewest people on at once through
-                the core window on its quieter dates (FIXED_QUANTILE): the
-                crew a meal never runs below whatever the volume.
+  fixed         per family and daypart, POOLED over every weekday, the
+                lower envelope (FIXED_QUANTILE) of the fewest people on at
+                once through the core window: the crew the restaurant has
+                shown it runs a meal with, whatever the volume. Pooled, so a
+                Monday the restaurant always overstaffed is held to the crew
+                its busier nights run on, not to its own habit (LOGIC-10).
   work          per weekday and daypart, the typical work of each unit and
                 its half-hour shares.
 
@@ -68,7 +71,7 @@ LAG_MIN_DAYS = 6
 LAG_MIN_GAIN = 0.05
 STD_MIN_DAYS = 6                 # labor_standards.STANDARD_MIN_DAYS
 STD_SHRINK = 6.0
-FIXED_QUANTILE = 0.25
+FIXED_QUANTILE = 0.10
 MIN_SLOT_RATIO = 0.3             # staffing_curve.MIN_SLOT_RATIO
 UNIT_FAMILY_TICKETS = "tickets"
 
