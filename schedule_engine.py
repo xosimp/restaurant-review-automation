@@ -1683,7 +1683,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "owner words": "your notes and instruction read as rules",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
     "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
@@ -2528,6 +2528,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                  "plan_rows": list(manager_plan.get("rows") or []),
                  "plan_dates": list(manager_plan.get("dates") or []),
                  "open_times": constraints.open_times or {}, "close_times": constraints.close_times or {}}
+    # The deterministic+critic arm (scheduler audit 10/10/26 AI-8): the
+    # solver's week reviewed by the model, each edit validated by code.
+    try:
+        import schedule_critic as _scr
+        _fallback["critic"] = bool(not code_redo and _scr.enabled(_arms))
+    except Exception as _crx:
+        _soft_fail("solver-first draft", _crx, restaurant_id)
     # Handed in the kwargs and popped there, like the rules (the call's own
     # keyword arguments never carry it to labor).
     _gen_kwargs["draft_fallback"] = _fallback
@@ -3383,6 +3390,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
                                            for k in ("source", "week_start", "week_end")},
                                   "left_out": list(code_draft.get("dropped") or [])[:50],
                                   "unassigned": len(code_draft.get("unassigned") or [])}
+        if code_draft.get("solver"):
+            # The solver-first draft's own account (RM-12, LOGIC-32): why each
+            # person, what to relax, what it could not staff.
+            merged["draft_source"]["solver"] = code_draft["solver"]
         merged["generation_notes"].insert(0, code_draft["line"])
     # Dates the week leaves empty — closed, never traded, nobody able, not
     # written — are closed to every pass after this one, so no backstop
@@ -3554,23 +3565,168 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
             clock = current_clock()
             if clock is not None:
                 secs = max(1.0, min(secs, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
-            got = _sfb.solver_rows(dates, (facts or {}).get("requirements_by_date") or {}, c, base_rows=hist,
-                                   context_rows=plan, open_times=fallback.get("open_times"),
-                                   close_times=fallback.get("close_times"), signals=signals, weights=weights,
-                                   roster_roles=roles or None, max_seconds=secs)
+            got = _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts,
+                                     fallback)
+            if got is None or not got.get("rows"):
+                # The v0 code draft (requirement counts on the usual shift
+                # templates, people by the backtracking solver): what runs
+                # where OR-Tools is not installed or the solver-first draft
+                # found nothing.
+                got = _sfb.solver_rows(dates, (facts or {}).get("requirements_by_date") or {}, c, base_rows=hist,
+                                       context_rows=plan, open_times=fallback.get("open_times"),
+                                       close_times=fallback.get("close_times"), signals=signals, weights=weights,
+                                       roster_roles=roles or None, max_seconds=secs)
             rows, unassigned, used = got["rows"], got["unassigned"], "solver"
+            solver_first = got if got.get("stats", {}).get("engine") == "shapes+cp-sat" else None
+            if rows and fallback.get("critic") and c is not None:
+                # The model as a critic of the week code built (AI-8): its
+                # edits validated by code against the week with the plan.
+                import schedule_critic as _scr
+                whole = [dict(r, _pinned=True) for r in plan] + rows
+                rev = _scr.review(rid, whole, c, unmet=(solver_first or {}).get("unassigned"),
+                                  last_week_rows=(base or {}).get("rows") if (base or {}).get("source") == "published"
+                                  else None)
+                rows = [{k: v for k, v in r.items() if k != "_pinned"} for r in rev["rows"] if not r.get("_pinned")]
+                if solver_first is not None:
+                    solver_first.setdefault("stats", {})["critic"] = {
+                        "called": rev["called"], "kept": rev["kept"][:6], "refused": rev["refused"][:6],
+                        "error": rev["error"]}
         if not rows:
             return None
         drafted = sorted({r["date"] for r in rows if r.get("date")})
         reasons = [why.get(d) for d in drafted if why.get(d)]
         main = max(set(reasons), key=reasons.count) if reasons else "other"
         redo = bool(fallback.get("code_redo"))
-        return {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
-                "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
-                                                         base if used == "carry_forward" else None, redo=redo)}
+        out = {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
+               "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
+                                                        base if used == "carry_forward" else None, redo=redo)}
+        if used == "solver" and locals().get("solver_first"):
+            out["solver"] = solver_explain(locals()["solver_first"])
+        return out
     except Exception as e:
         _soft_fail("code draft", e, rid)
         return None
+
+
+# How long the solver-first draft (schedule_cpsat.solver_draft: Stage 1
+# shapes, Stage 2 assignment) may take inside a generation.
+SOLVER_DRAFT_SECONDS = float(os.getenv("SCHEDULE_SOLVER_DRAFT_SECONDS", "25"))
+
+
+def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts, fallback):
+    """The "solver" draft source, solver-first (scheduler audit 10/10/26
+    LOGIC-24, RM-8, RM-11, RM-21): the week's shapes from the restaurant's
+    own people-on-at-once curve (the baseline's `concurrent`, the week's
+    requirement rows and their demand factors), then who works each, as one
+    CP-SAT model — with `plan` (the manager plan, a redo's kept days) held
+    and last PUBLISHED week as the stability reference. None when OR-Tools
+    is not installed here or it raised (the v0 code draft runs instead)."""
+    try:
+        import schedule_cpsat as _cps
+        if not _cps.available():
+            return None
+        facts = facts or {}
+        concurrent = facts.get("concurrent")
+        if concurrent is None and rid is not None:
+            try:
+                import labor as _lab_sf
+                concurrent = (_lab_sf.staffing_baseline(rid) or {}).get("concurrent")
+            except Exception as e:
+                _soft_fail("concurrent baseline", e, rid)
+        last = base if (base or {}).get("source") == "published" else None
+        if last is None and rid is not None:
+            try:
+                import schedule_fallback as _sfb_l
+                got = _sfb_l.base_week(rid, fallback.get("week_dates") or dates, shifts)
+                last = got if got.get("source") == "published" else None
+            except Exception as e:
+                _soft_fail("last published week", e, rid)
+        clock = current_clock()
+        budget = SOLVER_DRAFT_SECONDS
+        if clock is not None:
+            budget = max(2.0, min(budget, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
+        sig = dict(signals or {})
+        if not sig.get("overtime") and c is not None and rid is not None:
+            try:
+                sig["overtime"] = _overtime_inputs(rid, c)
+            except Exception as e:
+                _soft_fail("overtime inputs", e, rid)
+        if not sig.get("staffing_value") and rid is not None:
+            sig["staffing_value"] = _staffing_value(rid)
+        got = _cps.solver_draft(sorted(dates), c, facts.get("requirements") or [], concurrent=concurrent,
+                                history_rows=hist, context_rows=plan,
+                                last_week_rows=(last or {}).get("rows") or [], signals=sig, weights=weights,
+                                profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
+                                budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget)
+        if got.get("rows") and rid is not None:
+            _solver_standby(rid, dates, got, plan, facts, c, sig, weights)
+        return got
+    except Exception as e:
+        _soft_fail("solver-first draft", e, rid)
+        return None
+
+
+def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
+    """A standby on each busy shift the drafted week is likely to come up
+    short on (scheduler audit 10/10/26 RM-18 — attendance_risk.standby_
+    needed over the drafted people's own weekday no-show rates): one more of
+    the role over the daypart's core window, staffed by the solver only
+    while the week is under its budget. In place on `got`."""
+    import attendance_risk as _ar
+    import schedule_cpsat as _cps
+    import schedule_requirements as _req_sb
+    reqs = facts.get("requirements") or []
+    try:
+        busy = _req_sb.busy_shifts(sorted(dates), facts.get("shift_profiles") or None,
+                                   facts.get("demand_by_day") or {}, facts.get("demand_by_date") or {})
+        risks = _ar.shift_risks(list(plan) + got["rows"], reqs, _ar.rates(rid), busy=busy)
+        need = _ar.standby_needed(risks)
+    except Exception as e:
+        _soft_fail("solver-first draft", e, rid)
+        return
+    slots = []
+    for x in need[:7]:
+        role = next((r.get("role") for r in got["rows"] if r.get("date") == x["date"]
+                     and c.family(r.get("role")) == x.get("role")), None)
+        day = _weekday_name(x["date"])
+        o, cl = _rules.open_hours(c, day)
+        win = __import__("shift_quality").floor_window(x["daypart"], o, cl)
+        if not role or not win:
+            continue
+        slot = {"date": x["date"], "day": day, "employee": "", "role": role,
+                "shift_start": _rules._fmt_minutes(win[0] % 1440), "shift_end": _rules._fmt_minutes(win[1] % 1440),
+                "scheduled_hours": "", "notes": "standby"}
+        slot["scheduled_hours"] = _stime.row_hours_text(slot, _rules.tz_of(c))
+        slots.append(dict(slot, _standby=True))
+    if not slots:
+        return
+    kept = [dict(r, _pinned=True) for r in list(plan) + got["rows"]]
+    res = _cps.assign(kept + slots, c, signals=sig, weights=weights, only_dates=sorted(dates), max_seconds=5.0,
+                      mode="draft", budget_dollars=facts.get("labor_budget_dollars") or None, reasons=False,
+                      explain=False)
+    added = [{k: v for k, v in r.items() if k not in ("_pinned", "_standby", "_open")}
+             for r in res.get("rows", [])[len(kept):] if (r.get("employee") or "").strip()]
+    got["rows"] = got["rows"] + added
+    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added)}
+
+
+def solver_explain(got) -> dict:
+    """What the solver-first draft says about itself, for the review and
+    the pre-publish screen: each assignment's reason ("Kim, not Lee: Lee
+    would hit overtime (+$27)" — RM-12), the smallest set of rules to relax
+    for what could not be met (LOGIC-32), the shifts left unfilled and the
+    named cost terms (LOGIC-19)."""
+    got = got or {}
+    st = dict(got.get("stats") or {})
+    return {"engine": st.get("engine"), "status": st.get("status"), "seconds": st.get("seconds"),
+            "proved_optimal": bool(st.get("proved_optimal")), "critic": st.get("critic"),
+            "reasons": [{k: r.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "employee",
+                                                "instead", "text")} for r in (got.get("reasons") or [])][:200],
+            "conflicts": list(got.get("conflicts") or [])[:12],
+            "unfilled": [{k: e.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "floor", "text")}
+                         for e in (got.get("unassigned") or [])][:40],
+            "short": list(got.get("short") or [])[:20],
+            "terms": {k: {"label": v.get("label"), "count": v.get("count")} for k, v in (got.get("terms") or {}).items()}}
 
 
 def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock):
@@ -7285,6 +7441,17 @@ def _quality_signals(restaurant_id, result, **extra):
         except Exception as _sx:
             _soft_fail(key, _sx, restaurant_id)
             signals[key] = {}
+    # The last PUBLISHED week's rows (scheduler audit 10/10/26 RM-3,
+    # LOGIC-18): what schedule stability is judged against slot by slot, and
+    # what the CP-SAT solver keeps people on — never a discarded draft.
+    try:
+        _first = (_sig_week or [None])[0]
+        if _first:
+            _lp = frozen_read(("last_published", restaurant_id, _first),
+                              lambda: _last_published_week(restaurant_id, _first)) or {}
+            signals["last_published_rows"] = _versions.rows_from_csv(_lp.get("schedule_csv") or "") if _lp else None
+    except Exception as _sx:
+        _soft_fail("last published week", _sx, restaurant_id)
     try:
         signals["experienced"] = frozen_read(("experienced", restaurant_id),
                                              lambda: _staff.experienced_names(restaurant_id))
@@ -8562,7 +8729,7 @@ def _gate_local(quality: dict, dates) -> float:
 EXPECTED_SCHEDULE_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
 
-def _gate_fill_answer(answer, restaurant_id, history_id, dates):
+def _gate_fill_answer(answer, restaurant_id, history_id, dates, extra_rows=None):
     """The model's answer (`answer`, copied as it came back) with the gate's
     dates written as the saved draft `history_id` now has them — what the
     gate's fill in code re-runs through the repair loop as a redo of those
@@ -8581,6 +8748,11 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates):
     body = [r for r in _versions.rows_from_csv(text) if (r.get("date") or "")[:10] in want]
     if not body:
         return None
+    # The shifts the exact solve of the gate's days found (LOGIC-26), with
+    # the person it chose — the loop then judges them like any row.
+    for r in extra_rows or []:
+        if r.get("date") in want and (r.get("employee") or "").strip():
+            body.append(_rows_to_csv_text([r]).split("\n", 1)[-1].strip())
     out = copy.deepcopy(answer)
     # The stored text is quoted and carries ids; the answer parser reads its
     # own eight-column lines (schedule_rows.answer_csv).
@@ -8621,9 +8793,12 @@ def _record_gate_path(restaurant_id, path, dates) -> None:
     try:
         import ai_utils as _ai_gate
         _ai_gate.record_quality_event(
-            "labor_schedule", "gate_filled_in_code" if path == "code" else "gate_model_rewrite",
+            "labor_schedule", {"code": "gate_filled_in_code", "solver": "gate_explained_by_solver"}.get(
+                path, "gate_model_rewrite"),
             restaurant_id=restaurant_id, action="labor_schedule", n=len(dates or []) or 1,
-            detail=("quality gate settled in code: " if path == "code" else "quality gate sent to the model: ")
+            detail=({"code": "quality gate settled in code: ",
+                     "solver": "quality gate explained by the exact solve (no legal fix): "}.get(
+                         path, "quality gate sent to the model: "))
             + ", ".join(sorted(dates or [])))
     except Exception as e:
         print(f"[schedule] gate path not recorded: {e!r}")
@@ -8633,6 +8808,39 @@ def _record_gate_path(restaurant_id, path, dates) -> None:
 # model (parse, repair, score, save): it is expected to take as long as the
 # first pass's did, and never less than this (re-audit 10/7/26 #3).
 GATE_FILL_MIN_SECONDS = 30
+
+
+def _gate_exact(result, gate, restaurant_id):
+    """schedule_cpsat.gate_exact over the finished week for the gate's days
+    (LOGIC-26), or None when the CP-SAT engine is off or it failed."""
+    if assign_engine() != "cpsat":
+        return None
+    c = result.get("constraints")
+    rows = result.get("rows") or []
+    if c is None or not rows:
+        return None
+    try:
+        import schedule_cpsat as _cps_g
+        sig = {"roster": list(result.get("roster") or []), "roster_roles": dict(result.get("roster_roles") or {})}
+        try:
+            sig["overtime"] = _overtime_inputs(restaurant_id, c)
+        except Exception as e:
+            _soft_fail("overtime inputs", e, restaurant_id)
+        return _cps_g.gate_exact(rows, c, gate.get("dates") or [], signals=sig, viols=result.get("rule_violations"))
+    except Exception as e:
+        _soft_fail("solver-first draft", e, restaurant_id)
+        return None
+
+
+def _gate_settled_by_solver(gate, exact) -> bool:
+    """Whether the exact solve settles the gate with no model call: every
+    trigger is a hard rule (a stretch with no manager, a rule broken), each
+    was probed, none could be filled, and the conflicting rules are named."""
+    if not exact or exact.get("fixes") or exact.get("unprobed") or not exact.get("conflicts"):
+        return False
+    kinds = set(gate.get("kinds") or [])
+    return bool(kinds) and kinds <= {"manager", "rules"}
+
 
 
 def _gate_fill_seconds(result) -> float:
@@ -8800,7 +9008,14 @@ _STAGE_TIER = {k: t for k, t, _w, _c in REPAIR_STAGES}
 # solving its own answer again finds nothing new; the top-up fills at most a
 # quarter of a day's target (its own cap, P-20), which a second cycle would
 # have doubled.
-_REPAIR_ONCE = frozenset({"solver", "top_up"})
+_REPAIR_ONCE = frozenset({"top_up"})
+# Run again in a later cycle only when the week changed since its last run:
+# the solver re-solves the whole assignment, deterministically, so its own
+# answer solved again is the same week; but a floor, a close-out or the
+# budget's trim in a later cycle changes the week it solved, and its answer
+# was then edited by passes that do not optimise who works (scheduler audit
+# 10/10/26 LOGIC-28).
+_REPAIR_ON_CHANGE = frozenset({"solver"})
 _REPAIR_SEARCHES = frozenset({"solver", "optimizer"})
 _COLS_ROW = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 
@@ -9310,25 +9525,45 @@ def _stage_stagger(rows, x):
 
 
 def _stage_solver(rows, x):
-    """Who works each shift, solved over the hard rules and judged by Shift
-    Quality (schedule_solver) — this week's experiment arm says whether it
-    runs (schedule_experiments; pinned on until the experiment can conclude,
-    P-21)."""
+    """Who works each shift, solved as one model (schedule_cpsat — CP-SAT
+    over the draft's shapes: legality hard, the manager every minute,
+    coverage, overtime with its teammate cost, minimum hours, the budget and
+    the quality terms each a named cost; scheduler audit 10/10/26 RM-11,
+    LOGIC-19), the backtracking solver (schedule_solver) when OR-Tools is
+    not here, SCHEDULE_ASSIGN_ENGINE=backtracking, or CP-SAT finds nothing in
+    time. This week's experiment arm says whether it runs (schedule_
+    experiments; pinned on until the experiment can conclude, P-21)."""
     if not (x.solver_on and x.searches):
         return {"rows": rows, "report": {"summary": None}}
     import schedule_solver as _solver
+    import schedule_cpsat as _cps
     viols = _rules.violations(rows, x.c)
     x.result["flagged_rows"] = _flagged_rows(viols)
+    sig = dict(x.signals, flagged=x.result["flagged_rows"])
     # The budget the loop judges this stage by (RepairContext.over_budget):
     # each candidate is held to it, so one over it never costs the others.
-    res = _solver.improve(rows, x.result, signals=dict(x.signals, flagged=x.result["flagged_rows"]),
-                          weights=x.weights, constraints=x.c, only_dates=x.editable,
-                          max_seconds=max(0.5, min(_solver.DEFAULT_SECONDS, x.search_seconds())),
-                          hours_budget=x.budget or None)
-    summary = _solver.summary(res)
-    print(f"[schedule] solver {summary['status']} {res['before_score']} -> {res['after_score']} "
-          f"kept={summary['kept']} ({summary['seconds']}s)")
+    if assign_engine() == "cpsat":
+        res = _cps.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
+                           max_seconds=max(0.5, min(_cps.DEFAULT_SECONDS, x.search_seconds())),
+                           hours_budget=x.budget or None)
+        summary = _cps.summary(res)
+    else:
+        res = _solver.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
+                              max_seconds=max(0.5, min(_solver.DEFAULT_SECONDS, x.search_seconds())),
+                              hours_budget=x.budget or None)
+        summary = _solver.summary(res)
+        summary["engine"] = "backtracking"
+    print(f"[schedule] solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
+          f"{res.get('after_score')} kept={summary['kept']} ({summary['seconds']}s)")
     return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
+
+
+def assign_engine() -> str:
+    """Which solver re-solves who works each shift: "cpsat" (the default,
+    schedule_cpsat) or "backtracking" (schedule_solver, also the fallback) —
+    SCHEDULE_ASSIGN_ENGINE."""
+    v = str(os.getenv("SCHEDULE_ASSIGN_ENGINE", "cpsat") or "cpsat").strip().lower()
+    return "backtracking" if v == "backtracking" else "cpsat"
 
 
 def _stage_optimizer(rows, x):
@@ -9459,12 +9694,17 @@ def repair_week(rows, x: RepairContext) -> dict:
             _raise_if_stopped(x.clock)
             if key in failed or (key in _REPAIR_ONCE and key in ran):
                 continue
+            if key in _REPAIR_ON_CHANGE and ledger.setdefault("solved_sig", {}).get(key) == \
+                    tuple(sorted(map(_full_sig, state))):
+                continue
             if key in _REPAIR_SEARCHES and x.search_seconds() < REPAIR_MIN_SEARCH_SECONDS:
                 if not any(s["stage"] == key for s in ledger["skipped"]):
                     ledger["skipped"].append({"stage": key, "cycle": cycle, "why": "time"})
                 continue
             ran.add(key)
             state, prof, outcome = _run_stage(key, state, prof, x, ledger)
+            if key in _REPAIR_ON_CHANGE:
+                ledger["solved_sig"][key] = tuple(sorted(map(_full_sig, state)))
             if outcome == "failed":
                 failed.add(key)
             elif outcome == "kept":
@@ -11561,6 +11801,27 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _ops.finish_async_job(job_id, "done", _json_ready(_fb))
                 return
         _gate = _quality_gate(result) if gate else None
+        # The gate's days solved exactly before any model call (scheduler
+        # audit 10/10/26 LOGIC-26): a breach an added shift could answer is
+        # offered to the solver; where no legal arrangement exists, the
+        # smallest set of rules in the way is said and no rewrite is paid
+        # for — sampling the model again cannot change a conflict.
+        _exact = _gate_exact(result, _gate, restaurant_id) if (_gate and _history_id) else None
+        if _exact is not None:
+            _gate = dict(_gate, exact={k: _exact.get(k) for k in ("conflicts", "probed", "unprobed")},
+                         exact_fixes=list(_exact.get("fixes") or []))
+            if _gate_settled_by_solver(_gate, _exact):
+                print(f"[schedule] quality gate: {_gate['dates']} explained by the solver — no rewrite")
+                _record_gate_path(restaurant_id, "solver", _gate["dates"])
+                _run_gate(_gate, "explained")
+                _payload["gate"] = {"ran": True, "kept": "explained", "path": "solver",
+                                    "dates": list(_gate["dates"]), "conflicts": list(_exact["conflicts"])[:12],
+                                    "reason": "No legal arrangement of your team fixes "
+                                              + _dates_label(_gate["dates"])
+                                              + " with every rule as it stands — relax one of the rules named "
+                                                "and it can be filled."}
+                _ops.finish_async_job(job_id, "done", _json_ready(_payload))
+                return
         if _gate and clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS:
             # Not enough of the job's time left to rewrite the weak days and
             # check the rewrite (P-22): the draft stands as it is.
@@ -11576,8 +11837,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 # usually changed nothing, and ate the minutes the escalated
                 # rewrite then found missing (GATE_MIN_MODEL_SECONDS).
                 _no_fill = _gate_fill_skip(result, clock)
+                if _no_fill == "converged" and _gate.get("exact_fixes"):
+                    # the exact solve found shifts the loop did not: the fill
+                    # takes them in before any rewrite (LOGIC-26)
+                    _no_fill = None
                 _fill_answer = None if _no_fill else \
-                    _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"])
+                    _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"],
+                                      extra_rows=_gate.get("exact_fixes"))
                 if _no_fill:
                     print(f"[schedule] quality gate: no fill in code ({_no_fill}) — straight to the rewrite")
                     _gate = dict(_gate, fill={"tried": False, "skipped": _no_fill})
@@ -12112,6 +12378,56 @@ def prepare_replacements(restaurant_id, rows: list, constraints=None) -> dict:
         c = _rules.build_constraints(restaurant_id, dates, [_weekday_name(d) for d in dates])
     return {"rows": rows, "constraints": c, "before": _rules.breach_profile(rows, c)}
 
+
+
+def resolve_days(restaurant_id, rows: list, dates: list, out=None, add=None, history_id=None) -> dict:
+    """The Studio's and Ask's re-solve (scheduler audit 10/10/26 MARKET-13):
+    the week on screen re-solved on `dates` in seconds with no model call —
+    "Maria is out, re-solve Friday", "add a server Friday", "redo Saturday"
+    — every other day and every locked row kept, a person on a shift that
+    stays changed only when the rules leave no other way, each change with
+    its reason, and the rules in the way named for anything left open
+    (schedule_cpsat.resolve). Nothing is saved: the client shows the rows as
+    unsaved edits. On a published week a change inside the notice window
+    carries the predictive-scheduling warning (schedule_rules.
+    late_change_warning)."""
+    import schedule_cpsat as _cps
+    rows = [dict(r) for r in rows or []]
+    week = sorted({r.get("date") for r in rows if r.get("date")} | set(dates or []))
+    if not week:
+        return {"ok": False, "error": "no week to re-solve"}
+    c = _rules.build_constraints(restaurant_id, week, week_day_names(week))
+    roster_roles = {}
+    try:
+        import staff_settings as _ss_rs
+        roster_roles = {e["name"]: e.get("role") for e in _ss_rs.roster(restaurant_id) if e.get("name")}
+    except Exception as e:
+        _soft_fail("roster", e, restaurant_id)
+    result = {"week_dates": week, "week_days": week_day_names(week), "roster": list(c.roster_names or []),
+              "roster_roles": roster_roles, "constraints": c}
+    signals, weights = {}, {}
+    try:
+        signals, weights = _quality_signals(restaurant_id, result)
+    except Exception as e:
+        _soft_fail("quality signals", e, restaurant_id)
+        signals = {"roster": result["roster"], "roster_roles": roster_roles}
+    got = _cps.resolve(rows, c, sorted(set(dates or [])), out=out or [], add=add or [], signals=signals,
+                       weights=weights, last_week=signals.get("last_published_rows"))
+    got["dates"] = sorted(set(dates or []))
+    if history_id:
+        try:
+            from models import get_schedule_history_detail as _gshd_rs
+            from time_utils import restaurant_now_by_id
+            det = _gshd_rs(int(history_id), restaurant_id) or {}
+            if det.get("published_at") and got.get("changes"):
+                warn = _rules.late_change_warning(c.compliance, [x["date"] for x in got["changes"]],
+                                                  restaurant_now_by_id(restaurant_id, naive=True).date())
+                if warn:
+                    got["late_change_warning"] = warn
+        except Exception as e:
+            _soft_fail("notice window", e, restaurant_id)
+    got.pop("terms", None)
+    return _json_safe(got)
 
 
 def try_prepare_replacements(restaurant_id, rows: list, constraints=None):

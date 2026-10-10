@@ -783,8 +783,10 @@ def test_a_corrupt_stored_profile_does_not_break_the_rest():
 # ── Weighting ──────────────────────────────────────────────────────────────
 
 def test_an_admin_can_make_a_dimension_count_for_more():
-    """Demand match rather than a critical dimension, because a critical
-    one under its floor caps the shift and no weighting can move a cap.
+    """Strength under the busy-shift level (demand match folded into
+    operational strength, LOGIC-30), which marks down but never caps —
+    a critical dimension under its floor caps the shift and no weighting
+    can move a cap.
     The restaurant's stronger bartenders are off, so the peak night is
     staffed under its own level (demand match reads the restaurant's own
     ratings since the 10/3/26 audit, SQ-12)."""
@@ -795,7 +797,7 @@ def test_an_admin_can_make_a_dimension_count_for_more():
     bar = {n: "Bartender" for n in "ABCD"}
     normal = sq.score_rows(rows, profiles=busy, scores=scores, roster_roles=bar)
     heavy = sq.score_rows(rows, profiles=busy, scores=scores, roster_roles=bar,
-                          weights={"demand_match": 80})
+                          weights={"operational_strength": 80})
     assert normal["shifts"][0]["capped_by"] is None
     assert heavy["score"] < normal["score"]
 
@@ -826,8 +828,13 @@ def test_the_default_weights_put_the_operational_dimensions_first():
     product. Pin the ordering the design actually argues for."""
     w = sq.DEFAULT_WEIGHTS
     assert w["coverage"] > w["operational_strength"] > w["leadership"]
-    assert w["leadership"] > w["demand_match"] >= w["labor_efficiency"]
-    assert w["labor_efficiency"] > w["fatigue"] > w["fairness"] >= w["stability"]
+    assert w["leadership"] >= w["labor_efficiency"]
+    assert w["labor_efficiency"] > w["fatigue"] > w["fairness"]
+    # Stability is about a tenth of the week (scheduler audit 10/10/26 RM-3,
+    # LOGIC-18 — it was 2 of 162); demand match is folded into strength
+    # (LOGIC-30) and weighs nothing on its own.
+    assert 0.09 <= w["stability"] / float(sum(w.values())) <= 0.12
+    assert w["demand_match"] == 0
 
 
 # ── Explanations a manager can act on ──────────────────────────────────────
@@ -1018,9 +1025,18 @@ def test_the_comparison_never_recommends_benching_an_unrated_employee():
     out = sq.compare_candidates(
         rows, profiles=profiles(),
         scores={"Pat": 5, "Casey": 5, "Alex": 2})
+    # A swap trades two people's shifts, so nobody is taken off the week by
+    # one: "benching" would be a trade that leaves the unrated person off a
+    # shift for a rated one with nothing in return. Since demand match was
+    # folded into strength (scheduler audit 10/10/26 LOGIC-30) the score may
+    # move an unrated person between nights (SQ-19: unknown, never zero —
+    # the score decides); it never takes them off.
     for swap in out["swaps"]:
         moved = {swap["from"]["employee"], swap["to"]["employee"]}
-        assert "Unrated" not in moved, swap["reason"]
+        if "Unrated" in moved:
+            assert swap["from"]["date"] != swap["to"]["date"], swap["reason"]
+    final = out.get("rows") or rows
+    assert any(r["employee"] == "Unrated" for r in final)
 
 
 def test_two_unrated_people_may_still_trade_with_each_other():

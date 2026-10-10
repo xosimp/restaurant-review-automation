@@ -11716,6 +11716,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .sched-redo label.hol{border-color:var(--ember);color:var(--ember)}
 .sched-redo label input{margin:0;accent-color:var(--ember)}
 .sched-redo .sp{flex:1}
+/* Re-solve in seconds (MARKET-13): who is out, then the changes with why */
+.sched-resolve{flex-basis:100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:8px}
+.sched-resolve label{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--ink2);cursor:pointer;padding:4px 9px;border-radius:999px;border:1px solid var(--hb-line2);background:var(--sf-recess)}
+.sched-resolve label input{margin:0;accent-color:var(--ember)}
+.sched-resolve .sr-out{flex-basis:100%;font-size:13px;color:var(--ink2)}
+.sched-resolve .sr-out ul{margin:4px 0 0;padding-left:18px}
+.sched-resolve .sr-why{color:var(--ink3)}
+.sched-resolve .sr-open{color:var(--ember)}
 /* Projected cost and the forecast's notices */
 .sched-econ{padding:14px 20px;border-bottom:1px solid var(--hb-line2)}
 .sched-econ .hb-stats{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
@@ -24592,7 +24600,68 @@ function _schedRenderRedo() {
     h += '<label' + (hol ? ' class="hol" title="' + _escAttr(hol.name) + '"' : '') + '><input type="checkbox" value="' + _escAttr(d) + '"> ' + _escHtml(_schedDayOf(d).slice(0, 3)) + ' <span class="hb-num">' + mdy(d) + '</span></label>';
   }
   h += '<span class="sp"></span><button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="regenerateScheduleDays(this)">Redo selected days</button>';
+  h += '<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="schedResolvePick(this)" title="Who is out, re-solved in seconds with no AI drafting; every other day kept">Re-solve in seconds</button>';
+  h += '<div id="sched-resolve" class="sched-resolve" style="display:none"></div>';
   el.innerHTML = h; el.style.display = 'flex';
+}
+
+// Re-solve the ticked days in seconds, with no model call (scheduler audit
+// 10/10/26 MARKET-13): who is out, then the solver re-staffs only what has
+// to move, every other day and every pinned shift kept. The answer is an
+// unsaved edit like any other: Save keeps it.
+function schedResolvePick(btn) {
+  var boxes = document.querySelectorAll('#sched-redo input[type=checkbox]:checked'), dates = [], i, j;
+  for (i = 0; i < boxes.length; i++) dates.push(boxes[i].value);
+  if (!dates.length) { toast('Tick the days to re-solve', 'error'); return; }
+  var pane = document.getElementById('sched-resolve');
+  if (!pane) return;
+  var on = {}, names = [];
+  for (i = 0; i < _schedRows.length; i++) {
+    var r = _schedRows[i], n = String(r.employee || '').trim();
+    if (n && dates.indexOf(r.date) >= 0 && !on[n.toLowerCase()]) { on[n.toLowerCase()] = 1; names.push(n); }
+  }
+  names.sort();
+  var h = '<div class="sr-k">Who is out on ' + _escHtml(dates.length === 1 ? (_schedDayOf(dates[0]).slice(0, 3) + ' ' + mdy(dates[0])) : (dates.length + ' days')) + '?</div>';
+  for (j = 0; j < names.length; j++) {
+    h += '<label><input type="checkbox" data-resolve-out="' + _escAttr(names[j]) + '"> ' + _escHtml(names[j]) + '</label>';
+  }
+  h += '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="schedResolveGo(this)">Re-solve</button>';
+  h += '<div class="sr-out" id="sched-resolve-out"></div>';
+  pane.setAttribute('data-dates', dates.join(','));
+  pane.innerHTML = h; pane.style.display = 'flex';
+}
+
+function schedResolveGo(btn) {
+  var pane = document.getElementById('sched-resolve');
+  if (!pane) return;
+  var dates = String(pane.getAttribute('data-dates') || '').split(',');
+  var picks = pane.querySelectorAll('input[data-resolve-out]:checked'), out = [], i;
+  for (i = 0; i < picks.length; i++) out.push({employee: picks[i].getAttribute('data-resolve-out'), dates: dates});
+  var res = document.getElementById('sched-resolve-out');
+  if (res) res.innerHTML = '<div class="dr-pulse"><i></i></div>';
+  btn.disabled = true;
+  fetch('/api/labor/schedule/resolve', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rows: _schedRows, dates: dates, out: out, history_id: _schedHistoryId})
+  }).then(apiJson).then(function (d) {
+    btn.disabled = false;
+    if (!d || !d.ok) { if (res) res.innerHTML = ''; toast((d && d.error) || 'That could not be re-solved', 'error'); return; }
+    _schedRows = d.rows || _schedRows;
+    schedAfterEdit();
+    var lines = [], k;
+    for (k = 0; k < (d.changes || []).length && k < 12; k++) {
+      var c = d.changes[k];
+      lines.push('<li>' + _escHtml(_schedDayOf(c.date).slice(0, 3) + ' ' + (c.role || '') + ' ' + (c.shift_start || '') + '\u2013' + (c.shift_end || '') + ': ' + (c.to || '') + (c.from ? ' for ' + c.from : '')) + (c.why ? ' <span class="sr-why">' + _escHtml(c.why) + '</span>' : '') + '</li>');
+    }
+    for (k = 0; k < (d.unfilled || []).length && k < 6; k++) {
+      var u = d.unfilled[k];
+      lines.push('<li class="sr-open">' + _escHtml(_schedDayOf(u.date).slice(0, 3) + ' ' + (u.role || '') + ' ' + (u.shift_start || '') + '\u2013' + (u.shift_end || '') + ' left open: ' + (u.text || '')) + '</li>');
+    }
+    for (k = 0; k < (d.conflicts || []).length && k < 4; k++) lines.push('<li class="sr-open">' + _escHtml(d.conflicts[k].text || '') + '</li>');
+    if (d.late_change_warning) lines.push('<li class="sr-open">' + _escHtml(d.late_change_warning) + '</li>');
+    if (res) res.innerHTML = lines.length ? '<ul>' + lines.join('') + '</ul>' : '<div class="sw-note">Nothing had to change.</div>';
+    toast((d.changes || []).length + ' change' + ((d.changes || []).length === 1 ? '' : 's') + ' in ' + (Math.round((d.seconds || 0) * 10) / 10) + 's \u2014 save to keep them');
+  }).catch(function () { btn.disabled = false; if (res) res.innerHTML = ''; toast('That could not be re-solved', 'error'); });
 }
 
 function _schedMoney(n) { return '$' + Math.round(+n || 0).toLocaleString(); }

@@ -157,7 +157,13 @@ EXPERIMENTS = (
               {"key": "carried", "label": "Last published week, carried forward", "weight": 1,
                "flags": {"draft_source": "carry_forward"}},
               {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 0,
-               "flags": {"draft_source": "solver"}})},
+               "flags": {"draft_source": "solver"}},
+              # The solver-first draft with the model as a critic of it
+              # (schedule_critic — scheduler audit 10/10/26 AI-8): a few
+              # judged edits, each validated by code. Off the hash, like
+              # code_shaped, until the eval reads it.
+              {"key": "code_critic", "label": "Shaped in code, solved, then reviewed by the model", "weight": 0,
+               "flags": {"draft_source": "solver", "critic": True}})},
 )
 # What a week gets from a flag no active experiment sets.
 DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model"}

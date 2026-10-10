@@ -239,6 +239,11 @@ POLICIES = {p.workflow: p for p in (
     _p("schedule_note", "scheduling", "schedule_note", ladder=(DEFAULT,), reviewer="rules",
        caps=Caps(calls=1, usd=0.02, seconds=60), delivery="background",
        note="schedule_narrative: written from the final week, every bullet checked against its rows"),
+    # The critic of a week the solver built (schedule_critic — AI-8): at
+    # most six typed edits, each kept only when code finds it breaks nothing.
+    _p("schedule_critic", "scheduling", "schedule_critic", ladder=(DEFAULT,), reviewer="rules",
+       caps=Caps(calls=1, usd=0.20, seconds=120), delivery="background",
+       note="schedule_critic: Sonnet 5.5, structured edits; code validates each (can_add, regressions, the score)"),
     # ── cfo ─────────────────────────────────────────────────────────────
     _p("ask_cavnar", "cfo", "ask_cavnar", ladder=("T2",), reviewer="rules",
        caps=Caps(calls=8, usd=0.60, seconds=90),
@@ -406,7 +411,7 @@ def _coerce(name, value, base):
 # tool, and the two diagnoses call create_with_retry directly (sync and
 # batch) on their own model.
 CONSOLE_READ_ONLY = ("weekly_plan", "ask_summary", "audit_notes_read", "review_diagnosis", "food_cost_diagnosis",
-                     "schedule_rule_extract", "schedule_note")
+                     "schedule_rule_extract", "schedule_note", "schedule_critic")
 
 
 def overridable(workflow) -> bool:

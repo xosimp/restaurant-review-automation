@@ -437,15 +437,21 @@ def score_arm(rows, item, gate=True) -> dict:
 
 # ── the code arms (AI-8): no model at all ──────────────────────────────────
 
-CODE_ARMS = ("carry_forward", "solver")
+CODE_ARMS = ("carry_forward", "solver", "solver_v0")
+# The deterministic+critic arm (scheduler audit 10/10/26 AI-8): the
+# "solver" arm's week reviewed by the model (schedule_critic), each edit
+# validated by code — a model arm, run only with --live or an injected call.
+CRITIC_ARM = "solver_critic"
 
 
 def code_arm_rows(arm, item) -> list:
     """The rows a code arm drafts for a frozen item, as production's
     fallback draft would (schedule_fallback): "carry_forward" — the last
     published week before it, on the week's roster and rules (no base: the
-    solver); "solver" — SHIFT REQUIREMENTS shaped on the restaurant's usual
-    shifts and solved."""
+    solver); "solver" — the solver-first draft (schedule_cpsat.solver_draft:
+    shapes from the people-on-at-once curve, then CP-SAT — scheduler audit
+    10/10/26 RM-21), falling back to "solver_v0" — SHIFT REQUIREMENTS laid
+    onto the usual shift templates, people by the backtracking solver."""
     import schedule_fallback as _sfb
     ctx = item.get("context") or {}
     c = ctx.get("constraints")
@@ -457,6 +463,20 @@ def code_arm_rows(arm, item) -> list:
     base = item.get("base") or {}
     if arm == "carry_forward" and base.get("rows"):
         return _sfb.carry_forward_rows(base, dates, c, res.get("roster"))["rows"]
+    if arm == "solver":
+        try:
+            import schedule_cpsat as _cps
+            if _cps.available():
+                got = _cps.solver_draft(dates, c, res.get("requirements") or [], concurrent=res.get("concurrent"),
+                                        history_rows=base.get("rows") or [], context_rows=[],
+                                        last_week_rows=base.get("rows") if base.get("source") == "published" else [],
+                                        signals=ctx.get("signals"), weights=ctx.get("weights"),
+                                        roster_roles=res.get("roster_roles") or None,
+                                        budget_dollars=res.get("labor_budget_dollars") or None, max_seconds=20.0)
+                if got.get("rows"):
+                    return got["rows"]
+        except Exception as e:
+            print(f"[schedule_eval] solver-first arm fell back to v0: {e!r}")
     return _sfb.solver_rows(dates, res.get("requirements_by_date") or {}, c, base_rows=base.get("rows") or [],
                             context_rows=[], open_times=res.get("open_times"), close_times=ctx.get("close_times"),
                             signals=ctx.get("signals"), weights=ctx.get("weights"),
