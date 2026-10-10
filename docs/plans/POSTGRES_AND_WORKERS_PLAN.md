@@ -1,6 +1,58 @@
 # Postgres, a job queue and more than one web worker (#96)
 
-Plan, 9/29/26 (admin-console fix round, finding #96). Nothing here is built.
+Plan, 9/29/26 (admin-console fix round, finding #96).
+
+**Status, 10/10/26 (scheduler audit, workstream H2 — RM-7, RM-13, RM-14,
+SCALE-1/2/10/13/20/21/24/25/32, ARCH-4/22/34).** Step 2 (the job queue) and
+step 3 up to the cutover (Postgres behind `models.get_conn`, the copy and its
+verification, the normalized schedule model as a shadow, blobs in object
+storage) are BUILT. What runs in production is unchanged until the switches
+are set: the queue is consumed in the web process (`QUEUE_WORKER=1` moves it
+to `worker.py`), the shadow is off (`PG_SHADOW_WRITE`), blobs stay inline
+(`BLOB_STORE`), and SQLite is the database until `DATABASE_URL` names a
+Postgres — the cutover is Will's step, in `docs/ops/POSTGRES_CUTOVER.md`.
+Built:
+
+- **`job_queue`** — one `jobs` table (kind, group, tenant, priority class
+  interactive / scheduled / bulk, not_before, deadline, attempts, lease,
+  idempotency key, stage checkpoint). Claimed in one write transaction (an
+  advisory transaction lock on Postgres): a group's concurrency is a count of
+  claimed rows across every process, one generation runs per restaurant,
+  presses go before drafts (scheduled by earliest deadline), tenants share
+  each class by weighted fair queueing gated by a token bucket. Consumers:
+  the web process by default, `worker.py` with `QUEUE_WORKER=1` (the web
+  process consumes after all if the worker's heartbeat goes stale). FIRST
+  CONSUMER: schedule generation (owners' presses and the auto-draft), then
+  the nightly learners' per-restaurant passes (`learner` rows).
+- **Resume across a deploy** (`schedule_resume`): a running row is handed
+  back at SIGTERM (or its lease runs out); the next try finishes from the
+  saved checkpoint, or runs again reading every model answer its earlier
+  try paid for (`schedule_model_calls.job_id`, `call_key`). The boot sweep
+  no longer fails a job the queue will resume.
+- **`model_gateway`** — every Anthropic call classed; the organisation's
+  tokens a minute allocated by class (`GATEWAY_ORG_OTPM` / `ITPM`), a
+  tenant's tokens a minute, generation concurrency held to the budget,
+  Message Batches for the unattended classes, per-restaurant AI ceilings,
+  and the provider breakers shared through `ai_breakers`.
+- **`db_dialect`** — Postgres behind `models.get_conn` when `DATABASE_URL`
+  names one: the SQL translated per statement (placeholders, dates,
+  upserts, `BEGIN IMMEDIATE` as an advisory lock, PRAGMAs answered,
+  sqlite3's errors) — `scripts/pg_sql_audit.py` lists the handful of
+  statements it cannot carry (SQLite triggers, ported in
+  `migrations/postgres/0002_triggers.sql`; a few `strftime` / GLOB / PRAGMA
+  sites).
+- **`pg_copy` + `scripts/pg_copy.py`** — the schema (month-partitioned fact
+  tables, deferred foreign keys), the copy (every value its column's type,
+  what could not be counted), the verification (counts, key min/max/sum),
+  and the Postgres -> SQLite export the nightly backup uses on Postgres.
+- **`pg_shadow`** — the normalized schedule model (`sched`: weeks with the
+  working and published pointers, immutable revisions, shifts by
+  `shift_id` on timestamptz with a no-double-booking exclusion on
+  published revisions, the event log) written from an outbox beside
+  SQLite, compared before the switch.
+- **`blob_store`** — model-call and quality blobs to object storage.
+- **Versions as differences from a snapshot** (SCALE-34) and the off-site
+  copy in parts past 512 MiB (SCALE-20).
 Updated 10/7/26 (AI cost audit #56) with the process-local state that round
 added — the interactive AI slots, the AI background pools, the route-override
 cache — and where each goes in the order of work; and again 10/7/26 (iOS
@@ -39,10 +91,10 @@ Process-local state a second worker would duplicate (the inventory:
 | State | Where | What N workers do to it | Move it to |
 |---|---|---|---|
 | The admin request ceiling | `security._admin_hits` | 240 requests / 60 writes a minute becomes N × that | a `login_attempts`-style table, or the gateway |
-| AI breakers | `ai_utils._breakers` | each worker trips and closes its own; "Reset breaker" reaches one | an `ai_breakers` row per provider, read with a short cache (the events are already in `ai_health_events`) |
+| AI breakers | `ai_utils._breakers` | **moved 10/10/26**: each process keeps its own counts, but every opening, closing and reset is the `ai_breakers` row, read back by every process within `AI_BREAKER_SYNC_SECONDS` | done |
 | AI budget cache, blocked-call merge | `ai_utils._budget_cache`, `_blocked_memo` | stale spend per worker; blocked rows merged per worker, not per minute | read-through with a generation stamp; merge on an `INSERT … ON CONFLICT` key |
 | The admin fleet memo | `admin_ops._fleet_state` | a write on one worker drops only its own memo: the other serves reads up to 45 s stale | the materialised health row (#97), or a generation counter in the database the memo checks |
-| Bounded pools | `ASK_MAX_CONCURRENT` (`client_api._ASK_SLOTS`), Ask's read pool (`ask_cavnar.ASK_READ_WORKERS`, 10/7/26), `ops.run_admin_task`, `admin_routes._submit_admin_job` (the one admin job pool; `_AdminJobs` was folded into it), the webhook and push delivery pools, `admin_ops.heavy_slot`, the schedule generation pool and its slots (`schedule_engine.submit_generation`, `_GEN_SLOTS`, `SCHEDULE_GEN_WORKERS`; 10/3/26), the owner AI job pool (`ai_async`, `OWNER_AI_JOB_WORKERS`; AI cost audit 10/7/26 #57 — invoice and recipe-card reads, the Campaign Studio's drafts) | every bound becomes N × its value | the job queue below (a global bound is a count of claimed rows) |
+| Bounded pools | `ASK_MAX_CONCURRENT` (`client_api._ASK_SLOTS`), Ask's read pool (`ask_cavnar.ASK_READ_WORKERS`, 10/7/26), `ops.run_admin_task`, `admin_routes._submit_admin_job` (the one admin job pool; `_AdminJobs` was folded into it), the webhook and push delivery pools, `admin_ops.heavy_slot`, the schedule generation pool and its slots (**moved 10/10/26**: a generation is a `job_queue` row and its slot a count of claimed rows — `QUEUE_GENERATION_CONCURRENCY` across every process; `_GEN_SLOTS` is only a direct call's, `JOB_QUEUE=0` the old pool), the owner AI job pool (`ai_async`, `OWNER_AI_JOB_WORKERS`; AI cost audit 10/7/26 #57 — invoice and recipe-card reads, the Campaign Studio's drafts) | every bound becomes N × its value | the job queue below (a global bound is a count of claimed rows) |
 | The in-memory telemetry | `http_layer` (`_samples`, `_inflight`, `_rollups`, `_sentry_last`) | each worker reports only its own "now"; persisted rollups add up correctly | nothing — label the live panels per worker |
 | Claim fallback and page memory | `ops._claim_fallback`, `ops._page_memory`, `ops._running_jobs` | fallbacks for a database that cannot be written; `is_running` sees one process (`running_elsewhere` reads the database) | acceptable as fallbacks; keep |
 | Refused-audit window | `admin_events._refused_window` | N × 20 rows per IP per 10 minutes | the table's own cap already bounds it |
@@ -50,8 +102,8 @@ Process-local state a second worker would duplicate (the inventory:
 | The interactive AI slots (AI cost audit 10/7/26) | `ai_utils._INTERACTIVE_SLOTS` (`INTERACTIVE_AI_SLOTS`, default 2) | the "at most two owner-facing model calls in flight" bound becomes 2 × N, and the slot a waiting request is promised exists only on its own worker | a count of claimed rows (the job queue below), or `ai_rate_events`-style rows with a lease stamp |
 | The AI background pools (10/7/26) | Ask's read pool (`ask_cavnar._READ_POOL`, `ASK_READ_WORKERS`), Ask's summary pool (`client_api._SUMMARY_POOL`, one thread), the orchestrator's shadow-review pool (`ai_orchestrator._SHADOW_POOL`, one thread), the learner's scoring pool (`ai_learning._SCORE_POOL`, one thread) | each one-thread pool becomes N threads; the shadow review's sampling rate is per worker, so the share of runs reviewed holds but the spend bound is N × | the job queue (kinds `ask_summary`, `shadow_review`, `shadow_score`) |
 | The route-override cache (10/7/26) | `ai_orchestrator._OVERRIDES` (`OVERRIDE_CACHE_SECONDS`, 60) | an override applied or reverted in the console reaches the other workers up to 60 s later — the same window one worker already has | keep, or a generation stamp in `ai_route_overrides` the cache checks |
-| The generation watchers (iOS parity round 10/7/26) | `schedule_engine._GEN_WATCHERS` (`watch_generation` / `take_generation_watchers`, under `_GEN_WATCHERS_LOCK`) — who pressed Generate for each running job, pushed `schedule_drafted` when it lands | a press on worker A is remembered only on A; the job runs on whichever worker's pool took it, so a press joined on worker B (or a job that runs on A for a press made on B) pushes nobody. With one worker the job and its watchers die together on a restart | a `generation_watchers` table keyed on the `async_jobs` job id, taken with a `DELETE … RETURNING` when the job finishes |
-| The Studio's kept inputs (10/2/26) | `schedule_engine._studio_cache`, `_studio_live` (keyed on `models.schedule_inputs_version`; an LRU of `STUDIO_CACHE_BUDGET_ROWS` 20,000 week rows, `STUDIO_CACHE_PER_RESTAURANT` 3, `STUDIO_CACHE_SECONDS` 900 as a backstop, one `_studio_lock` — scheduler audit 10/10/26 SCALE-8, BUGSLIFE-23), and each prepared week's last served answers for the re-score's deltas (`quality_payload`, SCALE-29) | each worker re-sweeps on its own first drag; the key moves the moment the inputs do, so nothing is stored stale; a delta's base another worker served is answered whole | keep (a cache) |
+| The generation watchers (iOS parity round 10/7/26) | was `schedule_engine._GEN_WATCHERS` (`watch_generation` / `take_generation_watchers`) — who pressed Generate for each running job, pushed `schedule_drafted` when it lands | **moved 10/10/26**: the `generation_watchers` table keyed on the async job id, taken (read and deleted in one transaction) when the job finishes, wherever it ran — a restart no longer forgets who was waiting | done |
+| The Studio's kept inputs (10/2/26; reviewed 10/10/26, SCALE-24: its key is `models.schedule_inputs_version`, read from the database, so a second worker can never serve a stale week — only re-sweep once) | `schedule_engine._studio_cache`, `_studio_live` (keyed on `models.schedule_inputs_version`; an LRU of `STUDIO_CACHE_BUDGET_ROWS` 20,000 week rows, `STUDIO_CACHE_PER_RESTAURANT` 3, `STUDIO_CACHE_SECONDS` 900 as a backstop, one `_studio_lock` — scheduler audit 10/10/26 SCALE-8, BUGSLIFE-23), and each prepared week's last served answers for the re-score's deltas (`quality_payload`, SCALE-29) | each worker re-sweeps on its own first drag; the key moves the moment the inputs do, so nothing is stored stale; a delta's base another worker served is answered whole | keep (a cache) |
 | The Crew stage's kept matrix (10/10/26) | `crew_matrix._matrix_cache` (`MATRIX_CACHE_SECONDS` 600, `MATRIX_CACHE_SIZE` 512; keyed on `models.schedule_inputs_version`, the week's draft and the newest POS day — scheduler audit SCALE-27) | each worker builds it on its own first view; the key moves when anything it reads does | keep (a cache) |
 | Push provider alarms and the delivery ceiling | `push._provider_alarms` (one capture per APNs failure reason an hour), `push._queued` / the overflow queue (`_MAX_PUSH_QUEUED`) — the alerts, and since 10/7/26 the silent widget pushes and Live Activity updates too (`push._submit_native`) | N × one capture an hour per reason; N × the queue ceiling | the push outbox already holds every alert (`push_outbox`); the ceiling becomes a count of claimed rows with the job queue |
 
@@ -130,30 +182,43 @@ the queue, beside the scheduler that only enqueues.
 
 ## Order of work
 
-1. **Now, still on SQLite**: move the admin ceiling and the AI breakers into
-   the database; give the fleet memo a database generation (or build #97);
-   elect the supervisor with a lease; make the interactive AI slots a
-   database count (a row per call in flight with a lease stamp, so a dead
-   worker's slot frees itself) — the one 10/7/26 bound an owner feels when it
-   doubles, since two workers would let four owner-facing calls race the
-   provider's rate limit. The one-thread AI pools (Ask's summary, the shadow
-   review, the learner's scoring) can stay per worker until step 2: doubling
-   them costs a little spend, never a wrong answer. Then two gunicorn workers
-   in one container behind a flag, measured on `request_rollups` (latency by
-   class, saturated minutes) and the write probe's wait (`/health`
-   `database.write_ms`). `synchronous=NORMAL` (10/7/26 #92) shortens each
-   commit, which is what two workers contend on.
-2. **The job queue on SQLite** (the table and its claim), with the review
-   fetch's AI work as its first consumer, then the AI pools above (the
-   summary, the shadow reviews, the learner's scoring) as kinds on it, and
-   the scheduler's sweep lane's jobs as enqueued work rather than a thread.
-3. **Postgres** behind `models.get_conn` and a dialect helper, run as a
-   shadow (dual-write the ledgers, compare) before the switch; migrations
-   replace boot DDL; backups move to the provider's PITR plus a scrubbed
-   off-site dump.
-4. **Services**: the queue workers and the scheduler as their own Railway
-   services once the database is networked; retire the volume.
+1. **Now, still on SQLite**: move the admin ceiling into the database; give
+   the fleet memo a database generation (or build #97); elect the
+   supervisor with a lease; make the interactive AI slots a database count.
+   (The AI breakers moved 10/10/26.)
+2. **The job queue — BUILT 10/10/26**, with schedule generation as its first
+   consumer (not the review fetch: generation is what breaks first — owner
+   presses wait past the 15-minute client wait at ~150-300 restaurants,
+   SCALE-1) and the auto-draft and the nightly learners on it. Next kinds:
+   the review fetch's AI work (#98), the AI pools (the summary, the shadow
+   reviews, the learner's scoring), the admin pools, then the outboxes. To
+   take the CPU and the model waits out of the web process, set
+   `QUEUE_WORKER=1` with the start command in
+   `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`.
+3. **Postgres — BUILT up to the cutover 10/10/26**: `db_dialect` behind
+   `models.get_conn`, `scripts/pg_copy.py` (copy + verify), the normalized
+   schedule model as a shadow (`PG_SHADOW_WRITE`), blobs in object storage
+   (`BLOB_STORE`); migrations replace boot DDL for the new model; backups on
+   Postgres are the provider's point-in-time recovery plus the nightly
+   export to SQLite that the existing scrub, encryption and off-site copy
+   run on. The cutover — provision, copy, verify, switch, rollback — is
+   `docs/ops/POSTGRES_CUTOVER.md`.
+4. **Services**: once the database is networked, the queue workers and the
+   scheduler as their own Railway services (the scheduler only enqueues,
+   elected by an advisory lock); the web tier with N replicas; retire the
+   volume. Workers autoscaled on queue depth (`job_queue.stats`).
 
-**When**: before about 10,000 restaurants, or earlier when request latency
-p95 by class, saturated minutes or the write probe's wait start to climb on
-`/admin` → Engineering. None of these do today.
+**When** — re-based on what breaks first (scheduler audit 10/10/26,
+SCALE-21; scale.md *What breaks first*), not "about 10,000 restaurants",
+which was 30-50x too late:
+
+| Step | Before | Why | Trigger to watch |
+|---|---|---|---|
+| Queue consumed by `worker.py` (`QUEUE_WORKER=1`) | **~150 restaurants** | owner presses queue past the 15-minute client wait at ~150-300 (2 slots, 5-30 minutes a week); the generation CPU holds the web process's GIL | `job_queue.stats()` `wait_p95_seconds` for the interactive class over 120 s (the target: p95 under two minutes to start) |
+| Postgres shadow on, then the cutover | **~300 restaurants** | the 5 GB volume and the backup's 2-3x free space hold tens to ~100 restaurant-years of schedules; the Studio cache, the AI caps and press latency all fail by ~300 | the volume over 60% (`/health` disk, Railway's volume metric); a backup whose off-site copy took parts (multipart) means the snapshot passed 512 MiB |
+| Services + autoscaled workers | ~1,000-2,500 | the GIL-bound CPU (~262 CPU-hours a week at 9,000), auto-draft throughput (~900-1,200 opted in) | generation queue depth at the auto-draft's deadline; saturated minutes on `/admin` → Engineering |
+| Warehouse + change data capture (Stage 4) | a few thousand | learners scanning the fleet nightly | learner rows still queued at 8am |
+
+The latency triggers (`request_rollups` p95 by class, the write probe's
+wait) still apply, but they do not see queue wait — that is the new trigger
+above.

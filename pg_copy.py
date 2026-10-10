@@ -119,6 +119,7 @@ def table_ddl(name, sql, partition_col=None) -> tuple:
                 e = f"{m.group(1)}({', '.join(cols)}){m.group(3)}"
             out.append(e)
         keep = out
+    head = re.sub(r"^\s*CREATE\s+TABLE\s+(?!IF\s)", "CREATE TABLE IF NOT EXISTS ", head, flags=re.I)
     body = head + "(\n    " + ",\n    ".join(keep) + "\n)" + tail.rstrip().rstrip(";")
     if partition_col:
         body += f" PARTITION BY RANGE ({partition_col})"
@@ -133,6 +134,8 @@ def index_ddl(sql, table=None) -> str:
     """A CREATE INDEX in Postgres's SQL; a UNIQUE index on a partitioned
     table gains the partition column."""
     text = db_dialect.Translator().translate(sql).replace("%%", "%")
+    text = re.sub(r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(?!IF\s)", lambda m: f"CREATE {m.group(1) or ''}INDEX IF NOT EXISTS ",
+                  text, flags=re.I)
     part = db_dialect.PARTITIONED.get((table or "").lower())
     if part and re.match(r"\s*CREATE\s+UNIQUE", text, re.I):
         text = re.sub(r"\(([^)]*)\)", lambda m: m.group(0) if part in m.group(1) else

@@ -444,8 +444,8 @@ def claim(worker_id, groups=("generation", "bulk"), db_path=None):
     attempts + 1) — or None when nothing is claimable within the bounds
     above. Rows expired unstarted on the way are handed to their kind's
     EXPIRE_HOOKS after the commit."""
-    if _draining.is_set():
-        return None
+    if _draining.is_set() or (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return None                       # draining, or the cutover's write freeze
     now = time.time()
     expired, picked = [], None
     conn = get_conn(db_path)
@@ -1001,6 +1001,7 @@ def stats(window_seconds=3600, db_path=None) -> dict:
             "AND priority_class='interactive'", (now - window_seconds,)).fetchall())
         out["wait_p95_seconds"] = round(waits[min(len(waits) - 1, int(math.ceil(0.95 * len(waits))) - 1)], 1) \
             if waits else None
+        out["wait_samples"] = len(waits)
         out["failed"] = int(conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE state='failed' AND finished_at>?",
                                          (now - window_seconds,)).fetchone()["n"])
         out["consumers"] = {r["role"]: int(r["n"]) for r in conn.execute(

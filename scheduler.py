@@ -6129,6 +6129,10 @@ def scheduling_allowed():
     # removed RESTORE_FROM.
     if (os.getenv("RESTORE_FROM") or "").strip():
         return False
+    # Held during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
+    # docs/ops/POSTGRES_CUTOVER.md): no job writes the database being copied.
+    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return False
     if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
         return True
     # Railway sets all of these on every deploy; any one is enough.

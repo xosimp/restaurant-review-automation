@@ -38,13 +38,16 @@ PG_RESERVED = {"all", "analyse", "analyze", "and", "any", "array", "as", "asc", 
                "variadic", "when", "where", "window", "with"}
 _SQL_START = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|REPLACE|WITH|ALTER|DROP|PRAGMA|BEGIN)\b", re.I)
 _SQLITE_ONLY = [(re.compile(p, re.I), what) for p, what in (
-    (r"\btypeof\s*\(", "typeof()"), (r"\bprintf\s*\(", "printf()"), (r"\bGLOB\b", "GLOB"),
+    (r"\btypeof\s*\(", "typeof()"), (r"\bprintf\s*\(", "printf()"),
     (r"\blast_insert_rowid\s*\(", "last_insert_rowid()"), (r"^\s*(ATTACH|DETACH)\b", "ATTACH/DETACH"),
     (r"^\s*VACUUM\b", "VACUUM"), (r"\bCREATE\s+TRIGGER\b", "CREATE TRIGGER"),
     (r"\bINSERT\s+OR\s+(ROLLBACK|ABORT|FAIL)\b", "INSERT OR ROLLBACK/ABORT/FAIL"))]
 _PRAGMA_OK = re.compile(r"^\s*PRAGMA\s+(table_info|index_list|integrity_check|quick_check|journal_mode|"
                         r"foreign_keys|busy_timeout|synchronous|foreign_key_check|optimize|wal_checkpoint|"
-                        r"cache_size|temp_store)\b", re.I)
+                        r"cache_size|temp_store|database_list|schema_version|analysis_limit)\b", re.I)
+# Statements db_dialect.PgConnection deliberately turns into no-ops because the
+# copy installs their Postgres form (migrations/postgres/0002_triggers.sql).
+_PORTED = re.compile(r"^\s*(CREATE|DROP)\s+TRIGGER\b", re.I)
 
 
 def _text(node):
@@ -90,6 +93,25 @@ def _schema():
     p = os.path.join(tempfile.mkdtemp(), "audit.db")
     models.init_db(p)
     models.ensure_columns(p)
+    # The rest of the boot's tables (hosted_dashboard's init chain), so every
+    # table's primary key is known.
+    import importlib
+    import inspect
+    for mod, fn in (("models", "init_email_log"), ("models", "init_onboarding_emails"),
+                    ("models", "init_staff_notes"), ("models", "init_staff_availability"),
+                    ("models", "init_two_fa_backup_codes"), ("models", "init_competitor_snapshots"),
+                    ("models", "init_ai_visibility_queries"), ("models", "init_staff_capabilities"),
+                    ("models", "init_shift_profiles"), ("models", "init_capability_changes"),
+                    ("models", "init_ask_memory"), ("auth", "init_auth"), ("webhooks", "init_webhooks"),
+                    ("guest_marketing", "init_guest_marketing"), ("push", "init_push"),
+                    ("sales_audits", "init_sales_audits"), ("platform_monitor", "init_platform_tables"),
+                    ("provider_health", "init_provider_health")):
+        try:
+            f = getattr(importlib.import_module(mod), fn)
+            if "db_path" in inspect.signature(f).parameters:
+                f(db_path=p)
+        except Exception:
+            pass
     conn = sqlite3.connect(p)
     pks, cols = {}, {}
     for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
@@ -108,10 +130,14 @@ def audit():
         pks, cols = _schema()
     tr = db_dialect.Translator(lambda t: pks.get((t or "").lower()) or None,
                                lambda t: cols.get((t or "").lower()) or None)
-    out = {"untranslatable": [], "double_quoted": [], "sqlite_only": [], "reserved_columns": [], "statements": 0}
+    out = {"untranslatable": [], "dynamic": [], "ported": [], "double_quoted": [], "sqlite_only": [],
+           "reserved_columns": [], "statements": 0}
     for path, line, sql in statements():
         out["statements"] += 1
         where = f"{path}:{line}"
+        if _PORTED.match(sql):
+            out["ported"].append({"at": where, "what": "TRIGGER (plpgsql in 0002_triggers.sql)"})
+            continue
         for rx, what in _SQLITE_ONLY:
             if rx.search(sql):
                 out["sqlite_only"].append({"at": where, "what": what})
@@ -120,9 +146,12 @@ def audit():
         if re.search(r"(=|<>|!=|\bIN\s*\(|,)\s*\"[^\"]*\"", sql) and not re.search(r"\"(trigger|effort)\"", sql):
             out["double_quoted"].append({"at": where, "sql": sql[:120]})
         try:
-            tr.translate(sql.replace("X", "x"))
+            tr.translate(sql.replace("X", "hole"))
         except Exception as e:
-            out["untranslatable"].append({"at": where, "error": str(e)[:120]})
+            # A hole the f-string fills at run time (a table name, an
+            # interval's number): translated then, not decidable here.
+            key = "dynamic" if "hole" in str(e).lower() else "untranslatable"
+            out[key].append({"at": where, "error": str(e)[:120]})
     for t, cs in sorted(cols.items()):
         for c in cs:
             if c.lower() in PG_RESERVED:
@@ -136,7 +165,7 @@ def main(argv=None):
         print(json.dumps(rep, indent=2))
         return 0
     print(f"{rep['statements']} SQL statements read")
-    for k in ("untranslatable", "double_quoted", "sqlite_only", "reserved_columns"):
+    for k in ("untranslatable", "dynamic", "ported", "double_quoted", "sqlite_only", "reserved_columns"):
         print(f"\n{k}: {len(rep[k])}")
         for item in rep[k]:
             print("  ", item if isinstance(item, str) else " — ".join(str(v) for v in item.values()))

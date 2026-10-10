@@ -1009,6 +1009,9 @@ JOB_MAX_MINUTES = 45
 # A job the queue will resume after a restart (sweep_stale_jobs) has this
 # long from the boot before a poll calls it dead.
 RESUME_DEADLINE_SECONDS = 20 * 60
+# An owner's generation waiting past this to start (the queue's interactive
+# p95 over the last hour) warns the operator (check_platform_sla).
+QUEUE_WAIT_ALERT_SECONDS = int(os.getenv("QUEUE_WAIT_ALERT_SECONDS", "120"))
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
@@ -2009,7 +2012,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "schedule_generation": None, "schedule_inputs": None, "alerted": False}
+           "schedule_generation": None, "schedule_inputs": None, "queue": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2102,6 +2105,23 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         + ", ".join(f"{k} ({int(round(gin['rates'][k] * 100))}% of the last {gin['n']})"
                                     for k in gin["over"][:4])
                         + " — each failure is in the job failures (schedule_inputs).")
+    # The durable job queue's wait (scheduler audit 10/10/26 SCALE-21): an
+    # owner's press waiting longer than QUEUE_WAIT_ALERT_SECONDS to start
+    # (p95 over the last hour) is the trigger to move the queue to its own
+    # worker and add slots — no request-latency figure sees it.
+    try:
+        import job_queue as _jq_sla
+        if _jq_sla.enabled():
+            out["queue"] = _jq_sla.stats()
+    except Exception as e:
+        log.warning(f"the job queue's stats unavailable to the platform check: {e}")
+    q = out["queue"] or {}
+    if (q.get("wait_p95_seconds") or 0) > QUEUE_WAIT_ALERT_SECONDS and (q.get("wait_samples") or 0) >= 5:
+        warn_kinds.add("queue_wait")
+        problems.append(f"Owners' schedule generations wait {q['wait_p95_seconds'] / 60:.1f} minutes to start "
+                        f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — move the queue to "
+                        "worker.py (QUEUE_WORKER=1) or raise QUEUE_GENERATION_CONCURRENCY "
+                        "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
     out["problems"] = problems
     if not problems or not send:
         return out

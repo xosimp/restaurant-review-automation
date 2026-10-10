@@ -98,11 +98,12 @@ def test_the_whole_apps_sql_is_audited_and_the_gaps_are_named():
     rep = pg_sql_audit.audit()
     assert rep["statements"] > 3000
     assert rep["double_quoted"] == [] and rep["reserved_columns"] == []
-    # The triggers are ported by the copy (0002_triggers.sql); the rest of
-    # the SQLite-only list is small and each one is named.
-    assert len(rep["untranslatable"]) <= 10
-    assert all(i["what"] in ("CREATE TRIGGER", "GLOB") or i["what"].startswith("PRAGMA")
-               for i in rep["sqlite_only"])
+    # Every statement translates; the SQLite triggers are no-ops on
+    # Postgres because the copy installs their plpgsql form; two statements
+    # build their SQL at run time (a table name, an interval) and translate
+    # then.
+    assert rep["untranslatable"] == [] and rep["sqlite_only"] == []
+    assert len(rep["ported"]) == 6 and len(rep["dynamic"]) <= 3
 
 
 # ── the connection, against a recording driver ──────────────────────────────
@@ -250,14 +251,15 @@ def test_the_schema_plan_partitions_the_facts_and_defers_the_foreign_keys(source
     finally:
         src.close()
     text = "\n".join(plan["before"])
-    assert "CREATE TABLE shift_facts" in text and "PARTITION BY RANGE (business_date)" in text
+    assert "CREATE TABLE IF NOT EXISTS shift_facts" in text and "PARTITION BY RANGE (business_date)" in text
+    assert "CREATE INDEX IF NOT EXISTS idx_attendance_date" in text
     assert "PRIMARY KEY (id, business_date)" in text and "nextval('shift_facts_id_seq')" in text
     assert "shift_facts_p202609 PARTITION OF shift_facts FOR VALUES FROM ('2026-09-01') TO ('2026-10-01')" in text
     assert "shift_facts_p202701" in text and "shift_facts_default PARTITION OF shift_facts DEFAULT" in text
     assert "CREATE OR REPLACE VIEW sqlite_master" in text
     assert "EXCLUDE USING gist (revision_id WITH =, person_id WITH =, span WITH &&)" in text
     assert "CREATE TRIGGER trg_outcomes_changed_upd BEFORE UPDATE ON recommendation_outcomes" in text
-    assert " REFERENCES " not in "\n".join(s for s in plan["before"] if s.startswith("CREATE TABLE people"))
+    assert " REFERENCES " not in "\n".join(s for s in plan["before"] if s.startswith("CREATE TABLE IF NOT EXISTS people ("))
     assert "ALTER TABLE people ADD FOREIGN KEY (merged_into) REFERENCES people(id)" in plan["after"]
 
 
@@ -517,3 +519,23 @@ def test_the_nightly_snapshot_on_postgres_is_an_export(monkeypatch, tmp_path):
     dest = str(tmp_path / "snap.db")
     scheduler._write_consistent_snapshot(dest)
     assert made and os.path.exists(dest)
+
+
+def test_the_shadow_writes_through_postgres_with_typed_casts(pg):
+    import pg_shadow
+    conn, raw = pg
+    proj = {"week": {"id": 1, "restaurant_id": 2, "week_start": "2026-10-19", "week_end": "2026-10-25",
+                     "superseded_by": None},
+            "revision": {"id": 9, "week_id": 1, "restaurant_id": 2, "version": 1, "parent_version": None,
+                         "kind": "published", "author": "o", "authority": "principal",
+                         "created_at": "2026-10-10T10:00:00+00:00"},
+            "shifts": [{"shift_id": "a" * 32, "person_id": 3, "employee": "Ana", "role": "Server",
+                        "business_date": "2026-10-19", "start_ts": "2026-10-19T15:00:00+00:00",
+                        "end_ts": "2026-10-19T21:00:00+00:00", "scheduled_hours": 6.0, "notes": None,
+                        "locked": False, "published": True}],
+            "events": [{"kind": "publish", "payload": {"rows": 1}}], "published": True}
+    pg_shadow.write(conn, proj)
+    sql = "\n".join(s for s, _p in raw.log)
+    assert "CAST(%s AS timestamptz)" in sql and "CAST(%s AS jsonb)" in sql and "CAST(%s AS date)" in sql
+    assert "INSERT INTO sched.shifts" in sql and "ON CONFLICT (revision_id, shift_id) DO NOTHING" in sql
+    assert "published_revision_id = %s" in sql

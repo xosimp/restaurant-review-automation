@@ -678,6 +678,27 @@ def reset_metrics():
             _dropped[k] = 0
 
 
+MAINTENANCE_MESSAGE = ("Cavnar AI is moving to a new database for a few minutes — you can read everything, but "
+                       "changes are paused. Try again shortly.")
+
+
+def maintenance_gate():
+    """MAINTENANCE_READ_ONLY=1 (the Postgres cutover's write freeze,
+    docs/ops/POSTGRES_CUTOVER.md): every write request is refused 503 with a
+    sentence, so nothing is written to the database being copied; reads,
+    /health and sign-in pages still answer. None otherwise."""
+    import os
+    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    from flask import request, jsonify
+    if request.method in ("GET", "HEAD", "OPTIONS") or request.path == "/health":
+        return None
+    resp = jsonify(ok=False, maintenance=True, error=MAINTENANCE_MESSAGE)
+    resp.status_code = 503
+    resp.headers["Retry-After"] = "300"
+    return resp
+
+
 def register(app):
     """Attach the handlers. Order matters, and Flask runs after_request
     functions in REVERSE registration order — verified, not assumed — so
@@ -698,6 +719,7 @@ def register(app):
     runs FIRST: the tag is over the uncompressed JSON, and a 304 reaches
     compression already bodiless (compression skips any non-2xx)."""
     app.before_request(_start_timer)
+    app.before_request(maintenance_gate)
     app.after_request(_record_request)
     app.after_request(add_cache_headers)
     app.after_request(compress_response)

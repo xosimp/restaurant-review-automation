@@ -689,3 +689,42 @@ def test_the_worker_consumes_in_worker_mode_and_hands_rows_back_first():
     assert 'job_queue.mode() == "worker"' in src and "job_queue.run_worker" in src
     stop = inspect.getsource(worker._handle_stop)
     assert stop.index("job_queue.shutdown()") < stop.index("ops.shutdown_scheduler()")
+
+
+# ── the cutover's write freeze, and the queue-wait trigger ─────────────────
+
+def test_the_write_freeze_refuses_writes_stops_jobs_and_the_queue(db, quiet, monkeypatch):
+    from flask import Flask
+    import http_layer
+    import scheduler
+    jq = quiet
+    app = Flask(__name__)
+    http_layer.register(app)
+
+    @app.route("/x", methods=["GET", "POST"])
+    def x():
+        return {"ok": True}
+    monkeypatch.setenv("MAINTENANCE_READ_ONLY", "1")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    c = app.test_client()
+    r = c.post("/x")
+    assert r.status_code == 503 and r.get_json()["maintenance"] is True and r.headers["Retry-After"]
+    assert c.get("/x").status_code == 200
+    assert scheduler.scheduling_allowed() is False
+    jq.enqueue("learner", {})
+    assert jq.claim("w", groups=("bulk",)) is None
+    monkeypatch.delenv("MAINTENANCE_READ_ONLY")
+    assert c.post("/x").status_code == 200 and scheduler.scheduling_allowed() is True
+    assert jq.claim("w", groups=("bulk",)) is not None
+
+
+def test_a_long_queue_wait_warns_the_operator(db, quiet, monkeypatch):
+    import ops
+    jq = quiet
+    now = time.time()
+    for wait in (200, 260, 300, 400, 500):
+        qid, _ = jq.enqueue("schedule_generate", {})
+        _set(qid, enqueued_at=now - wait - 1, started_at=now - 1, state="done")
+    out = ops.check_platform_sla(send=False)
+    assert out["queue"]["wait_p95_seconds"] == 500.0 and out["queue"]["wait_samples"] == 5
+    assert any("wait" in p and "QUEUE_WORKER=1" in p for p in out["problems"])
