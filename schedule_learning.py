@@ -677,8 +677,10 @@ def _slot_test(where: str):
     """'Saturday night' or '2026-10-10' → a row predicate, or None."""
     where = (where or "").strip().rstrip(".")
     parts = where.split()
-    if len(parts) == 2 and parts[0] in WEEKDAYS and parts[1] in ("morning", "night"):
-        day, part = parts
+    # The owner's word pair (lunch/dinner, TRUST-31) and the older morning/night.
+    _p = {"lunch": "morning", "dinner": "night", "morning": "morning", "night": "night"}
+    if len(parts) == 2 and parts[0] in WEEKDAYS and parts[1].lower() in _p:
+        day, part = parts[0], _p[parts[1].lower()]
         return lambda r: _weekday(r.get("date"), r.get("day")) == day and _part(r.get("shift_start")) == part
     if re.match(r"^\d{4}-\d{2}-\d{2}$", where):
         return lambda r: (r.get("date") or "")[:10] == where

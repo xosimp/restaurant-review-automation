@@ -4089,6 +4089,15 @@ def _profile_facts(profile: ShiftProfile) -> dict:
                        for k in sorted(set(CRITICAL_FLOORS) | set(getattr(profile, "floors", None) or {}))}}
 
 
+def _where(shift) -> str:
+    """"Saturday dinner" — a shift in the owner's one word pair (schedule
+    audit 10/10/26 TRUST-31: the server's sentences said "Saturday night" /
+    "Monday morning" beside Crew's Lunch/Dinner), else its date."""
+    import schedule_time as _st_w
+    part = _st_w.part_word(shift.get("daypart"), capital=False) or (shift.get("daypart") or "")
+    return f"{shift.get('day') or ''} {part}".strip() or (shift.get("date") or "")
+
+
 def _headline(ctx: ShiftContext, score: int) -> str:
     part = {"morning": "lunch", "night": "dinner"}.get(ctx.daypart, ctx.daypart or "shift")
     where = f"{ctx.day} {part}".strip() if ctx.day else ctx.date
@@ -4418,7 +4427,7 @@ def _top_reasons(scored: list, field_name: str, limit: int = 4) -> list:
     worst = min(scored, key=lambda s: s["score"]) if scored else None
     if not worst:
         return []
-    where = f"{worst['day']} {worst['daypart']}".strip() or worst["date"]
+    where = _where(worst)
     return [f"{where}: {line}" for line in (worst.get(field_name) or [])[:limit]]
 
 
@@ -4612,7 +4621,7 @@ def recommendation_details(scored: list, week_dims: list = None) -> list:
                       "points": points_if_fixed(scored, shift, key, week_dims), "_order": order})
 
     for shift in scored:
-        where = f"{shift['day']} {shift['daypart']}".strip() or shift["date"]
+        where = _where(shift)
         dims = {d["key"]: d for d in shift["dimensions"]}
         if shift.get("hard_breaches"):
             add(shift, "rules", f"Fix the rule breach on {where}: {shift['hard_breaches'][0]}.", HARD_RULES_KEY, 0)

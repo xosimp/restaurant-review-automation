@@ -2101,8 +2101,10 @@ def _rec_target(text):
             continue
         where = (m.groupdict().get("where") or "").strip().rstrip(".")
         parts = where.split()
-        if len(parts) == 2 and parts[1] in ("morning", "night"):
-            return dim, parts[0], parts[1]
+        # The owner's word pair (lunch/dinner, TRUST-31) and the older morning/night.
+        _p = {"lunch": "morning", "dinner": "night", "morning": "morning", "night": "night"}
+        if len(parts) == 2 and parts[1].lower() in _p:
+            return dim, parts[0], _p[parts[1].lower()]
         if re.match(r"^\d{4}-\d{2}-\d{2}$", where):
             return dim, where, None
         return dim, None, None
