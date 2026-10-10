@@ -7204,6 +7204,11 @@ def _quality_signals(restaurant_id, result, **extra):
         # people on at once the scorer rebuilds a curve from without them.
         "half_hours_by_date": _half_hours_signal(result.get("requirements")),
         "concurrent": result.get("concurrent") or {},
+        # {(role family, daypart): {"per_hour", "lo", "hi"}} — one more
+        # person's measured net value an hour (staffing_elasticity, MARKET-23):
+        # the trim reads it, and it is the price a solver objective puts on
+        # an hour there (contract for the CP-SAT solver).
+        "staffing_value": _staffing_value(restaurant_id),
     }
     c = result.get("constraints")
     if c is not None:
