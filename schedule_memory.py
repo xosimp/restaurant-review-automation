@@ -1533,12 +1533,14 @@ def _learn_pairs(ctx) -> list:
     """Teams that do well together (L-21: chemistry needed watched nights,
     read "no issue" as the only success, and nothing applied until the owner
     acted). Every recorded shift (schedule_outcomes, the punches for who
-    actually worked it) is read as ran-well or not against the restaurant's
-    own record: its sales per labor hour at or above the median for that
-    weekday and daypart, its Shift Quality as it ran at or above that
-    night's median, no coverage or no-show issue on a night the check was
-    watching, no review under GOOD_REVIEW placed on it — every reading
-    the shift has, none of the readings it lacks. A pair (or a trio) whose
+    actually worked it) is read as ran-well or not on outcomes a short-
+    staffed shift does not win (schedule audit 10/10/26 LEARNING-12;
+    schedule_intel.slot_readings / ran_well): sales against the forecast,
+    comps and table turns against that weekday and daypart's median, no
+    coverage or no-show issue on a watched night, the meal's reviews — and
+    every shift on the SAME set of readings (the ones most shifts have; a
+    shift missing any is not read). Sales per labor hour (a lean shift wins
+    it) and the engine's own as-run score are no longer readings. A pair (or a trio) whose
     shared shifts ran well clearly more often than the restaurant's do —
     PAIR_MIN_SHARED of them at least, PAIR_MIN_LIFT above it — is a
     candidate; active only with confidence. A pair that ran clearly worse
@@ -1571,54 +1573,21 @@ def _learn_pairs(ctx) -> list:
     import schedule_intel
     dates = sorted(d for d, _p in slots)
     kw = {"db_path": ctx.db} if ctx.db else {}
-    watched = schedule_intel.watched_dates(ctx.rid, dates[0], dates[-1], **kw)
     who = {}
     for p in ctx.punches():
         d = str(p.get("date") or "")[:10]
         part = _daypart(p.get("shift_start"))
         if (d, part) in slots:
             who.setdefault((d, part), {})[_nk(p.get("employee"))] = p.get("employee")
-    splh = {}
-    for (d, part), o in slots.items():
-        try:
-            if o["sales"] and o["actual_hours"]:
-                splh[(d, part)] = float(o["sales"]) / float(o["actual_hours"])
-        except (TypeError, ValueError, ZeroDivisionError):
-            continue
-    medians = {}
-    for (d, part), v in splh.items():
-        medians.setdefault((_weekday(d), part), []).append(v)
-    medians = {k: _median(v) for k, v in medians.items() if len(v) >= 3}
-
-    # The shift's Shift Quality as it ran (schedule_intel.record_as_run_quality),
-    # against the same weekday and daypart's median as-run score.
-    as_run = {}
-    for o in observations(ctx.rid, kinds=("sq_as_run",), since=ctx.since, db_path=ctx.db):
-        if o.get("date") and (o.get("value") or {}).get("score") is not None:
-            as_run[(str(o["date"])[:10], o.get("daypart"))] = float(o["value"]["score"])
-    sq_med = {}
-    for (d, part), v in as_run.items():
-        sq_med.setdefault((_weekday(d), part), []).append(v)
-    sq_med = {k: _median(v) for k, v in sq_med.items() if len(v) >= 3}
-
-    def ran_well(d, part, o):
-        readings = []
-        med = medians.get((_weekday(d), part))
-        if (d, part) in splh and med:
-            readings.append(splh[(d, part)] >= med)
-        if (d, part) in as_run and sq_med.get((_weekday(d), part)) is not None:
-            readings.append(as_run[(d, part)] >= sq_med[(_weekday(d), part)])
-        if (o["issues"] or 0) or d in watched:
-            readings.append(not (o["issues"] or 0))
-        if o["rating"] is not None and (o["reviews"] or 0):
-            readings.append(float(o["rating"]) >= GOOD_REVIEW)
-        return all(readings) if readings else None
-
-    read = {}
-    for (d, part), o in slots.items():
-        verdict = ran_well(d, part, o)
-        if verdict is not None and who.get((d, part)):
-            read[(d, part)] = verdict
+    # Ran well, on outcomes a short-staffed shift does not win and on ONE
+    # reading set for every shift (schedule audit 10/10/26 LEARNING-12:
+    # sales per labor hour rewarded the lean shift, the as-run score was the
+    # engine grading itself, and a shift with fewer readings faced fewer
+    # conditions) — schedule_intel.slot_readings / ran_well.
+    readings = schedule_intel.slot_readings(ctx.rid, dates[0], dates[-1], **kw)
+    verdicts = schedule_intel.ran_well({k: v for k, v in readings.items() if k in slots and who.get(k)})
+    chosen = schedule_intel.reading_set({k: v for k, v in readings.items() if k in slots and who.get(k)})
+    read = dict(verdicts)
     if not read:
         return []
     base = sum(1 for v in read.values() if v) / float(len(read))
@@ -1664,11 +1633,11 @@ def _learn_pairs(ctx) -> list:
             conf_e = dict(e, hits_w=e["opps_w"] - e["hits_w"], hits=e["opps"] - e["hits"])
         shown = [names.get(k) or k.title() for k in g]
         together = ", ".join(shown[:-1]) + " and " + shown[-1]
+        words = ", ".join(schedule_intel.READING_WORDS.get(k, k) for k in chosen)
         if kind_ == "prefer":
-            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
-                    f"labor hour and the Shift Quality as it ran at or above the usual for that night, no coverage "
-                    f"issue, no poor review) against {_pct(held_to)} of this restaurant's shifts — a team worth "
-                    f"keeping together.")
+            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well ({words}, "
+                    f"each against the usual for that night) against {_pct(held_to)} of this restaurant's shifts "
+                    f"without them together — a team worth keeping together.")
         else:
             # Worded by what its evidence counts — the shared shifts that did
             # NOT run well — so "6 of 6" beside it reads true.
@@ -1679,7 +1648,7 @@ def _learn_pairs(ctx) -> list:
                     conf_e, person=names.get(g[0]) or g[0],
                     value={"with": [names.get(k) or k for k in g[1:]], "kind": kind_, "rate": rate,
                            "baseline": round(base, 3), "held_to": round(held_to, 3), "p_value": round(pvalue, 5),
-                           "shared": e["opps"], "ran_well": e["hits"], "size": len(g)},
+                           "shared": e["opps"], "ran_well": e["hits"], "size": len(g), "readings": list(chosen)},
                     text=text, source="outcomes_and_punches", origin="measured", habit=False,
                     # A trio is told to the model, never enforced (LEARN-7);
                     # keeping two apart is the owner's call alone.

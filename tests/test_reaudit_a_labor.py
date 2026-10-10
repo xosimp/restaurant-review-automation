@@ -167,8 +167,12 @@ def test_pairs_are_not_suggested_from_nights_nobody_watched(db, monkeypatch):
     c.commit(); c.close()
     assert si.chemistry_suggestions(rid, db_path=db) == [], "no clock-in feed: nothing was watching"
     monkeypatch.setattr(si, "watched_dates", lambda rid_, start, end, db_path=None: {d for _h, d in outs})
-    got = si.chemistry_suggestions(rid, db_path=db)
-    assert got and {got[0]["a"], got[0]["b"]} == {"Ana", "Ben"}
+    # Schedule audit 10/10/26 LEARNING-13: watched clean nights alone no
+    # longer make a suggestion. The pair worked every night of a restaurant
+    # whose every night was clean — no lift over its own baseline — and the
+    # suggestions come from schedule_memory's Holm-tested pairs only (this
+    # test used to expect Ana and Ben suggested: the flaw itself).
+    assert si.chemistry_suggestions(rid, db_path=db) == []
 
 
 def test_an_unwatched_clean_night_is_not_an_improved_outcome(db):
