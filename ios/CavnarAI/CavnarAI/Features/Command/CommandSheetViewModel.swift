@@ -159,7 +159,9 @@ final class CommandSheetViewModel {
         guard let req = item.request else { return }
         let path = req.kind == "time_off"
             ? "/mobile/api/labor/time-off/\(req.id)/decide"
-            : "/mobile/api/labor/shift-requests/\(req.id)/decide"
+            : req.kind == "availability_change"
+                ? "/mobile/api/labor/availability-changes/\(req.id)/decide"
+                : "/mobile/api/labor/shift-requests/\(req.id)/decide"
         rowBusy.insert(item.key)
         defer { rowBusy.remove(item.key) }
         do {

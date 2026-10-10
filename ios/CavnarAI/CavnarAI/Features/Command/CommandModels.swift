@@ -206,13 +206,19 @@ struct CommandWaitingItem: Decodable, Identifiable, Hashable {
     var id: String { key }
 
     /// time_off:12 / shift_request:8 — answered in place, like the Labor
-    /// block and the notification buttons.
+    /// block and the notification buttons. A pickup held for overtime
+    /// (held_claim:8, schedule audit 10/10/26 BUGSLIFE-14) is the shift
+    /// request's own decide; an availability cut (availability_change:5,
+    /// MARKET-15) has its own.
     var request: (kind: String, id: Int)? {
         let parts = key.split(separator: ":", maxSplits: 1)
         guard parts.count == 2, let id = Int(parts[1]) else { return nil }
         let kind = String(parts[0])
-        guard kind == "time_off" || kind == "shift_request" else { return nil }
-        return (kind, id)
+        switch kind {
+        case "time_off", "shift_request", "availability_change": return (kind, id)
+        case "held_claim": return ("shift_request", id)
+        default: return nil
+        }
     }
 
     /// Where a tap goes: the server's `nav`, else the item's module. An Ask

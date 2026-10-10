@@ -365,7 +365,7 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     releases = _released(restaurant_id, day, restaurant, db_path)
     released, expected = [], []
     for s in scheduled:
-        hit = _sreq.released_for(releases, s["employee"], s["shift_start"])
+        hit = _sreq.released_for(releases, s["employee"], s["shift_start"], s.get("shift_end"))
         if hit and hit["outcome"] in ("excused", "covered"):
             released.append(dict(s, status=OPEN_DROPPED if hit["outcome"] == "excused" else "covered",
                                  request_id=hit.get("request_id"), covered_by=hit.get("replacement")))

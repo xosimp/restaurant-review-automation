@@ -407,8 +407,13 @@ def test_availability_save_from_the_browser_names_its_conflicts_and_refuses_a_st
             w.update(status="window", earliest="10:00", latest="16:00")
     r = _post(c, "/staff/api/availability", {"updated_at": av["updated_at"], "week": week, "notes": "bus"})
     out = r.get_json()
-    assert r.status_code == 200 and "Tuesday" in out["unavailable_days"] and out["notes"] == "bus"
-    assert [x["date"] for x in out["conflicts"]] == [W1[1]] and out["conflicts_text"]
+    # Less availability waits for a manager and starts after the week staff
+    # already have (schedule audit 10/10/26 MARKET-15): nothing on it moves,
+    # so nothing on it is a conflict; the note is saved at once.
+    assert r.status_code == 200 and "Tuesday" not in out["unavailable_days"] and out["notes"] == "bus"
+    assert out["pending_change"]["effective_from"] == "2026-10-12" and out["message"]
+    assert set(out["pending_change"]["days"]) == {"Monday", "Tuesday"}
+    assert out["conflicts"] == []
     stale = _post(c, "/staff/api/availability", {"updated_at": av["updated_at"], "week": week, "notes": "x"})
     assert stale.status_code == 409 and stale.get_json()["availability"]["notes"] == "bus"
 

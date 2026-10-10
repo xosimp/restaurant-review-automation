@@ -368,6 +368,15 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
                     (restaurant_id, today.isoformat())).fetchall()
             except Exception:
                 offs = []
+            # A pickup held because it creates overtime while a teammate has
+            # room (schedule audit 10/10/26 BUGSLIFE-14).
+            try:
+                held = conn.execute(
+                    "SELECT id, employee_name, date, shift_start, held_claimant, held_claim_note FROM "
+                    "shift_change_requests WHERE restaurant_id=? AND status='open' AND COALESCE(held_claimant,'')<>'' "
+                    "AND date >= ? ORDER BY date, shift_start LIMIT 10", (restaurant_id, today.isoformat())).fetchall()
+            except Exception:
+                held = []
             try:
                 unsent = conn.execute(
                     "SELECT h.id, h.week_start FROM schedule_history h WHERE h.restaurant_id=? "
@@ -387,8 +396,12 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
         # card first (an answer reaches the employee - DESIGN_SYSTEM.md
         # §10, re-audit F1-3). A login without SCHEDULE_DRAFT, which the
         # decide routes check, gets "Open it" only (F2-16).
-        from permissions import SCHEDULE_DRAFT, SCHEDULE_PUBLISH
-        may_decide, may_publish = _may(viewer, SCHEDULE_DRAFT), _may(viewer, SCHEDULE_PUBLISH)
+        # Answering a request rewrites the week staff have and messages
+        # them: SCHEDULE_PUBLISH, as the decide routes now check (schedule
+        # audit 10/10/26 BUGSLIFE-15).
+        from permissions import SCHEDULE_PUBLISH
+        may_publish = _may(viewer, SCHEDULE_PUBLISH)
+        may_decide = may_publish
 
         def _decide(kind_path, tool, rid_, decision, label):
             return {"label": label, "method": "POST",
@@ -413,6 +426,51 @@ def items(restaurant_id, viewer=None, db_path=DB_PATH, today=None, restaurant=No
             add(f"time_off:{r['id']}", "time_off",
                 f"{r['employee_name']} asked for time off from {mdy(r['start_date'])}",
                 "important", act, detail=f"Through {mdy(r['end_date'])}", module="labor")
+        for r in held:
+            act = _request_act("shift-requests", "decide_shift_request", r["id"], f"request/shift_request-{r['id']}")
+            add(f"held_claim:{r['id']}", "shift_request",
+                f"{r['held_claimant']} wants {mdy(r['date'])} {r['shift_start'] or ''}".rstrip()
+                + " — into overtime", "important", act,
+                detail=(r["held_claim_note"] or "A teammate has room") + ". Approve gives it to them.", module="labor")
+        # Approved time off that still has its person on a published shift
+        # (BUGSLIFE-5): an item until the shift is covered, posted or moved —
+        # derived from the week each time, so a lock-screen approve can
+        # never throw it away. "Post it open" puts it on the board.
+        try:
+            import time_off as _to_fu
+            follow = _to_fu.follow_ups(restaurant_id, today=today, db_path=None if db_path == DB_PATH else db_path,
+                                       limit=8)
+        except Exception:
+            follow = []
+        for f in follow:
+            post = ({"label": "Post it open", "method": "POST", "module": "labor",
+                     "route": {"web": "/api/labor/open-shifts", "mobile": "/mobile/api/labor/open-shifts"},
+                     "body": {"date": f["date"], "shift_start": f["shift_start"], "employee": f["employee_name"]},
+                     "nav": "labor/requests"}
+                    if may_decide else {"label": "Open it", "module": "labor", "nav": "labor/requests"})
+            add(f"time_off_shift:{f['request_id']}:{f['date']}:{f['shift_start']}", "time_off",
+                f"{f['employee_name']} is off {mdy(f['date'])} but still on {f['shift_start']}",
+                "important", post, detail="Approved time off — cover the shift or post it open", module="labor")
+        # A cut in somebody's availability waiting on a manager, with the
+        # date it takes effect (MARKET-15).
+        try:
+            import availability_changes as _avc
+            pend = _avc.pending(restaurant_id, db_path=None if db_path == DB_PATH else db_path)[:8]
+        except Exception:
+            pend = []
+        for c in pend:
+            act = ({"label": "Approve", "method": "POST", "module": "labor",
+                    "route": {"web": f"/api/labor/availability-changes/{c['id']}/decide",
+                              "mobile": f"/mobile/api/labor/availability-changes/{c['id']}/decide"},
+                    "body": {"decision": "approve"}, "nav": "labor/requests",
+                    "alt": {"label": "Deny", "method": "POST",
+                            "route": {"web": f"/api/labor/availability-changes/{c['id']}/decide",
+                                      "mobile": f"/mobile/api/labor/availability-changes/{c['id']}/decide"},
+                            "body": {"decision": "deny"}}}
+                   if may_decide else {"label": "Open it", "module": "labor", "nav": "labor/requests"})
+            add(f"availability_change:{c['id']}", "availability",
+                f"{c['employee_name']} can work less from {mdy(c['effective_from'])}", "important", act,
+                detail=c.get("summary") or "An availability change waiting on you", module="labor")
         if unsent:
             # "Send now" sends THIS week (Friction audit #4): the publish
             # route with its id — the gate still answers needs_ack for a
