@@ -9117,10 +9117,25 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except (TypeError, ValueError):
                 _hs = _hb = 0.0
             _budget_lines = []
-            if _hb > 0 and _hs > _hb * 1.02:
+            # The budget is held in dollars when the week is priced (sched
+            # audit 10/10/26 LOGIC-13): each person at their own rate, overtime
+            # at its premium, an hourly manager's assumed stay — the hours the
+            # display view beside it. 20h of overtime no longer reads "on
+            # budget" because the hours fit.
+            _lbd = float(result.get("labor_budget_dollars") or 0)
+            _cost = float(((result.get("projected_cost") or {}).get("total")) or 0)
+            _over_d = _lbd > 0 and _cost > _lbd * 1.02
+            if _over_d:
+                result["review"]["over_budget_dollars"] = round(_cost - _lbd, 0)
+                result["review"]["over_budget_hours"] = round(max(0.0, _hs - _hb), 1)
+                _budget_lines.append(
+                    f"⚠ ${_cost:,.0f} of hourly pay against a ${_lbd:,.0f} hourly budget — ${_cost - _lbd:,.0f} over "
+                    f"({_hs:,.0f}h scheduled against {_hb:,.0f}h)")
+            elif (_lbd <= 0 or not _cost) and _hb > 0 and _hs > _hb * 1.02:
                 result["review"]["over_budget_hours"] = round(_hs - _hb, 1)
                 _budget_lines.append(
                     f"⚠ {_hs:,.0f}h scheduled against a {_hb:,.0f}h budget — {_hs - _hb:,.0f}h over the ceiling")
+            if _budget_lines:
                 # Why the trim left it there — the shifts' requirement, days
                 # kept from cuts, the rules — said once, beside it (SQ-7).
                 _bc = result.get("budget_conflict")

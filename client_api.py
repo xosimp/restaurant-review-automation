@@ -12019,7 +12019,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     try:
         _ensure_history_columns(conn)
         cols = ("SELECT id, week_start, week_end, schedule_csv, review_json, quality_json, hours_scheduled, "
-                "hours_hourly, hours_salaried, hours_budget, published_at FROM schedule_history ")
+                "hours_hourly, hours_salaried, hours_budget, economics_json, published_at FROM schedule_history ")
         if schedule_id:
             row = conn.execute(cols + "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
         else:
@@ -12096,9 +12096,18 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             add(f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}",
                 f"{v['employee']} — {where}: {v['detail']}")
+        ceiling_seen = set()
         for v in viols:
             if v["hard"]:
                 continue
+            if v["kind"] == "over_hours_ceiling":
+                # One overtime line per person and payroll week, never one per
+                # shift of it (it names every row of the week, like the hard
+                # maximum above — sched audit 10/10/26 LOGIC-1).
+                ck = ((v.get("employee") or "").strip().lower(), v.get("bucket"))
+                if ck in ceiling_seen:
+                    continue
+                ceiling_seen.add(ck)
             if v["kind"] in _sr.ROSTER_BLOCKERS:
                 # Nobody counted as a floor manager: the highest rule is
                 # unmet on every shift, so the week waits for the owner to
@@ -12156,7 +12165,32 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         hb = float(row["hours_budget"] or 0)
     except (TypeError, ValueError, KeyError, IndexError):
         hb = 0.0
-    if hours and hb > 0 and hours["hourly"] > hb * 1.02:
+    # Held in dollars when the week can be priced (sched audit 10/10/26
+    # LOGIC-13): each person at their own rate, overtime at its premium and
+    # an hourly closing manager's assumed stay, against the hourly budget's
+    # dollars — the one measure the generation's trim and judge use; hours
+    # stay the view beside it.
+    dollars = None
+    try:
+        econ = json.loads(row["economics_json"] or "null") or {}
+        lbd = float(econ.get("labor_budget_dollars") or 0)
+        if lbd > 0 and c is not None and rows:
+            import schedule_economics as _econ
+            pricing = _econ.week_pricing(restaurant_id, c, blended_rate=econ.get("blended_rate"))
+            cost = float(_econ.price_week(_sr.with_assumed_stays(rows, c), pricing)["total"] or 0)
+            dollars = (cost, lbd)
+    except Exception as _dx:
+        print(f"[publish] dollar budget check unavailable: {_dx!r}")
+        dollars = None
+    if dollars is not None:
+        cost, lbd = dollars
+        if cost > lbd * 1.02:
+            hs = (hours or {}).get("hourly") or 0.0
+            add("hours_over", f"${cost:,.0f} of hourly pay against a ${lbd:,.0f} hourly budget — ${cost - lbd:,.0f} "
+                              f"over ({hs:,.0f}h of hourly shifts against {hb:,.0f}h"
+                              + (f"; the {hours['salaried']:,.0f}h salaried aren't counted against it)"
+                                 if hours and hours.get("salaried") else ")"))
+    elif hours and hb > 0 and hours["hourly"] > hb * 1.02:
         hs = hours["hourly"]
         add("hours_over", f"{hs:,.0f}h of hourly shifts against a {hb:,.0f}h hourly budget — {hs - hb:,.0f}h over "
                           "the ceiling" + (f" (the {hours['salaried']:,.0f}h salaried aren't counted against it)"

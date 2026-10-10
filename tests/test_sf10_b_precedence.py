@@ -446,3 +446,70 @@ def test_the_begun_payroll_weeks_days_to_come_count_their_usual_hours(monkeypatc
     assert any(v["kind"] == "over_hours_ceiling" for v in sr.violations(rows, c))
     items = __import__("schedule_setup").setup_review(c)["items"]
     assert any(i["kind"] == "projected_tail" and "10/2/26–10/4/26" in i["text"] for i in items)
+
+
+def test_the_publish_gate_holds_the_budget_in_dollars(db_path, monkeypatch):
+    # 16h against a 40h hours budget reads fine in hours; at $45 an hour it
+    # is $720 of pay against a $600 hourly budget (LOGIC-13).
+    import json
+    import client_api
+    import models
+    import staff_settings as ss
+    real = models.get_conn
+    for mod in (models, client_api, sr, se, ss):
+        monkeypatch.setattr(mod, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    monkeypatch.setattr(models, "_cached_shifts", lambda r: [])
+    rid = models.create_restaurant(models.Restaurant(name="Dollar Co", owner_email="d@x.test"), db_path=db_path)
+    for n in ("Ana", "Bob"):
+        models.add_manual_team_member(rid, n, role="Server", db_path=db_path)
+        ss.upsert(rid, n, floor_manager=True, db_path=db_path)
+    models.update_restaurant(rid, {"role_rates_json": json.dumps({"Server": 45})}, db_path=db_path)
+    start = date.today() + timedelta(days=(7 - date.today().weekday()) % 7 + 7)
+    d0 = start.isoformat()
+    csv = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+           f"{d0},Monday,Ana,Server,9:00am,5:00pm,8,\n{d0},Monday,Bob,Server,9:00am,5:00pm,8,\n")
+    conn = real(db_path)
+    models._ensure_history_columns(conn)
+    conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, "
+                 "labor_target, schedule_csv, summary_json, economics_json) VALUES (?,?,?,?,?,?,?,'[]',?)",
+                 (rid, d0, (start + timedelta(days=6)).isoformat(), 16, 40, 30, csv,
+                  json.dumps({"labor_budget_dollars": 600, "blended_rate": 45})))
+    conn.commit()
+    conn.close()
+    gate = client_api.publish_blockers(rid)
+    over = [b for b in gate if "hourly pay against a $600 hourly budget" in str(b)]
+    assert over, gate
+
+
+def test_weekly_overtime_is_said_once_and_holds_only_an_unattended_publish(db_path, monkeypatch):
+    import client_api
+    import models
+    import staff_settings as ss
+    real = models.get_conn
+    for mod in (models, client_api, sr, se, ss):
+        monkeypatch.setattr(mod, "get_conn", lambda *a, **k: real(db_path), raising=False)
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    monkeypatch.setattr(models, "_cached_shifts", lambda r: [])
+    rid = models.create_restaurant(models.Restaurant(name="OT Co", owner_email="ot@x.test"), db_path=db_path)
+    for n in ("Ana", "Bob"):
+        models.add_manual_team_member(rid, n, role="Server", db_path=db_path)
+        ss.upsert(rid, n, floor_manager=True, db_path=db_path)
+    start = date.today() + timedelta(days=(7 - date.today().weekday()) % 7 + 7)
+    lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"]
+    for i in range(6):
+        d = start + timedelta(days=i)
+        lines.append(f"{d.isoformat()},{d.strftime('%A')},Ana,Server,9:00am,5:00pm,8,")
+    conn = real(db_path)
+    models._ensure_history_columns(conn)
+    conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, "
+                 "labor_target, schedule_csv, summary_json) VALUES (?,?,?,?,?,?,?,'[]')",
+                 (rid, start.isoformat(), (start + timedelta(days=6)).isoformat(), 48, 0, 30, "\n".join(lines) + "\n"))
+    conn.commit()
+    conn.close()
+    review = client_api.publish_review(rid)
+    assert not any("weekly ceiling" in b["text"] for b in review["blockers"])          # a person may send it
+    soft = [s for s in review["soft"] if "weekly ceiling" in str(s)]
+    assert len(soft) == 1, review["soft"]                                             # once, not six times
+    auto = client_api.publish_review(rid, unattended=True)
+    assert sum(1 for b in auto["blockers"] if "weekly ceiling" in b["text"]) >= 1       # never sent unread

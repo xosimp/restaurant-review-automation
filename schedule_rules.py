@@ -90,10 +90,12 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
 # under a soft note).
 ROSTER_BLOCKERS = frozenset({"no_manager_roster"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
-# delayed run of one): a meal break owed, daily overtime and a time-off
-# request nobody answered are things a person decides, not a week to send
-# unread (NS5 M7). A person publishing may still send them.
-HOLD_UNATTENDED = frozenset({"meal_break", "daily_ot", "pending_time_off"})
+# delayed run of one): a meal break owed, daily or weekly overtime (past the
+# restaurant's ceiling — a cost the passes take only when nobody else can,
+# sched audit 10/10/26 LOGIC-1) and a time-off request nobody answered are
+# things a person decides, not a week to send unread (NS5 M7). A person
+# publishing may still send them.
+HOLD_UNATTENDED = frozenset({"meal_break", "daily_ot", "pending_time_off", "over_hours_ceiling"})
 
 LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
@@ -6111,8 +6113,17 @@ def summarize(viols: list) -> dict:
     by_kind = {}
     for v in viols:
         by_kind[v["kind"]] = by_kind.get(v["kind"], 0) + 1
-    lines = []
-    for v in sorted(viols, key=lambda x: (not x["hard"], x["date"] or "", x["employee"] or ""))[:12]:
+    lines, said = [], set()
+    for v in sorted(viols, key=lambda x: (not x["hard"], x["date"] or "", x["employee"] or "")):
+        if len(lines) >= 12:
+            break
+        # A breach named on every row of a payroll week (the ceiling, a
+        # maximum) is one line, not one per shift.
+        if v.get("kind") in _WORST_OF:
+            bid = breach_id(v)
+            if bid in said:
+                continue
+            said.add(bid)
         lines.append(f"{'⚠ ' if v['hard'] else ''}{breach_text(v)}")
     return {"hard": len(hard), "soft": len(soft), "by_kind": by_kind, "lines": lines,
             "hard_rows": sorted({v["index"] for v in hard if not v.get("day_level")}),
