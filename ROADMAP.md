@@ -333,6 +333,26 @@ restaurant 5; restaurant 4 is Will's demo copy.
   on 10/2/26; the settings ignore a stored value.
 - **More than one gunicorn worker**, until the process-local state in
   `docs/plans/POSTGRES_AND_WORKERS_PLAN.md` moves into the database.
+- **Payroll, earned wage access (EWA) and hiring/onboarding** (scheduler
+  audit 10/10/26 MARKET-19, decided in the fix round 10/10/26). 7shifts,
+  Homebase, Legion and UKG bundle them, and they appear in RFPs, but none of
+  them changes the quality of a schedule or whether a manager trusts it, and
+  each is a regulated product (tax filing, money transmission, background
+  checks) that would take years away from the scheduler's own lead (the
+  simulator, retention-aware and stability-priced scheduling). We partner
+  instead:
+  - **Payroll** — Gusto, ADP and Toast Payroll take a file, not an
+    integration we run: hours by person, role and premium, with the
+    predictability-pay and rest-premium ledger (`compliance_pay_ledger`,
+    its CSV in M/D/YY) beside them. Cavnar AI never runs payroll, files tax
+    or moves money.
+  - **EWA** — through the payroll partner, fed by that same export. No
+    wage advance, balance or fee is ever held or computed here.
+  - **Hiring** — the hiring forecast (`bench_strength.py`: when a role
+    will be short and who to cross-train first) tells the owner *when* to
+    hire; posting, screening and onboarding stay with the owner's own tools.
+  - **Tip payout** — the scheduler rotates the tip *opportunity*
+    (`tip_opportunity.py`, MARKET-17); it never pools or pays out tips.
 
 ## Reference
 
