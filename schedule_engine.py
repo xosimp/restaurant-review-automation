@@ -9438,6 +9438,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             likely_edits=result.get("likely_edits") or [],
             demand_accuracy=result.get("demand_accuracy"),
             week_projection_accuracy=result.get("week_projection_accuracy"),
+            # What the draft read beside the rows (memory round 9/29/26): the
+            # staffing asks and whether the rows honoured each, the pairs two
+            # editors pull opposite ways, and which labor target the budget
+            # was built against. Both clients read these top level (the web's
+            # notes, the phone's ScheduleWeekNotes); they were computed here
+            # and never sent (schedule audit 10/10/26 TRUST-1 contract audit).
+            soft_requirements=_json_safe(result.get("soft_requirements") or []),
+            pattern_conflicts=_json_safe(result.get("pattern_conflicts") or []),
+            labor_target_label=result.get("labor_target_label"),
+            labor_target_source=result.get("labor_target_source"),
             # What schedule learning set the draft against: the rotation
             # plan, the sales-per-labor-hour objective and how the draft
             # landed on it, and a borrowed starting headcount (new accounts).

@@ -1,0 +1,6037 @@
+{
+ "backstop_added_dates": {},
+ "backstop_extended_dates": {},
+ "backstop_pizza_added_dates": {},
+ "backstop_trimmed_dates": {},
+ "budget_basis": {
+  "assumed_share": 0.0,
+  "caveat": null,
+  "closed_dates": [],
+  "closed_share": 0.0,
+  "kind": "all_in",
+  "rate": 18.0,
+  "rate_basis": null,
+  "target_pct": 30.0,
+  "text": "Nobody is salaried, so the hourly budget is the whole 30% labor target.",
+  "trim_ok": true
+ },
+ "calls": 1,
+ "capability_version": "<volatile>",
+ "chunked": false,
+ "could_hold": {},
+ "daily_target_basis": null,
+ "daily_target_hours": {},
+ "daily_target_reasons": {},
+ "date_demand": {
+  "2026-10-26": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  },
+  "2026-10-27": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  },
+  "2026-10-28": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  },
+  "2026-10-29": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  },
+  "2026-10-30": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  },
+  "2026-10-31": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  },
+  "2026-11-01": {
+   "closed": false,
+   "labels": [],
+   "pct": 0,
+   "projected_sales": null,
+   "ratio": 1.0,
+   "reasons": [],
+   "sources": [],
+   "typical_sales": null
+  }
+ },
+ "demand_accuracy": {
+  "actual_vs_forecast_pct": null,
+  "available": false,
+  "bias_pct": null,
+  "claim_kind": "measured",
+  "excluded_other_basis": 0,
+  "inside_range_pct": null,
+  "mean_error_pct": null,
+  "n_nights": 0,
+  "n_ranged": 0,
+  "n_skill": 0,
+  "reason": "only 0 nights scored against their forecast in the last 56 days — needs 7",
+  "skill_pct": null,
+  "skill_vs_last_pct": null,
+  "skill_vs_mean_pct": null,
+  "window_days": 56
+ },
+ "demand_data_through": {
+  "blind": true,
+  "blocked": false,
+  "date": null,
+  "days_ago": null,
+  "line": "No daily sales on file — this week has no demand forecast to plan by.",
+  "message": null,
+  "stale": false,
+  "trading_days_ago": null
+ },
+ "departments": [],
+ "dropped_row_note": null,
+ "dropped_rows": 0,
+ "gate": {
+  "ran": false
+ },
+ "generation_seconds": 0.0,
+ "history_id": 1,
+ "holiday_lift": {
+  "2026-10-31": {
+   "based_on": null,
+   "by_name": {
+    "Halloween": {
+     "based_on": null,
+     "date": "2025-10-31",
+     "lift_pct": null,
+     "name": "Halloween",
+     "source": null
+    }
+   },
+   "date": "2025-10-31",
+   "lift_pct": null,
+   "name": "Halloween",
+   "names": [
+    "Halloween"
+   ],
+   "source": null
+  }
+ },
+ "hourly_profile_ready": false,
+ "hours_added_by_backstop": 0.0,
+ "hours_budget": 250.0,
+ "hours_hourly": 297.5,
+ "hours_salaried": 0.0,
+ "hours_scheduled": 297.5,
+ "hours_trimmed": 40.0,
+ "labor_budget_dollars": 4500.0,
+ "labor_standards": {},
+ "labor_target": 30.0,
+ "labor_target_label": "Cavnar AI's starting target",
+ "labor_target_source": "default",
+ "labor_view": {
+  "basis": "all_in",
+  "cost": 5558.0,
+  "hourly_cost": 5558.0,
+  "pct": 37.1,
+  "recent_days": 28,
+  "recent_pct": 27.0,
+  "savings": null,
+  "target_basis": "all_in",
+  "target_pct": 30.0,
+  "text": "Nobody is salaried, so hourly pay as drafted is the whole labor cost."
+ },
+ "leader_rules_status": {
+  "active": true,
+  "admin_closers": 0,
+  "admin_ratings": 0,
+  "attribute_rules": 0,
+  "can_adopt": false,
+  "closers": 0,
+  "lines": [],
+  "rated": 8,
+  "rules": 0,
+  "score_rules": 0
+ },
+ "likely_edits": [],
+ "manager_coverage": {
+  "added": 0,
+  "extended": 0,
+  "left": [],
+  "shortfall": null
+ },
+ "manager_plan": {
+  "acting": [],
+  "failed": false,
+  "hours": {},
+  "managers": [
+   {
+    "name": "Kim",
+    "pattern": "none",
+    "role": "General Manager",
+    "salaried": false
+   },
+   {
+    "name": "Max",
+    "pattern": "none",
+    "role": "General Manager",
+    "salaried": false
+   }
+  ],
+  "planned": false,
+  "question": "Which days and hours do Kim and Max work?",
+  "shifts": [],
+  "skipped": [],
+  "standing": [],
+  "uncovered": [],
+  "unknown_availability": {},
+  "unknown_pattern": [
+   "Kim",
+   "Max"
+  ],
+  "unplanned": [
+   {
+    "date": "2026-10-26",
+    "day": "Monday",
+    "why": "no opening or closing time is set for Mondays and there are no shifts on file to read the day from"
+   },
+   {
+    "date": "2026-10-27",
+    "day": "Tuesday",
+    "why": "no opening or closing time is set for Tuesdays and there are no shifts on file to read the day from"
+   },
+   {
+    "date": "2026-10-28",
+    "day": "Wednesday",
+    "why": "no opening or closing time is set for Wednesdays and there are no shifts on file to read the day from"
+   },
+   {
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "why": "no opening or closing time is set for Thursdays and there are no shifts on file to read the day from"
+   },
+   {
+    "date": "2026-10-30",
+    "day": "Friday",
+    "why": "no opening or closing time is set for Fridays and there are no shifts on file to read the day from"
+   },
+   {
+    "date": "2026-10-31",
+    "day": "Saturday",
+    "why": "no opening or closing time is set for Saturdays and there are no shifts on file to read the day from"
+   },
+   {
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "why": "no opening or closing time is set for Sundays and there are no shifts on file to read the day from"
+   }
+  ],
+  "windows": {}
+ },
+ "min_hours": {
+  "added": 0,
+  "left": [],
+  "moved": 0
+ },
+ "narrative": [
+  "Kept Saturday night heavy for the Halloween parties on the books.",
+  "Ana and Bo split the weekday lunches.",
+  "Ed closes the bar Friday and Saturday."
+ ],
+ "not_scheduled": [],
+ "ok": true,
+ "optimizer": {
+  "after_score": 44,
+  "applied": true,
+  "before_score": 39,
+  "changes": [
+   {
+    "gain": 5.3,
+    "kind": "solve",
+    "reason": "Cavnar AI re-solved who works each shift (10 changes), Shift Quality 39 → 44: fatigue 12 → 38, demand match 96 → 97."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Bo on Tuesday lunch Server (11:00am–4:00pm) instead of Ana — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Ana on Tuesday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Bo on Wednesday lunch Server (11:00am–4:00pm) instead of Ana — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Cara on Thursday lunch Server (11:00am–4:00pm) instead of Ana — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Ana on Thursday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Cara on Friday lunch Server (11:00am–4:00pm) instead of Ana — spreads the weekend shifts (Ana has 3, Cara 2)."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Ana on Friday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Cara on Saturday lunch Server (11:00am–4:00pm) instead of Ana — spreads the weekend shifts (Ana has 3, Cara 2)."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Ana on Saturday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+   },
+   {
+    "gain": null,
+    "kind": "reassign",
+    "reason": "Put Bo on Sunday dinner Server (6:00pm–10:00pm) instead of Cara — spreads the closes (Cara has 3 this week, Bo 2)."
+   }
+  ],
+  "dollars_after": 5558.0,
+  "dollars_before": 5558.0,
+  "evaluations": 42,
+  "improvement": 5,
+  "ran": true,
+  "seconds": 0.3,
+  "solver": {
+   "after_score": 44,
+   "applied": true,
+   "before_score": 39,
+   "components": 1,
+   "components_proved": 0,
+   "dollars_after": 5630.0,
+   "dollars_before": 5630.0,
+   "infeasible": [
+    {
+     "date": "2026-10-26",
+     "day": "Monday",
+     "kept": "Max",
+     "role": "General Manager",
+     "shift_end": "10:30pm",
+     "shift_start": "10:00am",
+     "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-27",
+     "day": "Tuesday",
+     "kept": "Max",
+     "role": "General Manager",
+     "shift_end": "10:30pm",
+     "shift_start": "10:00am",
+     "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-28",
+     "day": "Wednesday",
+     "kept": "Max",
+     "role": "General Manager",
+     "shift_end": "10:30pm",
+     "shift_start": "10:00am",
+     "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-29",
+     "day": "Thursday",
+     "kept": "Max",
+     "role": "General Manager",
+     "shift_end": "10:30pm",
+     "shift_start": "10:00am",
+     "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-26",
+     "day": "Monday",
+     "kept": "Di",
+     "role": "Line Cook",
+     "shift_end": "10:00pm",
+     "shift_start": "4:00pm",
+     "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-27",
+     "day": "Tuesday",
+     "kept": "Di",
+     "role": "Line Cook",
+     "shift_end": "10:00pm",
+     "shift_start": "4:00pm",
+     "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-28",
+     "day": "Wednesday",
+     "kept": "Di",
+     "role": "Line Cook",
+     "shift_end": "10:00pm",
+     "shift_start": "4:00pm",
+     "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-29",
+     "day": "Thursday",
+     "kept": "Di",
+     "role": "Line Cook",
+     "shift_end": "10:00pm",
+     "shift_start": "4:00pm",
+     "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-30",
+     "day": "Friday",
+     "kept": "Di",
+     "role": "Line Cook",
+     "shift_end": "10:00pm",
+     "shift_start": "4:00pm",
+     "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+    },
+    {
+     "date": "2026-10-31",
+     "day": "Saturday",
+     "kept": "Di",
+     "role": "Line Cook",
+     "shift_end": "10:00pm",
+     "shift_start": "4:00pm",
+     "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+    }
+   ],
+   "kept": "solver",
+   "nodes": 45504,
+   "notes": [
+    "7 shifts kept with people who have a written note the solver cannot read."
+   ],
+   "people": 8,
+   "proved_optimal": false,
+   "seconds": 0.76,
+   "slots": 15,
+   "status": "time_limit"
+  },
+  "stopped": "no improving move",
+  "unresolved": [
+   {
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "daypart": "morning",
+    "dimension": "hard_rules",
+    "fixable_by_draft": false,
+    "text": "42h in the payroll week — over 40h"
+   },
+   {
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "daypart": "night",
+    "dimension": "hard_rules",
+    "fixable_by_draft": false,
+    "text": "50h in the payroll week — over 40h"
+   },
+   {
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "daypart": "night",
+    "dimension": "hard_rules",
+    "fixable_by_draft": false,
+    "text": "42h in the payroll week — over 40h"
+   },
+   {
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "daypart": "morning",
+    "dimension": "hard_rules",
+    "fixable_by_draft": false,
+    "text": "50h in the payroll week — over 40h"
+   }
+  ],
+  "verdict": "Cavnar AI made 10 changes to the draft, raising Shift Quality from 39 to 44. Each is listed with why."
+ },
+ "over_budget_dollars": 1058.0,
+ "overtime_forecast": [
+  {
+   "bucket": "2026-10-26",
+   "candidate": null,
+   "ceiling": 40.0,
+   "draft_hours": 50.0,
+   "employee": "Max",
+   "hours": 50.0,
+   "over": 10.0,
+   "overtime_hours": 10.0,
+   "overtime_line": 40.0,
+   "published_hours": 0.0,
+   "text": "Max is scheduled for 50h in the payroll week of 10/26/26 — 10h past the 40h overtime line."
+  },
+  {
+   "bucket": "2026-10-26",
+   "candidate": null,
+   "ceiling": 40.0,
+   "draft_hours": 46.0,
+   "employee": "Ed",
+   "hours": 46.0,
+   "over": 6.0,
+   "overtime_hours": 6.0,
+   "overtime_line": 40.0,
+   "published_hours": 0.0,
+   "text": "Ed is scheduled for 46h in the payroll week of 10/26/26 — 6h past the 40h overtime line."
+  },
+  {
+   "bucket": "2026-10-26",
+   "candidate": null,
+   "ceiling": 40.0,
+   "draft_hours": 42.5,
+   "employee": "Kim",
+   "hours": 42.5,
+   "over": 2.5,
+   "overtime_hours": 2.5,
+   "overtime_line": 40.0,
+   "published_hours": 0.0,
+   "text": "Kim is scheduled for 42.5h in the payroll week of 10/26/26 — 2.5h past the 40h overtime line."
+  },
+  {
+   "bucket": "2026-10-26",
+   "candidate": null,
+   "ceiling": 40.0,
+   "draft_hours": 42.0,
+   "employee": "Cy",
+   "hours": 42.0,
+   "over": 2.0,
+   "overtime_hours": 2.0,
+   "overtime_line": 40.0,
+   "published_hours": 0.0,
+   "text": "Cy is scheduled for 42h in the payroll week of 10/26/26 — 2h past the 40h overtime line."
+  },
+  {
+   "bucket": "2026-10-26",
+   "candidate": null,
+   "ceiling": 40.0,
+   "draft_hours": 42.0,
+   "employee": "Di",
+   "hours": 42.0,
+   "over": 2.0,
+   "overtime_hours": 2.0,
+   "overtime_line": 40.0,
+   "published_hours": 0.0,
+   "text": "Di is scheduled for 42h in the payroll week of 10/26/26 — 2h past the 40h overtime line."
+  }
+ ],
+ "partial": false,
+ "pattern_conflicts": [],
+ "pending_time_off": {
+  "bo": [
+   "2026-10-29"
+  ]
+ },
+ "preview_rows": [
+  {
+   "_rid": "r1",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Max",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 50h in the payroll week — over 40h",
+   "review_reason": "50h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "12.5",
+   "shift_end": "10:30pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r2",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Ana",
+   "notes": "",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r4",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Cara",
+   "notes": "",
+   "role": "Server",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r5",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r6",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r7",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 46h in the payroll week — over 40h",
+   "review_reason": "46h in the payroll week — over 40h",
+   "role": "Bartender",
+   "scheduled_hours": "6",
+   "shift_end": "11:00pm",
+   "shift_start": "5:00pm"
+  },
+  {
+   "_rid": "r8",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Max",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 50h in the payroll week — over 40h",
+   "review_reason": "50h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "12.5",
+   "shift_end": "10:30pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r9",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Bo",
+   "notes": "Cavnar AI: solver put Bo here (was Ana)",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r11",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Ana",
+   "notes": "Cavnar AI: solver put Ana here (was Cara)",
+   "role": "Server",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r12",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r13",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r14",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 46h in the payroll week — over 40h",
+   "review_reason": "46h in the payroll week — over 40h",
+   "role": "Bartender",
+   "scheduled_hours": "6",
+   "shift_end": "11:00pm",
+   "shift_start": "5:00pm"
+  },
+  {
+   "_rid": "r15",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Max",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 50h in the payroll week — over 40h",
+   "review_reason": "50h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "12.5",
+   "shift_end": "10:30pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r16",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Bo",
+   "notes": "Cavnar AI: solver put Bo here (was Ana)",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r18",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Cara",
+   "notes": "",
+   "role": "Server",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r19",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r20",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r21",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 46h in the payroll week — over 40h",
+   "review_reason": "46h in the payroll week — over 40h",
+   "role": "Bartender",
+   "scheduled_hours": "6",
+   "shift_end": "11:00pm",
+   "shift_start": "5:00pm"
+  },
+  {
+   "_rid": "r22",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Max",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 50h in the payroll week — over 40h",
+   "review_reason": "50h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "12.5",
+   "shift_end": "10:30pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r23",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Cara",
+   "notes": "Cavnar AI: solver put Cara here (was Ana)",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r25",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Ana",
+   "notes": "Cavnar AI: solver put Ana here (was Cara)",
+   "role": "Server",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r26",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r27",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r28",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 46h in the payroll week — over 40h",
+   "review_reason": "46h in the payroll week — over 40h",
+   "role": "Bartender",
+   "scheduled_hours": "6",
+   "shift_end": "11:00pm",
+   "shift_start": "5:00pm"
+  },
+  {
+   "_rid": "r29",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Kim",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42.5h in the payroll week — over 40h",
+   "review_reason": "42.5h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "12.5",
+   "shift_end": "10:30pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r30",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Cara",
+   "notes": "Cavnar AI: solver put Cara here (was Ana)",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r32",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Ana",
+   "notes": "Cavnar AI: solver put Ana here (was Cara)",
+   "role": "Server",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r33",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r34",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r35",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 46h in the payroll week — over 40h",
+   "review_reason": "46h in the payroll week — over 40h",
+   "role": "Bartender",
+   "scheduled_hours": "6",
+   "shift_end": "11:00pm",
+   "shift_start": "5:00pm"
+  },
+  {
+   "_rid": "r36",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "dst_hours": 1.0,
+   "employee": "Kim",
+   "needs_review": true,
+   "notes": "(includes the extra hour when the clocks go back) — NEEDS REVIEW: 42.5h in the payroll week — over 40h",
+   "review_reason": "42.5h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "17.5",
+   "shift_end": "2:30am",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r37",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "employee": "Cara",
+   "notes": "Cavnar AI: solver put Cara here (was Ana)",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r39",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "employee": "Ana",
+   "notes": "Cavnar AI: solver put Ana here (was Cara)",
+   "role": "Server",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r40",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r41",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42h in the payroll week — over 40h",
+   "review_reason": "42h in the payroll week — over 40h",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r42",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "dst_hours": 1.0,
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "(includes the extra hour when the clocks go back) — NEEDS REVIEW: 46h in the payroll week — over 40h",
+   "review_reason": "46h in the payroll week — over 40h",
+   "role": "Bartender",
+   "scheduled_hours": "10.0",
+   "shift_end": "2:00am",
+   "shift_start": "5:00pm"
+  },
+  {
+   "_rid": "r43",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Kim",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: 42.5h in the payroll week — over 40h",
+   "review_reason": "42.5h in the payroll week — over 40h",
+   "role": "General Manager",
+   "scheduled_hours": "12.5",
+   "shift_end": "10:30pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r44",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Ana",
+   "notes": "",
+   "role": "Server",
+   "scheduled_hours": "5",
+   "shift_end": "4:00pm",
+   "shift_start": "11:00am"
+  },
+  {
+   "_rid": "r46",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Bo",
+   "notes": "Cavnar AI: solver put Bo here (was Cara)",
+   "role": "Server",
+   "scheduled_hours": "4",
+   "shift_end": "10:00pm",
+   "shift_start": "6:00pm"
+  },
+  {
+   "_rid": "r47",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Cy",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: too many days in a row",
+   "review_reason": "too many days in a row",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "4:00pm",
+   "shift_start": "10:00am"
+  },
+  {
+   "_rid": "r48",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Di",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: too many days in a row",
+   "review_reason": "too many days in a row",
+   "role": "Line Cook",
+   "scheduled_hours": "6",
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm"
+  },
+  {
+   "_rid": "r49",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Ed",
+   "needs_review": true,
+   "notes": "NEEDS REVIEW: too many days in a row",
+   "review_reason": "too many days in a row",
+   "role": "Bartender",
+   "scheduled_hours": "6",
+   "shift_end": "11:00pm",
+   "shift_start": "5:00pm"
+  }
+ ],
+ "projected_cost": {
+  "multiplier": 1.5,
+  "overtime_hours": 22.5,
+  "overtime_premium": 202.0,
+  "straight": 5355.0,
+  "total": 5558.0
+ },
+ "projected_revenue": 15000.0,
+ "projected_revenue_source": "recent sales scaled to a week",
+ "quality": {
+  "band": "weak",
+  "below_profile": [
+   {
+    "capped_by": "hard_rules",
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "daypart": "morning",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 50h in the payroll week — over 40h."
+    },
+    "label": "Weekday lunch",
+    "min_quality": 65,
+    "no_shift_written": false,
+    "reason": "A hard rule is broken on this shift, holding it at 50: 50h in the payroll week — over 40h.",
+    "score": 50
+   },
+   {
+    "capped_by": "hard_rules",
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "daypart": "night",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 50h in the payroll week — over 40h."
+    },
+    "label": "Weekday dinner",
+    "min_quality": 70,
+    "no_shift_written": false,
+    "reason": "A hard rule is broken on this shift, holding it at 50: 50h in the payroll week — over 40h.",
+    "score": 50
+   },
+   {
+    "capped_by": "hard_rules",
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "daypart": "morning",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 42h in the payroll week — over 40h (and 2 more)."
+    },
+    "label": "Weekend brunch",
+    "min_quality": 75,
+    "no_shift_written": false,
+    "reason": "A hard rule is broken on this shift, holding it at 50: 42h in the payroll week — over 40h (and 2 more).",
+    "score": 50
+   },
+   {
+    "capped_by": "hard_rules",
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "daypart": "night",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 42h in the payroll week — over 40h (and 3 more)."
+    },
+    "label": "Standard shift",
+    "min_quality": 70,
+    "no_shift_written": false,
+    "reason": "A hard rule is broken on this shift, holding it at 50: 42h in the payroll week — over 40h (and 3 more).",
+    "score": 50
+   }
+  ],
+  "best": "Monday lunch scored 100/100 on Shift Quality.",
+  "borrowed_slots": null,
+  "checked": true,
+  "confidence": {
+   "breakdown": [
+    {
+     "points": 15,
+     "reason": "28 generated rows needed a human check."
+    },
+    {
+     "points": 12,
+     "reason": "No shift history yet, so experience could not be judged."
+    },
+    {
+     "points": 10,
+     "reason": "Not enough sales history to know how busy these days really are."
+    },
+    {
+     "points": 8,
+     "reason": "No availability on file, so nobody could be ruled out."
+    },
+    {
+     "points": 5,
+     "reason": "Using default shift profiles rather than this restaurant's own."
+    }
+   ],
+   "level": "low",
+   "reasons": [
+    "No shift history yet, so experience could not be judged.",
+    "Not enough sales history to know how busy these days really are.",
+    "No availability on file, so nobody could be ruled out.",
+    "Using default shift profiles rather than this restaurant's own.",
+    "28 generated rows needed a human check."
+   ],
+   "score": 50,
+   "summary": "Treat these scores as provisional.",
+   "top_reason": "28 generated rows needed a human check."
+  },
+  "confidence_detail": {
+   "band": "medium",
+   "caps": {
+    "against_below": 50,
+    "beats_at": 95,
+    "freshness_unmeasured": 49,
+    "max": 99,
+    "no_track_record": 70,
+    "record_against": 49,
+    "record_unproven": 70,
+    "stale": 49,
+    "stale_below": 50
+   },
+   "caps_applied": [
+    "no_track_record"
+   ],
+   "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+   "confidence_impact": null,
+   "dimensions": {
+    "accuracy": {
+     "basis": "Not enough history yet — 0 measured, needs 5",
+     "cohort_label": null,
+     "high": null,
+     "improved": 0,
+     "lift": null,
+     "low": null,
+     "n": 0,
+     "pct": null,
+     "prior": null,
+     "prior_rung": null,
+     "prior_unlock": "confirm_profile",
+     "source": "none"
+    },
+    "evidence": {
+     "basis": "the Shift Quality read of this schedule — its inputs are 50% complete — No shift history yet, so experience could not be judged",
+     "corroborating": 0,
+     "kind": "count",
+     "n": 1,
+     "n_full": 1,
+     "pct": 50
+    },
+    "freshness": {
+     "as_of": "<volatile>",
+     "as_of_iso": "2026-10-11",
+     "basis": "Shifts through 10/11/26",
+     "errors": [],
+     "pct": 100,
+     "stalest": "labor",
+     "stalest_basis": "Shifts through 10/11/26"
+    }
+   },
+   "label": "70% confidence",
+   "meaning": "How well supported this is — not the chance it works",
+   "pct": 70,
+   "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+   "sample": false,
+   "score": 0.7,
+   "thresholds": {
+    "high": 75,
+    "medium": 50
+   },
+   "version": 2
+  },
+  "daily_target_hours": {},
+  "dimensions": [
+   {
+    "customer_facing": true,
+    "key": "leadership",
+    "label": "Leadership",
+    "score": 100,
+    "shifts": 2,
+    "worst": {
+     "date": "2026-10-30",
+     "day": "Friday",
+     "daypart": "night",
+     "score": 100
+    }
+   },
+   {
+    "customer_facing": true,
+    "key": "demand_match",
+    "label": "Demand match",
+    "score": 97,
+    "shifts": 14,
+    "worst": {
+     "date": "2026-11-01",
+     "day": "Sunday",
+     "daypart": "night",
+     "score": 86
+    }
+   },
+   {
+    "customer_facing": true,
+    "key": "training_balance",
+    "label": "Training balance",
+    "score": 100,
+    "shifts": 3,
+    "worst": {
+     "date": "2026-10-27",
+     "day": "Tuesday",
+     "daypart": "morning",
+     "score": 100
+    }
+   },
+   {
+    "customer_facing": true,
+    "key": "fairness",
+    "label": "Fairness",
+    "score": 100,
+    "shifts": 10,
+    "worst": {
+     "date": "2026-10-26",
+     "day": "Monday",
+     "daypart": "night",
+     "score": 100
+    }
+   },
+   {
+    "customer_facing": false,
+    "key": "fatigue",
+    "label": "Fatigue",
+    "score": 38,
+    "shifts": 0,
+    "week_level": true,
+    "worst": null
+   },
+   {
+    "customer_facing": false,
+    "key": "overtime",
+    "label": "Overtime",
+    "score": 53,
+    "shifts": 0,
+    "week_level": true,
+    "worst": null
+   }
+  ],
+  "held_by": {
+   "breaches": 9,
+   "ceiling": 64,
+   "key": "hard_rules",
+   "label": "Hard rules",
+   "score": 44,
+   "shifts": 4,
+   "text": "A hard rule is broken on Thursday lunch: 50h in the payroll week — over 40h (and 8 more this week). The week cannot score above 64 until it is fixed."
+  },
+  "optimizer": {
+   "after_score": 44,
+   "applied": true,
+   "before_score": 39,
+   "changes": [
+    {
+     "gain": 5.3,
+     "kind": "solve",
+     "reason": "Cavnar AI re-solved who works each shift (10 changes), Shift Quality 39 → 44: fatigue 12 → 38, demand match 96 → 97."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Bo on Tuesday lunch Server (11:00am–4:00pm) instead of Ana — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Ana on Tuesday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Bo on Wednesday lunch Server (11:00am–4:00pm) instead of Ana — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Cara on Thursday lunch Server (11:00am–4:00pm) instead of Ana — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Ana on Thursday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Cara on Friday lunch Server (11:00am–4:00pm) instead of Ana — spreads the weekend shifts (Ana has 3, Cara 2)."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Ana on Friday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Cara on Saturday lunch Server (11:00am–4:00pm) instead of Ana — spreads the weekend shifts (Ana has 3, Cara 2)."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Ana on Saturday dinner Server (4:00pm–10:00pm) instead of Cara — so the shift's leadership, strength, training and experience add up."
+    },
+    {
+     "gain": null,
+     "kind": "reassign",
+     "reason": "Put Bo on Sunday dinner Server (6:00pm–10:00pm) instead of Cara — spreads the closes (Cara has 3 this week, Bo 2)."
+    }
+   ],
+   "dollars_after": 5558.0,
+   "dollars_before": 5558.0,
+   "evaluations": 42,
+   "improvement": 5,
+   "ran": true,
+   "seconds": 0.3,
+   "solver": {
+    "after_score": 44,
+    "applied": true,
+    "before_score": 39,
+    "components": 1,
+    "components_proved": 0,
+    "dollars_after": 5630.0,
+    "dollars_before": 5630.0,
+    "infeasible": [
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "kept": "Max",
+      "role": "General Manager",
+      "shift_end": "10:30pm",
+      "shift_start": "10:00am",
+      "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "kept": "Max",
+      "role": "General Manager",
+      "shift_end": "10:30pm",
+      "shift_start": "10:00am",
+      "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "kept": "Max",
+      "role": "General Manager",
+      "shift_end": "10:30pm",
+      "shift_start": "10:00am",
+      "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "kept": "Max",
+      "role": "General Manager",
+      "shift_end": "10:30pm",
+      "shift_start": "10:00am",
+      "text": "7 General Manager shifts this week and the 2 people who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Max's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "kept": "Di",
+      "role": "Line Cook",
+      "shift_end": "10:00pm",
+      "shift_start": "4:00pm",
+      "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "kept": "Di",
+      "role": "Line Cook",
+      "shift_end": "10:00pm",
+      "shift_start": "4:00pm",
+      "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "kept": "Di",
+      "role": "Line Cook",
+      "shift_end": "10:00pm",
+      "shift_start": "4:00pm",
+      "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "kept": "Di",
+      "role": "Line Cook",
+      "shift_end": "10:00pm",
+      "shift_start": "4:00pm",
+      "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "kept": "Di",
+      "role": "Line Cook",
+      "shift_end": "10:00pm",
+      "shift_start": "4:00pm",
+      "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+     },
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "kept": "Di",
+      "role": "Line Cook",
+      "shift_end": "10:00pm",
+      "shift_start": "4:00pm",
+      "text": "7 Line Cook shifts this week and the 1 person who may work them can carry at most 6 (days in a row, one shift a day, hours ceiling); Di's week is kept as drafted."
+     }
+    ],
+    "kept": "solver",
+    "nodes": 45504,
+    "notes": [
+     "7 shifts kept with people who have a written note the solver cannot read."
+    ],
+    "people": 8,
+    "proved_optimal": false,
+    "seconds": 0.76,
+    "slots": 15,
+    "status": "time_limit"
+   },
+   "stopped": "no improving move",
+   "unresolved": [
+    {
+     "date": "2026-11-01",
+     "day": "Sunday",
+     "daypart": "morning",
+     "dimension": "hard_rules",
+     "fixable_by_draft": false,
+     "text": "42h in the payroll week — over 40h"
+    },
+    {
+     "date": "2026-10-29",
+     "day": "Thursday",
+     "daypart": "night",
+     "dimension": "hard_rules",
+     "fixable_by_draft": false,
+     "text": "50h in the payroll week — over 40h"
+    },
+    {
+     "date": "2026-11-01",
+     "day": "Sunday",
+     "daypart": "night",
+     "dimension": "hard_rules",
+     "fixable_by_draft": false,
+     "text": "42h in the payroll week — over 40h"
+    },
+    {
+     "date": "2026-10-29",
+     "day": "Thursday",
+     "daypart": "morning",
+     "dimension": "hard_rules",
+     "fixable_by_draft": false,
+     "text": "50h in the payroll week — over 40h"
+    }
+   ],
+   "verdict": "Cavnar AI made 10 changes to the draft, raising Shift Quality from 39 to 44. Each is listed with why."
+  },
+  "people": [
+   "Ana",
+   "Bo",
+   "Cara",
+   "Cy",
+   "Di",
+   "Ed",
+   "Kim",
+   "Max"
+  ],
+  "raw_score": 43.8414,
+  "recommendation_details": [
+   {
+    "date": null,
+    "daypart": null,
+    "dimension": "fatigue",
+    "kind": "fatigue",
+    "points": 5.87,
+    "text": "Give Cy a day off — 7 in a row this week."
+   },
+   {
+    "date": "2026-11-01",
+    "daypart": "morning",
+    "dimension": "hard_rules",
+    "kind": "rules",
+    "points": 1.54,
+    "text": "Fix the rule breach on Sunday morning: 42h in the payroll week — over 40h."
+   },
+   {
+    "date": "2026-11-01",
+    "daypart": "night",
+    "dimension": "hard_rules",
+    "kind": "rules",
+    "points": 1.08,
+    "text": "Fix the rule breach on Sunday night: 42h in the payroll week — over 40h."
+   }
+  ],
+  "recommendation_items": [
+   {
+    "advice_signature": null,
+    "answerable": true,
+    "answered": false,
+    "confidence": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "the Shift Quality read of this schedule — its inputs are 50% complete — No shift history yet, so experience could not be judged",
+       "corroborating": 0,
+       "kind": "count",
+       "n": 1,
+       "n_full": 1,
+       "pct": 50
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-11",
+       "basis": "Shifts through 10/11/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "labor",
+       "stalest_basis": "Shifts through 10/11/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "key": "schedule_fatigue:Give Cy a day off — 7 in a row this week.",
+    "kind": "fatigue",
+    "points": 5.87,
+    "rec_key": "schedule_fatigue:Give Cy a day off — 7 in a row this week.",
+    "text": "Give Cy a day off — 7 in a row this week."
+   },
+   {
+    "advice_signature": "labor:day:sunday",
+    "answerable": true,
+    "answered": false,
+    "confidence": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "the Shift Quality read of this schedule — its inputs are 50% complete — No shift history yet, so experience could not be judged",
+       "corroborating": 0,
+       "kind": "count",
+       "n": 1,
+       "n_full": 1,
+       "pct": 50
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-11",
+       "basis": "Shifts through 10/11/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "labor",
+       "stalest_basis": "Shifts through 10/11/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "key": "schedule_rules:Fix the rule breach on Sunday morning: 42h in the payroll week — over 40h.",
+    "kind": "rules",
+    "points": 1.54,
+    "rec_key": "schedule_rules:Fix the rule breach on Sunday morning: 42h in the payroll week — over 40h.",
+    "text": "Fix the rule breach on Sunday morning: 42h in the payroll week — over 40h."
+   },
+   {
+    "advice_signature": "labor:day:sunday",
+    "answerable": true,
+    "answered": false,
+    "confidence": {
+     "band": "medium",
+     "caps": {
+      "against_below": 50,
+      "beats_at": 95,
+      "freshness_unmeasured": 49,
+      "max": 99,
+      "no_track_record": 70,
+      "record_against": 49,
+      "record_unproven": 70,
+      "stale": 49,
+      "stale_below": 50
+     },
+     "caps_applied": [
+      "no_track_record"
+     ],
+     "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+     "confidence_impact": null,
+     "dimensions": {
+      "accuracy": {
+       "basis": "Not enough history yet — 0 measured, needs 5",
+       "cohort_label": null,
+       "high": null,
+       "improved": 0,
+       "lift": null,
+       "low": null,
+       "n": 0,
+       "pct": null,
+       "prior": null,
+       "prior_rung": null,
+       "prior_unlock": "confirm_profile",
+       "source": "none"
+      },
+      "evidence": {
+       "basis": "the Shift Quality read of this schedule — its inputs are 50% complete — No shift history yet, so experience could not be judged",
+       "corroborating": 0,
+       "kind": "count",
+       "n": 1,
+       "n_full": 1,
+       "pct": 50
+      },
+      "freshness": {
+       "as_of": "<volatile>",
+       "as_of_iso": "2026-10-11",
+       "basis": "Shifts through 10/11/26",
+       "errors": [],
+       "pct": 100,
+       "stalest": "labor",
+       "stalest_basis": "Shifts through 10/11/26"
+      }
+     },
+     "label": "70% confidence",
+     "meaning": "How well supported this is — not the chance it works",
+     "pct": 70,
+     "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+     "sample": false,
+     "score": 0.7,
+     "thresholds": {
+      "high": 75,
+      "medium": 50
+     },
+     "version": 2
+    },
+    "key": "schedule_rules:Fix the rule breach on Sunday night: 42h in the payroll week — over 40h.",
+    "kind": "rules",
+    "points": 1.08,
+    "rec_key": "schedule_rules:Fix the rule breach on Sunday night: 42h in the payroll week — over 40h.",
+    "text": "Fix the rule breach on Sunday night: 42h in the payroll week — over 40h."
+   }
+  ],
+  "recommendation_points": {
+   "Fix the rule breach on Sunday morning: 42h in the payroll week — over 40h.": 1.54,
+   "Fix the rule breach on Sunday night: 42h in the payroll week — over 40h.": 1.08,
+   "Give Cy a day off — 7 in a row this week.": 5.87
+  },
+  "recommendations": [
+   "Give Cy a day off — 7 in a row this week.",
+   "Fix the rule breach on Sunday morning: 42h in the payroll week — over 40h.",
+   "Fix the rule breach on Sunday night: 42h in the payroll week — over 40h."
+  ],
+  "score": 44,
+  "shifts": [
+   {
+    "assignments": [
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "morning",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "morning",
+      "employee": "Ana",
+      "facts": {
+       "score": 5,
+       "week_hours": 34.0
+      },
+      "role": "Server",
+      "why": "Level 5 server (excellent); 34h this week, 6h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-26",
+    "day": "Monday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.67,
+       "by_role": {
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "server": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.27
+        }
+       },
+       "demand": "low",
+       "offset": -0.4,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 3.41
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.7 against the 3.4 a low-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Monday lunch scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "fairness",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "nothing_specific": true,
+    "people": [
+     "Max",
+     "Ana",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "low",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_lunch",
+     "label": "Weekday lunch",
+     "min_quality": 65,
+     "source": "default",
+     "training_allowed": true
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "night",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "night",
+      "employee": "Cara",
+      "facts": {
+       "score": 4,
+       "week_hours": 27.0
+      },
+      "role": "Server",
+      "why": "Level 4 server (strong); 27h this week, 13h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-26",
+      "day": "Monday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-26",
+    "day": "Monday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.0,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "server": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.67
+        }
+       },
+       "demand": "normal",
+       "offset": 0.0,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 3.82
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.0 against the 3.8 a normal-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "closing": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Monday dinner scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "nothing_specific": true,
+    "people": [
+     "Max",
+     "Cara",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "normal",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_dinner",
+     "label": "Weekday dinner",
+     "min_quality": 70,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "morning",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "morning",
+      "employee": "Bo",
+      "facts": {
+       "score": 2,
+       "week_hours": 14.0
+      },
+      "role": "Server",
+      "why": "Level 2 server (below average); 14h this week, 26h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-27",
+    "day": "Tuesday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 3.67,
+       "by_role": {
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "server": {
+         "average": 2.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.27
+        }
+       },
+       "demand": "low",
+       "offset": -0.4,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 3.41
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 3.7 against the 3.4 a low-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "developing": 1,
+       "isolated": 0,
+       "isolated_names": [],
+       "mentored": 1,
+       "mentors": [
+        {
+         "how": "manager",
+         "mentor": "Max",
+         "name": "Bo",
+         "role": "Server"
+        }
+       ],
+       "one_person_stations": [
+        "Server"
+       ],
+       "pairs": [
+        "Bo on server, a one-person station, with Max managing the floor"
+       ]
+      },
+      "floor": null,
+      "key": "training_balance",
+      "label": "Training balance",
+      "score": 100,
+      "strengths": [
+       "Paired Bo on server, a one-person station, with Max managing the floor."
+      ],
+      "weaknesses": [],
+      "weight": 7.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Tuesday lunch scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "fairness",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations"
+    ],
+    "people": [
+     "Max",
+     "Bo",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "low",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_lunch",
+     "label": "Weekday lunch",
+     "min_quality": 65,
+     "source": "default",
+     "training_allowed": true
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [
+     "Paired Bo on server, a one-person station, with Max managing the floor."
+    ],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "night",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "night",
+      "employee": "Ana",
+      "facts": {
+       "score": 5,
+       "week_hours": 34.0
+      },
+      "role": "Server",
+      "why": "Level 5 server (excellent); 34h this week, 6h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-27",
+      "day": "Tuesday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-27",
+    "day": "Tuesday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.25,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "server": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.67
+        }
+       },
+       "demand": "normal",
+       "offset": 0.0,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 3.82
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.2 against the 3.8 a normal-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "closing": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Tuesday dinner scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "nothing_specific": true,
+    "people": [
+     "Max",
+     "Ana",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "normal",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_dinner",
+     "label": "Weekday dinner",
+     "min_quality": 70,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "morning",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "morning",
+      "employee": "Bo",
+      "facts": {
+       "score": 2,
+       "week_hours": 14.0
+      },
+      "role": "Server",
+      "why": "Level 2 server (below average); 14h this week, 26h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-28",
+    "day": "Wednesday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 3.67,
+       "by_role": {
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "server": {
+         "average": 2.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.27
+        }
+       },
+       "demand": "low",
+       "offset": -0.4,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 3.41
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 3.7 against the 3.4 a low-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "developing": 1,
+       "isolated": 0,
+       "isolated_names": [],
+       "mentored": 1,
+       "mentors": [
+        {
+         "how": "manager",
+         "mentor": "Max",
+         "name": "Bo",
+         "role": "Server"
+        }
+       ],
+       "one_person_stations": [
+        "Server"
+       ],
+       "pairs": [
+        "Bo on server, a one-person station, with Max managing the floor"
+       ]
+      },
+      "floor": null,
+      "key": "training_balance",
+      "label": "Training balance",
+      "score": 100,
+      "strengths": [
+       "Paired Bo on server, a one-person station, with Max managing the floor."
+      ],
+      "weaknesses": [],
+      "weight": 7.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Wednesday lunch scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "fairness",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations"
+    ],
+    "people": [
+     "Max",
+     "Bo",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "low",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_lunch",
+     "label": "Weekday lunch",
+     "min_quality": 65,
+     "source": "default",
+     "training_allowed": true
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [
+     "Paired Bo on server, a one-person station, with Max managing the floor."
+    ],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "night",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "night",
+      "employee": "Cara",
+      "facts": {
+       "score": 4,
+       "week_hours": 27.0
+      },
+      "role": "Server",
+      "why": "Level 4 server (strong); 27h this week, 13h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-28",
+      "day": "Wednesday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-28",
+    "day": "Wednesday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.0,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "server": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.67
+        }
+       },
+       "demand": "normal",
+       "offset": 0.0,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 3.82
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.0 against the 3.8 a normal-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "closing": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Wednesday dinner scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "nothing_specific": true,
+    "people": [
+     "Max",
+     "Cara",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "normal",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_dinner",
+     "label": "Weekday dinner",
+     "min_quality": 70,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "morning",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "morning",
+      "employee": "Cara",
+      "facts": {
+       "score": 4,
+       "week_hours": 27.0
+      },
+      "role": "Server",
+      "why": "Level 4 server (strong); 27h this week, 13h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "weak",
+    "blind_spots": [],
+    "capped_by": "hard_rules",
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.33,
+       "by_role": {
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.48
+        },
+        "server": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.27
+        }
+       },
+       "demand": "low",
+       "offset": -0.4,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 3.41
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.3 against the 3.4 a low-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [
+     "50h in the payroll week — over 40h"
+    ],
+    "headline": "Thursday lunch scored 50/100 on Shift Quality.",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 50h in the payroll week — over 40h."
+    },
+    "meets_profile": false,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "fairness",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "people": [
+     "Max",
+     "Cara",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "low",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_lunch",
+     "label": "Weekday lunch",
+     "min_quality": 65,
+     "source": "default",
+     "training_allowed": true
+    },
+    "score": 50,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": [
+     "Hard rule broken: 50h in the payroll week — over 40h."
+    ]
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "night",
+      "employee": "Max",
+      "facts": {
+       "manages": true,
+       "score": 5,
+       "week_hours": 50.0
+      },
+      "role": "General Manager",
+      "why": "Level 5 general manager (excellent); manager on duty — able to run the shift; 50h this week, 10h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "night",
+      "employee": "Ana",
+      "facts": {
+       "score": 5,
+       "week_hours": 34.0
+      },
+      "role": "Server",
+      "why": "Level 5 server (excellent); 34h this week, 6h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-29",
+      "day": "Thursday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "weak",
+    "blind_spots": [],
+    "capped_by": "hard_rules",
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.25,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "general manager": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "server": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.67
+        }
+       },
+       "demand": "normal",
+       "offset": 0.0,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 3.82
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.2 against the 3.8 a normal-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "closing": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [
+     "50h in the payroll week — over 40h"
+    ],
+    "headline": "Thursday dinner scored 50/100 on Shift Quality.",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 50h in the payroll week — over 40h."
+    },
+    "meets_profile": false,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "people": [
+     "Max",
+     "Ana",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "normal",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "weekday_dinner",
+     "label": "Weekday dinner",
+     "min_quality": 70,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 50,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": [
+     "Hard rule broken: 50h in the payroll week — over 40h."
+    ]
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "morning",
+      "employee": "Kim",
+      "facts": {
+       "manages": true,
+       "score": 4,
+       "week_hours": 42.5
+      },
+      "role": "General Manager",
+      "why": "Level 4 general manager (strong); manager on duty — able to run the shift; 42.5h this week, 2.5h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "morning",
+      "employee": "Cara",
+      "facts": {
+       "score": 4,
+       "week_hours": 27.0
+      },
+      "role": "Server",
+      "why": "Level 4 server (strong); 27h this week, 13h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-30",
+    "day": "Friday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.0,
+       "by_role": {
+        "general manager": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "server": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.67
+        }
+       },
+       "demand": "normal",
+       "offset": 0.0,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 3.81
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.0 against the 3.8 a normal-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "weekend": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of weekend shifts."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Friday lunch scored 100/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "nothing_specific": true,
+    "people": [
+     "Kim",
+     "Cara",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "normal",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "default",
+     "label": "Standard shift",
+     "min_quality": 70,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 100,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": []
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "night",
+      "employee": "Kim",
+      "facts": {
+       "manages": true,
+       "score": 4,
+       "week_hours": 42.5
+      },
+      "role": "General Manager",
+      "why": "Level 4 general manager (strong); manager on duty — able to run the shift; clears the 4+ leader bar this shift wants; 42.5h this week, 2.5h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "night",
+      "employee": "Ana",
+      "facts": {
+       "score": 5,
+       "week_hours": 34.0
+      },
+      "role": "Server",
+      "why": "Level 5 server (excellent); clears the 4+ leader bar this shift wants; 34h this week, 6h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-30",
+      "day": "Friday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); clears the 4+ leader bar this shift wants; 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-30",
+    "day": "Friday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "leader_min_score": 4.0,
+       "leader_roles": [],
+       "managers_on": [
+        "Kim"
+       ],
+       "miss_score": 50,
+       "misses": [],
+       "profile_leader_missing": false,
+       "rules_checked": 1,
+       "rules_met": 1
+      },
+      "floor": null,
+      "key": "leadership",
+      "label": "Leadership",
+      "score": 100,
+      "strengths": [
+       "Leadership requirements met — Kim on as manager."
+      ],
+      "weaknesses": [],
+      "weight": 15.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.0,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.0
+        },
+        "general manager": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.47
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.0
+        },
+        "server": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 4.27
+        }
+       },
+       "demand": "high",
+       "offset": 0.6,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 4.19
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 95,
+      "strengths": [],
+      "weaknesses": [
+       "Team averages 4.0 on a high-demand shift — about 4.2 would match it; your rated team averages 3.8."
+      ],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "busiest": {
+        "overloaded": []
+       },
+       "closing": {
+        "overloaded": []
+       },
+       "weekend": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes or weekend shifts or busiest shifts."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Friday dinner scored 98/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "people": [
+     "Kim",
+     "Ana",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "high",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "friday_dinner",
+     "label": "Friday dinner",
+     "min_quality": 78,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 98,
+    "scored": true,
+    "strengths": [
+     "Leadership requirements met — Kim on as manager."
+    ],
+    "weaknesses": [
+     "Team averages 4.0 on a high-demand shift — about 4.2 would match it; your rated team averages 3.8."
+    ]
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "morning",
+      "employee": "Kim",
+      "facts": {
+       "manages": true,
+       "score": 4,
+       "week_hours": 42.5
+      },
+      "role": "General Manager",
+      "why": "Level 4 general manager (strong); manager on duty — able to run the shift; 42.5h this week, 2.5h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "morning",
+      "employee": "Cara",
+      "facts": {
+       "score": 4,
+       "week_hours": 27.0
+      },
+      "role": "Server",
+      "why": "Level 4 server (strong); 27h this week, 13h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-31",
+    "day": "Saturday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.0,
+       "by_role": {
+        "general manager": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.47
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.0
+        },
+        "server": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 4.27
+        }
+       },
+       "demand": "high",
+       "offset": 0.6,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 4.25
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 94,
+      "strengths": [],
+      "weaknesses": [
+       "Team averages 4.0 on a high-demand shift — about 4.2 would match it; your rated team averages 3.8."
+      ],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "busiest": {
+        "overloaded": []
+       },
+       "closing": {
+        "overloaded": []
+       },
+       "weekend": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes or weekend shifts or busiest shifts."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Saturday lunch scored 96/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "people": [
+     "Kim",
+     "Cara",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "high",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "brunch",
+     "label": "Weekend brunch",
+     "min_quality": 75,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 96,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": [
+     "Team averages 4.0 on a high-demand shift — about 4.2 would match it; your rated team averages 3.8."
+    ]
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "night",
+      "employee": "Kim",
+      "facts": {
+       "manages": true,
+       "score": 4,
+       "week_hours": 42.5
+      },
+      "role": "General Manager",
+      "why": "Level 4 general manager (strong); manager on duty — able to run the shift; clears the 4+ leader bar this shift wants; 42.5h this week, 2.5h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "night",
+      "employee": "Ana",
+      "facts": {
+       "score": 5,
+       "week_hours": 34.0
+      },
+      "role": "Server",
+      "why": "Level 5 server (excellent); clears the 4+ leader bar this shift wants; 34h this week, 6h under the 40h ceiling."
+     },
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-10-31",
+      "day": "Saturday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); clears the 4+ leader bar this shift wants; 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "excellent",
+    "blind_spots": [],
+    "capped_by": null,
+    "date": "2026-10-31",
+    "day": "Saturday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "leader_min_score": 4.0,
+       "leader_roles": [],
+       "managers_on": [
+        "Kim"
+       ],
+       "miss_score": 50,
+       "misses": [],
+       "profile_leader_missing": false,
+       "rules_checked": 1,
+       "rules_met": 1
+      },
+      "floor": null,
+      "key": "leadership",
+      "label": "Leadership",
+      "score": 100,
+      "strengths": [
+       "Leadership requirements met — Kim on as manager."
+      ],
+      "weaknesses": [],
+      "weight": 15.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.0,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.0
+        },
+        "general manager": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.88
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.0
+        },
+        "server": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 4.67
+        }
+       },
+       "demand": "peak",
+       "offset": 1.0,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 4.39
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 90,
+      "strengths": [],
+      "weaknesses": [
+       "Team averages 4.0 on your busiest shift — about 4.4 would match it; your rated team averages 3.8."
+      ],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "busiest": {
+        "overloaded": []
+       },
+       "weekend": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of weekend shifts or busiest shifts."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [],
+    "headline": "Saturday dinner scored 97/100 on Shift Quality.",
+    "held_by": null,
+    "meets_profile": true,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "people": [
+     "Kim",
+     "Ana",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "peak",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "saturday_dinner",
+     "label": "Saturday dinner",
+     "min_quality": 82,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 97,
+    "scored": true,
+    "strengths": [
+     "Leadership requirements met — Kim on as manager."
+    ],
+    "weaknesses": [
+     "Team averages 4.0 on your busiest shift — about 4.4 would match it; your rated team averages 3.8."
+    ]
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "morning",
+      "employee": "Kim",
+      "facts": {
+       "manages": true,
+       "score": 4,
+       "week_hours": 42.5
+      },
+      "role": "General Manager",
+      "why": "Level 4 general manager (strong); manager on duty — able to run the shift; 42.5h this week, 2.5h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "morning",
+      "employee": "Ana",
+      "facts": {
+       "score": 5,
+       "week_hours": 34.0
+      },
+      "role": "Server",
+      "why": "Level 5 server (excellent); 34h this week, 6h under the 40h ceiling."
+     },
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "morning",
+      "employee": "Cy",
+      "facts": {
+       "score": 4,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 4 line cook (strong); 42h this week, 2h OVER the 40h ceiling; note on file: No doubles on school nights."
+     }
+    ],
+    "band": "weak",
+    "blind_spots": [],
+    "capped_by": "hard_rules",
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "daypart": "morning",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 4.33,
+       "by_role": {
+        "general manager": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.47
+        },
+        "line cook": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 4.0
+        },
+        "server": {
+         "average": 5.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 4.27
+        }
+       },
+       "demand": "high",
+       "offset": 0.6,
+       "team_average": 3.81,
+       "vs_average_day_pct": null,
+       "wanted": 4.25
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 100,
+      "strengths": [
+       "Team averages 4.3 against the 4.2 a high-demand shift here wants (your rated team averages 3.8)."
+      ],
+      "weaknesses": [],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "busiest": {
+        "overloaded": []
+       },
+       "weekend": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of weekend shifts or busiest shifts."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [
+     "42h in the payroll week — over 40h",
+     "42.5h in the payroll week — over 40h",
+     "7 days in a row — the rule is at most 6"
+    ],
+    "headline": "Sunday lunch scored 50/100 on Shift Quality.",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 42h in the payroll week — over 40h (and 2 more)."
+    },
+    "meets_profile": false,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations",
+     "training_balance"
+    ],
+    "people": [
+     "Kim",
+     "Ana",
+     "Cy"
+    ],
+    "profile": {
+     "demand": "high",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "brunch",
+     "label": "Weekend brunch",
+     "min_quality": 75,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 50,
+    "scored": true,
+    "strengths": [],
+    "weaknesses": [
+     "Hard rule broken: 42h in the payroll week — over 40h.",
+     "Hard rule broken: 42.5h in the payroll week — over 40h.",
+     "Hard rule broken: 7 days in a row — the rule is at most 6."
+    ]
+   },
+   {
+    "assignments": [
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "night",
+      "employee": "Kim",
+      "facts": {
+       "manages": true,
+       "score": 4,
+       "week_hours": 42.5
+      },
+      "role": "General Manager",
+      "why": "Level 4 general manager (strong); manager on duty — able to run the shift; 42.5h this week, 2.5h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "night",
+      "employee": "Bo",
+      "facts": {
+       "score": 2,
+       "week_hours": 14.0
+      },
+      "role": "Server",
+      "why": "Level 2 server (below average); 14h this week, 26h under the 40h ceiling."
+     },
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "night",
+      "employee": "Di",
+      "facts": {
+       "score": 3,
+       "week_hours": 42.0
+      },
+      "role": "Line Cook",
+      "why": "Level 3 line cook (average); 42h this week, 2h OVER the 40h ceiling."
+     },
+     {
+      "date": "2026-11-01",
+      "day": "Sunday",
+      "daypart": "night",
+      "employee": "Ed",
+      "facts": {
+       "score": 4,
+       "week_hours": 46.0
+      },
+      "role": "Bartender",
+      "why": "Level 4 bartender (strong); 46h this week, 6h OVER the 40h ceiling."
+     }
+    ],
+    "band": "weak",
+    "blind_spots": [],
+    "capped_by": "hard_rules",
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "daypart": "night",
+    "dimensions": [
+     {
+      "customer_facing": true,
+      "facts": {
+       "average_score": 3.25,
+       "by_role": {
+        "bartender": {
+         "average": 4.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "general manager": {
+         "average": 4.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "line cook": {
+         "average": 3.0,
+         "best_possible": 4.0,
+         "rated": 1,
+         "team_average": 3.88,
+         "wanted": 3.88
+        },
+        "server": {
+         "average": 2.0,
+         "best_possible": 5.0,
+         "rated": 1,
+         "team_average": 3.67,
+         "wanted": 3.67
+        }
+       },
+       "demand": "normal",
+       "offset": 0.0,
+       "team_average": 3.82,
+       "vs_average_day_pct": null,
+       "wanted": 3.82
+      },
+      "floor": null,
+      "key": "demand_match",
+      "label": "Demand match",
+      "score": 86,
+      "strengths": [],
+      "weaknesses": [
+       "Team averages 3.2 on a normal-demand shift — about 3.8 would match it; your rated team averages 3.8."
+      ],
+      "weight": 10.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "developing": 1,
+       "isolated": 0,
+       "isolated_names": [],
+       "mentored": 1,
+       "mentors": [
+        {
+         "how": "manager",
+         "mentor": "Kim",
+         "name": "Bo",
+         "role": "Server"
+        }
+       ],
+       "one_person_stations": [
+        "Server"
+       ],
+       "pairs": [
+        "Bo on server, a one-person station, with Kim managing the floor"
+       ]
+      },
+      "floor": null,
+      "key": "training_balance",
+      "label": "Training balance",
+      "score": 100,
+      "strengths": [
+       "Paired Bo on server, a one-person station, with Kim managing the floor."
+      ],
+      "weaknesses": [],
+      "weight": 7.0
+     },
+     {
+      "customer_facing": true,
+      "facts": {
+       "closing": {
+        "overloaded": []
+       },
+       "weekend": {
+        "overloaded": []
+       }
+      },
+      "floor": null,
+      "key": "fairness",
+      "label": "Fairness",
+      "score": 100,
+      "strengths": [
+       "Nobody on this shift is carrying more than their share of closes or weekend shifts."
+      ],
+      "weaknesses": [],
+      "weight": 6.0
+     }
+    ],
+    "failed": [],
+    "hard_breaches": [
+     "42h in the payroll week — over 40h",
+     "46h in the payroll week — over 40h",
+     "42.5h in the payroll week — over 40h",
+     "7 days in a row — the rule is at most 6"
+    ],
+    "headline": "Sunday dinner scored 50/100 on Shift Quality.",
+    "held_by": {
+     "floor": null,
+     "key": "hard_rules",
+     "label": "Hard rules",
+     "score": 50,
+     "text": "A hard rule is broken on this shift, holding it at 50: 42h in the payroll week — over 40h (and 3 more)."
+    },
+    "meets_profile": false,
+    "no_shift_written": false,
+    "not_applicable": [
+     "coverage",
+     "coverage_curve",
+     "cross_training",
+     "experience_balance",
+     "labor_efficiency",
+     "leadership",
+     "operational_strength",
+     "pairings",
+     "reliability",
+     "splh",
+     "stability",
+     "stations"
+    ],
+    "people": [
+     "Kim",
+     "Bo",
+     "Di",
+     "Ed"
+    ],
+    "profile": {
+     "demand": "normal",
+     "floors": {
+      "coverage": 70,
+      "coverage_curve": 60,
+      "leadership": 60,
+      "operational_strength": 55
+     },
+     "key": "default",
+     "label": "Standard shift",
+     "min_quality": 70,
+     "source": "default",
+     "training_allowed": false
+    },
+    "score": 50,
+    "scored": true,
+    "strengths": [
+     "Paired Bo on server, a one-person station, with Kim managing the floor."
+    ],
+    "weaknesses": [
+     "Hard rule broken: 42h in the payroll week — over 40h.",
+     "Hard rule broken: 46h in the payroll week — over 40h.",
+     "Hard rule broken: 42.5h in the payroll week — over 40h.",
+     "Hard rule broken: 7 days in a row — the rule is at most 6.",
+     "Team averages 3.2 on a normal-demand shift — about 3.8 would match it; your rated team averages 3.8."
+    ]
+   }
+  ],
+  "strengths": [
+   "Team averages 4.0 against the 3.8 a normal-demand shift here wants (your rated team averages 3.8). — 10 of 14 shifts",
+   "Nobody on this shift is carrying more than their share of closes. — 10 of 14 shifts",
+   "Paired Bo on server, a one-person station, with Max managing the floor. — 2 shifts",
+   "Leadership requirements met — Kim on as manager. — 2 shifts"
+  ],
+  "weaknesses": [
+   "A hard rule is broken on Thursday lunch: 50h in the payroll week — over 40h (and 8 more this week). The week cannot score above 64 until it is fixed.",
+   "Max is 10h into overtime in the payroll week of 10/26/26 — about $90 of overtime premium; nobody else in the role has room to take a shift.",
+   "Ed is 6h into overtime in the payroll week of 10/26/26 — about $54 of overtime premium; nobody else in the role has room to take a shift.",
+   "Cy works 7 days in a row this week.",
+   "Di works 7 days in a row this week."
+  ],
+  "week_dimensions": [
+   {
+    "facts": {
+     "heavy_weeks": [
+      {
+       "ceiling": 40.0,
+       "hours": 42.0,
+       "name": "Cy"
+      },
+      {
+       "ceiling": 40.0,
+       "hours": 42.0,
+       "name": "Di"
+      },
+      {
+       "ceiling": 40.0,
+       "hours": 46.0,
+       "name": "Ed"
+      },
+      {
+       "ceiling": 40.0,
+       "hours": 42.5,
+       "name": "Kim"
+      },
+      {
+       "ceiling": 40.0,
+       "hours": 50.0,
+       "name": "Max"
+      }
+     ],
+     "long_runs": [
+      {
+       "days": 7,
+       "name": "Cy"
+      },
+      {
+       "days": 7,
+       "name": "Di"
+      },
+      {
+       "days": 7,
+       "name": "Ed"
+      }
+     ],
+     "long_shifts": [],
+     "overloaded": [],
+     "scope": "week",
+     "strained": [
+      "Cy",
+      "Di",
+      "Ed",
+      "Kim",
+      "Max"
+     ],
+     "sustained_busy": [],
+     "sustained_hours": [],
+     "tracked": 8
+    },
+    "key": "fatigue",
+    "label": "Fatigue",
+    "score": 38,
+    "share": 0.317,
+    "strengths": [],
+    "weaknesses": [
+     "Cy works 7 days in a row this week.",
+     "Di works 7 days in a row this week.",
+     "Cy is at 42h against a 40h ceiling.",
+     "Di is at 42h against a 40h ceiling."
+    ],
+    "week_level": true,
+    "weight": 7.0
+   },
+   {
+    "facts": {
+     "line": 40.0,
+     "people": [
+      {
+       "avoidable": false,
+       "bucket": "2026-10-26",
+       "hours": 42.0,
+       "name": "Cy",
+       "overtime_hours": 2.0,
+       "premium": 18.0,
+       "published_hours": 0.0,
+       "role": "Line Cook",
+       "teammate": null
+      },
+      {
+       "avoidable": false,
+       "bucket": "2026-10-26",
+       "hours": 42.0,
+       "name": "Di",
+       "overtime_hours": 2.0,
+       "premium": 18.0,
+       "published_hours": 0.0,
+       "role": "Line Cook",
+       "teammate": null
+      },
+      {
+       "avoidable": false,
+       "bucket": "2026-10-26",
+       "hours": 46.0,
+       "name": "Ed",
+       "overtime_hours": 6.0,
+       "premium": 54.0,
+       "published_hours": 0.0,
+       "role": "Bartender",
+       "teammate": null
+      },
+      {
+       "avoidable": false,
+       "bucket": "2026-10-26",
+       "hours": 42.5,
+       "name": "Kim",
+       "overtime_hours": 2.5,
+       "premium": 22.5,
+       "published_hours": 0.0,
+       "role": "General Manager",
+       "teammate": null
+      },
+      {
+       "avoidable": false,
+       "bucket": "2026-10-26",
+       "hours": 50.0,
+       "name": "Max",
+       "overtime_hours": 10.0,
+       "premium": 90.0,
+       "published_hours": 0.0,
+       "role": "General Manager",
+       "teammate": null
+      }
+     ],
+     "premium": 202.5,
+     "premium_hours": 11.25,
+     "priced": true,
+     "scope": "week",
+     "share_pct": 1.89,
+     "strained": [
+      "Cy",
+      "Di",
+      "Ed",
+      "Kim",
+      "Max"
+     ],
+     "week_pay": 5355.0
+    },
+    "key": "overtime",
+    "label": "Overtime",
+    "score": 53,
+    "share": 0.317,
+    "strengths": [],
+    "weaknesses": [
+     "Max is 10h into overtime in the payroll week of 10/26/26 — about $90 of overtime premium; nobody else in the role has room to take a shift.",
+     "Ed is 6h into overtime in the payroll week of 10/26/26 — about $54 of overtime premium; nobody else in the role has room to take a shift."
+    ],
+    "week_level": true,
+    "weight": 8.0
+   }
+  ],
+  "worst": "Thursday lunch scored 50/100 on Shift Quality."
+ },
+ "ratings_off_roster": [],
+ "redo": null,
+ "regenerated_dates": [],
+ "repair": {
+  "budget": {
+   "added_above_budget": {},
+   "budget": 250.0,
+   "conflict": {
+    "budget": 250.0,
+    "examples": [],
+    "held": {
+     "last_of_role": 42
+    },
+    "over_by": 47.5,
+    "scheduled": 297.5
+   },
+   "hourly": 297.5,
+   "over": true,
+   "over_by": 47.5,
+   "trim_ok": true,
+   "trim_on": true
+  },
+  "converged": true,
+  "cycles": 3,
+  "hours_by_stage": {
+   "budget": -40.0,
+   "overtime": -4.0,
+   "solver": 0.0
+  },
+  "refused": [],
+  "restored_best": false,
+  "seconds": {
+   "budget": 0.097,
+   "close_out": 0.0,
+   "floors": 0.0,
+   "manager": 0.009,
+   "min_hours": 0.006,
+   "optimizer": 0.191,
+   "overtime": 0.049,
+   "pad_overruns": 0.0,
+   "person": 0.039,
+   "replace": 0.021,
+   "role_times": 0.0,
+   "section_cap": 0.0,
+   "solver": 0.761,
+   "stagger": 0.0,
+   "stations": 0.0,
+   "top_up": 0.0
+  },
+  "skipped": []
+ },
+ "requirements": [],
+ "requirements_by_date": {},
+ "reservation_feed": {
+  "configured": false,
+  "import": true,
+  "live": false,
+  "message": "No reservation system connected — import your reservation system's booking export (or type the covers) under Events & reservations.",
+  "provider": null
+ },
+ "review": {
+  "budget_conflict": {
+   "budget": 250.0,
+   "examples": [],
+   "held": {
+    "last_of_role": 42
+   },
+   "over_by": 47.5,
+   "scheduled": 297.5
+  },
+  "budget_lines": [
+   "⚠ 298h scheduled against a 250h budget — 48h over the ceiling",
+   "The trim stopped 48h over the 250h budget: the rest is held by your floors and the last of each role. Raise the hours budget, or lower the floors or staffing you set, to close it."
+  ],
+  "by_kind": {
+   "long_run": 3,
+   "over_max_hours": 28
+  },
+  "cap_floor_conflicts": [],
+  "fixes": [
+   {
+    "from": "Cara 4:00pm–10:00pm",
+    "index": 38,
+    "kind": "overtime",
+    "reason": "Cut Cara's Sunday shift by 2h, covered by the rest of the Server — no overtime.",
+    "row": {
+     "date": "2026-11-01",
+     "employee": "Bo",
+     "role": "Server",
+     "shift_end": "10:00pm",
+     "shift_start": "6:00pm"
+    },
+    "row_id": "r46",
+    "seq": 1,
+    "stage": "overtime",
+    "to": "6:00pm–10:00pm"
+   }
+  ],
+  "hard": 31,
+  "hard_days": [],
+  "hard_rows": [
+   0,
+   3,
+   4,
+   5,
+   6,
+   9,
+   10,
+   11,
+   12,
+   15,
+   16,
+   17,
+   18,
+   21,
+   22,
+   23,
+   24,
+   27,
+   28,
+   29,
+   30,
+   33,
+   34,
+   35,
+   36,
+   39,
+   40,
+   41
+  ],
+  "hours_trimmed": 40.0,
+  "input_problems": [],
+  "lead_lines": [],
+  "lines": [
+   "⚠ 298h scheduled against a 250h budget — 48h over the ceiling",
+   "The trim stopped 48h over the 250h budget: the rest is held by your floors and the last of each role. Raise the hours budget, or lower the floors or staffing you set, to close it.",
+   "⚠ Cy — Monday 10:00am: 42h in the payroll week — over 40h",
+   "⚠ Di — Monday 4:00pm: 42h in the payroll week — over 40h",
+   "⚠ Ed — Monday 5:00pm: 46h in the payroll week — over 40h",
+   "⚠ Max — Monday 10:00am: 50h in the payroll week — over 40h",
+   "⚠ Cy — Tuesday 10:00am: 42h in the payroll week — over 40h",
+   "⚠ Di — Tuesday 4:00pm: 42h in the payroll week — over 40h",
+   "⚠ Ed — Tuesday 5:00pm: 46h in the payroll week — over 40h",
+   "⚠ Max — Tuesday 10:00am: 50h in the payroll week — over 40h",
+   "⚠ Cy — Wednesday 10:00am: 42h in the payroll week — over 40h",
+   "⚠ Di — Wednesday 4:00pm: 42h in the payroll week — over 40h",
+   "⚠ Ed — Wednesday 5:00pm: 46h in the payroll week — over 40h",
+   "⚠ Max — Wednesday 10:00am: 50h in the payroll week — over 40h",
+   "Which days and hours do Kim and Max work? Cavnar AI has no standing shifts or past schedules for them, so this week's manager shifts are an even split. Set each one's standing shifts in Team and every draft will keep them.",
+   "No close time for Monday, Tuesday, Wednesday, Thursday, Friday, Saturday and Sunday — nobody at close, the closers and stays after close aren't checked on those days. Set a close time for every day you're open in Hours.",
+   "Trimmed 40h to fit the 250h budget: 7 shifts removed.",
+   "Saturday Server 4:00pm–10:00pm: Bo — latest Server on a day 54h over its target.",
+   "Monday Server 4:00pm–10:00pm: Bo — latest Server on a day 46h over its target.",
+   "Max is scheduled for 50h in the payroll week of 10/26/26 — 10h past the 40h overtime line.",
+   "Ed is scheduled for 46h in the payroll week of 10/26/26 — 6h past the 40h overtime line.",
+   "Kim is scheduled for 42.5h in the payroll week of 10/26/26 — 2.5h past the 40h overtime line.",
+   "22.5h of overtime priced at 1.5× — $202 of premium in a $5,558 week",
+   "No daily sales on file — this week has no demand forecast to plan by."
+  ],
+  "manager_coverage": {
+   "added": 0,
+   "extended": 0,
+   "left": [],
+   "shortfall": null
+  },
+  "manager_plan": {
+   "question": "Which days and hours do Kim and Max work?",
+   "uncovered": [],
+   "unknown_pattern": [
+    "Kim",
+    "Max"
+   ]
+  },
+  "min_hours": {
+   "added": 0,
+   "left": [],
+   "moved": 0
+  },
+  "needs_review": [
+   {
+    "index": 0,
+    "reason": "50h in the payroll week — over 40h",
+    "row_id": "r1"
+   },
+   {
+    "index": 3,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r5"
+   },
+   {
+    "index": 4,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r6"
+   },
+   {
+    "index": 5,
+    "reason": "46h in the payroll week — over 40h",
+    "row_id": "r7"
+   },
+   {
+    "index": 6,
+    "reason": "50h in the payroll week — over 40h",
+    "row_id": "r8"
+   },
+   {
+    "index": 9,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r12"
+   },
+   {
+    "index": 10,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r13"
+   },
+   {
+    "index": 11,
+    "reason": "46h in the payroll week — over 40h",
+    "row_id": "r14"
+   },
+   {
+    "index": 12,
+    "reason": "50h in the payroll week — over 40h",
+    "row_id": "r15"
+   },
+   {
+    "index": 15,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r19"
+   },
+   {
+    "index": 16,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r20"
+   },
+   {
+    "index": 17,
+    "reason": "46h in the payroll week — over 40h",
+    "row_id": "r21"
+   },
+   {
+    "index": 18,
+    "reason": "50h in the payroll week — over 40h",
+    "row_id": "r22"
+   },
+   {
+    "index": 21,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r26"
+   },
+   {
+    "index": 22,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r27"
+   },
+   {
+    "index": 23,
+    "reason": "46h in the payroll week — over 40h",
+    "row_id": "r28"
+   },
+   {
+    "index": 24,
+    "reason": "42.5h in the payroll week — over 40h",
+    "row_id": "r29"
+   },
+   {
+    "index": 27,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r33"
+   },
+   {
+    "index": 28,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r34"
+   },
+   {
+    "index": 29,
+    "reason": "46h in the payroll week — over 40h",
+    "row_id": "r35"
+   },
+   {
+    "index": 30,
+    "reason": "42.5h in the payroll week — over 40h",
+    "row_id": "r36"
+   },
+   {
+    "index": 33,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r40"
+   },
+   {
+    "index": 34,
+    "reason": "42h in the payroll week — over 40h",
+    "row_id": "r41"
+   },
+   {
+    "index": 35,
+    "reason": "46h in the payroll week — over 40h",
+    "row_id": "r42"
+   },
+   {
+    "index": 36,
+    "reason": "42.5h in the payroll week — over 40h",
+    "row_id": "r43"
+   },
+   {
+    "index": 39,
+    "reason": "too many days in a row",
+    "row_id": "r47"
+   },
+   {
+    "index": 40,
+    "reason": "too many days in a row",
+    "row_id": "r48"
+   },
+   {
+    "index": 41,
+    "reason": "too many days in a row",
+    "row_id": "r49"
+   }
+  ],
+  "over_budget_hours": 47.5,
+  "owner_rules_unchecked": [],
+  "repair": {
+   "budget": {
+    "added_above_budget": {},
+    "budget": 250.0,
+    "conflict": {
+     "budget": 250.0,
+     "examples": [],
+     "held": {
+      "last_of_role": 42
+     },
+     "over_by": 47.5,
+     "scheduled": 297.5
+    },
+    "hourly": 297.5,
+    "over": true,
+    "over_by": 47.5,
+    "trim_ok": true,
+    "trim_on": true
+   },
+   "converged": true,
+   "cycles": 3,
+   "hours_by_stage": {
+    "budget": -40.0,
+    "overtime": -4.0,
+    "solver": 0.0
+   },
+   "refused": [],
+   "restored_best": false,
+   "skipped": []
+  },
+  "rule_lines": [
+   "⚠ Cy — Monday 10:00am: 42h in the payroll week — over 40h",
+   "⚠ Di — Monday 4:00pm: 42h in the payroll week — over 40h",
+   "⚠ Ed — Monday 5:00pm: 46h in the payroll week — over 40h",
+   "⚠ Max — Monday 10:00am: 50h in the payroll week — over 40h",
+   "⚠ Cy — Tuesday 10:00am: 42h in the payroll week — over 40h",
+   "⚠ Di — Tuesday 4:00pm: 42h in the payroll week — over 40h",
+   "⚠ Ed — Tuesday 5:00pm: 46h in the payroll week — over 40h",
+   "⚠ Max — Tuesday 10:00am: 50h in the payroll week — over 40h",
+   "⚠ Cy — Wednesday 10:00am: 42h in the payroll week — over 40h",
+   "⚠ Di — Wednesday 4:00pm: 42h in the payroll week — over 40h",
+   "⚠ Ed — Wednesday 5:00pm: 46h in the payroll week — over 40h",
+   "⚠ Max — Wednesday 10:00am: 50h in the payroll week — over 40h"
+  ],
+  "setup": [
+   {
+    "kind": "managers",
+    "line": false,
+    "managers": [
+     {
+      "acting_dates": [],
+      "basis": "role",
+      "name": "Kim",
+      "role": "General Manager",
+      "salaried": false,
+      "standing_shifts": [],
+      "why": "their role is General Manager",
+      "work_days": []
+     },
+     {
+      "acting_dates": [],
+      "basis": "role",
+      "name": "Max",
+      "role": "General Manager",
+      "salaried": false,
+      "standing_shifts": [],
+      "why": "their role is General Manager",
+      "work_days": []
+     }
+    ],
+    "text": "Managers: Kim (General Manager), Max (General Manager)"
+   },
+   {
+    "days": [
+     "Monday",
+     "Tuesday",
+     "Wednesday",
+     "Thursday",
+     "Friday",
+     "Saturday",
+     "Sunday"
+    ],
+    "kind": "close_times_missing",
+    "line": true,
+    "text": "No close time for Monday, Tuesday, Wednesday, Thursday, Friday, Saturday and Sunday — nobody at close, the closers and stays after close aren't checked on those days. Set a close time for every day you're open in Hours."
+   }
+  ],
+  "soft": 0,
+  "stage_failures": [],
+  "staggered": [],
+  "trimmed": [
+   {
+    "date": "2026-10-31",
+    "day": "Saturday",
+    "employee": "Bo",
+    "hours": 6.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 54h over its target",
+    "role": "Server",
+    "row_id": "r38",
+    "seq": 2,
+    "shift_end": "10:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   },
+   {
+    "date": "2026-10-26",
+    "day": "Monday",
+    "employee": "Bo",
+    "hours": 6.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 46h over its target",
+    "role": "Server",
+    "row_id": "r3",
+    "seq": 2,
+    "shift_end": "10:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   },
+   {
+    "date": "2026-10-27",
+    "day": "Tuesday",
+    "employee": "Bo",
+    "hours": 6.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 46h over its target",
+    "role": "Server",
+    "row_id": "r10",
+    "seq": 2,
+    "shift_end": "10:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   },
+   {
+    "date": "2026-10-28",
+    "day": "Wednesday",
+    "employee": "Bo",
+    "hours": 6.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 46h over its target",
+    "role": "Server",
+    "row_id": "r17",
+    "seq": 2,
+    "shift_end": "10:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   },
+   {
+    "date": "2026-10-29",
+    "day": "Thursday",
+    "employee": "Bo",
+    "hours": 6.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 46h over its target",
+    "role": "Server",
+    "row_id": "r24",
+    "seq": 2,
+    "shift_end": "10:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   },
+   {
+    "date": "2026-10-30",
+    "day": "Friday",
+    "employee": "Bo",
+    "hours": 6.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 46h over its target",
+    "role": "Server",
+    "row_id": "r31",
+    "seq": 2,
+    "shift_end": "10:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   },
+   {
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "employee": "Bo",
+    "hours": 4.0,
+    "kind": "removed",
+    "reason": "latest Server on a day 44h over its target",
+    "role": "Server",
+    "row_id": "r45",
+    "seq": 2,
+    "shift_end": "8:00pm",
+    "shift_start": "4:00pm",
+    "stage": "budget"
+   }
+  ],
+  "unfixed": [
+   {
+    "date": "2026-10-26",
+    "employee": "Max",
+    "index": 0,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r1",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-27",
+    "employee": "Max",
+    "index": 6,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r8",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-28",
+    "employee": "Max",
+    "index": 12,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r15",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-29",
+    "employee": "Max",
+    "index": 18,
+    "kind": "over_max_hours",
+    "reason": "Nobody on the roster can legally take Max's Thursday General Manager shift.",
+    "row_id": "r22",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-26",
+    "employee": "Cy",
+    "index": 3,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r5",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-27",
+    "employee": "Cy",
+    "index": 9,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r12",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-28",
+    "employee": "Cy",
+    "index": 15,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r19",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-29",
+    "employee": "Cy",
+    "index": 21,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r26",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-30",
+    "employee": "Cy",
+    "index": 27,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r33",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-31",
+    "employee": "Cy",
+    "index": 33,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r40",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Cy",
+    "index": 39,
+    "kind": "over_max_hours",
+    "reason": "Nobody on the roster can legally take Cy's Sunday Line Cook shift.",
+    "row_id": "r47",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Cy",
+    "index": 39,
+    "kind": "long_run",
+    "reason": "too many days in a row — nobody who could legally take the shift was found",
+    "row_id": "r47",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-26",
+    "employee": "Di",
+    "index": 4,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r6",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-10-27",
+    "employee": "Di",
+    "index": 10,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r13",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-10-28",
+    "employee": "Di",
+    "index": 16,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r20",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-10-29",
+    "employee": "Di",
+    "index": 22,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r27",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-10-30",
+    "employee": "Di",
+    "index": 28,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r34",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-10-31",
+    "employee": "Di",
+    "index": 34,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r41",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Di",
+    "index": 40,
+    "kind": "over_max_hours",
+    "reason": "Nobody on the roster can legally take Di's Sunday Line Cook shift.",
+    "row_id": "r48",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Di",
+    "index": 40,
+    "kind": "long_run",
+    "reason": "too many days in a row — nobody who could legally take the shift was found",
+    "row_id": "r48",
+    "shift_start": "4:00pm"
+   },
+   {
+    "date": "2026-10-26",
+    "employee": "Ed",
+    "index": 5,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r7",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-10-27",
+    "employee": "Ed",
+    "index": 11,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r14",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-10-28",
+    "employee": "Ed",
+    "index": 17,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r21",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-10-29",
+    "employee": "Ed",
+    "index": 23,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r28",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-10-30",
+    "employee": "Ed",
+    "index": 29,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r35",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-10-31",
+    "employee": "Ed",
+    "index": 35,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r42",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Ed",
+    "index": 41,
+    "kind": "over_max_hours",
+    "reason": "Nobody on the roster can legally take Ed's Sunday Bartender shift.",
+    "row_id": "r49",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Ed",
+    "index": 41,
+    "kind": "long_run",
+    "reason": "too many days in a row — nobody who could legally take the shift was found",
+    "row_id": "r49",
+    "shift_start": "5:00pm"
+   },
+   {
+    "date": "2026-10-30",
+    "employee": "Kim",
+    "index": 24,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r29",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-10-31",
+    "employee": "Kim",
+    "index": 30,
+    "kind": "over_max_hours",
+    "reason": "over their hours ceiling for the payroll week — nobody who could legally take the shift was found",
+    "row_id": "r36",
+    "shift_start": "10:00am"
+   },
+   {
+    "date": "2026-11-01",
+    "employee": "Kim",
+    "index": 36,
+    "kind": "over_max_hours",
+    "reason": "Nobody on the roster can legally take Kim's Sunday General Manager shift.",
+    "row_id": "r43",
+    "shift_start": "10:00am"
+   }
+  ],
+  "unmatched_names": [],
+  "unmet": [
+   {
+    "date": "",
+    "day": "",
+    "daypart": "",
+    "kind": "budget",
+    "over": 47.5,
+    "source": "budget",
+    "what": "The weekly hours ceiling",
+    "why": "298h scheduled against 250h — 48h over"
+   }
+  ],
+  "unstaffable_dates": [],
+  "unwritten_dates": []
+ },
+ "roster": [
+  "Ana",
+  "Bo",
+  "Cara",
+  "Cy",
+  "Di",
+  "Ed",
+  "Kim",
+  "Max"
+ ],
+ "rotation_plan": {},
+ "rows_needing_review": 28,
+ "rule_violations": [
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "detail": "50h in the payroll week — over 40h",
+   "employee": "Max",
+   "hard": true,
+   "index": 0,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 10.0,
+   "role": "General Manager",
+   "severity": 10.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "detail": "50h in the payroll week — over 40h",
+   "employee": "Max",
+   "hard": true,
+   "index": 6,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 10.0,
+   "role": "General Manager",
+   "severity": 10.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "detail": "50h in the payroll week — over 40h",
+   "employee": "Max",
+   "hard": true,
+   "index": 12,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 10.0,
+   "role": "General Manager",
+   "severity": 10.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "detail": "50h in the payroll week — over 40h",
+   "employee": "Max",
+   "hard": true,
+   "index": 18,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 10.0,
+   "role": "General Manager",
+   "severity": 10.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 3,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 9,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 15,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 21,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 27,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 33,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Cy",
+   "hard": true,
+   "index": 39,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "10:00am"
+  },
+  {
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "7 days in a row — the rule is at most 6",
+   "employee": "Cy",
+   "hard": true,
+   "index": 39,
+   "kind": "long_run",
+   "label": "too many days in a row",
+   "no_show": false,
+   "role": "Line Cook",
+   "severity": 1,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 4,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 10,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 16,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 22,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 28,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 34,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "42h in the payroll week — over 40h",
+   "employee": "Di",
+   "hard": true,
+   "index": 40,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.0,
+   "role": "Line Cook",
+   "severity": 2.0,
+   "shift_start": "4:00pm"
+  },
+  {
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "7 days in a row — the rule is at most 6",
+   "employee": "Di",
+   "hard": true,
+   "index": 40,
+   "kind": "long_run",
+   "label": "too many days in a row",
+   "no_show": false,
+   "role": "Line Cook",
+   "severity": 1,
+   "shift_start": "4:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-26",
+   "day": "Monday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 5,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 11,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 17,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 23,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 29,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 35,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "46h in the payroll week — over 40h",
+   "employee": "Ed",
+   "hard": true,
+   "index": 41,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 6.0,
+   "role": "Bartender",
+   "severity": 6.0,
+   "shift_start": "5:00pm"
+  },
+  {
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "7 days in a row — the rule is at most 6",
+   "employee": "Ed",
+   "hard": true,
+   "index": 41,
+   "kind": "long_run",
+   "label": "too many days in a row",
+   "no_show": false,
+   "role": "Bartender",
+   "severity": 1,
+   "shift_start": "5:00pm"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-30",
+   "day": "Friday",
+   "detail": "42.5h in the payroll week — over 40h",
+   "employee": "Kim",
+   "hard": true,
+   "index": 24,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.5,
+   "role": "General Manager",
+   "severity": 2.5,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "detail": "42.5h in the payroll week — over 40h",
+   "employee": "Kim",
+   "hard": true,
+   "index": 30,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.5,
+   "role": "General Manager",
+   "severity": 2.5,
+   "shift_start": "10:00am"
+  },
+  {
+   "bucket": "2026-10-26",
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "detail": "42.5h in the payroll week — over 40h",
+   "employee": "Kim",
+   "hard": true,
+   "index": 36,
+   "kind": "over_max_hours",
+   "label": "over their hours ceiling for the payroll week",
+   "no_show": false,
+   "over_by": 2.5,
+   "role": "General Manager",
+   "severity": 2.5,
+   "shift_start": "10:00am"
+  }
+ ],
+ "schedule_csv": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n2026-10-26,Monday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-26,Monday,Ana,Server,11:00am,4:00pm,5,\n2026-10-26,Monday,Cara,Server,4:00pm,10:00pm,6,\n2026-10-26,Monday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-26,Monday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-26,Monday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-27,Tuesday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-27,Tuesday,Bo,Server,11:00am,4:00pm,5,Cavnar AI: solver put Bo here (was Ana)\n2026-10-27,Tuesday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-27,Tuesday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-27,Tuesday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-27,Tuesday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-28,Wednesday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-28,Wednesday,Bo,Server,11:00am,4:00pm,5,Cavnar AI: solver put Bo here (was Ana)\n2026-10-28,Wednesday,Cara,Server,4:00pm,10:00pm,6,\n2026-10-28,Wednesday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-28,Wednesday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-28,Wednesday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-29,Thursday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-29,Thursday,Cara,Server,11:00am,4:00pm,5,Cavnar AI: solver put Cara here (was Ana)\n2026-10-29,Thursday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-29,Thursday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-29,Thursday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-29,Thursday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-30,Friday,Kim,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 42.5h in the payroll week — over 40h\n2026-10-30,Friday,Cara,Server,11:00am,4:00pm,5,Cavnar AI: solver put Cara here (was Ana)\n2026-10-30,Friday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-30,Friday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-30,Friday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-30,Friday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-31,Saturday,Kim,General Manager,10:00am,2:30am,17.5,(includes the extra hour when the clocks go back) — NEEDS REVIEW: 42.5h in the payroll week — over 40h\n2026-10-31,Saturday,Cara,Server,11:00am,4:00pm,5,Cavnar AI: solver put Cara here (was Ana)\n2026-10-31,Saturday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-31,Saturday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-31,Saturday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-31,Saturday,Ed,Bartender,5:00pm,2:00am,10.0,(includes the extra hour when the clocks go back) — NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-11-01,Sunday,Kim,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 42.5h in the payroll week — over 40h\n2026-11-01,Sunday,Ana,Server,11:00am,4:00pm,5,\n2026-11-01,Sunday,Bo,Server,6:00pm,10:00pm,4,Cavnar AI: solver put Bo here (was Cara)\n2026-11-01,Sunday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: too many days in a row\n2026-11-01,Sunday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: too many days in a row\n2026-11-01,Sunday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: too many days in a row",
+ "section_cap_conflicts": [],
+ "slices": [
+  {
+   "cut": false,
+   "dates": [
+    "2026-10-26",
+    "2026-10-27",
+    "2026-10-28",
+    "2026-10-29",
+    "2026-10-30",
+    "2026-10-31",
+    "2026-11-01"
+   ],
+   "missing": [],
+   "model_call": {
+    "answer_chars": 4849,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "call_kind": "week",
+    "contract": "schema",
+    "effort": "medium",
+    "id": 1,
+    "input_tokens": 0,
+    "model": "claude-opus-5-5",
+    "output_tokens": 0,
+    "output_tokens_per_row": null,
+    "rows": 49,
+    "seconds": 0.0,
+    "stop_reason": "end_turn",
+    "tier": "T4"
+   },
+   "off_list_dropped": 0,
+   "part": "STAFF",
+   "partial_dates": [],
+   "pinned_dropped": 0,
+   "retried": false,
+   "rows": 49,
+   "rows_by_date": {
+    "2026-10-26": 7,
+    "2026-10-27": 7,
+    "2026-10-28": 7,
+    "2026-10-29": 7,
+    "2026-10-30": 7,
+    "2026-10-31": 7,
+    "2026-11-01": 7
+   },
+   "seconds": 0.0,
+   "stop_reason": "end_turn"
+  }
+ ],
+ "soft_requirements": [],
+ "splh_objective": {
+  "available": false,
+  "reason": "No daily sales and hours on file yet, so there is no sales-per-labor-hour target."
+ },
+ "splh_report": {},
+ "staff_constraints": {
+  "Cy": "No doubles on school nights"
+ },
+ "stage_failures": [],
+ "stage_seconds": {
+  "inputs": 0.14,
+  "model": 0.0,
+  "parse": 0.001,
+  "repair": 1.179,
+  "repair.budget": 0.097,
+  "repair.close_out": 0.0,
+  "repair.floors": 0.0,
+  "repair.manager": 0.009,
+  "repair.min_hours": 0.006,
+  "repair.optimizer": 0.191,
+  "repair.overtime": 0.049,
+  "repair.pad_overruns": 0.0,
+  "repair.person": 0.039,
+  "repair.replace": 0.021,
+  "repair.role_times": 0.0,
+  "repair.section_cap": 0.0,
+  "repair.solver": 0.761,
+  "repair.stagger": 0.0,
+  "repair.stations": 0.0,
+  "repair.top_up": 0.0,
+  "rules": 0.042,
+  "save": 0.001,
+  "score": 0.044,
+  "signals": 0.003,
+  "sweep": 0.002,
+  "total": 1.416
+ },
+ "staggered": [],
+ "standby_days": [],
+ "starting_headcount": {
+  "available": false,
+  "own_history": true,
+  "reason": "No restaurant profile is confirmed yet, so there is no group of similar restaurants to borrow a starting headcount from. Confirm it under Account → Restaurant profile and the first draft can start from theirs."
+ },
+ "starting_point": {
+  "no_history": false
+ },
+ "status": "done",
+ "strength": {
+  "checked": false,
+  "superseded_by": "quality"
+ },
+ "summary": [
+  "42 shifts, 298h across 8 people. Busiest day Saturday.",
+  "First published week on file — no prior week to compare against."
+ ],
+ "trimmed": [
+  {
+   "date": "2026-10-31",
+   "day": "Saturday",
+   "employee": "Bo",
+   "hours": 6.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 54h over its target",
+   "role": "Server",
+   "row_id": "r38",
+   "seq": 2,
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  },
+  {
+   "date": "2026-10-26",
+   "day": "Monday",
+   "employee": "Bo",
+   "hours": 6.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 46h over its target",
+   "role": "Server",
+   "row_id": "r3",
+   "seq": 2,
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  },
+  {
+   "date": "2026-10-27",
+   "day": "Tuesday",
+   "employee": "Bo",
+   "hours": 6.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 46h over its target",
+   "role": "Server",
+   "row_id": "r10",
+   "seq": 2,
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  },
+  {
+   "date": "2026-10-28",
+   "day": "Wednesday",
+   "employee": "Bo",
+   "hours": 6.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 46h over its target",
+   "role": "Server",
+   "row_id": "r17",
+   "seq": 2,
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  },
+  {
+   "date": "2026-10-29",
+   "day": "Thursday",
+   "employee": "Bo",
+   "hours": 6.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 46h over its target",
+   "role": "Server",
+   "row_id": "r24",
+   "seq": 2,
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  },
+  {
+   "date": "2026-10-30",
+   "day": "Friday",
+   "employee": "Bo",
+   "hours": 6.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 46h over its target",
+   "role": "Server",
+   "row_id": "r31",
+   "seq": 2,
+   "shift_end": "10:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  },
+  {
+   "date": "2026-11-01",
+   "day": "Sunday",
+   "employee": "Bo",
+   "hours": 4.0,
+   "kind": "removed",
+   "reason": "latest Server on a day 44h over its target",
+   "role": "Server",
+   "row_id": "r45",
+   "seq": 2,
+   "shift_end": "8:00pm",
+   "shift_start": "4:00pm",
+   "stage": "budget"
+  }
+ ],
+ "unstaffable_dates": [],
+ "unwritten_dates": [],
+ "version": 1,
+ "week_dates": [
+  "2026-10-26",
+  "2026-10-27",
+  "2026-10-28",
+  "2026-10-29",
+  "2026-10-30",
+  "2026-10-31",
+  "2026-11-01"
+ ],
+ "week_days": [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday"
+ ],
+ "week_projection_accuracy": {
+  "available": false,
+  "beats_naive": null,
+  "bias_pct": null,
+  "kind": "revenue_week",
+  "mean_error_pct": null,
+  "n_periods": 0,
+  "n_skill": 0,
+  "n_weeks": 0,
+  "reading": null,
+  "reason": "not enough scored forecasts yet to say how accurate these are — 0 closed weeks scored, needs 4",
+  "scored": 0,
+  "skill": null,
+  "skill_pct": null,
+  "skill_vs_last": null,
+  "skill_vs_mean": null,
+  "withheld": false
+ },
+ "what_if": {
+  "baseline_score": 44,
+  "best_score": 44,
+  "checked_with": "every rule",
+  "evaluated": 21,
+  "improvement": 0,
+  "legal_swaps": 31,
+  "ran": true,
+  "swaps": [],
+  "verdict": "Tried the 21 most promising swaps out of 31 possible and none scored better. A wider search might still find something."
+ }
+}

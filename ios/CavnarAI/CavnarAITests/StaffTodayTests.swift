@@ -222,6 +222,78 @@ final class StaffTodayTests: XCTestCase {
         XCTAssertEqual(span.end, at(1, day: 3))
     }
 
+    // MARK: The restaurant's clock (schedule audit 10/10/26 BUGSLIFE-21)
+
+    private var chicago: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/Chicago")!
+        return c
+    }
+
+    private func chicagoAt(_ y: Int, _ m: Int, _ d: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+        chicago.date(from: DateComponents(year: y, month: m, day: d, hour: hour, minute: minute))!
+    }
+
+    /// Minutes added as seconds to midnight were an hour off on a 23- or
+    /// 25-hour day: a 5pm shift on 11/1/26 (clocks back) read as 4pm, and on
+    /// 3/8/26 (clocks forward) as 6pm.
+    func testShiftTimesKeepTheirWallClockOnTheDaysTheClocksChange() throws {
+        let back = try XCTUnwrap(StaffTime.span(dayISO: "2026-11-01", start: "5:00pm", end: "11:00pm", calendar: chicago))
+        XCTAssertEqual(back.start, chicagoAt(2026, 11, 1, 17))
+        XCTAssertEqual(chicago.component(.hour, from: back.start), 17)
+        XCTAssertEqual(back.end, chicagoAt(2026, 11, 1, 23))
+        let forward = try XCTUnwrap(StaffTime.span(dayISO: "2026-03-08", start: "5:00pm", end: nil, calendar: chicago))
+        XCTAssertEqual(chicago.component(.hour, from: forward.start), 17)
+        // Halloween's close runs through the change: 5pm to 2am is ten real hours.
+        let close = try XCTUnwrap(StaffTime.span(dayISO: "2026-10-31", start: "5:00pm", end: "2:00am", calendar: chicago))
+        XCTAssertEqual(close.end, chicagoAt(2026, 11, 1, 2))
+        XCTAssertEqual(close.end?.timeIntervalSince(close.start), 10 * 3600)
+    }
+
+    /// The hero on the fall-back day: at 4:05pm the 5pm leg has not started.
+    func testOnTheFallBackDayTheHeroOpensAtTheShiftsOwnTime() throws {
+        let week = try decode([StaffWeekDay].self, """
+            [{"date": "2026-11-01", "weekday": "Sunday", "is_today": true, "off": false, "posted": true,
+              "shift": {"date": "2026-11-01", "start": "5:00pm", "end": "11:00pm", "hours": 6, "role": "Server",
+                        "actions": ["drop", "swap"]}}]
+            """)
+        let early = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: chicagoAt(2026, 11, 1, 16, 5), calendar: chicago))
+        XCTAssertEqual(early.relative, "Starts in 55m", "it read \"On now\" an hour early")
+        XCTAssertEqual(StaffTodayPlan.heroPrimary(early, now: chicagoAt(2026, 11, 1, 16, 5), hasTasks: false,
+                                                  calendar: chicago), .late)
+        let on = try XCTUnwrap(StaffTodayPlan.hero(week: week, now: chicagoAt(2026, 11, 1, 17, 5), calendar: chicago))
+        XCTAssertEqual(on.relative, "On now \u{00B7} until 11pm")
+        XCTAssertTrue(StaffTodayPlan.offersRunningLate(on, now: chicagoAt(2026, 11, 1, 17, 5), calendar: chicago))
+        XCTAssertFalse(StaffTodayPlan.offersRunningLate(on, now: chicagoAt(2026, 11, 1, 17, 20), calendar: chicago))
+    }
+
+    /// A row's date is its business date: a 12:30am–4am porter dated Friday
+    /// works after Friday's close; a 4:30am baker is Friday morning's — the
+    /// server's rule (schedule_rules._night_offset).
+    func testALegInTheSmallHoursIsAfterItsNightsMidnight() throws {
+        let porter = try XCTUnwrap(StaffTime.span(dayISO: "2026-10-02", start: "12:30am", end: "4:00am", calendar: utc))
+        XCTAssertEqual(porter.start, at(0, 30, day: 3))
+        XCTAssertEqual(porter.end, at(4, day: 3))
+        let baker = try XCTUnwrap(StaffTime.span(dayISO: "2026-10-02", start: "4:30am", end: "12:30pm", calendar: utc))
+        XCTAssertEqual(baker.start, at(4, 30, day: 2))
+        XCTAssertEqual(StaffTime.nightOffsetDays(startMinutes: 2 * 60, endMinutes: nil), 1)
+        XCTAssertEqual(StaffTime.nightOffsetDays(startMinutes: 4 * 60 + 30, endMinutes: nil), 0)
+        XCTAssertEqual(StaffTime.nightOffsetDays(startMinutes: 23 * 60, endMinutes: 2 * 60), 0)
+    }
+
+    /// The week is read on the restaurant's zone the server sends; the
+    /// phone's own only without one.
+    func testTheShiftsPayloadNamesTheRestaurantsClock() throws {
+        let denver = try decode(StaffShiftsResponse.self, #"{"ok": true, "week": [], "timezone": "America/Denver"}"#)
+        XCTAssertEqual(denver.calendar.timeZone.identifier, "America/Denver")
+        let older = try decode(StaffShiftsResponse.self, #"{"ok": true, "week": []}"#)
+        XCTAssertEqual(older.calendar.timeZone, TimeZone.current)
+        let unknown = try decode(StaffShiftsResponse.self, #"{"ok": true, "week": [], "timezone": "Mars/Base"}"#)
+        XCTAssertEqual(unknown.calendar.timeZone, TimeZone.current)
+        let cached = try JSONDecoder().decode(StaffShiftsResponse.self, from: JSONEncoder().encode(denver))
+        XCTAssertEqual(cached.timezone, "America/Denver")
+    }
+
     // MARK: Waiting on you, inbox
 
     func testWaitingOnYouCountsAsksAndOffersAndSaysTheFirst() throws {

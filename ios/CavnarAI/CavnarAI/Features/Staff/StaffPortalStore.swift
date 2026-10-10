@@ -282,8 +282,8 @@ final class StaffPortalStore {
     /// Who's on with me, for the hero's day (the next working day, today
     /// when today has a shift left).
     func reloadCoworkers(now: Date = Date()) async {
-        guard let week = shifts.value?.week,
-              let hero = StaffTodayPlan.hero(week: week, now: now) else {
+        guard let response = shifts.value, let week = response.week,
+              let hero = StaffTodayPlan.hero(week: week, now: now, calendar: response.calendar) else {
             coworkers = StaffSection()
             return
         }

@@ -1,0 +1,14 @@
+{
+ "ok": true,
+ "progress": {
+  "dates_drafted": [
+   "2026-10-26",
+   "2026-10-27",
+   "2026-10-28"
+  ],
+  "days_drafted": 3,
+  "days_total": 7
+ },
+ "seconds_left": 2156,
+ "status": "pending"
+}
