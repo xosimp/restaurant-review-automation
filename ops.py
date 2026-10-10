@@ -1006,6 +1006,12 @@ def _async_conn():
 # for a job that set none. A job still pending past it is dead, whatever
 # process owned it.
 JOB_MAX_MINUTES = 45
+# A job the queue will resume after a restart (sweep_stale_jobs) has this
+# long from the boot before a poll calls it dead.
+RESUME_DEADLINE_SECONDS = 20 * 60
+# An owner's generation waiting past this to start (the queue's interactive
+# p95 over the last hour) warns the operator (check_platform_sla).
+QUEUE_WAIT_ALERT_SECONDS = int(os.getenv("QUEUE_WAIT_ALERT_SECONDS", "120"))
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
@@ -1024,14 +1030,34 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
     jobs are dead whatever their age. Only jobs older than ten minutes used
     to be swept, and a press in the next ten minutes joined the dead one
     (SCHED-25 / DATA-9).
+
+    A job the durable queue will run again (job_queue — scheduler audit
+    10/10/26 SCALE-2, RM-7: a queued row, or a running one with tries left)
+    is NOT dead: the next consumer resumes it from its checkpoints, reading
+    the model answers its earlier try paid for. It stays pending, its
+    deadline pushed RESUME_DEADLINE_SECONDS out so a poll does not call it
+    dead while it restarts.
     """
     try:
+        resumable = []
+        try:
+            import job_queue as _jq_sweep
+            if _jq_sweep.enabled():
+                resumable = [str(x) for x in _jq_sweep.resumable_external_ids()]
+        except Exception as e:
+            log.warning(f"sweep_stale_jobs: the queue could not be read ({e}); every pending job is failed")
+            resumable = []
         conn = _async_conn()
+        keep = (" AND job_id NOT IN (" + ",".join("?" * len(resumable)) + ")") if resumable else ""
         cur = conn.execute(
             "UPDATE async_jobs SET status='error', result_json=? "
-            "WHERE status='pending' AND created_at <= datetime('now', ?)",
-            ('{"ok": false, "error": "Generation was interrupted — please try again."}',
-             f"-{int(older_than_minutes)} minutes"))
+            "WHERE status='pending' AND created_at <= datetime('now', ?)" + keep,
+            ['{"ok": false, "error": "Generation was interrupted — please try again."}',
+             f"-{int(older_than_minutes)} minutes"] + resumable)
+        if resumable:
+            conn.execute("UPDATE async_jobs SET deadline_at=datetime('now', ?) WHERE status='pending' "
+                         "AND job_id IN (" + ",".join("?" * len(resumable)) + ")",
+                         [f"+{int(RESUME_DEADLINE_SECONDS)} seconds"] + resumable)
         conn.commit()
         n = cur.rowcount or 0
         conn.close()
@@ -1986,7 +2012,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "schedule_generation": None, "schedule_inputs": None, "alerted": False}
+           "schedule_generation": None, "schedule_inputs": None, "queue": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2079,6 +2105,23 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         + ", ".join(f"{k} ({int(round(gin['rates'][k] * 100))}% of the last {gin['n']})"
                                     for k in gin["over"][:4])
                         + " — each failure is in the job failures (schedule_inputs).")
+    # The durable job queue's wait (scheduler audit 10/10/26 SCALE-21): an
+    # owner's press waiting longer than QUEUE_WAIT_ALERT_SECONDS to start
+    # (p95 over the last hour) is the trigger to move the queue to its own
+    # worker and add slots — no request-latency figure sees it.
+    try:
+        import job_queue as _jq_sla
+        if _jq_sla.enabled():
+            out["queue"] = _jq_sla.stats()
+    except Exception as e:
+        log.warning(f"the job queue's stats unavailable to the platform check: {e}")
+    q = out["queue"] or {}
+    if (q.get("wait_p95_seconds") or 0) > QUEUE_WAIT_ALERT_SECONDS and (q.get("wait_samples") or 0) >= 5:
+        warn_kinds.add("queue_wait")
+        problems.append(f"Owners' schedule generations wait {q['wait_p95_seconds'] / 60:.1f} minutes to start "
+                        f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — move the queue to "
+                        "worker.py (QUEUE_WORKER=1) or raise QUEUE_GENERATION_CONCURRENCY "
+                        "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -2781,6 +2824,14 @@ _RETENTION_DAYS = {
     # record_check_snapshot, schedule audit 10/10/26 ARCH-35): the other
     # half of a replay, kept as long as the calls it replays with.
     "schedule_check_snapshots": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
+    # The durable job queue (job_queue — scheduler audit 10/10/26 RM-7):
+    # a finished row is read by the Jobs page and the queue-wait p95 (an hour);
+    # two weeks reads what a week of passes did. The generation watchers are
+    # taken when their draft lands; a row left is a job that never finished.
+    "jobs": int(os.getenv("RETAIN_JOBS_DAYS", "14")),
+    # The Postgres shadow's outbox (pg_shadow, RM-13): a sent row is done.
+    "pg_shadow_outbox": int(os.getenv("RETAIN_PG_SHADOW_OUTBOX_DAYS", "30")),
+    "generation_watchers": int(os.getenv("RETAIN_GENERATION_WATCHERS_DAYS", "7")),
     # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
     # batch answers within 24 hours and every answer is in ai_usage and
     # ai_calls by then — a month is enough to read what a batch did.
@@ -2869,7 +2920,8 @@ _RETENTION_COLUMN = {
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
     "schedule_model_calls": "created_at", "schedule_generation_metrics": "created_at",
-    "schedule_check_snapshots": "created_at",
+    "schedule_check_snapshots": "created_at", "jobs": "created_at", "generation_watchers": "created_at",
+    "pg_shadow_outbox": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
@@ -3012,6 +3064,8 @@ _RETENTION_FLOOR_DAYS = {
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
     "schedule_model_calls": 90, "schedule_check_snapshots": 90,
+    # The queue's rows: job_queue.stats reads an hour; a week of passes.
+    "jobs": 7, "generation_watchers": 2, "pg_shadow_outbox": 7,
     # schedule_metrics.summary reads 90 days of generations.
     "schedule_generation_metrics": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
@@ -3567,7 +3621,19 @@ def _gc_quality_blobs(conn, deadline) -> int:
     """Stored evaluations no version points at any more (thinned, pruned, or
     their week deleted), in chunks. An hour's grace: a blob is written in
     the same transaction as the version that names it, so nothing newer
-    can be waiting on it."""
+    can be waiting on it. One kept in object storage (blob_store, RM-14) is
+    deleted there first."""
+    try:
+        import blob_store
+        if blob_store.active() != "db":
+            for r in conn.execute(
+                    "SELECT body FROM quality_blobs WHERE created_at < datetime('now', '-1 hour') AND "
+                    "substr(body, 1, ?) = ? AND NOT EXISTS (SELECT 1 FROM schedule_versions v WHERE "
+                    "v.quality_ref = quality_blobs.hash) LIMIT ?",
+                    (len(blob_store.POINTER), blob_store.POINTER, int(RETENTION_CHUNK_ROWS))).fetchall():
+                blob_store.delete(r["body"])
+    except Exception as e:
+        log.warning(f"stored quality objects not deleted: {e}")
     return _chunked_delete(
         conn, "quality_blobs",
         "created_at < datetime('now', '-1 hour') AND NOT EXISTS "
@@ -3601,9 +3667,13 @@ def _prune_schedules(conn, deadline, refused=None, held=None):
             refused.append(st)
     versions_days = retention_days("schedule_versions")
     if versions_days:
+        # Never a snapshot a kept version is stored against (SCALE-34:
+        # schedule_versions keeps later versions as differences from it).
         where = ("created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
                  "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
-                 "               WHERE v2.history_id = schedule_versions.history_id)")
+                 "               WHERE v2.history_id = schedule_versions.history_id) "
+                 "AND NOT EXISTS (SELECT 1 FROM schedule_versions d WHERE d.history_id = schedule_versions.history_id "
+                 "                AND d.base_version = schedule_versions.version)")
         args = [f"-{versions_days} days"]
         if held and versions_days < RECORDS_HOLD_DAYS:
             where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "

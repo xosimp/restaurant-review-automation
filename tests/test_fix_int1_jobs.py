@@ -147,15 +147,18 @@ def test_the_minute_duties_reap_both_outboxes(monkeypatch):
     monkeypatch.setattr(webhooks, "reap_webhook_outbox", lambda *a, **k: reaped.append("webhooks") or {})
     import schedule_publish
     monkeypatch.setattr(schedule_publish, "run_schedule_notices", lambda *a, **k: {"ok": 0, "failed": 0})
+    import job_queue
+    monkeypatch.setattr(job_queue, "tick", lambda *a, **k: reaped.append("queue") or {})
     out = scheduler._minute_duties()
-    assert reaped == ["push", "webhooks"] and out["attempted"] == 9 and out["failed"] == 0
+    # Ten duties since the durable job queue's tick (scheduler audit 10/10/26 RM-7).
+    assert reaped == ["push", "webhooks", "queue"] and out["attempted"] == 10 and out["failed"] == 0
     # One reaper failing is captured and counted; the other still runs.
     monkeypatch.setattr(push, "reap_push_outbox", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("pool")))
     captured = []
     monkeypatch.setattr(scheduler._ops, "capture", lambda e, job=None, **k: captured.append(job))
     del reaped[:]
     out = scheduler._minute_duties()
-    assert reaped == ["webhooks"] and out["failed"] == 1 and captured == ["push_outbox_reaper"]
+    assert reaped == ["webhooks", "queue"] and out["failed"] == 1 and captured == ["push_outbox_reaper"]
 
 
 # ── retention: the other workstreams' ledgers, and the AI rollup first ─────

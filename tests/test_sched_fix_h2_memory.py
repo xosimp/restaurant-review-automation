@@ -1158,7 +1158,10 @@ def test_the_nightly_memory_job_is_registered_bounded_resumable_and_counts():
     import strategy_jobs
     spec = jobs_registry.JOBS["schedule_memory"]
     assert spec["target"] == ("strategy_jobs", "run_schedule_memory") and spec["sends"] is False
-    assert 'run_job("schedule_memory", run_schedule_memory)' in inspect.getsource(scheduler.scheduler_loop)
+    # Through learner_pass since scheduler audit 10/10/26 SCALE-25: one queue
+    # row per restaurant when the job queue is on, the inline sweep when off.
+    assert 'run_job("schedule_memory", learner_pass("schedule_memory", run_schedule_memory))' in \
+        inspect.getsource(scheduler.scheduler_loop)
     src = inspect.getsource(strategy_jobs.run_schedule_memory)
     assert "resumable_sweep(MEMORY_CURSOR_KEY" in src
     _rid()

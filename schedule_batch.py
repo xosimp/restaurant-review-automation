@@ -89,13 +89,18 @@ def answer_for(request):
     answer, used once; or it raises CallCaptured while capturing."""
     hook = _HOOK.get()
     if not hook:
-        return None
+        # A generation the queue runs again after a deploy reads the answers
+        # its earlier try already paid for (schedule_resume — scheduler
+        # audit 10/10/26 SCALE-2, SCALE-22), before anything is sent.
+        import schedule_resume
+        return schedule_resume.stored_answer(request)
     if hook.get("mode") == "capture":
         raise CallCaptured(dict(request or {}))
     if hook.get("mode") == "answer":
         with hook["lock"]:
             if hook.get("used") or call_key(request) != hook.get("key"):
-                return None
+                import schedule_resume
+                return schedule_resume.stored_answer(request)
             hook["used"] = True
         msg = hook.get("message")
         try:
@@ -210,6 +215,30 @@ def on_auto_draft(item, message=None, error=None):
 
     def _bump(k):
         counts[k] = counts.get(k, 0) + 1
+    import job_queue
+    if job_queue.enabled():
+        # The draft is a job_queue row like any auto-draft (scheduler audit
+        # 10/10/26 RM-7): it takes a generation slot by the queue's rules,
+        # with the batched answer carried in the row (its text, stop reason
+        # and usage — what the call site reads), not on this callback thread.
+        answer = None
+        if error is None and message is not None:
+            try:
+                from ai_utils import extract_text
+                import labor
+                answer = {"key": ctx.get("key"), "text": extract_text(message),
+                          "stop_reason": getattr(message, "stop_reason", None),
+                          "model": getattr(message, "model", None), "usage": labor._usage_of(message),
+                          "call_id": getattr(message, "_cavnar_call_id", None)}
+            except Exception as e:
+                ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch answer unread)")
+                answer = None
+        try:
+            sj.enqueue_auto_draft(r, period=ctx.get("period"), target=ctx.get("target"), attempt=ctx.get("attempt"),
+                                  batch=False, answer=answer)
+        except Exception as e:
+            ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch enqueue)")
+        return
     try:
         if error is not None or message is None:
             sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),

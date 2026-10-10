@@ -137,6 +137,49 @@ GIL contention is not a problem today; the gain is that a job is no longer
 killed when gunicorn recycles its worker. Worth doing only alongside the
 catch-up gating fix, which addresses the problem that actually loses work.
 
+## The job queue's consumer in the same process (10/10/26)
+
+Since the scheduler audit of 10/10/26 (RM-7, SCALE-1, SCALE-10, SCALE-13,
+SCALE-25) schedule generation — owners' presses and the auto-draft — and the
+nightly learners' per-restaurant passes are rows in the durable `jobs`
+table (`job_queue.py`), not threads. Who runs them:
+
+- **Default (`QUEUE_WORKER` unset):** the web process consumes its own
+  queue on bounded pools — the same one process production has always run,
+  with every unit of work a row that survives a restart. The generation
+  pool's bound is `QUEUE_GENERATION_CONCURRENCY` (default
+  `SCHEDULE_GEN_WORKERS`, 2), now a count of claimed rows across every
+  process.
+- **`QUEUE_WORKER=1` on the service, with the second-process start command
+  above:** `worker.py` consumes the queue (`job_queue.run_worker`) beside
+  its scheduler loop, so the generation CPU (the repair loop, the solver,
+  the optimizer — 15 to 150 s a generation) and the model waits leave the
+  web process and its four request threads; the web process only enqueues.
+  If the worker has not beaten its heartbeat (`job_workers`) for
+  `QUEUE_WORKER_STALE_SECONDS` (90 s), the web process consumes after all —
+  a press is never stranded behind a worker that is not running.
+- **`JOB_QUEUE=0`:** the old paths (the in-process generation pool, the
+  auto-draft and the learners inline in the scheduler thread) — the
+  rollback.
+
+On a deploy's SIGTERM the process hands its running rows back to the queue
+(`job_queue.shutdown`, before `ops.shutdown_scheduler` in `worker.py`, and at
+interpreter exit in the web process); the next process resumes each from its
+checkpoint — a generation that had saved its draft finishes with it, one
+that had not reads back every model answer it already paid for
+(`schedule_resume`) — and the boot sweep no longer fails a job the queue
+will resume. A process killed without SIGTERM loses only its lease
+(`QUEUE_LEASE_SECONDS`, 120 s): the next consumer then claims the row.
+
+Turning the worker on: set the start command above (in `railway.json` and
+the `Procfile`), then `QUEUE_WORKER=1`. Rollback: unset `QUEUE_WORKER` — the
+web process consumes again at once; the worker's rows are handed back at its
+SIGTERM or after their lease.
+
+A separate worker SERVICE is still impossible on the volume; it becomes
+possible after the Postgres cutover (`docs/ops/POSTGRES_CUTOVER.md`), when the
+queue, the lease and the heartbeat live in a networked database.
+
 ## Worker count — leave it at 1
 
 The two limits this section used to name have moved into the database: the
@@ -152,8 +195,8 @@ the order to move it are in `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`):
 
   * `security._admin_hits` — the admin request ceiling (240 requests / 60
     writes a minute per session) would be N times that
-  * `ai_utils._breakers` — each worker trips and resets its own provider
-    breakers ("Reset breaker" reaches only the worker that served it)
+  * (moved 10/10/26) `ai_utils._breakers` — every opening, closing and
+    reset is the shared `ai_breakers` row now, read back within seconds
   * the admin console's fleet memo (`admin_ops._fleet_state`) — a write on one
     worker drops only that worker's memo, so the other serves a read up to
     45 seconds stale

@@ -551,6 +551,16 @@ def ai_budget_status(restaurant_id=None, db_path=None):
         # cannot exhaust the pool a paying client depends on.
         tier = _budget_tier(restaurant_id, db_path)
         daily, monthly = _tier_budgets(tier)
+        # One restaurant's own ceilings, when set (model_gateway — scheduler
+        # audit 10/10/26 SCALE-32): a large roster generating several weeks a
+        # day outgrows its tier's ceiling without raising everyone's.
+        try:
+            import model_gateway as _mg_b
+            t_day, t_month = _mg_b.tenant_budget(restaurant_id, db_path)
+            daily = float(t_day) if t_day is not None else daily
+            monthly = float(t_month) if t_month is not None else monthly
+        except Exception:
+            pass
         out["day"] = {"spend": _cached_spend((restaurant_id, day), day, restaurant_id, db_path),
                       "budget": daily, "resets_at": _resets_at("day")}
         out["month"] = {"spend": _cached_spend((restaurant_id, month), month, restaurant_id, db_path),
@@ -1007,14 +1017,68 @@ def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None, actio
 # what is actually happening. One probe is allowed through when the window
 # expires; a success closes the breaker.
 #
-# Process-local on purpose. It must be readable on the hot path without a
-# database round trip, and the state it protects is this process's threads.
-# A budget stop is NOT a provider failure and never trips it.
+# Readable on the hot path without a database round trip: the state lives
+# in this process, and since scheduler audit 10/10/26 (SCALE-24, SCALE-32)
+# every transition — an opening, a closing, the console's reset — is also
+# published to the `ai_breakers` row (model_gateway.write_breaker) and read
+# back by every process at most every BREAKER_SYNC_SECONDS (_breaker_sync):
+# a worker that finds the provider down stops the web process calling it
+# too, and "Reset breaker" reaches every process. Consecutive failures are
+# still counted per process. A budget stop is NOT a provider failure and
+# never trips it.
 CB_FAILURE_THRESHOLD = int(os.getenv("AI_BREAKER_THRESHOLD", "5"))
 CB_OPEN_SECONDS = int(os.getenv("AI_BREAKER_OPEN_SECONDS", "60"))
 
 _breakers = {}
 _breaker_lock = threading.Lock()
+BREAKER_SYNC_SECONDS = float(os.getenv("AI_BREAKER_SYNC_SECONDS", "5"))
+_breaker_synced = {}            # provider -> (time read, the row's updated_at seen)
+
+
+def _breaker_sync(provider):
+    """Adopt another process's breaker transition (the shared `ai_breakers`
+    row) when it is newer than what this process last saw: an open breaker
+    opens here too, a reset or a close closes it. At most one read every
+    BREAKER_SYNC_SECONDS per provider; never raises."""
+    now = time.time()
+    seen = _breaker_synced.get(provider)
+    if seen and now - seen[0] < BREAKER_SYNC_SECONDS:
+        return
+    try:
+        import model_gateway as _mg_b
+        row = _mg_b.breaker_row(provider)
+    except Exception:
+        row = None
+    last = seen[1] if seen else None
+    _breaker_synced[provider] = (now, row["updated_at"] if row else last)
+    if not row or (last is not None and row["updated_at"] <= last):
+        return
+    with _breaker_lock:
+        b = _breakers.setdefault(provider, {"failures": 0, "open_until": 0.0})
+        if float(row["open_until"] or 0) > now:
+            if float(b.get("open_until") or 0) < float(row["open_until"]):
+                b["open_until"] = float(row["open_until"])
+                b["opened_at"] = b.get("opened_at") or row["opened_at"]
+                b["reason"] = row["reason"]
+                b["failures"] = max(int(b.get("failures") or 0), int(row["failures"] or 0))
+        elif b.get("open_until") or b.get("opened_at"):
+            # Closed or reset elsewhere since.
+            b.update(open_until=0.0, opened_at=None, failures=0, reason=None, probe_until=0.0)
+
+
+def _breaker_publish(provider):
+    """Write this process's breaker to the shared row (a transition)."""
+    with _breaker_lock:
+        b = dict(_breakers.get(provider) or {})
+    try:
+        import model_gateway as _mg_b
+        _mg_b.write_breaker(provider, b.get("open_until") or 0.0, opened_at=b.get("opened_at"),
+                            reason=b.get("reason"), failures=b.get("failures") or 0)
+        row = _mg_b.breaker_row(provider)
+        if row:
+            _breaker_synced[provider] = (time.time(), row["updated_at"])
+    except Exception:
+        pass
 
 
 class AIProviderDown(RuntimeError):
@@ -1043,6 +1107,7 @@ _PLACES_DOWN_MESSAGE = "Google Places isn't answering right now — try again in
 
 def breaker_state(provider="anthropic"):
     """(state, seconds_remaining) — "closed", "open" or "probing"."""
+    _breaker_sync(provider)
     with _breaker_lock:
         b = _breakers.get(provider)
         if b and b.get("probe_until", 0) > time.time():
@@ -1082,6 +1147,7 @@ def _breaker_check(provider):
     until that probe reports (or CB_PROBE_SECONDS pass without a report).
     Clearing open_until alone let every concurrent caller through as "the
     probe", so a provider that was still down took the whole burst again."""
+    _breaker_sync(provider)
     now = time.time()
     with _breaker_lock:
         b = _breakers.get(provider)
@@ -1135,6 +1201,7 @@ def _breaker_record(provider, ok, reason=None):
                     b["opened_at"] = time.time()
                     transition = ("open", b["failures"], b.get("reason"))
     if transition:
+        _breaker_publish(provider)
         _note_breaker_transition(provider, *transition)
 
 
@@ -1153,6 +1220,7 @@ def trip_breaker(provider, reason):
         if not b.get("opened_at"):
             b["opened_at"] = time.time()
             transition = ("open", b["failures"], reason)
+    _breaker_publish(provider)
     if transition:
         _note_breaker_transition(provider, *transition)
 
@@ -1174,13 +1242,17 @@ def _note_breaker_transition(provider, kind, failures, reason):
 
 def reset_breaker(provider=None, actor=None):
     """Test hook and an operator escape hatch (the console's Reset breaker).
-    With an actor the reset is recorded. Process-local: it clears this
-    process's breaker, which is the one its request threads consult."""
+    With an actor the reset is recorded. It clears this process's breaker at
+    once and publishes the reset (the shared `ai_breakers` row), so every
+    other process closes its own within BREAKER_SYNC_SECONDS (scheduler audit
+    10/10/26 SCALE-24)."""
     with _breaker_lock:
         if provider:
             _breakers.pop(provider, None)
         else:
             _breakers.clear()
+    for p in ([provider] if provider else BREAKER_PROVIDERS):
+        _breaker_publish(p)
     if actor:
         for p in ([provider] if provider else BREAKER_PROVIDERS):
             record_health_event(p, "breaker_reset", detail=f"reset by {actor}")
@@ -2248,6 +2320,20 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
         _orch.keep_request(kwargs)
     except Exception:
         pass
+    # The model gateway (scheduler audit 10/10/26 SCALE-32): this call's
+    # tokens reserved in the organisation's minute for its class — waiting
+    # for the next minute while over its allowance — and settled to its real
+    # usage below. Off (None) until GATEWAY_ORG_OTPM / ITPM are set.
+    import model_gateway as _mg
+    try:
+        ticket = _mg.admit(restaurant_id, kwargs)
+    except _mg.GatewayBusy as busy:
+        if took_slot:
+            release_interactive_slot()
+        _breaker_release_probe("anthropic")
+        log_blocked(restaurant_id, action, model, "busy",
+                    detail=f"the {busy.klass} class's tokens for this minute were spent", **attribution)
+        raise AIBusy(_BUSY_MESSAGE) from busy
     held = _INTERACTIVE_HELD.set(True) if took_slot else None
     try:
         call_id = _new_call_id()
@@ -2329,6 +2415,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
             usage_id = _log_usage_safe(message, model, restaurant_id, action, latency_ms=latency_ms,
                                        attempts=attempt + 1, call_id=call_id, attribution=attribution,
                                        effort=sent_effort)
+            _mg.settle(ticket, message)
             _breaker_record("anthropic", True)
             if getattr(message, "usage", None) is not None:
                 _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome_of(message), attribution,
@@ -2340,6 +2427,8 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                     pass
             return message
     finally:
+        # A call that failed before an answer gives its reservation back.
+        _mg.settle(ticket, None)
         if took_slot:
             _INTERACTIVE_HELD.reset(held)
             release_interactive_slot()

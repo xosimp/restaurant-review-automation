@@ -19,6 +19,8 @@
 # 10/10/26: ortools 9.15.6755 added for the schedule solver (with absl-py,
 # immutabledict, numpy, pandas, protobuf, python-dateutil, six); every
 # existing pin held.
+# 10/10/26: psycopg[binary] 3.2.3 added (with psycopg-binary) for the Postgres
+# readiness work (db_dialect, scripts/pg_copy.py); every existing pin held.
 absl-py==2.5.1
     # via ortools
 annotated-types==0.8.0
@@ -114,6 +116,10 @@ pillow==12.3.0
     #   reportlab
 protobuf==6.33.6
     # via ortools
+psycopg[binary]==3.2.3
+    # via -r requirements.in
+psycopg-binary==3.2.3
+    # via psycopg
 pyasn1==0.6.4
     # via
     #   pyasn1-modules
@@ -162,6 +168,7 @@ typing-extensions==4.16.0
     #   anthropic
     #   anyio
     #   ortools
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   pyopenssl

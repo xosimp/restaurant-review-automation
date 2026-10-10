@@ -193,7 +193,7 @@ def test_following_the_run_in_the_way_promotes_and_watches_it(db, monkeypatch):
     body = r.get_json()
     assert r.status_code == 200 and body["joined"] is True and body["job_id"] == "auto-run"
     assert body["wait_seconds"] > 0
-    assert promoted == ["auto-run"] and se._GEN_WATCHERS["auto-run"] == {uid: True}
+    assert promoted == ["auto-run"] and se.generation_watchers("auto-run") == {uid: True}
 
 
 def test_following_a_run_that_already_ended_only_polls_it(db, monkeypatch):
@@ -205,7 +205,7 @@ def test_following_a_run_that_already_ended_only_polls_it(db, monkeypatch):
     body = c.post("/mobile/api/labor/generate-schedule/follow", headers=h, json={"job_id": "done-run"}).get_json()
     assert body["ok"] is True and body["job_id"] == "done-run"
     # Never watched: nothing would ever release it.
-    assert "done-run" not in se._GEN_WATCHERS
+    assert se.generation_watchers("done-run") == {}
 
 
 def test_following_another_restaurants_run_or_none_is_not_found(db, monkeypatch):
@@ -215,7 +215,7 @@ def test_following_another_restaurants_run_or_none_is_not_found(db, monkeypatch)
     ops.claim_async_job("theirs", "schedule", other)
     assert c.post("/mobile/api/labor/generate-schedule/follow", headers=h, json={"job_id": "theirs"}).status_code == 404
     assert c.post("/mobile/api/labor/generate-schedule/follow", headers=h, json={}).status_code == 404
-    assert "theirs" not in se._GEN_WATCHERS
+    assert se.generation_watchers("theirs") == {}
 
 
 def test_the_follow_route_has_a_web_twin():
@@ -269,7 +269,7 @@ def test_a_slot_timeout_releases_the_watchers(db, monkeypatch, pushed):
         raise _Timeout()
     _SE, watched = _auto(db, rid, monkeypatch, run)
     strategy_jobs._draft_one(r, db, _SE, lambda k: None)
-    assert watched["job"] not in se._GEN_WATCHERS and pushed == []
+    assert se.generation_watchers(watched["job"]) == {} and pushed == []
 
 
 def test_an_exception_out_of_the_run_releases_the_watchers_and_closes_the_job(db, monkeypatch, pushed):
@@ -281,7 +281,7 @@ def test_an_exception_out_of_the_run_releases_the_watchers_and_closes_the_job(db
     _SE, watched = _auto(db, rid, monkeypatch, run)
     with pytest.raises(RuntimeError):
         strategy_jobs._draft_one(r, db, _SE, lambda k: None)
-    assert watched["job"] not in se._GEN_WATCHERS and pushed == []
+    assert se.generation_watchers(watched["job"]) == {} and pushed == []
     assert ops.read_async_job(watched["job"], restaurant_id=rid)["status"] == "error"
 
 
@@ -293,7 +293,7 @@ def test_a_failed_job_releases_the_watchers(db, monkeypatch, pushed):
         ops.finish_async_job(job_id, "error", {"ok": False, "error": "No sales."})
     _SE, watched = _auto(db, rid, monkeypatch, run)
     strategy_jobs._draft_one(r, db, _SE, lambda k: None)
-    assert watched["job"] not in se._GEN_WATCHERS and pushed == []
+    assert se.generation_watchers(watched["job"]) == {} and pushed == []
 
 
 def test_a_press_whose_job_could_not_be_queued_is_not_left_watched(db, monkeypatch):
@@ -308,7 +308,13 @@ def test_a_press_whose_job_could_not_be_queued_is_not_left_watched(db, monkeypat
         assert r.status_code == 500
     except RuntimeError:
         pass                                 # an app that propagates it
-    assert se._GEN_WATCHERS == {}
+    # Nobody is left watching a job that was never queued (the watchers are
+    # rows since scheduler audit 10/10/26 SCALE-24).
+    conn = models.get_conn()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM generation_watchers").fetchone()[0] == 0
+    finally:
+        conn.close()
     running, _ = ops.running_job("schedule", rid)
     assert running is None
 

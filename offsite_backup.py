@@ -51,6 +51,13 @@ S3_TIMEOUT = (10, 600)
 S3_LIFECYCLE_TIMEOUT = (10, 30)
 # A single PUT carries at most this much (S3's and R2's single-part limit).
 S3_MAX_SINGLE_PUT = 5 * 1024 ** 3
+# Past this a copy goes up in parts (scheduler audit 10/10/26 SCALE-20: the
+# off-site copy refused anything over 5 GiB, and a backup with no off-site
+# copy fails — every night, once the encrypted snapshot passed it). Each
+# part is MULTIPART_PART_BYTES (S3 and R2 take 5 MiB..5 GiB a part, at most
+# 10,000 parts: 256 MiB parts carry 2.4 TiB).
+MULTIPART_THRESHOLD = int(os.getenv("BACKUP_MULTIPART_THRESHOLD", str(512 * 1024 ** 2)))
+MULTIPART_PART_BYTES = int(os.getenv("BACKUP_MULTIPART_PART_BYTES", str(256 * 1024 ** 2)))
 
 
 # ── configuration ───────────────────────────────────────────────────────────
@@ -171,10 +178,9 @@ def upload_file(path, key, cfg=None, sha256_hex=None):
     if not cfg:
         raise OffsiteError("object storage is not configured (BACKUP_S3_*)")
     size = os.path.getsize(path)
-    if size > S3_MAX_SINGLE_PUT:
-        raise OffsiteError(f"{size} bytes is over the {S3_MAX_SINGLE_PUT}-byte single-PUT limit; "
-                           "the uploader needs multipart before the database is this large")
     digest = sha256_file(path) if sha256_hex is None else sha256_hex
+    if size > min(MULTIPART_THRESHOLD, S3_MAX_SINGLE_PUT):
+        return upload_file_multipart(path, key, cfg=cfg, sha256_hex=digest)
     url, obj_path = _object_url(cfg, (cfg.get("prefix") or "") + key)
     headers = _signed_headers(cfg, "PUT", obj_path, digest, extra={"x-amz-meta-sha256": digest})
     headers["Content-Type"] = "application/octet-stream"
@@ -184,6 +190,119 @@ def upload_file(path, key, cfg=None, sha256_hex=None):
     if not 200 <= resp.status_code < 300:
         raise OffsiteError(f"object store refused the upload: HTTP {resp.status_code} {(resp.text or '')[:200]}")
     return {"target": f"s3://{cfg['bucket']}/{(cfg.get('prefix') or '')}{key}", "sha256": digest, "bytes": size}
+
+
+def _signed_query(cfg, method, obj_path, payload_hash, query, extra=None):
+    """Headers for a request with a query string (the multipart calls)."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    host = urllib.parse.urlparse(cfg["endpoint"]).netloc
+    headers = {"host": host, "x-amz-date": amz_date, "x-amz-content-sha256": payload_hash}
+    headers.update({k.lower(): v for k, v in (extra or {}).items()})
+    auth = sign(method, obj_path, headers, payload_hash, cfg["access_key"], cfg["secret_key"], cfg["region"],
+                amz_date, query=query)
+    out = {k: v for k, v in headers.items() if k != "host"}
+    out["Authorization"] = auth
+    return out
+
+
+def upload_file_multipart(path, key, cfg=None, sha256_hex=None, part_bytes=None):
+    """One file to the bucket in parts (S3 multipart: create, each part with
+    its own SHA-256 so the store verifies it, complete; aborted on any
+    failure so no half-upload lingers). The whole file's SHA-256 rides in
+    x-amz-meta-sha256 like a single PUT's, for the drill. Returns
+    {"target", "sha256", "bytes", "parts"}; raises OffsiteError."""
+    import requests
+    import xml.etree.ElementTree as ET
+    cfg = cfg or s3_config()
+    if not cfg:
+        raise OffsiteError("object storage is not configured (BACKUP_S3_*)")
+    part_bytes = int(part_bytes or MULTIPART_PART_BYTES)
+    size = os.path.getsize(path)
+    digest = sha256_file(path) if sha256_hex is None else sha256_hex
+    full = (cfg.get("prefix") or "") + key
+    url, obj_path = _object_url(cfg, full)
+    empty = hashlib.sha256(b"").hexdigest()
+    resp = requests.post(url + "?uploads=", headers=_signed_query(cfg, "POST", obj_path, empty, {"uploads": ""},
+                                                                  extra={"x-amz-meta-sha256": digest}),
+                         timeout=S3_LIFECYCLE_TIMEOUT)
+    if resp.status_code != 200:
+        raise OffsiteError(f"object store refused the multipart start: HTTP {resp.status_code}")
+    upload_id = None
+    for el in ET.fromstring(resp.content or b"").iter():
+        if el.tag.rsplit("}", 1)[-1] == "UploadId":
+            upload_id = (el.text or "").strip()
+    if not upload_id:
+        raise OffsiteError("object store gave no upload id")
+    etags = []
+    try:
+        with open(path, "rb") as f:
+            n = 0
+            while True:
+                chunk = f.read(part_bytes)
+                if not chunk:
+                    break
+                n += 1
+                ph = hashlib.sha256(chunk).hexdigest()
+                q = {"partNumber": str(n), "uploadId": upload_id}
+                hdr = _signed_query(cfg, "PUT", obj_path, ph, q)
+                hdr["Content-Length"] = str(len(chunk))
+                r = requests.put(url + "?" + canonical_query(q), data=chunk, headers=hdr, timeout=S3_TIMEOUT)
+                if not 200 <= r.status_code < 300:
+                    raise OffsiteError(f"object store refused part {n}: HTTP {r.status_code}")
+                etags.append((n, r.headers.get("ETag", "").strip()))
+        body = ("<CompleteMultipartUpload>" + "".join(
+            f"<Part><PartNumber>{n}</PartNumber><ETag>{e}</ETag></Part>" for n, e in etags)
+                + "</CompleteMultipartUpload>").encode("utf-8")
+        q = {"uploadId": upload_id}
+        hdr = _signed_query(cfg, "POST", obj_path, hashlib.sha256(body).hexdigest(), q)
+        hdr["Content-Type"] = "application/xml"
+        r = requests.post(url + "?" + canonical_query(q), data=body, headers=hdr, timeout=S3_LIFECYCLE_TIMEOUT)
+        if r.status_code != 200 or b"<Error>" in (r.content or b""):
+            raise OffsiteError(f"object store refused to complete the upload: HTTP {r.status_code}")
+    except BaseException:
+        try:
+            q = {"uploadId": upload_id}
+            requests.delete(url + "?" + canonical_query(q), headers=_signed_query(cfg, "DELETE", obj_path, empty, q),
+                            timeout=S3_LIFECYCLE_TIMEOUT)
+        except Exception:
+            pass
+        raise
+    return {"target": f"s3://{cfg['bucket']}/{full}", "sha256": digest, "bytes": size, "parts": len(etags)}
+
+
+def put_bytes(key, data, cfg, content_type="application/octet-stream"):
+    """One small object (a blob — blob_store) to the bucket, its SHA-256 the
+    signed payload hash. Raises OffsiteError."""
+    import requests
+    data = bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    url, obj_path = _object_url(cfg, (cfg.get("prefix") or "") + key)
+    headers = _signed_headers(cfg, "PUT", obj_path, digest)
+    headers["Content-Type"] = content_type
+    headers["Content-Length"] = str(len(data))
+    resp = requests.put(url, data=data, headers=headers, timeout=S3_LIFECYCLE_TIMEOUT)
+    if not 200 <= resp.status_code < 300:
+        raise OffsiteError(f"object store refused the blob: HTTP {resp.status_code}")
+    return digest
+
+
+def get_bytes(key, cfg) -> bytes:
+    import requests
+    empty = hashlib.sha256(b"").hexdigest()
+    url, obj_path = _object_url(cfg, (cfg.get("prefix") or "") + key)
+    resp = requests.get(url, headers=_signed_headers(cfg, "GET", obj_path, empty), timeout=S3_LIFECYCLE_TIMEOUT)
+    if resp.status_code != 200:
+        raise OffsiteError(f"object store refused the blob: HTTP {resp.status_code}")
+    return resp.content
+
+
+def delete_object(key, cfg) -> bool:
+    import requests
+    empty = hashlib.sha256(b"").hexdigest()
+    url, obj_path = _object_url(cfg, (cfg.get("prefix") or "") + key)
+    resp = requests.delete(url, headers=_signed_headers(cfg, "DELETE", obj_path, empty), timeout=S3_LIFECYCLE_TIMEOUT)
+    return resp.status_code in (200, 204, 404)
 
 
 def download_file(key, dest, cfg=None, full_key=False):
@@ -461,6 +580,12 @@ KEEP_COLUMNS = {
     ("ai_usage_daily", "output_tokens"): "a count of model tokens",
     ("ai_usage_daily", "cache_write_tokens"): "a count of model tokens",
     ("ai_usage_daily", "cache_read_tokens"): "a count of model tokens",
+    # The model gateway's minute windows (SCALE-32) and the job queue's
+    # per-tenant token bucket (RM-7): counts, not credentials.
+    ("model_token_windows", "input_tokens"): "a count of model tokens in one minute",
+    ("model_token_windows", "output_tokens"): "a count of model tokens in one minute",
+    ("model_tenant_windows", "output_tokens"): "a count of model tokens in one minute",
+    ("job_tenants", "tokens"): "a fairness token-bucket level (a number), not a credential",
 }
 
 

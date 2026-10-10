@@ -4444,7 +4444,11 @@ def _usage_of(msg) -> dict:
             "output_tokens": int(getattr(u, "output_tokens", 0) or 0),
             "cache_read_tokens": int(getattr(u, "cache_read_input_tokens", 0) or 0),
             "cache_write_tokens": int(getattr(u, "cache_creation_input_tokens", 0) or 0),
-            **({"batch": True} if getattr(msg, "_cavnar_batch", False) is True else {})}
+            **({"batch": True} if getattr(msg, "_cavnar_batch", False) is True else {}),
+            # An answer a resumed generation read again from its earlier
+            # try (schedule_resume — scheduler audit 10/10/26 SCALE-2): no
+            # tokens were spent on it this time.
+            **({"resumed": True} if getattr(msg, "_cavnar_resumed", False) is True else {})}
 
 
 def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_id=None, week_start=None,
@@ -4459,6 +4463,13 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
     try:
         request = {k: v for k, v in (call or {}).items() if k not in ("restaurant_id", "action")}
         oc = (call or {}).get("output_config") or {}
+        # The queue job this call ran for (its generation clock's job): a
+        # resumed try reads this answer instead of paying for it again.
+        try:
+            from schedule_engine import current_clock as _cc_rec
+            _job_rec = getattr(_cc_rec(), "job_id", None)
+        except Exception:
+            _job_rec = None
         return _sched_out.record_call(
             restaurant_id, request, inputs=call_args, answer=raw, generation_id=generation_id,
             week_start=week_start, dates=dates,
@@ -4467,7 +4478,7 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
             stop_reason=getattr(msg, "stop_reason", None) if msg is not None else None,
             outcome=outcome, error=error, seconds=seconds, usage=_usage_of(msg) if msg is not None else None,
             rows=rows, answer_chars=len(raw or "") if raw is not None else None, call_kind=call_kind,
-            tier=tier)
+            tier=tier, job_id=_job_rec)
     except Exception as e:
         print(f"[schedule] model call not recorded rid={restaurant_id}: {e!r}")
         try:

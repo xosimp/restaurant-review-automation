@@ -98,7 +98,10 @@ def test_every_registry_entry_is_complete_and_its_target_exists():
 
 def test_every_job_the_loop_runs_has_an_sla_unless_it_is_quarterly():
     no_sla = {n for n, s in jobs_registry.JOBS.items() if not s.get("sla_minutes")}
-    assert no_sla == {"restore_drill", "quarterly_summaries"}
+    # pg_shadow and blob_offload run only while their switch is on
+    # (PG_SHADOW_WRITE, BLOB_STORE — scheduler audit 10/10/26 RM-13/14): an
+    # SLA would page about a job that is off on purpose.
+    assert no_sla == {"restore_drill", "quarterly_summaries", "pg_shadow", "blob_offload"}
     assert set(ops.EXPECTED_JOBS) == set(jobs_registry.JOBS) - no_sla
     assert ops.EXPECTED_JOBS["pos_sync"] == 26 and ops.EXPECTED_JOBS["review_fetch"] == 16
 

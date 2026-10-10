@@ -1621,13 +1621,14 @@ def slice_context(restaurant_id, cluster, db_path=DB_PATH, today=None) -> dict:
         # 2. Schedule edits that touched the slice: the generated draft
         # against what was published, per published week in the lookback.
         try:
-            from schedule_versions import rows_from_csv
+            from schedule_versions import rows_from_csv, materialize, VERSION_TEXT
             weeks = _rows_raw(conn, "SELECT id, week_start FROM schedule_history WHERE restaurant_id=? "
                                     "AND published_at IS NOT NULL AND week_start >= ? AND week_start < ? "
                                     "ORDER BY week_start", (restaurant_id, look_start.isoformat(), today.isoformat()))
             for w in weeks[-8:]:
-                vs = _rows_raw(conn, "SELECT version, reason, schedule_csv FROM schedule_versions WHERE "
-                                     "restaurant_id=? AND history_id=? ORDER BY version", (restaurant_id, w["id"]))
+                vs = materialize(conn, _rows_raw(conn, "SELECT version, reason, " + VERSION_TEXT + " FROM "
+                                                       "schedule_versions WHERE restaurant_id=? AND history_id=? "
+                                                       "ORDER BY version", (restaurant_id, w["id"])), w["id"])
                 gen = next((v for v in vs if v["reason"] == "generated"), None)
                 pub = next((v for v in reversed(vs) if v["reason"] == "published"), None)
                 if gen is None or pub is None:

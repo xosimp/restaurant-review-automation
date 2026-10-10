@@ -1237,7 +1237,7 @@ def run_quality_calibration(db_path=DB_PATH):
     return _counts(attempted, attempted - failed, failed, hit_bound=hit, restaurants_changed=changed["n"])
 
 
-def run_auto_draft_schedules(db_path=DB_PATH, now=None):
+def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     """Draft next week's schedule for every opted-in restaurant that hasn't
     already made one. The draft lands in Schedule History exactly as a
     hand-generated one does; nothing reaches staff until the owner publishes.
@@ -1248,12 +1248,21 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
 
     `now` is the scheduler tick's instant (naive Chicago, scheduler._chi_now):
     whose draft day it is is read from it, so the pass and the loop agree on
-    the clock. Without it, each restaurant's own wall clock now."""
+    the clock. Without it, each restaurant's own wall clock now.
+
+    `enqueue` (the scheduler passes job_queue.enabled() — scheduler audit
+    10/10/26 SCALE-13, RM-7): each restaurant's draft is a `scheduled` row
+    on the job queue (enqueue_auto_draft), run by the queue's consumers
+    under its fairness and the generation group's slots, never inside this
+    pass. The pass used to hold the single-job AI lane for up to 40 minutes
+    of every draft-day hour, the weekly digests and the plan waiting behind
+    it; now it claims and enqueues in seconds. False: each draft runs here,
+    as before (a direct call, a test)."""
     import ops
     import threading
     import scheduler as _sched
     import schedule_engine as _se
-    counts = {"drafted": 0, "skipped": 0, "batched": 0}
+    counts = {"drafted": 0, "skipped": 0, "batched": 0, "queued": 0}
     lock = threading.Lock()
     # Bounded and resumable, like run_daily_fetch: a worker pool, a
     # wall-clock bound and a cursor. It used to be one serial 40-minute pass
@@ -1337,6 +1346,10 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
         if attempt is None:
             _bump("skipped")
             return
+        if enqueue:
+            enqueue_auto_draft(r, period=local[r.id][1], target=target, attempt=attempt)
+            _bump("queued")
+            return
         try:
             _draft_one(r, db_path, _se, _bump, period=local[r.id][1], target=target, attempt=attempt)
         except Exception:
@@ -1350,9 +1363,10 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
                                             workers=AUTO_DRAFT_WORKERS, job="auto_draft_schedule")
     # A draft sent through Message Batches (schedule_batch, RM-10) is an
     # attempt that went: its answer finishes it later, off this pass.
-    attempted = counts["drafted"] + counts["failed"] + counts["batched"]
-    return _counts(attempted, counts["drafted"] + counts["batched"], counts["failed"], counts["skipped"], ran_out,
-                   drafted=counts["drafted"], batched=counts["batched"], complete=not ran_out)
+    attempted = counts["drafted"] + counts["failed"] + counts["batched"] + counts["queued"]
+    return _counts(attempted, counts["drafted"] + counts["batched"] + counts["queued"], counts["failed"],
+                   counts["skipped"], ran_out, drafted=counts["drafted"], batched=counts["batched"],
+                   queued=counts["queued"], complete=not ran_out)
 
 
 def auto_draft_target(r, period) -> str:
@@ -1589,6 +1603,163 @@ def _tell_auto_draft_gave_up(r, db_path, target):
         ops.capture(e, job="auto_draft_schedule_gave_up", context=f"restaurant_id={getattr(r, 'id', None)}")
 
 
+# ── the auto-draft and the learners on the job queue (scheduler audit
+#    10/10/26 RM-7, SCALE-13, SCALE-25) ──────────────────────────────────────
+
+# How long an auto-draft row may wait for a generation slot before it gives
+# its day and its try back (on_auto_draft_expired): the next hourly pass
+# enqueues it again. Its deadline also orders the scheduled class (earliest
+# first).
+AUTO_DRAFT_QUEUE_HOURS = 6
+
+
+def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None):
+    """One restaurant's auto-draft as a `scheduled` job_queue row: the same
+    try (_claim_auto_draft_attempt) the pass claimed, keyed so the same try
+    is never queued twice. `answer` is the Message Batches answer
+    (schedule_batch.on_auto_draft, {key, text, stop_reason, usage,
+    call_id}) the draft is written from. Returns the row id."""
+    import job_queue
+    import time as _t
+    payload = {"restaurant_id": r.id, "period": period, "target": target, "attempt": attempt,
+               "batch": bool(batch), "answer": answer,
+               "attribution": {"trigger": "scheduler", "actor_user_id": None,
+                               "correlation_id": f"auto_draft:{r.id}:{target}"}}
+    key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if answer is not None else
+                                                      ":sync" if not batch else "")
+    qid, _created = job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
+                                      idempotency_key=key, deadline=_t.time() + AUTO_DRAFT_QUEUE_HOURS * 3600)
+    return qid
+
+
+def run_queued_auto_draft(job):
+    """job_queue's handler for `auto_draft`: _draft_one, exactly as the pass
+    ran it — its async job, its push, its tries — inside the claimed
+    generation slot (generation_scope takes none of its own in a queue job).
+    A row carrying a batched answer writes the week from it
+    (schedule_batch.answering). Returns the draft's counts."""
+    import contextlib as _cl
+    import schedule_engine as _se
+    from models import get_restaurant
+    p = job.payload
+    r = get_restaurant(p.get("restaurant_id"))
+    counts = {}
+
+    def _bump(k):
+        counts[k] = counts.get(k, 0) + 1
+    if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
+        return {"skipped": "not opted in"}
+    target = p.get("target")
+    if target and p.get("answer") is not None:
+        conn = get_conn(DB_PATH)
+        try:
+            if _week_has_schedule(conn, r.id, target):
+                return {"skipped": "week already has a schedule"}
+        finally:
+            conn.close()
+    ctx = _cl.nullcontext()
+    ans = p.get("answer")
+    if ans:
+        import schedule_batch as _sbat
+        import schedule_resume as _sres
+        msg = _sres.StoredMessage(ans.get("text") or "", stop_reason=ans.get("stop_reason"), model=ans.get("model"))
+        msg._cavnar_resumed = False
+        msg._cavnar_batch = True
+        msg._cavnar_call_id = ans.get("call_id")
+        u = ans.get("usage") or {}
+        msg.usage.input_tokens = int(u.get("input_tokens") or 0)
+        msg.usage.output_tokens = int(u.get("output_tokens") or 0)
+        msg.usage.cache_read_input_tokens = int(u.get("cache_read_tokens") or 0)
+        msg.usage.cache_creation_input_tokens = int(u.get("cache_write_tokens") or 0)
+        ctx = _sbat.answering(ans.get("key"), msg)
+    with ctx:
+        _draft_one(r, DB_PATH, _se, _bump, period=p.get("period"), target=target, attempt=p.get("attempt"),
+                   batch=bool(p.get("batch", True)) and not ans)
+    return counts
+
+
+def on_auto_draft_expired(job):
+    """An auto-draft row no slot took before its deadline: its day and its
+    try are handed back (nothing was paid for), so the next hourly pass on
+    the draft day or the fallback day enqueues it again — the old slot
+    give-up (GEN_BACKGROUND_WAIT_SECONDS), without holding a thread."""
+    import ops
+    p = job.payload
+    rid, period = p.get("restaurant_id"), p.get("period")
+    if period:
+        ops.release_period(f"auto_draft:{rid}", period)
+    _release_auto_draft_attempt(rid, p.get("target"), p.get("attempt"))
+
+
+# The learners a `learner` queue row runs, by name ("module:function"; each
+# takes (restaurant_id, db_path=...) and returns its counts). The fleet-wide
+# step before people_nightly's per-restaurant rows is `people_backfill`.
+LEARNERS = {
+    "schedule_outcomes": "strategy_jobs:schedule_outcomes_one",
+    "schedule_memory": "strategy_jobs:schedule_memory_one",
+    "people_nightly": "strategy_jobs:people_nightly_one",
+}
+
+
+def fan_out_learner(name, db_path=DB_PATH, today=None):
+    """The scheduler's nightly learner pass as queue work (scheduler audit
+    10/10/26 SCALE-25): one `learner` row (bulk class) per Labor restaurant,
+    keyed on the learner, the restaurant and the day so a pass run twice
+    queues nothing new. The consumers drain them in parallel, one row per
+    restaurant at a time, fairly across tenants; a restaurant's rows run in
+    the order queued (outcomes 4am, people 5am, memory 6am). The scheduler
+    thread spends seconds here, not the 20-minute bounded sweep it used to
+    hold in the web process. Standard counts: `attempted` / `ok` are the
+    rows queued now (the work's own results are the rows')."""
+    import job_queue
+    from datetime import date as _date
+    day = str(today or _date.today())[:10]
+    items = []
+    if name == "people_nightly":
+        items.append({"payload": {"learner": "people_backfill", "restaurant_id": None, "day": day},
+                      "restaurant_id": None, "idempotency_key": f"learner:people_backfill:{day}"})
+    for r in _restaurants(db_path):
+        if not getattr(r, "module_labor", 0):
+            continue
+        items.append({"payload": {"learner": name, "restaurant_id": r.id, "day": day,
+                                  **({"today": str(today)[:10]} if today else {})},
+                      "restaurant_id": r.id, "idempotency_key": f"learner:{name}:{r.id}:{day}"})
+    created = job_queue.enqueue_many("learner", items, priority_class="bulk",
+                                     db_path=None if db_path == DB_PATH else db_path)
+    return _counts(created, created, 0, len(items) - created, False, queued=created)
+
+
+def learner_pass(name, fn):
+    """What scheduler_loop runs for a nightly learner: its fan-out onto the
+    job queue when the queue is on, else `fn` (the bounded inline sweep)."""
+    import job_queue
+    if job_queue.enabled():
+        return lambda: fan_out_learner(name)
+    return fn
+
+
+def run_queued_learner(job):
+    """job_queue's handler for `learner`: one restaurant's pass of the named
+    learner inside one read_scope (its restaurant row, client_data and shift
+    history read once), or people_nightly's fleet-wide backfill. Raises on
+    failure (the queue captures it and tries again once)."""
+    import importlib
+    import models as _models_lq
+    p = job.payload
+    name, rid = p.get("learner"), p.get("restaurant_id")
+    if name == "people_backfill":
+        return people_nightly_backfill()
+    target = LEARNERS.get(name)
+    if not target or rid is None:
+        return {"skipped": f"no learner {name!r}"}
+    mod, _sep, fn = target.partition(":")
+    body = getattr(importlib.import_module(mod), fn)
+    kwargs = {"today": p["today"]} if (name == "people_nightly" and p.get("today")) else {}
+    with _models_lq.read_scope():
+        out = body(rid, **kwargs)
+    return out if isinstance(out, dict) else {"result": out}
+
+
 AUTO_DRAFT_CURSOR_KEY = "auto_draft_schedule_cursor"
 AUTO_DRAFT_HOUR = 6                 # local; the day is the owner's (models.auto_draft_weekday)
 # Paid tries at one week's draft, across the draft day and the day after
@@ -1753,35 +1924,44 @@ def run_schedule_outcomes(db_path=DB_PATH):
         with lock:
             tally["attempted"] += 1
         try:
-            got = schedule_intel.record_outcomes(rid, db_path=db_path, only_changed=True).get("written", 0)
-            with lock:
-                written["n"] += got
+            out = schedule_outcomes_one(rid, db_path=db_path)
         except Exception:
             with lock:
                 tally["failed"] += 1
             raise
-        broke = False
-        # The ended weeks as they ran, then each carried-out recommendation
-        # read against them (rec_ledger outcome), now that the nights are
-        # recorded — each on its own, a failure captured and counted.
-        for step, fn in (("as_run_quality", lambda r, db_path: schedule_intel.record_as_run_quality(
-                             r, db_path=db_path, only_changed=True)),
-                         ("as_run_recommendations", schedule_intel.measure_recommendations_as_run),
-                         ("accepted_recommendations", schedule_intel.measure_accepted_recommendations)):
-            try:
-                fn(rid, db_path=db_path)
-            except Exception as e:
-                import ops
-                ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={rid} {step}")
-                broke = True
-        if broke:
-            with lock:
+        with lock:
+            written["n"] += out["written"]
+            if out["broke"]:
                 tally["failed"] += 1
 
     _done, ran_out = _sched.resumable_sweep(OUTCOMES_CURSOR_KEY, sorted(by_id), _one, OUTCOMES_MAX_SECONDS,
                                             workers=OUTCOMES_WORKERS, job="schedule_outcomes")
     return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
                    hit_bound=ran_out, rows=written["n"])
+
+
+def schedule_outcomes_one(rid, db_path=DB_PATH) -> dict:
+    """One restaurant's outcomes pass (run_schedule_outcomes' body, and the
+    `learner` queue job's — fan_out_learner): {written, broke}. Raises when
+    the outcomes themselves could not be recorded; a later step that fails
+    is captured and reported as `broke`."""
+    import schedule_intel
+    written = schedule_intel.record_outcomes(rid, db_path=db_path, only_changed=True).get("written", 0)
+    broke = False
+    # The ended weeks as they ran, then each carried-out recommendation
+    # read against them (rec_ledger outcome), now that the nights are
+    # recorded — each on its own, a failure captured and counted.
+    for step, fn in (("as_run_quality", lambda r, db_path: schedule_intel.record_as_run_quality(
+                         r, db_path=db_path, only_changed=True)),
+                     ("as_run_recommendations", schedule_intel.measure_recommendations_as_run),
+                     ("accepted_recommendations", schedule_intel.measure_accepted_recommendations)):
+        try:
+            fn(rid, db_path=db_path)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="schedule_outcomes", context=f"restaurant_id={rid} {step}")
+            broke = True
+    return {"written": int(written or 0), "broke": broke}
 
 
 OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
@@ -1819,7 +1999,7 @@ def run_schedule_memory(db_path=DB_PATH):
         with lock:
             tally["attempted"] += 1
         try:
-            s = schedule_memory.consolidate(rid, db_path=None if db_path == DB_PATH else db_path)
+            s = schedule_memory_one(rid, db_path=db_path)
         except Exception:
             with lock:
                 tally["failed"] += 1
@@ -1839,6 +2019,14 @@ def run_schedule_memory(db_path=DB_PATH):
                                  "the next pass"), job="schedule_memory", context="time_bound")
     return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"], tally["skipped"],
                    hit_bound=ran_out, memories=tally["memories"])
+
+
+def schedule_memory_one(rid, db_path=DB_PATH) -> dict:
+    """One restaurant's scheduling memory rebuilt (run_schedule_memory's
+    body, and the `learner` queue job's): schedule_memory.consolidate's
+    summary."""
+    import schedule_memory
+    return schedule_memory.consolidate(rid, db_path=None if db_path == DB_PATH else db_path) or {}
 
 
 MEMORY_CURSOR_KEY = "schedule_memory_cursor"
@@ -1866,21 +2054,8 @@ def run_people_nightly(db_path=DB_PATH, today=None):
 
     Bounded and resumable (resumable_sweep, a cursor in job_cursors). Sends
     nothing."""
-    import attendance
-    import people
-    import shift_facts
     import scheduler as _sched
-    from datetime import date as _date, timedelta as _td
-    try:
-        people.backfill_people(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
-        shift_facts.backfill_from_csv(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
-        # The restaurants still on their shifts file: shift_facts made their
-        # record, bounded (scheduler audit 10/10/26, SCALE-5); a sync or an
-        # upload adopts the rest as it lands.
-        shift_facts.adopt_pending(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
-    except Exception as e:
-        import ops
-        ops.capture(e, job="people_nightly", context="backfill")
+    people_nightly_backfill(db_path)
     by_id = {r.id: r for r in _restaurants(db_path) if getattr(r, "module_labor", 0)}
     tally = {"attempted": 0, "failed": 0, "attendance": 0, "signals": 0}
     lock = threading.Lock()
@@ -1889,24 +2064,10 @@ def run_people_nightly(db_path=DB_PATH, today=None):
         with lock:
             tally["attempted"] += 1
         try:
-            from time_utils import restaurant_now_by_id
-            day = today or restaurant_now_by_id(rid, naive=True).date()
-            people.stamp_person_ids(rid)
-            n = 0
-            for back in range(1, attendance.JOIN_DAYS + 1):
-                n += attendance.join_published(rid, (day - _td(days=back)).isoformat())["recorded"]
-            n += attendance.from_coverage_issues(rid, today=day)
-            sig = people.record_cover_signals(rid, today=day) + people.match_review_mentions(rid)
-            try:
-                import schedule_versions
-                schedule_versions.refresh_standing_patterns(rid)
-            except Exception as e:
-                import ops
-                ops.capture(e, job="people_nightly", context=f"restaurant_id={rid} standing patterns")
-            shift_facts.rollup_quarters(rid, today=day)
+            out = people_nightly_one(rid, db_path=db_path, today=today)
             with lock:
-                tally["attendance"] += n
-                tally["signals"] += sig
+                tally["attendance"] += out["attendance"]
+                tally["signals"] += out["signals"]
         except Exception:
             with lock:
                 tally["failed"] += 1
@@ -1916,6 +2077,54 @@ def run_people_nightly(db_path=DB_PATH, today=None):
                                             workers=1, job="people_nightly")
     return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
                    hit_bound=ran_out, attendance=tally["attendance"], signals=tally["signals"])
+
+
+def people_nightly_backfill(db_path=DB_PATH) -> dict:
+    """people_nightly's fleet-wide first step: people and shift facts for
+    restaurants that have none yet and the shift files still to adopt, each
+    bounded at a minute. Captured, never raised."""
+    import people
+    import shift_facts
+    try:
+        people.backfill_people(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+        shift_facts.backfill_from_csv(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+        # The restaurants still on their shifts file: shift_facts made their
+        # record, bounded (scheduler audit 10/10/26, SCALE-5); a sync or an
+        # upload adopts the rest as it lands.
+        shift_facts.adopt_pending(db_path=None if db_path == DB_PATH else db_path, max_seconds=60)
+        return {"ok": True}
+    except Exception as e:
+        import ops
+        ops.capture(e, job="people_nightly", context="backfill")
+        return {"ok": False}
+
+
+def people_nightly_one(rid, db_path=DB_PATH, today=None) -> dict:
+    """One restaurant's people pass (run_people_nightly's body, and the
+    `learner` queue job's): {attendance, signals}. Raises on a failure
+    other than the standing patterns' (captured)."""
+    import attendance
+    import people
+    import shift_facts
+    from datetime import date as _date, timedelta as _td
+    from time_utils import restaurant_now_by_id
+    if isinstance(today, str):
+        today = _date.fromisoformat(today[:10])
+    day = today or restaurant_now_by_id(rid, naive=True).date()
+    people.stamp_person_ids(rid)
+    n = 0
+    for back in range(1, attendance.JOIN_DAYS + 1):
+        n += attendance.join_published(rid, (day - _td(days=back)).isoformat())["recorded"]
+    n += attendance.from_coverage_issues(rid, today=day)
+    sig = people.record_cover_signals(rid, today=day) + people.match_review_mentions(rid)
+    try:
+        import schedule_versions
+        schedule_versions.refresh_standing_patterns(rid)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="people_nightly", context=f"restaurant_id={rid} standing patterns")
+    shift_facts.rollup_quarters(rid, today=day)
+    return {"attendance": int(n or 0), "signals": int(sig or 0)}
 
 
 PEOPLE_CURSOR_KEY = "people_nightly_cursor"

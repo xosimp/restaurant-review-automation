@@ -1227,6 +1227,18 @@ else:
     print("Scheduler not started in web process (RUN_SCHEDULER_IN_WEB=0) — "
           "worker.py is expected to be running it")
 
+# The durable job queue (job_queue — scheduler audit 10/10/26 RM-7): this
+# process consumes it by default ("inprocess"); with QUEUE_WORKER=1 worker.py
+# (a second process in THIS service) consumes and this one only enqueues —
+# unless no worker has beaten its heartbeat, so a press is never stranded.
+# A row a deploy interrupted is claimed again here and resumes from its
+# checkpoints; at exit the rows this process runs are handed back.
+try:
+    import job_queue as _jq_boot
+    _jq_boot.start_inprocess()
+except Exception as _jq_e:
+    _boot_log.exception("Job queue start error: %s", _jq_e)
+
 
 def _restart_scheduler_loop():
     """The supervisor's way back when the scheduler thread has died: a new

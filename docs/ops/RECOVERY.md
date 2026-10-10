@@ -142,6 +142,20 @@ post to them directly.
 
 ---
 
+## Background work after a restart (the job queue, 10/10/26)
+
+Schedule generations, auto-drafts and the nightly learners' per-restaurant
+passes are rows in `jobs` (`job_queue.py`). A deploy hands the running rows
+back at SIGTERM and the new process resumes them — a generation that had
+saved its draft finishes with it, one that had not re-reads the model
+answers it already paid for — so after a restart nothing needs pressing
+again. To see them: `SELECT id, kind, restaurant_id, state, attempts, error
+FROM jobs WHERE state IN ('queued','running','failed') ORDER BY id DESC`.
+A row stuck `running` with a lease in the past is claimed by the next
+consumer within a minute (the `job_queue_tick` minute duty). Turning the
+queue off is `JOB_QUEUE=0` (the old in-process paths). The Postgres cutover
+and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
+
 ## Database recovery
 
 `/health` returns 500 with a database error code, or SQLite reports corruption.
@@ -511,7 +525,7 @@ The admin console needs a password, and — once enrolled or with
 
 | Symptom | Where to look |
 |---|---|
-| AI answers failing | `/admin` → Operations → AI. `GET /admin/api/ai/health` shows each provider's breaker (this process's and the last recorded), the last hour's error rate, the last credential failure and the budgets; `ai_health_events` is the history. A 401 or an empty credit balance trips the breaker at once; an open breaker still open after 15 minutes pages. A tripped breaker clears itself; each vendor's **Reset** on that tab (`POST /admin/api/ai/reset-breaker {provider?}`, admins only) closes it now — in this process only. A budget stop (80% warns, 100% stops; trial $5/day and $50/month; Places has its own ceiling) needs the ceiling raised (`AI_*_BUDGET_USD`) |
+| AI answers failing | `/admin` → Operations → AI. `GET /admin/api/ai/health` shows each provider's breaker (this process's and the last recorded), the last hour's error rate, the last credential failure and the budgets; `ai_health_events` is the history. A 401 or an empty credit balance trips the breaker at once; an open breaker still open after 15 minutes pages. A tripped breaker clears itself; each vendor's **Reset** on that tab (`POST /admin/api/ai/reset-breaker {provider?}`, admins only) closes it now in this process and, through the shared `ai_breakers` row, in every other process within `AI_BREAKER_SYNC_SECONDS` (5 s; scheduler audit 10/10/26 SCALE-24 — an opening is shared the same way, so a worker that finds the provider down stops the web process calling it too). One restaurant's own ceilings can be set with `model_gateway.set_tenant_budget` (`ai_tenant_budgets`). A budget stop (80% warns, 100% stops; trial $5/day and $50/month; Places has its own ceiling) needs the ceiling raised (`AI_*_BUDGET_USD`) |
 | No email arriving | `/admin` → Operations → Email & SMS and `GET /admin/api/messaging/health` (problems, Resend/Twilio webhook health, email and SMS stats, outboxes, storm caps, a suppressed operator address). Check Resend's status. A suppressed address: the tab's suppression search (`GET /admin/api/suppressions?q=`) and **Reinstate** (`POST /admin/api/suppressions/reinstate {email, reason}`, audited) — also on the client page's *Suppressed addresses*. Operator addresses are never suppressed. Cavnar AI's own marketing is held until `CAVNAR_POSTAL_ADDRESS` is set |
 | Texts not arriving | Operations → Email & SMS, `GET /admin/api/sms?restaurant_id=` — every attempt with its status (the number's last four only); `blocked` means consent or a STOP; account-level Twilio errors are captured once an hour |
 | Push not arriving | `POST /api/account/send-test-push` — it reports Apple's own reason string. See the APNs notes in project memory |

@@ -1148,6 +1148,13 @@ class _HandleFinal:
 
 
 def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+    # Postgres behind the same door when DATABASE_URL names one (db_dialect —
+    # scheduler audit 10/10/26 RM-13): the platform's own database only; an
+    # explicit other path (a test's file, a restore, a script's copy) stays
+    # SQLite. SQLite is the default and costs one env read here.
+    if db_path == DB_PATH and _db_backend() == "postgres":
+        import db_dialect
+        return db_dialect.connect()
     if not _pool_enabled():
         conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
         conn.row_factory = sqlite3.Row
@@ -1163,6 +1170,15 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     except TypeError:
         pass
     return conn
+
+
+def _db_backend() -> str:
+    """db_dialect.backend() without importing it on SQLite: "postgres" only
+    when DATABASE_URL is a postgres URL and DB_BACKEND does not pin sqlite."""
+    url = os.getenv("DATABASE_URL") or ""
+    if not url.startswith(("postgres://", "postgresql://")):
+        return "sqlite"
+    return "sqlite" if (os.getenv("DB_BACKEND") or "").strip().lower() == "sqlite" else "postgres"
 
 
 def checkpoint(db_path: str = DB_PATH) -> None:
@@ -4539,6 +4555,19 @@ def init_db(db_path: str = DB_PATH):
     # audit 10/3/26 PR-31).
     from schedule_output import init_schedule_output
     init_schedule_output(db_path)
+    # The durable job queue, its tenants' fairness state, its consumers'
+    # heartbeats and the generation watchers (job_queue — scheduler audit
+    # 10/10/26 RM-7, SCALE-24).
+    from job_queue import init_job_queue
+    init_job_queue(db_path)
+    # The model gateway's minute windows, per-restaurant AI ceilings and the
+    # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
+    from model_gateway import init_model_gateway
+    init_model_gateway(db_path)
+    # The Postgres shadow's outbox (pg_shadow — RM-13) and the blob store's
+    # index (blob_store — RM-14).
+    from pg_shadow import init_pg_shadow
+    init_pg_shadow(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).
@@ -8710,6 +8739,15 @@ def init_schedule_versions(db_path: str = DB_PATH):
     # versions (SCALE-14, measured 2-3 ms per 2,400 rows vs 0.05 ms).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_rid_created "
                  "ON schedule_versions(restaurant_id, created_at)")
+    # A version kept as its difference from the week's snapshot (scheduler
+    # audit 10/10/26 SCALE-34, RM-14 — schedule_versions.materialize):
+    # delta_json the line operations, base_version the snapshot they apply
+    # to; schedule_csv is '' on such a row.
+    _sv_cols0 = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}
+    if "delta_json" not in _sv_cols0:
+        conn.execute("ALTER TABLE schedule_versions ADD COLUMN delta_json TEXT")
+    if "base_version" not in _sv_cols0:
+        conn.execute("ALTER TABLE schedule_versions ADD COLUMN base_version INTEGER")
     # Whose save each version is (permissions.answer_authority — memory
     # audit 9/29/26): a support login's edits through view-as are stored
     # under the owner's name, and must never teach the draft.

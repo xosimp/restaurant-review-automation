@@ -154,6 +154,43 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `BACKUP_RETAIN_COUNT` | `"3"` | How many local snapshots (`cavnar_ai_backup_<date>.db.gz`, gzipped since 10/7/26) are kept — the newest N, gzipped and older plain ones counted together. Replaces `BACKUP_RETAIN_DAYS` (7 by default, 14 set in production), which the code no longer reads: remove it from Railway. | scheduler.py |
 | `BACKUP_FREE_SPACE_FACTOR` | `"1.5"` | Free space the backup needs before it starts, as a multiple of the database and its WAL: the `VACUUM INTO` copy (at most the database) plus its gzip, with margin. Was 3.5 when the snapshot, the scrubbed copy and the encryption all had to fit up front; the off-site copy now checks its own room (1.4x the snapshot) just before it is made. | scheduler.py |
 
+## The job queue, the model gateway and Postgres (scheduler audit 10/10/26, H2)
+
+Defaults change nothing in production: the queue is consumed in the web process, the gateway allocates nothing until an organisation budget is set, SQLite stays the database, blobs stay inline and the shadow is off. `docs/ops/POSTGRES_CUTOVER.md` and `docs/ops/RAILWAY_SCHEDULER_SPLIT.md` say when to set each.
+
+| Variable | Default | What it does | Read in |
+|---|---|---|---|
+| `JOB_QUEUE` | `"1"` | `0` turns the durable job queue off: generations run on the old in-process pool, the auto-draft and the learners inline in the scheduler thread (the rollback switch). | job_queue.py |
+| `QUEUE_WORKER` | — | `1`: `worker.py` (a second process in the same service) consumes the queue and the web process only enqueues — unless no worker has beaten its heartbeat for `QUEUE_WORKER_STALE_SECONDS`. Unset: the web process consumes its own queue. | job_queue.py, worker.py |
+| `QUEUE_WORKER_STALE_SECONDS` | `"90"` | A worker silent this long is gone: the web process consumes again. | job_queue.py |
+| `QUEUE_GENERATION_CONCURRENCY` | `SCHEDULE_GEN_WORKERS` (2) | Generations running at once across EVERY process (a count of claimed rows), held under what `GATEWAY_ORG_OTPM` can stream. | job_queue.py |
+| `QUEUE_BULK_CONCURRENCY` | `"2"` | Learner rows running at once across every process. | job_queue.py |
+| `QUEUE_LEASE_SECONDS` | `"120"` | A claimed row's lease, renewed every quarter of it; a row whose lease ran out (its process died) is claimed again and resumed. | job_queue.py |
+| `QUEUE_POLL_SECONDS` | `"2"` | How often an idle worker looks for rows. | job_queue.py |
+| `QUEUE_INTERACTIVE_BURST`, `QUEUE_INTERACTIVE_PER_HOUR` | `"6"`, `"6"` | Per-tenant token bucket for owners' presses: past it a tenant waits behind tenants that have tokens (never refused while nobody else waits). | job_queue.py |
+| `QUEUE_SCHEDULED_BURST`, `QUEUE_SCHEDULED_PER_HOUR` | `"2"`, `"2"` | The same for auto-drafts. | job_queue.py |
+| `QUEUE_BULK_BURST`, `QUEUE_BULK_PER_HOUR` | `"30"`, `"120"` | The same for learner rows. | job_queue.py |
+| `GATEWAY_ORG_OTPM`, `GATEWAY_ORG_ITPM` | `"0"` (off) | The organisation's output / input tokens a minute the model gateway allocates by class. Set from the Anthropic console's organisation limits. | model_gateway.py |
+| `GATEWAY_SHARE_INTERACTIVE`, `GATEWAY_SHARE_SCHEDULED`, `GATEWAY_SHARE_BULK` | `"0.5"`, `"0.3"`, `"0.2"` | Each class's guaranteed share; unused share is borrowed, never the interactive reserve by the others. | model_gateway.py |
+| `GATEWAY_TENANT_OTPM` | `"0"` (off) | One restaurant's output tokens a minute. | model_gateway.py |
+| `GATEWAY_INTERACTIVE_WAIT_SECONDS`, `GATEWAY_SCHEDULED_WAIT_SECONDS`, `GATEWAY_BULK_WAIT_SECONDS` | `"10"`, `"120"`, `"60"` | How long a call over its allowance waits for the next minute: then an owner's or a generation's call goes anyway, a bulk call is refused (its queue row retries). | model_gateway.py |
+| `GATEWAY_OUTPUT_RESERVE_CAP` | `"16000"` | The most output tokens a call reserves before its answer says. | model_gateway.py |
+| `GATEWAY_GENERATION_STREAM_OTPM` | `"7200"` | Output tokens a minute one streaming generation spends, for the generation concurrency cap. | model_gateway.py |
+| `AI_BREAKER_SYNC_SECONDS` | `"5"` | How often a process reads the shared provider breaker (`ai_breakers`). | ai_utils.py |
+| `DATABASE_URL` | — | A `postgres://` URL makes Postgres the database behind `models.get_conn` (db_dialect). **Set only at the cutover** (POSTGRES_CUTOVER.md). | models.py, db_dialect.py |
+| `DB_BACKEND` | — | `sqlite` pins SQLite even with `DATABASE_URL` set (the rollback). | models.py, db_dialect.py |
+| `SHADOW_DATABASE_URL` | — | The Postgres the shadow writes the normalized schedule model to while SQLite is primary. | pg_shadow.py |
+| `PG_SHADOW_WRITE` | — | `1` notes every schedule revision in `pg_shadow_outbox`; the `pg_shadow` job writes them to `SHADOW_DATABASE_URL`. | pg_shadow.py |
+| `QUEUE_WAIT_ALERT_SECONDS` | `"120"` | The platform check warns when owners' generations wait longer than this to start (the queue's interactive p95 over the last hour, five samples at least). | ops.py |
+| `MAINTENANCE_READ_ONLY` | — | `1`: the cutover's write freeze — every write request answers 503 with a sentence, the scheduler and its sends stop (`scheduler.scheduling_allowed`); reads and `/health` still answer. | http_layer.py, scheduler.py |
+| `TARGET_DATABASE_URL` | — | `scripts/pg_copy.py`'s target when `--database-url` is not given. | scripts/pg_copy.py |
+| `PG_COPY_BATCH_ROWS` | `"2000"` | Rows a batch in the copy and the export. | pg_copy.py |
+| `BLOB_STORE` | `"db"` | Where model-call and quality blobs live: `db` (inline, as before), `s3` (the `BLOB_S3_*` bucket), `local` (`BLOB_STORE_DIR`; development only — the SQLite backup does not carry it). | blob_store.py |
+| `BLOB_S3_ENDPOINT`, `BLOB_S3_BUCKET`, `BLOB_S3_ACCESS_KEY_ID`, `BLOB_S3_SECRET_ACCESS_KEY`, `BLOB_S3_REGION`, `BLOB_S3_PREFIX` | —, —, —, —, `"auto"`, `"cavnar-blobs/"` | The blob bucket (https only; never the backup bucket, whose lifecycle rule expires objects). Give `model-calls/` a lifecycle rule of ~100 days. | blob_store.py |
+| `BLOB_STORE_DIR` | `<volume>/blobs` | `BLOB_STORE=local`'s folder. | blob_store.py |
+| `BACKUP_MULTIPART_THRESHOLD`, `BACKUP_MULTIPART_PART_BYTES` | 512 MiB, 256 MiB | Past the threshold the off-site copy goes up in parts (SCALE-20: the single PUT refused anything over 5 GiB). | offsite_backup.py |
+| `RETAIN_JOBS_DAYS`, `RETAIN_GENERATION_WATCHERS_DAYS`, `RETAIN_PG_SHADOW_OUTBOX_DAYS` | `"14"`, `"7"`, `"30"` | Retention of the queue's rows, the generation watchers and the shadow outbox. | ops.py |
+
 ## Model behaviour
 
 | Variable | Default | What it does | Read in |
