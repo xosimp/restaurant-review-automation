@@ -269,8 +269,10 @@ def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
                  "PRIMARY scheduling basis", "— in that order", "must be satisfied, not merely aimed at"):
         assert gone not in prompt, gone
     # Every hard rule is still stated.
-    assert "STAFF CONSTRAINTS — priority 1" in prompt and "- S0: no Fridays" in prompt
-    assert "the constraint wins" in prompt
+    # One ranking (AI-14, 10/10/26): the block names its PRIORITIES rank and
+    # claims no rank of its own ("the constraint wins" competed with it).
+    assert "STAFF CONSTRAINTS — PRIORITIES 1b." in prompt and "- S0: no Fridays" in prompt
+    assert "the constraint wins" not in prompt
     # Availability is the ROSTER's AVAILABLE column, marked [HARD] (C1,
     # PR-33: one line per person instead of a block per fact).
     roster = prompt[prompt.index("ROSTER — "):]
@@ -300,7 +302,7 @@ def test_the_straight_through_paragraph_states_the_presence_rule(monkeypatch):
     # Stated once, in the standing instructions every call shares, from the
     # scorer's own constants (C1, PR-26); shift length is its own default.
     assert prompt.count(req.presence_rule()) == 1
-    assert "it counts toward the number, it does not add to it" in prompt
+    assert "one of dinner's people, never an extra one" in prompt
     para = next(ln for ln in prompt.splitlines() if ln.startswith("- Shift length:"))
     assert "one or two a day may work straight through" in para and "never headcount" in para
     # The old wording — any shift extending past 3pm counts at night — is gone.
@@ -312,7 +314,7 @@ def test_the_ceiling_is_still_a_ceiling_and_a_days_target_is_the_aim_only_when_n
     assert "This is a ceiling, not a quota" in prompt
     assert "Coming in under it is a good outcome when every shift meets its SHIFT REQUIREMENTS" in prompt
     assert "use up to it when the day's shifts need the hours" in prompt
-    assert "it never adds them" in prompt
+    assert "it never adds hours" in prompt
 
 
 def test_focus_reaches_the_prompt_only_when_given(monkeypatch):
@@ -332,6 +334,6 @@ def test_a_slice_is_told_closes_weekends_and_busy_shifts_so_far(monkeypatch):
                      role_floors={"Server": {"night": 2}})
     block = prompt[prompt.index("ALREADY WRITTEN FOR THE OTHER DAYS"):]
     assert "S0: 6h so far on Fri, last shift Fri 2026-10-09 until 11:00pm; 1 close, 1 weekend, 1 busy" in block
-    assert "closes, weekend shifts and busy shifts" in block
+    assert "Share the closes, weekend and busy shifts" in block
     # The table covers only the slice being written.
     assert "  Fri 2026-10-09" not in prompt and "  Sat 2026-10-10" in prompt

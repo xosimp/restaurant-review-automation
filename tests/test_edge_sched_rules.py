@@ -158,7 +158,9 @@ def test_a_close_and_open_across_the_spring_forward_night_is_a_rest_gap(db):
 
 def test_an_ordinary_night_rest_gap_is_measured_on_the_wall_clock():
     rows = [_row("2026-10-09", "Ana", "5:00pm", "11:00pm", 6), _row("2026-10-10", "Ana", "8:00am", "2:00pm", 6)]
-    v = [x for x in sr.violations(rows, _c()) if x["kind"] == "rest_gap"]
+    c = _c()
+    c.compliance["min_rest_hours"] = 10            # the owner's rule (no default since 10/10/26 MARKET-3)
+    v = [x for x in sr.violations(rows, c) if x["kind"] == "rest_gap"]
     assert len(v) == 1 and "9.0h" in v[0]["detail"]
 
 
@@ -183,6 +185,7 @@ def test_two_versions_of_a_later_week_never_hide_the_previous_weeks_close(db):
     _publish(db, rid, NEXT, [(NEXT[0], "Monday", "Ben", "Server", "5:00pm", "10:00pm", 5, "")])
     _publish(db, rid, NEXT, [(NEXT[0], "Monday", "Ben", "Server", "4:00pm", "10:00pm", 6, "")])
     c = sr.build_constraints(rid, WEEK, DAYS)
+    c.compliance["min_rest_hours"] = 10            # the owner's rule (no default since 10/10/26 MARKET-3)
     rows = [_row(WEEK[0], "Ana", "7:00am", "3:00pm", 8)]              # 8h after Sunday's 11pm close
     assert "rest_gap" in {v["kind"] for v in sr.violations(rows, c)}
 
@@ -192,5 +195,6 @@ def test_a_single_published_previous_week_feeds_rest_and_hours(db):
     _publish(db, rid, PREV, [(d, "X", "Ana", "Server", "3:00pm", "11:00pm", 8, "") for d in PREV[3:]])
     c = sr.build_constraints(rid, WEEK, DAYS)
     assert c.base_hours["ana"] == {PREV[3]: 32.0}
+    c.compliance["min_rest_hours"] = 10            # the owner's rule (no default since 10/10/26 MARKET-3)
     rows = [_row(WEEK[0], "Ana", "7:00am", "3:00pm", 8)]
     assert "rest_gap" in {v["kind"] for v in sr.violations(rows, c)}

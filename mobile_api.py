@@ -8800,6 +8800,15 @@ def mobile_score_schedule(current_user):
                         from time_utils import restaurant_now_by_id as _rnow_w
                         _late_warning = _sr_w.late_change_warning(
                             _sr_w.compliance(rid), pending["dates"], _rnow_w(rid, naive=True).date())
+                        # Where a predictive-scheduling law covers the
+                        # restaurant the change is PRICED per changed shift
+                        # before it is sent (schedule audit 10/10/26
+                        # MARKET-2): the sentence names the sum, and the rows
+                        # come back for the review.
+                        import strategy_routes as _sr_pp
+                        _pp_resp = _sr_pp._predictability_preview(rid, saved, rows)
+                        if _pp_resp and _pp_resp.get("text"):
+                            _late_warning = _pp_resp["text"]
             except Exception as _nx:
                 print(f"[schedule] unsent-changes check failed: {_nx}")
         # The rescored verdict is on the manager's screen: its
@@ -8827,6 +8836,9 @@ def mobile_score_schedule(current_user):
                        # never sent). Nobody has been told yet.
                        unsent_changes=locals().get("_resp_unsent"),
                        late_change_warning=locals().get("_late_warning"),
+                       # The priced changes (predictability_pay.preview) when a
+                       # predictive-scheduling law covers the restaurant.
+                       predictability_pay=locals().get("_pp_resp"),
                        # The one-tap "why" for a big change in the first weeks
                        # (L-35): [{key, kind, text, options: [{answer, label}],
                        # date, employee, role, daypart}] — answered at

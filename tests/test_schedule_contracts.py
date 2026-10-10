@@ -116,7 +116,7 @@ def test_the_contract_is_schema_unless_schedule_contract_names_another(monkeypat
 
 def test_a_generation_reads_its_contract_once_and_hands_it_to_every_call():
     src = _src("schedule_engine.py")
-    assert "contract=_sched_out.schedule_contract()," in src          # _build_schedule_result, once
+    assert "_contract_now = _sched_out.schedule_contract()" in src and "contract=_contract_now," in src   # once
     assert "contract = _sched_out.schedule_contract(kwargs.get(\"contract\"))" in src
 
 

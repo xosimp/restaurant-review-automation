@@ -107,6 +107,11 @@ def _gen(answers, calls):
     """A stubbed generate_optimized_schedule: each call pops its answer — a
     list of CSV lines, or a dict merged into the result, or an exception."""
     def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
+        if kwargs.get("prepare_only"):
+            # labor's prepare_only (scheduler audit 10/10/26): the week's
+            # figures with no model call — never one of the answers.
+            return {"schedule_csv": HEADER + "\n", "rows": [], "narrative": [], "generation_seconds": 0.0,
+                    "week_dates": WEEK, "hours_budget": 0, "requirements_by_date": {}, "prepared": True}
         calls.append({"slice": list(week_slice) if week_slice else None, "prior": list(prior_rows or []),
                       "kwargs": kwargs})
         ans = answers.pop(0)
@@ -245,7 +250,7 @@ def test_the_redo_prompt_names_the_dates_and_says_the_owners_words_once(db, monk
     assert p.count("THE OWNER'S REQUEST FOR THIS DRAFT —") == 1 and p.count("Saturday is slammed") == 1
     said = p[p.index("THE OWNER'S REQUEST FOR THIS DRAFT —"):]
     said = said[:said.index("Saturday is slammed") + 60]
-    assert "priority 5" in said and "Too few people on" in said and ai_guard.OWNER_RULE_OPEN not in said
+    assert "PRIORITIES 5" in said and "Too few people on" in said and ai_guard.OWNER_RULE_OPEN not in said
     assert "WHY THE OWNER IS REDOING" not in p
     assert prompts[-1]["deadline"] is not None                         # the job's clock reaches the call
 
@@ -266,7 +271,9 @@ def test_the_gate_and_an_owner_redo_regenerate_only_their_dates_through_the_job(
     assert len(calls) == 1 and calls[0]["slice"] == [WEEK[5]]
     assert calls[0]["kwargs"]["instruction"] == "What was wrong with the previous draft: The wrong people on"
     assert res["regenerated_dates"] == [WEEK[5]]
-    assert res["redo"] == {"dates": [WEEK[5]], "base_history_id": base, "by": "owner"}
+    # Drafted in code first (scheduler audit 10/10/26 AI-28); this harness has
+    # no SHIFT REQUIREMENTS for code to lay out, so the model redid the day.
+    assert res["redo"] == {"dates": [WEEK[5]], "base_history_id": base, "by": "owner", "how": "model"}
     saturday = [r for r in res["preview_rows"] if r["date"] == WEEK[5]]
     assert [r["employee"] for r in saturday] == ["Bo"]                 # rewritten
     assert {r["date"] for r in res["preview_rows"] if r["employee"] == "Ana"} == set(WEEK) - {WEEK[5]}   # kept
@@ -666,7 +673,9 @@ def test_a_restaurants_measured_row_cost_shrinks_its_calls_and_never_grows_them(
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL              # no calls yet: the estimate
     # The restaurant's own, on the model in force: the route's since 10/7/26
     # (schedule_route - the labor_schedule ladder's tier, not model_for).
-    assert seen[-1] == (rid, se.schedule_route().model)
+    # Then, with nothing of its own measured, every restaurant's calls on that
+    # model (scheduler audit 10/10/26 AI-17: the fleet's before the guess).
+    assert seen[-2:] == [(rid, se.schedule_route().model), (None, se.schedule_route().model)]
     monkeypatch.setattr(so, "call_costs", measured(400))               # thinking included, per row written
     assert se.rows_per_call(rid) == int(se.SCHEDULE_TOKEN_CEILING * se.MEASURED_HEADROOM // 400)
     monkeypatch.setattr(so, "call_costs", measured(100, fixed=30000))  # the fixed part comes off first
@@ -681,8 +690,9 @@ def test_a_restaurants_measured_row_cost_shrinks_its_calls_and_never_grows_them(
         raise RuntimeError("no such table")
     monkeypatch.setattr(so, "call_costs", broken)
     assert se.rows_per_call(rid) == se.CHUNK_ROWS_PER_CALL              # a store failure never fails the week
-    # The plan follows it: 300 rows fit one call at the estimate, three at 400 tokens a row.
-    monkeypatch.setattr(so, "call_costs", measured(400))
+    # The plan follows it: 300 rows fit one call at the estimate, three at 900
+    # tokens a row (400 until the 128K ceiling of 10/10/26, AI-17).
+    monkeypatch.setattr(so, "call_costs", measured(900))
     _pin_week(monkeypatch)
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 300)
     calls = []
@@ -1121,6 +1131,11 @@ def test_an_unreadable_shifts_file_is_named_as_that(db, monkeypatch):
 # ── E-29 / PR-17: a department call gets its own rules and rows ─────────────
 
 def test_a_department_call_gets_only_its_own_managers_floors_and_people(monkeypatch):
+    # One call at a time, so the managers' part sees the kitchen's rows (the
+    # addendum below). Since 10/10/26 (scheduler audit AI-4) the departments
+    # go out together by default and the managers' part relies on the plan
+    # made in code — tests/test_sf10_e_parallel.py holds that.
+    monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
     _pin_week(monkeypatch)
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 4 * se.CHUNK_ROWS_PER_CALL)   # by department
     c = _c(roster_names=["Ana", "Mo", "Cy"], active={"ana", "mo", "cy"},

@@ -2237,11 +2237,76 @@ def _do_note_rules_get(u):
     else:
         t = _local_today(u)
         week_of = t + _td(days=(sd - t.weekday()) % 7 or 7)
+    sentences = snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat())
+    unread = _typed_readings(_rid(u), sentences)
     return {"ok": True, "week_of": week_of.isoformat(),
-            "sentences": snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat()),
+            "sentences": sentences,
             "rules": snr.note_rules(_rid(u), week_start=week or week_of.isoformat()),
             "roles": snr.restaurant_roles(_rid(u)),
+            # Sentences no model has read yet (owner_rules — scheduler audit
+            # 10/10/26 RM-9): "Read my notes" reads them; a generation does too.
+            "unread": unread,
             "can_edit": _principal(u)}, 200
+
+
+def _typed_readings(rid, sentences, extract=False) -> int:
+    """Each sentence the plain reader could not hold, with the typed rules
+    Cavnar AI read from it (owner_rules — RM-9, AI-19): `typed` [{rule,
+    words}] to confirm, [] when it states none. Returns how many no model
+    has read yet. Cached readings only, unless `extract` (the owner's own
+    "Read my notes" press)."""
+    import owner_rules as _owr
+    try:
+        state = _owr.notes_state(rid, extract=extract)
+    except Exception as e:
+        print(f"[note rules] typed readings unavailable: {e!r}")
+        return 0
+    unread = 0
+    for item in sentences or []:
+        if item.get("rule_id") or item.get("kind") not in ("unchecked", "guidance", "person"):
+            continue
+        got = state.get(" ".join(str(item.get("text") or "").split()))
+        if got is None:
+            unread += 1
+            continue
+        item["typed"] = [{"rule": r, "words": _owr.words(r)} for r in got if r.get("kind") != "floor"]
+    return unread
+
+
+def _do_note_rules_read(u):
+    """The owner's "Read my notes" press: the notes' sentences no model has
+    read yet read now (owner_rules — Claude Haiku 5.5, each sentence once,
+    cached; every proposed rule validated in code), the screen's own answer
+    back. Proposals only: nothing holds until the owner confirms it."""
+    if not (_principal(u) or _may_draft(u)):
+        return _forbidden("Only someone who can change the schedule can have the notes read.")
+    from models import get_restaurant
+    import schedule_note_rules as snr
+    notes = getattr(get_restaurant(_rid(u)), "sched_notes", None) or ""
+    sentences = snr.read_notes(_rid(u), notes)
+    unread = _typed_readings(_rid(u), sentences, extract=True)
+    return {"ok": True, "sentences": sentences, "unread": unread}, 200
+
+
+def _do_note_rule_typed_add(u):
+    """{rule: {kind, role, person, person2, days, dates, daypart, value,
+    time, quote}, source_text, scope: "every"|"week", week_start?} — a typed
+    reading of a note (or a draft's chip) the owner confirmed: stored as a
+    schedule_note_rules row of its kind, validated again, hard from then on
+    (owner_rules.confirm — RM-9). Owner only, as every note rule is."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can turn a note into a rule.")
+    from client_api import log_account_event
+    import owner_rules as _owr
+    b = _body()
+    try:
+        rule = _owr.confirm(_rid(u), b.get("rule") or {}, source_text=b.get("source_text"),
+                            scope=b.get("scope") or "every", week_start=b.get("week_start"), user=u)
+    except ValueError as e:
+        return {"ok": False, "error": e.args[0]}, 400
+    if not rule.get("existing"):
+        log_account_event(_rid(u), "schedule_note_rule_added", current_user=u, detail=str(rule.get("words"))[:200])
+    return {"ok": True, "rule": rule}, 200
 
 
 def _do_note_rule_add(u):
@@ -2590,6 +2655,266 @@ def _setup_payload(rid, principal=False) -> dict:
         return {}
 
 
+# ── the compliance engine (schedule audit 10/10/26 RM-15) ───────────────────
+#
+# One screen's data, web and phone alike: which jurisdictions hold the
+# restaurant and why (coverage, with the questions that decide it), every
+# value in force with its source and effective date, the draft horizon a
+# notice rule sets, owner values laxer than a covering law, the school
+# calendar, the break rules, and — for whoever sends schedules — the
+# predictability-pay ledger, good-faith estimates, change requests owed a
+# written answer and access-to-hours offers.
+
+def _compliance_payload(u) -> dict:
+    import compliance_packs as _cp
+    import schedule_rules as _sr
+    import school_calendar as _sc
+    import breaks as _breaks
+    from models import get_restaurant
+    from time_utils import restaurant_now_by_id
+    rid = _rid(u)
+    r = get_restaurant(rid)
+    today = restaurant_now_by_id(rid, naive=True).date()
+    ev = _cp.evaluate(r, today)
+    comp = _sr.compliance(r)
+    pack = comp.pop("_pack", None) or {}
+    vals = _cp.values_in_force(r, today)
+    try:
+        stored = _sr.stored_compliance(r)
+        owner_vals = {k: v for k, v in stored.items() if k in _sr._BOUNDS or k == "rest_mode"}
+    except Exception:
+        owner_vals = {}
+    in_force = []
+    for k, v in sorted(vals.items()):
+        e = _cp.entry(v["by"]) or {}
+        in_force.append({"key": k[5:] if k.startswith("rule:") else k, "rule": k.startswith("rule:"),
+                         "value": v["value"], "source": v["source"], "effective": v.get("effective"),
+                         "note": v.get("note"), "by": v["by"], "by_label": e.get("label")})
+    from labor import get_week_start_day
+    horizon = _sr.draft_horizon(comp, today, get_week_start_day(rid))
+    minors = []
+    try:
+        import staff_settings as _ss
+        minors = [n for n, st in (_ss.get_all(rid) or {}).items()
+                  if (st or {}).get("is_minor") or (st or {}).get("minor_age_band")]
+    except Exception:
+        minors = []
+    has_minors = bool(minors)
+    cal = _sc.calendar_of(r)
+    br = _breaks.rules_for(comp, vals)
+    return {"ok": True, "evaluation": ev, "in_force": in_force, "pack": pack,
+            "rest": {"mode": _sr.rest_mode(comp), "hours": comp.get("min_rest_hours"),
+                     "multiplier": comp.get("rest_premium_multiplier"), "flat": comp.get("rest_premium_flat"),
+                     "scope": comp.get("rest_premium_scope")},
+            "horizon": horizon, "conflicts": _cp.conflicts(r, owner_vals, today),
+            "school_calendar": cal, "school_calendar_prompt": _sc.needs_prompt(cal, today, has_minors),
+            "school_basis": _sc.basis(cal, today),
+            # What each minor actually works in school weeks and out of them
+            # over the last year — the availability the calendar explains.
+            "minor_seasons": _sc.minors_by_season(rid, minors, cal) if minors else {},
+            "breaks": {"meals": br.get("meals"), "rest": br.get("rest"), "premium": br.get("premium"),
+                       "basis": br.get("basis"), "source": br.get("source")},
+            "minor_tables": {b: {k: v for k, v in _sr.minor_rules(b, _cp.state_of(r)).items()}
+                             for b in _sr.MINOR_BANDS},
+            "library": _cp.library_summary(), "can_edit": _principal(u), "can_send": _may_publish(u),
+            "kinds": list(_cp.PROFILE_KINDS), "states": [{"code": k, "label": v} for k, v in
+                                                         sorted(_cp.ALL_STATES.items(), key=lambda kv: kv[1])]}
+
+
+def _do_compliance_engine_get(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the compliance rules.")
+    if request.args.get("brief") == "1":
+        # The draft horizon alone — the Generate picker's "first week on
+        # time" label (MARKET-1), read on every Studio load.
+        import schedule_rules as _sr
+        from labor import get_week_start_day
+        comp = _sr.compliance(_rid(u))
+        return {"ok": True, "horizon": _sr.draft_horizon(comp, _local_today(u), get_week_start_day(_rid(u)))}, 200
+    out = _compliance_payload(u)
+    if _may_publish(u):
+        import predictability_pay as _pp
+        import fair_workweek as _fww
+        rid = _rid(u)
+        since = (_local_today(u) - __import__("datetime").timedelta(days=90)).isoformat()
+        out["ledger"] = _pp.summary(rid, date_from=since)
+        out["estimates"] = _fww.estimates_status(rid)
+        out["requests"] = _fww.requests(rid)
+        out["access_offers"] = _fww.access_offers(rid, since=since)
+        out["hire_check"] = _fww.hire_check(rid)
+    return out, 200
+
+
+def _do_compliance_profile_set(u):
+    """The facts coverage is decided on: state, city, the business's size
+    (employees and locations, all of them), employees in this city, kind.
+    The account holder confirms them; the jurisdiction pick follows the
+    state."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can set where the restaurant is and how big the business is.")
+    import compliance_packs as _cp
+    try:
+        prof = _cp.save_profile(_rid(u), _body(), by=_who(u))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return dict(_compliance_payload(u), profile=prof), 200
+
+
+def _do_school_calendar_set(u):
+    if not _principal(u):
+        return _forbidden("Only the account owner can set the school calendar.")
+    import school_calendar as _sc
+    try:
+        _sc.save_calendar(_rid(u), _body(), by=_who(u))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return _compliance_payload(u), 200
+
+
+def _do_compliance_ledger(u):
+    """The predictability-pay and rest-premium ledger, ?from=&to= (ISO);
+    ?format=csv is the payroll export (and stamps the rows exported)."""
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can read the pay ledger.")
+    import predictability_pay as _pp
+    a = request.args
+    frm, to = (a.get("from") or "")[:10] or None, (a.get("to") or "")[:10] or None
+    if a.get("format") == "csv":
+        text = _pp.export_csv(_rid(u), frm, to, mark_exported=a.get("mark") == "1")
+        resp = Response(text, mimetype="text/csv")
+        resp.headers["Content-Disposition"] = "attachment; filename=predictability-pay.csv"
+        return resp, 200
+    return {"ok": True, "rows": _pp.ledger(_rid(u), frm, to), "summary": _pp.summary(_rid(u), frm, to)}, 200
+
+
+def _do_compliance_consent_ask(u):
+    """Ask one person, in their app or portal, to agree in writing to a
+    change to their posted shift (Chicago, Seattle and Oregon accept it as
+    the employee's agreement; it is time-stamped either way)."""
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can ask staff to agree to a change.")
+    import staff_consent
+    b = _body()
+    before, after = b.get("before") or {}, b.get("after") or {}
+    from time_utils import mdy
+    words = " ".join(str(b.get("text") or "").split())
+    if not words:
+        if before and after:
+            words = (f"I agree to change my {mdy(b.get('date'))} shift from {before.get('start')}–{before.get('end')} "
+                     f"to {after.get('start')}–{after.get('end')}.")
+        elif after:
+            words = f"I agree to work {after.get('start')}–{after.get('end')} on {mdy(b.get('date'))}."
+    try:
+        row = staff_consent.ask(_rid(u), b.get("employee"), "shift_change", words, subject_date=(b.get("date") or "")[:10],
+                                subject={"before": before or None, "after": after or None}, asked_by=_who(u))
+    except staff_consent.ConsentError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "consent": row}, 200
+
+
+def _do_compliance_consents(u):
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can read staff consents.")
+    import staff_consent
+    return {"ok": True, "consents": staff_consent.for_restaurant(_rid(u))}, 200
+
+
+def _do_estimate_draft(u):
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can write a schedule estimate.")
+    import fair_workweek as _fww
+    try:
+        return {"ok": True, "estimate": _fww.draft_estimate(_rid(u), _body().get("employee"))}, 200
+    except _fww.FairWorkweekError as e:
+        return {"ok": False, "error": str(e)}, 400
+
+
+def _do_estimate_issue(u):
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can issue a schedule estimate.")
+    import fair_workweek as _fww
+    try:
+        return {"ok": True, "estimate": _fww.issue_estimate(_rid(u), _body().get("estimate"), issued_by=_who(u))}, 200
+    except _fww.FairWorkweekError as e:
+        return {"ok": False, "error": str(e)}, 400
+
+
+def _do_fww_request_answer(u, request_id):
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can answer a schedule request.")
+    import fair_workweek as _fww
+    b = _body()
+    try:
+        return {"ok": True, "request": _fww.answer_request(_rid(u), request_id, b.get("decision"), b.get("answer"),
+                                                          answered_by=_who(u))}, 200
+    except _fww.FairWorkweekError as e:
+        return {"ok": False, "error": str(e)}, 400
+
+
+def _do_offer_hours(u):
+    """Offer additional hours to the current staff first (access to hours)."""
+    if not _may_publish(u):
+        return _forbidden("Only someone who sends the schedule can post extra hours.")
+    import fair_workweek as _fww
+    b = _body()
+    try:
+        row = _fww.offer_hours(_rid(u), b.get("date"), b.get("shift_start"), b.get("shift_end"), role=b.get("role"),
+                               hours_window=b.get("hours_window"), actor=_who(u), note=b.get("note"))
+    except _fww.FairWorkweekError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, "offer": row}, 200
+
+
+def _do_compliance_breaks(u):
+    """The breaks placed in a week (?schedule_id=) and, from the POS's
+    punches, meals missed or short in the last 14 days with any premium."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the breaks.")
+    import breaks as _breaks
+    import compliance_packs as _cp
+    import schedule_rules as _sr
+    from models import get_restaurant, get_conn
+    rid = _rid(u)
+    r = get_restaurant(rid)
+    rules = _breaks.rules_for(_sr.compliance(r), _cp.values_in_force(r))
+    out = {"ok": True, "rules": {"meals": rules.get("meals"), "rest": rules.get("rest"), "basis": rules.get("basis"),
+                                 "source": rules.get("source"), "premium": rules.get("premium")},
+           "planned": [], "as_run": []}
+    try:
+        sid = int(request.args.get("schedule_id") or 0)
+    except (TypeError, ValueError):
+        sid = 0
+    conn = get_conn()
+    try:
+        if sid:
+            h = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                             (sid, rid)).fetchone()
+            if h:
+                from schedule_versions import rows_from_csv
+                rows = rows_from_csv(h["schedule_csv"] or "")
+                for i, bl in sorted(_breaks.plan_week(rows, rules).items()):
+                    out["planned"].append({"employee": rows[i].get("employee"), "date": rows[i].get("date"),
+                                           "shift_start": rows[i].get("shift_start"),
+                                           "shift_end": rows[i].get("shift_end"),
+                                           "breaks": [{k: b.get(k) for k in ("kind", "label", "minutes", "paid",
+                                                                             "placed", "window")} for b in bl]})
+        since = (_local_today(u) - __import__("datetime").timedelta(days=14)).isoformat()
+        try:
+            punches = [dict(p) for p in conn.execute(
+                "SELECT employee_name, business_date, clock_in, clock_out, meal_minutes, break_minutes, reg_rate "
+                "FROM pos_punches WHERE restaurant_id=? AND business_date>=? AND is_station=0", (rid, since)).fetchall()]
+        except Exception:
+            punches = []
+    finally:
+        conn.close()
+    audit = _breaks.audit_punches(punches, rules)
+    if not _may_publish(u):
+        for a in audit:
+            a.pop("premium_dollars", None)
+    out["as_run"] = audit
+    return out, 200
+
+
 def _do_compliance_set(u):
     """Save the scheduling rules. Partial, and all or nothing (schedule
     re-audit 10/4/26 UI-2, UI-9):
@@ -2646,8 +2971,11 @@ def _do_compliance_set(u):
     comp = None
     reset = b.get("rules_default") if isinstance(b.get("rules_default"), list) else []
     if isinstance(b.get("rules"), dict) or reset:
-        comp = _sr.merged_compliance(_sr.stored_compliance(r), b.get("rules") or {},
-                                     reset=[str(k) for k in reset])
+        try:
+            comp = _sr.merged_compliance(_sr.stored_compliance(r), b.get("rules") or {},
+                                         reset=[str(k) for k in reset])
+        except ValueError as e:
+            return _refuse(str(e))
         after.append("rules")
     if "closed_weekdays" in b or "closed_dates" in b:
         cw = b.get("closed_weekdays") if isinstance(b.get("closed_weekdays"), list) else None
@@ -3101,7 +3429,41 @@ def _do_schedule_violations(u):
                 _rid(u), c, blended_rate=_econ.stored_blended_rate(_rid(u), b.get("history_id"))))
         except Exception:
             out["cost"] = None
+    # An edit to a week staff already have, inside a predictive-scheduling
+    # law's notice window, owes predictability pay: priced per changed shift
+    # against what each person was last told, before the change is sent
+    # (schedule audit 10/10/26 MARKET-2). Kept apart from the wage delta —
+    # a premium owed is not the week's labor cost moving.
+    pp = _predictability_preview(_rid(u), b.get("history_id"), rows)
+    if pp is not None:
+        out["predictability_pay"] = pp
+        if isinstance(out.get("cost"), dict):
+            out["cost"]["predictability_pay"] = pp.get("total") or 0.0
     return out, 200
+
+
+def _predictability_preview(rid, history_id, rows):
+    """predictability_pay.preview of `rows` against the last version staff
+    were told, for a PUBLISHED week; None for a draft or with no law."""
+    try:
+        hid = int(history_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        import predictability_pay as _pp
+        before, _swaps = _pp._last_published_rows(rid, hid)
+        if before is None:
+            return None
+        pp = _pp.preview(rid, before, rows)
+        if not pp.get("covered"):
+            return None
+        return {k: pp[k] for k in ("law", "code", "total", "owed_count", "unknown_count", "text")} | {
+            "rows": [{k: x.get(k) for k in ("employee", "date", "kind", "notice_hours", "premium_hours", "rate", "amount",
+                                            "status", "exempt_reason")} for x in pp["rows"]]}
+    except Exception as e:
+        import ops as _ops_pp
+        _ops_pp.capture(e, job="predictability_preview", context=f"restaurant_id={rid}")
+        return None
 
 
 def _do_schedule_apply_fixes(u):
@@ -7319,9 +7681,24 @@ _ROUTES = [
     ("/labor/staff-note-holds", ["POST"], _do_staff_note_hold, "staff_note_hold"),
     ("/labor/staff-note-holds/<int:hold_id>/remove", ["POST"], _do_staff_note_unhold, "staff_note_unhold"),
     ("/labor/note-rules", ["POST"], _do_note_rule_add, "note_rule_add"),
+    ("/labor/note-rules/read", ["POST"], _do_note_rules_read, "note_rules_read"),
+    ("/labor/note-rules/typed", ["POST"], _do_note_rule_typed_add, "note_rule_typed_add"),
     ("/labor/note-rules/<int:rule_id>/remove", ["POST"], _do_note_rule_remove, "note_rule_remove"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
+    # The compliance engine (schedule audit 10/10/26 RM-15).
+    ("/labor/compliance", ["GET"], _do_compliance_engine_get, "compliance_get"),
+    ("/labor/compliance/profile", ["POST"], _do_compliance_profile_set, "compliance_profile_set"),
+    ("/labor/compliance/school-calendar", ["POST"], _do_school_calendar_set, "school_calendar_set"),
+    ("/labor/compliance/ledger", ["GET"], _do_compliance_ledger, "compliance_ledger"),
+    ("/labor/compliance/consents", ["GET"], _do_compliance_consents, "compliance_consents"),
+    ("/labor/compliance/consents", ["POST"], _do_compliance_consent_ask, "compliance_consent_ask"),
+    ("/labor/compliance/estimates/draft", ["POST"], _do_estimate_draft, "compliance_estimate_draft"),
+    ("/labor/compliance/estimates", ["POST"], _do_estimate_issue, "compliance_estimate_issue"),
+    ("/labor/compliance/requests/<int:request_id>/answer", ["POST"], _do_fww_request_answer,
+     "compliance_request_answer"),
+    ("/labor/compliance/offer-hours", ["POST"], _do_offer_hours, "compliance_offer_hours"),
+    ("/labor/compliance/breaks", ["GET"], _do_compliance_breaks, "compliance_breaks"),
     ("/labor/managers", ["GET"], _do_managers_get, "schedule_managers_get"),
     ("/labor/managers", ["POST"], _do_managers_set, "schedule_managers_set"),
     ("/labor/closers", ["GET"], _do_closers_get, "schedule_closers_get"),

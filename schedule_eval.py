@@ -1,0 +1,518 @@
+"""
+schedule_eval.py — the frozen golden evaluation set for schedule generation,
+how an arm's week is scored against the week the owner published, and the
+verdicts the router reads (scheduler audit 10/10/26: RM-1, AI-3, AI-5, AI-6,
+AI-7, AI-8, AI-22, AI-30).
+
+Why it exists. The model, effort and contract the schedule runs on were
+decided on ONE stored week with one sample per arm (PROMPT_LIBRARY →
+Schedule), the replays read schedule_model_calls — deleted at 90 days
+(ops._RETENTION_DAYS) — so a quarter later the baseline is gone, and the
+script scored the old repair_rows alone, never the week the owner actually
+sent out. Here:
+
+  THE SET (schedule_eval_items). freeze() copies a curated set of stored
+  generations — each one's every call (request and answer, scrubbed as
+  schedule_output.record_call already scrubs: a guest's contact details and
+  labelled names redacted, staff names and figures kept, since a replay
+  needs them), the post-model context the job scored it in (the Constraints,
+  the quality signals, the week's figures — schedule_metrics' snapshot of
+  the generation, `context_z`), and the PUBLISHED rows of that week — into a
+  versioned set (`version`) that NO retention rule touches
+  (ops._RETENTION_DAYS has no entry for these tables, and
+  tests/test_sf10_e_eval.py holds it so). Items are tagged (`tags`: size
+  band, holiday, first week, redo, gate) so a set spans 15-250 staff,
+  holiday, first and redo weeks.
+
+  THE SCORE (score_against_published). An arm's rows go through the
+  production post-model path (schedule_engine.post_model_rows: repair_week
+  with the generation's own RepairContext, then the quality gate's fill in
+  code when the gate trips) — never repair_rows alone — and are compared
+  with the week the owner published: row-level precision and recall on
+  (person, date, role family, start within 30 minutes) and the hours by
+  role and day (L1 distance), beside hard breaches, manager minutes,
+  quality and unmet items.
+
+  VARIANCE (summarize_runs). Every arm runs at least RUNS_PER_ARM (3) times
+  per week; an arm is reported as the paired mean over weeks with a 90%
+  interval clustered by restaurant (schedule_experiments.cluster_mean_ci),
+  and against a baseline arm as the paired difference with its interval.
+  A routing decision needs an interval that excludes zero.
+
+  VERDICTS (schedule_eval_verdicts). record_verdict() stores one paired
+  comparison per metric and roster-size band; route_evidence() is what
+  schedule_engine's pre-router reads: a week starts on T4 for its roster
+  size only when a stored verdict says T4 beat T3 there at 90% (AI-3: it was
+  "roster over 120", a size the code itself called untested).
+
+Pure where it can be; the tables are created at boot (init_schedule_eval,
+from models.init_db).
+"""
+import json
+
+import zlib
+
+
+def get_conn(db_path=None):
+    """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
+    import models
+    return models.get_conn(db_path) if db_path else models.get_conn()
+
+
+# Every arm runs this many times on every week before its mean is read.
+RUNS_PER_ARM = 3
+# A start within this many minutes of the published one is the same shift.
+START_TOLERANCE_MINUTES = 30
+# Roster-size bands the verdicts (and the router) are read by: [lo, hi].
+SIZE_BANDS = ((0, 39), (40, 79), (80, 119), (120, 179), (180, 10000))
+# The paired metric the router decides on: agreement with the published
+# week (F1 of row precision and recall) — what an owner keeps, not the
+# internal scorer.
+ROUTE_METRIC = "published_f1"
+VERDICT_METHOD = "paired_cluster_90"
+
+_DDL = (
+    """CREATE TABLE IF NOT EXISTS schedule_eval_items (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        version         TEXT    NOT NULL,
+        item_key        TEXT    NOT NULL,
+        restaurant_id   INTEGER,
+        week_start      TEXT,
+        generation_id   TEXT,
+        history_id      INTEGER,
+        roster_size     INTEGER,
+        tags_json       TEXT,
+        calls_z         BLOB,
+        context_z       BLOB,
+        published_z     BLOB,
+        frozen_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(version, item_key)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sched_eval_items_v ON schedule_eval_items(version, id)",
+    """CREATE TABLE IF NOT EXISTS schedule_eval_runs (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_key         TEXT    NOT NULL,
+        version         TEXT    NOT NULL,
+        item_key        TEXT    NOT NULL,
+        arm             TEXT    NOT NULL,
+        run_index       INTEGER NOT NULL DEFAULT 0,
+        metrics_json    TEXT,
+        cost_usd        REAL,
+        seconds         REAL,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sched_eval_runs_key ON schedule_eval_runs(run_key, arm)",
+    """CREATE TABLE IF NOT EXISTS schedule_eval_verdicts (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        version         TEXT,
+        run_key         TEXT,
+        metric          TEXT    NOT NULL,
+        arm_a           TEXT    NOT NULL,
+        arm_b           TEXT    NOT NULL,
+        band_lo         INTEGER,
+        band_hi         INTEGER,
+        weeks           INTEGER,
+        restaurants     INTEGER,
+        diff            REAL,
+        ci_lo           REAL,
+        ci_hi           REAL,
+        winner          TEXT,
+        method          TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sched_eval_verdicts ON schedule_eval_verdicts(metric, arm_a, arm_b, id)",
+)
+
+
+def init_schedule_eval(db_path=None):
+    """The eval set, its runs and its verdicts — at boot (models.init_db),
+    never on a call."""
+    conn = get_conn(db_path)
+    try:
+        for stmt in _DDL:
+            conn.execute(stmt)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _z(obj) -> bytes:
+    return zlib.compress(json.dumps(obj, default=str).encode("utf-8", "replace"))
+
+
+def _unz(blob):
+    if not blob:
+        return None
+    return json.loads(zlib.decompress(blob).decode("utf-8"))
+
+
+def band_of(roster_size):
+    """The SIZE_BANDS band a roster of `roster_size` falls in, (lo, hi)."""
+    n = int(roster_size or 0)
+    for lo, hi in SIZE_BANDS:
+        if lo <= n <= hi:
+            return lo, hi
+    return SIZE_BANDS[-1]
+
+
+# ── verdicts and the router (AI-3, AI-5) ───────────────────────────────────
+
+def record_verdict(metric, arm_a, arm_b, band, paired, version=None, run_key=None, db_path=None) -> dict:
+    """Store one paired comparison of arm_a against arm_b on `metric` for a
+    roster-size `band` (lo, hi): `paired` is summarize_pair's dict ({"diff",
+    "ci90", "weeks", "restaurants"}). The winner is named only when the 90%
+    interval excludes zero (arm_a above it: arm_a; below: arm_b)."""
+    ci = paired.get("ci90")
+    winner = None
+    if ci and ci[0] is not None and ci[1] is not None:
+        if ci[0] > 0:
+            winner = arm_a
+        elif ci[1] < 0:
+            winner = arm_b
+    row = {"metric": metric, "arm_a": arm_a, "arm_b": arm_b, "band_lo": int(band[0]), "band_hi": int(band[1]),
+           "weeks": int(paired.get("weeks") or 0), "restaurants": int(paired.get("restaurants") or 0),
+           "diff": paired.get("diff"), "ci_lo": (ci or (None, None))[0], "ci_hi": (ci or (None, None))[1],
+           "winner": winner, "method": VERDICT_METHOD}
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO schedule_eval_verdicts (version, run_key, metric, arm_a, arm_b, band_lo, band_hi, weeks, "
+            "restaurants, diff, ci_lo, ci_hi, winner, method) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (version, run_key, row["metric"], arm_a, arm_b, row["band_lo"], row["band_hi"], row["weeks"],
+             row["restaurants"], row["diff"], row["ci_lo"], row["ci_hi"], winner, VERDICT_METHOD))
+        conn.commit()
+    finally:
+        conn.close()
+    return row
+
+
+def latest_verdict(metric, arm_a, arm_b, roster_size, db_path=None):
+    """The newest stored verdict of arm_a against arm_b on `metric` whose
+    band holds `roster_size`, or None."""
+    n = int(roster_size or 0)
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute(
+            "SELECT * FROM schedule_eval_verdicts WHERE metric=? AND arm_a=? AND arm_b=? AND band_lo<=? "
+            "AND band_hi>=? ORDER BY id DESC LIMIT 1", (metric, arm_a, arm_b, n, n)).fetchone()
+    finally:
+        conn.close()
+    return dict(r) if r else None
+
+
+def route_evidence(roster_size, db_path=None):
+    """Why a week of this roster size starts on T4, or None (AI-3: route by
+    measured evidence). A reason only when the newest stored verdict of T4
+    against T3 for the roster's size band named T4 the winner at 90% on
+    ROUTE_METRIC. Never raises: a store that cannot be read is no
+    evidence, so the week starts where the ladder starts it."""
+    try:
+        v = latest_verdict(ROUTE_METRIC, "T4", "T3", roster_size, db_path=db_path)
+    except Exception as e:
+        print(f"[schedule_eval] route evidence not read: {e!r}")
+        return None
+    if not v or v.get("winner") != "T4":
+        return None
+    return (f"the eval showed T4 better for rosters of {v['band_lo']}-{v['band_hi']} "
+            f"(+{float(v['diff'] or 0):.3f} {ROUTE_METRIC}, 90% CI {float(v['ci_lo']):.3f} to "
+            f"{float(v['ci_hi']):.3f}, {v['weeks']} weeks)")
+
+
+# ── the set: freezing stored generations (AI-6) ────────────────────────────
+
+def _week(week_start):
+    from datetime import date, timedelta
+    d0 = date.fromisoformat(str(week_start)[:10])
+    return [(d0 + timedelta(days=i)).isoformat() for i in range(7)]
+
+
+def _published_rows(restaurant_id, week_start, db_path=None):
+    """The rows the owner published for that week (the newest published
+    schedule_history row), or None when the week was never published."""
+    import schedule_versions as _sv
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                         "AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+                         (restaurant_id, week_start)).fetchone()
+    finally:
+        conn.close()
+    return _sv.rows_from_csv(r["schedule_csv"] or "") if r else None
+
+
+def item_tags(calls, roster_size, restaurant_id, week_start, extra=(), holidays=None, db_path=None) -> list:
+    """An item's tags: its roster-size band, "redo" / "gate" when its calls
+    were one, "first_week" when the restaurant had no earlier draft,
+    "holiday" when a date of the week is in `holidays`, and any hand label
+    (an instruction subset, say)."""
+    lo, hi = band_of(roster_size)
+    tags = [f"size:{lo}-{hi}"]
+    kinds = {c.get("call_kind") for c in calls or []}
+    if "redo" in kinds:
+        tags.append("redo")
+    if "gate" in kinds:
+        tags.append("gate")
+    conn = get_conn(db_path)
+    try:
+        earlier = conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start<? LIMIT 1",
+                               (restaurant_id, week_start)).fetchone()
+    finally:
+        conn.close()
+    if not earlier:
+        tags.append("first_week")
+    if holidays and set(_week(week_start)) & set(holidays):
+        tags.append("holiday")
+    return sorted(set(tags) | set(extra or ()))
+
+
+def freeze(version, history_ids, tags=None, db_path=None) -> dict:
+    """Copy each stored generation of `history_ids` into the frozen set
+    `version`: its calls (already scrubbed as schedule_model_calls is), its
+    post-model context (schedule_metrics' snapshot, with the last published
+    week before it — what the carry-forward arm drafts from) and the rows
+    the owner published for that week (the ground truth). A generation with
+    no published week or no stored context is skipped, and said. `tags`
+    ({history_id: [tag]}) adds hand labels. Returns {"frozen": [item_key],
+    "skipped": [{history_id, why}]}."""
+    import schedule_output as _so
+    import schedule_metrics as _sm
+    import schedule_fallback as _sfb
+    frozen, skipped = [], []
+    for hid in history_ids or []:
+        calls = _so.load_calls(history_id=int(hid), db_path=db_path)
+        if not calls:
+            skipped.append({"history_id": hid, "why": "no stored calls"})
+            continue
+        first = calls[0]
+        rid, ws, gid = first.get("restaurant_id"), first.get("week_start"), first.get("generation_id")
+        blob = _sm.context_for(generation_id=gid, db_path=db_path) or _sm.context_for(history_id=hid,
+                                                                                       db_path=db_path)
+        if not blob:
+            skipped.append({"history_id": hid, "why": "no stored post-model context"})
+            continue
+        published = _published_rows(rid, ws, db_path=db_path)
+        if not published:
+            skipped.append({"history_id": hid, "why": "the week was never published"})
+            continue
+        ctx = _sm.load_context(blob) or {}
+        res = ctx.get("result") or {}
+        roster_size = len(res.get("roster") or [])
+        try:
+            base = _sfb.base_week(rid, _week(ws), db_path=db_path)
+        except Exception as e:
+            print(f"[schedule_eval] base week not read for {hid}: {e!r}")
+            base = {}
+        key = f"{rid}:{ws}:{gid}"
+        tags_now = item_tags(calls, roster_size, rid, ws, extra=(tags or {}).get(hid) or (),
+                             holidays=res.get("holidays"), db_path=db_path)
+        slim = [{k: c.get(k) for k in ("dates", "model", "effort", "contract", "stop_reason", "outcome", "seconds",
+                                       "usage", "rows", "call_kind", "tier", "request", "inputs", "answer")}
+                for c in calls]
+        conn = get_conn(db_path)
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO schedule_eval_items (version, item_key, restaurant_id, week_start, "
+                "generation_id, history_id, roster_size, tags_json, calls_z, context_z, published_z) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (version, key, rid, ws, gid, int(hid), roster_size, json.dumps(tags_now), _z(slim),
+                 _z({"blob": blob.hex(), "base": base}), _z(published)))
+            conn.commit()
+        finally:
+            conn.close()
+        frozen.append(key)
+    return {"frozen": frozen, "skipped": skipped}
+
+
+def load_items(version, tags=None, db_path=None) -> list:
+    """The frozen items of `version` (all, or those carrying every tag in
+    `tags`): [{item_key, restaurant_id, week_start, roster_size, tags,
+    calls, context, base, published}]."""
+    import schedule_metrics as _sm
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM schedule_eval_items WHERE version=? ORDER BY id", (version,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        t = json.loads(r["tags_json"] or "[]")
+        if tags and not set(tags) <= set(t):
+            continue
+        holder = _unz(r["context_z"]) or {}
+        blob = holder.get("blob")
+        out.append({"item_key": r["item_key"], "restaurant_id": r["restaurant_id"], "week_start": r["week_start"],
+                    "history_id": r["history_id"], "generation_id": r["generation_id"],
+                    "roster_size": r["roster_size"], "tags": t, "calls": _unz(r["calls_z"]) or [],
+                    "context": _sm.load_context(bytes.fromhex(blob)) if blob else None,
+                    "base": holder.get("base") or {}, "published": _unz(r["published_z"]) or []})
+    return out
+
+
+# ── the score: against the week the owner published (AI-7) ─────────────────
+
+def _start_min(t):
+    from time_utils import parse_clock
+    hm = parse_clock(t)
+    return hm[0] * 60 + hm[1] if hm else None
+
+
+def _family(role, c=None):
+    if c is not None:
+        try:
+            return c.family(role)
+        except Exception:
+            pass
+    from shift_quality import role_family
+    return role_family(role or "")
+
+
+def _hours(r) -> float:
+    from schedule_rules import row_hours
+    try:
+        return float(row_hours(r) or 0)
+    except Exception:
+        return 0.0
+
+
+def compare_with_published(rows, published, c=None) -> dict:
+    """Row-level agreement of `rows` with the week the owner published: a
+    row matches a published row of the same person, date and role family
+    whose start is within START_TOLERANCE_MINUTES (each published row
+    matched once). Precision, recall and F1, and the hours by role family
+    and date as an L1 distance (and its share of the published hours)."""
+    pub = [dict(p) for p in published or []]
+    used = [False] * len(pub)
+    by_key = {}
+    for i, p in enumerate(pub):
+        k = (" ".join(str(p.get("employee") or "").split()).lower(), p.get("date"), _family(p.get("role"), c))
+        by_key.setdefault(k, []).append(i)
+    hit = 0
+    for r in rows or []:
+        k = (" ".join(str(r.get("employee") or "").split()).lower(), r.get("date"), _family(r.get("role"), c))
+        s = _start_min(r.get("shift_start"))
+        for i in by_key.get(k, []):
+            ps = _start_min(pub[i].get("shift_start"))
+            if not used[i] and s is not None and ps is not None and abs(s - ps) <= START_TOLERANCE_MINUTES:
+                used[i] = True
+                hit += 1
+                break
+    n_rows, n_pub = len(rows or []), len(pub)
+    precision = hit / n_rows if n_rows else 0.0
+    recall = hit / n_pub if n_pub else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    hours = {}
+    for sign, src in ((1, rows or []), (-1, pub)):
+        for r in src:
+            k = (_family(r.get("role"), c), r.get("date"))
+            hours[k] = hours.get(k, 0.0) + sign * _hours(r)
+    l1 = sum(abs(v) for v in hours.values())
+    pub_hours = sum(_hours(p) for p in pub)
+    return {"matched": hit, "rows": n_rows, "published_rows": n_pub, "published_precision": round(precision, 4),
+            "published_recall": round(recall, 4), "published_f1": round(f1, 4), "hours_l1": round(l1, 2),
+            "hours_l1_share": round(l1 / pub_hours, 4) if pub_hours else None}
+
+
+def score_arm(rows, item, gate=True) -> dict:
+    """One arm's rows for one frozen item, scored as production would see
+    them: through schedule_engine.post_model_rows with the item's own
+    context (the repair loop and the gate's fill), then against the
+    published week, beside hard breaches, manager minutes, quality and the
+    gate."""
+    import schedule_engine as _se
+    import schedule_rules as _sr
+    ctx = item.get("context") or {}
+    c = ctx.get("constraints")
+    post = _se.post_model_rows(rows, ctx, restaurant_id=None, gate=gate)
+    final = post["rows"]
+    prof = _sr.breach_profile(final, c, post["violations"]) if c is not None else {}
+    q = post.get("quality") or {}
+    out = compare_with_published(final, item.get("published") or [], c)
+    out.update({"hard": sum(1 for v in post["violations"] if v.get("hard")),
+                "manager_minutes": int(sum((prof.get("manager") or {}).values())) if prof else None,
+                "quality": q.get("score") if q.get("checked") else None,
+                "gate": (post.get("gate") or {}).get("reason"), "gate_kept": (post.get("gate") or {}).get("kept"),
+                "final_rows": len(final)})
+    return out
+
+
+# ── the code arms (AI-8): no model at all ──────────────────────────────────
+
+CODE_ARMS = ("carry_forward", "solver")
+
+
+def code_arm_rows(arm, item) -> list:
+    """The rows a code arm drafts for a frozen item, as production's
+    fallback draft would (schedule_fallback): "carry_forward" — the last
+    published week before it, on the week's roster and rules (no base: the
+    solver); "solver" — SHIFT REQUIREMENTS shaped on the restaurant's usual
+    shifts and solved."""
+    import schedule_fallback as _sfb
+    ctx = item.get("context") or {}
+    c = ctx.get("constraints")
+    res = ctx.get("result") or {}
+    dates = [d for d in (res.get("week_dates") or _week(item["week_start"]))
+             if d not in set(res.get("closed_dates") or ())]
+    if arm not in CODE_ARMS:
+        raise ValueError(f"unknown code arm {arm!r} (one of {', '.join(CODE_ARMS)})")
+    base = item.get("base") or {}
+    if arm == "carry_forward" and base.get("rows"):
+        return _sfb.carry_forward_rows(base, dates, c, res.get("roster"))["rows"]
+    return _sfb.solver_rows(dates, res.get("requirements_by_date") or {}, c, base_rows=base.get("rows") or [],
+                            context_rows=[], open_times=res.get("open_times"), close_times=ctx.get("close_times"),
+                            signals=ctx.get("signals"), weights=ctx.get("weights"),
+                            roster_roles=res.get("roster_roles") or None, max_seconds=10.0)["rows"]
+
+
+# ── variance: runs, paired means and intervals (AI-5) ──────────────────────
+
+def record_run(run_key, version, item_key, arm, run_index, metrics, cost_usd=None, seconds=None, db_path=None):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO schedule_eval_runs (run_key, version, item_key, arm, run_index, metrics_json, "
+                     "cost_usd, seconds) VALUES (?,?,?,?,?,?,?,?)",
+                     (run_key, version, item_key, arm, int(run_index), json.dumps(metrics, default=str),
+                      cost_usd, seconds))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def item_means(runs, metric) -> dict:
+    """{(arm, item_key): (restaurant, mean over the item's runs)} from
+    [{arm, item_key, restaurant_id, metrics}]."""
+    acc = {}
+    for r in runs:
+        v = (r.get("metrics") or {}).get(metric)
+        if v is None:
+            continue
+        e = acc.setdefault((r["arm"], r["item_key"]), [r.get("restaurant_id"), 0.0, 0])
+        e[1] += float(v)
+        e[2] += 1
+    return {k: (e[0], e[1] / e[2]) for k, e in acc.items() if e[2]}
+
+
+def summarize_arm(runs, arm, metric) -> dict:
+    """An arm on `metric`: the mean over items of each item's mean over its
+    runs, with a 90% interval clustered by restaurant."""
+    from schedule_experiments import cluster_mean_ci
+    return cluster_mean_ci([v for (a, _k), v in item_means(runs, metric).items() if a == arm])
+
+
+def summarize_pair(runs, arm_a, arm_b, metric) -> dict:
+    """arm_a minus arm_b on `metric`, paired by item (each item's mean over
+    its runs), with a 90% interval clustered by restaurant: {"diff",
+    "ci90", "weeks", "restaurants"}. A decision needs ci90 to exclude 0."""
+    from schedule_experiments import cluster_mean_ci
+    m = item_means(runs, metric)
+    pairs = [(rid, v - m[(arm_b, key)][1]) for (a, key), (rid, v) in m.items() if a == arm_a and (arm_b, key) in m]
+    s = cluster_mean_ci(pairs)
+    return {"diff": s.get("mean"), "ci90": s.get("ci90"), "weeks": s.get("n"), "restaurants": s.get("restaurants")}
+
+
+def runs_short(runs, arms, items) -> list:
+    """[(arm, item_key, runs)] for every arm and item with fewer than
+    RUNS_PER_ARM runs — a report with any is not a decision."""
+    n = {}
+    for r in runs:
+        n[(r["arm"], r["item_key"])] = n.get((r["arm"], r["item_key"]), 0) + 1
+    return [(a, it, n.get((a, it), 0)) for a in arms for it in items if n.get((a, it), 0) < RUNS_PER_ARM]

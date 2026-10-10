@@ -24,7 +24,8 @@ Tiers are models, set once: moving every T1 workflow to a better Haiku is one
 env var, and the learner measures the change.
 
     T0  deterministic, no model (forecasts, alerts, the Morning Brief)
-    T1  Haiku 4.5
+    T1  Haiku 5.5 (Haiku 4.5 outside the canary restaurants until AI_TIER_CANARY
+        stops naming T1 — scheduler audit 10/10/26 AI-27)
     T2  Sonnet 5
     T3  Sonnet 5.5, adaptive thinking at medium effort
     T4  Opus 5.5, adaptive thinking at medium effort
@@ -49,7 +50,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-07.4"
+POLICY_VERSION = "2026-10-10.1"
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
@@ -59,10 +60,49 @@ DEFAULT = "default"
 LADDER_TIERS = ("T1", "T2", "T3", "T4")
 
 
-def _tier_table():
+# A tier whose model is new ships to the canary restaurants first
+# (scheduler audit 10/10/26 AI-27: "evaluate Haiku 5.5 as T1 on the existing
+# canary"), the way a cheaper first rung does (canary_start): while
+# AI_TIER_CANARY names the tier, a run for a restaurant outside
+# AI_CANARY_RESTAURANTS — or a call made for no one restaurant (a batch
+# built for many) — keeps the tier's previous model. The operator turns it
+# off (AI_TIER_CANARY="") once the learner's numbers on the canary look
+# right, and every restaurant moves. An AI_TIER_<n>_MODEL set explicitly is
+# the operator's own choice and is never canaried.
+TIER_CANARY_ENV = "AI_TIER_CANARY"
+TIER_CANARY_DEFAULT = "T1"
+
+
+def tier_canaried(tier) -> bool:
+    """Whether `tier`'s new model is still held to the canary restaurants."""
+    names = {p.strip() for p in str(os.getenv(TIER_CANARY_ENV, TIER_CANARY_DEFAULT) or "").split(",")}
+    return tier in names
+
+
+def _previous_tier_models():
     import ai_utils as _ai
+    return {"T1": os.getenv("AI_TIER_T1_PREVIOUS_MODEL", _ai.HAIKU)}
+
+
+def _in_canary(restaurant_id) -> bool:
+    names = canary_restaurants()
+    if CANARY_ALL in names:
+        return True
+    try:
+        return restaurant_id is not None and int(restaurant_id) in names
+    except (TypeError, ValueError):
+        return False
+
+
+def _tier_table(restaurant_id=None):
+    import ai_utils as _ai
+    t1 = os.getenv("AI_TIER_T1_MODEL")
+    if not t1:
+        t1 = _ai.HAIKU_55
+        if tier_canaried("T1") and not _in_canary(restaurant_id):
+            t1 = _previous_tier_models()["T1"]
     return {
-        "T1": {"model": os.getenv("AI_TIER_T1_MODEL", _ai.HAIKU), "effort": None},
+        "T1": {"model": t1, "effort": None},
         "T2": {"model": os.getenv("AI_TIER_T2_MODEL", _ai.SONNET), "effort": None},
         "T3": {"model": os.getenv("AI_TIER_T3_MODEL", _ai.SONNET_55),
                "effort": os.getenv("AI_TIER_T3_EFFORT", "medium")},
@@ -182,10 +222,23 @@ POLICIES = {p.workflow: p for p in (
     # its own; ~$6; the job's longest deadline (SCHEDULE_JOB_MAX_SECONDS).
     _p("labor_schedule", "scheduling", "schedule", ladder=("T3", "T4"), reviewer="rules",
        escalate_on=("rule_breach",), max_escalations=1,
-       caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background",
+       caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background", batch=True,
        context=("profile", "owner_rules", "roster", "sales_trend", "labor_trend", "events", "weather",
                 "memory", "data_state"),
-       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder"),
+       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder; "
+            "the unattended auto-draft's first call goes through Message Batches (schedule_batch), a press never"),
+    # The schedule's two small calls (scheduler audit 10/10/26): the owner's
+    # words read into typed rules (owner_rules — every proposed rule
+    # validated in code, each sentence read once and cached) and the note
+    # written from the FINISHED week (schedule_narrative — each bullet
+    # checked against the final rows). Claude Haiku 5.5 on the call site's
+    # own route; code is the reviewer.
+    _p("schedule_rule_extract", "scheduling", "schedule_rules", ladder=(DEFAULT,), reviewer="rules",
+       caps=Caps(calls=2, usd=0.02, seconds=60), delivery="background",
+       note="owner_rules: Haiku 5.5, structured, cached by sentence; code validates every rule"),
+    _p("schedule_note", "scheduling", "schedule_note", ladder=(DEFAULT,), reviewer="rules",
+       caps=Caps(calls=1, usd=0.02, seconds=60), delivery="background",
+       note="schedule_narrative: written from the final week, every bullet checked against its rows"),
     # ── cfo ─────────────────────────────────────────────────────────────
     _p("ask_cavnar", "cfo", "ask_cavnar", ladder=("T2",), reviewer="rules",
        caps=Caps(calls=8, usd=0.60, seconds=90),
@@ -352,7 +405,8 @@ def _coerce(name, value, base):
 # and Ask's summary are the cfo agent's own loop, the audit read is an admin
 # tool, and the two diagnoses call create_with_retry directly (sync and
 # batch) on their own model.
-CONSOLE_READ_ONLY = ("weekly_plan", "ask_summary", "audit_notes_read", "review_diagnosis", "food_cost_diagnosis")
+CONSOLE_READ_ONLY = ("weekly_plan", "ask_summary", "audit_notes_read", "review_diagnosis", "food_cost_diagnosis",
+                     "schedule_rule_extract", "schedule_note")
 
 
 def overridable(workflow) -> bool:
@@ -518,11 +572,13 @@ def pinned_model(pol: Policy) -> str | None:
     return value or None
 
 
-def route_for(pol: Policy, step: int = 0, start: str | None = None) -> Route:
+def route_for(pol: Policy, step: int = 0, start: str | None = None, restaurant_id=None) -> Route:
     """The route of rung `step` on the policy's ladder, starting from
     `start` (a tier the workflow's own pre-router chose) when given — or,
     when the purpose's env var pins a model (pinned_model), that model on
-    the call site's own route, whatever the step."""
+    the call site's own route, whatever the step. `restaurant_id` is whose
+    run it is: a canaried tier's new model reaches the canary restaurants
+    only (tier_canaried)."""
     pin = pinned_model(pol)
     if pin:
         return Route(tier=DEFAULT, model=pin)
@@ -535,7 +591,7 @@ def route_for(pol: Policy, step: int = 0, start: str | None = None) -> Route:
             raise ValueError(f"{pol.workflow}: '{DEFAULT}' has no call-site model to run on")
         import ai_utils as _ai
         return Route(tier=DEFAULT, model=_ai.model_for(pol.purpose))
-    t = _tier_table().get(tier)
+    t = _tier_table(restaurant_id).get(tier)
     if t is None:
         raise ValueError(f"{pol.workflow}: tier {tier!r} has no model")
     return Route(tier=tier, model=t["model"], effort=t["effort"])

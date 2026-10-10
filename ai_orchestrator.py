@@ -507,7 +507,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                                                  "late": time.time() >= deadline}})
                         break
                 try:
-                    route = wf.route_for(pol, step, start)
+                    route = wf.route_for(pol, step, start, restaurant_id=restaurant_id)
                 except Exception as e:
                     # A rung with no model to run on (a stored ladder the
                     # validator would now refuse): the run is recorded as an

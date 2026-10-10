@@ -357,7 +357,7 @@ def test_the_auto_draft_leaves_a_week_the_owner_drafted_a_week_ago_and_edited(db
     conn.commit()
     conn.close()
     ran = []
-    monkeypatch.setattr(se, "_run_schedule_job", lambda job_id, r: ran.append(r))
+    monkeypatch.setattr(se, "_run_schedule_job", lambda job_id, r, **k: ran.append(r))
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "done"})
     monkeypatch.setattr("push.fire_push", lambda *a, **k: None)
     thursday = dt.datetime(2026, 10, 1, 9, 0)                        # drafts the week of 10/5

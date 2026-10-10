@@ -87,7 +87,8 @@ _K = {
                       "digest_day", "dsr_notify", "dsr_deadline_hour", "dsr_budget_mode", "preshift_nudge_hour", "push_sound",
                       "login_notify", "issue_texts", "staff_signin_notify", "marketing_emails_opt_out"),
     "rules": ("compliance_json", "cut_floor_default", "daypart_split", "daypart_boundary", "delivery_pct", "foh_roles_json",
-              "patio_roles_json", "jurisdiction", "quality_weights_json", "quality_tuning_json", "role_arrival_json",
+              "patio_roles_json", "jurisdiction", "compliance_profile_json", "school_calendar_json",
+              "quality_weights_json", "quality_tuning_json", "role_arrival_json",
               "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
               "role_minimums_json", "role_requirements_json", "kitchen_stations_json", "role_strength_json", "shift_leader_rules_json",
               # Standing positions (schedule_dedicated: EJ's bar-tables bartender).

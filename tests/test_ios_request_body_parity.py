@@ -1826,6 +1826,12 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # Sent only on the second tap, after a 409 needs_consent (a clopen under a
+    # consent rest rule, schedule audit 10/10/26 MARKET-3): the web portal
+    # sends it; the iPhone staff app does not handle the 409 yet — an iOS
+    # follow-up (J1 report), the claim simply stays refused there.
+    ("/staff/api/offers/<int:offer_id>/respond", "consent_rest"): "the second tap after a 409 needs_consent; iOS follow-up",
+    ("/staff/api/open-shifts/<int:request_id>/claim", "consent_rest"): "the second tap after a 409 needs_consent; iOS follow-up",
     # schedule audit 10/10/26 BUGSGEN-23: a name somebody already goes by is
     # a 409 same_name the owner answers with a name that tells them apart
     # (or by turning a former employee back on in Team); `same_person` is the

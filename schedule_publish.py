@@ -242,6 +242,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     if not row:
         return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": None}
     out, soft, notes, seen = [], [], [], set()
+    pp_out = None          # the priced late changes (predictability_pay.preview), when a law covers it
 
     def add(key, text):
         if text and text not in seen:
@@ -335,15 +336,27 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 soft.append(text)
         now = today or _local_today(restaurant_id)
         import schedule_versions as _sv_pb
+        import predictability_pay as _pp_pb
         live = None if row["published_at"] else _live_week(restaurant_id, row["week_start"], row["id"])
+        # What staff have now: the live copy this draft replaces, or this
+        # week's own published copy (ARCH-1) — the base every late change,
+        # its predictability pay and the access-to-hours note are read from.
+        told = (rows_from_csv(live["schedule_csv"] or "") if live is not None else
+                (_sv_pb.published_rows(row["id"], restaurant_id) if row["published_at"] else None))
         if live is not None:
             # A regenerated draft of a week staff already have: what moves
             # is the shifts that differ, and inside the notice window that
             # is the predictability-pay warning — not "the week starts in
-            # -2 days" from the notice rule (E-22).
-            changed = _sv_pb.shift_changes(rows_from_csv(live["schedule_csv"] or ""), rows)["dates"]
+            # -2 days" from the notice rule (E-22). Where a law covers the
+            # restaurant it is priced per changed shift (MARKET-2).
+            changed = _sv_pb.shift_changes(told, rows)["dates"]
             warn = _sr.late_change_warning(c.compliance, changed, now)
-            if warn:
+            pp = _pp_pb.preview(restaurant_id, told, rows)
+            if pp.get("covered"):
+                pp_out = pp
+                if pp.get("text"):
+                    add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + pp["text"])
+            elif warn:
                 add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + warn)
         elif not row["published_at"]:
             short = _sr.notice_shortfall(c.compliance, row["week_start"], now)
@@ -353,8 +366,34 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             # Saved changes to a week staff have, about to be sent.
             pending = _sv_pb.unsent_changes(restaurant_id, row["id"]) or {}
             warn = _sr.late_change_warning(c.compliance, pending.get("dates") or [], now)
-            if warn:
+            pp = _pp_pb.preview(restaurant_id, told, rows) if told is not None else {"covered": False}
+            if pp.get("covered"):
+                pp_out = pp
+                if pp.get("text"):
+                    add("late_change:" + ",".join(pending.get("dates") or []), pp["text"])
+            elif warn:
                 add("late_change:" + ",".join(pending.get("dates") or []), warn)
+        # Hours added straight to someone's week while a law asks for them to
+        # be offered to the current staff first (access to hours, MARKET-4):
+        # a note, never a hold.
+        try:
+            import fair_workweek as _fww_pb
+            if told is not None:
+                for a in _fww_pb.added_hours_without_offer(restaurant_id, _pp_pb.classify(told, rows)):
+                    note(f"access_hours:{a['employee'].lower()}:{a['date']}", a["text"])
+        except Exception as _ax:
+            import ops as _ops_ax
+            _ops_ax.capture(_ax, job="publish_access_hours", context=f"restaurant_id={restaurant_id}")
+        # A roster with minors and no school calendar for this school year:
+        # the default holds them to school-day limits on every weekday but
+        # June 1 to July 31 — said once a year (LEARNING-18).
+        try:
+            import school_calendar as _sc_pb
+            ask = _sc_pb.needs_prompt(c.school_calendar, now, bool(c.minors))
+            if ask.get("ask"):
+                note(f"school_calendar:{ask['school_year']}", ask["text"])
+        except Exception:
+            pass
     except Exception as e:
         import ops as _ops_pb
         _ops_pb.capture(e, job="publish_blockers_sweep", context=f"restaurant_id={restaurant_id}")
@@ -435,7 +474,15 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     # and the review of the warnings they always override.
     import schedule_overrides as _so_pr
     return _so_pr.annotate(restaurant_id, {"blockers": out, "soft": soft, "notes": notes, "hours": hours,
-                                           "schedule_id": row["id"]}, unattended=unattended)
+                                           "schedule_id": row["id"],
+                                           # Each changed shift inside a predictive-scheduling
+                                           # law's notice window, priced, and the total
+                                           # (MARKET-2) — None when no law covers the
+                                           # restaurant or nothing changed.
+                                           "predictability_pay": (
+                                               {k: pp_out[k] for k in ("law", "code", "total", "owed_count",
+                                                                       "unknown_count", "text", "rows")}
+                                               if pp_out else None)}, unattended=unattended)
 
 
 def _drop_share(token, schedule_id):
@@ -1071,6 +1118,22 @@ def _after_send(rid, schedule_id, version, review, acked, override_reasons, acto
         _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
 
 
+def _record_pay(rid, schedule_id, rows, sent_by, before_rows=None, replacement=False):
+    """On the predictability-pay record: each changed shift inside a
+    predictive-scheduling law's notice window, priced, against what staff
+    had (`before_rows`: the live copy a replacement retires, or this week's
+    published copy before a changes send), and any consented short rest's
+    premium (MARKET-2, MARKET-3). A first send with nothing replaced records
+    only the rest premiums. Never stops the send."""
+    try:
+        import predictability_pay as _pp_pub
+        if before_rows is not None:
+            _pp_pub.record_send(rid, schedule_id, rows, before_rows=before_rows, sent_by=sent_by)
+        _pp_pub.record_rest_premiums(rid, schedule_id, None, rows, sent_by=sent_by)
+    except Exception as _ppx:
+        _ops.capture(_ppx, job="predictability_pay_record", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+
+
 def _actor_name(actor) -> str:
     return (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
 
@@ -1176,6 +1239,9 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
 
     actor_name = _actor_name(actor)
     authority = _sv.authority_of(actor)
+    # The copy this one replaces, read before the stamp retires it: its
+    # changes go on the predictability-pay record (MARKET-2).
+    _replacing = _live_week(rid, row["week_start"], schedule_id)
     regates = 0
     while True:
         try:
@@ -1209,6 +1275,9 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     log_account_event(rid, "schedule_published", actor,
                       detail=f"{len(stamped['queued'])} to tell" + (" — acknowledged blockers" if blockers else ""))
     _after_send(rid, schedule_id, stamped["version"], review, _acked, override_reasons, actor, authority)
+    _record_pay(rid, schedule_id, stamped["rows"], actor_name,
+                before_rows=_sv.rows_from_csv(_replacing["schedule_csv"] or "") if _replacing is not None else None,
+                replacement=True)
     import schedule_rows as _srows
     _after_publish(rid, schedule_id, dict(row, schedule_csv=_srows.to_csv(stamped["rows"])), actor, actor_name,
                    authority)
@@ -1282,6 +1351,9 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
         return {"ok": False, "in_progress": True, "schedule_id": row["id"],
                 "error": "This week is being sent to staff right now."}, 409
     who = _actor_name(actor)
+    # What staff had before this send — the published copy — for the
+    # predictability-pay record (MARKET-2); covers and swaps since are in it.
+    _told_before = _sv.published_rows(row["id"], rid)
     regates = 0
     try:
         while True:
@@ -1310,6 +1382,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
     finally:
         _release(rid, row["id"])
     _after_send(rid, row["id"], stamped["version"], review, _acked, override_reasons, actor, _sv.authority_of(actor))
+    _record_pay(rid, row["id"], stamped["rows"], who, before_rows=_told_before)
     got = deliver_notices(restaurant_id=rid, batch=stamped["batch"], budget_seconds=INLINE_SECONDS)
     log_account_event(rid, "schedule_changes_sent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
