@@ -4439,6 +4439,9 @@ def init_db(db_path: str = DB_PATH):
     init_schedule_overrides(db_path)
     from schedule_scorecard import init_schedule_scorecard
     init_schedule_scorecard(db_path)
+    # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
+    from schedule_calibration import init_schedule_calibration
+    init_schedule_calibration(db_path)
     # Every schedule call's full input and answer, for replaying real weeks
     # against another model, effort or prompt (schedule_output, schedule
     # audit 10/3/26 PR-31).

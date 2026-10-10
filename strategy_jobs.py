@@ -1156,10 +1156,27 @@ def run_quality_calibration(db_path=DB_PATH):
     import shift_quality as _sq
     from models import get_quality_weights, record_capability_change
     changed = {"n": 0}
+    # The weights calibrated where nobody presses Apply (schedule audit
+    # 10/10/26 LEARNING-9): the platform's pooled reading once, then each
+    # restaurant's shadow run — promoted within the bounded steps only when
+    # it beats the weights now on held-out weeks; the owner is told and can
+    # undo (schedule_calibration).
+    import schedule_calibration as _scal
+    try:
+        cohort = _scal.cohort_evidence(db_path=None if db_path == DB_PATH else db_path)
+    except Exception as _cx:
+        _ops_cal.capture(_cx, job="quality_calibration", context="cohort evidence")
+        cohort = {}
 
     def _one(r):
         if not getattr(r, "module_labor", 0):
             return
+        try:
+            if _scal.shadow_run(r.id, cohort=cohort, db_path=None if db_path == DB_PATH else db_path).get(
+                    "status") == "promoted":
+                changed["n"] += 1
+        except Exception as _sx:
+            _ops_cal.capture(_sx, job="quality_calibration", context=f"restaurant_id={r.id} shadow run")
         cal = _sl.calibrate_weights(r.id, db_path=db_path)
         if not cal.get("ready") or not (cal.get("suggested_weights") or cal.get("suggested_profiles")):
             return

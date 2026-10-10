@@ -3198,6 +3198,19 @@ def _do_schedule_optimize(u):
             "quality": quality, "what_if": what_if}, 200
 
 
+def _do_calibration_revert(u):
+    """Undo the weights Cavnar AI moved on its own (schedule audit 10/10/26
+    LEARNING-9, schedule_calibration.revert): the weights before back, and
+    no automatic change for eight weeks. The account owner's."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can change how schedules are scored.")
+    import schedule_calibration as _scal
+    try:
+        return _scal.revert(_rid(u), user=u), 200
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+
+
 def _do_calibration_apply(u):
     """Apply the suggested Shift Quality weights (schedule_learning.
     calibrate_weights) — the owner's decision, one tap, recorded and
@@ -4695,6 +4708,14 @@ def _present_calibration(u, cal):
             cal = dict(cal, rec_key="calibration:weights", answerable=rec_delivery.answerable("calibration:weights"))
     except Exception as e:
         print(f"[schedule] calibration not presented rid={_rid(u)}: {e}")
+    # What Cavnar AI changed on its own, said with an Undo (LEARNING-9).
+    try:
+        import schedule_calibration as _scal
+        prom = _scal.latest_promotion(_rid(u))
+        if prom:
+            cal = dict(cal or {}, promoted=dict(prom, can_undo=bool(_principal(u))))
+    except Exception as e:
+        print(f"[schedule] calibration promotion not read rid={_rid(u)}: {e}")
     return cal
 
 
@@ -7174,6 +7195,7 @@ _ROUTES = [
     ("/recs/what-worked", ["GET"], _do_recs_what_worked, "recs_what_worked"),
     ("/recs/checkin", ["POST"], _do_recs_checkin, "recs_checkin"),
     ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
+    ("/labor/quality/calibration/revert", ["POST"], _do_calibration_revert, "calibration_revert"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/shift-requests/<int:request_id>/candidates", ["POST"], _do_shift_request_candidates,

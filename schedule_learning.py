@@ -1758,6 +1758,37 @@ def _solve(a, b):
     return x
 
 
+def _fe_group(sample) -> str:
+    """A sample's fixed-effect cell: its weekday × daypart (calibration v2,
+    LEARNING-8) — busy nights carry harder demand and more issues, and
+    without the cell the demand-sensitive dimensions absorbed it."""
+    meta = sample[3] if len(sample) > 3 else {}
+    return str((meta or {}).get("cell") or "")
+
+
+def _within(values, groups, demand=None):
+    """`values` with each fixed-effect cell's mean taken out, and — where a
+    demand ratio is given for every value — its linear part too (the
+    within estimator: the fit reads only how a shift differed from the
+    other shifts of its own weekday and daypart at its own demand)."""
+    by = {}
+    for v, g in zip(values, groups):
+        by.setdefault(g, []).append(v)
+    means = {g: sum(vs) / len(vs) for g, vs in by.items()}
+    out = [v - means[g] for v, g in zip(values, groups)]
+    if demand and all(d is not None for d in demand):
+        dm = {}
+        for d, g in zip(demand, groups):
+            dm.setdefault(g, []).append(d)
+        dmeans = {g: sum(vs) / len(vs) for g, vs in dm.items()}
+        dz = [d - dmeans[g] for d, g in zip(demand, groups)]
+        sxx = sum(x * x for x in dz)
+        if sxx > 1e-9:
+            b = sum(x * y for x, y in zip(dz, out)) / sxx
+            out = [y - b * x for x, y in zip(dz, out)]
+    return out
+
+
 def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     """One outcome regressed on every dimension at once, standardized, with
     a ridge penalty: {key: coefficient}, {key: shifts that dimension was
@@ -1770,11 +1801,19 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
 
     At most one dimension per CALIBRATION_SAMPLES_PER_DIMENSION shifts is
     fitted (SQ-22), the best-observed first; the ones that did not fit are
-    returned as `crowded`."""
-    rows = [(s[0], s[1][outcome]) for s in samples if s[1].get(outcome) is not None]
+    returned as `crowded`.
+
+    Calibration v2 (schedule audit 10/10/26 LEARNING-8): the fit is WITHIN
+    each weekday × daypart cell and at the shift's own demand (the samples'
+    `cell` and `demand` — _within), so a busy night's harder demand and its
+    issues are not read as the dimensions' doing."""
+    picked = [s for s in samples if s[1].get(outcome) is not None]
+    rows = [(s[0], s[1][outcome]) for s in picked]
     if len(rows) < min_pairs:
         return {}, {}, len(rows), []
-    ys = [y for _d, y in rows]
+    groups = [_fe_group(s) for s in picked]
+    demand = [(s[3] or {}).get("demand") if len(s) > 3 else None for s in picked]
+    ys = _within([y for _d, y in rows], groups, demand)
     my = sum(ys) / len(ys)
     sy = math.sqrt(sum((y - my) ** 2 for y in ys) / len(ys))
     if sy <= 1e-9:
@@ -1794,7 +1833,14 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     used, crowded = sorted(ranked[:room]), sorted(ranked[room:])
     if not used:
         return {}, seen, len(rows), crowded
-    xs = [[((d[k] - stats[k][0]) / stats[k][1]) if k in d else 0.0 for k in used] for d, _y in rows]
+    # Each regressor within its cell too (a dimension missing on a shift is
+    # held at its mean there, as before).
+    cols = {k: _within([(d[k] if k in d else stats[k][0]) for d, _y in rows], groups, demand) for k in used}
+    wsd = {k: math.sqrt(sum(v * v for v in cols[k]) / len(cols[k])) for k in used}
+    used = [k for k in used if wsd[k] > 1e-9]           # no variation inside any cell: nothing to read
+    if not used:
+        return {}, seen, len(rows), crowded
+    xs = [[cols[k][r] / wsd[k] for k in used] for r in range(len(rows))]
     yz = [(y - my) / sy for y in ys]
     n, p = len(xs), len(used)
     xtx = [[sum(xs[r][i] * xs[r][j] for r in range(n)) for j in range(p)] for i in range(p)]
@@ -1808,6 +1854,24 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     # what CALIBRATION_MIN_EVIDENCE was written against.
     return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows), crowded
 
+
+# Calibration v2 (schedule audit 10/10/26 LEARNING-8): each outcome is fitted
+# on its own and the fits are COMBINED by what each outcome costs — the
+# owner sees these: a coverage or no-show issue, one star on a meal's
+# reviews, one point of labor % on a shift's sales (its measured sales when
+# known, else CALIBRATION_LABOR_POINT_USD). Averaging the outcomes made
+# coverage's "fewer issues" and "higher labor" cancel into no signal.
+CALIBRATION_ISSUE_USD = 150.0
+CALIBRATION_REVIEW_POINT_USD = 200.0
+CALIBRATION_LABOR_POINT_USD = 25.0
+# A suggestion stands only when the weights fitted on the older weeks score
+# the newest CALIBRATION_HOLDOUT_SHARE of them better than the weights now
+# do (held out, never fitted on); a floor or bar moves only when its line
+# survives a permutation test over every line looked at.
+CALIBRATION_HOLDOUT_SHARE = 0.25
+CALIBRATION_HOLDOUT_CONFIDENCE = 0.8     # bootstrap resamples in which the suggestion tracks better
+CALIBRATION_THRESHOLD_ALPHA = 0.05
+CALIBRATION_PERMUTATIONS = 200
 
 # The outcomes a shift is judged by afterwards: +1 = a higher value is
 # better, −1 = a lower one is. Each carries the words its explanation uses.
@@ -1840,11 +1904,11 @@ def _calibration_samples(restaurant_id, db_path):
         # without a measured daypart figure has no labor reading at all.
         try:
             outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating_attributed AS review_rating, "
-                                "labor_pct_daypart AS labor_pct FROM schedule_outcomes WHERE restaurant_id=?",
-                                (restaurant_id,)).fetchall()
-        except Exception:
-            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, NULL AS labor_pct "
+                                "labor_pct_daypart AS labor_pct, CASE WHEN split_basis='measured' THEN sales END AS sales "
                                 "FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        except Exception:
+            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, NULL AS labor_pct, "
+                                "NULL AS sales FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         ids = sorted({o["history_id"] for o in outs})
         hist = {}
         for i in range(0, len(ids), 200):
@@ -1885,20 +1949,169 @@ def _calibration_samples(restaurant_id, db_path):
         except Exception as e:
             log.warning("[calibration] watched dates unavailable for %s: %s", restaurant_id, e)
             watched = set()
+    # The week AS IT RAN where it was scored so (schedule audit 10/10/26
+    # LEARNING-8: the planned week was fitted against what the run week
+    # did) — the as-run dimensions (schedule_intel.record_as_run_quality,
+    # sq_as_run); the planned ones only for a shift never scored as run.
+    as_run = {}
+    try:
+        import schedule_memory as _sm_cal
+        for ob in _sm_cal.observations(restaurant_id, kinds=("sq_as_run",),
+                                       db_path=None if db_path == DB_PATH else db_path):
+            dims_ = (ob.get("value") or {}).get("dims") or {}
+            if ob.get("date") and dims_:
+                as_run[(ob.get("history_id"), str(ob["date"])[:10], ob.get("daypart"))] = {
+                    k: float(v) for k, v in dims_.items() if v is not None}
+    except Exception as e:
+        log.warning("[calibration] as-run scores unavailable for %s: %s", restaurant_id, e)
+    # The demand each shift ran at, against its weekday and daypart's median
+    # measured sales — the fit's demand control.
+    med = {}
+    for o in outs:
+        if o["sales"]:
+            med.setdefault((_weekday(o["date"]), o["daypart"]), []).append(float(o["sales"]))
+    med = {k: sorted(v)[len(v) // 2] for k, v in med.items() if len(v) >= 3}
     samples = []
     for o in outs:
-        dims = dims_by.get((o["history_id"], o["date"], o["daypart"]))
+        key = (o["history_id"], o["date"], o["daypart"])
+        dims = as_run.get(key) or dims_by.get(key)
         if not dims:
             continue
         target = hist[o["history_id"]]["labor_target"] if o["history_id"] in hist else None
         labor = None
         if o["labor_pct"] is not None and target:
             labor = float(o["labor_pct"]) - float(target)
+        m = med.get((_weekday(o["date"]), o["daypart"]))
+        meta = dict(meta_by.get(key) or {}, basis="as_run" if key in as_run else "planned",
+                    cell=f"{_weekday(o['date'])}|{o['daypart']}",
+                    demand=round(float(o["sales"]) / m, 4) if (o["sales"] and m) else 1.0,
+                    sales=float(o["sales"]) if o["sales"] else None)
         samples.append((dims, {"issues": float(o["issues"] or 0) if o["date"] in watched else None,
                                "review_rating": float(o["review_rating"]) if o["review_rating"] is not None else None,
-                               "labor_vs_target": labor}, o["history_id"],
-                        meta_by.get((o["history_id"], o["date"], o["daypart"])) or {}))
+                               "labor_vs_target": labor}, o["history_id"], meta))
     return samples, watched
+
+
+def _dollar_weights(samples) -> dict:
+    """{outcome: dollars per unit} the fits are combined by (v2): an issue,
+    a star on a meal's reviews, a point of labor % on the shift's own
+    measured sales (the median shift's, else CALIBRATION_LABOR_POINT_USD)."""
+    sales = sorted(float((s[3] or {}).get("sales")) for s in samples
+                   if len(s) > 3 and (s[3] or {}).get("sales"))
+    labor = round(sales[len(sales) // 2] / 100.0, 2) if len(sales) >= 5 else CALIBRATION_LABOR_POINT_USD
+    return {"issues": CALIBRATION_ISSUE_USD, "review_rating": CALIBRATION_REVIEW_POINT_USD, "labor_vs_target": labor}
+
+
+def _outcome_scale(samples, usd) -> dict:
+    """{outcome: dollars one standard deviation of it moves} — what turns a
+    standardized coefficient into dollars."""
+    out = {}
+    for o in CALIBRATION_OUTCOMES:
+        ys = [s[1][o] for s in samples if s[1].get(o) is not None]
+        if len(ys) < 2:
+            continue
+        m = sum(ys) / len(ys)
+        sd = math.sqrt(sum((y - m) ** 2 for y in ys) / len(ys))
+        out[o] = sd * float(usd.get(o) or 0.0)
+    return out
+
+
+def _candidate_weights(samples, keys, current, usd) -> dict:
+    """The bounded next weights `samples` alone point to — calibrate_weights'
+    own arithmetic (per-outcome fits combined in dollars, the evidence
+    floor, the 30% ceiling, one 10% step), for the held-out check."""
+    from shift_quality import DEFAULT_WEIGHTS
+    fits = {o: _ridge_fit(samples, keys, o, CALIBRATION_MIN_PAIRS)[0] for o in CALIBRATION_OUTCOMES}
+    scale = _outcome_scale(samples, usd)
+    out = {}
+    for key, default in DEFAULT_WEIGHTS.items():
+        contrib = {o: CALIBRATION_OUTCOMES[o][0] * fits[o][key] for o in CALIBRATION_OUTCOMES if key in fits[o]}
+        norm = sum(scale.get(o, 0.0) for o in contrib)
+        ev = sum(c * scale.get(o, 0.0) for o, c in contrib.items()) / norm if (contrib and norm > 0) else None
+        nudge = max(-CALIBRATION_MAX_NUDGE, min(CALIBRATION_MAX_NUDGE, ev)) \
+            if (ev is not None and abs(ev) >= CALIBRATION_MIN_EVIDENCE) else 0.0
+        now = float(current.get(key, default))
+        step = CALIBRATION_MAX_STEP * default
+        out[key] = round(now + max(-step, min(step, default * (1 + nudge) - now)), 1)
+    return out
+
+
+def _holdout_check(samples, keys, current, usd) -> dict:
+    """{weeks, shifts, current, candidate, confirmed, reason}: the weights
+    the older weeks fit (_candidate_weights) against the weights now, on the
+    newest CALIBRATION_HOLDOUT_SHARE of the weeks, never fitted on — the
+    correlation, within each weekday and daypart, between a shift's score
+    under those weights and what its outcomes were worth in dollars.
+    `confirmed` None when there is too little to hold out or nothing moves."""
+    weeks = sorted({s[2] for s in samples})
+    k = max(1, int(round(len(weeks) * CALIBRATION_HOLDOUT_SHARE)))
+    held = set(weeks[-k:])
+    train = [s for s in samples if s[2] not in held]
+    test = [s for s in samples if s[2] in held]
+    out = {"weeks": k, "shifts": len(test), "current": None, "candidate": None, "confirmed": None, "reason": None}
+    if len(test) < 10 or len(train) < CALIBRATION_MIN_SHIFTS:
+        out["reason"] = "too few weeks to hold some out and check the suggestion on them"
+        return out
+    cand = _candidate_weights(train, keys, current, usd)
+    if all(abs(cand[k_] - float(current.get(k_, cand[k_]))) < 0.05 for k_ in cand):
+        out["reason"] = "the older weeks alone point nowhere"
+        return out
+    vals, comp_c, comp_n, groups = [], [], [], []
+    for s in test:
+        v = [CALIBRATION_OUTCOMES[o][0] * s[1][o] * float(usd.get(o) or 0) for o in CALIBRATION_OUTCOMES
+             if s[1].get(o) is not None]
+        dims = s[0]
+
+        def composite(w):
+            num = sum(float(w.get(k_, 0)) * x for k_, x in dims.items() if k_ in w)
+            den = sum(float(w.get(k_, 0)) for k_ in dims if k_ in w)
+            return num / den if den else None
+        a, b = composite(current), composite(cand)
+        if not v or a is None or b is None:
+            continue
+        vals.append(sum(v))
+        comp_c.append(a)
+        comp_n.append(b)
+        groups.append(_fe_group(s))
+    if len(vals) < 10:
+        out["reason"] = "too few held-out shifts with an outcome"
+        return out
+    yv = _within(vals, groups)
+    xa, xb = _within(comp_c, groups), _within(comp_n, groups)
+    rc = _pearson(list(zip(xa, yv)))
+    rn = _pearson(list(zip(xb, yv)))
+    out.update(current=round(rc, 3) if rc is not None else None, candidate=round(rn, 3) if rn is not None else None)
+    if rc is None or rn is None:
+        out["reason"] = "the held-out shifts did not vary enough to tell"
+        return out
+    out["p_better"] = paired_better(xa, xb, yv)
+    out["confirmed"] = rn > rc + 1e-9 and (out["p_better"] or 0) >= CALIBRATION_HOLDOUT_CONFIDENCE
+    if not out["confirmed"]:
+        out["reason"] = (f"on the newest {k} week{'s' if k != 1 else ''}, held out, the suggested weights were not "
+                         f"clearly better at tracking what the shifts were worth than the weights now")
+    return out
+
+
+def paired_better(xa, xb, yv, tries=200) -> float:
+    """The share of bootstrap resamples (paired, seeded) of the held-out
+    shifts in which the score `xb` correlates with the outcome `yv` better
+    than `xa` does — how sure a set of weights is the better one. None when
+    no resample could be read."""
+    import random
+    n = len(yv)
+    if n < 3:
+        return None
+    rng = random.Random(f"holdout|{n}|{round(sum(xa), 6)}|{round(sum(xb), 6)}|{round(sum(yv), 6)}")
+    wins = done = 0
+    for _ in range(int(tries)):
+        pick = [rng.randrange(n) for _ in range(n)]
+        c1 = _pearson([(xa[i], yv[i]) for i in pick])
+        c2 = _pearson([(xb[i], yv[i]) for i in pick])
+        if c1 is None or c2 is None:
+            continue
+        done += 1
+        wins += 1 if c2 > c1 else 0
+    return round(wins / float(done), 3) if done else None
 
 
 def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> dict:
@@ -1957,6 +2170,8 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     for outcome in CALIBRATION_OUTCOMES:
         coef, seen, used, crowded = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
         fits[outcome] = {"coef": coef, "seen": seen, "shifts": used, "crowded": crowded}
+    usd = _dollar_weights(samples)
+    scale = _outcome_scale(samples, usd)
     report, suggested = {}, {}
     for key, default in DEFAULT_WEIGHTS.items():
         corr, pairs_n, coefs, contrib = {}, {}, {}, {}
@@ -1969,7 +2184,12 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
             coefs[outcome] = round(b, 3) if b is not None else None
             if b is not None:
                 contrib[outcome] = sign * b
-        ev = sum(contrib.values()) / len(contrib) if contrib else None
+        # Combined by what each outcome costs (v2): the dollars a standard
+        # deviation more of this dimension went with, over the dollars the
+        # outcomes move by — 1.0 is "every outcome, fully, the good way".
+        dollars = {o: c * scale.get(o, 0.0) for o, c in contrib.items()}
+        norm = sum(scale.get(o, 0.0) for o in contrib)
+        ev = (sum(dollars.values()) / norm) if (contrib and norm > 0) else None
         target_nudge = 0.0
         if ev is not None and abs(ev) >= CALIBRATION_MIN_EVIDENCE:
             target_nudge = max(-CALIBRATION_MAX_NUDGE, min(CALIBRATION_MAX_NUDGE, ev))
@@ -1996,11 +2216,25 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                        "step_pct": int(round((weight - now) / default * 100)) if default else 0,
                        "target": round(target, 1),
                        "evidence": round(ev, 3) if ev is not None else None,
+                       # What a standard deviation more of it went with, in
+                       # dollars per outcome (LEARNING-8).
+                       "dollars": {o: round(v, 2) for o, v in dollars.items()},
                        "correlation": corr, "coefficient": coefs, "pairs": pairs_n,
                        "driver": driver, "explanation": explanation,
                        "reading": ("tracked better outcomes" if target_nudge > 0 else
                                    "did not track outcomes here" if target_nudge < 0 else
                                    "no clear signal yet")}
+    # Held-out weeks before anything is suggested (LEARNING-8): the weights
+    # the OLDER weeks fit, against the weights now, on the newest weeks.
+    holdout = _holdout_check(samples, keys, current, usd)
+    if holdout.get("confirmed") is False or holdout.get("confirmed") is None:
+        why = holdout.get("reason") or "the newest weeks did not confirm it"
+        for key, d in report.items():
+            if abs(d["suggested"] - d["current"]) >= 0.05:
+                d["suggested"] = d["current"]
+                d["step_pct"] = 0
+                d["explanation"] = (d["explanation"] + f" Held back: {why}.")
+                suggested[key] = d["current"]
     moving = sorted((k for k, d in report.items() if abs(d["suggested"] - d["current"]) >= 0.05),
                     key=lambda k: -abs(report[k]["suggested"] - report[k]["current"]))
     watch_note = ("" if base["watched_shifts"] else
@@ -2009,6 +2243,13 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
             "moving": moving, "profiles": profiles, "suggested_profiles": suggested_profiles,
             "moving_profiles": sorted(suggested_profiles),
+            # v2 (LEARNING-8): what each outcome is worth, how the week was
+            # read (as it ran, or as planned), the fixed effects, and the
+            # held-out check the suggestion passed or failed.
+            "method": "v2", "dollar_weights": usd, "holdout": holdout,
+            "basis": {"as_run": sum(1 for s in samples if (s[3] or {}).get("basis") == "as_run"),
+                      "planned": sum(1 for s in samples if (s[3] or {}).get("basis") != "as_run")},
+            "controls": "within each weekday and daypart, at the shift's own demand",
             "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"]), "left_out": f["crowded"]}
                     for o, f in fits.items()},
             "limits": {"max_step_pct": int(CALIBRATION_MAX_STEP * 100), "max_total_pct": int(CALIBRATION_MAX_NUDGE * 100),
@@ -2062,6 +2303,25 @@ def _threshold_fit(points: list, current: float):
     return best
 
 
+def _threshold_pvalue(points: list, current, observed: float, name="") -> float:
+    """The share of CALIBRATION_PERMUTATIONS shuffles of the outcomes among
+    the shifts whose best line (_threshold_fit over the same range) shows a
+    gap at least `observed` — (1 + hits) / (1 + tries), deterministic (the
+    shuffle is seeded by the line's name)."""
+    import random
+    rng = random.Random(f"threshold|{name}|{len(points)}")
+    xs = [x for x, _oc in points]
+    ocs = [oc for _x, oc in points]
+    hits = 0
+    for _ in range(CALIBRATION_PERMUTATIONS):
+        shuffled = list(ocs)
+        rng.shuffle(shuffled)
+        fit = _threshold_fit(list(zip(xs, shuffled)), current)
+        if fit is not None and fit[1] >= observed - 1e-12:
+            hits += 1
+    return round((1 + hits) / float(1 + CALIBRATION_PERMUTATIONS), 4)
+
+
 def _line_reading(name: str, points: list, current) -> dict:
     """One floor's or bar's reading: {current, suggested, fitted, evidence,
     below, above, shifts, explanation} — a bounded step toward the line the
@@ -2078,6 +2338,17 @@ def _line_reading(name: str, points: list, current) -> dict:
     if ev < CALIBRATION_THRESHOLD_EVIDENCE:
         out["explanation"] = (f"{name} stays at {current}: shifts under no nearby line did clearly worse "
                               f"(the best gap was {ev:.2f} standard deviations).")
+        return out
+    # Corrected for looking at every line (schedule audit 10/10/26
+    # LEARNING-8): the best gap must beat the best gap the same search finds
+    # with the outcomes shuffled among the shifts, in all but
+    # CALIBRATION_THRESHOLD_ALPHA of CALIBRATION_PERMUTATIONS tries — a
+    # search over ±20 points finds some line by chance.
+    p = _threshold_pvalue(points, current, ev, name)
+    out["p_value"] = p
+    if p > CALIBRATION_THRESHOLD_ALPHA:
+        out["explanation"] = (f"{name} stays at {current}: the line at {line} could be chance — shuffled outcomes "
+                              f"found as big a gap {int(round(p * 100))}% of the time.")
         return out
     if line == current:
         out["explanation"] = (f"{name} stays at {current}, already where the record puts it: the {below} shifts "

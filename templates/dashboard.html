@@ -36953,6 +36953,16 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="lb2-sub">Borrowed starting headcount<small>for a restaurant with no history of its own</small></div><div class="int-cal">'+num(sp.reason)+'</div>';
     }
     h+='<div class="lb2-sub">Quality weights<small>checked against what the published weeks actually did</small></div>';
+    /* What Cavnar AI changed on its own, within the bounded steps, once the
+       newest held-out weeks confirmed it (schedule audit 10/10/26
+       LEARNING-9) - said, with Undo. */
+    var pm=cal.promoted;
+    if(pm&&pm.changes&&pm.changes.length){
+      var pl=[],pi;for(pi=0;pi<pm.changes.length;pi++){var pc=pm.changes[pi];pl.push(esc(pc.label||pc.dimension)+' '+esc(pc.before)+' → '+esc(pc.after));}
+      h+='<div class="int-cal"><div class="ac-note">'+num('Cavnar AI adjusted these on '+(pm.when||'')+': ')+'<span class="hb-num">'+pl.join(' · ')+'</span></div>'
+        +(pm.reason?'<div class="ac-note" style="margin-top:4px">'+num('Why: '+pm.reason+'.')+'</div>':'')
+        +(pm.can_undo?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" data-sfw2-cal-undo="1">Undo this change</button>':'')+'</div>';
+    }
     if(!cal.ready)h+='<div class="int-cal">'+num(cal.reason||'Not enough published weeks with a stored score to check the weights yet.')+'</div>';
     else{
       var dims=cal.dimensions||{},k,rows='';
@@ -36981,6 +36991,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     return h;
   }
+  /* Undo of an automatic weight change (LEARNING-9): the weights before
+     come back and no automatic change is made for eight weeks. */
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('[data-sfw2-cal-undo]'):null;if(!t||t.disabled)return;
+    var done=busy(t,'Undoing…');
+    jsend('/api/labor/quality/calibration/revert',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not undo it','error');return;}
+      toast('Undone — the score is back to the weights before','success');
+      loadIntel(null,true);
+    });
+  });
   /* Apply writes the weights and, in the same tap, each profile's floors
      and bars (SQ-22) — said back, then the record is read again. */
   document.addEventListener('click',function(ev){
