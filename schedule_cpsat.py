@@ -134,6 +134,9 @@ TERM_LABELS = {
     "hours_wanted": "the hours people asked for",
     "standby": "a standby on a shift likely to come up short",
     "commitment": "a shift staff were told is committed, moved",
+    "retention_hours": "hours taken from somebody at risk of leaving",
+    "retention_slot": "somebody at risk of leaving on a slot they keep dropping",
+    "rotation_tips": "the rotation of the best-tipped shifts",
 }
 _STATIC_TERMS = {"pending": "pending", "reliability": "reliability", "rotation_weekend": "fairness",
                  "rotation_close": "fairness", "preference": "preferences", "learned_preference": "preferences",
@@ -141,6 +144,9 @@ _STATIC_TERMS = {"pending": "pending", "reliability": "reliability", "rotation_w
                  # a published shift handed to somebody else, at its commitment
                  # level (J3's commitment ladder, MARKET-27)
                  "commitment": "commitment"}
+
+
+_OWN_TERMS = frozenset({"dollars", "stability", "change"})
 
 
 def available() -> bool:
@@ -845,7 +851,11 @@ class _Model:
                 v = self.x[(u.id, p)]
                 comp = prob.components_of(u, p)
                 for k, val in comp.items():
-                    term = _STATIC_TERMS.get(k)
+                    # every per-assignment cost the solver's table knows,
+                    # under its own name where no term groups it (J3's
+                    # retention and tip rotation, and whatever comes next);
+                    # dollars, stability and change are this model's own
+                    term = None if k in _OWN_TERMS else _STATIC_TERMS.get(k, k)
                     if term and val:
                         book.add(term, v, val * Q, {"unit": u.id, "person": p})
                 if stab and p in self.last[u.id]:
