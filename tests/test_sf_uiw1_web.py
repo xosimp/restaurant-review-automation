@@ -344,9 +344,11 @@ def test_publish_shows_notes_hours_and_likely_changes(page):
     for f in ("c.hours", "hr.hourly", "hr.salaried", "c.notes", "Worth a look", "c.likely_to_change", "lk.ready",
               "lk.rows", "lk.note"):
         assert f in pub, f
-    assert 'id="sfw1-pub"' in page
-    assert "sfw1RenderPub(d)" in page[page.index("window.psRefresh = function"):page.index("/* ── The verdict line")]
-    assert "d.notes" in _top(page, "publishScheduleNow")
+    # Since the pre-publish review (schedule audit 10/10/26 RM-6) the notes,
+    # hours and likely changes ride its one payload (fyi, numbers,
+    # likely_to_change) and psRefresh reads it; the 409 re-reads it.
+    assert "prRefresh()" in page[page.index("window.psRefresh = function"):page.index("/* ── The verdict line")]
+    assert "prRefresh()" in _top(page, "publishScheduleNow")
 
 
 def test_shift_quality_reads_the_new_fields(page):

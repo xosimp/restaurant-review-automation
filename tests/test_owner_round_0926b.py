@@ -16,11 +16,14 @@ def _between(a, b):
     return SRC[i:SRC.index(b, i)]
 
 
-def test_the_warning_list_arrives_folded_and_opens_only_when_a_send_asked():
-    rb = _between("function _psRenderBlockers(list, arm, keys, open) {", "\n}\n")
-    assert "al.open = !!open;" in rb and "if (arm) al.open = true" not in rb
-    assert "_psRenderBlockers(d.blockers, true, d.blocker_keys, false);" in SRC     # on load: folded
-    assert "_psRenderBlockers(d.blockers || [], true, d.blocker_keys, true);" in SRC  # a refused send: open
+def test_send_is_never_armed_on_load_and_waits_for_each_item():
+    # Schedule audit 10/10/26 TRUST-2 reverses the folded list: one press
+    # sent hard breaches nobody opened. The review is open; the button waits.
+    refresh = _between("  window.psRefresh = function () {", "  window.psReachRender")
+    assert "_psRenderBlockers" not in refresh and "prRefresh()" in refresh
+    label = _between("  window.psLabel = function () {", "  function psReach()")
+    assert "_psArmed" not in label and "prGate()" in label
+    assert "'Fix ' + g.must + ' thing'" in label and "'Answer ' + g.decide + ' decision'" in label
 
 
 def test_a_sent_week_keeps_a_sent_button_and_says_it_once():

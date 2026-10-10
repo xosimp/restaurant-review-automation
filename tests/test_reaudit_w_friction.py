@@ -443,7 +443,9 @@ console.log(JSON.stringify([cavBlockers([{key: 'a', text: 'A'}, {key: 'b', text:
     assert got[0] == {"texts": ["A", "B"], "keys": ["a", "b"]}
     assert got[1] == {"texts": ["A", "B"], "keys": ["a", "b"]}
     assert got[2] == {"texts": ["A"], "keys": None}, "an older server's list acknowledges with true"
-    assert "acknowledge: ack ? (keys && keys.length ? keys.slice() : true) : false" in src
+    # The web Send names what was read (schedule audit 10/10/26 TRUST-3):
+    # the answered decisions as keys, each must-fix override with its reason.
+    assert "var body = {acknowledge: _pb.acknowledge, overrides: _pb.overrides};" in src
     assert "b.acknowledge=cb.keys||true" in src
 
 
