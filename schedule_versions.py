@@ -510,7 +510,9 @@ def authority_of(user) -> str:
 #   * the notes Cavnar AI's own passes write on a row they change, read only
 #     where this save added them.
 
-CAVNAR_SOURCES = ("apply_fixes", "optimize", "overtime_move")
+# live_move: a cut, extension or call-in the live labor read suggested and
+# the manager approved (labor_live, schedule audit 10/10/26 MARKET-24).
+CAVNAR_SOURCES = ("apply_fixes", "optimize", "overtime_move", "live_move")
 _CAVNAR_NOTE_TAGS = (
     ("optimize", re.compile(r"\bCavnar(?: AI)?:", re.I)),                  # Improve, the solver
     ("apply_fixes", re.compile(r"\(was [^()]+? — [^()]+\)")),              # shift_quality.apply_fixes

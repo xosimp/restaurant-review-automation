@@ -79,6 +79,9 @@ def init_schedule_calibration(db_path=None):
             reverted_at     TEXT
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_cal_runs ON schedule_calibration_runs(restaurant_id, run_at)")
+        # The retention sweep deletes by run_at alone (ops._RETENTION_DAYS),
+        # which the (restaurant_id, run_at) index cannot serve.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_cal_runs_at ON schedule_calibration_runs(run_at)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_calibration_cohort (
             week           TEXT PRIMARY KEY,
             restaurants    INTEGER NOT NULL,
