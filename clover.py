@@ -299,3 +299,223 @@ def sync_to_db(restaurant_id: int) -> dict:
         except Exception:
             pass
         return {"ok": False, "error": str(e)}
+
+
+# ── the ticket archive (schedule audit 10/10/26 MARKET-9) ───────────────────
+#
+# pos_archive's provider-neutral rows from Clover's orders (with line items,
+# discounts, payments and the employee who rang them) and shifts. Clover's
+# REST API carries no table, guest count or kitchen times, so those stay
+# None, and no pay rate on a shift, so a punch's pay is None (never a
+# guessed wage). Amounts are cents.
+
+def _dollars(v) -> float:
+    try:
+        return round(int(v or 0) / 100.0, 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _elements(v) -> list:
+    return (v.get("elements") if isinstance(v, dict) else v) or []
+
+
+def _local_ms(ms, tz):
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).astimezone(tz).strftime("%Y-%m-%dT%H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _orders_window(restaurant_id, field, start_ms, end_ms) -> list:
+    """Every order whose `field` (createdTime / modifiedTime) falls in the
+    window, expanded, paged to the end; a failed page fails the read."""
+    mid = _mid(restaurant_id)
+    headers = _headers(restaurant_id)
+    out, offset = [], 0
+    while True:
+        resp = _http(requests.get, f"{CLOVER_BASE}/merchants/{mid}/orders", headers=headers,
+                     params={"filter": f"{field}>={start_ms}&{field}<{end_ms}",
+                             "expand": "lineItems,lineItems.discounts,discounts,payments,payments.tender,employee",
+                             "limit": 500, "offset": offset}, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Clover orders returned {resp.status_code} partway through; nothing was saved")
+        items = resp.json().get("elements", [])
+        out.extend(items)
+        if len(items) < 500:
+            break
+        offset += 500
+    return out
+
+
+def _discount_cents(d, base_cents) -> int:
+    """A Clover discount in cents: `amount` (negative cents) or a
+    `percentage` of the line/order it is on."""
+    try:
+        if d.get("amount") is not None:
+            return abs(int(d.get("amount") or 0))
+        if d.get("percentage") is not None:
+            return int(round(abs(float(d["percentage"])) / 100.0 * int(base_cents or 0)))
+    except (TypeError, ValueError):
+        pass
+    return 0
+
+
+def archive_rows(restaurant_id: int, business_date) -> dict:
+    """One business date as pos_archive rows: {"tickets", "lines",
+    "punches", "payments", "payouts", "max_stamp"}. Orders created in the
+    business day (BUSINESS_DAY_START_HOUR local to the same hour next day);
+    a ticket's net is pos.py's contract (_order_net_cents: total less the
+    tax on its payments). Lines: each line item (a refunded one as a
+    "refund" line, its price the loss) and each discount as a negative
+    "discount" line. Punches: shifts that clocked in during the day."""
+    from time_utils import BUSINESS_DAY_START_HOUR
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    iso = day.isoformat()
+    tz, _r = _tz_and_restaurant(restaurant_id)
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR, tzinfo=tz)
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int((start + timedelta(days=1)).timestamp() * 1000)
+    employees = _fetch_employees(restaurant_id)
+    tickets, lines, payments, stamps = [], [], [], []
+    for o in _orders_window(restaurant_id, "createdTime", start_ms, end_ms):
+        oid = str(o.get("id") or "").strip()
+        if not oid:
+            continue
+        stamp = _local_ms(o.get("modifiedTime"), tz)
+        stamps.append(stamp or "")
+        opened = _local_ms(o.get("createdTime"), tz)
+        disc = 0
+        for li in _elements(o.get("lineItems")):
+            price = int(li.get("price") or 0)
+            qty = (float(li.get("unitQty")) / 1000.0) if li.get("unitQty") else 1.0
+            gross = int(round(price * qty))
+            refunded = bool(li.get("refunded"))
+            lines.append({"line_id": str(li.get("id") or f"{oid}:li"), "ticket_id": oid, "business_date": iso,
+                          "item_id": (li.get("item") or {}).get("id"),
+                          "item_name": (li.get("name") or "").strip() or None, "item_kind": None,
+                          "kind": "refund" if refunded else "sale", "qty": qty,
+                          "sales": 0.0 if refunded else _dollars(gross), "price": _dollars(price),
+                          "loss_amount": _dollars(gross) if refunded else None, "item_at": opened,
+                          "source_stamp": stamp})
+            for d in _elements(li.get("discounts")):
+                c = _discount_cents(d, gross)
+                if c and not refunded:
+                    disc += c
+                    lines.append({"line_id": str(d.get("id") or f"{li.get('id')}:d"), "ticket_id": oid,
+                                  "business_date": iso, "kind": "discount", "qty": 1.0, "sales": -_dollars(c),
+                                  "price": -_dollars(c), "reason": (d.get("name") or "").strip() or None,
+                                  "item_at": opened, "source_stamp": stamp})
+        for d in _elements(o.get("discounts")):
+            c = _discount_cents(d, o.get("total"))
+            if c:
+                disc += c
+                lines.append({"line_id": str(d.get("id") or f"{oid}:d"), "ticket_id": oid, "business_date": iso,
+                              "kind": "discount", "qty": 1.0, "sales": -_dollars(c), "price": -_dollars(c),
+                              "reason": (d.get("name") or "").strip() or None, "item_at": opened,
+                              "source_stamp": stamp})
+        tip = tax = 0
+        paid_at = max((int(p.get("createdTime") or 0) for p in _elements(o.get("payments"))), default=0) or None
+        for p in _elements(o.get("payments")):
+            label = ((p.get("tender") or {}).get("label") or "").strip()
+            tip += int(p.get("tipAmount") or 0)
+            tax += int(p.get("taxAmount") or 0)
+            payments.append({"payment_id": str(p.get("id") or f"{oid}:p"), "ticket_id": oid, "business_date": iso,
+                             "method": label or None, "is_cash": 1 if label.lower() == "cash" else 0,
+                             "is_card": 1 if "card" in label.lower() else 0, "amount": _dollars(p.get("amount")),
+                             "tip": _dollars(p.get("tipAmount")), "tip_fee": None})
+        emp = str((o.get("employee") or {}).get("id") or "").strip() or None
+        state = str(o.get("state") or "").lower()
+        tickets.append({
+            "ticket_id": oid, "business_date": iso, "ticket_no": None, "opened_at": opened,
+            # Clover keeps no close time: a paid (locked) order closed with
+            # its last payment.
+            "closed_at": _local_ms(paid_at, tz) if (state == "locked" and paid_at) else None,
+            "fired_at": None, "bumped_at": None, "need_at": None, "server_id": emp,
+            "server_name": (employees.get(emp) or {}).get("name") if emp else None, "table_id": None,
+            "table_name": None, "room_name": None, "is_bar": 0, "guest_count": None, "entree_count": None,
+            "bev_count": None, "net_sales": _dollars(_order_net_cents(o)), "discount": _dollars(disc),
+            "tip": _dollars(tip), "grat": None, "tax": _dollars(tax), "mealtime": None, "profit_center": None,
+            "cancelled": 0, "source_stamp": stamp})
+    punches = []
+    for s in _fetch_shifts(restaurant_id, start_ms, end_ms + 16 * 3600 * 1000):
+        sid = str(s.get("id") or "").strip()
+        if not sid or not s.get("inTime") or not (start_ms <= int(s["inTime"]) < end_ms):
+            continue
+        eid = str((s.get("employee") or {}).get("id") or "").strip() or None
+        a, z = _local_ms(s.get("inTime"), tz), _local_ms(s.get("outTime"), tz) if s.get("outTime") else None
+        hours = (round((int(s["outTime"]) - int(s["inTime"])) / 3600000.0, 2) if s.get("outTime") else None)
+        punches.append({
+            "punch_id": sid, "business_date": iso, "employee_id": eid,
+            "employee_name": (employees.get(eid) or {}).get("name") if eid else None, "job_id": None,
+            "role": (employees.get(eid) or {}).get("role") if eid else None, "clock_in": a, "clock_out": z,
+            "reg_hours": hours, "ot_hours": None, "dt_hours": None, "reg_rate": None, "ot_rate": None, "pay": None,
+            "ot_pay": None, "tips": _dollars(s.get("cashTipsCollected")) or None, "tips_net": None, "grats": None,
+            "break_minutes": None, "meal_minutes": None, "rest_minutes": None, "edited_by": None,
+            "edited_at": None, "edit_what": None, "is_station": 0, "source_stamp": _local_ms(s.get("modifiedTime"), tz)})
+    return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": [],
+            "max_stamp": (max(x for x in stamps if x)[:19] if any(stamps) else None)}
+
+
+def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
+    """Business dates of orders Clover modified between two UTC moments
+    (the orders filter on modifiedTime)."""
+    tz, restaurant = _tz_and_restaurant(restaurant_id)
+    out = set()
+    for o in _orders_window(restaurant_id, "modifiedTime", int(since_utc.timestamp() * 1000),
+                            int(until_utc.timestamp() * 1000)):
+        if o.get("createdTime"):
+            out.add(_business_date_ms(int(o["createdTime"]), tz, restaurant).isoformat())
+    return out
+
+
+# ── during service (schedule audit 10/10/26 MARKET-10, MARKET-24) ──────────
+#
+# Clover's orders and shifts answer while the restaurant trades: today's paid
+# orders so far, and today's shifts with their clock-in (an open one has no
+# outTime yet).
+
+class CloverNoSalesYet(RuntimeError):
+    """Clover answered, with nothing paid yet today (intraday.capture reads
+    `not_yet`)."""
+    not_yet = True
+    provider = "clover"
+
+
+def _today_ms(restaurant_id, business_date):
+    from time_utils import BUSINESS_DAY_START_HOUR
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    tz, _r = _tz_and_restaurant(restaurant_id)
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR, tzinfo=tz)
+    return day, int(start.timestamp() * 1000), int((start + timedelta(days=1)).timestamp() * 1000)
+
+
+def fetch_sales_today(restaurant_id: int, business_date) -> float:
+    """Net sales so far for the business date (pos.py's net contract: paid
+    orders' total less the tax on their payments)."""
+    day, start_ms, end_ms = _today_ms(restaurant_id, business_date)
+    paid = [o for o in _orders_window(restaurant_id, "createdTime", start_ms, end_ms)
+            if str(o.get("paymentState") or o.get("state") or "").lower() in ("paid", "locked")]
+    if not paid:
+        raise CloverNoSalesYet(f"Clover has no paid orders for {day.isoformat()} yet")
+    return _dollars(sum(_order_net_cents(o) for o in paid))
+
+
+def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
+    """Everyone who clocked in this business day: [{"employee", "role",
+    "clocked_in_at", "clocked_out_at", "hourly_wage", "external_id"}]."""
+    _day, start_ms, end_ms = _today_ms(restaurant_id, business_date)
+    shifts = [s for s in _fetch_shifts(restaurant_id, start_ms, end_ms + 16 * 3600 * 1000)
+              if s.get("inTime") and start_ms <= int(s["inTime"]) < end_ms]
+    employees = _fetch_employees(restaurant_id) if shifts else {}
+    out = []
+    for s in shifts:
+        eid = str((s.get("employee") or {}).get("id") or "").strip()
+        emp = employees.get(eid) or {}
+        if not emp.get("name") or emp.get("name") == "Unknown":
+            continue
+        stamp = lambda ms: datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).isoformat()  # noqa: E731
+        out.append({"employee": emp["name"], "role": emp.get("role") or "Staff", "clocked_in_at": stamp(s["inTime"]),
+                    "clocked_out_at": stamp(s["outTime"]) if s.get("outTime") else None, "hourly_wage": None,
+                    "external_id": eid})
+    return out

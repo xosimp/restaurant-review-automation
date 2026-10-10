@@ -1067,6 +1067,10 @@ def fetch_clock_ins_today(restaurant_id: int, business_date: date) -> list:
         rows.append({"employee": name,
                      "role": (entry.get("jobReference") or {}).get("name", "Staff"),
                      "clocked_in_at": entry.get("inDate"),
+                     # The punch's end once they clocked out (live labor
+                     # to date reads it — labor_live), None while on.
+                     "clocked_out_at": entry.get("outDate") or None,
+                     "hourly_wage": entry.get("hourlyWage"),
                      # The GUID the person is keyed on (people.resolve_rows),
                      # so a clock-in matches the scheduled person whatever
                      # spelling either side carries (memory audit 9/29/26).
@@ -1074,3 +1078,371 @@ def fetch_clock_ins_today(restaurant_id: int, business_date: date) -> list:
                                      or str((entry.get("employeeReference") or {}).get("guid") or "").strip()
                                      or None)})
     return rows
+
+
+# ── the ticket archive (schedule audit 10/10/26 MARKET-9) ───────────────────
+#
+# pos_archive keeps one business date's tickets, sale lines, punches and
+# payments per restaurant; labor standards, the Crew stage's busy/slow read,
+# the measured sales curve (schedule_economics.measured_sales_curve reads
+# tickets first) and every ticket-timing learner read it. Only RPOWER fed it.
+# Toast's Orders API (ordersBulk) carries each order's open/close times,
+# server, table, guest count, checks, selections and payments; the Labor
+# API's time entries carry the punches. Read defensively: the shapes below
+# are Toast's documented ones, not yet seen from a live Toast account here.
+#
+# What Toast does NOT give through these endpoints: kitchen fire and bump
+# times (the KDS is a separate product), so fired_at/bumped_at stay None —
+# never a guess. A comp is rung as a discount (fetch_day_sales), so it is a
+# "discount" line carrying the discount's own name as its reason.
+
+def _local_iso(ts, tz):
+    """A Toast UTC stamp as the restaurant's local wall clock
+    ("YYYY-MM-DDTHH:MM:SS", the archive's format), or None."""
+    dt = _parse_toast_time(ts) if ts else None
+    if dt is None:
+        return None
+    if dt.tzinfo is not None and tz is not None:
+        dt = dt.astimezone(tz).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _toast_base():
+    return TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
+
+
+def _orders_bulk(restaurant_id, params: dict) -> list:
+    """Every order ordersBulk returns for `params` (a businessDate, or a
+    startDate/endDate modified window), paged to the end; ToastTruncated
+    past PAGE_LIMIT pages — a partial day is never stored as a whole one."""
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    token = get_toast_token(restaurant_id)
+    out, page = [], 1
+    for _ in range(PAGE_LIMIT):
+        resp = _http(requests.get, f"{_toast_base()}/orders/v2/ordersBulk",
+                     headers=_headers(token, r.toast_restaurant_guid),
+                     params=dict(params, page=page, pageSize=100), timeout=30)
+        resp.raise_for_status()
+        batch = resp.json() or []
+        if not batch:
+            break
+        out.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    else:
+        raise ToastTruncated(f"Toast returned more than {PAGE_LIMIT * 100:,} orders for {params}")
+    return out
+
+
+def _table_names(restaurant_id) -> dict:
+    """{table guid: name} from the config API, {} when it can't be read
+    (the ticket is still archived, its table unnamed)."""
+    from models import get_restaurant
+    try:
+        r = get_restaurant(restaurant_id)
+        token = get_toast_token(restaurant_id)
+        resp = _http(requests.get, f"{_toast_base()}/config/v2/tables",
+                     headers=_headers(token, r.toast_restaurant_guid), timeout=30)
+        resp.raise_for_status()
+        return {t["guid"]: (t.get("name") or "").strip() or None for t in (resp.json() or [])
+                if isinstance(t, dict) and t.get("guid")}
+    except Exception:
+        return {}
+
+
+def _break_minutes(entry) -> float:
+    total = 0.0
+    for b in entry.get("breaks") or []:
+        a, z = _parse_toast_time((b or {}).get("inDate")), _parse_toast_time((b or {}).get("outDate"))
+        if a and z and z > a:
+            total += (z - a).total_seconds() / 60.0
+    return round(total, 1)
+
+
+def _disc_line(line_id, ticket_id, iso, amount, name, at, stamp, extra=None):
+    out = {"line_id": line_id, "ticket_id": ticket_id, "business_date": iso, "kind": "discount", "qty": 1.0,
+           "sales": round(-amount, 2), "price": round(-amount, 2), "reason": (name or "").strip() or None,
+           "item_at": at, "source_stamp": stamp}
+    out.update(extra or {})
+    return out
+
+
+def archive_rows(restaurant_id: int, business_date) -> dict:
+    """One Toast business date in pos_archive's provider-neutral shape:
+    {"tickets", "lines", "punches", "payments", "payouts", "max_stamp"}.
+
+    Tickets are orders (voided/deleted ones kept, `cancelled` 1); a ticket's
+    net is its live checks' `amount` (after discounts, before tax), the same
+    net fetch_day_sales reports. Lines: each selection (a voided one as a
+    "void" line with its pre-discount price as the loss), each discount
+    applied to a selection or a check as a "discount" line (negative), so a
+    ticket's sale and discount lines sum to its net. Punches are the Labor
+    API's time entries opened in the business day (BUSINESS_DAY_START_HOUR
+    local to the same hour next day); pay = regular hours at the wage plus
+    overtime hours at 1.5x it (Toast reports hours and the wage, not pay)."""
+    if _is_demo(restaurant_id):
+        raise NotImplementedError("Toast demo mode has no real day to archive")
+    from time_utils import BUSINESS_DAY_START_HOUR
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    iso, ymd = day.isoformat(), day.strftime("%Y%m%d")
+    tz = _tz_for(restaurant_id)
+    orders = _orders_bulk(restaurant_id, {"businessDate": ymd})
+    people = _fetch_people(restaurant_id, {}) if orders else {"employees": {}, "jobs": {}}
+    emps = people.get("employees") or {}
+    tables = _table_names(restaurant_id) if any((o.get("table") or {}).get("guid") for o in orders) else {}
+    tickets, lines, payments, stamps = [], [], [], []
+    for o in orders:
+        oid = str(o.get("guid") or "").strip()
+        bd = str(o.get("businessDate") or "").strip()
+        if not oid or (bd and bd != ymd):
+            continue
+        dead_order = bool(o.get("voided") or o.get("deleted"))
+        stamp = str(o.get("modifiedDate") or "")[:19] or None
+        stamps.append(str(o.get("modifiedDate") or ""))
+        opened = _local_iso(o.get("openedDate"), tz)
+        net = disc_total = tax = tip = 0.0
+        for ci, check in enumerate(o.get("checks") or []):
+            dead = dead_order or bool(check.get("voided") or check.get("deleted"))
+            if not dead:
+                net += _num(check.get("amount"))
+                tax += _num(check.get("taxAmount"))
+                for di, d in enumerate(check.get("appliedDiscounts") or []):
+                    amt = _num((d or {}).get("discountAmount"))
+                    if amt:
+                        disc_total += amt
+                        lines.append(_disc_line(str((d or {}).get("guid") or f"{oid}:c{ci}:d{di}"), oid, iso, amt,
+                                                (d or {}).get("name"), opened, stamp))
+            for si, sel in enumerate(check.get("selections") or []):
+                sid = str(sel.get("guid") or f"{oid}:c{ci}:s{si}")
+                cat = sel.get("salesCategory") if isinstance(sel.get("salesCategory"), dict) else {}
+                base_line = {"ticket_id": oid, "business_date": iso, "item_id": (sel.get("item") or {}).get("guid"),
+                             "item_name": (sel.get("displayName") or "").strip() or None, "item_kind": None,
+                             "qty": _num(sel.get("quantity")),
+                             "profit_center": (cat.get("name") or "").strip() or None,
+                             "item_at": _local_iso(sel.get("createdDate"), tz) or opened, "source_stamp": stamp}
+                price = _num(sel.get("price"))
+                if dead or sel.get("voided"):
+                    lost = _num(sel.get("preDiscountPrice")) or price
+                    lines.append(dict(base_line, line_id=sid, kind="void", sales=0.0, price=round(lost, 2),
+                                      loss_amount=round(lost, 2), voided=1.0))
+                    continue
+                sel_disc = sum(_num((d or {}).get("discountAmount")) for d in (sel.get("appliedDiscounts") or []))
+                lines.append(dict(base_line, line_id=sid, kind="sale", sales=round(price + sel_disc, 2),
+                                  price=round(_num(sel.get("preDiscountPrice")) or (price + sel_disc), 2)))
+                for di, d in enumerate(sel.get("appliedDiscounts") or []):
+                    amt = _num((d or {}).get("discountAmount"))
+                    if amt:
+                        disc_total += amt
+                        lines.append(_disc_line(str((d or {}).get("guid") or f"{sid}:d{di}"), oid, iso, amt,
+                                                (d or {}).get("name"), base_line["item_at"], stamp,
+                                                {"item_id": base_line["item_id"],
+                                                 "item_name": base_line["item_name"]}))
+            for pi, p in enumerate(check.get("payments") or []):
+                kind = str((p or {}).get("type") or "").upper()
+                ptip = _num((p or {}).get("tipAmount"))
+                tip += 0.0 if dead else ptip
+                payments.append({"payment_id": str((p or {}).get("guid") or f"{oid}:c{ci}:p{pi}"), "ticket_id": oid,
+                                 "business_date": iso, "method": kind.title() or None,
+                                 "is_cash": 1 if kind == "CASH" else 0,
+                                 "is_card": 1 if kind in ("CREDIT", "DEBIT") else 0,
+                                 "amount": round(_num((p or {}).get("amount")), 2), "tip": round(ptip, 2),
+                                 "tip_fee": None})
+        server = str((o.get("server") or {}).get("guid") or "").strip() or None
+        table = str((o.get("table") or {}).get("guid") or "").strip() or None
+        rc = o.get("revenueCenter") if isinstance(o.get("revenueCenter"), dict) else {}
+        tickets.append({
+            "ticket_id": oid, "business_date": iso, "ticket_no": str(o.get("displayNumber") or "") or None,
+            "opened_at": opened, "closed_at": _local_iso(o.get("closedDate"), tz),
+            "fired_at": None, "bumped_at": None, "need_at": None,
+            "server_id": server, "server_name": (_toast_name(emps.get(server) or {}) or None) if server else None,
+            "table_id": table, "table_name": tables.get(table) if table else None, "room_name": None, "is_bar": 0,
+            "guest_count": int(_num(o.get("numberOfGuests"))), "entree_count": None, "bev_count": None,
+            "net_sales": round(net, 2), "discount": round(disc_total, 2), "tip": round(tip, 2), "grat": None,
+            "tax": round(tax, 2), "mealtime": None, "profit_center": (rc.get("name") or None),
+            "cancelled": 1 if dead_order else 0, "source_stamp": stamp})
+    # Punches: the business day's time entries, the person and job resolved.
+    start_local = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR, tzinfo=tz)
+    end_local = start_local + timedelta(days=1) - timedelta(seconds=1)
+    entries = fetch_time_entries(restaurant_id, day, day, start_at=start_local, end_at=end_local) or []
+    entries = [e for e in entries if not str(e.get("businessDate") or "").strip()
+               or str(e.get("businessDate")).strip() == ymd]
+    if entries:
+        _require_resolved(restaurant_id, entries)
+    punches = []
+    for e in entries:
+        pid = str(e.get("guid") or "").strip()
+        if not pid:
+            continue
+        emp = e.get("employee") or {}
+        eid = (str(emp.get("guid") or "").strip() or str((e.get("employeeReference") or {}).get("guid") or "").strip()
+               or None)
+        wage = _num(e.get("hourlyWage"))
+        reg, ot = _num(e.get("regularHours")), _num(e.get("overtimeHours"))
+        stamps.append(str(e.get("modifiedDate") or ""))
+        punches.append({
+            "punch_id": pid, "business_date": iso, "employee_id": eid, "employee_name": _toast_name(emp) or None,
+            "job_id": str((e.get("jobReference") or {}).get("guid") or "") or None,
+            "role": (e.get("jobReference") or {}).get("name") or None,
+            "clock_in": _local_iso(e.get("inDate"), tz), "clock_out": _local_iso(e.get("outDate"), tz),
+            "reg_hours": reg, "ot_hours": ot, "dt_hours": 0.0, "reg_rate": wage or None,
+            "ot_rate": round(wage * 1.5, 2) if wage else None,
+            "pay": round(reg * wage + ot * wage * 1.5, 2) if wage else None,
+            "ot_pay": round(ot * wage * 1.5, 2) if wage else None,
+            "tips": round(_num(e.get("declaredCashTips")) + _num(e.get("nonCashTips")), 2), "tips_net": None,
+            "grats": round(_num(e.get("cashGratuityServiceCharges")) + _num(e.get("nonCashGratuityServiceCharges")), 2),
+            "break_minutes": _break_minutes(e), "meal_minutes": None, "rest_minutes": None,
+            "edited_by": None, "edited_at": None, "edit_what": None, "is_station": 0,
+            "source_stamp": str(e.get("modifiedDate") or "")[:19] or None})
+    return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": [],
+            "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None)}
+
+
+def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
+    """Business dates with an order Toast modified between two UTC moments
+    (ordersBulk's startDate/endDate window reads the order's modified date):
+    a check re-opened and closed after the night was archived shows up here
+    and the day is archived again (pos_archive restatements)."""
+    fmt = "%Y-%m-%dT%H:%M:%S.000+0000"
+    orders = _orders_bulk(restaurant_id, {"startDate": since_utc.astimezone(timezone.utc).strftime(fmt),
+                                          "endDate": until_utc.astimezone(timezone.utc).strftime(fmt)})
+    out = set()
+    for o in orders:
+        bd = str(o.get("businessDate") or "").strip()
+        if len(bd) == 8 and bd.isdigit():
+            out.add(f"{bd[:4]}-{bd[4:6]}-{bd[6:]}")
+    return out
+
+
+# ── the schedule written back to Toast (schedule audit 10/10/26 MARKET-7) ───
+#
+# Toast enforces a schedule at its time clock (early clock-in, late clock-out)
+# for shifts an integration partner writes through the Labor API's shifts
+# resource. Cavnar AI's Toast credentials are a standard API client with read
+# scopes: writing shifts needs Toast to admit Cavnar AI to its integration-
+# partner programme and grant the labor write scope. Until then the push is
+# refused with SCHEDULE_WRITE_EXTERNAL (TOAST_SCHEDULE_WRITE stays off) — the
+# preview, which only READS (employees, jobs), is real and shows exactly what
+# would be sent and what Toast would refuse.
+SCHEDULE_WRITE_ENV = "TOAST_SCHEDULE_WRITE"
+SCHEDULE_WRITE_EXTERNAL = ("Toast hasn't granted Cavnar AI the labor write access its integration partners get, so "
+                           "the schedule can't be written to Toast's time clock yet. Nothing was sent.")
+
+
+def schedule_write_enabled() -> bool:
+    return os.getenv(SCHEDULE_WRITE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _schedule_body(restaurant_id, shifts, people=None):
+    """([Toast Shift bodies], [{employee, why}] skipped) — each Cavnar shift
+    as Toast's documented Shift entity: the employee and job by GUID
+    (resolved by exact name from Toast's own lists; a name two current
+    employees share matches neither), inDate/outDate in UTC from the
+    restaurant's local wall clock. `_employee`/`_start`/`_end` ride along
+    for the caller and are stripped before anything is sent."""
+    import staff_settings as _ss
+    people = people or _fetch_people(restaurant_id, {})
+    tz = _tz_for(restaurant_id)
+    by_name, dup = {}, set()
+    for guid, e in (people.get("employees") or {}).items():
+        if e.get("deleted"):
+            continue
+        k = _ss.name_key(_toast_name(e))
+        if not k:
+            continue
+        if k in by_name:
+            dup.add(k)
+        by_name[k] = guid
+    jobs = {(t or "").strip().lower(): g for g, t in (people.get("jobs") or {}).items() if t}
+    body, skipped = [], []
+    for s in shifts or []:
+        who = (s.get("employee") or "").strip()
+        k = _ss.name_key(who)
+        guid = str(s.get("toast_employee_guid") or "").strip() or (by_name.get(k) if k not in dup else None)
+        job_name = (s.get("job") or s.get("role") or "").strip()
+        job = jobs.get(job_name.lower())
+        start, end = s.get("start"), s.get("end")
+        if not (guid and job and start and end):
+            skipped.append({"employee": who or "(unnamed)",
+                            "why": ("two Toast employees share that name" if k in dup else
+                                    "no Toast employee with that name" if not guid else
+                                    f"Toast has no job \"{job_name}\"" if not job else "missing times")})
+            continue
+        try:
+            a = datetime.fromisoformat(str(start)[:19]).replace(tzinfo=tz).astimezone(timezone.utc)
+            z = datetime.fromisoformat(str(end)[:19]).replace(tzinfo=tz).astimezone(timezone.utc)
+        except ValueError:
+            skipped.append({"employee": who, "why": "times not readable"})
+            continue
+        body.append({"entityType": "Shift",
+                     "employeeReference": {"guid": guid, "entityType": "RestaurantUser"},
+                     "jobReference": {"guid": job, "entityType": "RestaurantJob"},
+                     "inDate": a.strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+                     "outDate": z.strftime("%Y-%m-%dT%H:%M:%S.000+0000"),
+                     "_employee": who, "_start": str(start)[:19], "_end": str(end)[:19]})
+    return body, skipped
+
+
+def _sendable(b):
+    return {k: v for k, v in b.items() if not k.startswith("_")}
+
+
+def preview_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None) -> dict:
+    """What a push WOULD write to Toast, checked against Toast's own employee
+    and job lists — reads only, never sends. RPOWER's preview shape: {ok,
+    sent: False, would_send, employees, shifts, skipped, problems} plus
+    `write_enabled` and, while Toast has not granted the write, `external`."""
+    body, skipped = _schedule_body(restaurant_id, shifts)
+    problems, spans = [], {}
+    for b in body:
+        shift = {"inTime": b["_start"], "outTime": b["_end"]}
+        if b["outDate"] <= b["inDate"]:
+            problems.append({"employee": b["_employee"], "shift": shift, "problem": "ends before it starts"})
+        spans.setdefault(b["employeeReference"]["guid"], []).append((b["inDate"], b["outDate"], b))
+    for rows in spans.values():
+        rows.sort(key=lambda x: x[0])
+        for (_a1, z1, b1), (a2, _z2, b2) in zip(rows, rows[1:]):
+            if a2 < z1:
+                problems.append({"employee": b2["_employee"], "shift": {"inTime": b2["_start"], "outTime": b2["_end"]},
+                                 "problem": f"overlaps {b1['_start']}–{b1['_end']}"})
+    out = {"ok": bool(body) and not problems, "sent": False, "would_send": [_sendable(b) for b in body],
+           "employees": len(spans), "shifts": len(body), "skipped": skipped, "problems": problems,
+           "write_enabled": schedule_write_enabled()}
+    if not schedule_write_enabled():
+        out["external"] = SCHEDULE_WRITE_EXTERNAL
+    return out
+
+
+def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None) -> dict:
+    """Write the week's shifts to Toast (POST /labor/v1/shifts, one shift per
+    call) — refused with SCHEDULE_WRITE_EXTERNAL until Toast grants the write
+    scope and TOAST_SCHEDULE_WRITE is set. UNVERIFIED against a live Toast
+    account: confirm the entity shape and the re-push rule (Toast keeps its
+    own shift GUIDs; a corrected week must update or delete, not add twice)
+    on the first partner sandbox before turning it on. Returns {ok,
+    employees, shifts, skipped, failed, error}."""
+    if not schedule_write_enabled():
+        return {"ok": False, "external": True, "error": SCHEDULE_WRITE_EXTERNAL, "skipped": []}
+    from models import get_restaurant
+    body, skipped = _schedule_body(restaurant_id, shifts)
+    if not body:
+        return {"ok": False, "error": "No shifts had a Toast employee and job to push.", "skipped": skipped}
+    r = get_restaurant(restaurant_id)
+    token = get_toast_token(restaurant_id)
+    failed = []
+    for b in body:
+        try:
+            resp = _http(requests.post, f"{_toast_base()}/labor/v1/shifts",
+                         headers=_headers(token, r.toast_restaurant_guid), json=_sendable(b), timeout=30, tries=1)
+        except Exception as e:
+            failed.append({"employee": b["_employee"], "start": b["_start"], "why": f"couldn't reach Toast: {e}"})
+            continue
+        if resp.status_code in (401, 403):
+            return {"ok": False, "skipped": skipped, "error": SCHEDULE_WRITE_EXTERNAL, "external": True}
+        if not resp.ok:
+            failed.append({"employee": b["_employee"], "start": b["_start"],
+                           "why": f"Toast returned HTTP {resp.status_code}: {resp.text[:160]}"})
+    return {"ok": not failed, "employees": len({b["employeeReference"]["guid"] for b in body}),
+            "shifts": len(body) - len(failed), "skipped": skipped, "failed": failed,
+            "error": None if not failed else f"{len(failed)} shift(s) Toast did not take"}

@@ -4105,9 +4105,16 @@ def _do_shift_requests_list(u):
     except Exception as e:
         print(f"[requests] automatic decisions unread rid={_rid(u)}: {e!r}")
         auto_recent = []
+    # `group`: this location has sibling locations, so an open shift can be
+    # offered to people there who travel (cross_site, MARKET-16).
+    try:
+        import schedule_rules as _sr_grp
+        group = bool(_sr_grp.org_sibling_ids(_rid(u)))
+    except Exception:
+        group = False
     return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
             "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_decide_requests(u),
-            "autonomy": autonomy, "auto_recent": auto_recent}, 200
+            "autonomy": autonomy, "auto_recent": auto_recent, "group": group}, 200
 
 
 def _do_shift_request_decide(u, request_id):
@@ -7826,6 +7833,12 @@ def _wrap(body, decorator):
     view.__name__ = body.__name__
     return decorator(view)
 
+
+# The schedule on the floor — the POS schedule push, live labor and its moves,
+# one-shift edits, people from sibling locations (floor_api; schedule audit
+# 10/10/26, J2): their bodies live there, the twins are mounted here.
+import floor_api as _floor_api  # noqa: E402
+_ROUTES += _floor_api.ROUTES
 
 for _path, _methods, _body_fn, _ep in _ROUTES:
     strategy_bp.add_url_rule("/api" + _path, endpoint=_ep, methods=_methods,
