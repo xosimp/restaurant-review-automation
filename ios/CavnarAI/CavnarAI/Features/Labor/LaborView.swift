@@ -68,6 +68,7 @@ struct LaborView: View {
     /// On the floor (J2): the live read, its moves, and the switches.
     @State private var floorStore = FloorStore()
     @State private var showingFloorSettings = false
+    @State private var showingBench = false
     @State private var crewStore = CrewMatrixStore()
     @State private var showingMeasuredRatings = false
     /// A person a review line named (an unmatched name's suggestion).
@@ -607,6 +608,7 @@ struct LaborView: View {
             EditWhySheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showingMemory) { ScheduleMemoryScreen() }
+        .sheet(isPresented: $showingBench) { BenchScreen(historyId: viewModel.scheduleResult?.historyId) }
         .sheet(isPresented: $showingFloorSettings, onDismiss: { Task { await floorStore.load() } }) {
             FloorSettingsSheet(store: floorStore)
         }
@@ -1383,6 +1385,11 @@ struct LaborView: View {
                 if result.historyId != nil, let line = crewStore.matrix?.headline {
                     crewRow(line)
                 }
+                // The Bench (J3): who could cover, on call for no-shows,
+                // events that changed, people to keep (owner only).
+                if result.historyId != nil {
+                    benchRow
+                }
                 // THE WEEK.
                 if let rows = result.previewRows, !rows.isEmpty {
                     fullScheduleTable(rows, csv: result.scheduleCsv)
@@ -2061,6 +2068,34 @@ struct LaborView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Crew").cavnarText(.label)
                     CavnarMixedText(line, role: .secondary)
+                }
+                Spacer(minLength: CavnarSpace.xs)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard()
+    }
+
+    /// "Bench · who covers, on call, people to keep ›".
+    private var benchRow: some View {
+        Button {
+            Haptic.light()
+            showingBench = true
+        } label: {
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                Image(systemName: "person.badge.shield.checkmark")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bench").cavnarText(.label)
+                    Text("Who covers a gap, on call for no-shows, people to keep").cavnarText(.secondary)
                 }
                 Spacer(minLength: CavnarSpace.xs)
                 Image(systemName: "chevron.right")

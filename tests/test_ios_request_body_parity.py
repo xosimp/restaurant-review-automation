@@ -1826,6 +1826,11 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # The Bench's standby policy (J3, MARKET-26): the phone sets the hours of
+    # pay; a flat sum and a note are set where the web sets them too, which is
+    # nowhere yet (both read as optional by standby_insurance.set_policy).
+    ("/mobile/api/labor/bench", "flat_pay"): _WEB_TOO + " (the standby policy's flat sum; hours are sent)",
+    ("/mobile/api/labor/bench", "note"): _WEB_TOO + " (the standby policy's note)",
     # schedule audit 10/10/26 BUGSGEN-23: a name somebody already goes by is
     # a 409 same_name the owner answers with a name that tells them apart
     # (or by turning a former employee back on in Team); `same_person` is the

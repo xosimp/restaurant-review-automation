@@ -395,4 +395,59 @@ final class SchedFixI2bTests: XCTestCase {
         let set = try encode(FloorStore.SettingsBody(posPush: true, previewed: true))
         XCTAssertEqual(set as NSDictionary, ["pos_push": true, "previewed": true] as NSDictionary)
     }
+
+    // MARK: J3 — push to talk, the Bench, how firm a shift is
+
+    func testTheReadBackSaysTheAnswerInPlainWords() {
+        XCTAssertEqual(AskReadBack.plain("**Ana** can close — [see the week](https://x)", proposals: 1),
+                       "Ana can close — see the week Tap the card to send it.")
+        XCTAssertNil(AskReadBack.plain("  **  ", proposals: 0))
+        let long = String(repeating: "word ", count: 200)
+        XCTAssertLessThanOrEqual(AskReadBack.plain(long, proposals: 0)?.count ?? 0, 602)
+    }
+
+    func testTheBenchPartsDecodeAndItsActionsCarryTheirKeys() throws {
+        let s = try decode(BenchStrength.self, """
+        {"ok": true, "available": true, "pools": [{"family": "Bar", "daypart": "night", "status": "critical", "why": "Only Ana closes"},
+                                                   {"family": "Kitchen", "daypart": "morning", "status": "ok"}],
+         "cross_train": [{"text": "Train Ben on bar next"}], "hiring": [{"text": "Hire a cook by 11/14/26"}], "basis": "Last 8 weeks"}
+        """)
+        XCTAssertEqual(s.pools.map(\.family), ["Bar"])
+        let sb = try decode(BenchStandby.self, """
+        {"ok": true, "history_id": 41, "policy": {"pay_hours": 2, "flat_pay": null, "stated": false},
+         "suggestions": [{"date": "2026-10-17", "day": "Saturday", "chance_of_a_no_show": 0.22,
+                          "standby": {"employee": "Lee", "role": "Server", "shift_start": "4:00pm", "shift_end": "10:00pm"},
+                          "price": {"standby_pay": 36, "expected_short_cost": 410}, "slots": []}],
+         "slots": [{"id": 3, "status": "accepted", "employee_name": "Lee", "date": "2026-10-10", "shift_start": "4:00pm",
+                    "shift_end": "10:00pm", "called_in": false}]}
+        """)
+        XCTAssertEqual(sb.suggestions.first?.standby?.employee, "Lee")
+        XCTAssertEqual(sb.suggestions.first?.taken, false)
+        XCTAssertEqual(sb.policyLine, "Standby pay: 2 hours at their rate (the default)")
+        let r = try decode(BenchRetention.self, """
+        {"ok": true, "people": [{"name": "Ana", "level": "high", "risk": 0.4, "reasons": ["hours cut 3 weeks"], "protect": false},
+                                {"name": "Bo", "level": "none"}]}
+        """)
+        XCTAssertEqual(r.people.map(\.name), ["Ana"])
+        let body = try encode(BenchActionBody(action: "standby_offer", date: "2026-10-17", role: "Server", employee: "Lee",
+                                              shiftStart: "4:00pm", historyId: 41, chance: 0.22))
+        XCTAssertEqual(body["action"] as? String, "standby_offer")
+        XCTAssertEqual(body["shift_start"] as? String, "4:00pm")
+        XCTAssertEqual(body["history_id"] as? Int, 41)
+        XCTAssertNil(body["protect"])
+    }
+
+    func testAStaffShiftSaysHowFirmItIs() throws {
+        let shift = try decode(StaffShift.self, """
+        {"date": "Sat 10/17", "start": "4:00pm", "end": "10:00pm", "commitment": "firm",
+         "commitment_text": "Firm \u{2014} needed even on a slow night. It changes only in an emergency."}
+        """)
+        let pill = try XCTUnwrap(shift.commitmentPill)
+        XCTAssertEqual(pill.word, "Firm")
+        XCTAssertEqual(pill.meaning, "needed even on a slow night. It changes only in an emergency.")
+        XCTAssertNil(try decode(StaffShift.self, #"{"commitment": "maybe"}"#).commitmentPill)
+        // Kept in the device cache as it came.
+        let again = try JSONDecoder().decode(StaffShift.self, from: JSONEncoder().encode(shift))
+        XCTAssertEqual(again.commitment, "firm")
+    }
 }

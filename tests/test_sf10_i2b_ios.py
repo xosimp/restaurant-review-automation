@@ -255,3 +255,42 @@ def test_approved_time_off_over_a_published_shift_waits_with_post_it_open():
     assert 'case followUps = "follow_ups"' in _swift("LaborViewModel.swift")
     assert 'Text("Post it open")' in _swift("LaborWaitingOnYou.swift")
     assert '"follow_ups"' in _py("strategy_routes.py")
+
+
+# ── J3 on the phone ────────────────────────────────────────────────────────
+
+def test_push_to_talk_sends_on_release_and_reads_the_answer_back():
+    voice = _read(APP, "Features", "AskCavnar", "AskVoiceInput.swift")
+    view = _read(APP, "Features", "AskCavnar", "AskCavnarView.swift")
+    assert "AVSpeechSynthesizer" in voice and "final class AskReadBack" in voice
+    assert "LongPressGesture(minimumDuration: 0.35)" in voice
+    assert "onHoldEnd:" in view and "AskReadBack.shared.speak(answer.text, proposals: answer.proposals.count)" in view
+    # A write the answer proposes still waits on its confirm card: offer_cover
+    # is a confirm tool whose card posts its own mobile route.
+    tools = _py("ask_cavnar_tools.py")
+    assert '"name": "offer_cover"' in tools and '"name": "find_cover"' in tools
+    assert "proposal.route" in _read(APP, "Features", "AskCavnar", "AskCavnarViewModel.swift")
+
+
+def test_the_bench_reads_its_parts_by_their_keys_and_retention_stays_the_owners():
+    bench = _swift("BenchScreen.swift")
+    src = _py("studio_bench.py")
+    assert '"/mobile/api/labor/bench"' in bench
+    for part in ("strength", "standby", "retention", "events", "org"):
+        assert f'"{part}"' in bench, part
+        assert f'"{part}"' in src, part
+    assert 'OWNER_ONLY = ("tips", "retention")' in src
+    for action in ("standby_offer", "standby_withdraw", "standby_policy", "event_approve", "event_dismiss",
+                   "retention_protect", "bench_site"):
+        assert f'"{action}"' in bench and f'action == "{action}"' in src, action
+    for k in ("chance_of_a_no_show", "standby_pay", "expected_short_cost", "cross_train", "valued_because"):
+        assert f'"{k}"' in bench, k
+    assert "BenchScreen(historyId:" in _swift("LaborView.swift")
+
+
+def test_staff_shifts_say_how_firm_they_are():
+    models = _swift("StaffModels.swift", STAFF)
+    assert 'case commitmentText = "commitment_text"' in models
+    assert '["firm", "likely", "tentative"]' in models
+    assert "leg.commitmentPill" in _swift("StaffTodayView.swift", STAFF)
+    assert 's["commitment_text"] = LEVEL_WORDS' in _py("commitment_ladder.py")
