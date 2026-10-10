@@ -540,6 +540,14 @@
     if (l['break']) out += '<div class="meta">Break <span class="num">' + esc(l['break']) + '</span></div>';
     if (l.notes) out += '<div class="meta">Note: ' + esc(l.notes) + '</div>';
     if (l.request) out += '<div style="margin-top:6px">' + legRequestPill(l.request) + '</div>';
+    /* How firm the shift is, as published (commitment_ladder, MARKET-27):
+       firm, likely or tentative, and what that means for the person. */
+    if (l.commitment) {
+      var cls = {firm: 'good', likely: '', tentative: 'warn'}[l.commitment] || '';
+      var word = {firm: 'Firm', likely: 'Likely', tentative: 'Tentative'}[l.commitment] || '';
+      out += '<div class="meta" style="margin-top:6px"><span class="pill ' + cls + '">' + esc(word) + '</span> '
+        + esc(String(l.commitment_text || '').replace(/^[A-Za-z]+ — /, '')) + '</div>';
+    }
     return out;
   }
   function legActions(date, l){

@@ -12596,6 +12596,15 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
         _demand.freeze_week_projection(rid, row["week_start"])
     except Exception as _fx:
         print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
+    # How firm each published shift is, recorded with the publish (commitment_
+    # ladder, scheduler audit 10/10/26 MARKET-27): staff see firm / likely /
+    # tentative, and a later change to a committed shift is priced. Never
+    # blocks the publish; the nightly pass records any week this missed.
+    try:
+        import commitment_ladder as _cl_pub
+        _cl_pub.ensure(rid, schedule_id)
+    except Exception as _clx:
+        _ops.capture(_clx, job="commitment_ladder", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     note = None
     if not sent:
         note = ("Published to the staff portal. Nobody has the app, agreed to texts, or has an email "

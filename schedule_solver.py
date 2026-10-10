@@ -259,6 +259,7 @@ class Problem:
             except (TypeError, ValueError):
                 req = 0
             self.off_req.append(0 if p in self.draft_days_off else req)
+        self.commit_level = {}          # {unit id: a published shift's commitment level} (_build_units)
         self._build_units(only_dates)
         self._build_caps()
         self._build_scale()
@@ -710,6 +711,13 @@ class Problem:
             u.weekend = u.day in ("Friday", "Saturday", "Sunday")
             name = (rs[0].get("employee") or "").strip()
             u.draft = self.pidx.get(self.key(name)) if name else None
+            # A shift already published with a commitment level (commitment_
+            # ladder, MARKET-27): moving its holder off it costs stability.
+            commits = self.signals.get("commitments") or {}
+            if commits and name:
+                lv = commits.get((u.date, " ".join(name.split()).casefold(), (rs[0].get("shift_start") or "").strip()))
+                if lv:
+                    self.commit_level[u.id] = lv
             u.sig = (u.date, tuple(sorted(u.roles)),
                      tuple(sorted((r.get("shift_start") or "", r.get("shift_end") or "") for r in rs)))
             if any(r.get("_pinned") for r in rs):
@@ -1506,6 +1514,13 @@ class Problem:
             out["rotation_weekend"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         if u.closing and any(p in self.rot_rest.get(r, ()) for r in u.roles):
             out["rotation_close"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
+        # A published shift's commitment (MARKET-27): handing it to somebody
+        # else breaks the promise made to its holder — stability points by
+        # level (firm the most), on top of any predictability pay at Send.
+        lv = self.commit_level.get(u.id)
+        if lv and u.draft is not None and p != u.draft:
+            import commitment_ladder as _cl
+            out["commitment"] = self.dim_cost("stability", _cl.COMMIT_POINTS.get(lv, 0.0), dw0)
         if self.rot_rich and any(p in self.rot_rich.get(r, ()) and any((u.day, part) in self.rich_slots.get(r, ())
                                                                      for part in u.primary) for r in u.roles):
             out["rotation_tips"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
@@ -2928,6 +2943,7 @@ _WHY = {
     "rotation_weekend": lambda P, u, o, n: f"{P.names[o]} is due a weekend off by the rotation",
     "rotation_close": lambda P, u, o, n: f"{P.names[o]} has closed more than their share and is due a rest from it",
     "rotation_tips": lambda P, u, o, n: f"{P.names[o]} has had more than their share of the best-tipped shifts",
+    "commitment": lambda P, u, o, n: f"{P.names[o]} was told this shift is {P.commit_level.get(u.id, 'committed')}",
     "role": lambda P, u, o, n: f"it is {P.names[n]}'s own role",
     "dollars": lambda P, u, o, n: "the same shift at a lower wage",
     "learned": lambda P, u, o, n: "it is what the manager keeps doing on that shift",
