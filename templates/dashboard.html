@@ -38151,6 +38151,10 @@ function sfw1RatingLine(s) {
     var h = '';
     if (r && r._pinned === 'manager_plan') h += '<span class="sfw1-pin" title="' + e(r._pin_reason || 'Planned before the draft so every minute has a manager') + '">Manager plan</span>';
     if (r && r.dst_hours) h += '<span class="sfw1-dst" title="Includes the extra hour when the clocks go back">+1h clocks</span>';
+    /* A week staff have: the holder was let off this shift (an approved
+       drop nobody claimed, approved time off) - it is open, not theirs
+       (schedule audit 10/10/26 BUGSLIFE-12). */
+    if (r && r.release) h += '<span class="sfw1-pin" title="' + e((r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was let off it') + ' - nobody has picked it up') + '">Open</span>';
     return h;
   };
   /* The shift pane: why a planned row is there, the clocks, and the server's
@@ -38160,6 +38164,7 @@ function sfw1RatingLine(s) {
     if (!r) return '';
     if (r._pinned === 'manager_plan') h += '<div class="sw-flag"><b>Manager plan</b> — ' + n(r._pin_reason || 'planned before the draft so every minute on the floor has a manager') + '. Passes after the draft never move it.</div>';
     if (r.dst_hours) h += '<div class="sw-flag">Includes the extra hour when the clocks go back (<span class="hb-num">' + e(sfw1G(r.dst_hours)) + 'h</span> paid).</div>';
+    if (r.release) h += '<div class="sw-flag"><b>Open</b> - ' + e(r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was let off this shift') + ' and nobody has picked it up yet. Offer it from Shift requests.</div>';
     return h;
   };
   window.sfw1UsualSection = function (r, usual) {

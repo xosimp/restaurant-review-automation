@@ -3862,6 +3862,20 @@ def mobile_schedule_history_detail(history_id, current_user):
     # 10/4/26 UI-6): the pin is the plan's mark in the stored notes.
     import schedule_skeleton as _skel_pins
     preview_rows = _skel_pins.mark_pins(preview_rows)
+    # A week staff have: a row whose holder a manager let off it — an
+    # approved drop nobody claimed, approved time off over it — carries
+    # `release` ({kind, status, request_id, holder}), so the Studio shows the
+    # slot open instead of counting them on the floor (schedule audit
+    # 10/10/26 BUGSLIFE-12; shift_requests.release_marks, the one reading).
+    if detail.get("published_at"):
+        try:
+            import shift_requests as _sr_rel
+            for _i, _hit in _sr_rel.release_marks(current_user["restaurant_id"], preview_rows).items():
+                preview_rows[_i]["release"] = {"kind": _hit.get("kind"), "status": _hit.get("status"),
+                                               "request_id": _hit.get("request_id"),
+                                               "holder": preview_rows[_i].get("employee")}
+        except Exception as _rx:
+            print(f"[schedule history] releases unread for {history_id}: {_rx!r}")
 
     # A stored week reopened puts its verdict back on screen (web reload,
     # iOS Labor): its recommendations are shown by this response.
@@ -8461,6 +8475,13 @@ def mobile_score_schedule(current_user):
                 _pc.close()
             rows = _skel_save.carry_pins(_skel_save.mark_pins(rows, sent=[r for r in raw_rows if isinstance(r, dict)]),
                                          _stored_rows)
+            # Each name as the person it means now: a screen opened before a
+            # rename saves the person's new spelling, never the old one back
+            # over the live week (schedule audit 10/10/26 ARCH-7).
+            try:
+                rows = _sv.canonical_rows(rid, [rows])[0]
+            except Exception as _cx_n:
+                print(f"[schedule] names not canonicalised rid={rid}: {_cx_n!r}")
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
             # The week, its version row and its review are one write: the
@@ -8541,6 +8562,13 @@ def mobile_score_schedule(current_user):
                 _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
             except Exception:
                 pass
+            # The requests the save moved or closed (write_on → follow_week,
+            # ARCH-9) are told now that it has committed.
+            try:
+                import shift_requests as _srq_fl
+                _srq_fl.flush_notices(rid)
+            except Exception as _flx:
+                print(f"[schedule] request notices not sent rid={rid}: {_flx!r}")
             # What the save teaches, now it is stored (schedule audit
             # 10/3/26): Cavnar AI's kept changes credit that move's trust and
             # are never the manager's habit (L-5); a change to a week staff

@@ -246,7 +246,46 @@ def rows_changed_since(conn, history_id, base_version):
                        (history_id, base)).fetchone()
     if was is None:
         return latest
-    return None if _rows_sig(was["schedule_csv"]) == _rows_sig(last["schedule_csv"]) else latest
+    if _rows_sig(was["schedule_csv"]) == _rows_sig(last["schedule_csv"]):
+        return None
+    # A person renamed since (a `rename` version, people._rewrite_schedule_
+    # weeks) changed a spelling, not the week: the client's rows read with
+    # the new names are compared (schedule audit 10/10/26 ARCH-7).
+    names = rename_map_since(conn, history_id, base)
+    if names:
+        renamed = sorted(tuple((names.get(_fold(r.get("employee")), r.get("employee")) if c == "employee"
+                                else r.get(c, "")) for c in COLS) for r in rows_from_csv(was["schedule_csv"]))
+        if renamed == _rows_sig(last["schedule_csv"]):
+            return None
+    return latest
+
+
+def _fold(name) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def rename_map_since(conn, history_id, base_version) -> dict:
+    """{old spelling folded: new spelling} for every `rename` version after
+    `base_version` — the same rows, the same dates and starts, one person's
+    name changed (people._rewrite_schedule_weeks). {} when none."""
+    try:
+        vs = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
+                          "AND version>=? ORDER BY version", (history_id, int(base_version or 0))).fetchall()
+    except (TypeError, ValueError):
+        return {}
+    out, prev = {}, None
+    for v in vs:
+        if prev is not None and v["reason"] == "rename":
+            d = diff(rows_from_csv(prev["schedule_csv"]), rows_from_csv(v["schedule_csv"]))
+            for m in d["moved"]:
+                if m.get("from") and m.get("to"):
+                    old = _fold(m["from"])
+                    out[old] = m["to"]
+                    for k, val in list(out.items()):
+                        if _fold(val) == old:
+                            out[k] = m["to"]
+        prev = v
+    return out
 
 
 def replaced_error(row):
@@ -659,6 +698,17 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         raise LookupError("that schedule is gone")
     _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by,
                                        saved_authority, row_origins=row_origins)
+    # A week staff have: the live requests on it follow it in this same
+    # transaction — a retimed shift carries its request, a removed or
+    # reassigned one closes it (schedule audit 10/10/26 ARCH-9). A `swap`
+    # write is a request's own, which voids its dependents itself.
+    if reason != "swap":
+        pub = conn.execute("SELECT published_at, week_start, week_end FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+        if pub and pub[0]:
+            import shift_requests as _srq
+            _srq.follow_week(conn, restaurant_id, rows_from_csv(schedule_csv),
+                             dates=_week_dates(pub["week_start"], pub["week_end"]))
     # A shift that changed hands in this rewrite keeps its floor section —
     # the Studio's swap saves here, as do covers and swaps (employee audit
     # B8 gap). Inside the caller's transaction.
@@ -669,6 +719,18 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         if "no such table" not in str(e).lower():
             raise
     return version
+
+
+def _week_dates(week_start, week_end) -> list:
+    """Every ISO date from week_start to week_end (at most 14), [] when
+    either is unreadable — a row removed from the week is still on a date
+    the week owns."""
+    try:
+        a = date.fromisoformat(str(week_start)[:10])
+        b = date.fromisoformat(str(week_end)[:10])
+    except (TypeError, ValueError):
+        return []
+    return [(a + timedelta(days=i)).isoformat() for i in range(min(14, (b - a).days + 1))]
 
 
 def list_versions(restaurant_id, history_id, db_path=DB_PATH) -> list:
@@ -758,10 +820,24 @@ def unsent_changes(restaurant_id, history_id, csv_text=None, db_path=DB_PATH):
         # A week published before versions were kept: nothing on file says
         # what anyone was told, so nobody is claimed to be behind.
         return {"people": [], "dates": []}
-    base = rows_from_csv(versions[last_pub]["schedule_csv"])
+    # Every row list read as the person each name means now: a rename since
+    # the Send is the same person, never "changed" (ARCH-7).
+    names = sorted({(r.get("employee") or "").strip() for v in versions[last_pub:] for r in rows_from_csv(v["schedule_csv"])}
+                   | {(r.get("employee") or "").strip() for r in now_rows})
+    try:
+        import people as _people
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        canon = _people.canonical_names(restaurant_id, [n for n in names if n], **kw) or {}
+    except Exception:
+        canon = {}
+
+    def _canon(rows_):
+        return [dict(r, employee=canon.get((r.get("employee") or "").strip(), r.get("employee"))) for r in rows_]
+    now_rows = _canon(now_rows)
+    base = _canon(rows_from_csv(versions[last_pub]["schedule_csv"]))
     personal, prev = {}, base
     for v in versions[last_pub + 1:]:
-        cur = rows_from_csv(v["schedule_csv"])
+        cur = _canon(rows_from_csv(v["schedule_csv"]))
         if v["reason"] == "swap":
             d = diff(prev, cur)
             parties = {(r.get("employee") or "") for r in d["added"] + d["removed"] + d["retimed"] + d["role_changed"]}
@@ -1175,7 +1251,7 @@ class _WeekData:
         pub = self.first_publish(hid)
         cutoff = pub["version"] if pub else (vs[-1]["version"] if vs else gen["version"])
         own = [(self.rows(v), self.attrs(v)) for v in vs
-               if gen["version"] < v["version"] <= cutoff and v["reason"] != "swap"]
+               if gen["version"] < v["version"] <= cutoff and v["reason"] not in ("swap", "rename")]
         pred, redo, by = self.predecessor(hid) if depth < 12 else (None, None, None)
         if pred is None:
             return {"base": self.rows(gen), "steps": own, "rejected": [], "redo_dates": set(), "chain": [hid]}

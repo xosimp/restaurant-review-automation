@@ -12466,6 +12466,14 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
                                   saved_authority=_pub_auth, return_version=True)
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # A replacement copy now live: the live requests on its dates follow it —
+    # a retimed shift carries its request, a removed one closes it and its
+    # requester is told (schedule audit 10/10/26 ARCH-9). Never blocks.
+    try:
+        import shift_requests as _srq_follow
+        _srq_follow.reconcile(rid)
+    except Exception as _fx:
+        _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # What the week's first publish says, into the observation log: every
     # change from the original draft by origin (the manager's, Cavnar AI's
     # kept ones, an admin's), and whether a person sent it (schedule audit
