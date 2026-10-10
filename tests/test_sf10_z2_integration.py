@@ -84,3 +84,19 @@ def test_a_labels_role_lifts_need_its_effect_to_apply(monkeypatch):
     # Two nights, below the floor: they move nobody.
     monkeypatch.setattr(em, "measured_effect", lambda *a, **k: dict(eff, applies=False))
     assert ddr.role_event_lifts(1, "cubs", 22, rows=rows, family_prior={}) == {}
+
+
+def test_the_review_screens_labor_target_is_the_owners_goal_when_one_is_set(db_path, monkeypatch):
+    # prepublish read the bare labor_target_pct, so an owner's active goal
+    # ("labor 27% by 12/1") never reached the review screen's labor %.
+    import owner_memory
+    import prepublish
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    rid = models.create_restaurant(models.Restaurant(name="Goal Co", owner_email="g@x.test", labor_target_pct=30.0),
+                                   db_path=db_path)
+    monkeypatch.setattr(owner_memory, "target_for",
+                        lambda r, metric: {"value": 27.0, "source": "goal", "goal_id": 1, "until": None,
+                                           "label": "your goal of 27%"} if r == rid else None)
+    assert prepublish._labor_target(rid) == 27.0

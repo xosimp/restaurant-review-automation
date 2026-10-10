@@ -434,7 +434,6 @@ def read(restaurant, now_local=None, live=True, db_path=None) -> dict:
     hourly_projected, all_in_projected, target, over_by, target_label},
     close, cut_at, moves}."""
     import time_utils as _tu
-    from notify import labor_target_for
     now_local = now_local or _tu.restaurant_now(restaurant, naive=True)
     day = _tu.business_date(restaurant, now_local)
     rows = _today_rows(restaurant.id, day, db_path)
@@ -451,21 +450,24 @@ def read(restaurant, now_local=None, live=True, db_path=None) -> dict:
         sal_day = float(salaried_day_share(restaurant) or 0)
     except Exception:
         sal_day = 0.0
-    try:
-        target = float(labor_target_for(restaurant))
-    except Exception:
-        target = None
+    # The ONE target read (thresholds.target_for): the owner's goal first,
+    # its label, and whether it may raise anything - on Cavnar AI's starting
+    # target nothing is "over" enough to suggest a cut (pace still can).
     try:
         import thresholds
-        target_label = (thresholds.target_for(restaurant, "labor") or {}).get("label") or "your target"
+        tf = thresholds.target_for(restaurant, "labor") or {}
+        target = float(tf["pct"]) if tf.get("pct") is not None else None
+        target_label = tf.get("label") or "your target"
+        target_alerts = bool(tf.get("alerts_allowed", True))
     except Exception:
-        target_label = "your target"
+        target, target_label, target_alerts = None, "your target", False
     proj = sales.get("projected")
     all_in = _pct(lab["projected"] + sal_day, proj)
     out.update(sales=sales, labor=dict(lab, salaried_day=round(sal_day, 2)),
                pct={"hourly_so_far": _pct(lab["to_date"], sales.get("so_far")),
                     "hourly_projected": _pct(lab["projected"], proj),
                     "all_in_projected": all_in, "target": target, "target_label": target_label,
+                    "target_alerts": target_alerts,
                     "over_by": round(all_in - target, 1) if (all_in is not None and target is not None) else None,
                     "basis": "all-in (hourly plus the day's share of salaries) against your target; hourly beside it"})
     out["sentence"] = _sentence(out)
@@ -661,7 +663,7 @@ def moves(restaurant, rd=None, now_local=None, db_path=None, limit=3) -> list:
     out = []
     rates_t = _rates(restaurant.id, restaurant)
     behind = pace is not None and pace <= -PACE_BEHIND_PCT
-    over_target = over is not None and over > margin
+    over_target = over is not None and over > margin and (rd.get("pct") or {}).get("target_alerts", True)
     if behind or over_target:
         out += _cuts(restaurant, day, now_local, rows, week, crew, min(factor, 1.0), first, rates_t, sal, db_path)
     if pace is not None and pace >= PACE_AHEAD_PCT:
