@@ -411,6 +411,15 @@ class ShiftContext:
     day_rows: list = field(default_factory=list)
     role_floors: dict = field(default_factory=dict)    # {role: people required on this daypart}
     demand_curve: dict = field(default_factory=dict)   # {hour: share of the day's sales}
+    # {minute: {role: people on}} — this shift's half-hour need from the
+    # requirements the draft was written to (schedule_requirements.
+    # half_hours_map): people on at once from the role's usual concurrent
+    # peak or its labor standard, each role on its own lead or lag
+    # (scheduler audit 10/10/26 LOGIC-11). Empty: rebuilt from the curve.
+    half_hour_needs: dict = field(default_factory=dict)
+    # {role: usual most on at once} for this weekday's daypart (the
+    # baseline's concurrent peak, contract #2) — the rebuilt curve's peak.
+    concurrent_peaks: dict = field(default_factory=dict)
     # The meal breaks the law (or the owner) puts inside long shifts
     # (breaks.rules_for): coverage by the hour takes a person off the floor
     # for their placed meal (schedule audit 10/10/26 MARKET-6). None: none.
@@ -3027,7 +3036,12 @@ def _half_hour_requirement(ctx: ShiftContext, lo: int, hi: int) -> dict:
     """{minute: {role: people}} for this daypart's half hours of service,
     from the measured sales curve and the usual crew (staffing_curve
     .half_hour_needs) — {} without both. The same function the requirements
-    table the model reads is built from."""
+    table the model reads is built from — or, where the draft's own
+    requirements carry the half hours (ctx.half_hour_needs), those exactly:
+    the passes fill to them and the score judges them, never two readings
+    (scheduler audit 10/10/26 LOGIC-11)."""
+    if ctx.half_hour_needs:
+        return {int(m): dict(n) for m, n in ctx.half_hour_needs.items() if lo <= int(m) < hi}
     if not ctx.demand_curve or not ctx.typical_headcount:
         return {}
     from staffing_curve import half_hour_needs
@@ -3036,7 +3050,12 @@ def _half_hour_requirement(ctx: ShiftContext, lo: int, hi: int) -> dict:
     # two agree on every half hour; then only this shift's window is judged.
     split = _stime.daypart_split()
     half = (0, split) if ctx.daypart == "morning" else (split, 48 * 60)
-    needs = half_hour_needs(ctx.demand_curve, ctx.typical_headcount, *half)
+    # Each role's peak is its usual most on at once, never more than the
+    # shift's requirement of different people (LOGIC-11).
+    low_typ = {str(r).strip().lower(): int(n or 0) for r, n in (ctx.typical_headcount or {}).items()}
+    peaks = {r: min(p, low_typ[str(r).strip().lower()]) for r, p in (ctx.concurrent_peaks or {}).items()
+             if low_typ.get(str(r).strip().lower())}
+    needs = half_hour_needs(ctx.demand_curve, ctx.typical_headcount, *half, peaks=peaks or None)
     return {m: n for m, n in needs.items() if lo <= m < hi}
 
 
@@ -3055,7 +3074,12 @@ def _peak_requirement(ctx: ShiftContext):
         return None
     hour = max(hours.items(), key=lambda kv: kv[1])[0] % 24
     import math
-    needs = {role: max(1, int(math.ceil(PEAK_SHARE * int(n)))) for role, n in ctx.typical_headcount.items() if n}
+    # The role's usual most on at once where the baseline has it (LOGIC-11),
+    # else PEAK_SHARE of its different people.
+    low_peak = {str(r).strip().lower(): int(p) for r, p in (ctx.concurrent_peaks or {}).items() if p}
+    needs = {role: max(1, min(int(n), low_peak[str(role).strip().lower()]) if str(role).strip().lower() in low_peak
+                       else int(math.ceil(PEAK_SHARE * int(n))))
+             for role, n in ctx.typical_headcount.items() if n}
     return (hour, needs) if needs else None
 
 
@@ -3079,7 +3103,12 @@ def _late_at_the_edges(ctx: ShiftContext) -> list:
     staff_settings.LATE_MIN_SHIFTS of them exist) who are the only one of
     their role at its first start, or its last finish, that date (schedule
     audit 10/3/26 D-44)."""
-    risky = {str(n).strip().lower(): r for n, r in (ctx.reliability or {}).items() if (r or {}).get("late_risk")}
+    # Graded (scheduler audit 10/10/26 LEARNING-14): anyone whose late rate
+    # weighs anything (attendance_risk.late_exposure) — the weight is the
+    # caller's; it was only the 25% risk flag.
+    from attendance_risk import late_exposure as _late_w
+    risky = {str(n).strip().lower(): r for n, r in (ctx.reliability or {}).items()
+             if (r or {}).get("late_risk") or _late_w((r or {}).get("late_rate")) > 0}
     if not risky:
         return []
     mine = {(r.get("employee") or "").strip().lower() for r in ctx.rows if not ctx._is_flagged(r)}
@@ -3119,21 +3148,45 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
         return None
     busy = DEMAND_RANK.get(ctx.profile.demand or "normal", 1) >= DEMAND_RANK[HARD_DEMAND]
     at_risk, exposed = [], []
+    # Graded, and on the shift's own weekday (scheduler audit 10/10/26
+    # LEARNING-14, attendance_risk.exposure): a person's rate on this
+    # weekday (staff_settings' weekday_rates, shrunk toward their own), its
+    # weight rising from GRADED_FROM to 1 at UNRELIABLE_RATE — 19% used to
+    # weigh nothing and 20% everything.
+    from attendance_risk import exposure as _exposure
     for role, names in on_role.items():
         for n in names:
-            rate = float((ctx.reliability.get(n) or {}).get("no_show_rate") or 0)
-            if rate < UNRELIABLE_RATE:
+            rel = ctx.reliability.get(n) or {}
+            rate = float((rel.get("weekday_rates") or {}).get(ctx.day, rel.get("no_show_rate")) or 0)
+            w = _exposure(rate)
+            if w <= 0:
                 continue
-            at_risk.append(n)
+            if rate >= UNRELIABLE_RATE:
+                at_risk.append(n)
             if len(names) == 1 or busy:
-                exposed.append((n, role, rate, len(names)))
+                exposed.append((n, role, rate, len(names), w))
     # Lateness at the edges of a role's day (schedule audit 10/3/26 D-44):
     # reliability read no-shows only, so chronic lateness never weighed on
     # who opens or closes. Somebody with a lateness risk alone at their
     # role's first start or last finish counts against the shift too.
     late = _late_at_the_edges(ctx)
+    from attendance_risk import late_exposure as _late_w
+    rel_low = {str(k).strip().lower(): (v or {}) for k, v in ctx.reliability.items()}
+
+    def _lw(name, rate):
+        # Graded; the risk flag (LATE_RISK_RATE) still weighs in full.
+        return 1.0 if rel_low.get(name.lower(), {}).get("late_risk") else _late_w(rate)
     late_only = {n.lower() for n, *_ in late} - {n.lower() for n, *_ in exposed}
-    score = _pct(len(known) - len(exposed) - len(late_only), len(known))
+    weight = sum(w for *_x, w in exposed)
+    late_w = {}
+    for n, _r, _e, rt in late:
+        if n.lower() in late_only:
+            late_w[n.lower()] = max(late_w.get(n.lower(), 0.0), _lw(n, rt))
+    late_weight = sum(late_w.values())
+    score = _pct(len(known) - weight - late_weight, len(known))
+    # Named to the owner from half the weight up.
+    late = [x for x in late if _lw(x[0], x[3]) >= 0.5]
+    exposed = [(n, r, rt, c) for n, r, rt, c, w in sorted(exposed, key=lambda x: (-x[4], x[0]))]
     res = DimensionResult(key="reliability", label="Reliability", score=score,
                           weight=DEFAULT_WEIGHTS["reliability"],
                           facts={"at_risk": at_risk, "exposed": [{"name": n, "role": r, "no_show_rate": rt}
@@ -3143,7 +3196,10 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
                                  "checked": len(known)})
     for n, role, rate, count in exposed[:2]:
         why = "alone on " + role.lower() if count == 1 else "on a busy shift"
-        res.weaknesses.append(f"{n} has missed {int(round(rate * 100))}% of scheduled shifts and is {why}.")
+        on_day = ctx.day in ((ctx.reliability.get(n) or {}).get("weekday_rates") or {})
+        res.weaknesses.append(f"{n} has missed " + (f"about {int(round(rate * 100))}% of their {ctx.day} shifts"
+                                                    if on_day else f"{int(round(rate * 100))}% of scheduled shifts")
+                              + f" and is {why}.")
     for n, role, edge, rate in late[:2]:
         res.weaknesses.append(f"{n} is late to {int(round(rate * 100))}% of their clocked shifts and is the only "
                               f"{role_words(role)} {'opening' if edge == 'opens' else 'closing'}.")
@@ -5438,6 +5494,10 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             day_rows=day_rows_by_date.get(date, []),
             role_floors=floors_here,
             demand_curve=demand_curves.get(day) or {},
+            half_hour_needs=dict((signals.get("half_hours_by_date") or {}).get((date, part)) or {}),
+            concurrent_peaks={r: int(v.get("peak") or 0) for r, v in
+                              ((signals.get("concurrent") or {}).get((day, part)) or {}).items()
+                              if isinstance(v, dict) and v.get("peak")},
             break_rules=signals.get("break_rules"),
             reliability=signals.get("reliability") or {},
             pairs=signals.get("pairs") or {},

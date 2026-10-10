@@ -69,6 +69,10 @@ ONLY_SHIFT_COST_HOURS = 2.0
 # weekday (LOGIC-15); improved cuts the mirror, half as much.
 LEARNED_CUT_COST_HOURS = 4.0
 LEARNED_LEAN_BONUS_HOURS = 2.0
+# What one more of a role on a meal measured here (staffing_elasticity,
+# MARKET-23): a slot whose hour clearly pays ranks as though its day were
+# this many hours less over target — cut last; one clearly not, more — first.
+VALUE_KEEP_HOURS = 3.0
 STAGGER_STEP_MIN = 30
 STAGGER_MAX_MIN = 90
 
@@ -813,6 +817,15 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
             continue
     if wet:
         rain = _rain_effect(restaurant_id, db_path=db_path)
+    # Per daypart and per role (scheduler audit 10/10/26 LOGIC-9, LEARNING-19,
+    # LEARNING-20, LEARNING-21): the trend and season of the backtested
+    # forecast (demand_model), the weather of each meal (the NWS day period
+    # is lunch's, the night period dinner's) at this restaurant's measured
+    # effect per daypart and band, an event's lift on the daypart it falls
+    # in and on each role, and the patio's own. `ratio` stays the date's one
+    # figure (the hours targets, the projected sales); `parts` carries each
+    # meal's, with `roles` where a role moves on its own.
+    ctx = _DemandContext(restaurant_id, dates, weather, db_path, today)
     out = {}
     for d in dates:
         try:
@@ -828,6 +841,8 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
             entry.update(projected_sales=0.0, ratio=0.0, pct=None)
             continue
         occasion = 1.0
+        occ_parts = None           # {part: factor} when the occasion falls on one meal
+        role_lifts = {}            # {role lower: factor} replacing the occasion for that role
         b = budgets.get(d) or {}
         bv = b.get("net") if b.get("net") not in (None, "") else b.get("gross")
         try:
@@ -843,14 +858,14 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
         elif sig.get("lift_pct") is not None:
             occasion = 1.0 + float(sig["lift_pct"]) / 100.0
             entry["sources"].append("signals")
+            if sig.get("lift_source") == "measured":
+                entry["sources"].append("measured_effects")
             what = "; ".join(str(x) for x in (sig.get("labels") or []) if x) or "a dated fact"
             entry["reasons"].append(f"{what}: {int(sig['lift_pct']):+d}%")
+            occ_parts = ctx.event_split(d, occasion)
+            role_lifts = ctx.role_lifts(ctx.event_labels(d), sig.get("lift_pct"))
         else:
-            try:
-                import demand as _demand
-                fc = _demand.forecast_day(restaurant_id, day, db_path=db_path, calibrate=False)
-            except Exception:
-                fc = {}
+            fc = ctx.forecast_effects(day)
             if fc.get("available") and fc.get("effect_pct"):
                 occasion = 1.0 + float(fc["effect_pct"]) / 100.0
                 names = [e.get("display") or e.get("label") for e in (fc.get("effects") or []) if e]
@@ -858,21 +873,320 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 entry["reasons"].append(f"{', '.join(n for n in names if n) or 'a measured effect'}: "
                                         f"{float(fc['effect_pct']):+.0f}% measured here")
                 entry["labels"].append(", ".join(n for n in names if n) + f" ({float(fc['effect_pct']):+.0f}% measured here)")
-        weather_f = 1.0
-        if d in wet and rain:
-            weather_f = 1.0 + float(rain["median_lift_pct"]) / 100.0
+                labels = [e.get("label") for e in (fc.get("effects") or []) if e and e.get("label")]
+                occ_parts = ctx.label_split(labels, occasion)
+                role_lifts = ctx.role_lifts(labels, fc.get("effect_pct"))
+            else:
+                # A holiday this restaurant has no night of its own for yet
+                # starts from similar restaurants' (LEARNING-27: a first
+                # Christmas was planned as a typical night).
+                hp = ctx.holiday_prior(d)
+                if hp:
+                    occasion = 1.0 + float(hp["pct"]) / 100.0
+                    entry["sources"].append("cohort_prior")
+                    entry["reasons"].append(f"{hp['name']}: similar restaurants' holidays ran a median "
+                                            f"{float(hp['pct']):+.0f}% (no {hp['name']} of your own measured yet)")
+                    entry["labels"].append(f"{hp['name']} ({float(hp['pct']):+.0f}% at similar restaurants)")
+        # The forecast's trend and season (demand_model): how far a typical
+        # night of this weekday is moving — never on the owner's own budget.
+        trend_f, busy_f = 1.0, 1.0
+        fcm = ctx.model.get(d) or {}
+        if fcm and "budget" not in entry["sources"]:
+            trend_f = float(fcm.get("ratio") or 1.0)
+            busy_f = float(fcm.get("busy_ratio") or trend_f)
+            if abs(trend_f - 1.0) >= 0.02:
+                import demand_model as _dm
+                entry["sources"].append("forecast")
+                entry["reasons"].append("the forecast: " + _dm.basis_words(fcm))
+            entry["forecast"] = {k: fcm.get(k) for k in ("estimator", "skill", "backtest_n", "p50", "naive",
+                                                         "ratio", "busy_ratio")}
+            q = fcm.get("quantiles") or {}
+            if q:
+                entry["forecast"]["low"], entry["forecast"]["high"] = q.get(0.1), q.get(0.9)
+        parts = {}
+        weather_day = []
+        for part in ("morning", "night"):
+            occ = (occ_parts or {}).get(part, occasion)
+            w = ctx.weather(d, part, wet.get(d), rain)
+            wf, wused = w["f"], w["used"]
+            wwhy = ctx.weather_words(w, part)[0] if wused else []
+            if wused:
+                weather_day.append((part, w))
+            r = max(0.0, trend_f * occ * wf)
+            rb = max(0.0, busy_f * occ * wf)
+            roles = {}
+            # A role's own lift on the meal the occasion falls on (a whole-day
+            # occasion: both) — never on the other meal of a dinner game.
+            if not occ_parts or abs(occ - 1.0) >= 0.005:
+                for role, lift in role_lifts.items():
+                    roles[role] = round(max(0.0, trend_f * float(lift) * wf), 3)
+            for role, pf in ctx.patio(d, part).items():
+                roles[role] = round(roles.get(role, r) * pf, 3)
+            why = list(wwhy)
+            if occ_parts and part in occ_parts and abs(occ_parts[part] - occasion) >= 0.005:
+                why.append(f"the occasion falls on {'lunch' if part == 'morning' else 'dinner'}: "
+                           f"{int(round((occ_parts[part] - 1) * 100)):+d}% on this meal")
+            measured = bool(set(entry["sources"]) & {"budget", "measured_effects", "forecast"}) or bool(wused)
+            parts[part] = {"ratio": round(r, 3), "busy_ratio": round(rb, 3), "roles": roles,
+                           "measured": measured, "reasons": why}
+        if weather_day:
             entry["sources"].append("weather")
-            entry["reasons"].append(f"rain forecast ({wet[d]}%): rain nights here ran "
-                                    f"{abs(float(rain['median_lift_pct'])):.0f}% "
-                                    f"{'below' if rain['median_lift_pct'] < 0 else 'above'} a typical one "
-                                    f"(measured {rain['n']} times, last {mdy(rain['last'])})")
-            entry["labels"].append(f"Rain forecast ({wet[d]}%)")
-        ratio = max(0.0, occasion * weather_f)
+            same = (len(weather_day) == 2
+                    and weather_day[0][1]["used"] == weather_day[1][1]["used"]
+                    and abs(weather_day[0][1]["f"] - weather_day[1][1]["f"]) < 0.005)
+            # Both meals alike: said once for the day; else per meal.
+            for part, w in ([(None, weather_day[0][1])] if same else weather_day):
+                words, label = ctx.weather_words(w, part)
+                entry["reasons"].extend(words)
+                entry["labels"].append(label)
+            entry["sources"] = list(dict.fromkeys(entry["sources"]))
+        share = ctx.morning_share(wd)
+        if share is not None:
+            ratio = share * parts["morning"]["ratio"] + (1.0 - share) * parts["night"]["ratio"]
+        else:
+            ratio = (parts["morning"]["ratio"] + parts["night"]["ratio"]) / 2.0
+        entry["parts"] = parts
         entry["ratio"] = round(ratio, 3)
         entry["pct"] = int(round((ratio - 1.0) * 100))
         if base:
-            entry["projected_sales"] = round((bv * weather_f) if ("budget" in entry["sources"]) else base * ratio, 0)
+            if "budget" in entry["sources"]:
+                entry["projected_sales"] = round(bv * (ratio / occasion if occasion else 1.0), 0)
+            else:
+                entry["projected_sales"] = round(base * ratio, 0)
     return out
+
+
+# Wider bounds where the figure is the owner's own or measured here: an +80%
+# festival the owner budgeted is staffed for it, a measured snow day at -50%
+# is not held at -25% (LOGIC-9). An estimate keeps DEMAND_SCALE_BOUNDS.
+MEASURED_SCALE_BOUNDS = (0.4, 2.5)
+
+
+class _DemandContext:
+    """The reads date_demand's per-daypart, per-role figures need, each made
+    once for the week (and once per read scope — a live rescore re-reads
+    nothing it already has)."""
+
+    def __init__(self, restaurant_id, dates, weather, db_path, today):
+        self.rid, self.db, self.today = restaurant_id, db_path, today
+        self.dates = dates
+        self._weather_rows = weather or []
+        self._memo = {}
+        try:
+            import demand_model as _dm
+            self.model = (_dm.forecast_dates(restaurant_id, dates, db_path=db_path, today=today) or {}).get("dates") or {}
+        except Exception as e:
+            print(f"[schedule_economics] demand model unavailable for {restaurant_id}: {e}")
+            self.model = {}
+
+    def _once(self, key, fn):
+        if key not in self._memo:
+            import models as _m
+            store = _m.read_scope_store()
+            skey = ("date_demand", int(self.rid), str(self.db), key)
+            if store is not None and skey in store:
+                self._memo[key] = store[skey]
+            else:
+                try:
+                    self._memo[key] = fn()
+                except Exception as e:
+                    print(f"[schedule_economics] {key[0]} unavailable for {self.rid}: {e}")
+                    self._memo[key] = None
+                if store is not None:
+                    store[skey] = self._memo[key]
+        return self._memo[key]
+
+    def _today(self):
+        return self.today or _today_for(self.rid)
+
+    def forecast_effects(self, day):
+        try:
+            import demand as _demand
+            return _demand.forecast_day(self.rid, day, db_path=self.db, calibrate=False) or {}
+        except Exception:
+            return {}
+
+    def morning_share(self, wd):
+        curve = self._once(("curve",), lambda: measured_sales_curve(self.rid, db_path=self.db, today=self.today))
+        e = (curve or {}).get(wd) or {}
+        if e.get("days", 0) >= CURVE_MIN_DAYS and e.get("morning_share") is not None:
+            return float(e["morning_share"])
+        return None
+
+    def event_labels(self, d):
+        try:
+            import event_memory as _em
+            fl = (_em.flags_for(self.rid, [d], db_path=None if self.db == DB_PATH else self.db,
+                                known_before=True).get(d)) or []
+            return [f["label"] for f in fl if f.get("kind") in ("event", "holiday", "campaign")]
+        except Exception:
+            return []
+
+    def holiday_prior(self, d):
+        """{"pct", "name"} for a holiday on `d` with no measured night of its
+        own here, from the cohort (intelligence.schedule_priors.event_prior,
+        behind MIN_COHORT), or None."""
+        try:
+            import event_memory as _em
+            fl = (_em.flags_for(self.rid, [d], db_path=None if self.db == DB_PATH else self.db,
+                                known_before=True).get(d)) or []
+            hol = next((f for f in fl if f.get("kind") == "holiday"), None)
+            if not hol:
+                return None
+            own = _em.measured_effect(self.rid, hol["label"], db_path=None if self.db == DB_PATH else self.db)
+            if own and own.get("n"):
+                return None
+            from intelligence import schedule_priors as _sp
+            pct = self._once(("holiday_prior",), lambda: _sp.event_prior(self.rid, "holiday", db_path=self.db))
+            if pct is None or abs(float(pct)) < 5.0:
+                return None
+            return {"pct": float(pct), "name": str(hol.get("raw") or hol["label"])}
+        except Exception:
+            return None
+
+    def label_split(self, labels, occasion):
+        """{part: factor} from the labels' own nights measured per daypart,
+        or None — the occasion then falls on both meals alike."""
+        if not labels:
+            return None
+        import demand_drivers as _dd
+        import event_memory as _em
+        got = {}
+        for lab in labels:
+            eff = _em.measured_effect(self.rid, lab, db_path=None if self.db == DB_PATH else self.db)
+            if not eff or not eff.get("applies"):
+                continue
+            lifts = self._once(("label_parts", lab),
+                               lambda eff=eff: _dd.label_part_lifts(self.rid, eff.get("dates") or [], db_path=self.db))
+            for part, s in (lifts or {}).items():
+                if s.get("n", 0) >= _dd.EFFECT_MIN_N:
+                    got.setdefault(part, []).append(1.0 + float(s["lift_pct"]) / 100.0)
+        if set(got) != {"morning", "night"}:
+            return None
+        out = {}
+        for part, fs in got.items():
+            f = 1.0
+            for x in fs:
+                f *= x
+            out[part] = f
+        return out
+
+    def event_split(self, d, occasion):
+        """A dated event's lift on the meal its kickoff falls in (the hour
+        before it counting), the day's lift concentrated there at the
+        weekday's measured share; else measured per daypart from its label's
+        own nights; else None."""
+        import demand_drivers as _dd
+        split = self.label_split(self.event_labels(d), occasion)
+        if split:
+            return split
+        parts = self._once(("event_parts", d), lambda: _dd.event_parts(self.rid, d, db_path=self.db))
+        if not parts or len(parts) != 1:
+            return None
+        part = next(iter(parts))
+        share = self.morning_share(date.fromisoformat(d).strftime("%A"))
+        if share is None:
+            return None
+        s = share if part == "morning" else 1.0 - share
+        if s <= 0.05:
+            return None
+        lift = (occasion - 1.0) / s
+        other = "night" if part == "morning" else "morning"
+        return {part: max(0.0, 1.0 + lift), other: 1.0}
+
+    def role_lifts(self, labels, sales_lift_pct):
+        """{role lower: factor} for the labels with a measured per-role
+        record (demand_drivers.role_event_lifts) — the most measured label
+        for each role."""
+        if not labels:
+            return {}
+        import demand_drivers as _dd
+        best = {}
+        for lab in labels:
+            got = self._once(("role_lifts", lab, sales_lift_pct),
+                             lambda lab=lab: _dd.role_event_lifts(self.rid, lab, sales_lift_pct, db_path=self.db))
+            for role, e in (got or {}).items():
+                if role not in best or e["n"] > best[role]["n"]:
+                    best[role] = e
+        return {r: e["ratio"] for r, e in best.items()}
+
+    def _effects(self):
+        import demand_drivers as _dd
+
+        def _read():
+            prior = None
+            try:
+                from intelligence import schedule_priors as _sp
+                prior = _sp.weather_prior(self.rid, db_path=self.db)
+            except Exception:
+                prior = None
+            return _dd.weather_effects(self.rid, db_path=self.db, today=self._today(), prior=prior)
+        return self._once(("weather_effects",), _read) or {}
+
+    def weather(self, d, part, wet_pct, rain):
+        """{"f", "used", "items", "record"} for one meal: the learned effect
+        of its forecast conditions (demand_drivers.weather_factor); else, for
+        a wet meal, the whole-day rain effect measured before (event_memory's
+        "rain"), on that meal only (`record`: {pct, n, last, precip})."""
+        import demand_drivers as _dd
+        fp = self._once(("forecast_parts",), lambda: _dd.forecast_parts(self._weather_rows)) or {}
+        here = fp.get(d) or {}
+        if not here:
+            return {"f": 1.0, "used": [], "items": [], "record": None}
+        f, items, used = _dd.weather_factor(here, self._effects(), part)
+        if not used and rain and (here.get(part) or {}).get("rain"):
+            pct = float(rain["median_lift_pct"])
+            return {"f": 1.0 + pct / 100.0, "used": ["rain"], "items": [],
+                    "record": {"pct": pct, "n": rain["n"], "last": rain["last"],
+                               "precip": (here.get(part) or {}).get("precip_pct") or wet_pct}}
+        return {"f": f, "used": used, "items": items, "record": None}
+
+    @staticmethod
+    def weather_words(w, part=None) -> tuple:
+        """([reasons], label) for one meal's weather (`part`) or, with
+        None, the whole day's."""
+        import demand_drivers as _dd
+        from time_utils import mdy
+        meal = {"morning": "lunch", "night": "dinner"}.get(part)
+        rec = w.get("record")
+        if rec:
+            pct = float(rec["pct"])
+            at = f" at {meal}" if meal else ""
+            return ([f"rain forecast{at} ({rec['precip']}%): rain nights here ran {abs(pct):.0f}% "
+                     f"{'below' if pct < 0 else 'above'} a typical one (measured {rec['n']} times, last "
+                     f"{mdy(rec['last'])})"], f"Rain forecast{at} ({rec['precip']}%)")
+        words = _dd.weather_words(w.get("items"), part)
+        label = (", ".join(sorted(w.get("used") or [])).capitalize() + " forecast"
+                 + (f" at {meal}" if meal else ""))
+        return words, label
+
+    def patio(self, d, part):
+        """{patio role lower: factor} on a meal whose forecast puts the patio
+        in a condition its own room's sales are measured to move in."""
+        import demand_drivers as _dd
+
+        def _roles():
+            try:
+                r = _models_mod.get_restaurant(self.rid) if self.db in (None, DB_PATH) else \
+                    _models_mod.get_restaurant(self.rid, self.db)
+                import json as _json
+                return [str(x).strip().lower() for x in (_json.loads(getattr(r, "patio_roles_json", None) or "[]")
+                                                         or []) if str(x).strip()]
+            except Exception:
+                return []
+        roles = self._once(("patio_roles",), _roles) or []
+        if not roles:
+            return {}
+        fp = self._once(("forecast_parts",), lambda: _dd.forecast_parts(self._weather_rows)) or {}
+        here = fp.get(d) or {}
+        if not here:
+            return {}
+        eff = self._once(("patio_effects",), lambda: _dd.patio_effects(self.rid, roles, db_path=self.db,
+                                                                        today=self._today())) or {}
+        f, _why, used = _dd.weather_factor(here, eff, part)
+        if not used:
+            return {}
+        return {r: f for r in roles}
 
 
 # ── the measured sales curve: tickets, captures, nightly reports ──────────
@@ -1051,6 +1365,70 @@ def measured_sales_curve(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PAT
             "late_share": round(_median([sum(v for h, v in s.items() if h >= LATE_START_HOUR)
                                          for _n, s in entries]), 4),
         }
+    return out
+
+
+def _ticket_half_hours(conn, restaurant_id, start, end) -> dict:
+    """{business date: {minute: net}} from the ticket archive by the HALF
+    hour each ticket opened in, on its business day's timeline."""
+    out = {}
+    try:
+        rows = conn.execute(
+            "SELECT business_date, substr(replace(opened_at, ' ', 'T'), 1, 13) AS hk, "
+            "CASE WHEN CAST(substr(replace(opened_at, ' ', 'T'), 15, 2) AS INTEGER) >= 30 THEN 30 ELSE 0 END AS half, "
+            "SUM(net_sales) AS net FROM pos_tickets WHERE restaurant_id=? AND business_date>=? AND business_date<? "
+            "AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL GROUP BY business_date, hk, half",
+            (restaurant_id, start, end)).fetchall()
+    except Exception:
+        return {}
+    for r in rows:
+        bd = str(r["business_date"])[:10]
+        try:
+            opened = datetime.strptime(str(r["hk"] or ""), "%Y-%m-%dT%H")
+            hour = opened.hour + 24 * max(0, (opened.date() - date.fromisoformat(bd)).days)
+            net = float(r["net"] or 0)
+        except (TypeError, ValueError):
+            continue
+        m = hour * 60 + int(r["half"] or 0)
+        day = out.setdefault(bd, {})
+        day[m] = day.get(m, 0.0) + net
+    return out
+
+
+def measured_half_hours(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PATH, today=None) -> dict:
+    """{weekday: {minute: share of the day's sales}} MEASURED at the half
+    hour from the ticket archive (scheduler audit 10/10/26 MARKET-11: the
+    curve was interpolated from hourly readings), for weekdays with at least
+    CURVE_MIN_DAYS archived days; each half hour's share the mean across
+    them (a day with no sales in it counts 0), renormalised. {} without an
+    archive — the hourly curve, interpolated, stands."""
+    today = _today_for(restaurant_id, today)
+    conn = get_conn(db_path)
+    try:
+        days = _ticket_half_hours(conn, restaurant_id, (today - timedelta(weeks=int(weeks))).isoformat(),
+                                  today.isoformat())
+    finally:
+        conn.close()
+    by = {}
+    for bd, slots in days.items():
+        tot = sum(v for v in slots.values() if v > 0)
+        if tot <= 0:
+            continue
+        try:
+            wd = date.fromisoformat(bd).strftime("%A")
+        except ValueError:
+            continue
+        by.setdefault(wd, []).append({m: v / tot for m, v in slots.items() if v > 0})
+    out = {}
+    for wd, entries in by.items():
+        if len(entries) < CURVE_MIN_DAYS:
+            continue
+        n = len(entries)
+        mins = sorted({m for e in entries for m in e})
+        shares = {m: sum(e.get(m, 0.0) for e in entries) / n for m in mins}
+        s = sum(shares.values())
+        if s > 0:
+            out[wd] = {m: round(v / s, 5) for m, v in shares.items()}
     return out
 
 
@@ -1735,7 +2113,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                    score_seconds: float = TRIM_SCORE_SECONDS, only_dates=None, requirements=None,
                    learned_worse: dict = None, outcomes: dict = None, report: dict = None,
                    soft_asks: list = None, cost_fn=None, budget_value: float = None,
-                   pricing: dict = None) -> tuple:
+                   pricing: dict = None, staffing_value: dict = None) -> tuple:
     """Take the most discretionary hours out until the week is within the
     budget — the tails of shifts first, then whole shifts — every change
     reported.
@@ -1907,6 +2285,24 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         parts = _se._present(r) or [None]
         return (max(_rl.learned_cut_penalty(learned_worse, wd, p, fam) for p in parts),
                 max(_rl.learned_cut_penalty(learned_worse, wd, p, fam, lean=True) for p in parts))
+    def _valued(r):
+        """Hours the cut of `r` is held back (+) or brought forward (-) by
+        what one more of its role on its meal measured here (staffing_
+        elasticity.marginal_values — scheduler audit 10/10/26 MARKET-23):
+        an hour whose return's interval clears zero is cut last, one whose
+        interval is below zero first — never on a figure inside its noise."""
+        if not staffing_value:
+            return 0.0
+        from intelligence.staffing import family_of as _fo_v
+        fam = _fo_v(r.get("role"))
+        best = 0.0
+        for p in (_se._present(r) or []):
+            v = staffing_value.get((fam, p)) or {}
+            if v.get("lo") is not None and float(v["lo"]) > 0:
+                best = max(best, VALUE_KEEP_HOURS)
+            elif v.get("hi") is not None and float(v["hi"]) < 0:
+                best = min(best, -VALUE_KEEP_HOURS)
+        return best
     troubled = {(str(wd).strip().lower(), part) for wd, parts in (outcomes or {}).items() if isinstance(parts, dict)
                 for part, e in parts.items() if isinstance(e, dict) and e.get("troubled")}
     trimmed = []
@@ -2097,6 +2493,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             over = (day_hours.get(d, 0.0) - tgt) if tgt else day_hours.get(d, 0.0)
             worse_s, lean_s = _learned(r)
             over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
+            over -= _valued(r)
             rain = 0 if (d in rainy and (r.get("role") or "").strip().lower() in patio) else 1
             s = splh_for(r)
             sp = spans.get(id(r)) or (0, 0)
@@ -2233,6 +2630,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                 over -= ONLY_SHIFT_COST_HOURS          # retention: a cost, not a refusal (LOGIC-14)
             worse_s, lean_s = _learned(r)
             over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
+            over -= _valued(r)
             rate = _rate(r, rate_hours)
             return (tier, rain, -round(over), -rate, splh_rank, -start)
 

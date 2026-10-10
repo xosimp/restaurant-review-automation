@@ -39134,7 +39134,7 @@ function sfw1RatingLine(s) {
         + '<div class="acts">' + (s.differs || s.current == null ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-rate="' + e(s.suggested) + '" data-name="' + e(s.name) + '">Confirm ' + e(s.suggested) + '</button>' : '')
         + '<span class="chip-tog" role="group" aria-label="' + e('Rate ' + s.name) + '">' + pick + '</span></div></div>';
     }
-    if (d.window && d.window.length > 1) h += '<div class="ft">Sales per guest from <span class="hb-num">' + e(sfw1Mdy(d.window[0])) + '</span> to <span class="hb-num">' + e(sfw1Mdy(d.window[1])) + '</span>, against the house at the same mealtimes. ' + n(d.note || '') + '</div>';
+    if (d.window && d.window.length > 1) h += '<div class="ft">Sales per guest from <span class="hb-num">' + e(sfw1Mdy(d.window[0])) + '</span> to <span class="hb-num">' + e(sfw1Mdy(d.window[1])) + '</span>, against the house on the same date, meal and party size. ' + n(d.note || '') + '</div>';
     el.innerHTML = '<div class="sfw1-mem">' + h + '</div>';
   }
   function rateConfirm(t) {
