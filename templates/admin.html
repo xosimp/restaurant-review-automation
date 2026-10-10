@@ -3910,10 +3910,40 @@ async function experiments(){
     ${d.env_pin?`<div class="err" style="margin-bottom:12px"><b>Every restaurant is pinned</b> by SCHEDULE_EXPERIMENT_PIN=${esc(d.env_pin)} — new weeks are not randomised.</div>`:''}
     ${d.experiments.length ? d.experiments.map(block).join('') : '<div class="empty">No experiment has recorded a week yet.</div>'}
     <div id="sched-scorecard"></div>
+    <div id="sched-benchmark"></div>
     <div class="card"><div class="ch"><h2>Pins</h2><span class="sub">A pinned restaurant gets that arm every week and its weeks leave the comparison. Off is the control.</span></div><div class="cb">
       <div class="filters"><input id="exp-rid" placeholder="Restaurant ID" style="min-width:120px"><select id="exp-arm">${arms.map(a=>`<option value="${esc(a[0])}|${esc(a[1])}">${esc(a[2])}</option>`).join('')}${d.experiments.filter(e=>e.active).map(e=>`<option value="${esc(e.key)}|off">${esc(e.key)} · off</option>`).join('')}</select><button class="cbtn btn s w" onclick="expPinForm()">Pin</button></div>
       ${table(pinCols, d.pins, {id:'exp-pins', sort:'created_at', empty:'No restaurant is pinned.'})}</div></div>`;
   schedScorecard();
+  schedBenchmark();
+}
+// The outcome benchmark (scheduler audit 10/10/26 MARKET-21, RM-22): the same
+// as-run measures for weeks Cavnar AI drafted and weeks the manager built,
+// per restaurant (Welch 90%) and across restaurants (cluster 90%) - the
+// cross-restaurant figure only above the privacy floor, a claim only when the
+// interval clears no difference. Beside it, how fast staff answer offers on
+// each client (MARKET-18).
+async function schedBenchmark(){
+  const el = $('sched-benchmark');
+  if(!el) return;
+  const [d, p] = await Promise.all([api('/admin/api/schedule-outcome-benchmark'), api('/admin/api/staff-platforms')]);
+  if(!d || !d.ok){ el.innerHTML = `<div class="err" style="margin-bottom:12px">${esc((d && d.error) || 'The benchmark could not be read.')}</div>`; return; }
+  const one = v => v==null ? '—' : (Math.round(v*100)/100).toString();
+  const rows = Object.keys(d.measures || {}).map(k => Object.assign({k:k}, d.measures[k]));
+  const cols = [{h:'Measure',key:'label'},
+    {h:'Cavnar − manager',key:'mean',r:true,cell:r=>`<span class="num">${one(r.mean)}</span> <span class="dim">${r.ci90?one(r.ci90[0])+' to '+one(r.ci90[1]):''}</span>`},
+    {h:'Better is',key:'better'},
+    {h:'Behind it',key:'restaurants',r:true,cell:r=>`<span class="num">${fmtN(r.restaurants||0)}</span> <span class="dim">rest. · ${fmtN(r.organisations||0)} orgs</span>`},
+    {h:'Published',key:'published',cell:r=>r.published ? (r.published.claim ? esc(r.published.claim) : '<span class="dim">above the floor — no clear difference, nothing claimed</span>') : `<span class="dim">not published: ${esc(r.floor||'')}</span>`}];
+  const plat = ((p && p.ok && p.platforms) || []);
+  const pcols = [{h:'Client',key:'platform'},{h:'Answers',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n)}</span>`},
+    {h:'Median to answer',key:'median_minutes',r:true,cell:r=>r.median_minutes==null?'<span class="dim">too few</span>':`<span class="num">${one(r.median_minutes)}</span> min`},
+    {h:'Took it',key:'accepted_share',r:true,cell:r=>`<span class="num">${Math.round((r.accepted_share||0)*100)}%</span>`}];
+  el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="ch"><h2>Outcome benchmark</h2><span class="sub">${fmtN(d.restaurants||0)} restaurants · ${esc(d.method||'')}</span></div><div class="cb">
+    ${table(cols, rows, {id:'sched-benchmark-t', sort:'label', empty:'No restaurant has enough weeks on both sides yet.'})}
+    <div style="margin-top:12px"><span class="lbl">Offer answers by client</span> <span class="dim">Web Push ${p && p.web_push_enabled ? 'on' : 'off (no VAPID keys)'} · last ${fmtN((p && p.days)||90)} days</span></div>
+    ${table(pcols, plat, {id:'staff-platforms-t', sort:'platform', empty:'No offer answered yet.'})}
+  </div></div>`;
 }
 // The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4): one frozen
 // row per published week. Each figure's trend is the within-restaurant
