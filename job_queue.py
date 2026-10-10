@@ -853,6 +853,7 @@ def tick(db_path=None) -> dict:
     if not this_process_consumes(db_path):
         out["skipped"] = 1
         return out
+    heartbeat("web", db_path=db_path)
     for grp in ("generation", "bulk"):
         if claimable(grp, db_path=db_path):
             out["attempted"] += 1
