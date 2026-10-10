@@ -943,6 +943,8 @@ def _learn_patterns(ctx, patterns=None) -> list:
                  first=s.get("first_learned_iso") or "", last=s.get("last_confirmed_iso") or "")
         hand = s.get("last_hand_iso")
         e["hand_dates"] = [hand] if hand else []
+        # A week worked as published that kept it renews it (LEARNING-1).
+        e["kept_dates"] = [s["last_kept_iso"]] if s.get("last_kept_iso") else []
         m = _memory(ctx, "pattern:" + s["key"], kind, e, person=s.get("employee"), role=s.get("role"),
                     day=s.get("day"), daypart=s.get("daypart"), value=_pattern_value(s),
                     text=s.get("text") or "", source=("owner_said" if s.get("source") == "owner_said"
@@ -968,7 +970,14 @@ def _learn_patterns(ctx, patterns=None) -> list:
         if status == "rule" and not _pattern_rule_alive(ctx, s):
             _unrule_pattern(ctx, s["key"])
             status = "active"
-        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and not owner_word:
+        # Bound by its lifecycle, not a decaying confidence (schedule audit
+        # 10/10/26 LEARNING-1): once a standing habit has bound the passes
+        # (enforced_since) it stays applied until a re-test fails, two
+        # reversals, dormancy or the owner end it — it used to fall back to a
+        # prompt line 9 to 15 weeks into being carried by the draft, so the
+        # solver could undo it until the manager taught it again.
+        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and not owner_word \
+                and not row.get("enforced_since"):
             status = "candidate"
         reason = s.get("retired_reason") if status == "retired" else None
         if s["key"] in dismissed:
@@ -984,7 +993,7 @@ def _learn_patterns(ctx, patterns=None) -> list:
             "times_applied", "times_confirmed", "times_overridden", "last_overridden", "checked_through",
             "first_learned", "last_confirmed", "retired_at", "retired_week", "retest_since", "last_retest_end",
             "retests", "dormant_at", "rule_note", "ruled_by", "source", "authority", "status", "owner_kept_at",
-            "answer_authority") if f in row}
+            "answer_authority", "last_kept", "last_kept_week", "enforced_since") if f in row}
         if row.get("person_id"):
             m["person_id"] = row["person_id"]
         m["status"], m["retired_reason"] = status, reason

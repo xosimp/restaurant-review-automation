@@ -1834,15 +1834,102 @@ def _retest_verdict(p, draft, final):
     return "confirmed" if kept else "failed"
 
 
+def renewed_on(row):
+    """The date a standing pattern's decay runs from: the newer of a
+    manager's own hand last confirming it (last_hand) and the newest date a
+    week that kept it was worked as published (last_kept — schedule audit
+    10/10/26 LEARNING-1: a week the draft kept used to add a hit but never
+    renew it, so a habit the draft carried every week fell under the line
+    9 to 15 weeks in and stopped binding while it was working). A datetime,
+    or None."""
+    stamps = [w for w in (_when(_col(row, "last_hand") or _col(row, "first_learned")), _when(_col(row, "last_kept")))
+              if w is not None]
+    return max(stamps) if stamps else None
+
+
 def standing_confidence(row, today=None) -> float:
     """The Wilson lower bound of the weeks that kept a standing pattern over
-    the weeks that tested it, times its half-life decay since a manager's
-    own hand last confirmed it (L-6, L-30). 0-1."""
+    the weeks that tested it, times its half-life decay since it was last
+    renewed — by a manager's own hand or by a week worked as published that
+    kept it (L-6, L-30, LEARNING-1). 0-1."""
     today = today or date.today()
     hits, opps = int(_col(row, "hits") or 0), int(_col(row, "opportunities") or 0)
-    hand = _when(_col(row, "last_hand") or _col(row, "first_learned"))
-    age = (today - hand.date()).days if hand else 0
+    renewed = renewed_on(row)
+    age = (today - renewed.date()).days if renewed else 0
     return round(wilson_lower(hits, opps) * recency_weight(age, half_life(_col(row, "kind"))), 3)
+
+
+def _slot_date(week_start, day):
+    """The date in the seven days from `week_start` that falls on `day` (a
+    weekday name), or None."""
+    try:
+        d0 = week_start if isinstance(week_start, date) else date.fromisoformat(str(week_start)[:10])
+    except (TypeError, ValueError):
+        return None
+    for i in range(7):
+        d = d0 + timedelta(days=i)
+        if d.strftime("%A") == day:
+            return d
+    return None
+
+
+def _worked_kept(restaurant_id, rows, today, db_path=DB_PATH) -> dict:
+    """{standing row id: ISO date} — for each pattern whose newest kept week
+    (last_kept_week) has run on the pattern's weekday, that date, when the
+    week was WORKED as published (LEARNING-1, RM-5): the punches on that
+    date do not undo it — the person taken off did not work the slot, the
+    person put on did, a swapped-in leader was there; a time or a headcount
+    renews once the slot's date ran. A restaurant with no punches at all
+    (no POS) is read as having worked what it published; one with a POS
+    whose punches miss that date renews nothing from it (not known to have
+    run). The renewal only moves forward."""
+    want = {}
+    for r in rows:
+        wk = _when(r.get("last_kept_week"))
+        if wk is None or not r.get("day"):
+            continue
+        d = _slot_date(wk.date(), r["day"])
+        if d is None or d >= today:
+            continue
+        if str(r.get("last_kept") or "")[:10] >= d.isoformat():
+            continue
+        want[r["id"]] = (r, d)
+    if not want:
+        return {}
+    lo = min(d for _r, d in want.values())
+    hi = max(d for _r, d in want.values())
+    try:
+        import shift_facts
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        punches = shift_facts.rows(restaurant_id, since=(lo - timedelta(days=28)).isoformat(), until=hi.isoformat(),
+                                   **kw)
+    except Exception as e:                  # a read; the decay simply is not renewed tonight
+        log.warning("punches unreadable for standing renewal rid=%s: %s", restaurant_id, e)
+        return {}
+    by_date = {}
+    for p in punches:
+        by_date.setdefault(str(p.get("date") or "")[:10], []).append(p)
+    has_pos = bool(punches)
+    out = {}
+    for row_id, (r, d) in want.items():
+        iso = d.isoformat()
+        if not has_pos:
+            out[row_id] = iso
+            continue
+        day_rows = by_date.get(iso) or []
+        if not day_rows:
+            continue
+        kind = r["kind"]
+        p = dict(r, names=_detail(r).get("names"))
+        if kind == "moved_off":
+            ok = _respects(p, day_rows, need_presence=False) is True
+        elif kind in ("moved_on", "role_change", "leader_swap"):
+            ok = _respects(p, day_rows, need_presence=False) is True
+        else:
+            ok = any(_on_slot(p, x) for x in day_rows)
+        if ok:
+            out[row_id] = iso
+    return out
 
 
 def _person_id(restaurant_id, name, db_path=DB_PATH):
@@ -1996,6 +2083,19 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
         return dict(stats, skipped="not_eligible")
     today = today or date.today()
     _read_weeks(restaurant_id, stats, db_path, today=today)
+    # The weeks that kept a pattern and have since been worked as published
+    # renew its decay (LEARNING-1) — read before the write lock is taken.
+    try:
+        _c = get_conn(db_path)
+        try:
+            _pre = [r for r in _standing_rows(_c, restaurant_id) if r["status"] in ("active", "retest")]
+        finally:
+            _c.close()
+        renew = _worked_kept(restaurant_id, _pre, today, db_path)
+    except Exception as e:
+        log.warning("standing renewal unreadable rid=%s: %s", restaurant_id, e)
+        renew = {}
+    stats["renewed"] = 0
     live = _live(restaurant_id, db_path)
     pids = {p.get("employee"): _person_id(restaurant_id, p.get("employee"), db_path)
             for p in live if p.get("kind") in _NAMED_KINDS}
@@ -2040,7 +2140,7 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
                 # manager wants it back.
                 conn.execute("UPDATE schedule_standing_patterns SET status='active', times_overridden=0, "
                              "last_overridden=NULL, retired_at=NULL, retired_week=NULL, retired_reason=NULL, "
-                             "retest_since=NULL, text=?, editors=?, detail=?, last_confirmed=?, "
+                             "retest_since=NULL, enforced_since=NULL, text=?, editors=?, detail=?, last_confirmed=?, "
                              "checked_through=MAX(checked_through, ?), opportunities=?, hits=?, last_hand=?, "
                              "updated_at=datetime('now') WHERE id=?",
                              (p.get("text"), editors, detail, now, lw, opps, hits, hand, row["id"]))
@@ -2077,6 +2177,7 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
         # A row retired by decay comes back only on a draft made after it.
         newest_week = conn.execute("SELECT MAX(id) FROM schedule_history WHERE restaurant_id=?",
                                    (restaurant_id,)).fetchone()[0] or 0
+        import schedule_memory as _smem
         for r in _standing_rows(conn, restaurant_id):
             if r["status"] not in ("active", "retest"):
                 continue
@@ -2086,12 +2187,21 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
             if not r.get("last_hand"):
                 r["last_hand"] = _iso_day(r.get("last_confirmed") if int(r.get("times_confirmed") or 0)
                                           else r.get("first_learned")) or today.isoformat()
+            if renew.get(r["id"], "") > str(r.get("last_kept") or "")[:10]:
+                r["last_kept"] = renew[r["id"]]
+                stats["renewed"] += 1
             conf = standing_confidence(r, today)
             hl = half_life(r["kind"])
+            # The re-test is the one check-in, a half-life after a manager's
+            # own hand last confirmed it; the decay that retires it runs
+            # from its last renewal — hand or a kept week worked
+            # (LEARNING-1), so a habit that is working never fades out.
             hand = _when(r["last_hand"])
             age = (today - hand.date()).days if hand else 0
+            renewed = renewed_on(r)
+            renewed_age = (today - renewed.date()).days if renewed else age
             status, retest_since, reason = r["status"], r.get("retest_since"), None
-            if age >= 2 * hl and conf < STANDING_RETIRE_CONFIDENCE:
+            if renewed_age >= 2 * hl and conf < STANDING_RETIRE_CONFIDENCE:
                 status, retest_since, reason = "retired", None, "decayed"
                 stats["decayed"] += 1
                 stats["retired"] += 1
@@ -2100,12 +2210,22 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
                 if gap is None or (datetime.utcnow() - gap).days >= RETEST_GAP_DAYS:
                     status, retest_since = "retest", now
                     stats["retests"] += 1
+            # Bound from when it first earned it until its lifecycle ends it
+            # (LEARNING-1): a failed re-test or two reversals retire it; a
+            # decaying confidence never demotes it to a prompt line.
+            enforced = r.get("enforced_since")
+            if status == "retired":
+                enforced = None
+            elif not enforced and (conf >= _smem.ACTIVE_CONFIDENCE or _owner_kept(r)):
+                enforced = now
             conn.execute("UPDATE schedule_standing_patterns SET confidence=?, opportunities=?, hits=?, last_hand=?, "
+                         "last_kept=?, enforced_since=?, "
                          "status=?, retest_since=?, retired_reason=COALESCE(?, retired_reason), "
                          "retired_at=CASE WHEN ?='retired' THEN datetime('now') ELSE retired_at END, "
                          "retired_week=CASE WHEN ?='retired' THEN ? ELSE retired_week END, "
                          "updated_at=datetime('now') WHERE id=?",
-                         (conf, int(r.get("opportunities") or 0), int(r.get("hits") or 0), r["last_hand"], status,
+                         (conf, int(r.get("opportunities") or 0), int(r.get("hits") or 0), r["last_hand"],
+                          r.get("last_kept"), enforced, status,
                           retest_since, reason, status, status, newest_week, r["id"]))
         conn.commit()
     finally:
@@ -2143,7 +2263,7 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                        "through": int(r["checked_through"] or 0), "last": None, "retired": None, "row": r,
                        "hits": 0, "opps": 0, "hand": r.get("last_hand"), "reason": None,
                        "retest_since": r.get("retest_since") if r["status"] == "retest" else None,
-                       "retest_weeks": 0, "retest_end": None}
+                       "retest_weeks": 0, "retest_end": None, "kept_week": r.get("last_kept_week")}
              for r in rows}
     for w in weeks:
         rec = recs.get(w["id"])
@@ -2171,6 +2291,7 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                     u["hits"] += 1
                     u["opps"] += 1
                     u["hand"] = week_day or u["hand"]
+                    u["kept_week"] = max(str(u["kept_week"] or ""), week_day or "") or None
                     u["last"] = str(w["published_at"])[:19]
                     u["retest_since"], u["retest_end"] = None, True
                     continue
@@ -2186,6 +2307,10 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                 u["hits"] += 1
                 u["opps"] += 1
                 u["last"] = str(w["published_at"])[:19]
+                # A week that went out keeping it (LEARNING-1): once it is
+                # WORKED as published it renews the decay (_worked_kept), as
+                # the punches renew an opener's (schedule_memory kept_dates).
+                u["kept_week"] = max(str(u["kept_week"] or ""), week_day or "") or None
                 if verdict == "confirmed":
                     u["confirmed"] += 1
                     u["hand"] = week_day or u["hand"]
@@ -2208,20 +2333,22 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                          "times_confirmed=COALESCE(times_confirmed, 0)+?, times_overridden=?, last_overridden=?, "
                          "last_confirmed=COALESCE(?, last_confirmed), checked_through=?, "
                          "hits=COALESCE(hits, 0)+?, opportunities=COALESCE(opportunities, 0)+?, last_hand=?, "
+                         "last_kept_week=?, "
                          "status=?, retest_since=?, "
                          "retests=COALESCE(retests, 0)+?, "
                          "last_retest_end=CASE WHEN ? THEN datetime('now') ELSE last_retest_end END, "
                          "retired_reason=CASE WHEN ? THEN ? ELSE retired_reason END, "
                          "retired_at=CASE WHEN ? THEN datetime('now') ELSE retired_at END, "
-                         "retired_week=CASE WHEN ? THEN ? ELSE retired_week END, updated_at=datetime('now') "
+                         "retired_week=CASE WHEN ? THEN ? ELSE retired_week END, "
+                         "enforced_since=CASE WHEN ? THEN NULL ELSE enforced_since END, updated_at=datetime('now') "
                          "WHERE id=? AND status IN ('active', 'retest')",
                          (u["applied"], u["confirmed"], u["over"],
                           u["last_over"].strftime("%Y-%m-%d %H:%M:%S") if u["last_over"] else None,
-                          u["last"], u["through"], u["hits"], u["opps"], u["hand"], status,
+                          u["last"], u["through"], u["hits"], u["opps"], u["hand"], u["kept_week"], status,
                           u["retest_since"], 1 if (ended or (retire and u["reason"] == "retest")) else 0,
                           1 if (ended or (retire and u["reason"] == "retest")) else 0,
                           1 if retire else 0, u["reason"], 1 if retire else 0, 1 if retire else 0,
-                          u["retired"], rid_))
+                          u["retired"], 1 if retire else 0, rid_))
             stats["confirmed"] += u["confirmed"]
             stats["overridden"] += u["new_over"]
             stats["retired"] += 1 if retire else 0
@@ -2282,6 +2409,11 @@ def standing_patterns(restaurant_id, db_path=DB_PATH, include_retired=True) -> l
                     "last_hand": mdy(r["last_hand"]) if r.get("last_hand") else None,
                     "last_hand_iso": str(r["last_hand"])[:10] if r.get("last_hand") else None,
                     "retest_since": mdy(r["retest_since"]) if r.get("retest_since") else None,
+                    # LEARNING-1: the newest date a week that kept it was
+                    # worked as published, and since when it binds the passes.
+                    "last_kept": mdy(r["last_kept"]) if r.get("last_kept") else None,
+                    "last_kept_iso": str(r["last_kept"])[:10] if r.get("last_kept") else None,
+                    "enforced_since": str(r["enforced_since"])[:10] if r.get("enforced_since") else None,
                     "source": r.get("source") or "learned",
                     "can_be_rule": r["kind"] in RULE_KINDS and r["status"] in ("active", "retest"),
                     "rule": ({"note": r["rule_note"], "by": r["ruled_by"]} if r["status"] == "ruled" else None)})
@@ -2589,7 +2721,7 @@ def confirm_standing(restaurant_id, pattern_key, user=None, keep=True, db_path=D
                                   (restaurant_id,)).fetchone()[0] or 0
             conn.execute("UPDATE schedule_standing_patterns SET status='retired', retired_reason=?, "
                          "retired_at=datetime('now'), retired_week=?, retest_since=NULL, owner_kept_at=NULL, "
-                         "answer_authority=?, updated_at=datetime('now') WHERE id=?",
+                         "enforced_since=NULL, answer_authority=?, updated_at=datetime('now') WHERE id=?",
                          ("owner" if owner else "manager", newest, "principal" if owner else "delegate", row["id"]))
         conn.commit()
     finally:

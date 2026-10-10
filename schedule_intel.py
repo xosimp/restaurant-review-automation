@@ -2269,7 +2269,20 @@ def init_schedule_intel(db_path: str = DB_PATH):
                        ("last_hand", "TEXT"), ("confidence", "REAL"), ("retest_since", "TEXT"),
                        ("last_retest_end", "TEXT"), ("retests", "INTEGER NOT NULL DEFAULT 0"),
                        ("retired_reason", "TEXT"), ("source", "TEXT"), ("authority", "TEXT"),
-                       ("owner_kept_at", "TEXT"), ("answer_authority", "TEXT")):
+                       ("owner_kept_at", "TEXT"), ("answer_authority", "TEXT"),
+                       # Habits that stick (schedule audit 10/10/26 LEARNING-1,
+                       # RM-5): last_kept_week — the newest published week a
+                       # person of the restaurant sent that kept it (ISO week
+                       # start); last_kept — the newest date such a week was
+                       # WORKED as published (the punches did not undo it), what
+                       # the decay now also runs from, so a habit the draft
+                       # carries every week never fades while it works;
+                       # enforced_since — when it first bound the passes (its
+                       # confidence cleared the line, or the owner's word): from
+                       # then on it binds until its lifecycle ends it (a failed
+                       # re-test, two reversals, dormant, the owner's let-go),
+                       # never because a confidence decayed.
+                       ("last_kept_week", "TEXT"), ("last_kept", "TEXT"), ("enforced_since", "TEXT")):
         if _col not in _sp2:
             try:
                 conn.execute(f"ALTER TABLE schedule_standing_patterns ADD COLUMN {_col} {_typ}")
