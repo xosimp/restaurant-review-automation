@@ -1731,11 +1731,21 @@ def _learn_mirrors(ctx) -> list:
             for slot in p.get(which) or []:
                 wd, _sp, part = str(slot).partition(" ")
                 part = "night" if part == "night" else "morning"
-                verb = "keeps asking to drop" if kind == "staff_avoid" else "keeps picking up"
-                mirror(f"{kind}|{_person_token(ctx, name)}|{wd}|{part}", kind,
-                       f"{name} {verb} {wd} {_MEAL.get(part, part)} shifts.",
-                       {"drops": p.get("drops"), "claims": p.get("claims")}, person=name, day=wd, daypart=part,
-                       source="shift_requests")
+                ev = (p.get("evidence") or {}).get(slot) or {}
+                # Said with its denominator (LEARNING-15): how often they
+                # dropped it of the times they were on it, or picked it up
+                # of the open shifts offered there.
+                if kind == "staff_avoid":
+                    text = (f"{name} dropped {ev.get('dropped', '?')} of the {ev.get('scheduled', '?')} "
+                            f"{wd} {_MEAL.get(part, part)} shifts they were scheduled on.")
+                    conf = ev.get("drop_confidence")
+                else:
+                    text = (f"{name} picked up {ev.get('claimed', '?')} of the {ev.get('offered', '?')} open "
+                            f"{wd} {_MEAL.get(part, part)} shifts — more than the open shifts elsewhere.")
+                    conf = ev.get("claim_confidence")
+                mirror(f"{kind}|{_person_token(ctx, name)}|{wd}|{part}", kind, text,
+                       {"drops": p.get("drops"), "claims": p.get("claims"), "evidence": ev}, person=name, day=wd,
+                       daypart=part, conf=conf, source="shift_requests")
     try:
         rel = staff_settings.reliability(ctx.rid, today=ctx.today, **kw) or {}
     except Exception as e:

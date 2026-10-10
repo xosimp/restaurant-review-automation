@@ -1101,51 +1101,138 @@ def ledger_block(ledger: dict) -> str:
 
 # ── behaviour-learned preferences ─────────────────────────────────────────
 
+# What staff drop and claim, read against how often they could have
+# (schedule audit 10/10/26 LEARNING-15): "two of the same is a pattern" with
+# no denominator made somebody scheduled on 12 Sunday nights who dropped 2
+# (17%) "avoids Sunday night", and somebody chasing hours who picked up two
+# open Tuesdays "prefers Tuesday" — and the solver moved them on it.
+BEHAVIOUR_MIN_EVENTS = 2
+AVOID_MIN_CONFIDENCE = 0.2          # Wilson lower bound of drops / times scheduled on the slot
+PREFER_MIN_CONFIDENCE = 0.2         # Wilson lower bound of claims / open shifts offered on the slot
+PREFER_MIN_OTHER_OFFERS = 2         # open shifts elsewhere they could have taken, before a slot is "preferred"
+
+
 def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> dict:
-    """{name: {"avoids": ["Sunday night", …], "prefers": [...], "drops": n, "claims": n}}
-    from drop requests and claims. Two of the same is a pattern."""
+    """{name: {"avoids": ["Sunday night", …], "prefers": [...], "drops": n,
+    "claims": n, "wants_hours": bool, "evidence": {slot: {...}}}} from the
+    drops let go and the shifts picked up in the last `weeks`, each read
+    against its exposure (LEARNING-15), every event weighted by its age
+    (learning_stats.recency_weight, a person's half-life):
+      avoids   a slot (weekday × day | night) they dropped at least
+               BEHAVIOUR_MIN_EVENTS times, whose drop rate — drops over the
+               times they were scheduled there (the published weeks and the
+               dropped shifts themselves) — has a Wilson lower bound of
+               AVOID_MIN_CONFIDENCE or more;
+      prefers  a slot whose claim rate — shifts they picked up over the open
+               shifts offered on it (approved drops by others) — has a
+               Wilson lower bound of PREFER_MIN_CONFIDENCE or more AND above
+               their claim rate on every other slot (they had at least
+               PREFER_MIN_OTHER_OFFERS open shifts elsewhere): picking up
+               whatever is open says they want HOURS, not that slot;
+      wants_hours  they picked up at least BEHAVIOUR_MIN_EVENTS open shifts
+               that are not a slot preference — what the usual-hours band
+               reads (schedule_engine, LEARNING-28).
+    A denied drop is not a preference (SCHED-40); a drop let go that nobody
+    claimed before the shift passed still counts (LEARN-12)."""
+    import learning_stats
+    since = (date.today() - timedelta(days=int(weeks) * 7)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT employee_name, replacement_name, date, shift_start, status, kind, decided_at "
                             "FROM shift_change_requests WHERE restaurant_id=? AND created_at >= date('now', ?)",
                             (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+        pubs = conn.execute(
+            "SELECT schedule_csv FROM schedule_history h WHERE restaurant_id=? AND published_at IS NOT NULL AND "
+            "superseded_by IS NULL AND COALESCE(week_end, week_start) >= ? AND NOT EXISTS (SELECT 1 FROM "
+            "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
+            "n.published_at IS NOT NULL AND n.id > h.id)", (restaurant_id, since)).fetchall()
     except Exception:
         return {}
     finally:
         conn.close()
     from schedule_rules import daypart_of
-    tally = {}
-    for r in rows:
+    from schedule_versions import rows_from_csv
+
+    def slot_of(d, start):
         try:
-            wd = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%A")
+            wd = datetime.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):
+            return None
+        return f"{wd} {'night' if daypart_of(start or '') == 'night' else 'day'}"
+
+    def wt(d):
+        try:
+            age = (date.today() - date.fromisoformat(str(d)[:10])).days
+        except (TypeError, ValueError):
+            age = 0
+        return learning_stats.recency_weight(age, learning_stats.PERSON_HALF_LIFE_DAYS)
+
+    def key(n):
+        return " ".join(str(n or "").split()).casefold()
+    spell, scheduled, drops, claims, offers = {}, {}, {}, {}, {}
+    for p in pubs:
+        for r in rows_from_csv(p["schedule_csv"] or ""):
+            s_, k = slot_of(r.get("date"), r.get("shift_start")), key(r.get("employee"))
+            if s_ and k and str(r.get("date") or "")[:10] >= since:
+                scheduled.setdefault(k, {}).setdefault(s_, set()).add(str(r["date"])[:10])
+                spell.setdefault(k, r.get("employee"))
+    for r in rows:
+        s_ = slot_of(r["date"], r["shift_start"])
+        if not s_:
             continue
-        slot = f"{wd} {'night' if daypart_of(r['shift_start'] or '') == 'night' else 'day'}"
-        # A drop the manager DENIED is not a preference the next draft should
-        # honour — reading it as "avoids" overrode that decision (SCHED-40).
-        # Only a drop that was let go (open, covered) or a swap that went
-        # through says the person does not want that slot — and a drop the
-        # manager let go that nobody claimed before the shift passed
-        # (expired, with its approval's decided_at — shift_requests.decide):
-        # it vanished once the shift passed, so "keeps asking to drop
-        # Sunday nights" formed only when coworkers happened to claim them
-        # (schedule re-audit 10/4/26 LEARN-12).
+        d = str(r["date"])[:10]
         approved = r["status"] in ("open", "covered") or (
             r["status"] == "expired" and (r["kind"] or "drop") == "drop" and r["decided_at"])
         if (r["kind"] or "drop") in ("drop", "swap") and approved:
-            t = tally.setdefault(r["employee_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
-            t["avoid"][slot] = t["avoid"].get(slot, 0) + 1
-            t["drops"] += 1
+            k = key(r["employee_name"])
+            spell.setdefault(k, r["employee_name"])
+            drops.setdefault(k, {}).setdefault(s_, set()).add(d)
+            scheduled.setdefault(k, {}).setdefault(s_, set()).add(d)        # a dropped shift was scheduled
+            if (r["kind"] or "drop") == "drop":
+                offers.setdefault(s_, []).append((d, k))                   # an open shift, offered to the others
         if r["replacement_name"] and r["status"] == "covered":
-            t = tally.setdefault(r["replacement_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
-            t["prefer"][slot] = t["prefer"].get(slot, 0) + 1
-            t["claims"] += 1
+            k = key(r["replacement_name"])
+            spell.setdefault(k, r["replacement_name"])
+            claims.setdefault(k, {}).setdefault(s_, set()).add(d)
     out = {}
-    for n, t in tally.items():
-        avoids = sorted(s for s, c in t["avoid"].items() if c >= 2)
-        prefers = sorted(s for s, c in t["prefer"].items() if c >= 2)
-        if avoids or prefers:
-            out[n] = {"avoids": avoids, "prefers": prefers, "drops": t["drops"], "claims": t["claims"]}
+    for k in set(drops) | set(claims):
+        evidence, avoids, prefers = {}, [], []
+        for s_, ds in (drops.get(k) or {}).items():
+            exp = scheduled.get(k, {}).get(s_) or set()
+            hw, ow = sum(wt(d) for d in ds), sum(wt(d) for d in exp)
+            conf = learning_stats.wilson_lower(hw, ow)
+            evidence[s_] = {"dropped": len(ds), "scheduled": len(exp), "drop_rate": round(hw / ow, 3) if ow else None,
+                            "drop_confidence": round(conf, 3)}
+            if len(ds) >= BEHAVIOUR_MIN_EVENTS and conf >= AVOID_MIN_CONFIDENCE:
+                avoids.append(s_)
+        mine = claims.get(k) or {}
+        offered = {s_: [d for d, who in offers.get(s_, []) if who != k] for s_ in set(offers) | set(mine)}
+        rates = {}
+        for s_, ds in offered.items():
+            got = mine.get(s_) or set()
+            ow = sum(wt(d) for d in set(ds) | got)
+            rates[s_] = (sum(wt(d) for d in got), ow, len(set(ds) | got), len(got))
+        for s_, (hw, ow, n_off, n_got) in rates.items():
+            if not n_got:
+                continue
+            conf = learning_stats.wilson_lower(hw, ow)
+            others = [(h_, o_, n_) for t, (h_, o_, n_, _g) in rates.items() if t != s_]
+            other_offers = sum(n_ for _h, _o, n_ in others)
+            other_rate = (sum(h_ for h_, _o, _n in others) / sum(o_ for _h, o_, _n in others)) \
+                if others and sum(o_ for _h, o_, _n in others) > 0 else None
+            evidence.setdefault(s_, {}).update(claimed=n_got, offered=n_off, claim_rate=round(hw / ow, 3) if ow else None,
+                                               claim_confidence=round(conf, 3), other_claim_rate=(
+                                                   round(other_rate, 3) if other_rate is not None else None))
+            if n_got >= BEHAVIOUR_MIN_EVENTS and conf >= PREFER_MIN_CONFIDENCE and \
+                    other_offers >= PREFER_MIN_OTHER_OFFERS and other_rate is not None and conf > other_rate:
+                prefers.append(s_)
+        n_drops = sum(len(v) for v in (drops.get(k) or {}).values())
+        n_claims = sum(len(v) for v in mine.values())
+        unexplained = n_claims - sum(len(mine.get(s_) or ()) for s_ in prefers)
+        wants = unexplained >= BEHAVIOUR_MIN_EVENTS
+        if avoids or prefers or wants:
+            out[spell.get(k) or k] = {"avoids": sorted(avoids), "prefers": sorted(prefers), "drops": n_drops,
+                                      "claims": n_claims, "wants_hours": wants, "evidence": evidence}
     return out
 
 

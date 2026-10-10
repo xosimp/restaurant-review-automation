@@ -5893,9 +5893,14 @@ def _learned_preferences_signal(raw: dict) -> dict:
         both = {tuple(s) for s in avoid} & {tuple(s) for s in prefer}
         avoid = [s for s in avoid if tuple(s) not in both]
         prefer = [s for s in prefer if tuple(s) not in both]
-        if avoid or prefer:
+        if avoid or prefer or p.get("wants_hours"):
             out[name] = {"avoid": avoid, "prefer": prefer, "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
                          "source": "what they drop and pick up", "drops": p.get("drops"), "claims": p.get("claims")}
+            if p.get("wants_hours"):
+                # Picks up open shifts beyond any slot: wants more hours —
+                # the assigned week's band opens upward (shift_quality.
+                # usual_band, LEARNING-28).
+                out[name]["wants_hours"] = True
     return out
 
 
@@ -6195,8 +6200,13 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         except (TypeError, ValueError):
             avg = 0.0
         if avg >= USUAL_HOURS_MIN and n not in signals.get("salaried", set()):
-            learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
-                                   "source": "their usual week"})["usual_hours"] = round(avg, 1)
+            # What they have been ASSIGNED (schedule audit 10/10/26
+            # LEARNING-28) — a stated want always wins over it, and one who
+            # keeps picking up open shifts gets a band open upward.
+            _lp_u = learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
+                                           "source": "the week they have been assigned"})
+            _lp_u["usual_hours"] = round(avg, 1)
+            _lp_u["usual_basis"] = "assigned"
     prefs = {n: dict(p) for n, p in (stated or {}).items() if isinstance(p, dict)}
     for n, lp in learned.items():
         prefs.setdefault(n, {"preferred_dayparts": [], "desired_hours": None})["learned"] = lp

@@ -338,7 +338,10 @@ def test_behaviour_preferences_need_two_of_the_same(db_path, rid):
                  "VALUES (?,?,?,?,?,?)", (rid, hid, "Cy", "2026-09-06", "4:00pm", "withdrawn"))
     conn.commit(); conn.close()
     prefs = intel.behaviour_preferences(rid, db_path=db_path)
-    assert prefs["Ana"]["avoids"] == ["Sunday night"] and prefs["Bob"]["prefers"] == ["Sunday night"]
+    # Two claims of the only open shifts there were: hours, not a slot
+    # (schedule audit 10/10/26 LEARNING-15 — this used to expect "prefers").
+    assert prefs["Ana"]["avoids"] == ["Sunday night"] and prefs["Bob"]["prefers"] == []
+    assert prefs["Bob"]["wants_hours"] is True
     assert "Cy" not in prefs
 
 
