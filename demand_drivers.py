@@ -235,7 +235,9 @@ def role_event_lifts(restaurant_id, label, sales_lift_pct=None, db_path=DB_PATH,
     try:
         import event_memory as _em
         eff = _em.measured_effect(restaurant_id, label, db_path=None if db_path == DB_PATH else db_path)
-        if not eff:
+        # Below its floor a label's nights move nobody (event_memory
+        # `applies`) - both callers pass applied labels; this holds it here too.
+        if not eff or not eff.get("applies"):
             return {}
         nights = sorted(eff.get("dates") or [])[-ROLE_MAX_NIGHTS:]
         if not nights:
