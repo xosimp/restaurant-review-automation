@@ -242,8 +242,9 @@ def rows_changed_since(conn, history_id, base_version):
     10/4/26 UI-4). Somebody else's real change to the rows is still a
     conflict; a client that names no base, or a base the week never had,
     is too (it cannot show what its rows were made from)."""
-    last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
-                        "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    last = materialize_one(conn, conn.execute(
+        "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+        "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone(), history_id)
     if last is None:
         return None
     latest = int(last["version"])
@@ -255,8 +256,9 @@ def rows_changed_since(conn, history_id, base_version):
         return latest
     if base == latest:
         return None
-    was = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND version=?",
-                       (history_id, base)).fetchone()
+    was = materialize_one(conn, conn.execute(
+        "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? AND version=?",
+        (history_id, base)).fetchone(), history_id)
     if was is None:
         return latest
     if _rows_sig(was["schedule_csv"]) == _rows_sig(last["schedule_csv"]):
@@ -282,8 +284,9 @@ def rename_map_since(conn, history_id, base_version) -> dict:
     `base_version` — the same rows, the same dates and starts, one person's
     name changed (people._rewrite_schedule_weeks). {} when none."""
     try:
-        vs = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                          "AND version>=? ORDER BY version", (history_id, int(base_version or 0))).fetchall()
+        vs = materialize(conn, conn.execute(
+            "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+            "AND version>=? ORDER BY version", (history_id, int(base_version or 0))).fetchall(), history_id)
     except (TypeError, ValueError):
         return {}
     out, prev = {}, None
@@ -408,8 +411,9 @@ def staff_slots_since(conn, history_id, base_version) -> dict:
     moved (a `swap` version: a cover, a claim, a swap) after `base_version`
     — what "Keep my edits" may not overwrite without saying so (BUGSLIFE-16)."""
     try:
-        vs = conn.execute("SELECT version, reason, schedule_csv, saved_by FROM schedule_versions WHERE history_id=? "
-                          "AND version>=? ORDER BY version", (history_id, int(base_version or 0))).fetchall()
+        vs = materialize(conn, conn.execute(
+            "SELECT version, reason, " + VERSION_TEXT + ", saved_by FROM schedule_versions WHERE history_id=? "
+            "AND version>=? ORDER BY version", (history_id, int(base_version or 0))).fetchall(), history_id)
     except (TypeError, ValueError):
         return {}
     out, prev = {}, None
@@ -661,11 +665,12 @@ def stamp_cavnar(before_rows, after_rows, source, flagged_rows=None) -> tuple:
 
 def latest_rows(conn, history_id) -> list:
     """The rows of a week's newest version (the stored week when it has none)."""
-    row = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? ORDER BY version DESC LIMIT 1",
-                       (history_id,)).fetchone()
+    row = materialize_one(conn, conn.execute(
+        "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? ORDER BY version DESC LIMIT 1",
+        (history_id,)).fetchone(), history_id)
     if row is None:
         row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (history_id,)).fetchone()
-    return rows_from_csv(row[0] if row else "")
+    return rows_from_csv(row["schedule_csv"] if row else "")
 
 
 # What a version keeps of its Shift Quality evaluation in quality_json — the
@@ -733,10 +738,110 @@ def version_quality(conn, quality_json, quality_ref=None) -> dict:
         return {}
 
 
+# ── versions as differences from a snapshot (scheduler audit 10/10/26
+#    SCALE-34, RM-14) ───────────────────────────────────────────────────────
+#
+# Every save wrote the whole week twice: the working copy
+# (schedule_history.schedule_csv) and a full copy in its new version. A
+# version is now either a SNAPSHOT (its whole text in schedule_csv, as
+# before) or a DIFFERENCE from the week's newest snapshot: delta_json holds
+# line operations — [start, count] runs of the snapshot's lines and the
+# literal lines that are new — base_version names the snapshot, and
+# schedule_csv is ''. A version is kept as a difference only when the
+# difference rebuilds its text byte for byte and is under DELTA_MAX_SHARE of
+# it; the first version of a week is always a snapshot, and a difference
+# that has grown past the share makes the next snapshot. Every reader of a
+# version's text selects VERSION_TEXT and passes the rows through
+# materialize(); the retention prune never removes a snapshot a kept version
+# is stored against (ops._prune_schedules).
+
+VERSION_TEXT = "schedule_csv, delta_json, base_version"
+DELTA_MAX_SHARE = 0.5
+
+
+def encode_delta(base_text, text) -> list:
+    """`text` as operations on `base_text`'s lines: [i, n] takes base lines
+    i..i+n-1, a string is a line of its own."""
+    base = (base_text or "").split("\n")
+    where = {}
+    for i, line in enumerate(base):
+        where.setdefault(line, []).append(i)
+    ops_ = []
+    for line in (text or "").split("\n"):
+        hits = where.get(line)
+        if hits:
+            if ops_ and isinstance(ops_[-1], list) and (ops_[-1][0] + ops_[-1][1]) in hits:
+                ops_[-1][1] += 1
+            else:
+                ops_.append([hits[0], 1])
+        else:
+            ops_.append(line)
+    return ops_
+
+
+def apply_delta(base_text, delta) -> str:
+    base = (base_text or "").split("\n")
+    out = []
+    for op in delta or []:
+        if isinstance(op, list):
+            out.extend(base[int(op[0]):int(op[0]) + int(op[1])])
+        else:
+            out.append(str(op))
+    return "\n".join(out)
+
+
+def _version_storage(conn, history_id, version, schedule_csv) -> tuple:
+    """(schedule_csv to store, delta_json, base_version) for a new version:
+    a difference from the newest snapshot when it rebuilds the text exactly
+    and is small, else the whole text."""
+    if version <= 1 or not schedule_csv:
+        return schedule_csv, None, None
+    snap = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? AND "
+                        "delta_json IS NULL ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    if snap is None or not snap["schedule_csv"]:
+        return schedule_csv, None, None
+    delta = encode_delta(snap["schedule_csv"], schedule_csv)
+    blob = json.dumps(delta, separators=(",", ":"))
+    if len(blob) >= DELTA_MAX_SHARE * len(schedule_csv) or apply_delta(snap["schedule_csv"], delta) != schedule_csv:
+        return schedule_csv, None, None
+    return "", blob, int(snap["version"])
+
+
+def materialize(conn, rows, history_id=None) -> list:
+    """Version rows (each selected with VERSION_TEXT, and `version`) as
+    dicts whose schedule_csv is the version's whole text — a difference
+    applied to its snapshot. `history_id` when the rows do not carry it."""
+    out, snaps = [], {}
+    for r in rows or []:
+        d = dict(r)
+        if d.get("delta_json"):
+            hid = d.get("history_id", history_id)
+            key = (hid, d.get("base_version"))
+            if key not in snaps:
+                got = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND version=?",
+                                   key).fetchone()
+                snaps[key] = got["schedule_csv"] if got else None
+            if snaps[key] is None:
+                log.warning("version %s of week %s: its snapshot %s is gone", d.get("version"), hid, key[1])
+                d["schedule_csv"] = ""
+            else:
+                d["schedule_csv"] = apply_delta(snaps[key], json.loads(d["delta_json"]))
+        out.append(d)
+    return out
+
+
+def materialize_one(conn, row, history_id=None):
+    """materialize() for one row (None stays None)."""
+    if row is None:
+        return None
+    return materialize(conn, [row], history_id)[0]
+
+
 def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality=None, saved_by=None,
                     saved_authority=None, row_origins=None):
-    last = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE history_id=? "
-                        "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone()
+    last = materialize_one(conn, conn.execute(
+        "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+        "ORDER BY version DESC LIMIT 1", (history_id,)).fetchone(), history_id)
     version = (last["version"] + 1) if last else 1
     before_rows = rows_from_csv(last["schedule_csv"]) if last else []
     after_rows = rows_from_csv(schedule_csv)
@@ -763,13 +868,19 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
     # The headline inline, the whole evaluation stored once by its content
     # (SCALE-4); an evaluation identical to one already stored costs nothing.
     head, ref = store_quality(conn, restaurant_id, quality)
+    # The week's text once (SCALE-34, RM-14): a version after the first is
+    # kept as its difference from the week's newest snapshot when that is
+    # small — the working copy (schedule_history.schedule_csv) is the only
+    # whole copy of a save; a snapshot is whole.
+    text, delta, base_v = _version_storage(conn, history_id, version, schedule_csv)
     cur = conn.execute(
         "INSERT INTO schedule_versions (restaurant_id, history_id, version, reason, schedule_csv, quality_json, "
-        "quality_ref, diff_json, saved_by, saved_authority, row_origins_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (restaurant_id, history_id, version, reason, schedule_csv,
+        "quality_ref, diff_json, saved_by, saved_authority, row_origins_json, delta_json, base_version) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (restaurant_id, history_id, version, reason, text,
          head, ref, json.dumps(d) if d else None,
          (saved_by or "").strip()[:120] or None, saved_authority,
-         json.dumps(row_origins) if row_origins else None))
+         json.dumps(row_origins) if row_origins else None, delta, base_v))
     row_id = cur.lastrowid
     if open_recs and d and d.get("changes"):
         _record_implied_acceptance(conn, restaurant_id, open_recs, before_rows, after_rows, saved_by)
@@ -1044,8 +1155,9 @@ def _live_rows_of(conn, history_id, restaurant_id, row) -> tuple:
     what each person was last told, from the version history."""
     if row["published_csv"] is not None:
         return rows_from_csv(row["published_csv"]), False
-    versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                            "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall()
+    versions = materialize(conn, conn.execute(
+        "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+        "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall(), history_id)
     return told_rows_from_versions(versions, rows_from_csv(row["schedule_csv"])), True
 
 
@@ -1174,8 +1286,9 @@ def unsent_changes(restaurant_id, history_id, csv_text=None, db_path=DB_PATH):
             return None
         versions = None
         if row["published_csv"] is None:
-            versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                                    "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall()
+            versions = materialize(conn, conn.execute(
+                "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+                "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall(), history_id)
     finally:
         conn.close()
     now_rows = rows_from_csv(row["schedule_csv"] if csv_text is None else csv_text)
@@ -1261,8 +1374,9 @@ def backfill_published_copies(db_path=DB_PATH, max_seconds: float = 10.0) -> int
                                (hid,)).fetchone()
             if row is None:
                 continue
-            versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                                    "ORDER BY version", (hid,)).fetchall()
+            versions = materialize(conn, conn.execute(
+                "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+                "ORDER BY version", (hid,)).fetchall(), hid)
             draft = rows_from_csv(row["schedule_csv"])
             told = told_rows_from_versions(versions, draft)
             # One set of shift ids across both copies, so a cover or swap
@@ -1286,10 +1400,12 @@ def draft_vs_published(restaurant_id, history_id, db_path=DB_PATH) -> dict:
     by "what did I change before I sent it"."""
     conn = get_conn(db_path)
     try:
-        first = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND restaurant_id=? "
-                             "ORDER BY version ASC LIMIT 1", (history_id, restaurant_id)).fetchone()
-        last = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND restaurant_id=? "
-                            "ORDER BY version DESC LIMIT 1", (history_id, restaurant_id)).fetchone()
+        first = materialize_one(conn, conn.execute(
+            "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? AND restaurant_id=? "
+            "ORDER BY version ASC LIMIT 1", (history_id, restaurant_id)).fetchone(), history_id)
+        last = materialize_one(conn, conn.execute(
+            "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? AND restaurant_id=? "
+            "ORDER BY version DESC LIMIT 1", (history_id, restaurant_id)).fetchone(), history_id)
     finally:
         conn.close()
     if not first or not last:
@@ -1318,9 +1434,9 @@ def record_week_outcome(restaurant_id, history_id, actor=None, published=False, 
         try:
             hist = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
                                 (history_id, restaurant_id)).fetchone()
-            first = conn.execute("SELECT reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                                 "AND restaurant_id=? ORDER BY version ASC LIMIT 1",
-                                 (history_id, restaurant_id)).fetchone()
+            first = materialize_one(conn, conn.execute(
+                "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+                "AND restaurant_id=? ORDER BY version ASC LIMIT 1", (history_id, restaurant_id)).fetchone(), history_id)
             people = conn.execute("SELECT COUNT(*) FROM schedule_versions WHERE history_id=? AND restaurant_id=? "
                                   "AND reason='edited' AND COALESCE(saved_authority, '') NOT IN ('admin')",
                                   (history_id, restaurant_id)).fetchone()[0]
@@ -1549,11 +1665,12 @@ class _WeekData:
             for i in range(0, len(all_ids), 400):
                 chunk = all_ids[i:i + 400]
                 marks = ",".join("?" for _ in chunk)
-                for v in conn.execute(
-                        f"SELECT id, history_id, version, reason, schedule_csv, saved_by, saved_authority, created_at, "
-                        f"row_origins_json, adopted_at FROM schedule_versions WHERE restaurant_id=? AND history_id IN "
-                        f"({marks}) ORDER BY history_id, version", (restaurant_id, *chunk)):
-                    self.versions.setdefault(v["history_id"], []).append(dict(v))
+                for v in materialize(conn, conn.execute(
+                        f"SELECT id, history_id, version, reason, schedule_csv, delta_json, base_version, saved_by, "
+                        f"saved_authority, created_at, row_origins_json, adopted_at FROM schedule_versions WHERE "
+                        f"restaurant_id=? AND history_id IN ({marks}) ORDER BY history_id, version",
+                        (restaurant_id, *chunk)).fetchall()):
+                    self.versions.setdefault(v["history_id"], []).append(v)
                 try:
                     for r in conn.execute(f"SELECT * FROM schedule_rejections WHERE restaurant_id=? AND history_id IN "
                                           f"({marks}) ORDER BY created_at, id", (restaurant_id, *chunk)):

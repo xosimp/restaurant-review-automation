@@ -1481,9 +1481,10 @@ def edited_since(restaurant_id, schedule_id, version=None, since=None, db_path=N
                 base = int(version)
             except (TypeError, ValueError):
                 base = 0
-            vs = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                              "AND restaurant_id=? AND version>=? ORDER BY version",
-                              (schedule_id, restaurant_id, base)).fetchall()
+            vs = _sv.materialize(conn, conn.execute(
+                "SELECT version, reason, " + _sv.VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+                "AND restaurant_id=? AND version>=? ORDER BY version", (schedule_id, restaurant_id, base)).fetchall(),
+                schedule_id)
             if not vs or vs[0]["version"] != base:
                 return bool(vs)          # the queued version is not on file: never assume unchanged
             prev = _sv._rows_sig(vs[0]["schedule_csv"])

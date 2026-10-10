@@ -272,7 +272,10 @@ def test_the_outcomes_job_runs_daily_on_a_worker_pool():
     assert jobs_registry.JOBS["schedule_outcomes"]["cadence"] == "4am CT daily"
     assert strategy_jobs.OUTCOMES_WORKERS >= 2
     src = inspect.getsource(strategy_jobs.run_schedule_outcomes)
-    assert "only_changed=True" in src and "read_scope()" in src
+    # The per-restaurant body is strategy_jobs.schedule_outcomes_one since
+    # SCALE-25 (the queue's learner rows run it too).
+    assert "read_scope()" in src and "schedule_outcomes_one(" in src
+    assert "only_changed=True" in inspect.getsource(strategy_jobs.schedule_outcomes_one)
 
 
 # ── LEARNING-23: 24 weeks of versions replayed once per generation ────────

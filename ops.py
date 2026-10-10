@@ -3608,9 +3608,13 @@ def _prune_schedules(conn, deadline, refused=None, held=None):
             refused.append(st)
     versions_days = retention_days("schedule_versions")
     if versions_days:
+        # Never a snapshot a kept version is stored against (SCALE-34:
+        # schedule_versions keeps later versions as differences from it).
         where = ("created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
                  "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
-                 "               WHERE v2.history_id = schedule_versions.history_id)")
+                 "               WHERE v2.history_id = schedule_versions.history_id) "
+                 "AND NOT EXISTS (SELECT 1 FROM schedule_versions d WHERE d.history_id = schedule_versions.history_id "
+                 "                AND d.base_version = schedule_versions.version)")
         args = [f"-{versions_days} days"]
         if held and versions_days < RECORDS_HOLD_DAYS:
             where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "

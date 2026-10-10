@@ -398,7 +398,15 @@ def test_a_save_whose_version_cannot_be_written_does_not_report_saved(db, save_a
     edited = _rows(_week_csv(W1, people=(("Cy", "11:00am", "3:00pm", 4),)))
     r = _post_save(save_app, _bearer(db, rid), edited, history_id=hid, version=1)
     stored = _one(db, "SELECT schedule_csv FROM schedule_history WHERE id=?", hid)["schedule_csv"]
-    latest = _one(db, "SELECT schedule_csv FROM schedule_versions WHERE history_id=? ORDER BY version DESC LIMIT 1", hid)
+    # A version may be kept as its difference from a snapshot (SCALE-34):
+    # read through the one materializer.
+    conn = models.get_conn(db)
+    try:
+        latest = sv.materialize_one(conn, conn.execute(
+            "SELECT version, " + sv.VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
+            "ORDER BY version DESC LIMIT 1", (hid,)).fetchone(), hid)
+    finally:
+        conn.close()
     assert r.status_code != 200 or stored == latest["schedule_csv"]
 
 

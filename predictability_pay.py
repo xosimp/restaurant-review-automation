@@ -463,14 +463,16 @@ def _insert(conn, restaurant_id, history_id, version, row, sent_at, sent_by):
 
 
 def _last_published_rows(restaurant_id, history_id, db_path=None):
-    from schedule_versions import rows_from_csv
+    from schedule_versions import rows_from_csv, materialize, materialize_one, VERSION_TEXT
     conn = get_conn(db_path)
     try:
-        v = conn.execute("SELECT version, schedule_csv FROM schedule_versions WHERE restaurant_id=? AND history_id=? "
-                         "AND reason='published' ORDER BY version DESC LIMIT 1", (restaurant_id, history_id)).fetchone()
-        swaps = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE restaurant_id=? AND history_id=? AND "
-                             "reason='swap' AND version > ? ORDER BY version",
-                             (restaurant_id, history_id, v["version"] if v else 0)).fetchall()
+        v = materialize_one(conn, conn.execute(
+            "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE restaurant_id=? AND history_id=? "
+            "AND reason='published' ORDER BY version DESC LIMIT 1", (restaurant_id, history_id)).fetchone(), history_id)
+        swaps = materialize(conn, conn.execute(
+            "SELECT version, " + VERSION_TEXT + " FROM schedule_versions WHERE restaurant_id=? AND history_id=? AND "
+            "reason='swap' AND version > ? ORDER BY version",
+            (restaurant_id, history_id, v["version"] if v else 0)).fetchall(), history_id)
     finally:
         conn.close()
     if not v:

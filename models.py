@@ -8668,6 +8668,15 @@ def init_schedule_versions(db_path: str = DB_PATH):
     # versions (SCALE-14, measured 2-3 ms per 2,400 rows vs 0.05 ms).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_rid_created "
                  "ON schedule_versions(restaurant_id, created_at)")
+    # A version kept as its difference from the week's snapshot (scheduler
+    # audit 10/10/26 SCALE-34, RM-14 — schedule_versions.materialize):
+    # delta_json the line operations, base_version the snapshot they apply
+    # to; schedule_csv is '' on such a row.
+    _sv_cols0 = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}
+    if "delta_json" not in _sv_cols0:
+        conn.execute("ALTER TABLE schedule_versions ADD COLUMN delta_json TEXT")
+    if "base_version" not in _sv_cols0:
+        conn.execute("ALTER TABLE schedule_versions ADD COLUMN base_version INTEGER")
     # Whose save each version is (permissions.answer_authority — memory
     # audit 9/29/26): a support login's edits through view-as are stored
     # under the owner's name, and must never teach the draft.

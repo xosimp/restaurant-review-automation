@@ -8879,8 +8879,9 @@ def _keep_mine_merge(rid, data, rows) -> dict:
         if own is None or not _sv.rows_changed_since(conn, hid, base):
             return {}
         latest = _sv.latest_version(conn, hid)
-        was = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND version=?",
-                           (hid, base)).fetchone()
+        was = _sv.materialize_one(conn, conn.execute(
+            "SELECT version, " + _sv.VERSION_TEXT + " FROM schedule_versions WHERE history_id=? AND version=?",
+            (hid, base)).fetchone(), hid)
         staff = _sv.staff_slots_since(conn, hid, base)
     finally:
         conn.close()

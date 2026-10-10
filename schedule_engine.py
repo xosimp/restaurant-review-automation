@@ -11769,9 +11769,10 @@ def replay_checks(restaurant_id, history_id, rows=None, db_path=None) -> dict:
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()
         try:
-            got = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE restaurant_id=? AND history_id=? "
-                               "AND reason='generated' ORDER BY version LIMIT 1",
-                               (restaurant_id, int(history_id))).fetchone()
+            got = _versions.materialize_one(conn, conn.execute(
+                "SELECT version, " + _versions.VERSION_TEXT + " FROM schedule_versions WHERE restaurant_id=? "
+                "AND history_id=? AND reason='generated' ORDER BY version LIMIT 1",
+                (restaurant_id, int(history_id))).fetchone(), int(history_id))
             if got is None:
                 got = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND id=?",
                                    (restaurant_id, int(history_id))).fetchone()
