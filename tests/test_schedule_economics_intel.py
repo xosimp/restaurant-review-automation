@@ -190,13 +190,17 @@ def test_a_role_that_needs_a_certification_refuses_people_without_it():
     assert "Bartender needs alcohol" in sr.prompt_block(c) or "bartender needs alcohol" in sr.prompt_block(c)
 
 
-def test_manager_on_duty_needs_a_keyholder_on_every_open_daypart():
+def test_the_retired_manager_on_duty_switch_is_no_rule_at_all():
+    # The per-daypart "manager or keyholder on duty" switch was superseded by
+    # the manager-every-minute rule (owner, 10/2/26) and forced off on every
+    # read; its sweep is gone (sched audit 10/10/26 LOGIC-22): one fact, one
+    # rule. Even a Constraints built with it on finds nothing.
     c = _c(keyholders={"ana"}, compliance={**sr.DEFAULTS, "manager_on_duty": True})
     rows = [_row(WEEK[0], "Ana", "9:00am", "3:00pm"), _row(WEEK[0], "Bob", "4:00pm", "10:00pm")]
-    v = [x for x in sr.violations(rows, c) if x["kind"] == "no_manager_on_duty"]
-    assert len(v) == 1 and v[0]["hard"] and "night" in v[0]["detail"]
-    c.compliance["manager_on_duty"] = False
-    assert not [x for x in sr.violations(rows, c) if x["kind"] == "no_manager_on_duty"]
+    assert not {x["kind"] for x in sr.violations(rows, c)} & {"no_manager_on_duty", "manager_rule_unusable"}
+    from models import Restaurant
+    stored = Restaurant(name="X", owner_email="o@x.test", compliance_json='{"manager_on_duty": true}')
+    assert sr.compliance(stored)["manager_on_duty"] is False
 
 
 def test_the_section_cap_counts_the_configured_front_of_house_roles():

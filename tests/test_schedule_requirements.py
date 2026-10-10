@@ -258,8 +258,12 @@ def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
                      hours_notes="Open 11am-10pm")
     assert prompt.count("PRIORITIES —") == 1
     assert prompt.index("PRIORITIES —") < prompt.index("CONTEXT:")
-    for n, label in ((1, "Hard constraints"), (2, "SHIFT REQUIREMENTS"), (3, "Leadership"),
-                     (4, "The weekly hours ceiling"), (5, "Quality preferences")):
+    # The code's own ranked table (schedule_rules.TIER_TABLE — sched audit
+    # 10/10/26 LOGIC-20): the restaurant's own limits below the staffing
+    # rules, SHIFT REQUIREMENTS above the budget, leadership a quality.
+    for n, label in ((1, "Hard constraints"), (2, "The owner's staffing rules, then the restaurant's own"),
+                     (3, "Overtime, minimum hours and SHIFT REQUIREMENTS"), (4, "The hourly budget"),
+                     (5, "Quality preferences")):
         assert f"  {n}. {label}" in prompt
     for gone in ("HIGHEST PRIORITY", "same priority as STAFF CONSTRAINTS", "follow exactly —",
                  "PRIMARY scheduling basis", "— in that order", "must be satisfied, not merely aimed at"):

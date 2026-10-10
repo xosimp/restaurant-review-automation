@@ -302,20 +302,29 @@ def _percentile(values, pct=FLOOR_PERCENTILE) -> int:
 
 def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) -> dict:
     """{"floors": {role: {"morning", "night", "days"}}} — a "never below"
-    per role family and daypart, pre-filled from history: the 25th
-    percentile of how many of the role (any of its job codes — a Server AM
-    on at dinner is a server at dinner) were on for that half of the day on
-    the dates the restaurant traded it, over the last `weeks` weeks (a day
-    the role was missing counts as 0), and a weekday's own figure where it
-    differs. Training codes and manager roles (the manager rule covers
-    them) are left out. A floor saved on a role is held on the job code
-    that works each half of the day (build_constraints). A suggestion only:
-    the owner confirms what is saved (the rules route's role_floors) —
-    nothing is set from here."""
-    from shift_quality import present_dayparts
+    per role family and daypart, pre-filled from history in the unit a
+    floor is held in: people ON AT ONCE through the core of the shift. For
+    each date the restaurant traded that half of the day, the fewest of the
+    role (any of its job codes — a Server AM on at dinner is a server at
+    dinner) on at any half hour of the core window (shift_quality.
+    concurrent_groups — the coverage_floor rule's own test, floor_shortfall;
+    a day the role was missing counts as 0); the 25th percentile of those
+    over the last `weeks` weeks, and a weekday's own figure where it
+    differs. So on three of every four traded days the restaurant's own
+    crew already met the floor at every half hour. It used to take the
+    percentile of the different people who were on for some part of the
+    shift — staggered starts made that a floor the restaurant's own typical
+    night broke (schedule audit 10/10/26 LOGIC-8).
+
+    Training codes and manager roles (the manager rule covers them) are
+    left out. A floor saved on a role is held on the job code that works
+    each half of the day (build_constraints). A suggestion only: the owner
+    confirms what is saved (the rules route's role_floors) — nothing is set
+    from here."""
+    from shift_quality import present_dayparts, concurrent_groups
     c = _constraints(restaurant_id, c=c)
-    on = {}            # (date, part, family) -> people
     traded = {"morning": set(), "night": set()}
+    by_date = {}
     fams = set()
     for r in _history(restaurant_id, weeks, today):
         role = " ".join(str(r.get("role") or "").split())
@@ -324,27 +333,35 @@ def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) ->
         if not role or not d or not who:
             continue
         for part in present_dayparts(r):
-            if part not in traded:
-                continue
-            traded[part].add(d)
-            if _sr.is_training_role(role) or _sr.manager_role_kind(role) in ("owner", "manager", "lead"):
-                continue
-            fam = c.family(role)
-            c.role_names.setdefault(role.lower(), role)
-            fams.add(fam)
-            on.setdefault((d, part, fam), set()).add(who)
+            if part in traded:
+                traded[part].add(d)
+        if _sr.is_training_role(role) or _sr.manager_role_kind(role) in ("owner", "manager", "lead"):
+            continue
+        c.role_names.setdefault(role.lower(), role)
+        fams.add(c.family(role))
+        by_date.setdefault(d, []).append(r)
+    held = {}          # (date, part, family) -> fewest on at once in the core window
+    for part in ("morning", "night"):
+        for d in traded[part]:
+            day = _days([d])[0]
+            open_m = _sr.parse_minutes((c.open_times or {}).get(day, "") or "")
+            close_m = _sr.parse_minutes((c.close_times or {}).get(day, "") or "")
+            figs = concurrent_groups(by_date.get(d, []), part, open_m, close_m, c.role_families)["family"]
+            for fam, f in figs.items():
+                if f.get("held") is not None:
+                    held[(d, part, fam)] = int(f["held"])
     floors = {}
     for fam in sorted(fams):
         spec = {"morning": 0, "night": 0, "days": {}}
         for part in ("morning", "night"):
             dates = sorted(traded[part])
-            base = _percentile([len(on.get((d, part, fam), ())) for d in dates])
+            base = _percentile([held.get((d, part, fam), 0) for d in dates])
             spec[part] = base
             for wd in _sr.DAYS:
                 mine = [d for d in dates if _days([d])[0] == wd]
                 if len(mine) < FLOOR_MIN_DATES:
                     continue
-                v = _percentile([len(on.get((d, part, fam), ())) for d in mine])
+                v = _percentile([held.get((d, part, fam), 0) for d in mine])
                 if v != base:
                     spec["days"].setdefault(wd, {})[part] = v
         if spec["morning"] or spec["night"] or any(v for ds in spec["days"].values() for v in ds.values()):
@@ -355,9 +372,10 @@ def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) ->
     except Exception:
         current = {}
     return {"floors": floors, "current": current, "weeks": weeks, "percentile": FLOOR_PERCENTILE,
-            "dates": {p: len(v) for p, v in traded.items()},
+            "dates": {p: len(v) for p, v in traded.items()}, "unit": "on_at_once",
             "note": (f"From the last {weeks} weeks: on three of every four days you traded, at least this many were "
-                     "on. Check each before you save it — a floor is a minimum the schedule is never built below.")}
+                     "on at once through the core of the shift (11am–2:30pm, 5:30–8:30pm), every half hour. "
+                     "Check each before you save it — a floor is a minimum the schedule is never built below.")}
 
 
 # ── leader rules: checked as they are saved (D-11), loaded always (D-10) ───
@@ -748,6 +766,33 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
                               + (f" until {mdy(t['until'])}" if t.get("until") else "")
                               + (f" with {t['trainer']}" if t.get("trainer") else "")
                               + f" — their {t['target_role']} shifts don't count toward headcount."})
+    # A begun payroll week's days still to come, never published here: the
+    # hours toward this week's overtime line are each person's usual ones
+    # (sched audit 10/10/26 BUGSGEN-21).
+    pt = getattr(c, "projected_tail", None) or {}
+    if pt.get("dates"):
+        from time_utils import mdy
+        ds = sorted(pt["dates"])
+        when = mdy(ds[0]) if len(ds) == 1 else f"{mdy(ds[0])}–{mdy(ds[-1])}"
+        items.append({"kind": "projected_tail", "line": True, "dates": ds,
+                      "text": f"The payroll week's days before this one ({when}) were never published here, so "
+                              f"each person's usual hours on them ({pt.get('hours'):g}h across {pt.get('people')} "
+                              f"{'person' if pt.get('people') == 1 else 'people'}) count toward this week's "
+                              "overtime line — publish that week in Cavnar AI for its real hours."})
+    # The full-time line nobody confirmed (sched audit 10/10/26 LOGIC-29):
+    # typed "full" with no minimum of their own, the people it would hold
+    # are aimed at it as wanted hours until the owner makes it the minimum.
+    unconf = sorted((c.full_time_unconfirmed or {}).items())
+    if unconf:
+        line = unconf[0][1]
+        who = [_sr._display_name(c, k) for k, _v in unconf]
+        items.append({"kind": "full_time_unconfirmed", "line": True, "names": who, "hours": line,
+                      "text": f"{_and(who[:4])}{' and others' if len(who) > 4 else ''} "
+                              f"{'is' if len(who) == 1 else 'are'} marked full-time with no minimum of their own: "
+                              f"their week aims at {line:g}h, but the full-time line isn't a minimum until you "
+                              f"confirm it.",
+                      "action": {"label": f"Make {line:g}h the full-time minimum", "endpoint": "/api/labor/rules",
+                                 "rules": {"full_time_min_confirmed": True}}})
     for key in sorted(c.salaried_style or ()):
         who = _sr._display_name(c, key)
         lim = (c.hours_limits or {}).get(key)

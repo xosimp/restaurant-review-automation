@@ -235,10 +235,10 @@ class Problem:
         self.notes = []
         self._build_people(roster_roles, pending)
         if constraints is not None:
-            per_person = {"over_max_hours", "long_run", "rest_gap", "overlap", "double_booked"}
+            per_person = {"over_max_hours", "over_hours_ceiling", "long_run", "rest_gap", "overlap", "double_booked"}
             for v in _rules.violations(self.rows, constraints):
                 p = self.pidx.get(self.key(v.get("employee")))
-                if v.get("hard") and v["kind"] in per_person and p is not None:
+                if (v.get("hard") or v["kind"] == "over_hours_ceiling") and v["kind"] in per_person and p is not None:
                     self.draft_overcommitted.add(p)
                 if v["kind"] == "days_off" and p is not None:
                     self.draft_days_off.add(p)

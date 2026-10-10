@@ -5,9 +5,12 @@ The backstop and the repair loop held the draft to it, but the requirement
 the model was given and the score judged against could ask for more — so a
 restaurant whose history ran eight servers against six sections was scored
 short on every such shift however the week was built. The requirement is
-now held to the cap everywhere (staffing_curve.cap_requirement), all four
-stages count the same front-of-house roles, and a history that runs over
-the cap is told to the owner as a cap that is probably wrong.
+held to the cap in the cap's own unit — people on at once, at every half
+hour (staffing_curve.cap_requirement); the daypart's count of different
+people is not (schedule audit 10/10/26 LOGIC-7: staggered starts fit more
+people than sections). All four stages count the same front-of-house roles
+(by family), and a history that runs more on at once than the cap is told
+to the owner as a cap that is probably wrong.
 
 #40: only the peak hour of each daypart carried a requirement. Each half
 hour of service now does, from the measured hourly sales curve interpolated
@@ -36,14 +39,19 @@ def _dim(out, key):
 
 # ── #35: the section cap ────────────────────────────────────────────────
 
-def test_the_requirement_never_asks_for_more_than_the_section_cap():
+def test_the_daypart_crew_is_not_cut_to_the_section_cap():
+    # Schedule audit 10/10/26 LOGIC-7 (this test used to assert the cut): the
+    # section count is people ON AT ONCE; the daypart crew is different
+    # people across the shift. Eight staggered servers fit six sections, so
+    # six servers all 5-10pm are still two short of the eight the history
+    # runs — the cap judges them at the half hour, not here.
     rows = [_row(f"S{i}") for i in range(6)]
     kw = dict(profiles=[sq.ShiftProfile()], typical_headcount={("Saturday", "night"): {"Server": 8}})
     uncapped = _dim(sq.score_rows(rows, **kw), "coverage")
     assert uncapped["score"] == 75                        # 6 of the 8 the history runs
     capped = _dim(sq.score_rows(rows, section_cap=6, cap_roles=["server"], **kw), "coverage")
-    assert capped["score"] == 100
-    assert capped["facts"]["held_to_section_cap"] == {"cap": 6, "trimmed": {"Server": 2}}
+    assert capped["score"] == 75
+    assert "held_to_section_cap" not in capped["facts"]
 
 
 def test_the_cap_counts_every_front_of_house_role_together():
@@ -55,24 +63,45 @@ def test_the_cap_counts_every_front_of_house_role_together():
     assert sc.cap_requirement({"Server": 9}, 0, None) == ({"Server": 9}, {})
 
 
-def test_the_requirements_table_the_model_reads_is_held_to_the_same_cap():
-    rows = req.shift_requirements([SAT], typical_headcount={("Saturday", "night"): {"Server": 8, "Cook": 3}},
-                                  section_cap=6, cap_roles=["server"])
+def test_the_requirements_table_holds_only_the_half_hour_need_to_the_cap():
+    # LOGIC-7: the whole-shift number (different people) is the history's;
+    # every half-hour need (people on at once) stays under the cap.
+    curve = {"Saturday": {17: 0.05, 18: 0.2, 19: 0.6, 20: 0.15}}
+    rows = req.shift_requirements([SAT], typical_headcount={("Saturday", "night"): {"Server AM": 1, "Server PM": 12,
+                                                                                       "Cook": 3}},
+                                  section_cap=6, cap_roles=["server"], demand_curve=curve)
     night = next(r for r in rows if r["daypart"] == "night")
     need = {x["role"]: x["required"] for x in night["roles"]}
-    assert need == {"Server": 6, "Cook": 3}
-    assert night["held_to_cap"]["cap"] == 6
+    assert need == {"Server PM": 12, "Server AM": 1, "Cook": 3}
+    assert night["held_to_cap"]["cap"] == 6 and night["held_to_cap"]["unit"] == "on_at_once"
+    # Server AM and Server PM are servers to the cap (by family): together
+    # never more than six on at once at any half hour.
+    at = {}
+    for role, pts in night["half_hours"].items():
+        if role.startswith("Server"):
+            for m, n in pts:
+                at[m] = at.get(m, 0) + n
+    assert at and max(at.values()) <= 6
 
 
 def test_a_history_over_the_cap_is_told_to_the_owner():
-    typical = {("Saturday", "night"): {"Server": 8}, ("Friday", "night"): {"Server": 7},
-               ("Monday", "night"): {"Server": 4}}
-    conf = sc.cap_conflicts(typical, 6, ["server"])
+    # People on at once (labor.concurrent_patterns), the capped roles added
+    # at each half hour.
+    def fig(slots):
+        return {"held": min(slots.values()), "peak": max(slots.values()), "slots": slots}
+    concurrent = {("Saturday", "night"): {"Server AM": fig({1080: 2, 1110: 1}), "Server PM": fig({1080: 6, 1110: 7})},
+                  ("Friday", "night"): {"Server PM": fig({1080: 7, 1110: 7})},
+                  ("Monday", "night"): {"Server PM": fig({1080: 4, 1110: 4})}}
+    conf = sc.cap_conflicts(concurrent, 6, ["server"])
     assert [(c["day"], c["typical"]) for c in conf] == [("Saturday", 8), ("Friday", 7)]
     line = sc.cap_conflict_line(conf)
-    assert "8 servers on Saturday dinner" in line and "section count is 6" in line
+    assert "8 servers on at once on Saturday dinner" in line and "section count is 6" in line
     assert "raise the section count" in line
-    assert sc.cap_conflicts(typical, 8, ["server"]) == [] and sc.cap_conflict_line([]) == ""
+    assert sc.cap_conflicts(concurrent, 8, ["server"]) == [] and sc.cap_conflict_line([]) == ""
+    # Six different servers who are never more than five on at once are no
+    # conflict with five sections (the old count said they were).
+    staggered = {("Friday", "night"): {"Server": fig({1050: 4, 1080: 5, 1110: 5, 1140: 5})}}
+    assert sc.cap_conflicts(staggered, 5, ["server"]) == []
 
 
 def test_the_backstop_counts_the_same_front_of_house_roles():
