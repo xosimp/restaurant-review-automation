@@ -226,6 +226,18 @@ POLICIES = {p.workflow: p for p in (
        context=("profile", "owner_rules", "roster", "sales_trend", "labor_trend", "events", "weather",
                 "memory", "data_state"),
        note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder"),
+    # The schedule's two small calls (scheduler audit 10/10/26): the owner's
+    # words read into typed rules (owner_rules — every proposed rule
+    # validated in code, each sentence read once and cached) and the note
+    # written from the FINISHED week (schedule_narrative — each bullet
+    # checked against the final rows). Claude Haiku 5.5 on the call site's
+    # own route; code is the reviewer.
+    _p("schedule_rule_extract", "scheduling", "schedule_rules", ladder=(DEFAULT,), reviewer="rules",
+       caps=Caps(calls=2, usd=0.02, seconds=60), delivery="background",
+       note="owner_rules: Haiku 5.5, structured, cached by sentence; code validates every rule"),
+    _p("schedule_note", "scheduling", "schedule_note", ladder=(DEFAULT,), reviewer="rules",
+       caps=Caps(calls=1, usd=0.02, seconds=60), delivery="background",
+       note="schedule_narrative: written from the final week, every bullet checked against its rows"),
     # ── cfo ─────────────────────────────────────────────────────────────
     _p("ask_cavnar", "cfo", "ask_cavnar", ladder=("T2",), reviewer="rules",
        caps=Caps(calls=8, usd=0.60, seconds=90),
@@ -392,7 +404,8 @@ def _coerce(name, value, base):
 # and Ask's summary are the cfo agent's own loop, the audit read is an admin
 # tool, and the two diagnoses call create_with_retry directly (sync and
 # batch) on their own model.
-CONSOLE_READ_ONLY = ("weekly_plan", "ask_summary", "audit_notes_read", "review_diagnosis", "food_cost_diagnosis")
+CONSOLE_READ_ONLY = ("weekly_plan", "ask_summary", "audit_notes_read", "review_diagnosis", "food_cost_diagnosis",
+                     "schedule_rule_extract", "schedule_note")
 
 
 def overridable(workflow) -> bool:

@@ -2210,11 +2210,76 @@ def _do_note_rules_get(u):
     else:
         t = _local_today(u)
         week_of = t + _td(days=(sd - t.weekday()) % 7 or 7)
+    sentences = snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat())
+    unread = _typed_readings(_rid(u), sentences)
     return {"ok": True, "week_of": week_of.isoformat(),
-            "sentences": snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat()),
+            "sentences": sentences,
             "rules": snr.note_rules(_rid(u), week_start=week or week_of.isoformat()),
             "roles": snr.restaurant_roles(_rid(u)),
+            # Sentences no model has read yet (owner_rules — scheduler audit
+            # 10/10/26 RM-9): "Read my notes" reads them; a generation does too.
+            "unread": unread,
             "can_edit": _principal(u)}, 200
+
+
+def _typed_readings(rid, sentences, extract=False) -> int:
+    """Each sentence the plain reader could not hold, with the typed rules
+    Cavnar AI read from it (owner_rules — RM-9, AI-19): `typed` [{rule,
+    words}] to confirm, [] when it states none. Returns how many no model
+    has read yet. Cached readings only, unless `extract` (the owner's own
+    "Read my notes" press)."""
+    import owner_rules as _owr
+    try:
+        state = _owr.notes_state(rid, extract=extract)
+    except Exception as e:
+        print(f"[note rules] typed readings unavailable: {e!r}")
+        return 0
+    unread = 0
+    for item in sentences or []:
+        if item.get("rule_id") or item.get("kind") not in ("unchecked", "guidance", "person"):
+            continue
+        got = state.get(" ".join(str(item.get("text") or "").split()))
+        if got is None:
+            unread += 1
+            continue
+        item["typed"] = [{"rule": r, "words": _owr.words(r)} for r in got if r.get("kind") != "floor"]
+    return unread
+
+
+def _do_note_rules_read(u):
+    """The owner's "Read my notes" press: the notes' sentences no model has
+    read yet read now (owner_rules — Claude Haiku 5.5, each sentence once,
+    cached; every proposed rule validated in code), the screen's own answer
+    back. Proposals only: nothing holds until the owner confirms it."""
+    if not (_principal(u) or _may_draft(u)):
+        return _forbidden("Only someone who can change the schedule can have the notes read.")
+    from models import get_restaurant
+    import schedule_note_rules as snr
+    notes = getattr(get_restaurant(_rid(u)), "sched_notes", None) or ""
+    sentences = snr.read_notes(_rid(u), notes)
+    unread = _typed_readings(_rid(u), sentences, extract=True)
+    return {"ok": True, "sentences": sentences, "unread": unread}, 200
+
+
+def _do_note_rule_typed_add(u):
+    """{rule: {kind, role, person, person2, days, dates, daypart, value,
+    time, quote}, source_text, scope: "every"|"week", week_start?} — a typed
+    reading of a note (or a draft's chip) the owner confirmed: stored as a
+    schedule_note_rules row of its kind, validated again, hard from then on
+    (owner_rules.confirm — RM-9). Owner only, as every note rule is."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can turn a note into a rule.")
+    from client_api import log_account_event
+    import owner_rules as _owr
+    b = _body()
+    try:
+        rule = _owr.confirm(_rid(u), b.get("rule") or {}, source_text=b.get("source_text"),
+                            scope=b.get("scope") or "every", week_start=b.get("week_start"), user=u)
+    except ValueError as e:
+        return {"ok": False, "error": e.args[0]}, 400
+    if not rule.get("existing"):
+        log_account_event(_rid(u), "schedule_note_rule_added", current_user=u, detail=str(rule.get("words"))[:200])
+    return {"ok": True, "rule": rule}, 200
 
 
 def _do_note_rule_add(u):
@@ -7122,6 +7187,8 @@ _ROUTES = [
     ("/labor/staff-note-holds", ["POST"], _do_staff_note_hold, "staff_note_hold"),
     ("/labor/staff-note-holds/<int:hold_id>/remove", ["POST"], _do_staff_note_unhold, "staff_note_unhold"),
     ("/labor/note-rules", ["POST"], _do_note_rule_add, "note_rule_add"),
+    ("/labor/note-rules/read", ["POST"], _do_note_rules_read, "note_rules_read"),
+    ("/labor/note-rules/typed", ["POST"], _do_note_rule_typed_add, "note_rule_typed_add"),
     ("/labor/note-rules/<int:rule_id>/remove", ["POST"], _do_note_rule_remove, "note_rule_remove"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),

@@ -335,6 +335,14 @@ class LiveAnthropicCall(BaseException):
 
 
 @pytest.fixture(autouse=True)
+def _owner_rules_read_by_no_model(monkeypatch):
+    """A generation reads the owner's words with a model (owner_rules.prepare,
+    scheduler audit 10/10/26 RM-9). In the suite the model reads nothing
+    unless a test hands owner_rules its own stub (`call`) or sets this back."""
+    monkeypatch.setenv("OWNER_RULES_READ", "0")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_anthropic_calls(monkeypatch):
     """Any request the Anthropic SDK sends fails the test (employee audit B7
     handoff). The guard sits on httpx's transport — what the SDK sends

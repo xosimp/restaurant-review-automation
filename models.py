@@ -4441,6 +4441,10 @@ def init_db(db_path: str = DB_PATH):
     # runs and the verdicts the router reads (schedule_eval — RM-1, AI-3).
     from schedule_eval import init_schedule_eval
     init_schedule_eval(db_path)
+    # Each sentence of the owner's words read into typed rules, once
+    # (owner_rules — RM-9).
+    from owner_rules import init_owner_rules
+    init_owner_rules(db_path)
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)

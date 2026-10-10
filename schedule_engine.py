@@ -1572,7 +1572,8 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model","cache read rate": "the AI model's cache price",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "owner words": "your notes and instruction read as rules",
+    "owner weights": "your lighter and heavier days", "cache read rate": "the AI model's cache price",
     "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
 
@@ -1685,7 +1686,21 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # Everything the rules need to know about who can work when, gathered
     # once and shared by the prompt, the backstops, the swap search, the
     # review panel and the publish gate.
+    # The owner's words read into typed rules before the rules are built
+    # (owner_rules — scheduler audit 10/10/26 RM-9, AI-9, AI-19): this
+    # draft's instruction, the notes' sentences the reader cannot hold and
+    # the staff notes the hold reader cannot — each sentence once, cached;
+    # the one place a model reads them. The notes' readings are held softly
+    # by build_constraints (from the cache); the instruction's, which the
+    # owner typed for this draft, hard — applied just below.
+    import owner_rules as _owr
+    _owner_words = {"instruction": []}
+    try:
+        _owner_words = _owr.prepare(restaurant_id, next_week_dates, instruction=instruction)
+    except Exception as _sfx:
+        _soft_fail("owner words", _sfx, restaurant_id)
     constraints = _rules.build_constraints(restaurant_id, next_week_dates, week_days, restaurant)
+    _owr.apply(constraints, _owner_words.get("instruction") or [])
     roster_rows = _staff.roster(restaurant_id)
     # Somebody with no shift in weeks is not offered to the model (schedule
     # audit 10/3/26 E-3): the departed manager "Dana" was drafted onto a
@@ -2301,6 +2316,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     _gen_kwargs["draft_fallback"] = _fallback
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
     result["experiment_arms"] = _arms
+    # The instruction's typed rules, for the review's chips (owner_rules.chips).
+    result["instruction_rules"] = list(_owner_words.get("instruction") or [])
     result["generation_id"] = _generation_id
     result["manager_plan"] = manager_plan
     # The scorer, the solver and the optimizer judge every shift against
@@ -6642,6 +6659,17 @@ def _quality_signals(restaurant_id, result, **extra):
         except Exception as _sx:
             _soft_fail("staff notes", _sx, restaurant_id)
             signals["constraints"] = {}
+    # The people whose every open note part is read as rules — held,
+    # confirmed, or typed by owner_rules (scheduler audit 10/10/26 AI-10): the
+    # solver may choose them again. It kept anyone with a written note as the
+    # draft had them, so on the shape contract they were never given a slot.
+    if signals.get("constraints") and "notes_read" not in signals and restaurant_id:
+        try:
+            import owner_rules as _owr_n
+            signals["notes_read"] = sorted(frozen_read(("notes_read", restaurant_id),
+                                                       lambda: _owr_n.staff_notes_read(restaurant_id)))
+        except Exception as _nrx:
+            _soft_fail("staff notes", _nrx, restaurant_id)
     # The hard breaches of the rows being scored (SQ-14, the cap is D1a's):
     # only a caller holding those rows can say (_score_schedule_quality
     # passes them); without it the scorer is told nothing, never a stale
@@ -7892,6 +7920,11 @@ REPAIR_STAGES = (
     ("manager", _rules.TIER_MANAGER, "The manager-every-minute repair",
      "check a manager is on from open to close every day"),
     ("floors", _rules.TIER_COVERAGE, "The staffing-floor fill", "check each role's staffing floor"),
+    # The owner's own words about a person on a day — on, closing, opening
+    # (owner_rules — scheduler audit 10/10/26 RM-9, AI-9): the row the rule
+    # is about handed to them where they can legally take it.
+    ("owner_words", _rules.TIER_COVERAGE, "The pass that holds your own words about who works",
+     "check the people your instruction or rules name"),
     ("stations", _rules.TIER_COVERAGE, "The kitchen-station fill", "check each kitchen station has a trained cook"),
     ("close_out", _rules.TIER_COVERAGE, "The closer repair", "check each role's closer stays until close"),
     ("overtime", _rules.TIER_OVERTIME, "The overtime rebalance", "overtime a teammate could take may still be in it"),
@@ -8218,6 +8251,17 @@ def _stage_floors(rows, x):
     return {"rows": new, "report": {"added": n, "dates": dates}}
 
 
+def _stage_owner_words(rows, x):
+    """The owner's person rules (owner_rules.repair): a missed "Maria closes
+    Friday" or "Ana on Saturday dinner" put right by handing them the row
+    the rule is about, where they can legally take it."""
+    if not (getattr(x.c, "owner_person_on", None) or getattr(x.c, "owner_person_close", None)):
+        return {"rows": rows}
+    import owner_rules as _owr
+    out = _owr.repair(rows, x.c, editable=x.editable)
+    return {"rows": out["rows"], "fixes": out["fixed"], "report": {"fixed": len(out["fixed"]), "left": out["left"]}}
+
+
 def _stage_stations(rows, x):
     if not getattr(x.c, "stations", None):
         return {"rows": rows}
@@ -8385,7 +8429,8 @@ def _stage_role_times(rows, x):
 
 
 _STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _stage_manager,
-              "floors": _stage_floors, "stations": _stage_stations, "close_out": _stage_close_out,
+              "floors": _stage_floors, "owner_words": _stage_owner_words, "stations": _stage_stations,
+              "close_out": _stage_close_out,
               "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
               "section_cap": _stage_section_cap,
               "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
@@ -9247,6 +9292,17 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["hourly_profile_ready"] = bool(_curve)
                 _reqs = week_requirements(restaurant_id, result, _constraints, curve=_curve)
                 result["shift_requirements"] = _reqs
+            # The owner's lighter and heavier days (owner_rules weights —
+            # RM-9, AI-9: "keep Monday light" was prose the trim and the
+            # top-up never read): each day's hours target moved by its share,
+            # so the budget pass trims toward it and the top-up fills to it.
+            if getattr(_constraints, "owner_weights", None):
+                try:
+                    import owner_rules as _owr_w
+                    result["daily_target_hours"] = _owr_w.apply_weights(result.get("daily_target_hours"),
+                                                                         _constraints)
+                except Exception as _owx:
+                    _soft_fail("owner weights", _owx, restaurant_id)
             # This week's arm of the live experiment (schedule_experiments):
             # whether the solver re-solves who works each shift — pinned on
             # until the experiment can reach a verdict (P-21, L-11).
@@ -9359,6 +9415,19 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # Kept with the saved review: which days were built without the
             # model, and why (contract #7, AI-11).
             result["review"]["draft_source"] = _json_safe(result.get("draft_source") or {})
+            # The draft's instruction as the rules code held it — chips, each
+            # with the owner's quote and whether the finished week holds it —
+            # and every typed rule of the owner's words in force (owner_rules,
+            # RM-9: "I typed something and it didn't do what I said").
+            try:
+                import owner_rules as _owr_c
+                result["review"]["instruction_rules"] = _owr_c.chips(preview_rows, _constraints,
+                                                                     result.get("instruction_rules"))
+                result["review"]["typed_rules"] = [
+                    {"words": r.get("words"), "quote": r.get("quote"), "confirmed": bool(r.get("confirmed")),
+                     "source": r.get("source")} for r in (getattr(_constraints, "typed_rules", None) or [])][:40]
+            except Exception as _ocx:
+                _soft_fail("owner words", _ocx, restaurant_id)
             result["review"]["unstaffable_dates"] = result.get("unstaffable_dates") or []
             # A staffing rule the owner set that the code could not read is
             # named, so the owner checks the draft against it — the model was
@@ -10092,6 +10161,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # days built without it — which, from what, and why.
             draft_source=_json_safe(result.get("draft_source") or {"chosen": "model", "source": "model",
                                                                    "code_dates": [], "why": {}}),
+            # The draft's instruction read as rules, each held or not (RM-9).
+            instruction_rules=(result.get("review") or {}).get("instruction_rules") or [],
             # The hours split by pay (E-7, P-6): what the hourly budget is
             # held to, and the salaried hours it never pays for.
             hours_hourly=result.get("hours_hourly"),

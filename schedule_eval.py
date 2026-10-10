@@ -49,7 +49,7 @@ Pure where it can be; the tables are created at boot (init_schedule_eval,
 from models.init_db).
 """
 import json
-import math
+
 import zlib
 
 
