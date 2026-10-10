@@ -1461,6 +1461,107 @@ def _conflict_for_manager(prob, d, spans):
                     + "; ".join(r["text"] for r in relax[:6]) + ". Relax one of them."}
 
 
+# ── a re-solve in seconds: "Maria is out, re-solve Friday" (MARKET-13) ──────
+
+RESOLVE_SECONDS = _env_float("SCHEDULE_RESOLVE_SECONDS", 6.0)
+
+
+def resolve(rows, constraints, dates, out=(), add=(), signals=None, weights=None, profiles=None, last_week=None,
+            max_seconds=None, seed=SEED) -> dict:
+    """The week as it stands re-solved on `dates` only, with no model call:
+    each person in `out` ({"employee", "dates"?}) off those dates (their
+    shifts opened, nobody else's moved unless it has to be), each shift in
+    `add` ({"date", "role", "shift_start", "shift_end"}) staffed, every
+    other date and every locked or pinned row kept exactly. A person on a
+    shift that stays is changed only when the rules leave no other way —
+    a change costs more than any preference — so the answer is the
+    smallest edit that holds every rule.
+
+    {"ok", "rows" (the whole week), "changes": [{index, date, day, role,
+    shift_start, shift_end, from, to, why}], "unfilled", "conflicts",
+    "seconds", "status"}. Nothing is saved."""
+    import copy as _copy
+    t0 = _time.monotonic()
+    res = {"ok": False, "rows": [dict(r) for r in rows or []], "changes": [], "unfilled": [], "conflicts": [],
+           "seconds": 0.0, "status": "nothing_to_solve"}
+    if not available():
+        res["status"] = "unavailable"
+        return res
+    if constraints is None or not dates:
+        return res
+    want = set(dates)
+    c = _copy.copy(constraints)
+    c.blocked_dates = {k: dict(v or {}) for k, v in (constraints.blocked_dates or {}).items()}
+    gone = set()
+    for o in out or []:
+        name = str((o or {}).get("employee") or "").strip()
+        if not name:
+            continue
+        k = c.key(name)
+        for d in (o.get("dates") or sorted(want)):
+            if d in want:
+                gone.add((k, d))
+                c.blocked_dates.setdefault(k, {})[d] = "out — re-solved without them"
+    work, origin = [], []
+    for i, r in enumerate(rows or []):
+        x = dict(r)
+        name = (x.get("employee") or "").strip()
+        if x.get("date") not in want:
+            x["_pinned"] = True
+        elif name and (c.key(name), x.get("date")) in gone:
+            if is_locked(x):
+                x.pop("locked", None)
+                x.pop("_pinned", None)
+            x["employee"] = ""
+        work.append(x)
+        origin.append(i)
+    for a in add or []:
+        if not isinstance(a, dict) or a.get("date") not in want or not a.get("role"):
+            continue
+        x = {"date": a["date"], "day": sq._day_name(a["date"]), "employee": "", "role": str(a["role"]),
+             "shift_start": str(a.get("shift_start") or ""), "shift_end": str(a.get("shift_end") or ""),
+             "scheduled_hours": "", "notes": str(a.get("notes") or "")}
+        x["scheduled_hours"] = _stime_hours(x, c)
+        work.append(x)
+        origin.append(None)
+    secs = RESOLVE_SECONDS if max_seconds is None else float(max_seconds)
+    got = assign(work, c, signals=signals, weights=weights, profiles=profiles, only_dates=sorted(want),
+                 last_week=last_week, max_seconds=secs, mode="resolve", seed=seed, explain=True)
+    res["status"] = got["status"]
+    res["seconds"] = round(_time.monotonic() - t0, 3)
+    if got["status"] not in ("optimal", "time_limit"):
+        return res
+    prob = got.get("problem")
+    by_unit = {}
+    for u in prob.units:
+        for i in u.idx:
+            by_unit[i] = u
+    why = {(r["date"], r.get("shift_start"), _low(r["employee"])): r["text"] for r in got.get("reasons") or []}
+    final, changes = [], []
+    for i, x in enumerate(prob.rows):
+        u = by_unit.get(i)
+        p = got["assignment"][u.id] if u is not None and u.id < len(got["assignment"]) else None
+        name = prob.names[p] if p is not None else (x.get("employee") or "").strip()
+        src = origin[i]
+        before = (rows[src].get("employee") or "").strip() if src is not None else ""
+        if not name:
+            continue                    # nobody could take it: listed in unfilled
+        r = {k: v for k, v in x.items() if k not in ("_pinned", "_open")}
+        if src is not None and rows[src].get("_pinned"):
+            r["_pinned"] = rows[src]["_pinned"]
+        r["employee"] = name
+        final.append(r)
+        if _low(name) != _low(before):
+            changes.append({"index": src, "date": r["date"], "day": r.get("day") or sq._day_name(r["date"]),
+                            "role": r.get("role"), "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"),
+                            "from": before or None, "to": name,
+                            "why": why.get((r["date"], r.get("shift_start"), _low(name)), "")})
+    res.update(ok=True, rows=final, changes=changes, unfilled=got.get("unfilled") or [],
+               conflicts=got.get("conflicts") or [], terms=got.get("terms") or {})
+    res["seconds"] = round(_time.monotonic() - t0, 3)
+    return res
+
+
 # ── the quality gate, exactly (LOGIC-26) ────────────────────────────────────
 
 def _probe_row(c, v, rows):

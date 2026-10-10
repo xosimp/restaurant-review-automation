@@ -13702,6 +13702,14 @@ def labor_schedule_replacements(current_user):
     return _m("mobile_schedule_replacements")(current_user)
 
 
+# Re-solve chosen days in seconds, no model call (scheduler audit 10/10/26
+# MARKET-13): one body, both surfaces.
+@client_bp.route("/api/labor/schedule/resolve", methods=["POST"])
+@login_required
+def labor_schedule_resolve(current_user):
+    return _m("mobile_schedule_resolve")(current_user)
+
+
 # Floor sections per shift (employee audit V12): the Studio's picker.
 @client_bp.route("/api/labor/schedule/sections")
 @login_required

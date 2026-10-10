@@ -1678,7 +1678,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "owner words": "your notes and instruction read as rules",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
     "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
@@ -12110,6 +12110,56 @@ def prepare_replacements(restaurant_id, rows: list, constraints=None) -> dict:
         c = _rules.build_constraints(restaurant_id, dates, [_weekday_name(d) for d in dates])
     return {"rows": rows, "constraints": c, "before": _rules.breach_profile(rows, c)}
 
+
+
+def resolve_days(restaurant_id, rows: list, dates: list, out=None, add=None, history_id=None) -> dict:
+    """The Studio's and Ask's re-solve (scheduler audit 10/10/26 MARKET-13):
+    the week on screen re-solved on `dates` in seconds with no model call —
+    "Maria is out, re-solve Friday", "add a server Friday", "redo Saturday"
+    — every other day and every locked row kept, a person on a shift that
+    stays changed only when the rules leave no other way, each change with
+    its reason, and the rules in the way named for anything left open
+    (schedule_cpsat.resolve). Nothing is saved: the client shows the rows as
+    unsaved edits. On a published week a change inside the notice window
+    carries the predictive-scheduling warning (schedule_rules.
+    late_change_warning)."""
+    import schedule_cpsat as _cps
+    rows = [dict(r) for r in rows or []]
+    week = sorted({r.get("date") for r in rows if r.get("date")} | set(dates or []))
+    if not week:
+        return {"ok": False, "error": "no week to re-solve"}
+    c = _rules.build_constraints(restaurant_id, week, week_day_names(week))
+    roster_roles = {}
+    try:
+        import staff_settings as _ss_rs
+        roster_roles = {e["name"]: e.get("role") for e in _ss_rs.roster(restaurant_id) if e.get("name")}
+    except Exception as e:
+        _soft_fail("roster", e, restaurant_id)
+    result = {"week_dates": week, "week_days": week_day_names(week), "roster": list(c.roster_names or []),
+              "roster_roles": roster_roles, "constraints": c}
+    signals, weights = {}, {}
+    try:
+        signals, weights = _quality_signals(restaurant_id, result)
+    except Exception as e:
+        _soft_fail("quality signals", e, restaurant_id)
+        signals = {"roster": result["roster"], "roster_roles": roster_roles}
+    got = _cps.resolve(rows, c, sorted(set(dates or [])), out=out or [], add=add or [], signals=signals,
+                       weights=weights, last_week=signals.get("last_published_rows"))
+    got["dates"] = sorted(set(dates or []))
+    if history_id:
+        try:
+            from models import get_schedule_history_detail as _gshd_rs
+            from time_utils import restaurant_now_by_id
+            det = _gshd_rs(int(history_id), restaurant_id) or {}
+            if det.get("published_at") and got.get("changes"):
+                warn = _rules.late_change_warning(c.compliance, [x["date"] for x in got["changes"]],
+                                                  restaurant_now_by_id(restaurant_id, naive=True).date())
+                if warn:
+                    got["late_change_warning"] = warn
+        except Exception as e:
+            _soft_fail("notice window", e, restaurant_id)
+    got.pop("terms", None)
+    return _json_safe(got)
 
 
 def try_prepare_replacements(restaurant_id, rows: list, constraints=None):

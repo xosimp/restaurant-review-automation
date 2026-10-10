@@ -1196,6 +1196,45 @@ def _read_schedule_history(restaurant_id, limit=8):
     }
 
 
+def _propose_resolve(restaurant_id, dates=None, out=None, add=None):
+    """What re-solving chosen days of the current schedule would change, in
+    seconds and with no model call (scheduler audit 10/10/26 MARKET-13):
+    "Maria is out, re-solve Friday", "add a server Friday". The week is the
+    unsent draft covering those dates, else the week in force. Nothing is
+    saved — the Studio's Re-solve applies it."""
+    import schedule_engine as _se
+    import schedule_versions as _sv
+    from models import get_conn
+    want = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]})
+    if not want:
+        return {"error": "Which days? Give the dates to re-solve."}
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv, published_at FROM schedule_history WHERE restaurant_id=? "
+            "AND week_start<=? AND week_end>=? AND superseded_by IS NULL "
+            "ORDER BY (published_at IS NULL) DESC, id DESC LIMIT 1",
+            (restaurant_id, want[0], want[-1])).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"error": "There is no schedule for those dates yet."}
+    rows = _sv.rows_from_csv(row["schedule_csv"] or "")
+    outs = [{"employee": str(n)} for n in (out or []) if str(n).strip()][:10]
+    adds = [a for a in (add or []) if isinstance(a, dict)][:10]
+    got = _se.resolve_days(restaurant_id, rows, want, out=outs, add=adds, history_id=row["id"])
+    return {"schedule_id": row["id"], "week_start": row["week_start"], "published": bool(row["published_at"]),
+            "ok": bool(got.get("ok")), "seconds": got.get("seconds"),
+            "changes": [{k: c.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "from", "to", "why")}
+                        for c in (got.get("changes") or [])][:30],
+            "left_open": [{k: e.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "text")}
+                          for e in (got.get("unfilled") or [])][:10],
+            "rules_in_the_way": [c.get("text") for c in (got.get("conflicts") or [])][:6],
+            "late_change_warning": got.get("late_change_warning"),
+            "saved": False,
+            "note": "Nothing is changed yet: the owner applies it from the schedule's Re-solve in the Studio."}
+
+
 def _read_schedule_rules(restaurant_id):
     """The scheduling rules set in Cavnar for this restaurant — what the
     code checks — so a labor-law question is answered with the rule in
@@ -2952,6 +2991,22 @@ TOOLS = [
             "description": "Past schedules with hours vs budget.",
             "input_schema": {"type": "object", "properties": {
                 "limit": {"type": "integer"}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _propose_resolve,
+        "module": "module_labor",
+        "spec": {
+            "name": "propose_resolve",
+            "description": (
+                "Re-solve days of the schedule (someone out, a shift added): what would change and why. "
+                "Saves nothing; the Studio's Re-solve applies it."),
+            "input_schema": {"type": "object", "properties": {
+                "dates": {"type": "array", "items": {"type": "string"}},
+                "out": {"type": "array", "items": {"type": "string"}},
+                "add": {"type": "array", "items": {"type": "object"}, "description": "{date, role, shift_start, shift_end}"}},
+                "required": ["dates"]},
         },
     },
     {
