@@ -37075,6 +37075,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(acc.mean_unchanged_share!==null&&acc.mean_unchanged_share!==undefined)line+=(line?' ':'')+'On average '+Math.round(acc.mean_unchanged_share*100)+'% kept'+(acc.mean_changes!==null&&acc.mean_changes!==undefined?', '+acc.mean_changes+' changes a week':'')+'.';
       if(line)h+='<div class="ac-note" style="margin-top:8px">'+num(line)+'</div>';
     }
+    /* The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4): per
+       published week, the edits each draft needed per 100 shifts and what
+       the week did as it ran. A figure the week has no measurement of is
+       left out, never shown as 0. */
+    var sc=d.learning_scorecard||{},scw=sc.weeks||[];
+    h+='<div class="lb2-sub">How the drafts are doing<small>edits each draft needed, and what each week did as it ran</small></div>';
+    if(!sc.available||!scw.length)h+='<div class="hb-empty">Appears the Monday after a published week ends — the edits the draft needed, labor against the hourly target, overtime, minutes with no manager and no-shows nobody covered.</div>';
+    else{
+      var sh='',si,sj;
+      for(si=0;si<scw.length&&si<4;si++){var sw=scw[si];
+        sh+='<div class="int-say"><b>Week of '+esc(sw.week||'')+'</b>'+(sw.status==='open'?' <small>(still settling)</small>':'')+'</div>';
+        for(sj=0;sj<(sw.lines||[]).length;sj++)sh+='<div class="ac-note" style="margin:2px 0 0 10px">'+num(sw.lines[sj])+'</div>';}
+      h+='<div class="int-cal">'+sh+(sc.trend_sentence?'<div class="ac-note" style="margin-top:8px">'+num(sc.trend_sentence)+'</div>':'')+'</div>';
+    }
     /* The edit predictor: ready or why not, and how it did on past drafts. */
     var ep=d.edit_prediction||{};
     h+='<div class="lb2-sub">Predicting your edits<small>from the drafts you have already finished</small></div>';
@@ -37093,6 +37107,16 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="lb2-sub">Borrowed starting headcount<small>for a restaurant with no history of its own</small></div><div class="int-cal">'+num(sp.reason)+'</div>';
     }
     h+='<div class="lb2-sub">Quality weights<small>checked against what the published weeks actually did</small></div>';
+    /* What Cavnar AI changed on its own, within the bounded steps, once the
+       newest held-out weeks confirmed it (schedule audit 10/10/26
+       LEARNING-9) - said, with Undo. */
+    var pm=cal.promoted;
+    if(pm&&pm.changes&&pm.changes.length){
+      var pl=[],pi;for(pi=0;pi<pm.changes.length;pi++){var pc=pm.changes[pi];pl.push(esc(pc.label||pc.dimension)+' '+esc(pc.before)+' → '+esc(pc.after));}
+      h+='<div class="int-cal"><div class="ac-note">'+num('Cavnar AI adjusted these on '+(pm.when||'')+': ')+'<span class="hb-num">'+pl.join(' · ')+'</span></div>'
+        +(pm.reason?'<div class="ac-note" style="margin-top:4px">'+num('Why: '+pm.reason+'.')+'</div>':'')
+        +(pm.can_undo?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" data-sfw2-cal-undo="1">Undo this change</button>':'')+'</div>';
+    }
     if(!cal.ready)h+='<div class="int-cal">'+num(cal.reason||'Not enough published weeks with a stored score to check the weights yet.')+'</div>';
     else{
       var dims=cal.dimensions||{},k,rows='';
@@ -37121,6 +37145,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     return h;
   }
+  /* Undo of an automatic weight change (LEARNING-9): the weights before
+     come back and no automatic change is made for eight weeks. */
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('[data-sfw2-cal-undo]'):null;if(!t||t.disabled)return;
+    var done=busy(t,'Undoing…');
+    jsend('/api/labor/quality/calibration/revert',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not undo it','error');return;}
+      toast('Undone — the score is back to the weights before','success');
+      loadIntel(null,true);
+    });
+  });
   /* Apply writes the weights and, in the same tap, each profile's floors
      and bars (SQ-22) — said back, then the record is read again. */
   document.addEventListener('click',function(ev){

@@ -921,12 +921,32 @@ def test_a_carried_out_recommendation_is_measured_on_the_week_as_it_ran():
     sm.observe(rid, "sq_as_run", date=sat, daypart="night", history_id=hid, phase="as_run", origin="system",
                authority="system", value={"score": 88, "dims": {"training_balance": 92}, "hard_breaches": 0},
                fact_key=f"sq_as_run|{hid}|{sat}|night")
-    assert schedule_intel.measure_recommendations_as_run(rid) == 1
-    ev = _q("SELECT meta FROM rec_events WHERE restaurant_id=? AND event='outcome'", rid)
-    meta = json.loads(ev[0]["meta"])
-    assert (meta["verdict"], meta["measure"], meta["dimension"], meta["before"], meta["as_run"]) == \
-        ("improved", "as_run", "training_balance", 40.0, 92.0)
-    assert schedule_intel.measure_recommendations_as_run(rid) == 0                 # once
+    # Schedule audit 10/10/26 LEARNING-24: the engine's own as-run score no
+    # longer decides — with no outcome readings run yet there is no verdict
+    # (this test used to expect "improved" from 40 → 92 on that score).
+    assert schedule_intel.measure_recommendations_as_run(rid) == 0
+    # Saturday nights before it was accepted mostly did not run well on
+    # the outcome readings; the ones since did.
+    accepted = date.fromisoformat(_q("SELECT created_at FROM schedule_recommendation_events")[0]["created_at"][:10])
+    readings = {}
+    for k in range(1, 9):
+        d = accepted - timedelta(days=(accepted.weekday() - 5) % 7 or 7) - timedelta(weeks=k - 1)
+        readings[(d.isoformat(), "night")] = {"issues": 1, "sales_resid": -0.1, "comps_rate": None,
+                                              "turn_minutes": None, "review": None}
+    for k in range(8):
+        d = accepted + timedelta(days=(5 - accepted.weekday()) % 7) + timedelta(weeks=k)
+        readings[(d.isoformat(), "night")] = {"issues": 0, "sales_resid": 0.05, "comps_rate": None,
+                                              "turn_minutes": None, "review": None}
+    import unittest.mock as _mock
+    later = accepted + timedelta(weeks=9)
+    with _mock.patch.object(schedule_intel, "slot_readings", lambda *a, **k: dict(readings)):
+        assert schedule_intel.measure_recommendations_as_run(rid, today=later) == 1
+        ev = _q("SELECT meta FROM rec_events WHERE restaurant_id=? AND event='outcome'", rid)
+        meta = json.loads(ev[0]["meta"])
+        assert (meta["verdict"], meta["measure"], meta["dimension"]) == ("improved", "outcomes", "training_balance")
+        assert meta["plan_adherence"] == {"dimension": "training_balance", "planned": 40.0, "as_run": 92.0,
+                                          "reading": "kept", "band": schedule_intel.AS_RUN_BAND}
+        assert schedule_intel.measure_recommendations_as_run(rid, today=later) == 0     # once
 
 
 def test_the_week_is_scored_as_it_ran_beside_its_planned_score(monkeypatch):

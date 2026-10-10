@@ -17,8 +17,11 @@ a model; nothing crosses a tenant.
                         prompt's CAN WORK holds a second role to
   mentoring             shifts worked beside a closer in a role that is not
                         their own — who could hold a station
-  chemistry_suggestions pairs whose shared dayparts ran clean — suggested,
-                        never applied
+  chemistry_suggestions the teams offered to the owner — schedule_memory's
+                        Holm-tested pairs (LEARNING-13), never applied
+  slot_readings / ran_well  what a shift did on outcomes a lean shift does
+                        not win, one reading set for every shift compared
+                        (LEARNING-12, LEARNING-24)
   recommendation events an accept/dismiss ledger, and the kinds nobody takes
   learned-pattern dismissals — the owner's say over what the draft learns
 """
@@ -44,8 +47,6 @@ OUTCOME_WEEKS = 12
 LEDGER_WEEKS = 8
 MENTOR_SHIFTS_TO_HOLD = 8
 MENTOR_WINDOW_DAYS = 365          # the shifts that count toward holding a station
-SUGGEST_MIN_SHARED = 6
-SUGGEST_MIN_CLEAN = 0.8
 SUPPRESS_AFTER_SHOWN = 10
 
 
@@ -1108,51 +1109,138 @@ def ledger_block(ledger: dict) -> str:
 
 # ── behaviour-learned preferences ─────────────────────────────────────────
 
+# What staff drop and claim, read against how often they could have
+# (schedule audit 10/10/26 LEARNING-15): "two of the same is a pattern" with
+# no denominator made somebody scheduled on 12 Sunday nights who dropped 2
+# (17%) "avoids Sunday night", and somebody chasing hours who picked up two
+# open Tuesdays "prefers Tuesday" — and the solver moved them on it.
+BEHAVIOUR_MIN_EVENTS = 2
+AVOID_MIN_CONFIDENCE = 0.2          # Wilson lower bound of drops / times scheduled on the slot
+PREFER_MIN_CONFIDENCE = 0.2         # Wilson lower bound of claims / open shifts offered on the slot
+PREFER_MIN_OTHER_OFFERS = 2         # open shifts elsewhere they could have taken, before a slot is "preferred"
+
+
 def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> dict:
-    """{name: {"avoids": ["Sunday night", …], "prefers": [...], "drops": n, "claims": n}}
-    from drop requests and claims. Two of the same is a pattern."""
+    """{name: {"avoids": ["Sunday night", …], "prefers": [...], "drops": n,
+    "claims": n, "wants_hours": bool, "evidence": {slot: {...}}}} from the
+    drops let go and the shifts picked up in the last `weeks`, each read
+    against its exposure (LEARNING-15), every event weighted by its age
+    (learning_stats.recency_weight, a person's half-life):
+      avoids   a slot (weekday × day | night) they dropped at least
+               BEHAVIOUR_MIN_EVENTS times, whose drop rate — drops over the
+               times they were scheduled there (the published weeks and the
+               dropped shifts themselves) — has a Wilson lower bound of
+               AVOID_MIN_CONFIDENCE or more;
+      prefers  a slot whose claim rate — shifts they picked up over the open
+               shifts offered on it (approved drops by others) — has a
+               Wilson lower bound of PREFER_MIN_CONFIDENCE or more AND above
+               their claim rate on every other slot (they had at least
+               PREFER_MIN_OTHER_OFFERS open shifts elsewhere): picking up
+               whatever is open says they want HOURS, not that slot;
+      wants_hours  they picked up at least BEHAVIOUR_MIN_EVENTS open shifts
+               that are not a slot preference — what the usual-hours band
+               reads (schedule_engine, LEARNING-28).
+    A denied drop is not a preference (SCHED-40); a drop let go that nobody
+    claimed before the shift passed still counts (LEARN-12)."""
+    import learning_stats
+    since = (date.today() - timedelta(days=int(weeks) * 7)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT employee_name, replacement_name, date, shift_start, status, kind, decided_at "
                             "FROM shift_change_requests WHERE restaurant_id=? AND created_at >= date('now', ?)",
                             (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+        pubs = conn.execute(
+            "SELECT schedule_csv FROM schedule_history h WHERE restaurant_id=? AND published_at IS NOT NULL AND "
+            "superseded_by IS NULL AND COALESCE(week_end, week_start) >= ? AND NOT EXISTS (SELECT 1 FROM "
+            "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
+            "n.published_at IS NOT NULL AND n.id > h.id)", (restaurant_id, since)).fetchall()
     except Exception:
         return {}
     finally:
         conn.close()
     from schedule_rules import daypart_of
-    tally = {}
-    for r in rows:
+    from schedule_versions import rows_from_csv
+
+    def slot_of(d, start):
         try:
-            wd = datetime.strptime(r["date"], "%Y-%m-%d").strftime("%A")
+            wd = datetime.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):
+            return None
+        return f"{wd} {'night' if daypart_of(start or '') == 'night' else 'day'}"
+
+    def wt(d):
+        try:
+            age = (date.today() - date.fromisoformat(str(d)[:10])).days
+        except (TypeError, ValueError):
+            age = 0
+        return learning_stats.recency_weight(age, learning_stats.PERSON_HALF_LIFE_DAYS)
+
+    def key(n):
+        return " ".join(str(n or "").split()).casefold()
+    spell, scheduled, drops, claims, offers = {}, {}, {}, {}, {}
+    for p in pubs:
+        for r in rows_from_csv(p["schedule_csv"] or ""):
+            s_, k = slot_of(r.get("date"), r.get("shift_start")), key(r.get("employee"))
+            if s_ and k and str(r.get("date") or "")[:10] >= since:
+                scheduled.setdefault(k, {}).setdefault(s_, set()).add(str(r["date"])[:10])
+                spell.setdefault(k, r.get("employee"))
+    for r in rows:
+        s_ = slot_of(r["date"], r["shift_start"])
+        if not s_:
             continue
-        slot = f"{wd} {'night' if daypart_of(r['shift_start'] or '') == 'night' else 'day'}"
-        # A drop the manager DENIED is not a preference the next draft should
-        # honour — reading it as "avoids" overrode that decision (SCHED-40).
-        # Only a drop that was let go (open, covered) or a swap that went
-        # through says the person does not want that slot — and a drop the
-        # manager let go that nobody claimed before the shift passed
-        # (expired, with its approval's decided_at — shift_requests.decide):
-        # it vanished once the shift passed, so "keeps asking to drop
-        # Sunday nights" formed only when coworkers happened to claim them
-        # (schedule re-audit 10/4/26 LEARN-12).
+        d = str(r["date"])[:10]
         approved = r["status"] in ("open", "covered") or (
             r["status"] == "expired" and (r["kind"] or "drop") == "drop" and r["decided_at"])
         if (r["kind"] or "drop") in ("drop", "swap") and approved:
-            t = tally.setdefault(r["employee_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
-            t["avoid"][slot] = t["avoid"].get(slot, 0) + 1
-            t["drops"] += 1
+            k = key(r["employee_name"])
+            spell.setdefault(k, r["employee_name"])
+            drops.setdefault(k, {}).setdefault(s_, set()).add(d)
+            scheduled.setdefault(k, {}).setdefault(s_, set()).add(d)        # a dropped shift was scheduled
+            if (r["kind"] or "drop") == "drop":
+                offers.setdefault(s_, []).append((d, k))                   # an open shift, offered to the others
         if r["replacement_name"] and r["status"] == "covered":
-            t = tally.setdefault(r["replacement_name"], {"avoid": {}, "prefer": {}, "drops": 0, "claims": 0})
-            t["prefer"][slot] = t["prefer"].get(slot, 0) + 1
-            t["claims"] += 1
+            k = key(r["replacement_name"])
+            spell.setdefault(k, r["replacement_name"])
+            claims.setdefault(k, {}).setdefault(s_, set()).add(d)
     out = {}
-    for n, t in tally.items():
-        avoids = sorted(s for s, c in t["avoid"].items() if c >= 2)
-        prefers = sorted(s for s, c in t["prefer"].items() if c >= 2)
-        if avoids or prefers:
-            out[n] = {"avoids": avoids, "prefers": prefers, "drops": t["drops"], "claims": t["claims"]}
+    for k in set(drops) | set(claims):
+        evidence, avoids, prefers = {}, [], []
+        for s_, ds in (drops.get(k) or {}).items():
+            exp = scheduled.get(k, {}).get(s_) or set()
+            hw, ow = sum(wt(d) for d in ds), sum(wt(d) for d in exp)
+            conf = learning_stats.wilson_lower(hw, ow)
+            evidence[s_] = {"dropped": len(ds), "scheduled": len(exp), "drop_rate": round(hw / ow, 3) if ow else None,
+                            "drop_confidence": round(conf, 3)}
+            if len(ds) >= BEHAVIOUR_MIN_EVENTS and conf >= AVOID_MIN_CONFIDENCE:
+                avoids.append(s_)
+        mine = claims.get(k) or {}
+        offered = {s_: [d for d, who in offers.get(s_, []) if who != k] for s_ in set(offers) | set(mine)}
+        rates = {}
+        for s_, ds in offered.items():
+            got = mine.get(s_) or set()
+            ow = sum(wt(d) for d in set(ds) | got)
+            rates[s_] = (sum(wt(d) for d in got), ow, len(set(ds) | got), len(got))
+        for s_, (hw, ow, n_off, n_got) in rates.items():
+            if not n_got:
+                continue
+            conf = learning_stats.wilson_lower(hw, ow)
+            others = [(h_, o_, n_) for t, (h_, o_, n_, _g) in rates.items() if t != s_]
+            other_offers = sum(n_ for _h, _o, n_ in others)
+            other_rate = (sum(h_ for h_, _o, _n in others) / sum(o_ for _h, o_, _n in others)) \
+                if others and sum(o_ for _h, o_, _n in others) > 0 else None
+            evidence.setdefault(s_, {}).update(claimed=n_got, offered=n_off, claim_rate=round(hw / ow, 3) if ow else None,
+                                               claim_confidence=round(conf, 3), other_claim_rate=(
+                                                   round(other_rate, 3) if other_rate is not None else None))
+            if n_got >= BEHAVIOUR_MIN_EVENTS and conf >= PREFER_MIN_CONFIDENCE and \
+                    other_offers >= PREFER_MIN_OTHER_OFFERS and other_rate is not None and conf > other_rate:
+                prefers.append(s_)
+        n_drops = sum(len(v) for v in (drops.get(k) or {}).values())
+        n_claims = sum(len(v) for v in mine.values())
+        unexplained = n_claims - sum(len(mine.get(s_) or ()) for s_ in prefers)
+        wants = unexplained >= BEHAVIOUR_MIN_EVENTS
+        if avoids or prefers or wants:
+            out[spell.get(k) or k] = {"avoids": sorted(avoids), "prefers": sorted(prefers), "drops": n_drops,
+                                      "claims": n_claims, "wants_hours": wants, "evidence": evidence}
     return out
 
 
@@ -1308,81 +1396,233 @@ def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
         conn.close()
 
 
+# ── what a shift DID, on readings that never reward a lean shift ──────────
+#
+# Schedule audit 10/10/26 LEARNING-12, LEARNING-24: the team learner read a
+# shift as "ran well" when its sales per labor hour beat the weekday's median
+# (a shift with fewer hours has a higher one — under-staffing scored as
+# chemistry) and when the engine's own score of the week as it ran beat its
+# median (the engine grading itself); shifts with fewer readings faced fewer
+# conditions. A shift is now read on outcomes a short-staffed shift does not
+# win: its sales against the forecast (the nightly report's own forecast for
+# the day where there is one, else the weekday and daypart's median — a
+# residual, so a busy night is not "better"), its comps as a share of sales
+# and its table turn against that weekday and daypart's median (the ticket
+# archive), a coverage or no-show issue on a night the check was watching,
+# and a review put on that meal. And every shift compared is read on ONE
+# set of readings: those at least READING_MIN_SHARE of the shifts have — a
+# shift missing any of them is not read at all.
+
+def _weekday(d) -> str:
+    try:
+        return datetime.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A")
+    except (TypeError, ValueError):
+        return ""
+
+
+READING_KEYS = ("sales_resid", "comps_rate", "turn_minutes", "issues", "review")
+READING_MIN_SHARE = 0.6
+READING_GOOD_REVIEW = 4.0
+READING_MIN_MEDIAN = 3          # same weekday and daypart readings before a median is a baseline
+
+
+def slot_readings(restaurant_id, since, until, db_path=DB_PATH) -> dict:
+    """{(date, daypart): {sales_resid, comps_rate, turn_minutes, issues,
+    review}} for the recorded shifts of published weeks in [since, until]
+    (schedule_outcomes, the newest publish of each week). A reading the
+    shift has no measurement of is None — never 0: `issues` is read only on
+    a watched night (or one with an issue); `review` only a review put on
+    that meal; comps and turns only on a day the ticket archive holds."""
+    s, e = str(since)[:10], str(until)[:10]
+    conn = get_conn(db_path)
+    try:
+        outs = conn.execute(
+            "SELECT o.date, o.daypart, CASE WHEN o.split_basis='measured' THEN o.sales END AS sales, o.issues, "
+            "o.review_rating_attributed AS rating, o.review_attribution AS ra, o.history_id FROM schedule_outcomes o "
+            "WHERE o.restaurant_id=? AND o.date BETWEEN ? AND ? ORDER BY o.history_id", (restaurant_id, s, e)).fetchall()
+        try:
+            fc = {str(r["business_date"])[:10]: (r["f"], r["a"]) for r in conn.execute(
+                "SELECT business_date, MAX(CASE WHEN metric='sales.forecast_net' THEN value END) AS f, "
+                "MAX(CASE WHEN metric='sales.net' THEN value END) AS a FROM dsr_metrics WHERE restaurant_id=? AND "
+                "business_date BETWEEN ? AND ? AND metric IN ('sales.forecast_net', 'sales.net') GROUP BY business_date",
+                (restaurant_id, s, e)).fetchall()}
+        except Exception:
+            fc = {}
+        try:
+            tickets = conn.execute(
+                "SELECT ticket_id, business_date, opened_at, closed_at, room_name, is_bar, net_sales FROM pos_tickets "
+                "WHERE restaurant_id=? AND business_date BETWEEN ? AND ? AND cancelled=0", (restaurant_id, s, e)).fetchall()
+            comps = {r[0]: float(r[1] or 0) for r in conn.execute(
+                "SELECT ticket_id, SUM(COALESCE(loss_amount, 0)) FROM pos_ticket_lines WHERE restaurant_id=? AND "
+                "business_date BETWEEN ? AND ? AND kind='comp' GROUP BY ticket_id", (restaurant_id, s, e)).fetchall()}
+        except Exception:
+            tickets, comps = [], {}
+    except Exception as ex:
+        print(f"[schedule_intel] slot readings unavailable for {restaurant_id}: {ex}")
+        return {}
+    finally:
+        conn.close()
+    slots = {}
+    for o in outs:
+        slots[(str(o["date"])[:10], o["daypart"])] = o                  # the newest publish of the week
+    if not slots:
+        return {}
+    dates = sorted(d for d, _p in slots)
+    watched = watched_dates(restaurant_id, dates[0], dates[-1], db_path)
+    # Sales against the forecast: the day's own forecast where the nightly
+    # report has one (a day-level residual, both meals), else the weekday
+    # and daypart's median of the measured sales.
+    med = {}
+    for (d, part), o in slots.items():
+        if o["sales"]:
+            med.setdefault((_weekday(d), part), []).append(float(o["sales"]))
+    med = {k: sorted(v)[len(v) // 2] for k, v in med.items() if len(v) >= READING_MIN_MEDIAN}
+    # Comps and turns per date and meal from the ticket archive.
+    tk = {}
+    for t in tickets:
+        try:
+            hour = int(str(t["opened_at"] or "")[11:13])
+        except (TypeError, ValueError):
+            continue
+        part = "night" if hour >= MORNING_SPLIT_HOUR else "morning"
+        e_ = tk.setdefault((str(t["business_date"])[:10], part), {"net": 0.0, "comps": 0.0, "turns": []})
+        e_["net"] += float(t["net_sales"] or 0)
+        e_["comps"] += comps.get(t["ticket_id"], 0.0)
+        try:
+            import service_performance as _sp
+            m = _sp._turn(dict(t))
+        except Exception:
+            m = None
+        if m is not None:
+            e_["turns"].append(m)
+    out = {}
+    for (d, part), o in slots.items():
+        r = {k: None for k in READING_KEYS}
+        f, a = fc.get(d, (None, None))
+        if f and a and float(f) > 0:
+            r["sales_resid"] = round(float(a) / float(f) - 1.0, 4)
+        elif o["sales"] and med.get((_weekday(d), part)):
+            r["sales_resid"] = round(float(o["sales"]) / med[(_weekday(d), part)] - 1.0, 4)
+        t_ = tk.get((d, part))
+        if t_ and t_["net"] > 0:
+            r["comps_rate"] = round(t_["comps"] / t_["net"], 4)
+            if t_["turns"]:
+                r["turn_minutes"] = sorted(t_["turns"])[len(t_["turns"]) // 2]
+        if (o["issues"] or 0) or d in watched:
+            r["issues"] = int(o["issues"] or 0)
+        if o["rating"] is not None and o["ra"] == "daypart":
+            r["review"] = float(o["rating"])
+        out[(d, part)] = r
+    return out
+
+
+def ran_well(readings: dict) -> dict:
+    """{(date, daypart): True | False} — each shift read on ONE set of
+    readings (READING_MIN_SHARE of the shifts have each; a shift missing any
+    is not read): sales at or above the forecast, comps and turn at or under
+    the weekday and daypart's median, no issue on a watched night, the meal's
+    reviews at READING_GOOD_REVIEW or better — all of them. Pure."""
+    n = len(readings or {})
+    if not n:
+        return {}
+    chosen = [k for k in READING_KEYS
+              if sum(1 for r in readings.values() if r.get(k) is not None) / float(n) >= READING_MIN_SHARE]
+    if not chosen:
+        return {}
+    meds = {}
+    for k in ("comps_rate", "turn_minutes"):
+        by = {}
+        for (d, part), r in readings.items():
+            if r.get(k) is not None:
+                by.setdefault((_weekday(d), part), []).append(float(r[k]))
+        meds[k] = {kk: sorted(v)[len(v) // 2] for kk, v in by.items() if len(v) >= READING_MIN_MEDIAN}
+    out = {}
+    for (d, part), r in readings.items():
+        if any(r.get(k) is None for k in chosen):
+            continue
+        good = []
+        for k in chosen:
+            if k == "sales_resid":
+                good.append(r[k] >= 0)
+            elif k in ("comps_rate", "turn_minutes"):
+                m = meds[k].get((_weekday(d), part))
+                if m is None:
+                    break
+                good.append(float(r[k]) <= m)
+            elif k == "issues":
+                good.append(not r[k])
+            elif k == "review":
+                good.append(r[k] >= READING_GOOD_REVIEW)
+        else:
+            out[(d, part)] = all(good)
+    return out
+
+
+def reading_set(readings: dict) -> list:
+    """The readings ran_well judges these shifts on (for the wording)."""
+    n = len(readings or {})
+    return [k for k in READING_KEYS
+            if n and sum(1 for r in readings.values() if r.get(k) is not None) / float(n) >= READING_MIN_SHARE]
+
+
+READING_WORDS = {"sales_resid": "sales against the forecast", "comps_rate": "comps", "turn_minutes": "table turns",
+                 "issues": "no coverage or no-show issue on a watched night", "review": "the meal's reviews"}
+
+
 # ── chemistry suggestions ─────────────────────────────────────────────────
 
 def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
-    """Pairs who shared at least SUGGEST_MIN_SHARED recorded dayparts of
-    which SUGGEST_MIN_CLEAN ran without an issue, and are not already a
-    pair. Returned as suggestions with their evidence; nothing is written."""
-    from schedule_versions import rows_from_csv
+    """The teams the owner is offered: schedule_memory's Holm-tested
+    "prefer" pairs (schedule audit 10/10/26 LEARNING-13) — shared shifts
+    that ran well clearly more often than the restaurant's own shifts do
+    (against the rate without them together and their apart rate), on the
+    outcome readings (slot_readings / ran_well), surviving Holm's correction
+    over every pair tested — not already the owner's pair and not retired.
+    This used to be a second learner of its own: any pair with six shared
+    watched dayparts 80% issue-free, with no baseline and no correction, so
+    in a restaurant whose nights are 90% clean every pair that worked
+    together often was "suggested". Same shape as before ({a, b, kind,
+    shared, clean_rate — the ran-well rate —, evidence, rec_key}) plus the
+    `baseline` it beat and its `p_value`. Nothing is written."""
+    import schedule_memory as _sm
     conn = get_conn(db_path)
     try:
-        outs = conn.execute("SELECT history_id, date, daypart, issues FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
-        csvs = {r["id"]: r["schedule_csv"] for r in conn.execute(
-            "SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id)", (restaurant_id,)).fetchall()}
-        existing = {frozenset((r["employee_a"].lower(), r["employee_b"].lower())) for r in conn.execute(
+        existing = {frozenset((r["employee_a"].strip().lower(), r["employee_b"].strip().lower())) for r in conn.execute(
             "SELECT employee_a, employee_b FROM staff_pairs WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+        mems = conn.execute("SELECT person, value_json, status, confidence FROM schedule_memory WHERE restaurant_id=? "
+                            "AND kind='pair' AND status IN ('candidate', 'active')", (restaurant_id,)).fetchall()
     except Exception:
         return []
     finally:
         conn.close()
-    if not outs:
-        return []
-    # Only nights somebody was watching can count as "ran without an issue"
-    # (watched_dates, A-19). None watched, no suggestion.
-    dates = sorted(str(o["date"]) for o in outs if o["date"])
-    seen = watched_dates(restaurant_id, dates[0], dates[-1], db_path) if dates else set()
-    outs = [o for o in outs if str(o["date"]) in seen]
-    if not outs:
-        return []
-    people_by_slot = {}
-    for hid, csv_text in csvs.items():
-        for r in rows_from_csv(csv_text):
-            people_by_slot.setdefault((hid, r["date"], _daypart(r)), set()).add(r["employee"])
-    # Who actually worked each shift where the punches say (schedule audit
-    # 10/3/26 L-12): a pair the schedule put together but one of whom never
-    # came did not share that night. The salaried don't clock in — their
-    # planned shifts stand.
-    try:
-        import shift_facts as _sf
-        from models import get_restaurant as _gr, salaried_staff, salaried_name_key
-        sal = {salaried_name_key(x["name"]) for x in salaried_staff(_gr(restaurant_id))}
-        worked = {}
-        for p in _sf.rows(restaurant_id, since=dates[0], until=dates[-1],
-                          db_path=None if db_path in (None, DB_PATH) else db_path):
-            if p.get("actual_hours") in (None, ""):
-                continue
-            worked.setdefault((str(p["date"])[:10], _daypart(p)), set()).add(p["employee"])
-        punched = {d for d, _p in worked}
-        for key in list(people_by_slot):
-            hid, d, part = key
-            if d in punched:
-                people_by_slot[key] = worked.get((d, part), set()) | {
-                    n for n in people_by_slot[key] if salaried_name_key(n) in sal}
-    except Exception as _wx:
-        print(f"[schedule_intel] chemistry read the plan only for {restaurant_id}: {_wx}")
-    shared, clean = {}, {}
-    for o in outs:
-        people = sorted(people_by_slot.get((o["history_id"], o["date"], o["daypart"]), set()))
-        ok = int(o["issues"] or 0) == 0
-        for i in range(len(people)):
-            for j in range(i + 1, len(people)):
-                k = frozenset((people[i].lower(), people[j].lower()))
-                shared[k] = shared.get(k, 0) + 1
-                clean[k] = clean.get(k, 0) + (1 if ok else 0)
     out = []
-    for k, n in shared.items():
-        if n < SUGGEST_MIN_SHARED or k in existing:
+    for m in mems:
+        v = _sm._loads(m["value_json"]) or {}
+        others = [n for n in (v.get("with") or []) if n]
+        if v.get("kind") != "prefer" or int(v.get("size") or (1 + len(others))) != 2 or len(others) != 1:
             continue
-        rate = clean[k] / n
-        if rate >= SUGGEST_MIN_CLEAN:
-            a, b = sorted(k)
-            out.append({"a": a.title(), "b": b.title(), "kind": "prefer", "shared": n, "clean_rate": round(rate, 2),
-                        "evidence": f"{clean[k]} of {n} shared dayparts ran without a coverage or no-show issue"})
-    out.sort(key=lambda x: (-x["shared"], -x["clean_rate"]))
+        a, b = sorted([str(m["person"] or "").strip(), str(others[0]).strip()], key=str.lower)
+        if not a or not b or frozenset((a.lower(), b.lower())) in existing:
+            continue
+        shared, good = int(v.get("shared") or 0), int(v.get("ran_well") or 0)
+        out.append({"a": a, "b": b, "kind": "prefer", "shared": shared,
+                    "clean_rate": round(good / float(shared), 2) if shared else None,
+                    "baseline": v.get("baseline"), "held_to": v.get("held_to"), "p_value": v.get("p_value"),
+                    "status": m["status"],
+                    "evidence": (f"{good} of {shared} shared shifts ran well, against {_pct_words(v.get('held_to'))} "
+                                 f"of this restaurant's shifts without them together — a difference that held up "
+                                 f"against every pair tested")})
+    out.sort(key=lambda x: (x.get("p_value") if x.get("p_value") is not None else 1.0, -x["shared"]))
     for x in out:
         x["rec_key"] = pair_rec_key(x["a"], x["b"])
     return out[:8]
+
+
+def _pct_words(x) -> str:
+    try:
+        return f"{int(round(float(x) * 100))}%"
+    except (TypeError, ValueError):
+        return "the rate"
 
 
 def pair_rec_key(a, b) -> str:
@@ -1724,21 +1964,48 @@ def _rec_target(text):
     return None
 
 
+def _outcome_verdict(readings, verdicts, accepted_on, day, part, today) -> dict:
+    """A recommendation's verdict on what the weeks DID (schedule audit
+    10/10/26 LEARNING-24): the share of the shifts it was about — that
+    weekday and daypart, or every shift for a week-level one — that did NOT
+    run well (ran_well's outcome readings), in the REC_BASELINE_WEEKS before
+    it was accepted against the shifts since, by night_rate_verdict's band
+    and night floors. "unknown" until enough shifts have run."""
+    since = (date.fromisoformat(accepted_on) - timedelta(weeks=REC_BASELINE_WEEKS)).isoformat()
+    before, after = [], []
+    for (d, p), good in verdicts.items():
+        if day and (_weekday(d) != day or (part and p != part)):
+            continue
+        if since <= d < accepted_on:
+            before.append(good)
+        elif accepted_on <= d < today.isoformat():
+            after.append(good)
+    res = night_rate_verdict(sum(1 for g in before if not g), len(before), sum(1 for g in after if not g), len(after))
+    res["readings"] = reading_set(readings)
+    return res
+
+
 def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -> int:
     """Every recommendation the manager carried out — by the button or by
-    the edit itself (schedule_learning.addressed_recommendations) — read
-    against the week it was for, AS IT RAN (schedule audit 10/3/26 L-34:
-    only night coverage on watched nights was ever measured). The week is
-    the published one whose stored quality carried the sentence before it
-    was accepted; the reading is the dimension the sentence names, on the
-    shift it names (or the week, for fatigue), in the week as it ran
-    (sq_as_run) against the draft it was made on: AS_RUN_BAND points better
-    is improved, worse is worsened, else no clear change — and for a rule
-    breach, whether the shift ran without one. The punched heads of a
-    coverage gap's slot ride along (actual coverage). Recorded once per
-    recommendation and week as its rec_ledger outcome (a measured tracker's
-    verdict, where there is one, still stands over it). Returns outcomes
-    recorded."""
+    the edit itself (schedule_learning.addressed_recommendations) — judged
+    on what the weeks DID (schedule audit 10/10/26 LEARNING-24: it was
+    judged by the engine's own as-run score — "improved" meant the punches
+    matched the scorer's model better, the engine grading itself, and that
+    fed rec_ledger, the measured-success curve and trust). The verdict is
+    _outcome_verdict: the shifts it was about — that weekday and daypart, or
+    every shift for one about the week — that did not run well on the
+    outcome readings (sales against the forecast, comps, table turns,
+    issues on watched nights, the meal's reviews; ran_well), before it was
+    accepted against since, past night_rate_verdict's band — recorded once
+    enough shifts have run, until then read again next week. The as-run
+    score of the dimension it named stays beside it only as a PLAN-ADHERENCE
+    check (`plan_adherence`: did the week run the way the draft said), never
+    the verdict. A "rate the unscored staff" recommendation is read on what
+    it asked for — the share of shifts judged without ratings — not on an
+    outcome. The punched heads of a coverage gap's slot ride along (actual
+    coverage). Recorded once per recommendation as its rec_ledger outcome (a
+    measured tracker's verdict, where there is one, still stands over it).
+    Returns outcomes recorded."""
     import rec_ledger as _rl
     import schedule_memory as _sm
     from shift_quality import recommendation_kind
@@ -1764,6 +2031,11 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
     gaps = {}
     for o in _sm.observations(restaurant_id, kinds=("coverage_gap_actual", "actual_hours"), db_path=db):
         gaps.setdefault((o.get("date"), o.get("daypart")), []).append(o)
+    # What every shift did, once, over the whole window the verdicts read.
+    first = min(str(a["at"])[:10] for a in acc)
+    win_from = (date.fromisoformat(first) - timedelta(weeks=REC_BASELINE_WEEKS)).isoformat()
+    readings = slot_readings(restaurant_id, win_from, (today - timedelta(days=1)).isoformat(), db_path)
+    verdicts = ran_well(readings)
     n = 0
     for a in acc:
         text = str(a["key"] or "")
@@ -1771,6 +2043,7 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
         if not target:
             continue
         dim, day, part = target
+        accepted_on = str(a["at"])[:10]
         made = None
         for v in vers:
             if str(v["created_at"]) > str(a["at"]):
@@ -1781,51 +2054,65 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
                 continue
             if text in [str(r) for r in (q.get("recommendations") or [])]:
                 made = (v, q)
-        if made is None:
-            continue
-        v, q = made
-        hid = v["history_id"]
+        hid = made[0]["history_id"] if made else None
+        q = made[1] if made else {}
+        date_s = day if re.match(r"^\d{4}-\d{2}-\d{2}$", str(day or "")) else None
+        weekday = _weekday(date_s) if date_s else day
+        if date_s and part is None:
+            part = next((s.get("daypart") for s in q.get("shifts") or [] if s.get("date") == date_s), None)
+        # The plan-adherence check: the dimension the sentence named, as the
+        # week ran against the draft it was made on — beside the verdict,
+        # never the verdict.
+        adherence = None
+        if made and dim != "ratings":
+            if day is None and part is None:
+                before = {d.get("key"): d.get("score") for d in q.get("week_dimensions") or [] if isinstance(d, dict)}
+                after = (as_run.get((hid, "week", None)) or {}).get("week_dims") or {}
+            else:
+                ds = date_s or next((s.get("date") for s in q.get("shifts") or []
+                                     if s.get("day") == day and s.get("daypart") == part), None)
+                shift = next((s for s in q.get("shifts") or [] if s.get("date") == ds
+                              and (part is None or s.get("daypart") == part)), None)
+                before, after = {}, {}
+                if shift and ds:
+                    before = {d["key"]: d.get("score") for d in shift.get("dimensions") or [] if d.get("key")}
+                    before["hard_rules"] = len(shift.get("hard_breaches") or [])
+                    reading = as_run.get((hid, ds, part or shift.get("daypart"))) or {}
+                    after = dict(reading.get("dims") or {}, hard_rules=reading.get("hard_breaches")) if reading else {}
+                    date_s = date_s or ds
+            if dim in before and before.get(dim) is not None and after.get(dim) is not None:
+                b, x = float(before[dim]), float(after[dim])
+                if dim == "hard_rules":
+                    held = "kept" if x == 0 else ("worse" if x > b else "same")
+                else:
+                    held = "kept" if x - b >= AS_RUN_BAND else "lost" if b - x >= AS_RUN_BAND else "same"
+                adherence = {"dimension": dim, "planned": round(b, 3), "as_run": round(x, 3), "reading": held,
+                             "band": AS_RUN_BAND}
         if dim == "ratings":
+            # What it asked for: fewer shifts judged without ratings, as the
+            # week ran against the draft it was made on.
+            if not made:
+                continue
             planned = [s_ for s_ in q.get("shifts") or [] if s_.get("scored")]
             ran = [v for (h_, d_, _p), v in as_run.items() if h_ == hid and d_ != "week"]
             if not planned or not ran:
                 continue
-            before = {"ratings": sum(1 for s_ in planned if _unrated(s_)) / float(len(planned))}
-            after = {"ratings": sum(1 for v in ran if v.get("unrated")) / float(len(ran))}
-            date_s = None
-        elif day is None and part is None:
-            before = {d.get("key"): d.get("score") for d in q.get("week_dimensions") or [] if isinstance(d, dict)}
-            after = (as_run.get((hid, "week", None)) or {}).get("week_dims") or {}
-            date_s = None
-        else:
-            date_s = day if re.match(r"^\d{4}-\d{2}-\d{2}$", str(day)) else next(
-                (s.get("date") for s in q.get("shifts") or [] if s.get("day") == day and s.get("daypart") == part), None)
-            shift = next((s for s in q.get("shifts") or [] if s.get("date") == date_s
-                          and (part is None or s.get("daypart") == part)), None)
-            if not shift or not date_s:
-                continue
-            part = part or shift.get("daypart")
-            before = {d["key"]: d.get("score") for d in shift.get("dimensions") or [] if d.get("key")}
-            before["hard_rules"] = len(shift.get("hard_breaches") or [])
-            reading = as_run.get((hid, date_s, part))
-            if not reading:
-                continue
-            after = dict(reading.get("dims") or {}, hard_rules=reading.get("hard_breaches"))
-        if dim not in before or after.get(dim) is None or before.get(dim) is None:
-            continue
-        b, x = float(before[dim]), float(after[dim])
-        if dim == "hard_rules":
-            verdict = "improved" if b > 0 and x == 0 else ("worsened" if x > b else "no_clear_change")
-        elif dim == "ratings":
-            # A falling share of shifts judged without ratings is better.
+            b = sum(1 for s_ in planned if _unrated(s_)) / float(len(planned))
+            x = sum(1 for v in ran if v.get("unrated")) / float(len(ran))
             verdict = ("improved" if b - x >= AS_RUN_RATED_BAND else "worsened" if x - b >= AS_RUN_RATED_BAND
                        else "no_clear_change")
+            meta = {"verdict": verdict, "measure": "ratings_entered", "dimension": dim, "before": round(b, 3),
+                    "as_run": round(x, 3), "band": AS_RUN_RATED_BAND, "history_id": hid}
+            ref = f"as_run:{hid}:week:"
         else:
-            verdict = ("improved" if x - b >= AS_RUN_BAND else "worsened" if b - x >= AS_RUN_BAND
-                       else "no_clear_change")
-        meta = {"verdict": verdict, "measure": "as_run", "dimension": dim, "before": round(b, 3), "as_run": round(x, 3),
-                "band": AS_RUN_RATED_BAND if dim == "ratings" else AS_RUN_BAND, "history_id": hid, "date": date_s,
-                "daypart": part}
+            res = _outcome_verdict(readings, verdicts, accepted_on, weekday, part, today)
+            if res["verdict"] == "unknown":
+                continue                      # not enough shifts have run since: read again next week
+            meta = {"verdict": res["verdict"], "measure": "outcomes", "dimension": dim, "readings": res["readings"],
+                    "before_rate": res["before_rate"], "after_rate": res["after_rate"], "band": res["band"],
+                    "before_shifts": res["before_n"], "after_shifts": res["after_n"], "day": weekday,
+                    "daypart": part, "history_id": hid, "date": date_s, "plan_adherence": adherence}
+            ref = f"outcomes:{accepted_on}:{dim}:{weekday or 'week'}:{part or ''}"
         if dim in ("coverage", "coverage_curve") and date_s:
             obs = gaps.get((date_s, part)) or []
             heads = next((o.get("value") for o in obs if o.get("kind") == "actual_hours"), None)
@@ -1834,7 +2121,7 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
             meta["actual_coverage"] = {"planned_people": (heads or {}).get("planned_people"),
                                        "worked_people": (heads or {}).get("actual_people"), "short": short}
         if _rl.record(restaurant_id, schedule_rec_key(recommendation_kind(text), text), "outcome", meta=meta,
-                      source_ref=f"as_run:{hid}:{date_s or 'week'}:{part or ''}", db_path=db_path):
+                      source_ref=ref, db_path=db_path):
             n += 1
     return n
 
@@ -2277,7 +2564,20 @@ def init_schedule_intel(db_path: str = DB_PATH):
                        ("last_hand", "TEXT"), ("confidence", "REAL"), ("retest_since", "TEXT"),
                        ("last_retest_end", "TEXT"), ("retests", "INTEGER NOT NULL DEFAULT 0"),
                        ("retired_reason", "TEXT"), ("source", "TEXT"), ("authority", "TEXT"),
-                       ("owner_kept_at", "TEXT"), ("answer_authority", "TEXT")):
+                       ("owner_kept_at", "TEXT"), ("answer_authority", "TEXT"),
+                       # Habits that stick (schedule audit 10/10/26 LEARNING-1,
+                       # RM-5): last_kept_week — the newest published week a
+                       # person of the restaurant sent that kept it (ISO week
+                       # start); last_kept — the newest date such a week was
+                       # WORKED as published (the punches did not undo it), what
+                       # the decay now also runs from, so a habit the draft
+                       # carries every week never fades while it works;
+                       # enforced_since — when it first bound the passes (its
+                       # confidence cleared the line, or the owner's word): from
+                       # then on it binds until its lifecycle ends it (a failed
+                       # re-test, two reversals, dormant, the owner's let-go),
+                       # never because a confidence decayed.
+                       ("last_kept_week", "TEXT"), ("last_kept", "TEXT"), ("enforced_since", "TEXT")):
         if _col not in _sp2:
             try:
                 conn.execute(f"ALTER TABLE schedule_standing_patterns ADD COLUMN {_col} {_typ}")

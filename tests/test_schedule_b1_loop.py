@@ -801,14 +801,15 @@ def test_a_lone_restaurant_runs_the_solver_every_week_recorded_as_pinned(db):
     coin = [w for w in weeks if sx.hashed_arm(EXP, rid, w) == "model"]
     assert coin, "some of these weeks hash to the model's own assignment"
     for w in coin:
-        [a] = sx.arms_for(rid, w, db_path=db)
+        # learning_v1 (G1, LEARNING-25) runs beside assign_v1 now: pick this one's arm.
+        [a] = [x for x in sx.arms_for(rid, w, db_path=db) if x["experiment"] == EXP["key"]]
         assert a["arm"] == "solver" and a["pinned"] and a["pin_source"] == "underpowered"
         assert sx.flag([a], "solver") is True
     hid = models.save_schedule_history(rid, coin[0], coin[0], 0, 0, 30, HEADER, [], db_path=db)
     sx.record(rid, hid, sx.arms_for(rid, coin[0], db_path=db), 70, db_path=db)
     conn = models.get_conn(db)
-    row = conn.execute("SELECT arm, pinned, pin_source FROM schedule_experiment_weeks WHERE history_id=?",
-                       (hid,)).fetchone()
+    row = conn.execute("SELECT arm, pinned, pin_source FROM schedule_experiment_weeks "
+                       "WHERE history_id=? AND experiment=?", (hid, EXP["key"])).fetchone()
     conn.close()
     assert (row["arm"], row["pinned"], row["pin_source"]) == ("solver", 1, "underpowered")
     exp = sx.readout(db_path=db)["experiments"][0]

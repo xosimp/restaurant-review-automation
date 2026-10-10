@@ -166,6 +166,16 @@ JOBS = {
         cadence="Mon 4am CT", sla_minutes=_W, sends=False, runnable=True,
         label="Schedule outcomes", description="Record what each published week actually did, by daypart",
         target=("strategy_jobs", "run_schedule_outcomes"), max_minutes=30, retry=True),
+    "schedule_scorecard": dict(
+        # Schedule audit 10/10/26 RM-4, LEARNING-7: one row per published
+        # week, frozen 14 days after it ended, after schedule_outcomes and
+        # the memory have read the week.
+        cadence="Mon 7am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="Schedule Learning Scorecard",
+        description="Score each ended published week: the draft's rework rate, requirement error, labor against "
+                    "the hourly target, overtime, unmanaged minutes, shortfall, uncovered no-shows, forecast "
+                    "error, row origins and the learning ablation (bounded, resumable)",
+        target=("schedule_scorecard", "run_scorecard"), max_minutes=20, retry=True),
     "schedule_memory": dict(
         # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
         # sources, after people_nightly.

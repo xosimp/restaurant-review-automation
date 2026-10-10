@@ -4444,6 +4444,16 @@ def init_db(db_path: str = DB_PATH):
     # The week's generation arm and per-restaurant pins (schedule_experiments, audit #50).
     from schedule_experiments import init_schedule_experiments
     init_schedule_experiments(db_path)
+    # The publish warnings a send went out past, by key (schedule_overrides,
+    # schedule audit 10/10/26 TRUST-28), and the Schedule Learning Scorecard
+    # (schedule_scorecard, RM-4).
+    from schedule_overrides import init_schedule_overrides
+    init_schedule_overrides(db_path)
+    from schedule_scorecard import init_schedule_scorecard
+    init_schedule_scorecard(db_path)
+    # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
+    from schedule_calibration import init_schedule_calibration
+    init_schedule_calibration(db_path)
     # Every schedule call's full input and answer, for replaying real weeks
     # against another model, effort or prompt (schedule_output, schedule
     # audit 10/3/26 PR-31).
