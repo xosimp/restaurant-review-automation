@@ -570,7 +570,7 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
     where = " AND ".join([_due_sql()] + filters)
     base_url = config.base_url()
     ctx = {}
-    seen = set()
+    last_id = 0            # this pass's cursor: each notice is looked at once
     while True:
         if _time.monotonic() - started > budget_seconds:
             out["hit_bound"] = True
@@ -581,18 +581,18 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
         now = _dt.utcnow()
         conn = get_conn(db_path)
         try:
-            rows = conn.execute(f"SELECT n.* FROM schedule_notices n WHERE {where} ORDER BY n.id LIMIT 25",
-                                [_utc(now), _utc(now - _td(minutes=NOTICE_LEASE_MINUTES))] + fargs).fetchall()
+            rows = conn.execute(f"SELECT n.* FROM schedule_notices n WHERE {where} AND n.id>? ORDER BY n.id LIMIT 25",
+                                [_utc(now), _utc(now - _td(minutes=NOTICE_LEASE_MINUTES))] + fargs + [last_id]
+                                ).fetchall()
         finally:
             conn.close()
-        rows = [r for r in rows if r["id"] not in seen]
         if not rows:
             break
         for n in rows:
             if _time.monotonic() - started > budget_seconds or (limit is not None and out["attempted"] >= limit):
                 out["hit_bound"] = True
                 break
-            seen.add(n["id"])
+            last_id = n["id"]
             now = _dt.utcnow()
             conn = get_conn(db_path)
             try:
