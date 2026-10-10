@@ -403,7 +403,9 @@ def test_the_preview_has_one_send_button_that_saves_first_and_no_pos_id_in_the_d
     assert "Download CSV" not in head, "CSV is demoted out of the send step (#19)"
     assert "pos_id" not in _fn("openPublishSchedule"), "POS id moved to the person sheet (#16)"
     send = _fn("saveAndSendSchedule")
-    assert "rescoreSchedule(btn, function(){ publishScheduleNow(false); })" in send
+    # Saved, checked again, then sent only when nothing new needs reading
+    # (schedule audit 10/10/26 TRUST-2).
+    assert "rescoreSchedule(btn, function(){" in send and "if (prGate().ready) publishScheduleNow();" in send
     assert "Save your edits first" not in _fn("publishScheduleNow"), "a dirty week is saved, not refused"
     assert "after()" in _fn("rescoreSchedule")
 

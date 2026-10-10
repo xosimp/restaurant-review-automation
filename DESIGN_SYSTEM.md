@@ -1782,6 +1782,34 @@ existed:
 | Points | `.sfw1-pts` | `recommendation_items[].points` | "up to +6 points" in green, Space Grotesk, after the suggestion; the list sorts most valuable first |
 | Memory row | `.sfw1-mem .r` | `GET labor/schedule-memory`, `GET labor/ratings/suggested` | The learned-pattern row grown: sentence, `.mem-pill` status, a caption ("72% sure · 2 of 3 · last confirmed by hand 9/28/26"), actions at the end (Keep / Let it go / Make it a rule; Confirm N + a 1–5 `.chip-tog`) |
 
+### The pre-publish review (web, 10/10/26 — RM-6)
+
+The Studio's Publish step and the Summary's verdict, built on ONE payload
+(`GET/POST labor/publish-review`, `prepublish.review`; `<style id="cav-pr-css">`
+and `<script id="cav-pr">` in `dashboard.html`). The phone builds the same
+screen from the same payload. Every line carries its action; counts are
+decisions, never raw breaches; ordered by severity, never by date.
+
+| Piece | Class | Reads | Look |
+|---|---|---|---|
+| Verdict | `.pr-verdict` (`.green` / `.amber` / `.red`) | `verdict` | The card with a 4px inset rail and a 12px dot in the tone; the kicker "Ready to send" / "Decisions first" / "Not ready" (orange), the sentence as a Clash 22px title (`h1` on the Summary, `h2` on Publish), the subline in ink3. Replaces "Schedule complete · The week is built ✓" — never a celebration over a broken week |
+| Section | `.pr-sec` + `.pr-k` | each question | The card (`--surface`, 18px radius, `--elev-card`), an orange kicker with the count in the number face, a one-line `.pr-sub` saying what the section is |
+| Item | `.pr-it` (`.bad` red rail = must fix, `.warn` amber rail = a decision that holds the send, `.done` once answered) | `must_fix[]`, `decide[]`, `fragile[]`, `why`, `changed` | The sentence, then `.pr-acts`: the first fix `cbtn-primary cbtn-sm`, the rest `cbtn-secondary cbtn-sm`; a standing answer says "· standing" on its button. An answered item reads `.pr-ok` (green) with Undo / Change |
+| Override | `.pr-form` | `must_fix[].override` | Behind a `cbtn-text` "Send anyway — I'll handle it": a reason (`textarea.ac-input`) — or for a manager gap a `select.ac-select` of who runs the floor (the people on then, the managers, you; "Someone else…" opens a name field) — and a `cbtn-danger` "Override this one". One item at a time; never a bulk acknowledgement |
+| Numbers | `.pr-kv` | `numbers` | Label left (with its basis under it in ink3: the likely range, the target, the forecast's track record), the figure right in the number face, red over the target, green under, plain with no target |
+| Folded | `details.pr-fyi` | `fyi` | "Worth a look, never holding the send · N" — the only folded part |
+| Send button | `#ps-send-btn` | `prGate()` | Never armed on load. "Checking the week…" / "Fix N things first" / "Answer N decisions first" (secondary, disabled) until each is done, then "Send to N staff", "(overriding K rules)" in `cbtn-danger` when it goes out past must-fix items |
+| Summary tiles | `.ss-tile` | `quality.grade`, `labor_view.grade` / `label`, `projected_cost.overtime_hours`, `counts` | Quality coloured against the restaurant's own last weeks (good green, weak amber, typical plain) with the cap's reason under it; Labor by the server's grade, its basis as the label ("All-in labor"); Overtime "—" when not priced, "No overtime" at 0; "To fix or decide" counts decisions and opens Publish |
+
+Also in this round: the Building steps tick only the stages the job reported
+(the pulse until the first); a moved shift's chip goes dashed (`.swg-chip.pending`)
+while the rules recheck and keeps its flag, and "Not checked" holds Send when the
+recheck fails; a pinned shift carries a small ember square (`.swg-chip.locked`)
+and the shift pane offers "Keep this shift" / "Pinned — unpin" and "What Cavnar AI
+weighed" (the runner-up named); Generate over pinned shifts asks in the
+`sfw1` sheet — Keep them (primary) / Start fresh. Dayparts read Lunch / Dinner
+on every surface (`SCHED_PART_WORD`).
+
 ### The compliance engine on the rules screen (web, 10/10/26 — RM-15)
 
 Labor → Rules, below Save rules (`#cmp-root`, `cmpLoad` / `cmpRender` in

@@ -724,3 +724,5 @@ its own band and `item_verdict`; a group median carries `verdicts` and a
 `verdict` that is "lifted" only when most of its posts lifted; a
 period-on-period change % needs ≥3 posts in each period (`change_note`
 says why otherwise).
+
+- **`prepublish.py` — the pre-publish review (schedule audit 10/10/26 RM-6, contract #6).** One payload, computed against the rows as they stand (or the rows on screen, posted), that the web Studio's Summary verdict and Publish screen and the phone's publish sheet render: the verdict, must-fix items each with its fix or an override of its own (a manager gap names who runs the floor), scoped decisions, the numbers with ranges and their track record, what changed, where the week is fragile, what Cavnar AI weighed and who was left off and why, how sure, and what Send does. Design stance: the gate runs once (`schedule_publish.publish_review`), every figure is a measured one or null, every line carries its action. `GET/POST labor/publish-review` (both prefixes).

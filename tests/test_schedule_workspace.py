@@ -85,15 +85,19 @@ def test_a_fresh_draft_lands_on_the_summary_and_a_reopened_one_on_the_week():
 
 def test_the_summary_states_its_six_figures_and_labels_savings_a_projection():
     f = _fn("ssRenderSummary")
-    for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'Warnings'", "'Estimated savings'"):
+    # Decisions, not raw breaches (schedule audit 10/10/26 TRUST-22): the
+    # fifth tile counts what must be fixed or decided, from the review.
+    for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'To fix or decide'", "'Estimated savings'"):
         assert k in f
     # The savings are the server's, on one basis with the draft's labor %
     # (schedule re-audit 10/4/26 SQ-4): the page's own "rec.pct > lp" put an
     # all-in recent % against the hourly-only draft, and the "savings" were
     # the salaries.
     assert "Projection · not yet earned" in f and "lv.savings" in f and "rec.pct > lp" not in f
-    for b in ("View the schedule", "Optimize again", ">Publish<"):
+    for b in ("View the schedule", "Optimize again", ">Review &amp; send<"):
         assert b in f
+    # One verdict, the server's (TRUST-4, TRUST-6): never "The week is built".
+    assert "The week is built" not in f and "prVerdictHtml(pd, 'h1')" in f
 
 
 def test_shifts_are_objects_hover_click_double_click_drag():
@@ -246,11 +250,15 @@ def test_a_reopened_week_is_scored_against_todays_inputs_as_it_opens():
     assert "ssRescoreOnOpen();" in _fn("studioOnResult")
 
 
-def test_publish_reads_the_rows_on_screen_and_folds_the_saved_weeks_list():
+def test_publish_is_the_pre_publish_review_of_the_rows_on_screen():
+    # Schedule audit 10/10/26 TRUST-2/TRUST-4: one payload, checked against
+    # the rows on screen (POST when edits are unsaved), never a folded list
+    # under the client's own "All kept".
     s = _src()
     pub = _fn("ssRenderPublish")
-    assert "al.hidden = _schedDirty" in pub and "Your edits are saved" not in pub
-    assert '<details class="ss-pub-alerts" id="ss-pub-alerts">' in s
+    assert "prRender()" in pub and "All kept" not in pub and "Your edits are saved" not in pub
+    assert 'id="ss-pub-alerts"' not in s and '<div id="pr-review" class="pr" aria-live="polite"></div>' in s
+    assert "'/api/labor/publish-review'" in s and "body: JSON.stringify({schedule_id: hid, rows: _schedRows})" in s
     assert ".ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch}" in s
     assert ".ss-pub-go{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;justify-content:center}" in s
     assert ".ss-pub-go .cbtn{height:50px;width:240px;" in s

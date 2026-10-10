@@ -28,6 +28,7 @@ import schedule_versions as sv
 import staff_schedule
 import strategy_jobs
 from models import Restaurant, create_restaurant
+from tests.publish_overrides import overrides_for, override_list  # noqa: F401
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 W1 = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"]
@@ -134,7 +135,7 @@ def _bearer(db_path, rid, name="owner", role="client"):
 
 
 def _publish(rid, hid, **kw):
-    return client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True, **kw)
+    return client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True, override_reasons=overrides_for(rid, hid), **kw)
 
 
 def _save_rows(app, headers, hid, rows, version):
@@ -222,7 +223,7 @@ def test_an_unsent_edit_never_reaches_the_portal_the_link_or_the_ops_checks(db, 
         {("Ana", "11:00am"), ("Bob", "11:00am")}
     del mail["sent"][:]
     out = app.test_client().post("/mobile/api/labor/publish-schedule", headers=owner,
-                                 json={"schedule_id": hid, "acknowledge": True}).get_json()
+                                 json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid)}).get_json()
     assert out["ok"] and out["changes_sent"] and mail["sent"] == ["Ana"]
     assert _ana_monday(rid) == [("11:00am", "4:00pm")]
     assert sv.unsent_changes(rid, hid)["people"] == []
@@ -534,12 +535,12 @@ def test_a_send_of_rows_somebody_changed_since_is_refused_with_their_change(db, 
     assert _save_rows(app, other, hid, rows, seen).status_code == 200
     owner = _bearer(db, rid)
     r = app.test_client().post("/mobile/api/labor/publish-schedule", headers=owner,
-                               json={"schedule_id": hid, "acknowledge": True, "version": seen})
+                               json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid), "version": seen})
     body = r.get_json()
     assert r.status_code == 409 and body["stale"] and body["saved_by"] == "b" and body["lines"]
     assert mail["sent"] == []
     r = app.test_client().post("/mobile/api/labor/publish-schedule", headers=owner,
-                               json={"schedule_id": hid, "acknowledge": True, "version": body["latest_version"]})
+                               json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid), "version": body["latest_version"]})
     assert r.status_code == 200 and sorted(mail["sent"]) == ["Ana", "Bob"]
 
 
@@ -646,7 +647,7 @@ def test_an_edit_in_the_undo_window_voids_the_send_and_the_owner_is_told(db, mai
     hid = _save(db, rid, _csv())
     app, owner = _app(db), _bearer(db, rid)
     r = app.test_client().post("/mobile/api/labor/publish-schedule", headers=owner,
-                               json={"schedule_id": hid, "acknowledge": True, "version": _latest(rid, hid)})
+                               json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid), "version": _latest(rid, hid)})
     assert r.get_json()["queued"] is True
     rows = sv.draft_rows(hid)
     rows[0]["notes"] = "typo fixed"

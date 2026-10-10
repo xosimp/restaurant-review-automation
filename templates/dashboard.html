@@ -6809,7 +6809,7 @@ svg:hover .hb-xh{opacity:1}
         if(btn)btn.disabled=false;
         // The publish gate on "Send now": the warnings go on screen under
         // the item, and the one button that names them sends it knowingly.
-        if(d&&d.needs_ack&&btn){hbAckInPlace(route,btn,body,d.blockers||[],d.blocker_keys);return;}
+        if(d&&d.needs_ack&&btn){window._hbLastAck=d;hbAckInPlace(route,btn,body,d.blockers||[],d.blocker_keys);return;}
         toast((d&&d.error)||'Could not do that','error');})
       .catch(function(){if(btn)btn.disabled=false;});
   };
@@ -6819,10 +6819,15 @@ svg:hover .hb-xh{opacity:1}
     // The warnings shown, by key (re-audit F2-9); true from a server with none.
     var cb=typeof cavBlockers==='function'?cavBlockers(list,keys):{texts:list,keys:null};list=cb.texts;
     var b={};try{b=JSON.parse(body)||{};}catch(e){b={};}b.acknowledge=cb.keys||true;
+    // Must-fix items need an override of their own with a reason (schedule
+    // audit 10/10/26 TRUST-3): never sent from here - the week opens on its
+    // pre-publish review instead.
+    var mf=(window._hbLastAck&&window._hbLastAck.must_fix_keys)||[];
     var box=document.createElement('div');box.className='hb-chk-ack';box.style.padding='4px 0 10px 22px';
     var h='<div class="sr-k">Read before this goes out</div>',i;
     for(i=0;i<list.length;i++)h+='<div class="sr-line bad"><span class="d"></span><span>'+esc(list[i])+'</span></div>';
-    h+='<button type="button" class="cbtn cbtn-danger cbtn-sm" data-body="'+esc(JSON.stringify(b))+'" onclick="hbActionDo(\''+esc(route)+'\',this)">Send with '+list.length+' rule warning'+(list.length===1?'':'s')+'\u2026</button>';
+    if(mf.length)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cavNav(\'schedule/'+(+b.schedule_id||0)+'\')">Open the week to fix '+mf.length+' thing'+(mf.length===1?'':'s')+'</button>';
+    else h+='<button type="button" class="cbtn cbtn-danger cbtn-sm" data-body="'+esc(JSON.stringify(b))+'" onclick="hbActionDo(\''+esc(route)+'\',this)">Send with '+list.length+' warning'+(list.length===1?'':'s')+' read\u2026</button>';
     box.innerHTML=h;row.parentNode.insertBefore(box,row.nextSibling);
   }
   // A coverage issue carries its suggested covers (meta.covers) and who was
@@ -10794,6 +10799,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-chip .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip.bad{border-color:var(--hb-bad);box-shadow:inset 3px 0 0 var(--hb-bad)}
 .swg-chip.bad .s{color:var(--hb-bad)}
+/* TRUST-23: a moved shift keeps its flag while the rules recheck; dashed until they answer. */
+.swg-chip.pending{border-style:dashed}
+.sched-row.pending .rr.pending{color:var(--ink3)}
+/* TRUST-17: a shift the owner pinned - a regenerate keeps it exactly. */
+.swg-chip.locked::after{content:'';position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:2px;background:var(--ember)}
 .swg-chip.chg:after{content:'';position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--blue)}
 .swg-chip.sched-leaving{opacity:0;transform:scale(.94)}
 .swg-chip.editing{box-shadow:0 0 0 2px var(--ember)}
@@ -12664,8 +12674,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div id="sw-sugg"></div>
       <!-- AI summary bullets -->
       <div id="sched-summary" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:none">
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed vs last published week</div>
-        <div id="sched-summary-bullets" style="font-size:13px;color:#c0b8b0;line-height:1.8"></div>
+        <div class="sr-k">What changed vs last published week</div>
+        <div id="sched-summary-bullets" class="sr-note"></div>
         <div id="sched-narrative" class="sr-narr" style="display:none"></div>
       </div>
 
@@ -12686,10 +12696,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-pub">
         <div class="ss-kick">Publish</div>
         <h1 id="ss-pub-title">Send the week to staff</h1>
-        <p class="ss-pub-sub" id="ss-pub-sub">Check who it reaches and what it breaks, then send. Nothing goes out until you press the button.</p>
-        <div class="ss-pub-grid">
-          <div class="ss-pub-card">
-            <div class="sw-k">Who gets it</div>
+        <p class="ss-pub-sub" id="ss-pub-sub">Everything that matters before the week goes out, checked against today’s time off and availability. Nothing goes out until you press the button.</p>
+        <!-- The pre-publish review (schedule audit 10/10/26 RM-6): one server
+             payload, every line with its action (cav-pr). Send waits for each
+             must-fix item and each decision that holds the send. -->
+        <div id="pr-review" class="pr" aria-live="polite"></div>
+        <div class="ss-pub-card">
+          <div class="sw-k">Who gets it</div>
       <div id="ps-reach" class="sr-note" style="padding:8px 20px 0"></div>
       <!-- Who the week reaches, fixed in place: missing emails and numbers.
            Opened from "fix contacts" under the send button. -->
@@ -12706,23 +12719,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         </div>
       </div>
 
-          </div>
-          <div class="ss-pub-card">
-            <div class="sw-k">Before it goes out</div>
-            <div id="ss-pub-check"></div>
-            <!-- The hours split, the quality notes that never hold the send
-                 and the rows likely to change (G-1, H1-6; cav-sfw1). -->
-            <div id="sfw1-pub"></div>
-            <!-- The publish gate: a 409 needs_ack (or the pre-send check) lists
-                 what the sender must read before the week goes out; the send
-                 button then names them. Rendered by _psRenderBlockers, folded
-                 in a dropdown here (owner, 9/26/26); it opens when a send
-                 asks for them to be read. -->
-            <details class="ss-pub-alerts" id="ss-pub-alerts"><summary><span id="ss-pub-alerts-n">Read before this goes out</span></summary>
-      <div id="ps-blockers" style="padding:0 20px"></div>
-            </details>
-          </div>
         </div>
+        <!-- Kept empty for older paths that clear it; the review above lists
+             every blocker (TRUST-2: never a folded list). -->
+        <div id="ps-blockers" hidden></div>
         <div class="ss-pub-go">
           <!-- One button (Friction #16): it saves unsaved edits, then sends.
                Its label names who it reaches, or the rule warnings a send
@@ -12788,6 +12788,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-side" id="ss-team">
         <div class="ss-kick">Team &amp; rules</div>
         <h1>Your team, and the rules every draft keeps</h1>
+        <!-- Who the week on screen leaves off, each with the first reason
+             (schedule audit 10/10/26 TRUST-13; the pre-publish review's why.left_off). -->
+        <div id="ss-team-leftoff"></div>
   {# Team inbox (employee audit fix B5, staff_comms): what staff say from
      the app - running late, a message to the manager on duty - and the
      announcements you send them, each with who has tapped Got it. One
@@ -22390,41 +22393,27 @@ var _dayColors = {'Monday':'#1a2e40','Tuesday':'#1a2e40','Wednesday':'#1a2840','
 
 var _schedBtn = null;
 var _schedPollInterval = null;
+// The owner's one word pair for the two dayparts (schedule audit 10/10/26
+// TRUST-31; schedule_time.PART_WORDS on the server, the same on iOS):
+// Setup, Crew, Intel and every sentence say Lunch / Dinner.
+var SCHED_PART_WORD = {morning: 'Lunch', night: 'Dinner'};
 
-// What the generator is actually doing, while it does it.
-//
-// A spinner for sixty seconds tells an owner that something is slow. These
-// lines tell them something intelligent is happening, and each one names a
-// real stage: the prompt genuinely carries availability, labor targets,
-// operational scores and leadership rules, and the passes afterwards
-// genuinely repair rows, check strength and score quality.
-//
-// The timings are estimates, never progress. The one real measure is the
-// days the answer has finished (schedDaysLine, from the poll): the server
-// reports those, never a percentage, so this never claims one — the last
-// step simply holds until the schedule arrives.
-// The first step names last year's same days only when the page says that
-// input exists (labor.last_year_available, read tolerantly - an older
-// server never sends it): a progress line is a claim about the inputs, and
-// most restaurants have no year of history (NS1 #21).
-var _SCHED_STEPS = [
-  [0,  window._SCHED_HAS_LAST_YEAR ? "Reading last year's same days" : 'Reading your shift and sales history'],
-  [7,  'Checking who is available'],
-  [15, 'Balancing against your labor target'],
-  [26, 'Weighing operational scores'],
-  [36, 'Checking leadership requirements'],
-  [46, 'Building the strongest team it can'],
-  [62, 'Scoring every shift for quality']
-];
+// What the generator is actually doing, while it does it (schedule audit
+// 10/10/26 TRUST-16): the steps are the stages the JOB REPORTED reaching
+// (schedule_engine.GENERATION_STAGES on the poll's progress.stages) -
+// done, the one it is on, the next - never an elapsed-time script ticking
+// "Checking leadership requirements" while the model was still writing
+// Monday. Until the first stage is reported the pulse bar shows, nothing
+// is ticked. The days the answer has finished (schedDaysLine) ride beside
+// it, as before. The inputs stage names last year's same days only when
+// the page says that input exists (labor.last_year_available - a progress
+// line is a claim about the inputs; NS1 #21).
+var SCHED_INPUT_LABEL = window._SCHED_HAS_LAST_YEAR ? "Reading last year's same days" : 'Reading your shift and sales history';
 var _schedStepTimer = null;
-// The step times above are a 75-second sketch; a week now takes minutes, so
-// they stretch to the measured typical draft (scheduleTiming) and the last
-// step no longer sits on "Scoring" for most of the wait.
-var _schedStepScale = 1;
 var _schedTiming = null;
-// {days_total, days_drafted, dates_drafted} from a pending poll: the days
-// the answer has finished as it streams (AI cost audit 10/7/26 #36). A real
-// count, unlike the step times above; absent until the first day is done.
+// {days_total, days_drafted, dates_drafted, stage, stages} from a pending
+// poll: the days the answer has finished as it streams (AI cost audit
+// 10/7/26 #36) and the stages the job reported (TRUST-16).
 var _schedProgress = null;
 
 // "3 of 7 days drafted", or '' before the first day is finished.
@@ -22442,7 +22431,6 @@ function schedDaysLine(p) {
 function scheduleTiming(start, typical, waitSeconds) {
   _schedTiming = {start: start, typical: typical && +typical.seconds > 0 ? typical : null,
                   until: +waitSeconds > 0 ? start + waitSeconds * 1000 : null};
-  _schedStepScale = _schedTiming.typical ? Math.max(1, _schedTiming.typical.seconds / 75) : 3;
 }
 function _schedClock(ms) {
   var d = new Date(ms), h = d.getHours(), m = d.getMinutes();
@@ -22469,7 +22457,7 @@ function renderScheduleEta(startedAt) {
 
 function startScheduleSteps(startedAt) {
   stopScheduleSteps();
-  _schedTiming = null; _schedStepScale = 1; _schedProgress = null;
+  _schedTiming = null; _schedProgress = null;
   _schedStepTimer = setInterval(function () { renderScheduleSteps(startedAt); }, 500);
   renderScheduleSteps(startedAt);
 }
@@ -22481,28 +22469,31 @@ function stopScheduleSteps() {
 function renderScheduleSteps(startedAt) {
   var el = document.getElementById('sched-steps');
   if (!el) { stopScheduleSteps(); return; }
-  var elapsed = (Date.now() - startedAt) / 1000;
-  var current = 0, i;
-  for (i = 0; i < _SCHED_STEPS.length; i++) {
-    if (elapsed >= _SCHED_STEPS[i][0] * _schedStepScale) current = i;
-  }
   renderScheduleEta(startedAt);
+  var st = (_schedProgress && _schedProgress.stages) || [], i, current = -1;
+  for (i = 0; i < st.length; i++) if (st[i].current) current = i;
+  if (current < 0) {
+    // Nothing reported yet: the pulse, never a tick the job did not send.
+    el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Starting the draft"><i></i></div>';
+    return;
+  }
   // A window rather than the whole list, so the block keeps its height and
   // the eye stays on the live line.
   var lower = Math.max(0, current - 2);
-  var upper = Math.min(_SCHED_STEPS.length - 1, current + 1);
+  var upper = Math.min(st.length - 1, current + 1);
   var html = '';
   for (i = lower; i <= upper; i++) {
-    var done = i < current, live = i === current;
+    var done = !!st[i].done, live = i === current;
     var mark = done
       ? '<i class="cv-ok" style="width:17px;height:17px" aria-hidden="true"></i>'
       : (live ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ember)"></span>'
               : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;border:1px solid var(--paper3)"></span>');
     var colour = live ? 'var(--ink)' : 'var(--ink3)';
+    var label = st[i].key === 'inputs' ? SCHED_INPUT_LABEL : (st[i].label || '');
     html += '<div style="display:flex;align-items:center;gap:11px;padding:5px 0;opacity:' + (done ? '.65' : '1') + '">'
           + '<span style="width:18px;display:inline-flex;justify-content:center">' + mark + '</span>'
           + '<span style="font-size:14.5px;font-weight:' + (live ? '600' : '400') + ';color:' + colour + '">'
-          + _escHtml(_SCHED_STEPS[i][1]) + '</span></div>';
+          + _escHtml(label) + '</span></div>';
   }
   el.innerHTML = html;
 }
@@ -22724,7 +22715,10 @@ function _schedHandleResult(data) {
     var rv = data.review || null;
     var otMoves = [], oi, otf = data.overtime_forecast || [];
     for (oi = 0; oi < otf.length; oi++) if (otf[oi] && otf[oi].candidate) otMoves.push(otf[oi]);
-    renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations,
+    // A reopened week has no sweep of its own yet: its list starts empty
+    // until ssRescoreOnOpen's recheck lands, never another week's flags
+    // (schedule audit 10/10/26 TRUST-25).
+    renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations || [],
                           overtime_moves: otMoves, standby_days: data.standby_days || [],
                           likely_edits: data.likely_edits || [],
                           fixes: rv ? (rv.fixes || []) : [], unfixed: rv ? (rv.unfixed || []) : [],
@@ -23767,7 +23761,7 @@ document.addEventListener('click', function (ev) {
     _schedSortRows();
     schedAfterEdit();
     // Said, and shown on the week (owner, 9/26/26): it was silent.
-    toast(st.who + ' is on ' + _schedDayOf(st.date) + ' ' + (st.shift.daypart === 'night' ? 'night' : 'day') + ' \u2014 Save to keep it', 'success');
+    toast(st.who + ' is on ' + _schedDayOf(st.date) + ' ' + SCHED_PART_WORD[st.shift.daypart === 'night' ? 'night' : 'morning'].toLowerCase() + ' \u2014 Save to keep it', 'success');
     var jj; for (jj = 0; jj < _schedRows.length; jj++) if (_schedRows[jj].employee === st.who && _schedRows[jj].date === st.date) {
       _swSelRow = _schedRows[jj]; var ch = document.querySelector('[data-swg-chip="' + jj + '"]');
       if (ch) { ch.className += ' flash'; setTimeout(function () { var c2 = document.querySelectorAll('.swg-chip.flash'), q; for (q = 0; q < c2.length; q++) c2[q].className = c2[q].className.replace(/\s*flash/g, ''); }, 1200); }
@@ -23854,8 +23848,8 @@ function _fetchReplacements(index, done) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, index: index})
   }).then(apiJson).then(function (d) {
-    done(d && d.ok ? (d.replacements || []) : null);
-  }).catch(function () { done(null); });
+    done(d && d.ok ? (d.replacements || []) : null, d);
+  }).catch(function () { done(null, null); });
 }
 
 function openShiftSwap(index, anchorEl) {
@@ -23885,8 +23879,7 @@ function openShiftSwap(index, anchorEl) {
 function applyShiftSwap(index, name) {
   if (_schedReadOnly()) { _schedRenderTable(); return; }
   _schedRows[index].employee = name;
-  _schedRows[index].needs_review = false;
-  _schedRows[index].review_reason = '';
+  _schedPendRecheck(_schedRows[index]);
   _schedOverrides[index] = true;
   // Staged like every other edit: the rules check re-runs now, the score
   // and the stored week move when the manager presses Save.
@@ -24076,7 +24069,7 @@ function _schedRenderTable(collapse) {
     var constraintBadge = constraintNote
       ? ' <span title="' + _escAttr(constraintNote) + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
       : '';
-    var cls = 'sched-row' + (row.needs_review ? ' needs-review' : '') + (_schedWhyOpen === i ? ' open' : '');
+    var cls = 'sched-row' + (row.needs_review || row.review_unchecked ? ' needs-review' : '') + (row.review_pending ? ' pending' : '') + (_schedWhyOpen === i ? ' open' : '');
     tHtml += '<tr class="' + cls + '" data-sched-row="' + i + '" style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
     tHtml += '<td data-sort-key="' + _escAttr((row.date || '') + ' ' + ('0000' + i).slice(-4)) + '" style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + (isNewDay ? _schedHolidayMark(row.date) : '') + '</td>';
     // Clicking a name opens the list of people who could take that shift
@@ -24085,7 +24078,9 @@ function _schedRenderTable(collapse) {
           + '<span data-shift-row="' + i + '" title="Swap for somebody who can take this shift" style="cursor:pointer">'
           + _escHtml(empName) + '</span>' + constraintBadge
           + (_schedOverrides[i] ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#56ccf2;background:rgba(86,204,242,.15);padding:1px 5px;border-radius:8px">CHANGED</span>' : '')
-          + (row.needs_review ? '<span class="rr">&#9888; ' + _escHtml(row.review_reason || 'needs review') + '</span>' : '')
+          + (row.review_unchecked ? '<span class="rr">&#9888; Not checked \u2014 recheck before sending</span>'
+             : (row.needs_review ? '<span class="rr">&#9888; ' + _escHtml(row.review_reason || 'needs review') + (row.review_pending ? ' \u00b7 rechecking' : '') + '</span>'
+                : (row.review_pending ? '<span class="rr pending">Rechecking\u2026</span>' : '')))
           + '</td>';
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.45)">' + _escHtml(row.role || '') + '</td>';
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.75);white-space:nowrap">' + _escHtml(row.shift_start || '') + '\u2013' + _escHtml(row.shift_end || '') + '</td>';
@@ -24215,10 +24210,27 @@ function generateSchedule(btn, opts) {
       !window.confirm('You have unsaved changes to this week. Generating a new draft replaces them. Continue?')) {
     return;
   }
+  // A full Generate over a draft with pinned shifts (the owner's saved
+  // edits lock themselves; "Keep this shift" pins one) asks first, and
+  // keeping them is the default (schedule audit 10/10/26 TRUST-17): it used
+  // to replace a draft with 7 saved edits without a word.
+  if (!(opts.dates && opts.dates.length) && opts.keep_locked === undefined && window.sfw1Sheet) {
+    var _pinned = 0, _pi;
+    for (_pi = 0; _pi < _schedRows.length; _pi++) if (_schedRows[_pi].locked) _pinned++;
+    if (_pinned) {
+      sfw1Sheet('<div class="hb-kicker">Your pinned shifts</div><h3 id="sfw1-modal-t">Keep your <span class="hb-num">' + _pinned + '</span> pinned shift' + (_pinned === 1 ? '' : 's') + '?</h3>'
+        + '<p class="so-p">This draft has shifts you edited and saved, or kept. A new draft keeps them exactly unless you start fresh.</p>'
+        + '<div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-sched-gen-fresh="1">Start fresh</button>'
+        + '<button type="button" class="cbtn cbtn-primary" data-sched-gen-keep="1">Keep them</button></div>');
+      window._schedGenPending = {btn: btn, opts: opts};
+      return;
+    }
+  }
   _schedBtn = btn;
   btn.disabled = true;
   var _oldNotice = document.getElementById('sched-notice'); if (_oldNotice) _oldNotice.remove();
   var body = {};
+  if (opts.keep_locked === false) body.keep_locked = false;
   if (opts.dates && opts.dates.length) { body.dates = opts.dates; body.history_id = opts.history_id; }
   else { var ws = _schedWeekStart(); if (ws) body.week_start = ws; }
   // Why the owner is redoing these days (a chip and their words, B2 / H1),
@@ -24426,19 +24438,30 @@ function savePsContact(input){
   });
 }
 
-// Save & send (Friction #16): unsaved edits are saved, then the week goes
-// out. A week with rule warnings is sent knowingly — the button names them
-// once the list is on screen, and that press is the acknowledgement.
+// Save & send (Friction #16): unsaved edits are saved, then the saved week
+// is checked again and goes out only if nothing new needs reading. Send is
+// never armed on load (schedule audit 10/10/26 TRUST-2): the pre-publish
+// review (cav-pr) holds it until every must-fix item is fixed or overridden
+// on its own and every decision that holds the send is answered.
 function saveAndSendSchedule(btn){
   if (_schedReadOnly()) return;
   var result = document.getElementById('ps-result');
   if (_schedEditIdx !== null) { toast('Finish the row you are editing first', 'error'); return; }
+  if (window._schedUnchecked) { toast('Some moved shifts weren\u2019t checked \u2014 recheck the week first', 'error'); return; }
+  var g = window.prGate ? prGate() : {ready: true};
+  if (!g.ready) { if (window.psLabel) psLabel(); return; }
   if (_schedDirty) {
     if (result) { result.style.color = 'var(--ink3)'; result.textContent = 'Saving your edits first…'; }
-    rescoreSchedule(btn, function(){ publishScheduleNow(false); });
+    rescoreSchedule(btn, function(){
+      // The saved week, checked again: anything new is read before it goes.
+      prRefresh(function () {
+        if (prGate().ready) publishScheduleNow();
+        else if (result) { result.style.color = 'var(--ink3)'; result.textContent = 'Saved. Read what the check found below before sending.'; }
+      });
+    });
     return;
   }
-  publishScheduleNow(!!(window._psArmed && _psArmed.hid === _schedHistoryId));
+  publishScheduleNow();
 }
 
 function publishScheduleNow(ack){
@@ -24447,11 +24470,12 @@ function publishScheduleNow(ack){
   var result = document.getElementById('ps-result');
   var bl = document.getElementById('ps-blockers');
   var done = btn ? cbtnBusy(btn, 'Sending…') : function(){};
-  /* The acknowledgement names the warnings that were on screen, by key
-     (re-audit F2-9): a warning that appeared after the list was read is
-     not covered by this press. A server that sends no keys gets true. */
-  var keys = window._psAckKeys && window._psAckKeys.hid === _schedHistoryId ? window._psAckKeys.keys : null;
-  var body = {acknowledge: ack ? (keys && keys.length ? keys.slice() : true) : false};
+  /* What was read, by key (re-audit F2-9, schedule audit 10/10/26
+     TRUST-3): the decisions answered as the acknowledgement, each must-fix
+     override with its reason (a manager gap with who runs the floor). A
+     blocker that appeared after the review was read is covered by neither. */
+  var _pb = window.prSendBody ? prSendBody() : {acknowledge: [], overrides: []};
+  var body = {acknowledge: _pb.acknowledge, overrides: _pb.overrides};
   if (_schedHistoryId) body.schedule_id = _schedHistoryId;
   /* The version of the rows on screen: a week somebody changed since is
      refused with their changes, never sent unseen (BUGSLIFE-11). */
@@ -24506,11 +24530,11 @@ function publishScheduleNow(ack){
       // read what the rules check found. The list goes on screen and the
       // button becomes the acknowledgement.
       if (d.needs_ack) {
-        _psRenderBlockers(d.blockers || [], true, d.blocker_keys, true);
-        // Worth a look (10/3/26): the quality verdict rides the 409 as notes,
-        // read without acknowledging.
-        if (window.sfw1RenderPub) { var _pc = window._psCheck || {}; sfw1RenderPub({notes: d.notes || _pc.notes || [], hours: _pc.hours, likely_to_change: _pc.likely_to_change}); }
-        result.textContent = '';
+        // Something to read that the review on screen did not have: it is
+        // checked again and shown; nothing went out.
+        result.style.color = 'var(--hb-bad)';
+        result.textContent = 'Something changed since you read it \u2014 the review above is up to date.';
+        if (window.prRefresh) prRefresh();
         return;
       }
       // A newer copy of this week replaced this one: it cannot be sent (UI-3).
@@ -24888,8 +24912,33 @@ function _schedSetDirty(on) {
   // it acknowledged is about the week before the edit.
   if (on && window.psDisarm) psDisarm();
   if (window.psLabel) psLabel();
+  // The review follows the rows on screen (TRUST-4).
+  if (window.prStale) prStale();
 }
 
+// A moved, swapped or edited row keeps its flag until the recheck answers
+// (schedule audit 10/10/26 TRUST-23): it used to be cleared on the drop,
+// before any rule had looked, and a recheck that failed left it clean - a
+// "clean" week the gate later rejected. Pending, the old flag stays on
+// screen; a recheck that fails marks the row "not checked" and holds Send
+// until one succeeds.
+var _schedUnchecked = false;
+function _schedPendRecheck(r) {
+  if (!r) return;
+  r.review_pending = true;
+  r.review_unchecked = false;
+}
+function _schedRecheckSettled(ok) {
+  var i, any = false;
+  for (i = 0; i < _schedRows.length; i++) {
+    var r = _schedRows[i];
+    if (ok) { r.review_pending = false; r.review_unchecked = false; }
+    else if (r.review_pending || r.review_unchecked) { r.review_pending = false; r.review_unchecked = true; any = true; }
+  }
+  _schedUnchecked = !ok && any;
+  if (!ok && typeof _schedRenderTable === 'function') _schedRenderTable();
+  if (window.psLabel) psLabel();
+}
 function _schedRecheck() {
   var base = [];
   try { base = JSON.parse(_schedSaved) || []; } catch (e) { base = []; }
@@ -24898,14 +24947,20 @@ function _schedRecheck() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, baseline_rows: base, history_id: _schedHistoryId || null})
   }).then(apiJson).then(function (d) {
-    if (d && d.ok && window.renderScheduleReview) {
+    if (!(d && d.ok)) { _schedRecheckSettled(false); _schedRenderCost(null); return; }
+    // Only an answer for the rows still on screen settles them; a late one
+    // for rows since edited waits for the next recheck.
+    if (sent === _swRowsSig(_schedRows)) _schedRecheckSettled(true);
+    if (window.renderScheduleReview) {
       renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, overtime_moves: d.overtime_moves || [], fixes: [], unfixed: []});
     }
+    // The pre-publish review follows the rows on screen (TRUST-4, TRUST-24).
+    if (window.prStale) prStale();
     // Kept only for the rows still on screen: a late answer for rows since
     // edited (or another week's) waits for the next recheck.
     if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); }
     _schedRenderCost(d && d.ok ? d.cost : null);
-  }).catch(function () { _schedRenderCost(null); });
+  }).catch(function () { _schedRecheckSettled(false); _schedRenderCost(null); });
 }
 
 // "+6h · +$90 · 2h overtime" — what the edits on screen move against the
@@ -25051,7 +25106,7 @@ function schedFinishEdit(i, box) {
   if (date) { row.date = date; row.day = _schedDayOf(date) || row.day; }
   row.employee = emp; row.role = val('role') || ''; row.shift_start = start; row.shift_end = end;
   row.scheduled_hours = _schedHoursBetween(start, end);
-  row.needs_review = false; row.review_reason = '';
+  _schedPendRecheck(row);
   _schedOverrides[i] = true;
   _schedEditIdx = null; _schedEditOpts = []; _schedAddedIdx = null;
   _schedSortRows();
@@ -26449,7 +26504,7 @@ function swRenderGrid() {
         for (var c = 0; c < list.length; c++) {
           var ri = list[c], rw = _schedRows[ri], why = rw.needs_review ? (rw.review_reason || 'needs review') : (rw.notes || '');
           var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && rw.role !== q.role ? ' · ' + _escHtml(rw.role) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
-          h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review ? ' bad' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
+          h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review || rw.review_unchecked ? ' bad' : '') + (rw.review_pending ? ' pending' : '') + (rw.locked ? ' locked' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
              + ' aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
              + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span>'
              // A manager shift planned before the draft, and the clocks going back (M-2, A2-6).
@@ -27040,7 +27095,7 @@ function studioGo(stage) {
   else if (stage === 'crew') ssRenderCrew();
   else if (stage === 'bench') ssRenderBench();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
-  else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; }
+  else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; if (window.prTeamRender) prTeamRender(true); }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
 }
 function ssTopbar() {
@@ -27318,12 +27373,12 @@ function ssLoadForecast(force) {
     }).catch(function () { _ssFcKey = null; fc.innerHTML = '<div class="sw-note">The forecast could not load.</div>'; });
 }
 function ssCrewHtml(d) {
-  var rows = d.learned_crew || [], tr = d.crew_trends || [], h = '', i, j, PART = {morning: 'Daytime', night: 'Night'};
+  var rows = d.learned_crew || [], tr = d.crew_trends || [], h = '', i, j, PART = SCHED_PART_WORD;
   if (!rows.length) return '';
   h += '<div class="sw-sub">The usual crew</div><div class="sw-note">What Cavnar AI staffs each shift to, learned from your clock-ins over the last 8 weeks — the newest weeks count most, and a change that has held for 3 of the last 4 weeks is followed straight away.</div>';
   if (tr.length) {
     h += '<ul class="ssc-trends">';
-    for (i = 0; i < tr.length; i++) h += '<li class="' + (tr[i].direction === 'up' ? 'up' : 'down') + '"><b>' + _escHtml(tr[i].role) + '</b>, ' + _escHtml(tr[i].day) + ' ' + (tr[i].part === 'night' ? 'night' : 'daytime') + ': <span class="hb-num">' + tr[i].now + '</span> ' + (tr[i].direction === 'up' ? 'up' : 'down') + ' from <span class="hb-num">' + tr[i].was + '</span> since <span class="hb-num">' + _escHtml(tr[i].since) + '</span></li>';
+    for (i = 0; i < tr.length; i++) h += '<li class="' + (tr[i].direction === 'up' ? 'up' : 'down') + '"><b>' + _escHtml(tr[i].role) + '</b>, ' + _escHtml(tr[i].day) + ' ' + SCHED_PART_WORD[tr[i].part === 'night' ? 'night' : 'morning'].toLowerCase() + ': <span class="hb-num">' + tr[i].now + '</span> ' + (tr[i].direction === 'up' ? 'up' : 'down') + ' from <span class="hb-num">' + tr[i].was + '</span> since <span class="hb-num">' + _escHtml(tr[i].since) + '</span></li>';
     h += '</ul>';
   }
   h += '<details class="ssc-all"><summary>Every shift</summary><div class="ssc-grid">';
@@ -27491,8 +27546,13 @@ function _ssSavingsMath(lv, rev) {
 }
 function ssRenderSummary() {
   var el = document.getElementById('ss-summary'); if (!el) return;
-  var q = (typeof _quality !== 'undefined' && _quality) || {}, d = _swData || {}, pc = d.projected_cost || null;
-  var rv = _ssReview || d.review || {}, hard = +rv.hard || 0, soft = +rv.soft || 0, i;
+  var q = (typeof _quality !== 'undefined' && _quality) || {}, d = _swData || {}, pc = d.projected_cost || null, i;
+  // The one verdict, the server's (schedule audit 10/10/26 TRUST-4, TRUST-6):
+  // the tiles and the header read the pre-publish review, never the
+  // client's own recheck, and never a "built" celebration over a broken week.
+  var pd = window.prFor ? prFor() : null;
+  if (!pd && window.prRefresh && !(window._prState && _prState.busy)) prRefresh();
+  var pq = pd ? (pd.quality || {}) : {}, cnt = pd ? (pd.counts || {}) : null;
   var cov = null; for (i = 0; i < (q.dimensions || []).length; i++) if (q.dimensions[i].key === 'coverage') cov = q.dimensions[i].score;
   var lv = d.labor_view || null, lp = _ssLaborPct(), tgt = lv && lv.target_pct != null ? +lv.target_pct : 0;
   var ds = _schedWeekDates || [], people = {}, hrs = 0;
@@ -27509,35 +27569,57 @@ function ssRenderSummary() {
   var sc = q.score, band = q.band ? String(q.band) : '';
   var C = 2 * Math.PI * 30, off = sc != null ? C * (1 - Math.max(0, Math.min(100, +sc)) / 100) : C;
   function tile(cls, k, v, s, extra, attrs) { return '<div class="ss-tile ' + cls + (extra && extra.indexOf('ss-math') > -1 ? ' has-math" tabindex="0' : '') + '"' + (attrs || '') + '><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + '</div>' + (extra || '') + '</div>'; }
-  var h = '<div class="ss-sum-hd"><div class="ok"><svg viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><div>'
-    + '<div class="ss-kick">Schedule complete</div><h1>The week is built</h1><div class="w">'
-    + (ds.length ? 'Week of <span class="hb-num">' + _escHtml(mdy(ds[0])) + '</span> – <span class="hb-num">' + _escHtml(mdy(ds[ds.length - 1])) + '</span> · ' : '')
-    + '<span class="hb-num">' + _schedRows.length + '</span> shifts · <span class="hb-num">' + np + '</span> people · <span class="hb-num">' + _schedHrs(hrs) + 'h</span></div></div></div><div class="ss-tiles">';
-  h += tile(sc == null ? '' : (sc >= 80 ? 'good' : (sc >= 60 ? 'warn' : 'bad')), 'Shift quality', sc == null ? '—' : '<span class="hb-num">' + Math.round(sc) + '</span>',
-            band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week',
+  var h = pd ? '<div class="ss-sum-v">' + prVerdictHtml(pd, 'h1') + '</div>'
+    : '<div class="ss-sum-hd"><div><div class="ss-kick">Checking the week</div><h1>Reading every rule against today\u2019s data</h1><div class="w">'
+      + (ds.length ? 'Week of <span class="hb-num">' + _escHtml(mdy(ds[0])) + '</span> – <span class="hb-num">' + _escHtml(mdy(ds[ds.length - 1])) + '</span> · ' : '')
+      + '<span class="hb-num">' + _schedRows.length + '</span> shifts · <span class="hb-num">' + np + '</span> people · <span class="hb-num">' + _schedHrs(hrs) + 'h</span></div>'
+      + '<div class="dr-pulse" role="status" aria-label="Checking the week"><i></i></div></div></div>';
+  h += '<div class="ss-tiles">';
+  // Graded against the restaurant's own recent weeks, never fixed 80/60
+  // lines that put most weeks in amber; the reason a cap bit leads (TRUST-29).
+  var qcls = pq.grade === 'good' ? 'good' : (pq.grade === 'weak' ? 'warn' : '');
+  h += tile(sc == null ? '' : qcls, 'Shift quality', sc == null ? '—' : '<span class="hb-num">' + Math.round(sc) + '</span>',
+            pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week')),
             sc == null ? '' : '<svg class="ring" viewBox="0 0 74 74" aria-hidden="true"><circle class="tr" cx="37" cy="37" r="30"/><circle class="fg" cx="37" cy="37" r="30" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 37 37)"/></svg>');
-  h += tile(lp === null ? '' : (tgt && lp > tgt + 0.5 ? 'bad' : 'good'), 'Labor', lp === null ? '—' : '<span class="hb-num">' + lp + '</span><small>%</small>',
+  // One grade with iOS (TRUST-7): the server's - over at any amount past the
+  // target, neutral with none; the basis named on the tile (TRUST-30).
+  var lgr = lv && lv.grade ? lv.grade : 'no_target';
+  h += tile(lp === null ? '' : (lgr === 'over' ? 'bad' : (lgr === 'under' ? 'good' : '')), (lv && lv.label) || 'Labor', lp === null ? '—' : '<span class="hb-num">' + lp + '</span><small>%</small>',
             lp === null ? 'Needs the forecast this draft was built on — generate a new draft to see it'
               : 'of forecast sales, ' + basisWord + (tgt ? ' · ' + (lv.target_basis === 'hourly' ? 'the hourly budget is' : 'your target is') + ' <span class="hb-num">' + tgt + '%</span>' : ''),
             lv && lv.text ? '<div class="s" style="margin-top:4px">' + _numText(lv.text) + '</div>' : '');
   h += tile(cov == null ? '' : (cov >= 90 ? 'good' : (cov >= 75 ? 'warn' : 'bad')), 'Coverage', cov == null ? '—' : '<span class="hb-num">' + Math.round(cov) + '</span><small>%</small>',
             'of the people each shift needs, on it');
-  var ot = pc ? +pc.overtime_hours || 0 : null;
+  // Overtime that was not priced is a dash, never a green "nobody past 40h"
+  // (TRUST-32, the iOS rule), and the line is per restaurant, not 40.
+  var ot = (pc && pc.overtime_hours !== undefined && pc.overtime_hours !== null) ? +pc.overtime_hours : null;
   h += tile(ot === null ? '' : (ot > 0 ? 'bad' : 'good'), 'Overtime', ot === null ? '—' : '<span class="hb-num">' + _schedHrs(ot) + '</span><small>h</small>',
-            ot === null ? 'Priced once the draft is saved' : (ot > 0 ? '<span class="hb-num">' + _schedMoney(pc.overtime_premium || 0) + '</span> in premium pay' : 'Nobody past <span class="hb-num">40h</span>'));
-  h += tile((hard ? 'bad' : (soft ? 'warn' : 'good')) + ((hard + soft) ? ' go' : ''), 'Warnings', '<span class="hb-num">' + (hard + soft) + '</span>',
-            hard ? '<span class="hb-num">' + hard + '</span> break a hard rule · fix before sending' : (soft ? 'Soft rules only · worth a look' : 'Every rule kept'),
-            // The tile takes the owner to the list itself (owner, 10/7/26).
-            (hard + soft) ? '<span class="ss-go">See ' + ((hard + soft) === 1 ? 'it' : 'them') + ' <i aria-hidden="true">\u2192</i></span>' : '',
-            (hard + soft) ? ' role="button" tabindex="0" data-ss-warn="1" aria-label="See the ' + (hard + soft) + ' warning' + ((hard + soft) === 1 ? '' : 's') + ' on the schedule"' : '');
+            ot === null ? (pc ? 'Not priced for this week' : 'Priced once the draft is saved') : (ot > 0 ? '<span class="hb-num">' + _schedMoney(pc.overtime_premium || 0) + '</span> in premium pay' : 'No overtime'));
+  // Decisions, not raw breaches (TRUST-22): what must be fixed and what to
+  // decide, from the review; the reminders ride its "worth a look".
+  var nW = cnt ? (+cnt.must_fix || 0) + (+cnt.decide_holding || 0) : null, nM = cnt ? +cnt.must_fix || 0 : 0;
+  h += tile(nW === null ? '' : ((nM ? 'bad' : (nW ? 'warn' : 'good')) + ' go'), 'To fix or decide', nW === null ? '—' : '<span class="hb-num">' + nW + '</span>',
+            nW === null ? 'Checking against today\u2019s data' : (nM ? '<span class="hb-num">' + nM + '</span> must be fixed before sending' : (nW ? 'Decisions only · everything else checks out' : 'Nothing to fix or decide'))
+              + (cnt && +cnt.fyi ? ' · <span class="hb-num">' + cnt.fyi + '</span> worth a look' : ''),
+            '<span class="ss-go">Review &amp; send <i aria-hidden="true">\u2192</i></span>',
+            ' role="button" tabindex="0" data-ss-go="publish" aria-label="Review the week before sending"');
   h += tile('hero', 'Estimated savings', sav === null ? '—' : '<span class="hb-num">' + _schedMoney(sav) + '</span>',
             sav === null ? 'Needs a measured labor % for your recent weeks and this draft’s forecast'
               : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
             '<span class="tag">Projection · not yet earned</span>' + _ssSavingsMath(lv, rev));
-  h += '</div><div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
+  h += '</div>';
+  // How far to trust the figures above (TRUST-19): the labor range from the
+  // measured forecast error, its record, and last week's projection against
+  // what ran - the server's own sentences, never a figure of the page's.
+  var pn = pd ? (pd.numbers || {}) : {}, plp = pn.labor_pct || {}, tr = [];
+  if (plp.low != null && plp.high != null) tr.push('Labor likely <span class="hb-num">' + plp.low + '–' + plp.high + '%</span>.');
+  if (plp.track_record) tr.push(_numText(plp.track_record));
+  if (pn.last_week && pn.last_week.text) tr.push(_numText(pn.last_week.text));
+  if (tr.length) h += '<div class="pr-meta" style="margin-top:12px">' + tr.join(' ') + '</div>';
+  h += '<div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
     + '<button type="button" class="cbtn cbtn-primary cbtn-lg" data-ss-go="schedule">View the schedule</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" onclick="ssOptimize(this)">Optimize again</button>'
-    + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" data-ss-go="publish">Publish</button></div>'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" data-ss-go="publish">Review &amp; send</button></div>'
     + '<div class="ss-sum-note">Optimize again makes legal changes that raise the score and lists each one; nothing is kept until you save.</div>';
   el.innerHTML = h;
   if (window.sfw1RenderNotes) sfw1RenderNotes();
@@ -27560,24 +27642,12 @@ function ssTopPublish(btn) {
   saveAndSendSchedule(b);
 }
 function ssRenderPublish() {
-  var ds = _schedWeekDates || [], t = document.getElementById('ss-pub-title'), c = document.getElementById('ss-pub-check');
+  var ds = _schedWeekDates || [], t = document.getElementById('ss-pub-title');
   if (t) t.innerHTML = ds.length ? 'Send the week of <span class="hb-num">' + _escHtml(mdy(ds[0])) + '</span>' : 'Send the week to staff';
-  // The rules as they stand on screen - the same check as the Fix tab. The
-  // server's list below is the SAVED week's; with edits on screen the two
-  // disagreed ("All kept" over 26 red lines, owner 9/26/26). Save & send
-  // saves first and the server re-checks, so its list only shows while the
-  // week on screen is the saved one.
-  var rv = _ssReview || (_swData && _swData.review) || {}, hard = +rv.hard || 0, soft = +rv.soft || 0, lines = [];
-  lines.push('<div class="sw-kv"><span>Hard rules</span>' + (hard ? '<b class="hb-num bad">' + hard + ' broken</b>' : '<b class="good">All kept</b>') + '</div>');
-  lines.push('<div class="sw-kv"><span>Soft rules to look at</span><b class="hb-num">' + soft + '</b></div>');
-  var q = (typeof _quality !== 'undefined' && _quality) || {};
-  if (q.score != null) lines.push('<div class="sw-kv"><span>Shift quality</span><b class="hb-num">' + Math.round(q.score) + '</b></div>');
-  if (c) c.innerHTML = '<div class="ss-pub-check">' + lines.join('') + '</div>';
-  if (window.sfw1RenderPub) sfw1RenderPub();
-  var al = document.getElementById('ss-pub-alerts'), bl = document.getElementById('ps-blockers'), n = document.getElementById('ss-pub-alerts-n');
-  var cnt = bl ? bl.querySelectorAll('.sr-line').length : 0;
-  if (al) al.hidden = _schedDirty || !cnt || (bl && bl.style.display === 'none');
-  if (n) n.innerHTML = 'Read before this goes out · <span class="hb-num">' + cnt + '</span>';
+  // One payload for the whole screen (schedule audit 10/10/26 RM-6): the
+  // pre-publish review, checked against the rows on screen when edits are
+  // unsaved (TRUST-4) - never the client's own recheck over the server's list.
+  if (window.prRender) prRender();
   var done = document.getElementById('ss-pub-done'); if (done && !done._shown) done.hidden = true;
   if (window.psRefresh) try { psRefresh(); } catch (e) { }
 }
@@ -28016,13 +28086,35 @@ function ssRenderShift() {
     + (r.needs_review ? '<div class="sw-flag bad">' + _escHtml(r.review_reason || 'Breaks a rule') + '</div>' : '')
     + (window.sfw1ShiftExtras ? sfw1ShiftExtras(r) : '')
     + (_schedOverrides[i] ? '<div class="sw-flag">You changed this shift; Save to re-score the week.</div>' : '')
-    + '<div class="sw-sub">Why ' + _escHtml(r.employee || 'this person') + '</div><div class="sw-note">' + (why && why.why ? _escHtml(why.why) : 'No facts on file for this assignment.') + '</div>'
+    // What Cavnar AI weighed (TRUST-14): the person against the strongest
+    // legal alternative, from the replacements ranking; the scorer's
+    // description is only what is on file, said as that.
+    + '<div class="sw-sub">What Cavnar AI weighed</div><div class="sw-note" id="ss-sd-why"><div class="dr-pulse" role="status" aria-label="Weighing who else could take it"><i></i></div></div>'
+    + (why && why.why ? '<div class="sw-note" style="margin-top:6px">On file: ' + _escHtml(why.why) + '</div>' : '')
     + (r.notes ? '<div class="sw-note" style="margin-top:6px">' + _escHtml(r.notes) + '</div>' : '')
     + '<div class="ss-sd-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="swEdit(' + i + ')">Edit</button>'
+    // Pinned: a regenerate keeps it exactly (TRUST-17, contract #4).
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" aria-pressed="' + (r.locked ? 'true' : 'false') + '" onclick="ssToggleLock(' + i + ')">' + (r.locked ? 'Pinned \u2014 unpin' : 'Keep this shift') + '</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ssFindCover(' + i + ',this)">Who else could take it</button>'
     + '<button type="button" class="cbtn cbtn-text cbtn-danger cbtn-sm" onclick="var j=' + i + ';swSelect(null);schedRemoveRow(j)">Remove</button></div>'
     + '<div class="ss-sd-alt" id="ss-sd-alt"></div>';
   el.innerHTML = h;
+  _fetchReplacements(i, function (opts, d) {
+    var w = document.getElementById('ss-sd-why');
+    if (!w || _swSel !== i) return;
+    var x = d && d.weighed;
+    w.innerHTML = x && x.text ? _numText(x.text) : (opts === null ? 'Who else could take it couldn\u2019t be checked just now.' : 'Nothing on file to weigh this assignment against.');
+  });
+}
+// Pin or unpin one shift (TRUST-17): sent with the next save as the row's
+// lock, which a regenerate then keeps exactly.
+function ssToggleLock(i) {
+  var r = _schedRows[i]; if (!r || _schedReadOnly()) return;
+  r.locked = !r.locked; r.lock = r.locked;
+  _schedSetDirty(true);
+  if (typeof _schedRenderTable === 'function') _schedRenderTable();
+  ssRenderShift();
+  toast(r.locked ? 'Pinned \u2014 save to keep it; a new draft keeps this shift' : 'Unpinned \u2014 save to keep it', 'success');
 }
 function ssFindCover(i, btn) {
   var box = document.getElementById('ss-sd-alt'); if (!box) return;
@@ -28043,7 +28135,7 @@ function ssFindCover(i, btn) {
 function ssSwapTo(i, name) {
   var r = _schedRows[i]; if (!r || !name) return;
   var was = r.employee;
-  r.employee = name; r.needs_review = false; r.review_reason = '';
+  r.employee = name; _schedPendRecheck(r);
   r.notes = ((r.notes || '') + ' (was ' + was + ')').trim();
   _schedOverrides[i] = true; _swSelRow = r;
   schedAfterEdit();
@@ -28217,7 +28309,7 @@ document.addEventListener('drop', function (ev) {
   var r = _schedRows[i], pr = String(cell.getAttribute('data-swg-drop')).split('|'), was = r.employee + ' ' + _schedDayOf(r.date).slice(0, 3);
   r.employee = pr[0];
   if (pr[1] && pr[1] !== r.date) { r.date = pr[1]; r.day = _schedDayOf(pr[1]) || r.day; }
-  r.needs_review = false; r.review_reason = '';
+  _schedPendRecheck(r);
   r.notes = ((r.notes || '') + ' (moved from ' + was + ')').trim();
   _schedOverrides[i] = true; _swSelRow = r;
   _schedSortRows();
@@ -28304,9 +28396,9 @@ document.addEventListener('click', function (ev) {
 // role, availability, time off, rest, the hours line) who is not already on
 // that day and stays under 40h. Staged like any edit; Save keeps it.
 function ssFillGap(text, btn) {
-  var m = /^Fill the gap on (\w+) (morning|night): (.*?)\.?$/.exec(String(text || ''));
+  var m = /^Fill the gap on (\w+) (morning|night|lunch|dinner): (.*?)\.?$/.exec(String(text || ''));
   if (!m) return;
-  var day = m[1], part = m[2], gm = /([A-Za-z][A-Za-z &\/\-]*?) short (\d+) of (\d+)/.exec(m[3]);
+  var day = m[1], part = (m[2] === 'lunch' ? 'morning' : (m[2] === 'dinner' ? 'night' : m[2])), gm = /([A-Za-z][A-Za-z &\/\-]*?) short (\d+) of (\d+)/.exec(m[3]);
   if (!gm) { toast('Could not read that gap', 'error'); return; }
   var role = gm[1].replace(/^.*—\s*/, '').trim(), need = +gm[2], date = null, i;
   for (i = 0; i < _schedWeekDates.length; i++) if (_schedDayOf(_schedWeekDates[i]) === day) date = _schedWeekDates[i];
@@ -37741,7 +37833,7 @@ window._cuRole=window.CAV_BOOT.role;
   // hour, the rotation ledger, what staff keep dropping and claiming, who
   // could hold a station, and the pairs the record suggests. Every figure
   // is the server's; an absent measurement is absent, never 0.
-  var _DP_NAMES={morning:'day',night:'night'};
+  var _DP_NAMES={morning:'lunch',night:'dinner'};
   window.toggleIntelPanel=function(){_lbToggle('intel',function(){loadIntel(null,true);},'Read it ↓');};
   window.loadIntel=function(after,force){
     if(window._laborIntel&&!force){if(after)after();renderIntel();return;}
@@ -38983,6 +39075,17 @@ function sfw1RatingLine(s) {
     if (window.cModal) cModal.open('sfw1-modal'); else $id('sfw1-modal').style.display = 'flex';
   }
   function closeSheet() { if (window.cModal) cModal.close('sfw1-modal'); else $id('sfw1-modal').style.display = 'none'; }
+  window.sfw1Sheet = sheet;
+  window.sfw1CloseSheet = closeSheet;
+  // Generate's pinned-shift question (TRUST-17): keep them, or start fresh.
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sched-gen-keep],[data-sched-gen-fresh]') : null;
+    if (!t || !window._schedGenPending) return;
+    var p = window._schedGenPending; window._schedGenPending = null;
+    closeSheet();
+    p.opts.keep_locked = !t.hasAttribute('data-sched-gen-fresh');
+    generateSchedule(p.btn, p.opts);
+  });
   window.sfw1RedoSheet = function (dates) {
     if (!dates || !dates.length) { say('Tick the days to redo', 'error'); return; }
     if (typeof _schedHistoryId === 'undefined' || !_schedHistoryId) { say('This draft has no history row to rebuild from', 'error'); return; }
@@ -39837,7 +39940,6 @@ window.cavPalette = cavPalette;
   window.psLabel = function () {
     var b = $id('ps-send-btn'); if (!b || b.getAttribute('aria-busy') === 'true') return;
     var c = window._psCheck, n = c && c.reach ? (c.reach.reachable || 0) : 0;
-    var armed = window._psArmed && window._psArmed.hid === _schedHistoryId;
     /* Sent stays sent (owner, 9/26/26): once the week on screen is the one
        staff have and nothing saved since is waiting to go, the button says
        so and rests - the server's published_at, or this page's own send. */
@@ -39856,11 +39958,21 @@ window.cavPalette = cavPalette;
       b.textContent = 'Replaced by a newer copy'; b.className = 'cbtn cbtn-secondary'; b.disabled = true; b.title = rep.text || '';
       return;
     }
-    if (armed) b.textContent = 'Send with ' + window._psArmed.n + ' rule warning' + (window._psArmed.n === 1 ? '' : 's') + '…';
-    else b.textContent = (_schedDirty ? 'Save & send' : 'Send') + (n ? ' to ' + n + ' staff' : ' to staff');
-    b.className = 'cbtn ' + (armed ? 'cbtn-danger' : 'cbtn-primary');
-    var no = !!(c && c.can_publish === false);
-    b.disabled = no;
+    /* Never armed on load (schedule audit 10/10/26 TRUST-2): the button
+       waits for the review (cav-pr) - each must-fix item fixed or
+       overridden on its own, each decision that holds the send answered -
+       and names what it does, and how many rules it goes out past. */
+    var g = window.prGate ? prGate() : {loaded: true, must: 0, decide: 0, overriding: 0, ready: true};
+    var no = !!(c && c.can_publish === false), wait = '';
+    if (window._schedUnchecked) wait = 'Recheck the week first';
+    else if (!g.loaded) wait = 'Checking the week\u2026';
+    else if (g.must) wait = 'Fix ' + g.must + ' thing' + (g.must === 1 ? '' : 's') + ' first';
+    else if (g.decide) wait = 'Answer ' + g.decide + ' decision' + (g.decide === 1 ? '' : 's') + ' first';
+    if (wait) { b.textContent = wait; b.className = 'cbtn cbtn-secondary'; b.disabled = true; b.title = ''; return; }
+    b.textContent = (_schedDirty ? 'Save & send' : 'Send') + (n ? ' to ' + n + ' staff' : ' to staff')
+      + (g.overriding ? ' (overriding ' + g.overriding + ' rule' + (g.overriding === 1 ? '' : 's') + ')' : '');
+    b.className = 'cbtn ' + (g.overriding ? 'cbtn-danger' : 'cbtn-primary');
+    b.disabled = no || !!g.busy;
     b.title = no ? 'Your login can draft a schedule but not send it to staff.' : '';
   };
   function psReach() {
@@ -39910,21 +40022,14 @@ window.cavPalette = cavPalette;
     if (c && mine && c.published_at) return true;
     return !!(window._psSent && window._psSent.hid === _schedHistoryId);
   };
+  /* One read for the whole screen: the pre-publish review (cav-pr) - the
+     gate run once, the reach, the version and the delivery with it
+     (TRUST-33). _psCheck is that payload's send half. */
   window.psRefresh = function () {
     if (!_schedHistoryId) return;
-    var hid = _schedHistoryId;
-    getJ('/api/labor/publish-check?schedule_id=' + hid, function (d) {
-      if (!d.ok || _schedHistoryId !== hid) return;
-      window._psCheck = d;
-      psReach();
-      if (window.sfw1RenderPub) sfw1RenderPub(d);
-      /* Warnings already on file for the saved week go on screen now, and
-         the button names them: that press is the acknowledgement. */
-      if ((d.blockers || []).length && !_schedDirty && !d.published_at) _psRenderBlockers(d.blockers, true, d.blocker_keys, false);
-      else if (!(d.blockers || []).length) { _psRenderBlockers([], false); window._psArmed = null; }
-      psLabel();
-    });
+    if (window.prRefresh) prRefresh();
   };
+  window.psReachRender = function () { psReach(); };
 
   /* ── The verdict line (#19) ── */
   var _svBudget = null, _svReview = null;
@@ -40004,6 +40109,10 @@ window.cavPalette = cavPalette;
         // The rows' version, and whether a newer copy replaced this one
         // (schedule re-audit 10/4/26 UI-1, UI-3).
         version: d.version, superseded_by: d.superseded_by || null, replaced_reason: d.replaced_reason || null,
+        // The aids a fresh draft carries, worked out again on the rows as
+        // they stand (schedule_engine.generation_aids - TRUST-25).
+        overtime_forecast: d.overtime_forecast || [], standby_days: d.standby_days || [],
+        likely_edits: d.likely_edits || [],
         pending_time_off: undefined});
       if (!opts.quiet && panel) panel.scrollIntoView({behavior: 'smooth', block: 'start'});
     });
@@ -40604,6 +40713,414 @@ window.cavPalette = cavPalette;
       return true;
     });
   }
+})();
+</script>
+<style id="cav-pr-css">
+/* The pre-publish review (schedule audit 10/10/26 RM-6): one server payload
+   (GET/POST labor/publish-review), the Summary's verdict and the Publish
+   screen. A verdict card, then a card per question - must fix (red rail),
+   decide (amber rail), the numbers, what changed, fragile, why these people,
+   how sure, worth a look (folded). DESIGN_SYSTEM.md "The pre-publish review". */
+.pr{display:flex;flex-direction:column;gap:14px;margin:6px 0 18px}
+.pr-verdict{display:flex;gap:16px;align-items:flex-start;padding:18px 20px;border-radius:18px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-card)}
+.pr-verdict .pr-vd{flex:0 0 12px;height:12px;border-radius:50%;margin-top:8px;background:var(--ink3)}
+.pr-verdict.green .pr-vd{background:var(--hb-good)}.pr-verdict.amber .pr-vd{background:var(--hb-warn)}.pr-verdict.red .pr-vd{background:var(--hb-bad)}
+.pr-verdict.red{box-shadow:inset 4px 0 0 var(--hb-bad),var(--elev-card)}
+.pr-verdict.amber{box-shadow:inset 4px 0 0 var(--hb-warn),var(--elev-card)}
+.pr-verdict.green{box-shadow:inset 4px 0 0 var(--hb-good),var(--elev-card)}
+.pr-verdict h2,.pr-verdict h1{font-family:'Clash Display',sans-serif;font-weight:500;font-size:22px;line-height:1.3;color:var(--ink);margin:4px 0 6px}
+.pr-verdict .w{font-size:13.5px;color:var(--ink3)}
+.pr-sec{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:16px 20px;box-shadow:var(--elev-card);min-width:0}
+.pr-k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2);margin-bottom:4px}
+.pr-it{padding:10px 0;border-top:1px solid var(--hb-line2);font-size:14.5px;line-height:1.5;color:var(--ink2)}
+.pr-it:first-of-type{border-top:none}
+.pr-it.bad,.pr-it.warn{padding-left:12px}
+.pr-it.bad{box-shadow:inset 3px 0 0 var(--hb-bad)}.pr-it.bad .t{color:var(--ink)}
+.pr-it.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}
+.pr-it.done{opacity:.72}
+.pr-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.pr-meta{font-size:12.5px;color:var(--ink3);margin-top:4px}
+.pr-ok{font-size:13.5px;color:var(--hb-good);margin-top:6px}
+.pr-form{display:flex;flex-direction:column;gap:8px;margin-top:8px;max-width:520px}
+.pr-form textarea{min-height:60px}
+.pr-kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:14px;color:var(--ink2);border-top:1px solid var(--hb-line2)}
+.pr-kv:first-of-type{border-top:none}
+.pr-kv b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;text-align:right}
+.pr-kv b.bad{color:var(--hb-bad)}.pr-kv b.good{color:var(--hb-good)}
+.pr-sub{font-size:12.5px;color:var(--ink3);margin:2px 0 6px}
+.pr-fyi>summary{cursor:pointer;font-size:13.5px;color:var(--ink3);list-style:none}
+.pr-fyi>summary::-webkit-details-marker{display:none}
+.pr-err{font-size:14px;color:var(--hb-bad)}
+.ss-sum-v{margin-bottom:26px}
+@media (max-width:640px){.pr-sec,.pr-verdict{padding:14px 16px}.pr-kv{flex-direction:column;gap:2px}.pr-kv b{text-align:left}}
+</style>
+<script id="cav-pr">
+/* The pre-publish review (schedule audit 10/10/26 RM-6, contract #6). ES5
+   only. One payload - prepublish.review, GET labor/publish-review for the
+   saved week, POST with the rows on screen when edits are unsaved - drives
+   the Summary's verdict and tiles and the Publish screen, so they can never
+   disagree (TRUST-4). Send is never armed on load: it waits until every
+   must-fix item is fixed (the next check no longer finds it) or overridden
+   on its own with a reason - a manager gap by naming who runs the floor -
+   and every decision that holds the send is answered (TRUST-2, TRUST-3,
+   ARCH-30). Every line carries its action; the actions are the payload's
+   (edit_rows, override, acknowledge, dismiss, post, optimize, apply_fixes,
+   open). */
+(function () {
+  var S = {hid: null, data: null, busy: false, err: null, overrides: {}, answers: {}, dismissed: {}, form: null,
+           timer: null, seq: 0};
+  window._prState = S;
+  var POST_PATHS = {'labor/crew-matrix': 1, 'labor/standby/ask': 1, 'labor/rules': 1};
+  function $id(id) { return document.getElementById(id); }
+  function e(s) { return _escHtml(s == null ? '' : String(s)); }
+  function nt(s) { return _numText(s == null ? '' : String(s)); }
+  function pl(n, one, many) { return n === 1 ? one : (many || one + 's'); }
+  function reset(hid) { S.hid = hid; S.data = null; S.err = null; S.overrides = {}; S.answers = {}; S.dismissed = {}; S.form = null; }
+  function compat(d) {
+    var sd = d.send || {}, r = sd.reach || {};
+    return {ok: true, schedule_id: d.schedule_id, week_start: d.week_start, week_end: d.week_end,
+            published_at: d.published_at, version: d.version, can_publish: d.can_publish,
+            replaced_reason: d.replaced_reason, unsent_changes: sd.unsent_changes, delivery: sd.delivery,
+            one_tap_safe: !!sd.one_tap_safe, likely_to_change: d.likely_to_change,
+            reach: {total: r.total || 0, reachable: r.reachable || 0, by_app: r.app || 0, by_text: r.text || 0,
+                    by_email: r.email || 0, unreachable: r.unreachable || []}};
+  }
+  // Answers given to keys the fresh check no longer has are dropped: an
+  // override is for the item it was given on, never a later one.
+  function prune(d) {
+    var keep = {}, i, k;
+    for (i = 0; i < (d.must_fix || []).length; i++) keep[d.must_fix[i].key] = 1;
+    for (i = 0; i < (d.decide || []).length; i++) keep[d.decide[i].key] = 1;
+    for (k in S.overrides) if (S.overrides.hasOwnProperty(k) && !keep[k]) delete S.overrides[k];
+    for (k in S.answers) if (S.answers.hasOwnProperty(k) && !keep[k]) delete S.answers[k];
+  }
+  window.prRefresh = function (cb) {
+    if (!_schedHistoryId) return;
+    var hid = _schedHistoryId, seq = ++S.seq;
+    if (hid !== S.hid) reset(hid);
+    S.busy = true; prRender();
+    var done = function (d) {
+      if (seq !== S.seq || _schedHistoryId !== hid) return;
+      S.busy = false;
+      if (!d || !d.ok) { S.err = (d && d.error) || 'The check couldn’t run just now.'; }
+      else if (d.schedule_id) { S.err = null; S.data = d; prune(d); window._psCheck = compat(d); }
+      prRender();
+      if (window.psReachRender) psReachRender();
+      if (window.psLabel) psLabel();
+      if (_ssOpen && _ssStage === 'summary' && window.ssRenderSummary) ssRenderSummary();
+      if (cb) cb(d);
+    };
+    var fail = function () { done({ok: false, error: 'The check couldn’t run — check your connection.'}); };
+    if (_schedDirty) {
+      fetch('/api/labor/publish-review', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({schedule_id: hid, rows: _schedRows})}).then(apiJson).then(done).catch(fail);
+    } else {
+      fetch('/api/labor/publish-review?schedule_id=' + hid, {credentials: 'same-origin'}).then(apiJson).then(done).catch(fail);
+    }
+  };
+  // The rows on screen moved: the review follows them, once things settle.
+  window.prStale = function () {
+    if (S.timer) clearTimeout(S.timer);
+    S.timer = setTimeout(function () { S.timer = null; if (_schedHistoryId) prRefresh(); }, 700);
+  };
+  window.prFor = function () { return (S.data && S.hid === _schedHistoryId) ? S.data : null; };
+  function resolved(m) {
+    var o = S.overrides[m.key];
+    if (!o) return false;
+    return (m.override || {}).needs === 'covered_by' ? !!o.covered_by : !!o.reason;
+  }
+  // {loaded, busy, must, decide, overriding, ready}: what Send waits for.
+  window.prGate = function () {
+    var d = prFor(), i, must = 0, dec = 0, over = 0;
+    if (!d) return {loaded: false, busy: S.busy, must: 0, decide: 0, overriding: 0, ready: false};
+    for (i = 0; i < (d.must_fix || []).length; i++) { if (resolved(d.must_fix[i])) over++; else must++; }
+    for (i = 0; i < (d.decide || []).length; i++) {
+      var x = d.decide[i];
+      if (x.holds && !S.answers[x.key] && !S.dismissed[x.key]) dec++;
+    }
+    return {loaded: true, busy: S.busy, must: must, decide: dec, overriding: over, ready: !S.busy && !must && !dec};
+  };
+  // The Send body's acknowledgement and overrides: exactly what was read.
+  window.prSendBody = function () {
+    var d = prFor() || {}, ack = [], ovs = [], i;
+    for (i = 0; i < (d.decide || []).length; i++) if (d.decide[i].holds && S.answers[d.decide[i].key]) ack.push(d.decide[i].key);
+    for (i = 0; i < (d.must_fix || []).length; i++) {
+      var m = d.must_fix[i], o = S.overrides[m.key];
+      if (o && resolved(m)) ovs.push({key: m.key, reason: o.reason || '', covered_by: o.covered_by || ''});
+    }
+    return {acknowledge: ack, overrides: ovs};
+  };
+  // ── drawing ─────────────────────────────────────────────────────────
+  var TONE_WORD = {green: 'Ready to send', amber: 'Decisions first', red: 'Not ready'};
+  window.prVerdictHtml = function (d, tag) {
+    var v = (d && d.verdict) || {}, t = tag || 'h2';
+    return '<div class="pr-verdict ' + e(v.tone || '') + '"><span class="pr-vd" aria-hidden="true"></span><div>'
+      + '<div class="ss-kick">' + e(TONE_WORD[v.tone] || 'The week') + '</div>'
+      + '<' + t + '>' + nt(v.sentence || '') + '</' + t + '>'
+      + '<div class="w">' + nt(v.subline || '') + '</div></div></div>';
+  };
+  function btn(label, sec, n, j, cls) {
+    return '<button type="button" class="cbtn ' + (cls || 'cbtn-secondary') + ' cbtn-sm" data-pr="' + sec + '" data-n="' + n + '" data-j="' + j + '">' + nt(label) + '</button>';
+  }
+  function mustHtml(d) {
+    var list = d.must_fix || [], h = '', i, j;
+    if (!list.length) return '';
+    h += '<section class="pr-sec"><div class="pr-k">Must fix before sending · <span class="hb-num">' + list.length + '</span></div>'
+      + '<div class="pr-sub">Each one breaks the law or your own non-negotiable. Send stays off until each is fixed or overridden on its own.</div>';
+    for (i = 0; i < list.length; i++) {
+      var m = list[i], o = S.overrides[m.key], ok = resolved(m), ob = m.overridden_before;
+      h += '<div class="pr-it bad' + (ok ? ' done' : '') + '"><div class="t">' + nt(m.text) + '</div>';
+      if (ob && ob.weeks) h += '<div class="pr-meta">You sent past this in <span class="hb-num">' + ob.weeks + '</span> of <span class="hb-num">' + ob.of + '</span> weeks' + (ob.last ? ', last on <span class="hb-num">' + e(ob.last) + '</span>' : '') + '.</div>';
+      if (ok) {
+        h += '<div class="pr-ok">Overridden' + (o.covered_by ? ': ' + e(o.covered_by) + ' runs the floor' : '') + (o.reason ? ' — “' + e(o.reason) + '”' : '') + '. '
+          + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="ov-undo" data-n="' + i + '" data-j="0">Undo</button></div></div>';
+        continue;
+      }
+      h += '<div class="pr-acts">';
+      for (j = 0; j < (m.fixes || []).length; j++) h += btn(m.fixes[j].label, 'fix', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+      if (m.override_allowed) h += '<button type="button" class="cbtn cbtn-text cbtn-sm" data-pr="ov-open" data-n="' + i + '" data-j="0">Send anyway — I’ll handle it</button>';
+      h += '</div>';
+      if (S.form === m.key) h += formHtml(m, i);
+      h += '</div>';
+    }
+    return h + '</section>';
+  }
+  function formHtml(m, i) {
+    var ov = m.override || {}, h = '<div class="pr-form">', k, c = ov.candidates || [];
+    if (ov.needs === 'covered_by') {
+      h += '<label class="pr-meta" for="pr-cov">' + e(ov.prompt || 'Who runs the floor through it?') + '</label>'
+        + '<select id="pr-cov" class="ac-select"><option value="">Pick who runs the floor</option>';
+      for (k = 0; k < c.length; k++) h += '<option value="' + _escAttr(c[k]) + '">' + e(c[k]) + '</option>';
+      h += '<option value="__other">Someone else…</option></select>'
+        + '<input id="pr-cov-other" class="ac-input" maxlength="120" placeholder="Their name" hidden>'
+        + '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Anything to note (optional)"></textarea>';
+    } else {
+      h += '<label class="pr-meta" for="pr-why">' + e(ov.prompt || 'Why is it fine to send it anyway?') + '</label>'
+        + '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Your reason — kept with this week"></textarea>';
+    }
+    return h + '<div class="pr-acts"><button type="button" class="cbtn cbtn-danger cbtn-sm" data-pr="ov-save" data-n="' + i + '" data-j="0">Override this one</button>'
+      + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-pr="ov-cancel" data-n="' + i + '" data-j="0">Cancel</button></div></div>';
+  }
+  function decideHtml(d) {
+    var list = d.decide || [], h = '', i, j, shown = 0;
+    for (i = 0; i < list.length; i++) if (!S.dismissed[list[i].key]) shown++;
+    if (!shown) return '';
+    h += '<section class="pr-sec"><div class="pr-k">Decide · <span class="hb-num">' + shown + '</span></div>'
+      + '<div class="pr-sub">One tap each; the button says whether it is for this week or every week.</div>';
+    for (i = 0; i < list.length; i++) {
+      var x = list[i];
+      if (S.dismissed[x.key]) continue;
+      var ans = S.answers[x.key];
+      h += '<div class="pr-it' + (x.holds && !ans ? ' warn' : '') + (ans ? ' done' : '') + '"><div class="t">' + nt(x.text) + '</div>';
+      if (!x.holds) h += '<div class="pr-meta">Doesn’t hold the send.</div>';
+      if (ans) { h += '<div class="pr-ok">' + nt(ans) + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="ans-undo" data-n="' + i + '" data-j="0">Change</button></div></div>'; continue; }
+      h += '<div class="pr-acts">';
+      for (j = 0; j < (x.options || []).length; j++) {
+        var op = x.options[j], sc = op.scope === 'every' ? ' · standing' : '';
+        h += btn(op.label + sc, 'opt', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+      }
+      h += '</div></div>';
+    }
+    return h + '</section>';
+  }
+  function kv(k, v, cls, sub) {
+    return '<div class="pr-kv"><span>' + k + (sub ? '<div class="pr-meta">' + sub + '</div>' : '') + '</span><b class="hb-num' + (cls ? ' ' + cls : '') + '">' + v + '</b></div>';
+  }
+  function numbersHtml(d) {
+    var n = d.numbers || {}, h = '', lp = n.labor_pct, ot = n.overtime || {};
+    if (lp && lp.value != null) {
+      var cls = lp.grade === 'over' ? 'bad' : (lp.grade === 'under' ? 'good' : '');
+      var sub = (lp.low != null && lp.high != null ? 'likely <span class="hb-num">' + lp.low + '–' + lp.high + '%</span>' : '')
+        + (lp.target != null ? (lp.low != null ? ' · ' : '') + (lp.target_basis === 'hourly' ? 'the hourly budget is ' : 'your target ') + '<span class="hb-num">' + lp.target + '%</span>' : '')
+        + (lp.track_record ? '<br>' + nt(lp.track_record) : '<br>No measured forecast weeks yet, so no range.')
+        + (lp.other_basis_note ? '<br>' + nt(lp.other_basis_note) : '');
+      h += kv(e(lp.label || 'Labor') + ' of forecast sales', lp.value + '%', cls, sub);
+    }
+    if (n.cost) h += kv('Cost', nt(n.cost.text || ''), '');
+    h += kv('Overtime', ot.priced ? (ot.hours ? _schedHrs(ot.hours) + 'h' : '0h') : '—', ot.priced ? (ot.hours ? 'bad' : 'good') : '', nt(ot.text || ''));
+    if (n.forecast_sales) h += kv('Forecast sales', _schedMoney(n.forecast_sales.value), '', nt(n.forecast_sales.basis || ''));
+    if (n.savings) h += kv('Estimated savings', _schedMoney(n.savings.value), '', nt(n.savings.basis || '') + ' <span class="tag">Projection · not yet earned</span>');
+    if (n.last_week) h += '<div class="pr-meta">' + nt(n.last_week.text) + '</div>';
+    return h ? '<section class="pr-sec"><div class="pr-k">The numbers, with their track record</div>' + h + '</section>' : '';
+  }
+  function linesHtml(title, lines) {
+    var h = '', i;
+    for (i = 0; i < lines.length; i++) if (lines[i]) h += '<div class="pr-it">' + nt(lines[i]) + '</div>';
+    return h ? '<div class="pr-sub" style="margin-top:8px"><b>' + e(title) + '</b></div>' + h : '';
+  }
+  function changedHtml(d) {
+    var c = d.changed || {};
+    var h = linesHtml('Against last week', c.vs_last_week || []) + linesHtml('Against your usual crew', c.vs_usual || [])
+      + linesHtml('Against your last draft', c.vs_last_draft || []) + linesHtml('What Cavnar AI changed', c.cavnar_changes || []);
+    return h ? '<section class="pr-sec"><div class="pr-k">What changed</div>' + h + '</section>' : '';
+  }
+  function fragileHtml(d) {
+    var list = d.fragile || [], h = '', i;
+    if (!list.length) return '';
+    for (i = 0; i < list.length; i++) {
+      h += '<div class="pr-it"><div class="t">' + nt(list[i].text) + '</div>'
+        + (list[i].action ? '<div class="pr-acts">' + btn(list[i].action.label, 'frag', i, 0) + '</div>' : '') + '</div>';
+    }
+    return '<section class="pr-sec"><div class="pr-k">Where this week is fragile</div>' + h + '</section>';
+  }
+  function whyHtml(d) {
+    var w = d.why || {}, h = '', i, a = w.assignments || [], l = w.left_off || [];
+    if (a.length) {
+      h += '<div class="pr-sub"><b>What Cavnar AI weighed</b></div>';
+      for (i = 0; i < a.length; i++) h += '<div class="pr-it">' + nt(a[i].text) + '</div>';
+    }
+    if (l.length) {
+      h += '<div class="pr-sub" style="margin-top:8px"><b>Left off this week</b></div>';
+      for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> — ' + nt(l[i].reason) + '</div>';
+    }
+    return h ? '<section class="pr-sec"><div class="pr-k">Why these people</div>' + h + '</section>' : '';
+  }
+  function sureHtml(d) {
+    var s = d.sure || {}, q = d.quality || {}, h = '', i, cf = s.confidence || {};
+    h += kv('How sure', cf.pct != null ? cf.pct + '%' : '—', '', cf.pct != null ? nt((cf.basis || []).join(' · ')) : nt((cf.basis || [])[0] || 'Nothing measured yet'));
+    if (q.score != null) h += kv('Shift quality', q.score + '<small>/100</small>', q.grade === 'good' ? 'good' : (q.grade === 'weak' ? 'bad' : ''), nt((q.lead ? q.lead + '. ' : '') + (q.text || '')));
+    for (i = 0; i < (s.lines || []).length; i++) h += '<div class="pr-meta">' + nt(s.lines[i]) + '</div>';
+    return '<section class="pr-sec"><div class="pr-k">How sure we are</div>' + h + '</section>';
+  }
+  function fyiHtml(d) {
+    var list = d.fyi || [], h = '', i;
+    if (!list.length) return '';
+    for (i = 0; i < list.length; i++) h += '<div class="pr-it">' + nt(list[i].text) + '</div>';
+    return '<details class="pr-sec pr-fyi"><summary>Worth a look, never holding the send · <span class="hb-num">' + list.length + '</span></summary>' + h + '</details>';
+  }
+  function sendHtml(d) {
+    var p = (d.send || {}).pos_push;
+    return p && p.text ? '<section class="pr-sec"><div class="pr-k">Your POS</div><div class="pr-it' + (p.status === 'failed' || p.status === 'refused' || p.failed ? ' bad' : '') + '">' + nt(p.text) + '</div></section>' : '';
+  }
+  window.prRender = function () {
+    var el = $id('pr-review'); if (!el) return;
+    var d = prFor();
+    if (!d) {
+      el.innerHTML = S.err ? '<div class="pr-sec"><div class="pr-err">' + e(S.err) + '</div><div class="pr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-pr="retry" data-n="0" data-j="0">Check again</button></div></div>'
+        : '<div class="pr-sec"><div class="pr-k">Checking the week</div><div class="dr-pulse wide" role="status" aria-label="Checking the week against today’s data"><i></i></div></div>';
+      return;
+    }
+    el.innerHTML = prVerdictHtml(d, 'h2') + (S.busy ? '<div class="dr-pulse wide" role="status" aria-label="Checking again"><i></i></div>' : '')
+      + (S.err ? '<div class="pr-err">' + e(S.err) + '</div>' : '')
+      + mustHtml(d) + decideHtml(d) + numbersHtml(d) + changedHtml(d) + fragileHtml(d) + whyHtml(d) + sureHtml(d) + fyiHtml(d) + sendHtml(d);
+    prChangedBlock(d);
+    prTeamRender(false);
+  };
+  // The Team step's "Left off this week": the same reasons, beside the team.
+  window.prTeamRender = function (fetchIfMissing) {
+    var el = $id('ss-team-leftoff'), d = prFor(), i, h = '';
+    if (!el) return;
+    if (!d) { el.innerHTML = ''; if (fetchIfMissing && _schedHistoryId && !S.busy) prRefresh(); return; }
+    var l = (d.why || {}).left_off || [];
+    if (!l.length) { el.innerHTML = ''; return; }
+    h += '<section class="pr-sec" style="margin:14px 0 6px"><div class="pr-k">Left off the week of <span class="hb-num">' + e(mdy(d.week_start)) + '</span></div>';
+    for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> \u2014 ' + nt(l[i].reason) + '</div>';
+    el.innerHTML = h + '</section>';
+  };
+  // "What changed vs last published week" in the week view follows the rows
+  // too (TRUST-24): it was drawn once at generation and never again.
+  function prChangedBlock(d) {
+    var b = $id('sched-summary-bullets'), box = $id('sched-summary'), lines = (d.changed || {}).vs_last_week || [], h = '', i;
+    if (!b) return;
+    for (i = 0; i < lines.length; i++) h += '<div class="sr-line"><span>' + nt(lines[i]) + '</span></div>';
+    if (h) { b.innerHTML = h; if (box) box.style.display = 'block'; }
+  }
+  // ── acting ──────────────────────────────────────────────────────────
+  function rowIndex(m) {
+    var i, r, low = function (s) { return String(s || '').replace(/\s+/g, ' ').toLowerCase(); };
+    if (!m) return -1;
+    if (m.shift_id) for (i = 0; i < _schedRows.length; i++) if (_schedRows[i].shift_id === m.shift_id) return i;
+    for (i = 0; i < _schedRows.length; i++) {
+      r = _schedRows[i];
+      if (low(r.employee) === low(m.employee) && r.date === m.date && low(r.shift_start) === low(m.shift_start)) return i;
+    }
+    return -1;
+  }
+  window.prApplyEdit = function (p) {
+    var i, n = 0, miss = 0;
+    if (_schedReadOnly()) return false;
+    for (i = 0; i < (p.change || []).length; i++) {
+      var c = p.change[i], ix = rowIndex(c.match);
+      if (ix < 0) { miss++; continue; }
+      var r = _schedRows[ix], s = c.set || {}, k;
+      for (k in s) if (s.hasOwnProperty(k) && s[k] != null) r[k] = s[k];
+      if (s.shift_start || s.shift_end) r.scheduled_hours = _schedHoursBetween(r.shift_start, r.shift_end);
+      _schedPendRecheck(r); _schedOverrides[ix] = true; n++;
+    }
+    for (i = 0; i < (p.remove || []).length; i++) {
+      var rx = rowIndex(p.remove[i]);
+      if (rx < 0) { miss++; continue; }
+      _schedRows.splice(rx, 1); n++;
+    }
+    for (i = 0; i < (p.add || []).length; i++) {
+      var a = {}, src = p.add[i], q;
+      for (q in src) if (src.hasOwnProperty(q)) a[q] = src[q];
+      a.day = a.day || _schedDayOf(a.date);
+      if (!a.scheduled_hours) a.scheduled_hours = _schedHoursBetween(a.shift_start, a.shift_end);
+      _schedPendRecheck(a);
+      _schedRows.push(a); _schedOverrides[_schedRows.length - 1] = true; n++;
+    }
+    if (n) { _schedSortRows(); schedAfterEdit(); }
+    if (miss) { toast('That shift changed on screen — checking the week again', 'warning'); prRefresh(); }
+    else if (n) toast('Changed on the week — save to keep it', 'success');
+    return n > 0;
+  };
+  function openShift(p) {
+    if (p.redo && p.redo.length && window.sfw1RedoSheet) { studioGo('schedule'); sfw1RedoSheet(p.redo); return; }
+    studioGo(p.stage || 'schedule');
+    if (p.stage && p.stage !== 'schedule') return;
+    var ix = rowIndex({shift_id: p.shift_id, employee: p.employee, date: p.date, shift_start: p.shift_start});
+    if (ix < 0 && p.employee) { var i; for (i = 0; i < _schedRows.length; i++) if (String(_schedRows[i].employee).toLowerCase() === String(p.employee).toLowerCase() && (!p.date || _schedRows[i].date === p.date)) { ix = i; break; } }
+    if (ix >= 0 && window.swSelect) swSelect(ix);
+  }
+  function post(p, b) {
+    if (!POST_PATHS[p.path]) return;
+    var done = b ? cbtnBusy(b, 'Saving…') : function () { };
+    fetch('/api/' + p.path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(p.body || {})}).then(apiJson).then(function (d) {
+      done();
+      if (d && d.ok) { toast(d.message || 'Done', 'success'); prRefresh(); }
+      else toast((d && d.error) || 'That didn’t go through', 'error');
+    }).catch(function () { done(); toast('That didn’t go through — check your connection', 'error'); });
+  }
+  window.prDo = function (act, b, key) {
+    if (!act) return;
+    var p = act.payload || {};
+    if (act.action === 'edit_rows') prApplyEdit(p);
+    else if (act.action === 'acknowledge') { S.answers[p.key || key] = act.label; prRender(); psLabel(); }
+    else if (act.action === 'dismiss') { S.dismissed[p.key || key] = 1; prRender(); psLabel(); }
+    else if (act.action === 'override') { S.form = p.key || key; prRender(); }
+    else if (act.action === 'post') post(p, b);
+    else if (act.action === 'optimize') { if (window.ssOptimize) ssOptimize(b); }
+    else if (act.action === 'apply_fixes') { if (window.applyScheduleFixes) applyScheduleFixes(b); }
+    else if (act.action === 'open') openShift(p);
+  };
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-pr]') : null;
+    if (!t) return;
+    var d = prFor() || {}, what = t.getAttribute('data-pr'), n = +t.getAttribute('data-n'), j = +t.getAttribute('data-j');
+    var m = (d.must_fix || [])[n], x = (d.decide || [])[n];
+    if (what === 'retry') { prRefresh(); return; }
+    if (what === 'fix' && m) { prDo((m.fixes || [])[j], t, m.key); return; }
+    if (what === 'opt' && x) { var op = (x.options || [])[j]; if (op && op.action === 'acknowledge') op = {label: op.label, action: 'acknowledge', payload: {key: x.key}}; prDo(op, t, x.key); return; }
+    if (what === 'frag') { var f = (d.fragile || [])[n]; if (f) prDo(f.action, t, f.key); return; }
+    if (what === 'ans-undo' && x) { delete S.answers[x.key]; prRender(); psLabel(); return; }
+    if (what === 'ov-open' && m) { S.form = m.key; prRender(); var w = $id('pr-cov') || $id('pr-why'); if (w) w.focus(); return; }
+    if (what === 'ov-cancel') { S.form = null; prRender(); return; }
+    if (what === 'ov-undo' && m) { delete S.overrides[m.key]; prRender(); psLabel(); return; }
+    if (what === 'ov-save' && m) {
+      var why = $id('pr-why'), cov = $id('pr-cov'), other = $id('pr-cov-other');
+      var reason = why ? String(why.value || '').replace(/^\s+|\s+$/g, '') : '', who = '';
+      if (cov) who = cov.value === '__other' ? String((other && other.value) || '').replace(/^\s+|\s+$/g, '') : cov.value;
+      if ((m.override || {}).needs === 'covered_by' && !who) { toast('Name who runs the floor through it', 'error'); return; }
+      if ((m.override || {}).needs !== 'covered_by' && !reason) { toast('Say why it can go out anyway', 'error'); return; }
+      S.overrides[m.key] = {reason: reason, covered_by: who}; S.form = null; prRender(); psLabel(); return;
+    }
+  });
+  document.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t && t.id === 'pr-cov') { var o = $id('pr-cov-other'); if (o) { o.hidden = t.value !== '__other'; if (!o.hidden) o.focus(); } }
+  });
 })();
 </script>
 <!-- ════ Memory round, UI wave B (9/29/26) ════

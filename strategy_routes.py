@@ -7119,13 +7119,18 @@ def _open_draft_id(rid, today):
     return row["id"] if row else None
 
 
-def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
+def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
     """Whether a drafted week may go out from one tap — the push's "Send to
     staff" (iOS parity #16) and Waiting on you's Send: unsent, not replaced,
     nothing the publish gate would ask about, and somebody it reaches. The
     same rule LaborWaitingOnYou applies to publish-check's answer; the
     publish route still checks again when the button is pressed. Never
-    raises (False)."""
+    raises (False).
+
+    `review` — a person's publish_review of this week already run: the
+    verdict is derived from it (its `held_unattended` are what an unattended
+    run would add), so publish-check runs the gate once, not twice
+    (schedule audit 10/10/26 TRUST-33)."""
     if not can_publish or not schedule_id:
         return False
     try:
@@ -7144,8 +7149,9 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
         # One tap is an unattended send: the soft flags automation is held
         # by (schedule_rules.HOLD_UNATTENDED) stop it too, and so does any
         # warning or quality note the owner has not read (re-audit 10/8/26).
-        review = publish_review(rid, row["id"], unattended=True) or {}
-        if review.get("blockers") or review.get("soft") or review.get("notes"):
+        if review is None:
+            review = publish_review(rid, row["id"], unattended=True) or {}
+        if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
             return False
         reach = people.reach_summary(people.reach(rid, employees_in_schedule(row["schedule_csv"] or "")))
         return int(reach.get("total") or 0) > 0
@@ -7153,6 +7159,73 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
         import ops
         ops.capture(e, job="draft_one_tap_safe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
         return False
+
+
+def _review_rows(raw):
+    """The rows on screen for the pre-publish review: the eight columns and
+    what each row carries that the review reads — its shift id (a fix names
+    the row by it), its lock and its NEEDS REVIEW mark — with a manager-plan
+    pin kept (schedule_skeleton.mark_pins). [] is a week emptied on screen;
+    None a row with no readable date."""
+    from datetime import datetime as _dt
+    import schedule_skeleton as _skel
+    cols = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
+    raw = [r for r in raw if isinstance(r, dict)]
+    rows = []
+    for r in raw:
+        x = {c: str(r.get(c) or "")[:200] for c in cols}
+        try:
+            _dt.strptime(x["date"].strip(), "%Y-%m-%d")
+        except ValueError:
+            return None
+        sid = str(r.get("shift_id") or "").strip()[:64]
+        if sid:
+            x["shift_id"] = sid
+        if r.get("locked") in (True, 1, "1", "true"):
+            x["locked"] = True
+        if r.get("needs_review") in (True, 1, "1", "true"):
+            x["needs_review"] = True
+        rows.append(x)
+    return _skel.mark_pins(rows, sent=raw)
+
+
+def _do_publish_review(u):
+    """The pre-publish review (schedule audit 10/10/26 RM-6, contract #6;
+    prepublish.review): ONE payload the web Studio's Summary and Publish
+    and the phone's publish sheet render — the verdict, what must be fixed
+    (each with its fix or an override of its own), what to decide, the
+    numbers with their track record, what changed, where the week is
+    fragile, why these people, how sure, and what Send would do. GET checks
+    the stored week; POST {schedule_id, rows} checks the rows on screen
+    (unsaved edits), saving nothing."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see the schedule.")
+    import prepublish
+    rid = _rid(u)
+    body = _body() if request.method == "POST" else {}
+    try:
+        sid = int((body.get("schedule_id") if request.method == "POST" else request.args.get("schedule_id")) or 0)
+    except (TypeError, ValueError):
+        sid = 0
+    sid = sid or _open_draft_id(rid, _local_today(u))
+    if not sid:
+        return {"ok": True, "schedule_id": None}, 200
+    rows = None
+    if request.method == "POST":
+        raw = body.get("rows")
+        if not isinstance(raw, list):
+            return {"ok": False, "error": "rows required"}, 400
+        if len(raw) > 2000:
+            return {"ok": False, "error": "that is more rows than a week can hold"}, 400
+        rows = _review_rows(raw)
+        if rows is None:
+            return {"ok": False, "error": "A row on screen has no readable date — reload the week."}, 400
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    can = bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)
+    out = prepublish.review(rid, sid, rows=rows, user=u, today=_local_today(u), can_publish=can)
+    if not out.get("ok"):
+        return out, 404
+    return out, 200
 
 
 def _do_publish_check(u):
@@ -7224,7 +7297,9 @@ def _do_publish_check(u):
             # re-deriving it from `blockers`, which missed the soft flags
             # and notes (re-audit 10/8/26 #1).
             "one_tap_safe": bool(not row["published_at"] and not row["superseded_by"]
-                                 and draft_one_tap_safe(rid, row["id"], can_publish=_can_publish)), "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
+                                 and draft_one_tap_safe(rid, row["id"], can_publish=_can_publish,
+                                                        review=review if review else None)),
+            "schedule_id": row["id"], "week_start": row["week_start"], "week_end": row["week_end"],
             "published_at": row["published_at"], "blockers": blockers,
             "blocker_keys": [b["key"] for b in items], "blocker_items": items, "reach": summary,
             # What is worth a look but never holds the send (SQ-29: the
@@ -7815,6 +7890,8 @@ _ROUTES = [
     ("/people/mentions/<int:signal_id>", ["POST"], _do_people_mention_answer, "people_mention_answer"),
     ("/issues/<int:issue_id>/cover-answer", ["POST"], _do_issue_cover_answer, "issue_cover_answer"),
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
+    # The pre-publish review, one payload for web and phone (RM-6, contract #6).
+    ("/labor/publish-review", ["GET", "POST"], _do_publish_review, "publish_review"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
     ("/data-health/verify", ["POST"], _do_data_verify, "data_health_verify"),

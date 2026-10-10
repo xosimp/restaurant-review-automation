@@ -1911,6 +1911,10 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/reset-password", "device_token"): _THROTTLE,
     ("/mobile/api/register", "device_token"): _THROTTLE,
     ("/mobile/api/verify-2fa", "device_token"): _THROTTLE,
+    # schedule audit 10/10/26 TRUST-17: Generate keeps the owner's pinned
+    # shifts by default; only the web's "Start fresh" sends false. The
+    # phone's Generate keeps them (the default) until it offers the choice (I2b).
+    ("/mobile/api/labor/generate-schedule", "keep_locked"): "the default keeps pinned shifts; Start fresh is web-only for now",
 }
 
 # Write call sites whose path or body is not in the Swift source, by (file,

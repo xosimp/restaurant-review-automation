@@ -7,8 +7,47 @@
    "2026-10-28"
   ],
   "days_drafted": 3,
-  "days_total": 7
+  "days_total": 7,
+  "stage": "draft",
+  "stages": [
+   {
+    "current": false,
+    "done": true,
+    "key": "inputs",
+    "label": "Reading your team, time off and sales"
+   },
+   {
+    "current": true,
+    "done": false,
+    "key": "draft",
+    "label": "Drafting the week"
+   },
+   {
+    "current": false,
+    "done": false,
+    "key": "rules",
+    "label": "Checking every rule against today's data"
+   },
+   {
+    "current": false,
+    "done": false,
+    "key": "repair",
+    "label": "Fixing what breaks a rule"
+   },
+   {
+    "current": false,
+    "done": false,
+    "key": "score",
+    "label": "Scoring shift quality"
+   },
+   {
+    "current": false,
+    "done": false,
+    "key": "save",
+    "label": "Saving the draft"
+   }
+  ]
  },
- "seconds_left": 2156,
+ "seconds_left": 1140,
  "status": "pending"
 }

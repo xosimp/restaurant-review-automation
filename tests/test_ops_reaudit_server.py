@@ -29,6 +29,7 @@ import notify
 import people
 import schedule_versions as sv
 from models import create_restaurant, Restaurant
+from tests.publish_overrides import overrides_for, override_list  # noqa: F401
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 W1 = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"]
@@ -144,7 +145,7 @@ def test_a_failed_send_result_is_not_reported_sent_and_is_retried_from_the_outbo
     hid = _save(db, rid, _csv())
     _contacts(db, rid, "Ana", "Bob")
     mail["fail"] = {"ana@x.com", "bob@x.com"}
-    out, status = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True)
+    out, status = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True, override_reasons=overrides_for(rid, hid))
     assert out["ok"] is True and out["sent"] == []
     assert sorted(f["employee_name"] for f in out["failed"]) == ["Ana", "Bob"]
     assert "couldn" in (out.get("note") or "").lower()
@@ -160,7 +161,7 @@ def test_a_partial_send_drops_the_failed_persons_share_row(db, mail):
     hid = _save(db, rid, _csv())
     _contacts(db, rid, "Ana", "Bob")
     mail["fail"] = {"bob@x.com"}
-    out, _ = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True)
+    out, _ = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True, override_reasons=overrides_for(rid, hid))
     assert [s["employee_name"] for s in out["sent"]] == ["Ana"]
     assert [f["employee_name"] for f in out["failed"]] == ["Bob"]
     shares = [r["employee_name"] for r in models.get_conn(db).execute(
@@ -174,7 +175,7 @@ def test_the_week_label_staff_read_is_m_d_yy(db, mail):
     rid = _restaurant(db)
     hid = _save(db, rid, _csv())
     _contacts(db, rid, "Ana")
-    out, _ = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True)
+    out, _ = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True, override_reasons=overrides_for(rid, hid))
     assert out["week_label"] == "10/5/26 – 10/9/26"
     assert mail["kw"][0]["week_label"] == "10/5/26 – 10/9/26"
 
@@ -206,9 +207,16 @@ def test_an_acknowledgement_by_keys_does_not_cover_a_blocker_that_appeared_since
     assert [b["key"] for b in body["blocker_items"]] == ["hours_over", "rule:x"]
     assert body["blocker_keys"] == ["hours_over", "rule:x"]
     assert mail["sent"] == []
+    # A rule breach is must-fix (schedule audit 10/10/26 TRUST-3): the key
+    # list alone no longer sends past it — it needs an override with a reason.
     r = _app(db).test_client().post("/mobile/api/labor/publish-schedule",
                                     json={"schedule_id": hid, "acknowledge": ["hours_over", "rule:x"]},
                                     headers=_bearer(db, rid, name="owner2"))
+    assert r.status_code == 409 and r.get_json()["needs_reason"] == [{"key": "rule:x", "needs": "reason"}]
+    r = _app(db).test_client().post("/mobile/api/labor/publish-schedule",
+                                    json={"schedule_id": hid, "acknowledge": ["hours_over"],
+                                          "overrides": [{"key": "rule:x", "reason": "Ana agreed"}]},
+                                    headers=_bearer(db, rid, name="owner3"))
     assert r.status_code == 200 and r.get_json()["ok"] and mail["sent"] == ["Ana"]
 
 
@@ -264,14 +272,14 @@ def test_send_tells_only_the_changed_people_once_and_then_nothing_is_pending(db,
     assert _post_save(app, owner, _edited_rows(), history_id=hid, version=v).status_code == 200
     assert _post_save(app, owner, _edited_rows(), history_id=hid, version=v + 1).status_code == 200
     assert mail["sent"] == []
-    r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True},
+    r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid)},
                                headers=owner)
     body = r.get_json()
     assert r.status_code == 200 and body["ok"] and body["changes_sent"] is True
     assert mail["sent"] == ["Ana"] and "(updated)" in mail["kw"][0]["week_label"]
     assert sv.unsent_changes(rid, hid)["people"] == []
     # A second press sends nothing again.
-    r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True},
+    r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid)},
                                headers=owner)
     assert r.get_json()["already_published"] is True and mail["sent"] == ["Ana"]
 
@@ -297,7 +305,7 @@ def test_sending_changes_honours_the_owners_undo_window(db, mail):
     app, owner = _app(db), _bearer(db, rid)
     v = sv.list_versions(rid, hid)[-1]["version"]
     _post_save(app, owner, _edited_rows(), history_id=hid, version=v)
-    r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True},
+    r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid)},
                                headers=owner)
     assert r.get_json()["queued"] is True and mail["sent"] == []
     assert [a["kind"] for a in delayed.pending(rid)] == ["schedule_changes_send"]
@@ -312,7 +320,7 @@ def test_an_edit_inside_the_undo_window_voids_the_queued_changes(db, mail):
     app, owner = _app(db), _bearer(db, rid)
     v = sv.list_versions(rid, hid)[-1]["version"]
     _post_save(app, owner, _edited_rows(), history_id=hid, version=v)
-    app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True},
+    app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid, "acknowledge": True, "overrides": override_list(rid, hid)},
                            headers=owner)
     rows = _edited_rows()
     rows[1]["shift_start"] = "6:00pm"            # Bob's Monday, after Send was pressed

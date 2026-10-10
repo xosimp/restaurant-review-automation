@@ -551,7 +551,8 @@ def test_each_suggestion_says_how_many_points_it_is_worth():
     assert all(points[r] > 0 for r in recs if r.startswith("Fill the gap"))
     gaps = [r for r in recs if r.startswith("Fill the gap")]
     # The busier, emptier Saturday is worth more and comes first.
-    assert gaps[0].startswith("Fill the gap on Saturday night") and points[gaps[0]] > points[gaps[1]]
+    # One word pair, Lunch/Dinner (schedule audit 10/10/26 TRUST-31).
+    assert gaps[0].startswith("Fill the gap on Saturday dinner") and points[gaps[0]] > points[gaps[1]]
     assert [d["text"] for d in out["recommendation_details"]] == recs
     # Fixing one gap fully is what the number promises: the week's own
     # aggregation with that shift's coverage met.

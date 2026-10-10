@@ -196,8 +196,48 @@ def _in_restaurant_dayparts(fn):
     return wrapper
 
 
+# Each blocker's tier (schedule audit 10/10/26 TRUST-3, ARCH-30): MUST_FIX —
+# illegal, the owner's non-negotiable (a manager on the floor every minute),
+# or a week nobody could vouch for — is acknowledged only by an override of
+# its own with a reason (a manager gap only by naming who runs the floor);
+# DECIDE — the owner's own number or a choice (the hourly budget, the notice
+# rule, a late change, a week Shift Quality could not score, a line of the
+# draft's own) — by one tap; nothing else holds a send.
+MUST_FIX, DECIDE = "must_fix", "decide"
+# Ranks inside MUST_FIX, before any rule's own tier (schedule_rules.TIER_*):
+# a roster with no manager at all, then a day nobody drafted, then the checks
+# that could not vouch for the week.
+_RANK = {"roster": -3, "unwritten": -2, "sweep_failed": -1, "input": 0, "stage": 0, "needs_review": 3}
+# The keys whose override must name who runs the floor (ARCH-30).
+COVER_KINDS = ("rule:no_manager", "roster:no_manager_roster")
+
+
+def tier_of_key(key) -> str:
+    """A blocker's tier from its key, for a blocker built without one:
+    schedule_overrides.DECIDE_HEADS are DECIDE, everything else MUST_FIX —
+    never the other way round."""
+    import schedule_overrides as _so_t
+    return _so_t.tier_of_key(key)
+
+
+def blocker_tier(b) -> str:
+    """One blocker's tier: its own, else read from its key."""
+    return b.get("tier") or tier_of_key(b.get("key"))
+
+
+def override_needs(key) -> str:
+    """"covered_by" for a manager gap — its override names the person who
+    runs the floor (the owner counts) — else "reason"."""
+    import schedule_overrides as _so_n
+    return "covered_by" if _so_n.kind_of(key) in COVER_KINDS else "reason"
+
+
+def _unwritten_key(items) -> str:
+    return "unwritten:" + ",".join(sorted({str(it.get("date") or "") for it in items or []}))
+
+
 @_in_restaurant_dayparts
-def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
+def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None, rows=None, keep=None) -> dict:
     """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
     "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the
     publish gate, computed against the data as it stands NOW.
@@ -223,7 +263,23 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     flags schedule_rules.HOLD_UNATTENDED names stop it too, and every other
     soft flag is returned in `soft` for the owner's notice (NS5 M7). Each
     blocker carries a stable `key` so an acknowledgement given for one set
-    does not carry to a blocker that appeared later."""
+    does not carry to a blocker that appeared later.
+
+    Each blocker also carries `tier` (MUST_FIX | DECIDE), `rank` (severity
+    inside its tier: the law and the manager rule first, never the date) and
+    `date` (schedule audit 10/10/26 TRUST-3). Rule breaches come only from
+    the live sweep: a saved review line is read only for what the sweep
+    cannot recompute — the generation's own notes — and a day it could not
+    write is read against the rows as they stand (TRUST-5: a breach fixed in
+    Team settings stayed a blocker until the week was saved again).
+    `held_unattended` lists what would hold an unattended send whatever
+    `unattended` is, so one run answers a person's Send and the one-tap
+    verdict both (TRUST-33).
+
+    `rows` checks the rows on screen instead of the stored ones (the
+    pre-publish screen with unsaved edits, TRUST-4); `keep`, a dict, is
+    filled with what the run read ({"row", "rows", "constraints",
+    "violations", "review", "quality"}) for prepublish.review."""
     _ensure_history_columns = _models_mod._ensure_history_columns
     conn = get_conn()
     try:
@@ -240,14 +296,18 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     finally:
         conn.close()
     if not row:
-        return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": None}
+        return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": None, "held_unattended": []}
     out, soft, notes, seen = [], [], [], set()
+    held_unattended = []   # what would hold an unattended send (TRUST-33)
     pp_out = None          # the priced late changes (predictability_pay.preview), when a law covers it
 
-    def add(key, text):
+    def add(key, text, tier=MUST_FIX, rank=None, date=None, **meta):
         if text and text not in seen:
             seen.add(text)
-            out.append({"key": key, "text": text})
+            b = {"key": key, "text": text, "tier": tier,
+                 "rank": _RANK.get(str(key).split(":", 1)[0], 5) if rank is None else rank, "date": date}
+            b.update(meta)
+            out.append(b)
 
     def note(key, text):
         # Acknowledge-able, never holding a publish (SQ-29).
@@ -256,35 +316,74 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             notes.append({"key": key, "text": text})
             soft.append(text)
 
-    flagged = sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line)
+    import schedule_rules as _sr
+    from schedule_versions import rows_from_csv
+    screen = rows is not None
+    rows = [dict(r) for r in rows] if screen else rows_from_csv(row["schedule_csv"] or "")
+    flagged = (sum(1 for r in rows if str(r.get("needs_review") or "").strip().lower() in ("1", "true", "yes")
+                   or "NEEDS REVIEW" in str(r.get("notes") or "")) if screen
+               else sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line))
     if flagged:
         add("needs_review", f"{flagged} shift{'s' if flagged != 1 else ''} marked NEEDS REVIEW")
     try:
         review = json.loads(row["review_json"] or "null") or {}
     except Exception:
         review = {}
-    # The generation's own lead lines are read whole (re-audit 10/4/26
-    # PIPE-7): with three budget lines and a caveat ahead of it, the
-    # unwritten-day line sat at the edge of the first six.
-    _lead = [x for x in (review.get("lead_lines") or []) if isinstance(x, str)]
-    for line in _lead + [x for x in (review.get("lines") or [])[:6] if isinstance(x, str)]:
-        if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
-            t = line.lstrip("⚠ ").strip()
-            add("saved:" + t, t)
     # A repair stage of a hard rule or the manager rule that did not run on
     # this draft (schedule audit 10/3/26 P-3, P-17): its breaches were never
     # repaired, so the week is read before it goes out — wherever its line
     # sits in the review.
+    stage_lines = set()
     for f in review.get("stage_failures") or []:
         if f.get("blocks_publish"):
-            add(f"stage:{f.get('stage')}", (str(f.get("line") or "").lstrip("⚠ ").strip()
-                                            or f"A repair step ({f.get('stage')}) didn't run on this draft"))
+            t = str(f.get("line") or "").lstrip("⚠ ").strip()
+            stage_lines.add(t)
+            add(f"stage:{f.get('stage')}", t or f"A repair step ({f.get('stage')}) didn't run on this draft")
+    # A day the generation could not write, or nobody could work, read
+    # against the rows as they stand: one the owner has since filled is not
+    # said as empty (TRUST-5; refresh_review does the same on a save).
+    on = {r.get("date") for r in rows if (r.get("employee") or "").strip()}
+    said_days = set()
+    try:
+        import schedule_engine as _se_pr
+        for field_, line_of in (("unwritten_dates", _se_pr._unwritten_line),
+                                ("unstaffable_dates", _se_pr._unstaffable_line)):
+            items = [u for u in (review.get(field_) or []) if isinstance(u, dict)]
+            if not items:
+                continue
+            try:
+                said_days.add(line_of(items).lstrip("⚠ ").strip())
+            except Exception:
+                pass
+            left = [u for u in items if u.get("date") not in on]
+            if left:
+                add(_unwritten_key(left), line_of(left).lstrip("⚠ ").strip(), date=left[0].get("date"))
+    except Exception as _ux:
+        print(f"[publish] unwritten days unreadable: {_ux!r}")
+    # The generation's own lead lines (re-audit 10/4/26 PIPE-7) — only what
+    # the live sweep cannot recompute (TRUST-5): the sweep's rule lines, the
+    # budget's, the stage failures, the settings the rules could not read
+    # and the empty days above are each read fresh, never from the save. A
+    # review saved before its lines were told apart keeps only its lead.
+    rule_lines = {x.lstrip("⚠ ").strip() for x in (review.get("rule_lines") or []) + (review.get("budget_lines") or [])
+                  if isinstance(x, str)}
+    input_lines = set()
+    for p in review.get("input_problems") or []:
+        try:
+            input_lines.add(_input_problem_text(p))
+        except Exception:
+            pass
+    for line in [x for x in (review.get("lead_lines") or []) if isinstance(x, str)]:
+        if not line.startswith("⚠") or "over the ceiling" in line:   # the hours check below says it once
+            continue
+        t = line.lstrip("⚠ ").strip()
+        if t in rule_lines or t in stage_lines or t in input_lines or t in said_days:
+            continue
+        add("saved:" + t, t, tier=DECIDE, rank=40)
     # The sweep against today's data: time off approved, a person
     # deactivated, a floor or a minor's age band set since the draft.
-    import schedule_rules as _sr
-    from schedule_versions import rows_from_csv
-    rows = rows_from_csv(row["schedule_csv"] or "")
     c = None
+    viols = []
     try:
         from datetime import datetime as _dt, timedelta as _td
         ws = _dt.strptime(str(row["week_start"])[:10], "%Y-%m-%d")
@@ -298,18 +397,38 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         for p in (getattr(c, "input_problems", None) or []):
             add(f"input:{p.get('source')}:{(p.get('name') or '').strip().lower()}", _input_problem_text(p))
         viols = _sr.violations(rows, c)
-        hard = [v for v in viols if v["hard"] and v["kind"] != "over_max_hours"] + \
-               [v for v in viols if v["kind"] == "over_max_hours"][:1]
+        # A maximum is named on every row of the payroll week: one line per
+        # person and payroll week (it kept only the first person's, so a
+        # second person past their own maximum was never on the list).
+        max_seen, hard = set(), []
+        for v in viols:
+            if not v["hard"]:
+                continue
+            if v["kind"] == "over_max_hours":
+                mk = ((v.get("employee") or "").strip().lower(), v.get("bucket"))
+                if mk in max_seen:
+                    continue
+                max_seen.add(mk)
+            hard.append(v)
+        breaches = {}
         for v in sorted(hard, key=lambda x: (x.get("date") or "", x.get("employee") or "")):
+            # Ranked by the rule's tier — the law and the manager rule first
+            # (schedule_rules.tier_of), never by date (TRUST-3).
+            t = _sr.tier_of(v)
+            rank = 10 + (t if t is not None else 9)
             # A breach about a day is named on the day, never charged to
             # whoever's row it is pinned to (schedule_rules.breach_text, E-13).
             if v.get("day_level"):
-                add(f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}",
-                    _sr.breach_text(v))
+                k = f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}"
+                add(k, _sr.breach_text(v), rank=rank, date=v.get("date"))
+                breaches.setdefault(k, v)
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
-            add(f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}",
-                f"{v['employee']} — {where}: {v['detail']}")
+            k = f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}"
+            add(k, f"{v['employee']} — {where}: {v['detail']}", rank=rank, date=v.get("date"))
+            breaches.setdefault(k, v)
+        if keep is not None:
+            keep["breaches"] = breaches
         ceiling_seen = set()
         for v in viols:
             if v["hard"]:
@@ -330,9 +449,13 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             text = f"{v['employee']} — {where}: {v['detail']}"
-            if unattended and v["kind"] in _sr.HOLD_UNATTENDED:
-                add(f"soft:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}", text)
-            elif text not in soft:
+            if v["kind"] in _sr.HOLD_UNATTENDED:
+                hk = f"soft:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}"
+                held_unattended.append({"key": hk, "text": text})
+                if unattended:
+                    add(hk, text, tier=DECIDE, rank=30, date=v.get("date"))
+                    continue
+            if text not in soft:
                 soft.append(text)
         now = today or _local_today(restaurant_id)
         import schedule_versions as _sv_pb
@@ -355,13 +478,15 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             if pp.get("covered"):
                 pp_out = pp
                 if pp.get("text"):
-                    add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + pp["text"])
+                    add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + pp["text"],
+                        tier=DECIDE, rank=21)
             elif warn:
-                add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + warn)
+                add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + warn,
+                    tier=DECIDE, rank=21)
         elif not row["published_at"]:
             short = _sr.notice_shortfall(c.compliance, row["week_start"], now)
             if short:
-                add("notice_short", _notice_text(short, row["week_start"]))
+                add("notice_short", _notice_text(short, row["week_start"]), tier=DECIDE, rank=20)
         else:
             # Saved changes to a week staff have, about to be sent.
             pending = _sv_pb.unsent_changes(restaurant_id, row["id"]) or {}
@@ -370,9 +495,9 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             if pp.get("covered"):
                 pp_out = pp
                 if pp.get("text"):
-                    add("late_change:" + ",".join(pending.get("dates") or []), pp["text"])
+                    add("late_change:" + ",".join(pending.get("dates") or []), pp["text"], tier=DECIDE, rank=21)
             elif warn:
-                add("late_change:" + ",".join(pending.get("dates") or []), warn)
+                add("late_change:" + ",".join(pending.get("dates") or []), warn, tier=DECIDE, rank=21)
         # Hours added straight to someone's week while a law asks for them to
         # be offered to the current staff first (access to hours, MARKET-4):
         # a note, never a hold.
@@ -441,12 +566,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             add("hours_over", f"${cost:,.0f} of hourly pay against a ${lbd:,.0f} hourly budget — ${cost - lbd:,.0f} "
                               f"over ({hs:,.0f}h of hourly shifts against {hb:,.0f}h"
                               + (f"; the {hours['salaried']:,.0f}h salaried aren't counted against it)"
-                                 if hours and hours.get("salaried") else ")"))
+                                 if hours and hours.get("salaried") else ")"),
+                tier=DECIDE, rank=25, over={"dollars": round(cost - lbd), "hours": round(hs - hb, 1) if hb else None})
     elif hours and hb > 0 and hours["hourly"] > hb * 1.02:
         hs = hours["hourly"]
         add("hours_over", f"{hs:,.0f}h of hourly shifts against a {hb:,.0f}h hourly budget — {hs - hb:,.0f}h over "
                           "the ceiling" + (f" (the {hours['salaried']:,.0f}h salaried aren't counted against it)"
-                                           if hours.get("salaried") else ""))
+                                           if hours.get("salaried") else ""),
+            tier=DECIDE, rank=25, over={"dollars": None, "hours": round(hs - hb, 1)})
     try:
         quality = json.loads(row["quality_json"] or "null") or {}
     except Exception:
@@ -457,7 +584,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         # (P-16).
         cause = str(quality.get("error") or quality.get("reason") or "").strip()
         add("quality_unchecked", "Shift Quality couldn't check this week" + (f" ({cause[:160]})" if cause else "")
-            + " — read it yourself before it goes to staff")
+            + " — read it yourself before it goes to staff", tier=DECIDE, rank=24)
     elif quality.get("checked"):
         if quality.get("band") == "weak":
             note("quality_weak", f"Shift Quality {quality.get('score')}/100 — a weak week")
@@ -473,8 +600,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     # budget, the draft's own review lines — never a rule) moved to a note,
     # and the review of the warnings they always override.
     import schedule_overrides as _so_pr
+    # Severity first, never the date (TRUST-3): the must-fix tier, then each
+    # tier by rank — annotate keeps this order inside its own ranking.
+    out.sort(key=lambda b: (b.get("tier") != MUST_FIX, b.get("rank") or 0, b.get("date") or ""))
+    if keep is not None:
+        keep.update(row=dict(row), rows=rows, constraints=c, violations=viols, review=review, quality=quality,
+                    screen=screen)
     return _so_pr.annotate(restaurant_id, {"blockers": out, "soft": soft, "notes": notes, "hours": hours,
-                                           "schedule_id": row["id"],
+                                           "schedule_id": row["id"], "held_unattended": held_unattended,
                                            # Each changed shift inside a predictive-scheduling
                                            # law's notice window, priced, and the total
                                            # (MARKET-2) — None when no law covers the
@@ -1218,7 +1351,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     gate_sig = _sv._rows_sig(row["schedule_csv"])
     review = publish_review(rid, schedule_id, unattended=unattended)
     blockers = [b["text"] for b in review["blockers"]]
-    _acked, unacked = _ack_gate(review, acknowledge)
+    _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
     if unacked:
         # Each blocker with its key, so the client acknowledges exactly the
         # list it showed (F2-9).
@@ -1270,7 +1403,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                 gate_sig = _rows_sig_now(rid, schedule_id)
                 review = publish_review(rid, schedule_id, unattended=unattended)
                 blockers = [b["text"] for b in review["blockers"]]
-                _acked, unacked = _ack_gate(review, acknowledge)
+                _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
                 if unacked:
                     _release(rid, schedule_id)
                     return _needs_ack(review, unacked, schedule_id)
@@ -1357,7 +1490,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
             return stale, 409
     gate_sig = _sv._rows_sig(row["schedule_csv"])
     review = publish_review(rid, row["id"])
-    _acked, unacked = _ack_gate(review, acknowledge)
+    _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
     if unacked:
         return _needs_ack(review, unacked, row["id"])
     # One sender at a time: a double tap must not tell the same people twice.
@@ -1381,7 +1514,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
                     regates += 1
                     gate_sig = _rows_sig_now(rid, row["id"])
                     review = publish_review(rid, row["id"])
-                    _acked, unacked = _ack_gate(review, acknowledge)
+                    _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
                     if unacked:
                         return _needs_ack(review, unacked, row["id"])
                     continue
@@ -1521,17 +1654,48 @@ _publish_schedule = publish
 send_schedule_changes = send_changes
 
 
-def _ack_gate(review, acknowledge):
+def _override_ok(b, reasons) -> bool:
+    """Whether a MUST-FIX blocker carries the override of its own the gate
+    asks for (schedule audit 10/10/26 TRUST-3, ARCH-30): a non-empty reason,
+    and for a manager gap the person who runs the floor (`covered_by`)."""
+    o = (reasons or {}).get(b["key"])
+    if isinstance(o, dict):
+        reason, covered = str(o.get("reason") or "").strip(), str(o.get("covered_by") or "").strip()
+    else:
+        reason, covered = str(o or "").strip(), ""
+    if override_needs(b["key"]) == "covered_by":
+        return bool(covered)
+    return bool(reason)
+
+
+def _ack_gate(review, acknowledge, reasons=None):
     """(acked_keys, unacked_blockers) for one publish_review. `acknowledge`
     is a list of blocker keys (what the person was shown) or a bool (an
-    older client's "yes to whatever the gate finds now")."""
+    older client's "yes to whatever the gate finds now").
+
+    Tiered (schedule audit 10/10/26 TRUST-3, ARCH-30): a DECIDE blocker is
+    acknowledged by its key (or the bool); a MUST-FIX one only by an
+    override of its own in `reasons` ({key: reason | {reason, covered_by}})
+    — never by a bare `true` or a key list alone, so a manager gap and "2%
+    over budget" no longer share one acknowledgement. A blocker from before
+    the tiers (no `tier`) is read as must-fix."""
     items = review["blockers"]
+    reasons = reasons or {}
     if isinstance(acknowledge, (list, tuple, set)):
         keys = {str(k) for k in acknowledge}
-        return [b["key"] for b in items if b["key"] in keys], [b for b in items if b["key"] not in keys]
-    if acknowledge:
-        return [b["key"] for b in items], []
-    return [], list(items)
+        listed = lambda b: b["key"] in keys or b["key"] in reasons    # noqa: E731
+    elif acknowledge:
+        listed = lambda b: True                                         # noqa: E731
+    else:
+        listed = lambda b: b["key"] in reasons                          # noqa: E731
+    acked, unacked = [], []
+    for b in items:
+        must = blocker_tier(b) == MUST_FIX
+        if listed(b) and (not must or _override_ok(b, reasons)):
+            acked.append(b["key"])
+        else:
+            unacked.append(b)
+    return acked, unacked
 
 
 def _needs_ack(review, unacked, schedule_id):
@@ -1560,5 +1724,11 @@ def _needs_ack(review, unacked, schedule_id):
             "notes": review.get("notes") or [],
             # The warnings this owner always sends past (TRUST-28).
             "always_overridden": review.get("always_overridden") or [],
+            # The tiers (TRUST-3, ARCH-30): each must-fix key needs its own
+            # override with a reason — a manager gap names who runs the
+            # floor — and is never covered by a key list or `true`.
+            "must_fix_keys": [b["key"] for b in review["blockers"] if blocker_tier(b) == MUST_FIX],
+            "needs_reason": [{"key": b["key"], "needs": override_needs(b["key"])} for b in unacked
+                             if blocker_tier(b) == MUST_FIX],
             "schedule_id": schedule_id,
             "error": "This week has things to look at before it goes to staff."}, 409

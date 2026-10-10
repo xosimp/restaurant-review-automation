@@ -86,6 +86,25 @@ DAYPART_SPLIT_MAX = 18 * 60
 # The core service window of each daypart, and how much of it a shift must
 # cover to count as on the floor for it.
 CORE_WINDOWS = {"morning": (11 * 60, 14 * 60 + 30), "night": (17 * 60 + 30, 20 * 60 + 30)}
+# The ONE pair of words an owner reads for the two dayparts, on every
+# surface and in every server sentence (schedule audit 10/10/26 TRUST-31:
+# Setup said Daytime/Night, Crew Lunch/Dinner, Intel day/night and a Fix
+# line morning/night — four names for one 3pm split). The web's
+# SCHED_PART_WORD and iOS read the same pair.
+PART_WORDS = {"morning": "Lunch", "night": "Dinner"}
+
+
+def part_word(part, capital: bool = True) -> str:
+    """"Lunch" / "Dinner" for a daypart key ("morning" / "night"; "lunch",
+    "dinner", "day", "am", "pm" are read too) — lower case unless
+    `capital`. '' for anything else."""
+    p = str(part or "").strip().lower()
+    key = "morning" if p in ("morning", "lunch", "day", "daytime", "am") else \
+        "night" if p in ("night", "dinner", "evening", "pm") else None
+    if key is None:
+        return ""
+    w = PART_WORDS[key]
+    return w if capital else w.lower()
 PRESENCE_MIN_OVERLAP = 60
 DAYPARTS = ("morning", "night")
 

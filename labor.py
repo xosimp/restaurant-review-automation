@@ -5732,6 +5732,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # same on every call of the generation (a slice writes its own dates;
     # the fixed rows of the others are its weekly hours and handovers too).
     _manager_block = _skel.prompt_block(_pins, plan=manager_plan)
+    # The owner's locked shifts (TRUST-17): fixed rows code adds, like the plan's.
+    _manager_block += _skel.locked_block(_pins)
     # The standing positions (schedule_dedicated) the plan placed: fixed rows
     # code adds, said once beside the managers' block.
     try:

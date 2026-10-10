@@ -227,6 +227,33 @@ STOPPED_KEPT_LINE = ("Stopped — Cavnar AI had already saved this draft, so it 
                      "(it was still being improved).")
 
 
+# The stages a generation REPORTS as it reaches them (schedule audit 10/10/26
+# TRUST-16): the web's Building steps and the phone's tick only what the job
+# said, in these words, never an elapsed-time script.
+GENERATION_STAGES = (
+    ("inputs", "Reading your team, time off and sales"),
+    ("draft", "Drafting the week"),
+    ("rules", "Checking every rule against today's data"),
+    ("repair", "Fixing what breaks a rule"),
+    ("score", "Scoring shift quality"),
+    ("save", "Saving the draft"),
+)
+# _StageClock's timing names, read as the stage reached.
+_TIMER_STAGE = {"inputs_and_model": "inputs", "rules": "rules", "signals": "repair", "repair": "repair",
+                "sweep": "score"}
+
+
+def reach_stage(key) -> None:
+    """Tell the running generation's clock it reached stage `key`. Never
+    raises (a direct call, a test, a script has no clock)."""
+    try:
+        c = current_clock()
+        if c is not None:
+            c.reach(key)
+    except Exception:
+        pass
+
+
 class GenerationClock:
     """One generation's wall clock (P-22). `deadline` is when the job must
     be finished or failed; `model_deadline` is when the last model call must
@@ -242,6 +269,10 @@ class GenerationClock:
         # Building screen's "N of 7 days drafted" (AI cost audit 10/7/26 #36).
         self.days_planned = None
         self.days_drafted = set()
+        # The stage the job has REACHED, as the job reports it (schedule
+        # audit 10/10/26 TRUST-16): the Building screen ticks only these,
+        # never a timed script.
+        self.stage = None
         # The draft that was in force when the owner pressed (the one a
         # whole-week Generate would replace, or a redo's own draft): a Stop
         # after this job saved puts it back (ARCH-2). submit_generation sets it.
@@ -259,6 +290,17 @@ class GenerationClock:
         later in the same job, never re-plans the count)."""
         if self.days_planned is None and dates:
             self.days_planned = sorted(set(dates))
+            self.reach("draft", record=False)
+            self._record_progress()
+
+    def reach(self, key, record=True) -> None:
+        """The job has reached stage `key` (GENERATION_STAGES); stages only
+        move forward, and each is one progress write."""
+        order = [k for k, _l in GENERATION_STAGES]
+        if key not in order or (self.stage in order and order.index(key) <= order.index(self.stage)):
+            return
+        self.stage = key
+        if record:
             self._record_progress()
 
     def days_streamed(self, dates) -> None:
@@ -273,8 +315,12 @@ class GenerationClock:
 
     def progress(self) -> dict:
         planned = list(self.days_planned or [])
+        order = [k for k, _l in GENERATION_STAGES]
+        at = order.index(self.stage) if self.stage in order else -1
         return {"days_total": len(planned), "days_drafted": len(self.days_drafted),
-                "dates_drafted": sorted(self.days_drafted)}
+                "dates_drafted": sorted(self.days_drafted), "stage": self.stage,
+                "stages": [{"key": k, "label": lab, "done": i < at, "current": i == at}
+                           for i, (k, lab) in enumerate(GENERATION_STAGES)]}
 
     def _record_progress(self):
         if self.job_id:
@@ -1225,6 +1271,8 @@ class _StageClock:
 
     @contextlib.contextmanager
     def stage(self, name):
+        if name in _TIMER_STAGE:
+            reach_stage(_TIMER_STAGE[name])
         t = time.monotonic()
         try:
             yield
@@ -1633,6 +1681,9 @@ def _soft_fail(what, exc, restaurant_id):
 _INPUT_WORDS = {
     # The closing manager's assumed stay, said and priced (TRUST-21).
     "assumed stays": "the closing manager's assumed stay",
+    # The owner's pinned shifts a regenerate keeps (TRUST-17), and the standby
+    # odds of a week reopened later (TRUST-25).
+    "locked shifts": "the shifts you pinned", "standby": "the standby days",
     # The shape contract's slot filling (AI cost audit 10/7/26 #69, off by default).
     "shape slot assignment": "who fills each slot the draft asked for",
     # The notice rule that sets which week a draft targets (MARKET-1).
@@ -1772,9 +1823,32 @@ def _no_history_analysis() -> dict:
             "role_rates": {}, "blended_rate": None, "date_range": {}}
 
 
+def locked_rows_of(restaurant_id, week_start, dates=None) -> list:
+    """The shifts the owner locked on the working copy of the week starting
+    `week_start` (models.week_draft — contract #4: a Studio save locks the
+    rows the manager changed; "Keep this shift" locks one), on `dates` when
+    given (a redo: the other days are kept whole anyway)."""
+    import models as _m_lk
+    import schedule_rows as _srows_lk
+    conn = _m_lk.get_conn()
+    try:
+        row = _m_lk.week_draft(conn, restaurant_id, str(week_start)[:10])
+    finally:
+        conn.close()
+    if row is None:
+        return []
+    want = set(dates) if dates else None
+    return [dict(r) for r in _versions.rows_from_csv(row["schedule_csv"] or "")
+            if _srows_lk.is_locked(r) and (want is None or r.get("date") in want)]
+
+
 def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None,
-                           instruction=None, code_redo=False):
+                           instruction=None, code_redo=False, keep_locked=True):
     """Shared logic for both schedule endpoints.
+
+    keep_locked — keep the owner's locked shifts of the week's working copy
+    exactly (TRUST-17; locked_rows_of, schedule_skeleton.with_locked). The
+    Generate button's "Start fresh" passes False.
 
     code_redo — an owner's redo of `dates` drafted in code first (scheduler
     audit 10/10/26 AI-28): the days re-shaped from SHIFT REQUIREMENTS on the
@@ -2294,6 +2368,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('manager_plan', _sfx, restaurant_id)
         manager_plan = _skeleton.failed_plan(constraints, _sfx)
+    # The owner's locked shifts on the dates this run writes (schedule audit
+    # 10/10/26 TRUST-17, contract #4): a full Generate replaced a draft with
+    # saved edits without a word, and no shift could be pinned. Locked rows
+    # of the week's working copy join the plan's fixed rows — merged into
+    # every answer by code, restored after the parse, never moved by a pass.
+    if keep_locked:
+        try:
+            _locked = locked_rows_of(restaurant_id, next_week_dates[0], dates=dates)
+            if _locked:
+                manager_plan = _skeleton.with_locked(manager_plan, _locked)
+        except Exception as _lfx:
+            _soft_fail('locked shifts', _lfx, restaurant_id)
     # Everything learned reaches the model as ONE budgeted block (schedule
     # audit 10/3/26 L-28): the scheduling memory's own facts (the manager's
     # habits, openers, sections, teams, overtime and late closes, the
@@ -8387,6 +8473,57 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
     return ((sched_notes or "").strip() + "\n\n" + SCHED_FINDINGS_HEADER + "\n" + "\n".join(lines)).strip()
 
 
+def standby_for_rows(restaurant_id, rows: list, week_dates: list, inputs=None, limit=2) -> list:
+    """schedule_learning.standby_days for a week nobody just generated, with
+    the generation's own requirement inputs re-derived (quality_inputs_from_db
+    — the SHIFT REQUIREMENTS rows and the busy shifts), so a week reopened
+    later or checked before Send carries the same `standby_shift` a fresh
+    draft does (RM-18), not only the no-show odds."""
+    import schedule_learning as _sl
+    import schedule_requirements as _req_sb
+    reqs, busy = None, None
+    try:
+        inputs = inputs if inputs is not None else quality_inputs_from_db(restaurant_id, week_rows=rows)
+        reqs = inputs.get("requirements") or None
+        busy = _req_sb.busy_shifts(list(week_dates or []), inputs.get("shift_profiles") or None,
+                                   inputs.get("demand_by_day") or {}, inputs.get("demand_by_date") or {})
+    except Exception as e:
+        print(f"[schedule] standby requirements unavailable for {restaurant_id}: {e!r}")
+    return _sl.standby_days(restaurant_id, list(week_dates or []), rows=rows, limit=limit, requirements=reqs,
+                            busy=busy)
+
+
+def generation_aids(restaurant_id, rows: list, week_dates: list, constraints=None, roster_roles=None) -> dict:
+    """The aids a fresh draft carries, worked out again for a week reopened
+    later (schedule audit 10/10/26 TRUST-25): who the rows put past the
+    overtime line with a same-role person who has room (priced), the days
+    most likely to lose somebody to a no-show with who could be on call, and
+    the rows the manager's own record says they will change — the same
+    functions the generation calls, on the rows as they stand. A reopened
+    draft (the common path: Labor opens the newest draft) used to get none
+    of them. {overtime_forecast, standby_days, likely_edits}; a part that
+    cannot be worked out is []."""
+    import schedule_learning as _sl
+    out = {"overtime_forecast": [], "standby_days": [], "likely_edits": []}
+    try:
+        ot = _sl.overtime_forecast(rows, constraints=constraints, roster_roles=roster_roles or
+                                   (getattr(constraints, "roster_roles", None) if constraints is not None else None))
+        from models import get_role_rates as _grr_a, get_restaurant as _gr_a
+        _sl.price_overtime_moves(ot, _grr_a(restaurant_id), getattr(_gr_a(restaurant_id), "hourly_rate", None) or None)
+        out["overtime_forecast"] = ot
+    except Exception as e:
+        _soft_fail("overtime forecast", e, restaurant_id)
+    try:
+        out["standby_days"] = standby_for_rows(restaurant_id, rows, week_dates)
+    except Exception as e:
+        _soft_fail("standby", e, restaurant_id)
+    try:
+        out["likely_edits"] = likely_edits(restaurant_id, rows)
+    except Exception as e:
+        _soft_fail("likely edits", e, restaurant_id)
+    return out
+
+
 def likely_edits(restaurant_id, rows: list, patterns: list = None, predict: bool = True) -> list:
     """Draft rows the manager is likely to change, before they see it.
 
@@ -10259,8 +10396,10 @@ def _in_frozen_inputs(fn):
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
                       focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0,
-                      _gate_fill=None, _code_redo=None, _base_read=None):
-    """week_start picks the week (any date in it); dates + base_history_id
+                      _gate_fill=None, _code_redo=None, _base_read=None, keep_locked=True):
+    """week_start picks the week (any date in it); keep_locked False (the
+    Generate button's "Start fresh") drops the owner's locked shifts of the
+    week's working copy, which are otherwise kept exactly (TRUST-17); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
     automatic regeneration of a draft's weakest days (_quality_gate) — never
@@ -10326,6 +10465,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         # plan of a redo covers only its days, with the kept days' rows
         # counted for hours, rest and runs (schedule_skeleton).
         _build_kw = {"week_start": week_start}
+        if keep_locked is False:
+            _build_kw["keep_locked"] = False
         if focus:
             _build_kw["focus"] = list(focus)
         if instruction:
@@ -11145,6 +11286,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # still ships.
             _raise_if_stopped(clock)
             _t_score = time.monotonic()
+            reach_stage("score")
             try:
                 result["staff_constraints"] = staff_constraints
                 # Only the flags that mean the person is not really on that
@@ -11404,6 +11546,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _timer.seconds["inputs"] = round(max(0.0, _timer.seconds.get("inputs_and_model", 0.0) - _model_s), 3)
             _timer.seconds.pop("inputs_and_model", None)
             _t_save = time.monotonic()
+            reach_stage("save")
             # The week, its review, timings, weather and economics in one
             # write (re-audit 10/4/26 PIPE-7): the review was a second commit,
             # and a failed one left a draft in force that published without
