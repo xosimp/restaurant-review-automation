@@ -101,22 +101,24 @@ def _edited(rid, hid, db_path):
 
 # ── the bug, as it was ─────────────────────────────────────────────────────
 
-def test_without_a_key_a_replayed_save_is_refused_as_the_owners_own_conflict(db_path, captured):
-    """What the phone's transient retry met after a committed save: the old
-    behaviour, kept for a client that sends no key (the web, an older app)."""
+def test_without_a_key_a_replayed_save_is_the_week_already_and_writes_nothing(db_path, captured):
+    """What the phone's transient retry met after a committed save — a 409
+    "will changed this week" from its own save. A client that sends no key
+    (the web, an older app) is covered too since D1 (10/10/26): rows that
+    are the week already write nothing and are no conflict."""
     rid, hid, c, h = _setup(db_path)
     first = _save(c, h, hid, _rows("Cy"), 1)
     assert first.status_code == 200 and first.get_json()["version"] == 2
     again = _save(c, h, hid, _rows("Cy"), 1)
-    assert again.status_code == 409 and again.get_json()["conflict"] is True
-    assert "will changed this week" in again.get_json()["error"]
+    assert again.status_code == 200 and again.get_json()["unchanged"] is True and again.get_json()["version"] == 2
+    assert len(_edited(rid, hid, db_path)) == 1 and len(captured) == 1
 
 
-def test_without_a_key_a_replayed_unchanged_save_writes_a_second_version_and_learns_twice(db_path, captured):
+def test_without_a_key_a_replayed_unchanged_save_writes_no_version_and_learns_nothing(db_path, captured):
     rid, hid, c, h = _setup(db_path)
     assert _save(c, h, hid, _rows(), 1).status_code == 200
     assert _save(c, h, hid, _rows(), 1).status_code == 200
-    assert len(_edited(rid, hid, db_path)) == 2 and len(captured) == 2
+    assert len(_edited(rid, hid, db_path)) == 0 and len(captured) == 0
 
 
 # ── the fix ────────────────────────────────────────────────────────────────
@@ -134,11 +136,12 @@ def test_a_replayed_save_with_its_key_is_answered_from_the_first(db_path, captur
     assert len(_edited(rid, hid, db_path)) == 1 and len(captured) == 1
 
 
-def test_an_unchanged_save_replayed_with_its_key_writes_one_version(db_path, captured):
+def test_an_unchanged_save_replayed_with_its_key_writes_no_second_version(db_path, captured):
+    # Rows that are the week already write no version at all (D1).
     rid, hid, c, h = _setup(db_path)
     assert _save(c, h, hid, _rows(), 1, key="same-rows").status_code == 200
     assert _save(c, h, hid, _rows(), 1, key="same-rows").status_code == 200
-    assert len(_edited(rid, hid, db_path)) == 1 and len(captured) == 1
+    assert len(_edited(rid, hid, db_path)) == 0 and len(captured) == 0
 
 
 def test_a_replay_while_the_first_is_still_being_made_is_told_so_and_writes_nothing(db_path, captured):
