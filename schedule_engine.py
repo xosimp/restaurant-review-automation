@@ -6543,6 +6543,16 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
     key = ("requirement_model", int(restaurant_id))
     if store is not None and key in store:
         return store[key]
+    # Eight weeks of tickets and punches change once a night: a Studio edit's
+    # live rescore reuses the last read for REQUIREMENT_MODEL_TTL seconds
+    # (per process, per database file — a cache, safe to keep per worker).
+    import time as _time_rm
+    ckey = (str(_m_rm.DB_PATH), int(restaurant_id))
+    hit = _REQUIREMENT_MODEL_CACHE.get(ckey)
+    if hit and _time_rm.monotonic() - hit[0] < REQUIREMENT_MODEL_TTL:
+        if store is not None:
+            store[key] = hit[1]
+        return hit[1]
     out = {}
     try:
         import staffing_model as _smod
@@ -6570,7 +6580,14 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
         _soft_fail("staffing elasticity", _ex, restaurant_id)
     if store is not None:
         store[key] = out
+    if len(_REQUIREMENT_MODEL_CACHE) > 512:
+        _REQUIREMENT_MODEL_CACHE.clear()
+    _REQUIREMENT_MODEL_CACHE[ckey] = (_time_rm.monotonic(), out)
     return out
+
+
+REQUIREMENT_MODEL_TTL = 15 * 60
+_REQUIREMENT_MODEL_CACHE = {}
 
 
 def _merge_date_demand(restaurant_id, dates, signals_by_date: dict, weather=None, closed=()) -> tuple:

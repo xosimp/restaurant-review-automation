@@ -2986,7 +2986,12 @@ def _late_at_the_edges(ctx: ShiftContext) -> list:
     staff_settings.LATE_MIN_SHIFTS of them exist) who are the only one of
     their role at its first start, or its last finish, that date (schedule
     audit 10/3/26 D-44)."""
-    risky = {str(n).strip().lower(): r for n, r in (ctx.reliability or {}).items() if (r or {}).get("late_risk")}
+    # Graded (scheduler audit 10/10/26 LEARNING-14): anyone whose late rate
+    # weighs anything (attendance_risk.late_exposure) — the weight is the
+    # caller's; it was only the 25% risk flag.
+    from attendance_risk import late_exposure as _late_w
+    risky = {str(n).strip().lower(): r for n, r in (ctx.reliability or {}).items()
+             if (r or {}).get("late_risk") or _late_w((r or {}).get("late_rate")) > 0}
     if not risky:
         return []
     mine = {(r.get("employee") or "").strip().lower() for r in ctx.rows if not ctx._is_flagged(r)}
@@ -3048,9 +3053,22 @@ def dim_reliability(ctx: ShiftContext) -> DimensionResult | None:
     # who opens or closes. Somebody with a lateness risk alone at their
     # role's first start or last finish counts against the shift too.
     late = _late_at_the_edges(ctx)
+    from attendance_risk import late_exposure as _late_w
+    rel_low = {str(k).strip().lower(): (v or {}) for k, v in ctx.reliability.items()}
+
+    def _lw(name, rate):
+        # Graded; the risk flag (LATE_RISK_RATE) still weighs in full.
+        return 1.0 if rel_low.get(name.lower(), {}).get("late_risk") else _late_w(rate)
     late_only = {n.lower() for n, *_ in late} - {n.lower() for n, *_ in exposed}
     weight = sum(w for *_x, w in exposed)
-    score = _pct(len(known) - weight - len(late_only), len(known))
+    late_w = {}
+    for n, _r, _e, rt in late:
+        if n.lower() in late_only:
+            late_w[n.lower()] = max(late_w.get(n.lower(), 0.0), _lw(n, rt))
+    late_weight = sum(late_w.values())
+    score = _pct(len(known) - weight - late_weight, len(known))
+    # Named to the owner from half the weight up.
+    late = [x for x in late if _lw(x[0], x[3]) >= 0.5]
     exposed = [(n, r, rt, c) for n, r, rt, c, w in sorted(exposed, key=lambda x: (-x[4], x[0]))]
     res = DimensionResult(key="reliability", label="Reliability", score=score,
                           weight=DEFAULT_WEIGHTS["reliability"],

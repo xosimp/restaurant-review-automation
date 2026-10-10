@@ -451,6 +451,24 @@ def test_a_busy_shift_likely_short_needs_a_standby():
     assert ar.standby_needed(risks) and "chance fewer than 4 servers turn up" in ar.words(risks[0])
 
 
+def test_lateness_is_graded_too():
+    import attendance_risk as ar
+    import shift_quality as sq
+    assert ar.late_exposure(0.05) == 0.0 and ar.late_exposure(0.2) == pytest.approx(0.667, abs=1e-3)
+    assert ar.late_exposure(0.3) == 1.0
+    rows = [{"date": "2026-10-13", "day": "Tuesday", "employee": n, "role": "Server", "shift_start": s,
+             "shift_end": e} for n, s, e in (("Ana", "10:00am", "3:00pm"), ("Bo", "11:00am", "3:30pm"))]
+
+    def score(rate):
+        rel = {"Ana": {"no_show_rate": 0.0, "late_rate": rate, "late_risk": rate >= 0.25, "shifts": 30},
+               "Bo": {"no_show_rate": 0.0, "late_rate": 0.0, "shifts": 30}}
+        ctx = sq.ShiftContext(date="2026-10-13", day="Tuesday", daypart="morning", rows=rows, day_rows=rows,
+                              profile=sq.profile_for_shift("Tuesday", "morning"), reliability=rel)
+        return sq.dim_reliability(ctx).score
+    # 19% late used to weigh nothing and 25% everything.
+    assert score(0.0) > score(0.19) > score(0.3)
+
+
 def test_the_score_reads_the_shifts_own_weekday():
     import shift_quality as sq
     rel = {"Ana": {"no_show_rate": 0.1, "weekday_rates": {"Saturday": 0.35}, "shifts": 30}}
@@ -597,3 +615,40 @@ def test_a_floor_the_work_never_needed_is_said_with_its_evidence(db_path):
               "VALUES (?,?,?,?,?)", (rid, d, 1, "final", json.dumps(facts)))
     got = sm.floor_suggestions(rid, db_path=db_path, today=today)
     assert got and got[0]["floor"] == 3 and got[0]["suggest"] == 2 and "Wednesday lunch" in got[0]["text"]
+
+
+# ── the plumbing: the engine reads the model and the requirements carry it ─
+
+def test_the_engine_sizes_a_week_from_the_work_end_to_end(db_path):
+    import schedule_engine as se
+    import schedule_requirements as req
+    rid = _rid()
+    shifts = []
+    base = date(2026, 8, 14)                                      # Fridays
+    for k in range(7):
+        d = (base + timedelta(weeks=k)).isoformat()
+        for i in range(4):
+            shifts.append({"date": d, "employee": f"S{i}", "role": "Server", "shift_start": "5:00pm",
+                           "shift_end": "10:00pm", "actual_hours": 5})
+        for j, (at, guests) in enumerate((("17:40", 10), ("18:10", 20), ("18:35", 40), ("19:05", 20))):
+            _exec("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, opened_at, "
+                  "guest_count, net_sales) VALUES (?,?,?,?,?,?,?)",
+                  (rid, "rpower", f"{d}-{j}", d, f"{d}T{at}:00", guests, guests * 30.0))
+    se._REQUIREMENT_MODEL_CACHE.clear()
+    monkey_today = date(2026, 10, 10)
+    import labor_standards as _ls
+    real_today = _ls._today
+    try:
+        _ls._today = lambda rid_, today=None: monkey_today
+        got = se._requirement_model(rid, shifts)
+    finally:
+        _ls._today = real_today
+    model = got["model"]
+    assert model["families"]["server"]["parts"]["night"]["std"] == pytest.approx(20.0)
+    rows = req.shift_requirements(["2026-10-16"], typical_headcount={("Friday", "night"): {"Server": 4}},
+                                  staffing_model=model, concurrent={("Friday", "night"): {"Server": {"peak": 4}}},
+                                  half_curve=got.get("half_curve"))
+    night = next(r for r in rows if r["daypart"] == "night")
+    # 40 guests in the 6:30pm half hour at 20 a server-hour: 4 on at once.
+    assert night["driven"] == ["Server"] and night["half_need"][18 * 60 + 30]["Server"] == 4
+    assert req.half_hours_map(rows)[("2026-10-16", "night")][18 * 60 + 30] == {"Server": 4}

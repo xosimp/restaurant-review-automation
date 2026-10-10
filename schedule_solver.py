@@ -366,7 +366,7 @@ class Problem:
         self.no_show, self.late_risk, self.rel_known = [], [], []
         # Each person's rate by weekday (staff_settings' weekday_rates,
         # shrunk toward their own) — the scorer's own reading (LEARNING-14).
-        self.no_show_day = []
+        self.no_show_day, self.late_rate = [], []
         for n in self.names:
             r = lrel.get(self.key(n)) or {}
             try:
@@ -376,6 +376,10 @@ class Problem:
             self.no_show_day.append({str(k): float(v) for k, v in (r.get("weekday_rates") or {}).items()
                                      if v is not None})
             self.late_risk.append(bool(r.get("late_risk")))
+            try:
+                self.late_rate.append(float(r.get("late_rate") or 0))
+            except (TypeError, ValueError):
+                self.late_rate.append(0.0)
             self.rel_known.append(self.key(n) in lrel)
         tenure = {self.key(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
         marked = {self.key(n) for n in (s.get("experienced") or ()) if n}
@@ -1511,10 +1515,11 @@ class Problem:
                 w = _exposure(self.no_show_day[p].get(u.day, self.no_show[p])) if (
                     u.hard or len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
                                    if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1) else 0.0
-                late = self.late_risk[p] and bool(u.edges)
-                if w > 0 or late:
+                from attendance_risk import late_exposure as _late_exposure
+                lw = (1.0 if self.late_risk[p] else _late_exposure(self.late_rate[p])) if u.edges else 0.0
+                if w > 0 or lw > 0:
                     out["reliability"] = out.get("reliability", 0.0) + self.dim_cost(
-                        "reliability", 100.0 / n_here * max(w, 1.0 if late else 0.0), dw)
+                        "reliability", 100.0 / n_here * max(w, lw), dw)
         # Fairness: the rotation — somebody due a weekend off, or resting
         # from closes (ROTATION_PENALTY on the shift's fairness).
         dw0 = u.dw

@@ -188,6 +188,23 @@ def _reset_home_brief_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_requirement_model_cache():
+    """schedule_engine caches each restaurant's work-driven requirement model
+    (staffing_model, the half-hour curve, the elasticity moves) for 15
+    minutes per database file; a test on the shared default database reuses
+    restaurant ids, so one test's model would be another's. Cleared only
+    where the engine is loaded (never imported here for a test that does not
+    use it)."""
+    def _clear():
+        se = sys.modules.get("schedule_engine")
+        if se is not None and hasattr(se, "_REQUIREMENT_MODEL_CACHE"):
+            se._REQUIREMENT_MODEL_CACHE.clear()
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_usage_schema_flag():
     """ai_utils remembers, per process, which databases it has already created
     the usage table in — so the DDL is off the hot path of every AI call.

@@ -57,6 +57,25 @@ def exposure(rate) -> float:
     return round((r - GRADED_FROM) / (UNRELIABLE_RATE - GRADED_FROM), 3)
 
 
+LATE_GRADED_FROM = 0.10          # a late rate under this costs nothing
+
+
+def late_exposure(rate) -> float:
+    """0-1 for lateness, the same shape as exposure(): from LATE_GRADED_FROM
+    to staff_settings.LATE_RISK_RATE (1 there and above) — lateness was a
+    boolean at 25% (LEARNING-14)."""
+    try:
+        r = float(rate or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    from staff_settings import LATE_RISK_RATE
+    if r <= LATE_GRADED_FROM:
+        return 0.0
+    if r >= LATE_RISK_RATE:
+        return 1.0
+    return round((r - LATE_GRADED_FROM) / (LATE_RISK_RATE - LATE_GRADED_FROM), 3)
+
+
 def shrink(hits, weight, prior, k) -> float:
     """(hits + k x prior) / (weight + k)."""
     try:
