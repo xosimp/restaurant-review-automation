@@ -1116,6 +1116,15 @@ def _after_send(rid, schedule_id, version, review, acked, override_reasons, acto
         _srq_follow.reconcile(rid)
     except Exception as _fx:
         _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # How firm each published shift is, recorded with the send (commitment_
+    # ladder, scheduler audit 10/10/26 MARKET-27): staff see firm / likely /
+    # tentative, and a changes send marks the committed rows it changed. The
+    # nightly schedule_bench pass records any week this missed.
+    try:
+        import commitment_ladder as _cl_pub
+        _cl_pub.ensure(rid, schedule_id)
+    except Exception as _clx:
+        _ops.capture(_clx, job="commitment_ladder", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # The week to the POS time clock where the owner turned that on — queued
     # for the pos_schedule_push job, never waited on, never raising
     # (schedule audit 10/10/26 MARKET-7).

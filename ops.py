@@ -2593,6 +2593,9 @@ _RETENTION_DAYS = {
     # the learning ablation's two drafts — read until the week's scorecard
     # row is frozen; the frozen row keeps what was measured from it.
     "schedule_generation_tags": int(os.getenv("RETAIN_SCHED_GENERATION_TAGS_DAYS", "400")),
+    # Each staff offer answer's client and minutes to answer (staff_pwa,
+    # scheduler audit 10/10/26 MARKET-18): the admin's read is 90 days.
+    "offer_response_platforms": int(os.getenv("RETAIN_OFFER_PLATFORMS_DAYS", "400")),
     # The Shift Quality weights' weekly shadow runs and promotions (LEARNING-9):
     # the newest promotion is what the owner can undo, and an undo holds for
     # eight weeks.
@@ -2877,6 +2880,7 @@ _RETENTION_COLUMN = {
     "fww_requests": "created_at", "fww_access_offers": "created_at",
     "schedule_publish_overrides": "shown_at",
     "schedule_calibration_runs": "run_at",
+    "offer_response_platforms": "answered_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2948,6 +2952,7 @@ _RETENTION_FLOOR_DAYS = {
     "schedule_publish_overrides": 180,
     "schedule_generation_tags": 120,
     "schedule_calibration_runs": 90,
+    "offer_response_platforms": 90,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -3106,6 +3111,7 @@ _RETENTION_READERS = {
     "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
     "schedule_generation_tags": (("schedule_scorecard.compute_week", "schedule_scorecard.TAGS_READ_DAYS", None),),
+    "offer_response_platforms": (("staff_pwa.response_times", "staff_pwa.RESPONSE_DAYS", None),),
     "schedule_calibration_runs": (("schedule_calibration._quiet", "schedule_calibration.REVERT_QUIET_DAYS", None),),
     "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     # The scheduling memory (L-29, L-22, L-34): the owner's redos over its

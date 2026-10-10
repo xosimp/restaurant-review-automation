@@ -259,6 +259,7 @@ class Problem:
             except (TypeError, ValueError):
                 req = 0
             self.off_req.append(0 if p in self.draft_days_off else req)
+        self.commit_level = {}          # {unit id: a published shift's commitment level} (_build_units)
         self._build_units(only_dates)
         self._build_caps()
         self._build_scale()
@@ -364,13 +365,22 @@ class Problem:
         rel = s.get("reliability") or {}
         lrel = {self.key(k): v for k, v in rel.items()}
         self.no_show, self.late_risk, self.rel_known = [], [], []
+        # Each person's rate by weekday (staff_settings' weekday_rates,
+        # shrunk toward their own) — the scorer's own reading (LEARNING-14).
+        self.no_show_day, self.late_rate = [], []
         for n in self.names:
             r = lrel.get(self.key(n)) or {}
             try:
                 self.no_show.append(float(r.get("no_show_rate") or 0))
             except (TypeError, ValueError):
                 self.no_show.append(0.0)
+            self.no_show_day.append({str(k): float(v) for k, v in (r.get("weekday_rates") or {}).items()
+                                     if v is not None})
             self.late_risk.append(bool(r.get("late_risk")))
+            try:
+                self.late_rate.append(float(r.get("late_rate") or 0))
+            except (TypeError, ValueError):
+                self.late_rate.append(0.0)
             self.rel_known.append(self.key(n) in lrel)
         tenure = {self.key(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
         marked = {self.key(n) for n in (s.get("experienced") or ()) if n}
@@ -438,11 +448,22 @@ class Problem:
         # The multi-week rotation (schedule_intel.rotation_plan), per role:
         # who is due a weekend off, who should rest from closing — what
         # fairness now judges a week against.
-        self.rot_weekend, self.rot_rest = {}, {}
+        self.rot_weekend, self.rot_rest, self.rot_rich, self.rich_slots = {}, {}, {}, {}
+        # Retention (retention_risk, MARKET-29, owner-only): the valued people
+        # at risk the owner protects, and the slots they keep dropping.
+        self.protect_avoid = {}
+        for n, v in ((s.get("retention") or {}).items()):
+            if (v or {}).get("protect") and self.key(n) in self.pidx:
+                self.protect_avoid[self.pidx[self.key(n)]] = {(d_, p_) for d_, p_ in (v.get("avoid") or [])}
         for role, plan in (((s.get("rotation") or {}).get("roles")) or {}).items():
             key = _low(role)
             self.rot_weekend[key] = {self.pidx[self.key(n)] for n in (plan.get("weekend_due") or []) if self.key(n) in self.pidx}
             self.rot_rest[key] = {self.pidx[self.key(n)] for n in (plan.get("rest_from_close") or []) if self.key(n) in self.pidx}
+            # The tip opportunity (tip_opportunity, MARKET-17): who should
+            # rest from the role's best-tipped slots, and which slots those are.
+            tips = plan.get("tips") or {}
+            self.rot_rich[key] = {self.pidx[self.key(n)] for n in (tips.get("rest_from_rich") or []) if self.key(n) in self.pidx}
+            self.rich_slots[key] = {(s_.get("day"), s_.get("part")) for s_ in (tips.get("rich_slots") or [])}
         c = self.c
         self.maxh = [float(c.max_hours(n)) if c is not None else sq.WEEKLY_HOURS_CEILING for n in self.names]
         self.line = []
@@ -715,6 +736,13 @@ class Problem:
             u.weekend = u.day in ("Friday", "Saturday", "Sunday")
             name = (rs[0].get("employee") or "").strip()
             u.draft = self.pidx.get(self.key(name)) if name else None
+            # A shift already published with a commitment level (commitment_
+            # ladder, MARKET-27): moving its holder off it costs stability.
+            commits = self.signals.get("commitments") or {}
+            if commits and name:
+                lv = commits.get((u.date, " ".join(name.split()).casefold(), (rs[0].get("shift_start") or "").strip()))
+                if lv:
+                    self.commit_level[u.id] = lv
             u.sig = (u.date, tuple(sorted(u.roles)),
                      tuple(sorted((r.get("shift_start") or "", r.get("shift_end") or "") for r in rs)))
             if any(r.get("_pinned") for r in rs):
@@ -1500,12 +1528,17 @@ class Problem:
             # is the scorer's exposure; a lateness risk as the only one of the
             # role opening or closing the day (D-44).
             if self.rel_known[p]:
-                exposed = self.no_show[p] >= sq.UNRELIABLE_RATE and (
+                # Graded on the shift's own weekday (attendance_risk.exposure),
+                # as the scorer weighs it — never the 20% cliff (LEARNING-14).
+                from attendance_risk import exposure as _exposure
+                w = _exposure(self.no_show_day[p].get(u.day, self.no_show[p])) if (
                     u.hard or len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
-                                   if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1)
-                late = self.late_risk[p] and bool(u.edges)
-                if exposed or late:
-                    out["reliability"] = out.get("reliability", 0.0) + self.dim_cost("reliability", 100.0 / n_here, dw)
+                                   if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1) else 0.0
+                from attendance_risk import late_exposure as _late_exposure
+                lw = (1.0 if self.late_risk[p] else _late_exposure(self.late_rate[p])) if u.edges else 0.0
+                if w > 0 or lw > 0:
+                    out["reliability"] = out.get("reliability", 0.0) + self.dim_cost(
+                        "reliability", 100.0 / n_here * max(w, lw), dw)
         # Fairness: the rotation — somebody due a weekend off, or resting
         # from closes (ROTATION_PENALTY on the shift's fairness).
         dw0 = u.dw
@@ -1513,6 +1546,24 @@ class Problem:
             out["rotation_weekend"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         if u.closing and any(p in self.rot_rest.get(r, ()) for r in u.roles):
             out["rotation_close"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
+        # A published shift's commitment (MARKET-27): handing it to somebody
+        # else breaks the promise made to its holder — stability points by
+        # level (firm the most), on top of any predictability pay at Send.
+        lv = self.commit_level.get(u.id)
+        if lv and u.draft is not None and p != u.draft:
+            import commitment_ladder as _cl
+            out["commitment"] = self.dim_cost("stability", _cl.COMMIT_POINTS.get(lv, 0.0), dw0)
+        # Retention (MARKET-29): taking a protected person's drafted shift
+        # away, or putting them on a slot they keep dropping, is a soft cost.
+        if self.protect_avoid:
+            import retention_risk as _rr
+            if u.draft is not None and p != u.draft and u.draft in self.protect_avoid:
+                out["retention_hours"] = self.dim_cost("preferences", _rr.RETENTION_POINTS, dw0)
+            if p in self.protect_avoid and any((u.day, part) in self.protect_avoid[p] for part in u.primary):
+                out["retention_slot"] = self.dim_cost("preferences", _rr.RETENTION_POINTS, dw0)
+        if self.rot_rich and any(p in self.rot_rich.get(r, ()) and any((u.day, part) in self.rich_slots.get(r, ())
+                                                                     for part in u.primary) for r in u.roles):
+            out["rotation_tips"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         # Preferences, a week-level measure: a daypart they said they do not
         # want, a slot they keep dropping (half weight), a slot somebody else
         # keeps picking up taken by somebody who does not (L-19, D-36).
@@ -2931,6 +2982,10 @@ _WHY = {
     "learned_preference": lambda P, u, o, n: f"{P.names[o]} keeps dropping that shift",
     "rotation_weekend": lambda P, u, o, n: f"{P.names[o]} is due a weekend off by the rotation",
     "rotation_close": lambda P, u, o, n: f"{P.names[o]} has closed more than their share and is due a rest from it",
+    "rotation_tips": lambda P, u, o, n: f"{P.names[o]} has had more than their share of the best-tipped shifts",
+    "commitment": lambda P, u, o, n: f"{P.names[o]} was told this shift is {P.commit_level.get(u.id, 'committed')}",
+    "retention_hours": lambda P, u, o, n: f"{P.names[o]}'s hours have been cut lately (you protect them)",
+    "retention_slot": lambda P, u, o, n: f"{P.names[o]} keeps dropping that shift (you protect them)",
     "role": lambda P, u, o, n: f"it is {P.names[n]}'s own role",
     "dollars": lambda P, u, o, n: "the same shift at a lower wage",
     "learned": lambda P, u, o, n: "it is what the manager keeps doing on that shift",

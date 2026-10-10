@@ -116,7 +116,20 @@ def meta(metric) -> dict:
         fam = str(metric)[len(_STAFF_PREFIX):].replace("_", " ")
         return {"key": metric, "label": f"People per $1k of sales, {fam}", "unit": "people", "better": "lower",
                 "comparability": ECONOMICS, "module": "labor", "source": "labor", "step": 0.05}
+    if str(metric or "").startswith(SCHED_PRIOR_PREFIX):
+        what = str(metric)[len(SCHED_PRIOR_PREFIX):].replace("_", " ").replace(".", " ")
+        return {"key": metric, "label": f"Scheduling prior, {what}", "unit": "ratio", "better": None,
+                "comparability": ECONOMICS, "module": "labor", "source": "labor", "step": None}
     return {}
+
+
+# sched_prior.<what> (intelligence.schedule_priors, scheduler audit 10/10/26
+# LEARNING-27): each restaurant's own measured labor standards, weather and
+# event lifts and no-show base rate, as ratios — banded per peer partition
+# (the staff family) and read back only as the prior a restaurant's own
+# estimate is shrunk toward. Server-only, like staff_per_1k.
+SCHED_PRIOR_PREFIX = "sched_prior."
+SERVER_ONLY_PREFIXES = (_STAFF_PREFIX, SCHED_PRIOR_PREFIX)
 
 
 def comparability(metric) -> str | None:
@@ -130,7 +143,7 @@ def definition(metric) -> str | None:
 def partition_family(metric) -> str:
     """'format' | 'labor' | 'food' | 'staff' — which hard split a peer band
     for `metric` is read from (categories.partition_key)."""
-    if str(metric or "").startswith(_STAFF_PREFIX):
+    if str(metric or "").startswith(SERVER_ONLY_PREFIXES):
         return "staff"
     return _PARTITION.get(metric, "format")
 

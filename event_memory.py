@@ -186,6 +186,14 @@ def init_event_memory(db_path=DB_PATH):
             fetched_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, date)
         )""")
+        # Lunch and dinner apart, and snow (scheduler audit 10/10/26
+        # LEARNING-21): weather learned per daypart and temperature band,
+        # not one rain flag for the whole day. NULL on rows captured before.
+        _wcols = {r[1] for r in conn.execute("PRAGMA table_info(weather_daily)").fetchall()}
+        for _col, _typ in (("lunch_wet", "INTEGER"), ("dinner_wet", "INTEGER"), ("lunch_temp_f", "REAL"),
+                           ("dinner_temp_f", "REAL"), ("snow", "INTEGER")):
+            if _col not in _wcols:
+                conn.execute(f"ALTER TABLE weather_daily ADD COLUMN {_col} {_typ}")
         # public_history: the restaurant's own public rating, one row per ISO
         # week (the latest reading that week), and what its market did.
         conn.execute("""CREATE TABLE IF NOT EXISTS own_rating_history (
@@ -1710,12 +1718,16 @@ def record_weather(restaurant, days, db_path=None) -> dict:
                     continue
                 conn.execute(
                     "INSERT INTO weather_daily (restaurant_id, date, high_f, low_f, precip_in, rain, wet_hours, "
-                    "conditions, station, n_obs) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, date) "
+                    "conditions, station, n_obs, lunch_wet, dinner_wet, lunch_temp_f, dinner_temp_f, snow) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, date) "
                     "DO UPDATE SET high_f=excluded.high_f, low_f=excluded.low_f, precip_in=excluded.precip_in, "
                     "rain=excluded.rain, wet_hours=excluded.wet_hours, conditions=excluded.conditions, "
-                    "station=excluded.station, n_obs=excluded.n_obs, fetched_at=datetime('now')",
+                    "station=excluded.station, n_obs=excluded.n_obs, lunch_wet=excluded.lunch_wet, "
+                    "dinner_wet=excluded.dinner_wet, lunch_temp_f=excluded.lunch_temp_f, "
+                    "dinner_temp_f=excluded.dinner_temp_f, snow=excluded.snow, fetched_at=datetime('now')",
                     (rid, d.isoformat(), s["high_f"], s["low_f"], s["precip_in"], s["rain"], s["wet_hours"],
-                     s["conditions"], station, s["n_obs"]))
+                     s["conditions"], station, s["n_obs"], s.get("lunch_wet"), s.get("dinner_wet"),
+                     s.get("lunch_temp_f"), s.get("dinner_temp_f"), s.get("snow")))
                 out["recorded"] += 1
             conn.commit()
         finally:

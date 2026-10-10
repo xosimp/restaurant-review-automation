@@ -25,7 +25,16 @@ import re
 import statistics
 from datetime import date, timedelta, datetime
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time (CLAUDE.md, bound imports): the
+    import-time binding kept whichever test's redirect was in force when
+    this module was first imported, so a later caller read another
+    database (found by the staffing estimates, scheduler audit 10/10/26)."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 MIN_TICKETS = 20
 TURN_MIN, TURN_MAX = 5.0, 300.0
