@@ -2514,6 +2514,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                  "plan_rows": list(manager_plan.get("rows") or []),
                  "plan_dates": list(manager_plan.get("dates") or []),
                  "open_times": constraints.open_times or {}, "close_times": constraints.close_times or {}}
+    # The deterministic+critic arm (scheduler audit 10/10/26 AI-8): the
+    # solver's week reviewed by the model, each edit validated by code.
+    try:
+        import schedule_critic as _scr
+        _fallback["critic"] = bool(not code_redo and _scr.enabled(_arms))
+    except Exception as _crx:
+        _soft_fail("solver-first draft", _crx, restaurant_id)
     # Handed in the kwargs and popped there, like the rules (the call's own
     # keyword arguments never carry it to labor).
     _gen_kwargs["draft_fallback"] = _fallback
@@ -3557,6 +3564,19 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
                                        roster_roles=roles or None, max_seconds=secs)
             rows, unassigned, used = got["rows"], got["unassigned"], "solver"
             solver_first = got if got.get("stats", {}).get("engine") == "shapes+cp-sat" else None
+            if rows and fallback.get("critic") and c is not None:
+                # The model as a critic of the week code built (AI-8): its
+                # edits validated by code against the week with the plan.
+                import schedule_critic as _scr
+                whole = [dict(r, _pinned=True) for r in plan] + rows
+                rev = _scr.review(rid, whole, c, unmet=(solver_first or {}).get("unassigned"),
+                                  last_week_rows=(base or {}).get("rows") if (base or {}).get("source") == "published"
+                                  else None)
+                rows = [{k: v for k, v in r.items() if k != "_pinned"} for r in rev["rows"] if not r.get("_pinned")]
+                if solver_first is not None:
+                    solver_first.setdefault("stats", {})["critic"] = {
+                        "called": rev["called"], "kept": rev["kept"][:6], "refused": rev["refused"][:6],
+                        "error": rev["error"]}
         if not rows:
             return None
         drafted = sorted({r["date"] for r in rows if r.get("date")})
@@ -3636,7 +3656,7 @@ def solver_explain(got) -> dict:
     got = got or {}
     st = dict(got.get("stats") or {})
     return {"engine": st.get("engine"), "status": st.get("status"), "seconds": st.get("seconds"),
-            "proved_optimal": bool(st.get("proved_optimal")),
+            "proved_optimal": bool(st.get("proved_optimal")), "critic": st.get("critic"),
             "reasons": [{k: r.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "employee",
                                                 "instead", "text")} for r in (got.get("reasons") or [])][:200],
             "conflicts": list(got.get("conflicts") or [])[:12],
