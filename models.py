@@ -8255,6 +8255,59 @@ def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
+# What the schedule's inputs are read from, for schedule_inputs_version: each
+# (table, the stamp columns it has). A table a test database lacks reads as
+# itself, every time.
+_INPUT_STAMPS = (
+    ("staff_availability", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("staff_time_off", "COUNT(*), MAX(id), TOTAL(id * LENGTH(COALESCE(status, '')))"),
+    ("staff_settings", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("staff_notes", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("people", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("person_roles", "COUNT(*), MAX(id), MAX(COALESCE(removed_at, ''))"),
+    ("person_aliases", "COUNT(*), MAX(id)"),
+    ("manual_team_members", "COUNT(*), MAX(id)"),
+    ("schedule_note_rules", "COUNT(*), MAX(id)"),
+    ("staff_pairs", "COUNT(*), MAX(id)"),
+    ("demand_signals", "COUNT(*), MAX(id)"),
+    ("labor_daily_history", "COUNT(*), MAX(saved_at)"),
+)
+
+
+def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """A stamp that moves whenever anything a schedule's inputs are built
+    from moves (scheduler audit 10/10/26, SCALE-8): the restaurant's row
+    (every setting, rule, floor and hour), the shift history (client_data's
+    stamp — a POS sync or an upload), the people and their availability,
+    time off, roles, notes, rules, pairs and demand signals, the daily sales
+    and capability_version (ratings, profiles, leader rules, weights). The
+    Studio's kept inputs are keyed on it, so a save re-uses them when
+    nothing they were read from changed and rebuilds the moment anything
+    did — not every save, and not on a two-minute guess."""
+    import hashlib
+    h = hashlib.sha1()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        h.update(repr(tuple(row) if row else ()).encode())
+        try:
+            cd = conn.execute("SELECT updated_at, shifts_source, LENGTH(shifts_csv) FROM client_data "
+                              "WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        except sqlite3.OperationalError:
+            cd = None
+        h.update(repr(tuple(cd) if cd else ()).encode())
+        for table, cols in _INPUT_STAMPS:
+            try:
+                got = conn.execute(f"SELECT {cols} FROM {table} WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+                h.update(f"{table}:{tuple(got)!r}".encode())
+            except sqlite3.OperationalError:
+                h.update(f"{table}:-".encode())
+    finally:
+        conn.close()
+    h.update(capability_version(restaurant_id, db_path=db_path).encode())
+    return h.hexdigest()[:20]
+
+
 def rename_capability_holder(restaurant_id: int, old_name: str, new_name: str, db_path: str = DB_PATH):
     """Move every capability row (ratings, closer flag) from one name to
     another. Returns rows moved, or None when the new name already holds a

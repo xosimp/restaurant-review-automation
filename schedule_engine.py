@@ -6447,24 +6447,61 @@ def _reconcile_to_roster(signals: dict, c=None, restaurant_id=None) -> None:
 # exact local scorer are built once per week being edited and reused for
 # STUDIO_CACHE_SECONDS; each drag re-sweeps and re-scores only the people
 # and dates it moved (the answer is score_rows' and violations' exactly);
-# the what-if runs only when the editor asks for it. A save always rebuilds
-# from the database, so what is stored is never judged on minutes-old inputs.
+# the what-if runs only when the editor asks for it.
+#
+# Scheduler audit 10/10/26 (SCALE-8, BUGSLIFE-23): the kept inputs were 8
+# entries for the whole process on a 120-second guess, and every save rebuilt
+# them (4.6 s for a 250-person restaurant with three years of history) — past
+# eight editors at once every drag missed. Now they are keyed on
+# models.schedule_inputs_version (it moves the moment anything they were read
+# from moves), so a save re-uses them when nothing changed and what is stored
+# is still never judged on stale inputs; the store is an LRU sized in rows
+# (STUDIO_CACHE_BUDGET_ROWS — a 1,100-row week weighs what it holds), at most
+# STUDIO_CACHE_PER_RESTAURANT weeks per restaurant, with STUDIO_CACHE_SECONDS
+# only as a backstop for inputs the version cannot see; and one lock guards
+# it — four request threads mutated it with none.
 
-STUDIO_CACHE_SECONDS = 120.0
-STUDIO_CACHE_SIZE = 8
+STUDIO_CACHE_SECONDS = float(os.getenv("STUDIO_CACHE_SECONDS", "900"))
+STUDIO_CACHE_BUDGET_ROWS = int(os.getenv("STUDIO_CACHE_BUDGET_ROWS", "20000"))
+STUDIO_CACHE_PER_RESTAURANT = int(os.getenv("STUDIO_CACHE_PER_RESTAURANT", "3"))
 # The dates (in their edited variants) one week's kept scorer holds.
 STUDIO_SCORER_DATES = 96
-_studio_cache = {}
+import collections as _collections_studio
+_studio_cache = _collections_studio.OrderedDict()
 _studio_live = {}
+_studio_lock = threading.Lock()
 
 
 def studio_invalidate(restaurant_id=None) -> None:
     """Forget the kept Studio inputs and live checks — one restaurant's, or
     every one (the test suite's fresh database per test reuses ids)."""
-    for store in (_studio_cache, _studio_live):
-        for k in [k for k in list(store) if restaurant_id is None
-                  or (k[0] if isinstance(k, tuple) else k) == restaurant_id]:
-            store.pop(k, None)
+    with _studio_lock:
+        for store in (_studio_cache, _studio_live):
+            for k in [k for k in list(store) if restaurant_id is None
+                      or (k[0] if isinstance(k, tuple) else k) == restaurant_id]:
+                store.pop(k, None)
+
+
+def _studio_weight(entry) -> int:
+    return max(50, int(entry.get("rows") or 0))
+
+
+def _studio_put(key, entry, now) -> None:
+    """Keep `entry` under `key` (the lock held): this week's older variants
+    and anything past STUDIO_CACHE_SECONDS go, the restaurant keeps at most
+    STUDIO_CACHE_PER_RESTAURANT weeks, and the least recently used go until
+    the store fits STUDIO_CACHE_BUDGET_ROWS."""
+    for k in [k for k, v in _studio_cache.items()
+              if now - v["built"] >= STUDIO_CACHE_SECONDS or k[:3] == key[:3]]:
+        _studio_cache.pop(k, None)
+    mine = [k for k in _studio_cache if k[0] == key[0]]
+    while len(mine) >= max(1, STUDIO_CACHE_PER_RESTAURANT):
+        _studio_cache.pop(mine.pop(0), None)
+    _studio_cache[key] = entry
+    total = sum(_studio_weight(v) for v in _studio_cache.values())
+    while total > STUDIO_CACHE_BUDGET_ROWS and len(_studio_cache) > 1:
+        _k, old = _studio_cache.popitem(last=False)
+        total -= _studio_weight(old)
 
 
 def studio_is_live(restaurant_id) -> bool:
@@ -6473,14 +6510,16 @@ def studio_is_live(restaurant_id) -> bool:
     STUDIO_CACHE_SECONDS — it reads every shift the restaurant has."""
     import time as _time
     now = _time.monotonic()
-    hit = _studio_live.get(restaurant_id)
+    with _studio_lock:
+        hit = _studio_live.get(restaurant_id)
     if hit is not None and now - hit[1] < STUDIO_CACHE_SECONDS:
         return hit[0]
     from labor import analyse_shifts_for_restaurant
     live = bool((analyse_shifts_for_restaurant(restaurant_id) or {}).get("is_live"))
-    if len(_studio_live) > 256:
-        _studio_live.clear()
-    _studio_live[restaurant_id] = (live, now)
+    with _studio_lock:
+        if len(_studio_live) > 4096:
+            _studio_live.clear()
+        _studio_live[restaurant_id] = (live, now)
     return live
 
 
@@ -6490,23 +6529,26 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     the generation would rebuild (quality_inputs_from_db), the scorer's
     signals and weights (_quality_signals), the week's Constraints with the
     roster on them, a kept rule sweep (schedule_rules.IncrementalSweep) and
-    an exact local scorer (shift_quality.LocalScorer). Kept for
-    STUDIO_CACHE_SECONDS per restaurant, week, hour targets and
-    capability_version (a rating, profile, leader rule or weight changed);
-    `fresh` rebuilds it (a save)."""
+    an exact local scorer (shift_quality.LocalScorer). Kept per restaurant,
+    week, hour targets and models.schedule_inputs_version (anything the
+    inputs were read from changed — SCALE-8). `fresh` (a save) no longer
+    rebuilds by itself: the version is read on every call, so a save whose
+    inputs are unchanged re-uses them and one whose inputs moved rebuilds."""
     import time as _time
-    from models import capability_version
+    from models import schedule_inputs_version
     dates = tuple(sorted({r.get("date") for r in rows or [] if r.get("date")}))
     targets = tuple(sorted((str(k), float(v)) for k, v in (daily_target_hours or {}).items()))
     try:
-        cap = capability_version(restaurant_id)
+        version = schedule_inputs_version(restaurant_id)
     except Exception:
-        cap = None
-    key = (restaurant_id, history_id or None, dates, targets, cap)
+        version = None
+    key = (restaurant_id, history_id or None, dates, targets, version)
     now = _time.monotonic()
-    hit = _studio_cache.get(key)
-    if hit is not None and not fresh and now - hit["built"] < STUDIO_CACHE_SECONDS:
-        return hit
+    with _studio_lock:
+        hit = _studio_cache.get(key)
+        if hit is not None and version is not None and now - hit["built"] < STUDIO_CACHE_SECONDS:
+            _studio_cache.move_to_end(key)
+            return hit
     import models as _m_studio
     # One read of everything the build reads, shared by the inputs and the
     # signals (SCALE-6/SCALE-8).
@@ -6523,12 +6565,10 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     # other's (the web process runs four threads).
     entry = {"inputs": inputs, "signals": signals, "weights": weights, "built": now,
              "sweep": _rules.IncrementalSweep(c) if c is not None else None, "scorer": None,
-             "lock": _threading.Lock()}
-    for k in [k for k, v in _studio_cache.items() if now - v["built"] >= STUDIO_CACHE_SECONDS or k[:3] == key[:3]]:
-        _studio_cache.pop(k, None)
-    while len(_studio_cache) >= STUDIO_CACHE_SIZE:
-        _studio_cache.pop(next(iter(_studio_cache)))
-    _studio_cache[key] = entry
+             "lock": _threading.Lock(), "rows": len(rows or [])}
+    if version is not None:
+        with _studio_lock:
+            _studio_put(key, entry, now)
     return entry
 
 
@@ -6742,6 +6782,76 @@ def schedule_item_metric(item):
                                             module="schedule")
     except Exception:
         return None
+
+
+# The re-score's answer as a delta (scheduler audit 10/10/26, SCALE-29): the
+# quality object is 130-440 KB of JSON, 94% of it the per-shift readings, and
+# a drag moves two or three of fourteen. A client that holds the last answer
+# sends its etag with `delta: true` and gets the headline and only the
+# readings that changed; anything else — no etag, an etag this process no
+# longer holds (another worker, a rebuilt week) — gets the whole object.
+QUALITY_SERVED_KEEP = 4
+
+
+def _shift_key_list(shifts) -> list:
+    """A stable key for each reading of the week, in order: date|daypart,
+    with #n on a repeat."""
+    seen, keys = {}, []
+    for s in shifts or []:
+        k = f"{(s or {}).get('date') or ''}|{(s or {}).get('daypart') or ''}"
+        n = seen.get(k, 0)
+        seen[k] = n + 1
+        keys.append(k if not n else f"{k}#{n}")
+    return keys
+
+
+def quality_payload(prepared, quality, want_delta=False, base_etag=None) -> dict:
+    """{quality, quality_etag, quality_keys} — or, when the client holds the
+    answer `base_etag` names (kept on the Studio's prepared week),
+    {quality: None, quality_delta: {base, head, order, changed}, quality_etag,
+    quality_keys}. A reading is resent only when it changed: the same object
+    the kept scorer handed out before is unchanged by construction, and any
+    other is compared by its JSON."""
+    import hashlib
+    q = quality if isinstance(quality, dict) else {}
+    shifts = list(q.get("shifts") or [])
+    keys = _shift_key_list(shifts)
+    head = {k: v for k, v in q.items() if k != "shifts"}
+    served = prepared.setdefault("served", {}) if isinstance(prepared, dict) else {}
+    lock = prepared.get("lock") if isinstance(prepared, dict) else None
+    if lock is not None:
+        lock.acquire()
+    try:
+        prev = served.get(base_etag) if (want_delta and base_etag) else None
+        latest = next(reversed(served.values()), None) if served else None
+        known = {}
+        for state in (prev, latest):
+            for k, (obj, dig) in ((state or {}).get("shifts") or {}).items():
+                known.setdefault(id(obj), (obj, dig))
+        digests, objs = {}, {}
+        for k, s in zip(keys, shifts):
+            hit = known.get(id(s))
+            dig = hit[1] if hit is not None and hit[0] is s else \
+                hashlib.sha1(json.dumps(s, sort_keys=True, default=str).encode()).hexdigest()[:16]
+            digests[k] = dig
+            objs[k] = (s, dig)
+        etag = hashlib.sha1((json.dumps(head, sort_keys=True, default=str) + "|"
+                             + ",".join(f"{k}={digests[k]}" for k in keys)).encode()).hexdigest()[:20]
+        served[etag] = {"shifts": objs}
+        while len(served) > QUALITY_SERVED_KEEP:
+            served.pop(next(iter(served)))
+    finally:
+        if lock is not None:
+            lock.release()
+    out = {"quality_etag": etag, "quality_keys": keys}
+    if prev is None:
+        out["quality"] = quality
+        return out
+    before = {k: dig for k, (_o, dig) in (prev.get("shifts") or {}).items()}
+    out["quality"] = None
+    out["quality_delta"] = {"base": base_etag, "head": head, "order": keys,
+                            "changed": {k: s for k, s in zip(keys, shifts) if before.get(k) != digests[k]}}
+    return out
 
 
 def present_quality(restaurant_id, quality, user_id=None, authority=None):

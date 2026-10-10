@@ -23079,12 +23079,50 @@ document.addEventListener('click', function (ev) {
     }).catch(function () { _sqRated[name] = prev; renderQualityRatePrompt(); toast('Could not save that rating', 'error'); });
 });
 
+// The re-score answers with only the shift readings that changed since the
+// answer this page holds (scheduler audit 10/10/26, SCALE-29): the whole
+// quality object is 130-440 KB, and a drag moves two or three readings of
+// fourteen. _sqHeld is that answer and its etag; the server sends the whole
+// object whenever it no longer holds the etag.
+var _sqHeld = null;
+function _sqShiftKeys(shifts) {
+  var seen = {}, keys = [], i, k, n;
+  for (i = 0; i < (shifts || []).length; i++) {
+    k = ((shifts[i] || {}).date || '') + '|' + ((shifts[i] || {}).daypart || '');
+    n = seen[k] || 0;
+    seen[k] = n + 1;
+    keys.push(n ? k + '#' + n : k);
+  }
+  return keys;
+}
+function _sqDeltaBody(body) {
+  if (_sqHeld && _sqHeld.etag) { body.delta = true; body.quality_etag = _sqHeld.etag; }
+  return body;
+}
+function _sqTakeQuality(d) {
+  if (!d || !d.ok) return d;
+  var dl = d.quality_delta;
+  if (!d.quality && dl && _sqHeld && _sqHeld.etag === dl.base) {
+    var out = {}, k, i, had = {}, prev = _sqHeld.quality.shifts || [], keys = _sqShiftKeys(prev), shifts = [];
+    for (k in (dl.head || {})) if (dl.head.hasOwnProperty(k)) out[k] = dl.head[k];
+    for (i = 0; i < keys.length; i++) had[keys[i]] = prev[i];
+    for (i = 0; i < (dl.order || []).length; i++) {
+      k = dl.order[i];
+      shifts.push(dl.changed && dl.changed.hasOwnProperty(k) ? dl.changed[k] : had[k]);
+    }
+    out.shifts = shifts;
+    d.quality = out;
+  }
+  _sqHeld = (d.quality && d.quality_etag) ? {etag: d.quality_etag, quality: d.quality} : null;
+  return d;
+}
+
 // Score the rows without storing anything — the what-if, and the
 // re-score after rating somebody. The same endpoint Save uses, save:false.
 function _sqLiveScore(rows, done) {
   fetch('/api/labor/schedule/score', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rows: rows, daily_target_hours: _schedTargets, save: false})})
-    .then(apiJson).then(function (d) { done(d && d.ok ? d : null, d); })
+    body: JSON.stringify(_sqDeltaBody({rows: rows, daily_target_hours: _schedTargets, save: false}))})
+    .then(apiJson).then(function (d) { d = _sqTakeQuality(d); done(d && d.ok ? d : null, d); })
     .catch(function () { done(null, null); });
 }
 function rescoreQualityLive(btn) {
@@ -23695,9 +23733,10 @@ function rescoreSchedule(btn, after) {
   fetch('/api/labor/schedule/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
+    body: JSON.stringify(_sqDeltaBody(body))
   }).then(function (r) { status = r.status; return r.json(); }).then(function (d) {
     done();
+    d = _sqTakeQuality(d);
     if (d && d.ok) {
       if (d.saved && _sqOptimizerProposed && window._sqOptimizerKey) {
         _recEvent(window._sqOptimizerKey, 'accepted');
@@ -38539,8 +38578,9 @@ function sfw1RatingLine(s) {
      the arrangement search on; nothing is saved. */
   window.sfw1LookBetter = function (btn) {
     var done = busy(btn, 'Looking…');
-    jpost('/api/labor/schedule/score', {rows: rows(), daily_target_hours: window._schedTargets || {}, save: false, what_if: true}, function (d) {
+    jpost('/api/labor/schedule/score', (window._sqDeltaBody || function (b) { return b; })({rows: rows(), daily_target_hours: window._schedTargets || {}, save: false, what_if: true}), function (d) {
       done();
+      if (window._sqTakeQuality) d = _sqTakeQuality(d);
       if (!d.ok) { say(d.error || 'Couldn’t look for a better arrangement', 'error'); return; }
       if (window.renderShiftQuality) renderShiftQuality(d.quality, d.what_if);
       var wi = d.what_if || {};
