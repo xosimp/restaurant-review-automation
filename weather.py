@@ -344,8 +344,22 @@ def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
     """
     if not restaurant:
         return []
-    by_day, _night = _periods_by_date(restaurant, db_path=db_path)
-    return [_row(d, by_day[d]) for d in week_dates if d in by_day]
+    by_day, by_night = _periods_by_date(restaurant, db_path=db_path)
+    return [_with_night(_row(d, by_day[d]), by_night.get(d)) for d in week_dates if d in by_day]
+
+
+def _with_night(row, night):
+    """A daytime row with its night period beside it (`night_precip_pct`,
+    `low_f`, `night_short_forecast`): the schedule reads the day period as
+    lunch's weather and the night period as dinner's (demand_drivers.
+    forecast_parts — scheduler audit 10/10/26 LEARNING-21: a rainy-lunch
+    forecast cut dinner too). Unchanged without a night period."""
+    if not night:
+        return row
+    row["night_precip_pct"] = (night.get("probabilityOfPrecipitation") or {}).get("value")
+    row["low_f"] = night.get("temperature")
+    row["night_short_forecast"] = night.get("shortForecast", "")
+    return row
 
 
 def cached_forecast_for_week(restaurant, week_dates) -> list:
@@ -361,12 +375,12 @@ def cached_forecast_for_week(restaurant, week_dates) -> list:
     stamp = _cached_at(restaurant)
     if stamp is not None:
         as_of = stamp.isoformat()
-    by_day = {}
+    by_day, by_night = {}, {}
     for p in periods:
         pdate = (p.get("startTime") or "")[:10]
-        if pdate and p.get("isDaytime"):
-            by_day[pdate] = dict(p, _as_of=as_of)
-    return [_row(d, by_day[d]) for d in week_dates or [] if d in by_day]
+        if pdate:
+            (by_day if p.get("isDaytime") else by_night)[pdate] = dict(p, _as_of=as_of)
+    return [_with_night(_row(d, by_day[d]), by_night.get(d)) for d in week_dates or [] if d in by_day]
 
 
 def forecast_for_day(restaurant, day, db_path=DB_PATH):
@@ -495,13 +509,29 @@ def summarise_day(observations, tz, day, service=None):
         s0 = datetime.combine(day, _time(11, 0))
         s1 = datetime.combine(day, _time(23, 0))
     in_service = [(t, o) for t, o in local if s0 <= t < s1]
+    # Lunch and dinner apart (scheduler audit 10/10/26 LEARNING-21): a wet
+    # lunch is not a wet dinner, and a 40F April evening is not its 62F
+    # afternoon. Split at the restaurant's lunch/dinner boundary.
+    import schedule_time as _stime
+    from datetime import timedelta as _td
+    split = datetime.combine(day, _time(0, 0)) + _td(minutes=_stime.daypart_split())
+    parts = {"lunch": [(t, o) for t, o in in_service if t < split],
+             "dinner": [(t, o) for t, o in in_service if t >= split]}
     temps = [o["temp_f"] for _t, o in today if o["temp_f"] is not None]
     mm = [o["precip_mm"] for _t, o in today if o["precip_mm"] is not None]
     wet_hours = len({t.replace(minute=0, second=0, microsecond=0) for t, o in in_service if o["wet"]})
     texts = [o["text"] for _t, o in in_service if o["text"]]
     conditions = max(set(texts), key=texts.count) if texts else None
-    return {"high_f": max(temps) if temps else None, "low_f": min(temps) if temps else None,
-            "precip_in": round(sum(mm) / 25.4, 2) if mm else None,
-            "rain": (1 if wet_hours else 0) if in_service else None,
-            "wet_hours": wet_hours if in_service else None,
-            "conditions": conditions, "n_obs": len(today)}
+    out = {"high_f": max(temps) if temps else None, "low_f": min(temps) if temps else None,
+           "precip_in": round(sum(mm) / 25.4, 2) if mm else None,
+           "rain": (1 if wet_hours else 0) if in_service else None,
+           "wet_hours": wet_hours if in_service else None,
+           "conditions": conditions, "n_obs": len(today)}
+    for name, obs in parts.items():
+        pt = [o["temp_f"] for _t, o in obs if o["temp_f"] is not None]
+        out[f"{name}_wet"] = (1 if any(o["wet"] for _t, o in obs) else 0) if obs else None
+        out[f"{name}_temp_f"] = round(sum(pt) / len(pt), 1) if pt else None
+    snow_words = ("snow", "sleet", "ice pellets", "freezing")
+    out["snow"] = (1 if any(any(w in (o["text"] or "").lower() for w in snow_words) for _t, o in in_service)
+                   else 0) if in_service else None
+    return out

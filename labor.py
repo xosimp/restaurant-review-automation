@@ -3498,7 +3498,7 @@ def _wmedian(pairs) -> int:
 
 
 def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict = None,
-                        families: dict = None) -> dict:
+                        families: dict = None, trend_guard=None) -> dict:
     """The usual crew in the ONE headcount unit — people on at once at a
     half hour (schedule audit 10/10/26, contract #2: LOGIC-2, BUGSGEN-1/2) —
     from the same rows the usual distinct crew is counted from.
@@ -3558,7 +3558,14 @@ def concurrent_patterns(rows: list, open_times: dict = None, close_times: dict =
                     peak = _wmedian([(v, weight[d]) for d, v in peak_by.items()])
                     if kind == "role" and held_by:
                         t = _held_trend(held_by, [d for d in dates if d in held_by])
-                        if t:
+                        g = (trend_guard(dict(t, day=day, part=part, role=name)) or {}) \
+                            if (t and trend_guard is not None) else {}
+                        if t and g.get("hold"):
+                            # A Cavnar-era drop with no outcome evidence keeps
+                            # the earlier level (LEARNING-5).
+                            held = t["was"]
+                            trends.append(dict(t, day=day, part=part, role=name, held=True, reason=g.get("reason")))
+                        elif t:
                             held = t["now"]
                             trends.append(dict(t, day=day, part=part, role=name))
                     if peak or held:
@@ -3586,11 +3593,11 @@ def _held_trend(values: dict, dates: list):
     if sum(1 for x in r if (x > mp if move > 0 else x < mp)) < TREND_HOLD:
         return None
     return {"now": _wmedian([(x, 1) for x in r]), "was": _wmedian([(x, 1) for x in p]), "since": recent[0],
-            "direction": "up" if move > 0 else "down"}
+            "direction": "up" if move > 0 else "down", "recent_dates": list(recent)}
 
 
 def historical_patterns(shifts: list, published_rows: list = None, salaried=None, close_times: dict = None,
-                        open_times: dict = None, families: dict = None) -> dict:
+                        open_times: dict = None, families: dict = None, trend_guard=None) -> dict:
     """What this restaurant's own history says about how it staffs.
 
     Two signals the Shift Quality Engine needs and that only the shift data
@@ -3701,6 +3708,9 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         return by_role_date, dates_by_day, late_by, late_dates
 
     trends = []
+    # {(weekday, daypart): {role: "pre_cavnar" | "cavnar" | "validated" |
+    # "trim_held"}} — where a moved level came from (trend_guard; LEARNING-5).
+    provenance = {}
 
     def _typical(by_role_date, dates_by_day, find_trends=False):
         typical = {}
@@ -3724,6 +3734,22 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                     # "will it notice trends either up or down over time?"):
                     # the recent level, not the blend that lags it by weeks.
                     t = _trend(per_date, usual_dates) if find_trends else None
+                    if t and trend_guard is not None:
+                        # Cavnar AI's own trims never become the usual crew
+                        # without outcome evidence (scheduler audit 10/10/26
+                        # LEARNING-5, requirement_provenance).
+                        g = trend_guard(dict(t, day=day, part=part, role=role)) or {}
+                        t["provenance"] = g.get("provenance")
+                        if g.get("hold"):
+                            t["held"], t["reason"] = True, g.get("reason")
+                            provenance.setdefault((day, part), {})[role] = "trim_held"
+                            n = t["was"]
+                            trends.append(dict(t, day=day, part=part, role=role))
+                            if n:
+                                counts[role] = n
+                            continue
+                        if g.get("provenance"):
+                            provenance.setdefault((day, part), {})[role] = g["provenance"]
                     if t:
                         n = t["now"]
                         trends.append(dict(t, day=day, part=part, role=role))
@@ -3763,7 +3789,7 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         if held < TREND_HOLD:
             return None
         return {"now": int(math.floor(mr + 0.5)), "was": int(math.floor(mp + 0.5)), "since": recent[0],
-                "direction": "up" if move > 0 else "down", "recent": r, "prior": p}
+                "direction": "up" if move > 0 else "down", "recent": r, "prior": p, "recent_dates": list(recent)}
 
     def _held(spans, window):
         # The people a role holds ACROSS the late window: the median of its
@@ -3830,13 +3856,15 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
     # Counted over each weekday's newest TYPICAL_WEEKS dates only, the dates
     # it reads (_recent_rows, SCALE-17) — not three years of rows.
     concurrent = concurrent_patterns(_recent_rows(list(punch_rows) + list(pub_rows)), open_times=open_times,
-                                     close_times=close_times, families=families)
+                                     close_times=close_times, families=families, trend_guard=trend_guard)
     return {
         "typical_headcount": typical,
         # The roles and shifts whose usual crew has moved and held
         # (_trend): [{day, part, role, now, was, since, direction}] — the
-        # typical above already uses `now` for them.
+        # typical above already uses `now` for them, except a Cavnar-era drop
+        # with no outcome evidence (`held`, `reason`: kept at `was`).
         "headcount_trends": [t for t in trends if t["now"] != t["was"]],
+        "headcount_provenance": provenance,
         # People on at once (concurrent_patterns): the unit every floor, cap
         # and the Crew stage read — never mixed with typical_headcount's
         # different-people count.
@@ -3975,6 +4003,29 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
     return out
 
 
+def _trend_guard(restaurant_id):
+    """The baseline's guard against its own past output (scheduler audit
+    10/10/26 LEARNING-5): a callable(trend) -> {hold, provenance, reason}
+    from requirement_provenance, or None before the restaurant's first
+    published Cavnar week (nothing it read was Cavnar's) or on any failure."""
+    try:
+        import requirement_provenance as _prov
+        live = _prov.go_live(restaurant_id)
+        if not live:
+            return None
+        memo = {}
+
+        def guard(trend):
+            key = (trend.get("day"), trend.get("part"), trend.get("since"), tuple(trend.get("recent_dates") or ()))
+            if key not in memo:
+                memo[key] = _prov.hold_down_trend(trend, live, restaurant_id=restaurant_id)
+            return memo[key]
+        return guard
+    except Exception as e:
+        print(f"[labor] baseline provenance unavailable for {restaurant_id}: {e}")
+        return None
+
+
 def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
     if shifts is None:
         shifts = load_shifts_for_restaurant(restaurant_id) or []
@@ -3998,7 +4049,7 @@ def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
     patterns = historical_patterns(shifts, published_rows=published_rows_for_baseline(restaurant_id, before),
                                    salaried=salaried, close_times=close_times or {},
                                    open_times=open_times if isinstance(open_times, dict) else {},
-                                   families=families or None)
+                                   families=families or None, trend_guard=_trend_guard(restaurant_id))
     patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
     if r is not None:
         try:
@@ -5629,6 +5680,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # usual crew above is already held to it (crew_matrix.bind_answers);
         # this names it as the reason.
         crew_answers=_patterns.get("crew_answers") or None,
+        # The work-driven requirement (scheduler audit 10/10/26 RM-17,
+        # LOGIC-11): each family's half-hour work ÷ its labor standard at the
+        # rush, the usual crew's half-hour peak in people on at once, each
+        # role on its own lead or lag, the curve measured at the half hour.
+        staffing_model=(labor_standards or {}).get("model") or None,
+        concurrent=_patterns.get("concurrent") or None,
+        half_curve=(labor_standards or {}).get("half_curve") or None,
     )
     _requirements_block = _req.requirements_block(
         _req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs),

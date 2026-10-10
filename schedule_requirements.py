@@ -113,20 +113,50 @@ def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=
                 v[idx_why].append(f"your maximum of {cap} on at once: stagger them")
 
 
-def demand_factor(ratio=1.0, hold=1.0) -> float:
+def demand_factor(ratio=1.0, hold=1.0, measured=False) -> float:
     """The factor the usual crew is scaled by on one shift: the date's
     demand against a typical one (schedule_economics.date_demand's ratio)
     times the sales-per-labor-hour hold (schedule_economics.splh_objective's
     `hold`, ≤ 1 when the record runs over the labor target), held inside
-    DEMAND_SCALE_BOUNDS. 1.0 when nothing moves it."""
+    DEMAND_SCALE_BOUNDS — or, where the figure is the owner's own budget or
+    measured here (`measured`: schedule_economics.MEASURED_SCALE_BOUNDS),
+    the wider bounds: an +80% festival the owner budgeted, a measured -50%
+    snow day (scheduler audit 10/10/26 LOGIC-9). 1.0 when nothing moves it."""
     try:
         r = float(ratio if ratio is not None else 1.0) * float(hold if hold is not None else 1.0)
     except (TypeError, ValueError):
         return 1.0
     if r <= 0:
         return 1.0
-    lo, hi = DEMAND_SCALE_BOUNDS
+    lo, hi = MEASURED_SCALE_BOUNDS if measured else DEMAND_SCALE_BOUNDS
     return round(min(max(r, lo), hi), 3)
+
+
+# schedule_economics.MEASURED_SCALE_BOUNDS, kept here so this module stays
+# free of schedule_economics' imports.
+MEASURED_SCALE_BOUNDS = (0.4, 2.5)
+
+
+def part_demand(dd: dict, part: str, busy: bool = False) -> tuple:
+    """(ratio, roles {role lower: ratio}, measured, reasons) for one daypart
+    of one date from schedule_economics.date_demand's entry: the meal's own
+    figure (`parts`) where the entry carries one — its busy-shift quantile
+    when `busy` (demand_model.BUSY_QUANTILE: a busy shift is staffed to the
+    upper forecast, not the median — LEARNING-19) — else the date's one
+    ratio (an older stored entry)."""
+    dd = dd or {}
+    pd = (dd.get("parts") or {}).get(part)
+    if not pd:
+        r = dd.get("ratio", 1.0) if dd.get("ratio") is not None else 1.0
+        return r, {}, bool(set(dd.get("sources") or ()) & {"budget", "measured_effects"}), []
+    base = float(pd.get("ratio") if pd.get("ratio") is not None else 1.0)
+    r = float(pd.get("busy_ratio") or base) if busy else base
+    lift = (r / base) if base else 1.0
+    roles = {str(k).strip().lower(): float(v) * lift for k, v in (pd.get("roles") or {}).items()}
+    why = list(pd.get("reasons") or [])
+    if busy and abs(lift - 1.0) >= 0.01:
+        why.append(f"a busy shift, staffed to the upper forecast ({int(round((lift - 1) * 100)):+d}%)")
+    return r, roles, bool(pd.get("measured")), why
 
 
 def _scaled(n, factor) -> int:
@@ -249,7 +279,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        demand_curve: dict = None, open_times: dict = None, close_times: dict = None,
                        section_cap: int = 0, cap_roles=None, date_demand: dict = None, splh_hold: dict = None,
                        adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None,
-                       role_windows: dict = None, role_caps: dict = None, crew_answers: dict = None) -> list:
+                       role_windows: dict = None, role_caps: dict = None, crew_answers: dict = None,
+                       staffing_model: dict = None, concurrent: dict = None, half_curve: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -316,6 +347,26 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 a floor stands there) and never more than its ceiling. The
                 usual crew from punches used to ask for an evening-only
                 bartender at Wednesday lunch.
+    staffing_model — staffing_model.measure(): where a role's family has a
+                labor standard (the owner's, or measured at the rush and
+                shrunk toward a prior), its number is the forecast work of
+                the meal at each half hour ÷ that standard, plus the meal's
+                fixed crew — people on at once, mapped to different people
+                by the restaurant's own stagger — never the usual crew x a
+                ratio (scheduler audit 10/10/26 RM-17, LEARNING-4, LOGIC-10,
+                LOGIC-12). Without a standard the usual crew stands, moved by
+                the meal's and the role's own demand (LOGIC-9, LEARNING-20).
+                Its `lags` shift each role along the curve (LOGIC-11).
+    concurrent — the staffing baseline's people on at once ({(weekday,
+                daypart): {role: {"peak"}}}, contract #2): each role's
+                half-hour peak is its usual most on at once, demand-scaled —
+                no longer 0.75 x its different people (LOGIC-11).
+    half_curve — {weekday: {minute: share}}, the curve measured at the half
+                hour from the ticket archive (schedule_economics.
+                measured_half_hours), used over the hourly one.
+    Each row also carries `half_need` — {minute: {role: people on}}, every
+    half hour's full need after the caps — the one the score judges
+    (half_hours_map).
     """
     import staffing_curve as _curve
     from shift_quality import shift_role_requirements
@@ -343,13 +394,34 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             profile_here = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
             typical_raw = raw_by_part[part]
             hold = ((splh_hold or {}).get(day) or {}).get(part)
-            factor = demand_factor(ratio, hold)
-            typical_here = {r: _scaled(n, factor) for r, n in typical_raw.items()} if factor != 1.0 \
-                else dict(typical_raw)
+            # The meal's own demand and each role's (LOGIC-9, LEARNING-20):
+            # a dinner game never lifts lunch, a bar night never the dish pit.
+            busy_here = _sq.DEMAND_RANK.get(profile_here.demand, 1) >= _sq.DEMAND_RANK[_sq.HARD_DEMAND]
+            p_ratio, role_ratios, measured, why_part = part_demand(dd, part, busy_here)
+            factor = demand_factor(p_ratio, hold, measured)
+
+            def _role_factor(r):
+                rr = role_ratios.get(r.strip().lower())
+                return demand_factor(rr, hold, measured) if rr is not None else factor
+            typical_here = {r: (_scaled(n, _role_factor(r)) if _role_factor(r) != 1.0 else int(n or 0))
+                            for r, n in typical_raw.items()}
+            # Driver-based (RM-17): a family with a labor standard is asked
+            # for the work it will carry, not its habit. The hold is not
+            # applied — the budget is priced in dollars elsewhere (LOGIC-10).
+            driven = {}
+            if staffing_model and typical_raw:
+                import staffing_model as _sm
+                lo_d, hi_d = _service_window(day, part, open_times, close_times)
+                ratios_d = {r: demand_factor(role_ratios.get(r.strip().lower(), p_ratio), 1.0, True)
+                            for r in typical_raw}
+                driven = _sm.needs(staffing_model, day, part, ratios_d, typical_raw,
+                                   (concurrent or {}).get((day, part)) or {}, window=(lo_d, hi_d))
+                for r, dn in driven.items():
+                    typical_here[r] = int(dn["distinct"])
             standard_here = (standard_needs or {}).get((d, part)) or {}
             for r in list(typical_here):
                 std = standard_here.get(r.strip().lower())
-                if std and std.get("people") is not None:
+                if std and std.get("people") is not None and r not in driven:
                     typical_here[r] = int(std["people"])
             floors_here = {}
             for role, spec in (role_floors or {}).items():
@@ -365,10 +437,16 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 typ = max([int(v or 0) for r2, v in typical_raw.items() if r2.strip().lower() == key] or [0])
                 why = []
                 std = standard_here.get(key)
-                if std and std.get("reason"):
+                dn = next((v for r2, v in driven.items() if r2.strip().lower() == key), None)
+                rf = _role_factor(role)
+                if dn is not None:
+                    why.append(f"usual {typ}; {dn['reason']}" if typ and int(n) != typ else dn["reason"])
+                elif std and std.get("reason"):
                     why.append(str(std["reason"]))
-                elif typ and factor != 1.0 and _scaled(typ, factor) != typ and int(n) != typ:
-                    why.append(f"usual {typ}")
+                elif typ and rf != 1.0 and _scaled(typ, rf) != typ and int(n) != typ:
+                    why.append(f"usual {typ}" + (f"; this role's own record on nights like it "
+                                                 f"{int(round((rf - 1) * 100)):+d}%"
+                                                 if key in role_ratios and abs(rf - factor) >= 0.005 else ""))
                 need[key] = [role.strip(), int(n), floor, typ, 0, why]
             # Asks folded in (PR-7): +1 of a role, with its reason.
             for key, word, a in _adjust_for(adjustments, d, part, need, raw_by_part):
@@ -418,15 +496,46 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if not need:
                 continue
             half = {}
+            full_needs = {}
             curve_here = (demand_curve or {}).get(day) or {}
-            if curve_here and typical_here:
+            hcurve = (half_curve or {}).get(day) or None
+            if (curve_here or hcurve or driven) and typical_here:
                 lo, hi = _service_window(day, part, open_times, close_times)
                 # Normalised over the daypart's half of the day, as the scorer
                 # does, then kept to the hours the restaurant is open.
                 split = _stime.daypart_split()
                 whole = (0, split) if part == "morning" else (split, 48 * 60)
-                needs = {m: n for m, n in _curve.half_hour_needs(curve_here, typical_here, *whole).items()
-                         if lo <= m < hi}
+                # The roles on the usual crew: each one's half-hour peak is
+                # its usual most ON AT ONCE (the baseline's concurrent peak),
+                # moved by its demand — not 0.75 x its different people — and
+                # its curve shifted by its family's measured lead or lag
+                # (LOGIC-11). A role with a labor standard brings its own.
+                hist_roles = {r: n for r, n in typical_here.items() if r not in driven}
+                conc = (concurrent or {}).get((day, part)) or {}
+                peaks, offs = {}, {}
+                fam_lags = {}
+                if staffing_model:
+                    import staffing_model as _sm
+                    fam_lags = _sm.lags(staffing_model)
+                for r, n in hist_roles.items():
+                    cfig = next((v for k, v in conc.items() if str(k).strip().lower() == r.strip().lower()), None)
+                    if isinstance(cfig, dict) and cfig.get("peak"):
+                        peaks[r] = min(int(n or 0) or 1, _scaled(cfig["peak"], _role_factor(r)))
+                    lag = None
+                    if fam_lags:
+                        from intelligence.staffing import family_of as _fo
+                        lag = fam_lags.get(_fo(r))
+                    if lag:
+                        offs[r] = lag
+                needs = {}
+                if curve_here or hcurve:
+                    needs = {m: n for m, n in _curve.half_hour_needs(curve_here, hist_roles, *whole, peaks=peaks,
+                                                                      offsets=offs, shares=hcurve).items()
+                             if lo <= m < hi}
+                for r, dn in driven.items():
+                    for m, k in (dn.get("half") or {}).items():
+                        if lo <= m < hi and k:
+                            needs.setdefault(m, {})[r] = int(k)
                 if section_cap:
                     # People on at once at each half hour: the unit the
                     # section count is in.
@@ -448,6 +557,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in roles} for m, rn in needs.items()}
                 half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1
                         and r.strip().lower() in need}
+                full_needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in need and n}
+                              for m, rn in needs.items()}
+                full_needs = {m: rn for m, rn in full_needs.items() if rn}
             profile = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
             demand = profile.demand
             leader = []
@@ -484,16 +596,27 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 if _k in lent and typical and typical > floor:
                     entry["borrowed"] = True
                 roles_out.append(entry)
-            reasons = _row_reasons(factor, ratio, hold, why_date, held)
+            reasons = _row_reasons(factor, p_ratio, hold, why_date + [w for w in why_part if w not in why_date],
+                                   held, bounded_by=MEASURED_SCALE_BOUNDS if measured else DEMAND_SCALE_BOUNDS)
+            if driven:
+                reasons.append("sized from the work: " + ", ".join(sorted({dn["family"].replace("_", " ")
+                                                                           for dn in driven.values()}))
+                               + " by the labor standard at the busiest half hour")
             row = {"date": d, "day": day, "daypart": part, "roles": roles_out,
                    "target_hours": (daily_targets or {}).get(d), "demand": demand,
                    "leader": leader, "factor": factor, "reasons": reasons}
+            if abs(float(p_ratio or 1.0) - float(ratio or 1.0)) >= 0.005:
+                row["part_ratio"] = round(float(p_ratio), 3)
+            if driven:
+                row["driven"] = sorted(driven)
             if half:
                 row["half_hours"] = half
+            if full_needs:
+                row["half_need"] = full_needs
             if held:
                 row["held_to_cap"] = {"cap": int(section_cap), "trimmed": held, "unit": "on_at_once"}
             out.append(row)
-        late = _late_row(d, day, (late_headcount or {}).get(day) or {}, close_times, ratio,
+        late = _late_row(d, day, (late_headcount or {}).get(day) or {}, close_times, part_demand(dd, "night")[0],
                          ((splh_hold or {}).get(day) or {}).get(LATE_PART), why_date, roles, section_cap, cap_roles,
                          (daily_targets or {}).get(d), role_windows=role_windows, role_caps=role_caps)
         if late:
@@ -501,8 +624,10 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     return out
 
 
-def _row_reasons(factor, ratio, hold, why_date, held) -> list:
-    """Why a shift's numbers moved off its usual crew, in the owner's words."""
+def _row_reasons(factor, ratio, hold, why_date, held, bounded_by=None) -> list:
+    """Why a shift's numbers moved off its usual crew, in the owner's words.
+    `bounded_by` — the bounds the factor was held inside (named when they
+    bit)."""
     out = []
     if factor != 1.0:
         moved = int(round((factor - 1) * 100))
@@ -596,6 +721,33 @@ def requirements_map(rows: list, firm: bool = True) -> dict:
             if n > 0:
                 slot[x["role"]] = max(n, slot.get(x["role"], 0))
     return {k: v for k, v in out.items() if v}
+
+
+def half_hours_map(rows: list) -> dict:
+    """{(date, daypart): {minute: {role: people on}}} — each shift's full
+    half-hour need (the rows' `half_need`): what the coverage score judges
+    every half hour against, the same numbers the passes fill to (scheduler
+    audit 10/10/26 LOGIC-11 — the scorer used to rebuild them as 0.75 x
+    the requirement's different people). Keys read back from JSON as
+    strings are turned back into minutes."""
+    out = {}
+    for r in rows or []:
+        hn = r.get("half_need") if isinstance(r, dict) else None
+        if not hn or not r.get("date") or not r.get("daypart"):
+            continue
+        slot = out.setdefault((r["date"], r["daypart"]), {})
+        for m, rn in hn.items():
+            try:
+                m = int(m)
+            except (TypeError, ValueError):
+                continue
+            here = slot.setdefault(m, {})
+            for role, n in (rn or {}).items():
+                try:
+                    here[role] = max(int(n), int(here.get(role) or 0))
+                except (TypeError, ValueError):
+                    continue
+    return out
 
 
 def requirement_reasons(rows: list) -> dict:

@@ -407,6 +407,15 @@ class ShiftContext:
     day_rows: list = field(default_factory=list)
     role_floors: dict = field(default_factory=dict)    # {role: people required on this daypart}
     demand_curve: dict = field(default_factory=dict)   # {hour: share of the day's sales}
+    # {minute: {role: people on}} — this shift's half-hour need from the
+    # requirements the draft was written to (schedule_requirements.
+    # half_hours_map): people on at once from the role's usual concurrent
+    # peak or its labor standard, each role on its own lead or lag
+    # (scheduler audit 10/10/26 LOGIC-11). Empty: rebuilt from the curve.
+    half_hour_needs: dict = field(default_factory=dict)
+    # {role: usual most on at once} for this weekday's daypart (the
+    # baseline's concurrent peak, contract #2) — the rebuilt curve's peak.
+    concurrent_peaks: dict = field(default_factory=dict)
     # ── people facts (reliability, pairings, limits) ───────────────────
     reliability: dict = field(default_factory=dict)    # {name: {"no_show_rate", "shifts"}}
     pairs: dict = field(default_factory=dict)          # {"prefer": {frozenset}, "avoid": {frozenset}}
@@ -2887,7 +2896,12 @@ def _half_hour_requirement(ctx: ShiftContext, lo: int, hi: int) -> dict:
     """{minute: {role: people}} for this daypart's half hours of service,
     from the measured sales curve and the usual crew (staffing_curve
     .half_hour_needs) — {} without both. The same function the requirements
-    table the model reads is built from."""
+    table the model reads is built from — or, where the draft's own
+    requirements carry the half hours (ctx.half_hour_needs), those exactly:
+    the passes fill to them and the score judges them, never two readings
+    (scheduler audit 10/10/26 LOGIC-11)."""
+    if ctx.half_hour_needs:
+        return {int(m): dict(n) for m, n in ctx.half_hour_needs.items() if lo <= int(m) < hi}
     if not ctx.demand_curve or not ctx.typical_headcount:
         return {}
     from staffing_curve import half_hour_needs
@@ -2896,7 +2910,12 @@ def _half_hour_requirement(ctx: ShiftContext, lo: int, hi: int) -> dict:
     # two agree on every half hour; then only this shift's window is judged.
     split = _stime.daypart_split()
     half = (0, split) if ctx.daypart == "morning" else (split, 48 * 60)
-    needs = half_hour_needs(ctx.demand_curve, ctx.typical_headcount, *half)
+    # Each role's peak is its usual most on at once, never more than the
+    # shift's requirement of different people (LOGIC-11).
+    low_typ = {str(r).strip().lower(): int(n or 0) for r, n in (ctx.typical_headcount or {}).items()}
+    peaks = {r: min(p, low_typ[str(r).strip().lower()]) for r, p in (ctx.concurrent_peaks or {}).items()
+             if low_typ.get(str(r).strip().lower())}
+    needs = half_hour_needs(ctx.demand_curve, ctx.typical_headcount, *half, peaks=peaks or None)
     return {m: n for m, n in needs.items() if lo <= m < hi}
 
 
@@ -2915,7 +2934,12 @@ def _peak_requirement(ctx: ShiftContext):
         return None
     hour = max(hours.items(), key=lambda kv: kv[1])[0] % 24
     import math
-    needs = {role: max(1, int(math.ceil(PEAK_SHARE * int(n)))) for role, n in ctx.typical_headcount.items() if n}
+    # The role's usual most on at once where the baseline has it (LOGIC-11),
+    # else PEAK_SHARE of its different people.
+    low_peak = {str(r).strip().lower(): int(p) for r, p in (ctx.concurrent_peaks or {}).items() if p}
+    needs = {role: max(1, min(int(n), low_peak[str(role).strip().lower()]) if str(role).strip().lower() in low_peak
+                       else int(math.ceil(PEAK_SHARE * int(n))))
+             for role, n in ctx.typical_headcount.items() if n}
     return (hour, needs) if needs else None
 
 
@@ -5281,6 +5305,10 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             day_rows=day_rows_by_date.get(date, []),
             role_floors=floors_here,
             demand_curve=demand_curves.get(day) or {},
+            half_hour_needs=dict((signals.get("half_hours_by_date") or {}).get((date, part)) or {}),
+            concurrent_peaks={r: int(v.get("peak") or 0) for r, v in
+                              ((signals.get("concurrent") or {}).get((day, part)) or {}).items()
+                              if isinstance(v, dict) and v.get("peak")},
             reliability=signals.get("reliability") or {},
             pairs=signals.get("pairs") or {},
             max_shift_hours=signals.get("max_shift_hours"),
