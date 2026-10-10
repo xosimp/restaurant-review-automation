@@ -27436,7 +27436,16 @@ function ssRenderSummary() {
             sav === null ? 'Needs a measured labor % for your recent weeks and this draft’s forecast'
               : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
             '<span class="tag">Projection · not yet earned</span>' + _ssSavingsMath(lv, rev));
-  h += '</div><div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
+  h += '</div>';
+  // How far to trust the figures above (TRUST-19): the labor range from the
+  // measured forecast error, its record, and last week's projection against
+  // what ran - the server's own sentences, never a figure of the page's.
+  var pn = pd ? (pd.numbers || {}) : {}, plp = pn.labor_pct || {}, tr = [];
+  if (plp.low != null && plp.high != null) tr.push('Labor likely <span class="hb-num">' + plp.low + '–' + plp.high + '%</span>.');
+  if (plp.track_record) tr.push(_numText(plp.track_record));
+  if (pn.last_week && pn.last_week.text) tr.push(_numText(pn.last_week.text));
+  if (tr.length) h += '<div class="pr-meta" style="margin-top:12px">' + tr.join(' ') + '</div>';
+  h += '<div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
     + '<button type="button" class="cbtn cbtn-primary cbtn-lg" data-ss-go="schedule">View the schedule</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" onclick="ssOptimize(this)">Optimize again</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" data-ss-go="publish">Review &amp; send</button></div>'
