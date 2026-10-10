@@ -88,6 +88,28 @@ def _owner_of(weeks, d):
     return None
 
 
+def _placed_breaks(schedule_csv, employee_name, break_rules) -> dict:
+    """{(date, shift_start): [break]} for this person's shifts in one
+    week's CSV, placed across the whole day's team (breaks.plan_week), or {}
+    when no break rule holds."""
+    if not break_rules or not (break_rules.get("meals") or break_rules.get("rest")):
+        return {}
+    try:
+        import breaks as _breaks
+        from schedule_versions import rows_from_csv
+        rows = rows_from_csv(schedule_csv or "")
+        plan = _breaks.plan_week(rows, break_rules)
+    except Exception:
+        return {}
+    who = " ".join(str(employee_name or "").lower().split())
+    out = {}
+    for i, bl in plan.items():
+        r = rows[i]
+        if " ".join(str(r.get("employee") or "").lower().split()) == who:
+            out[((r.get("date") or "").strip(), (r.get("shift_start") or "").strip())] = bl
+    return out
+
+
 def _leg(s, live_requests, now):
     """One shift as the app needs it: its own times under both spellings
     (`start`/`end` and the `shift_start`/`shift_end` a drop or swap sends
@@ -144,11 +166,21 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 "published": False, "week_hours": 0, "_week_ids": []}
 
     meal_after = None
+    break_rules = None
     try:
         import schedule_rules as _sr
-        meal_after = _sr.compliance(restaurant_id).get("meal_break_after_hours")
+        _comp = _sr.compliance(restaurant_id)
+        meal_after = _comp.get("meal_break_after_hours")
+        # The breaks the law places inside the shift (breaks.plan_day — the
+        # same placement the coverage score takes the person off the floor
+        # for), staggered across the day's team; the plain midway window
+        # stays the fallback (schedule audit 10/10/26 MARKET-6).
+        import breaks as _breaks
+        import compliance_packs as _cp
+        from models import get_restaurant as _gr_b
+        break_rules = _breaks.rules_for(_comp, _cp.values_in_force(_gr_b(restaurant_id)))
     except Exception:
-        meal_after = None
+        meal_after = meal_after if meal_after else None
 
     # Each shift's dining-room section, where labor can say (the sections
     # fix, employee audit B8): passed only when that reader takes it.
@@ -180,6 +212,7 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 parts = [p for p in (a.get("morning"), a.get("night")) if p]
                 if parts:
                     stations[(a.get("date"), a.get("shift_start"))] = " then ".join(dict.fromkeys(parts))
+        placed = _placed_breaks(detail.get("schedule_csv") or "", employee_name, break_rules)
         for s in employee_shifts_from_csv(detail.get("schedule_csv") or "", employee_name,
                                           meal_break_after_hours=meal_after, **_section_kw):
             d = _parse_day(s.get("date"))
@@ -188,6 +221,12 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 st = stations.get((d.isoformat(), s.get("start")))
                 if st:
                     s["station"] = st
+                pb = placed.get((s.get("date"), s.get("start")))
+                if pb is not None:
+                    meal = next((b for b in pb if b["kind"] == "meal" and b.get("placed")), None)
+                    s["break"] = meal["label"] if meal else ""
+                    s["breaks"] = [{"kind": b["kind"], "label": b["label"], "minutes": b["minutes"],
+                                    "paid": b["paid"]} for b in pb if b.get("placed")]
                 mine.append(s)
         if week_of is None and w["start"] and w["start"] <= today and (w["end"] is None or today <= w["end"]):
             week_of = detail.get("week_start")

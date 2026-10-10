@@ -115,7 +115,7 @@ def test_no_batch_when_batches_are_off_or_nothing_would_be_sent(monkeypatch):
 def test_the_auto_draft_submits_first_and_holds_no_job_or_slot(monkeypatch):
     import ops
     import schedule_engine
-    monkeypatch.setattr(schedule_engine, "generation_request", lambda rid, today=None: {"week_start": WEEK[0]})
+    monkeypatch.setattr(schedule_engine, "generation_request", lambda rid, **k: {"week_start": WEEK[0]})
     got = {}
     monkeypatch.setattr(sb, "submit_auto_draft", lambda r, **k: got.update(k) or "submitted")
     monkeypatch.setattr(ops, "claim_async_job", lambda *a, **k: (_ for _ in ()).throw(AssertionError("claimed")))

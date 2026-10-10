@@ -219,6 +219,7 @@ def test_a_pickup_is_held_to_the_restaurants_own_limits_too(db):
     """The one engine reaches TIER_POLICY (merged with B's tiers, 10/10/26):
     rest between shifts still refuses a claim, as the swap index did."""
     rid = _restaurant(db, [("Ana", "Server"), ("Ben", "Server")])
+    sr.save_compliance(rid, {"min_rest_hours": 10}, db_path=db)    # the owner's rule (no default since J1 MARKET-3)
     rows = sv.rows_from_csv(HEADER + f"\n{W1[1]},{_day(W1[1])},Ben,Server,5:00pm,11:30pm,6.5,"
                             f"\n{W1[2]},{_day(W1[2])},Ana,Server,7:00am,1:00pm,6,")
     ok, why = se.replacement_is_legal(rid, rows, 1, "Ben")

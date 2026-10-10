@@ -247,7 +247,9 @@ def _busy_constraints():
            minors={"kid"}, salaried={"sal"}, closers_by_role={"server": {"bo"}},
            trainees={"tia": {"target_role": "Bartender", "trainer": "Bo", "until": "2026-12-01"}},
            role_floors={"Server": {"night": 2}}, role_requirements={"bartender": {"bassett"}})
-    c.compliance.update({"daily_ot_hours": 8, "meal_break_after_hours": 6, "max_consecutive_days": 6})
+    # The owner's rest rule (there is no default since 10/10/26 MARKET-3).
+    c.compliance.update({"daily_ot_hours": 8, "meal_break_after_hours": 6, "max_consecutive_days": 6,
+                         "min_rest_hours": 10})
     return c
 
 
