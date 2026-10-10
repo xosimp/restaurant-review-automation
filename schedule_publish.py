@@ -60,6 +60,10 @@ NOTICE_DUTY_SECONDS = 20.0
 
 NOTICE_KINDS = ("posted", "changed", "removed")
 
+# How many times a Send with no reviewed version re-checks a week a save
+# changed while its gate ran, before it gives up and asks for a press again.
+GATE_RETRIES = 2
+
 
 def get_conn(db_path=None):
     """models.get_conn, resolved at call time (CLAUDE.md, bound imports)."""
@@ -848,6 +852,18 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
         conn.close()
 
 
+def _rows_sig_now(restaurant_id, schedule_id):
+    """The week's working-copy rows as they stand now, as one comparable value."""
+    import schedule_versions as _sv
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (schedule_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    return _sv._rows_sig(row["schedule_csv"] if row else "")
+
+
 def _claim(restaurant_id, schedule_id, mode):
     """Take the week's Send claim (SCHED-29, DATA-12): one Send at a time.
     A claim older than PUBLISH_CLAIM_MINUTES belongs to a Send that died.
@@ -1073,19 +1089,35 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
 
     actor_name = _actor_name(actor)
     authority = _sv.authority_of(actor)
-    try:
-        stamped = _stamp(rid, schedule_id, "publish", actor_name, authority, gate_sig, version=version)
-    except _Refused as r:
-        _release(rid, schedule_id)
-        if r.payload.get("already_published"):
-            return dict(r.payload, week_label=week_label, sent=[], unreachable=[], failed=[], sending=[],
-                        status=_models_mod.get_schedule_share_status(rid, schedule_id), error=None), 200
-        if r.payload.get("stale"):
-            return (stale_payload(rid, schedule_id, version) or r.payload), 409
-        return r.payload, r.status
-    except Exception:
-        _release(rid, schedule_id)
-        raise
+    regates = 0
+    while True:
+        try:
+            stamped = _stamp(rid, schedule_id, "publish", actor_name, authority, gate_sig, version=version)
+            break
+        except _Refused as r:
+            if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
+                # A save landed while the gate ran (BUGSLIFE-6, ARCH-21): what
+                # goes out is the week as saved — checked again, the claim
+                # still held, never the rows read before the save.
+                regates += 1
+                gate_sig = _rows_sig_now(rid, schedule_id)
+                review = publish_review(rid, schedule_id, unattended=unattended)
+                blockers = [b["text"] for b in review["blockers"]]
+                _acked, unacked = _ack_gate(review, acknowledge)
+                if unacked:
+                    _release(rid, schedule_id)
+                    return _needs_ack(review, unacked, schedule_id)
+                continue
+            _release(rid, schedule_id)
+            if r.payload.get("already_published"):
+                return dict(r.payload, week_label=week_label, sent=[], unreachable=[], failed=[], sending=[],
+                            status=_models_mod.get_schedule_share_status(rid, schedule_id), error=None), 200
+            if r.payload.get("stale"):
+                return (stale_payload(rid, schedule_id, version) or r.payload), 409
+            return r.payload, r.status
+        except Exception:
+            _release(rid, schedule_id)
+            raise
 
     log_account_event(rid, "schedule_published", actor,
                       detail=f"{len(stamped['queued'])} to tell" + (" — acknowledged blockers" if blockers else ""))
@@ -1162,17 +1194,31 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
         return {"ok": False, "in_progress": True, "schedule_id": row["id"],
                 "error": "This week is being sent to staff right now."}, 409
     who = _actor_name(actor)
+    regates = 0
     try:
-        stamped = _stamp(rid, row["id"], "changes", who, _sv.authority_of(actor), gate_sig, version=version)
-    except _Refused as r:
-        if r.payload.get("already_published"):
-            _vn = _sv.newest_version(rid, row["id"])
-            return dict(r.payload, week_label=week_label, sent=[], unreachable=[], failed=[], sending=[],
-                        unsent_changes=[], version=_vn[0]["version"] if _vn else None,
-                        status=_models_mod.get_schedule_share_status(rid, row["id"]), error=None), 200
-        if r.payload.get("stale"):
-            return (stale_payload(rid, row["id"], version) or r.payload), 409
-        return r.payload, r.status
+        while True:
+            try:
+                stamped = _stamp(rid, row["id"], "changes", who, _sv.authority_of(actor), gate_sig, version=version)
+                break
+            except _Refused as r:
+                if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
+                    # A save landed while the gate ran: the changes that go
+                    # are the saved ones, checked again (BUGSLIFE-6).
+                    regates += 1
+                    gate_sig = _rows_sig_now(rid, row["id"])
+                    review = publish_review(rid, row["id"])
+                    _acked, unacked = _ack_gate(review, acknowledge)
+                    if unacked:
+                        return _needs_ack(review, unacked, row["id"])
+                    continue
+                if r.payload.get("already_published"):
+                    _vn = _sv.newest_version(rid, row["id"])
+                    return dict(r.payload, week_label=week_label, sent=[], unreachable=[], failed=[], sending=[],
+                                unsent_changes=[], version=_vn[0]["version"] if _vn else None,
+                                status=_models_mod.get_schedule_share_status(rid, row["id"]), error=None), 200
+                if r.payload.get("stale"):
+                    return (stale_payload(rid, row["id"], version) or r.payload), 409
+                return r.payload, r.status
     finally:
         _release(rid, row["id"])
     got = deliver_notices(restaurant_id=rid, batch=stamped["batch"], budget_seconds=INLINE_SECONDS)

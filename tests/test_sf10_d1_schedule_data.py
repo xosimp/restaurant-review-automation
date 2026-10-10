@@ -458,44 +458,57 @@ def test_a_send_that_ends_unpublished_lets_the_newer_draft_supersede_it(db):
 
 # ── BUGSLIFE-6, ARCH-21 · a save during the Send ───────────────────────────
 
-def test_a_save_landing_while_the_send_is_checked_is_never_sent_stale(db, mail, monkeypatch):
+def _save_mid_gate(db, rid, hid, monkeypatch, times=1):
+    """A gate during which manager B saves Ana -> Cy (once)."""
+    done = []
+
+    def gate(r, sid, **k):
+        if len(done) < times:
+            done.append(1)
+            rows = sv.draft_rows(hid)
+            for x in rows:
+                if x["employee"] == "Ana":
+                    x["employee"] = "Cy"
+            conn = models.get_conn(db)
+            conn.execute("BEGIN IMMEDIATE")
+            sv.write_on(conn, rid, hid, "edited", schedule_rows.to_csv(rows), saved_by="b")
+            conn.commit()
+            conn.close()
+        return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": sid}
+    monkeypatch.setattr(schedule_publish, "publish_review", gate)
+    return done
+
+
+def test_a_save_landing_while_the_send_is_checked_is_sent_as_saved_and_checked_again(db, mail, monkeypatch):
     rid = _restaurant(db)
     _contacts(db, rid, "Ana", "Bob", "Cy")
     hid = _save(db, rid, _csv())
     v0 = _latest(rid, hid)
-
-    def gate(r, sid, **k):
-        rows = sv.draft_rows(hid)
-        for x in rows:
-            if x["employee"] == "Ana":
-                x["employee"] = "Cy"                          # manager B: Ana -> Cy, mid-gate
-        conn = models.get_conn(db)
-        conn.execute("BEGIN IMMEDIATE")
-        sv.write_on(conn, rid, hid, "edited", schedule_rows.to_csv(rows), saved_by="b")
-        conn.commit()
-        conn.close()
-        return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": sid}
-    monkeypatch.setattr(schedule_publish, "publish_review", gate)
+    gated = _save_mid_gate(db, rid, hid, monkeypatch)
     out, status = _publish(rid, hid)
-    assert status == 409 and out["changed"] and mail["sent"] == []
-    assert not _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
-    assert _one(db, "SELECT publishing_at FROM schedule_history WHERE id=?", hid)["publishing_at"] is None
-    # B's next save on their own version is no conflict; the week sends as saved.
-    with pytest.raises(sv.StaleVersion):
-        conn = models.get_conn(db)
-        try:
-            sv.write_on(conn, rid, hid, "edited", _csv(), expected_version=v0)
-        finally:
-            conn.rollback()
-            conn.close()
-    monkeypatch.setattr(schedule_publish, "publish_review",
-                        lambda *a, **k: {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": hid})
-    out, status = _publish(rid, hid)
-    assert status == 200 and sorted(mail["sent"]) == ["Bob", "Cy"]
+    # Never the rows read before the save: the saved week, gated again.
+    assert status == 200 and out["ok"] and sorted(mail["sent"]) == ["Bob", "Cy"] and len(gated) == 1
     pub = schedule_rows.parse(_one(db, "SELECT published_csv FROM schedule_history WHERE id=?", hid)[0])
     assert {r["employee"] for r in pub} == {"Bob", "Cy"}
-    last = sv.list_versions(rid, hid)[-1]
-    assert last["reason"] == "published"
+    assert sv.list_versions(rid, hid)[-1]["reason"] == "published"
+    # The published version holds the saved rows: B's next save on their own
+    # version is no conflict ("a revert nobody made").
+    conn = models.get_conn(db)
+    try:
+        assert sv.rows_changed_since(conn, hid, v0 + 1) is None
+    finally:
+        conn.close()
+
+
+def test_a_send_naming_its_version_is_refused_when_a_save_lands_mid_check(db, mail, monkeypatch):
+    rid = _restaurant(db)
+    _contacts(db, rid, "Ana", "Bob", "Cy")
+    hid = _save(db, rid, _csv())
+    _save_mid_gate(db, rid, hid, monkeypatch)
+    out, status = _publish(rid, hid, version=_latest(rid, hid))
+    assert status == 409 and out["stale"] and mail["sent"] == []
+    row = _one(db, "SELECT published_at, publishing_at FROM schedule_history WHERE id=?", hid)
+    assert row["published_at"] is None and row["publishing_at"] is None
 
 
 # ── BUGSLIFE-11 · Send publishes the version the sender reviewed ───────────
