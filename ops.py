@@ -597,6 +597,8 @@ def init_ops(db_path=None):
             "CREATE INDEX IF NOT EXISTS idx_backup_runs_started ON backup_runs(started_at)",
             "CREATE INDEX IF NOT EXISTS idx_operator_alerts_created ON operator_alerts(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_missed_windows_created ON missed_windows(created_at)",
+            # A press joins a pending job of its own restaurant (SCALE-30).
+            "CREATE INDEX IF NOT EXISTS idx_async_jobs_rid ON async_jobs(restaurant_id, kind, status)",
         ):
             conn.execute(sql)
         conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id) VALUES (1)")

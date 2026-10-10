@@ -1902,6 +1902,14 @@ def ensure_columns(db_path: str = DB_PATH):
                                 also_tolerate=("no such table",)):
                 conn.commit()
                 print(f"Added column {table}.{col}")
+        # Indexes on columns this list adds (SCALE-30): a per-restaurant or
+        # per-notification read of a growing ledger must SEARCH, never SCAN
+        # (tests/test_query_plans.py holds every literal restaurant query to
+        # it). Created once the column exists; a table an init_* helper
+        # creates later gets its index when ensure_columns runs again.
+        for sql in ("CREATE INDEX IF NOT EXISTS idx_notification_opens_alert ON notification_opens(alert_log_id, user_id)",):
+            _apply_migration(conn, sql, also_tolerate=("no such table", "no such column"))
+        conn.commit()
     finally:
         conn.close()
 
@@ -2391,6 +2399,7 @@ def init_db(db_path: str = DB_PATH):
             restaurant_id INTEGER NOT NULL,
             sent_at       TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_docusign_envelopes_rid ON docusign_envelopes(restaurant_id, sent_at)",
         """CREATE TABLE IF NOT EXISTS stripe_subscriptions (
             restaurant_id   INTEGER PRIMARY KEY,
             subscription_id TEXT NOT NULL,
@@ -2472,6 +2481,7 @@ def init_db(db_path: str = DB_PATH):
             answered_at    TEXT,
             answered_by    INTEGER
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_recipe_drafts_rid ON recipe_drafts(restaurant_id, status)",
         """CREATE TABLE IF NOT EXISTS delayed_actions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -3417,6 +3427,9 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_shares_schedule ON schedule_shares(schedule_id)",
         "CREATE INDEX IF NOT EXISTS idx_schedule_shares_token ON schedule_shares(token)",
+        # The staff portal's per-restaurant live-link reads (SCALE-30): a
+        # row per person per send, so it grows with every publish.
+        "CREATE INDEX IF NOT EXISTS idx_schedule_shares_rid ON schedule_shares(restaurant_id, expires_at)",
         # Also created lazily by init_email_log(), but a fresh database that
         # logged an email before that ran hit "no such table" — the same
         # lazy-init gap already fixed for schedule_history and
@@ -3659,6 +3672,7 @@ def init_db(db_path: str = DB_PATH):
             outcome       TEXT NOT NULL DEFAULT 'proposed',
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_actions_rid ON ask_cavnar_actions(restaurant_id, id)",
         # event_type: 'recount' (qty = absolute counted amount) |
         # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
         # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
@@ -4248,6 +4262,7 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_holds_due ON alert_holds(sent_at, release_at)",
         "CREATE INDEX IF NOT EXISTS idx_alert_holds_created ON alert_holds(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_alert_holds_rid ON alert_holds(restaurant_id, id)",
 
         """CREATE TABLE IF NOT EXISTS invoice_imports (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6884,6 +6899,7 @@ def init_two_fa_backup_codes(db_path: str = DB_PATH):
         used_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_two_fa_backup_codes_rid ON two_fa_backup_codes(restaurant_id)")
     conn.commit()
     conn.close()
 
@@ -8388,6 +8404,12 @@ def init_schedule_versions(db_path: str = DB_PATH):
         UNIQUE(history_id, version)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_hist ON schedule_versions(history_id)")
+    # Every learner reads a restaurant's versions by time (_WeekData,
+    # learning_weeks, acceptance, the admin-saves count): with only the
+    # history_id and created_at indexes each call scanned every restaurant's
+    # versions (SCALE-14, measured 2-3 ms per 2,400 rows vs 0.05 ms).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_rid_created "
+                 "ON schedule_versions(restaurant_id, created_at)")
     # Whose save each version is (permissions.answer_authority — memory
     # audit 9/29/26): a support login's edits through view-as are stored
     # under the owner's name, and must never teach the draft.
