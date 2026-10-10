@@ -1009,6 +1009,14 @@ def insight_error(exc, fallback=INSIGHT_RETRY_LATER):
 # factory; PROMPT_LIBRARY.md's table is generated from the same names.
 
 HAIKU = "claude-haiku-4-5-20251001"
+# Claude Haiku 5.5 — $0.10 / $0.50 per MTok, a tenth of Haiku 4.5 (scheduler
+# audit 10/10/26 AI-27). The model behind tier T1 (ai_workflows), shipped to
+# the canary restaurants first (AI_TIER_CANARY), and the default of the
+# schedule's own small calls: reading the owner's words into typed rules
+# (owner_rules) and the note written from the finished week
+# (schedule_narrative). It thinks by default; thinking is turned off where a
+# caller names none (default_thinking), as it is on Haiku 4.5.
+HAIKU_55 = "claude-haiku-5-5"
 SONNET = "claude-sonnet-5"
 OPUS = "claude-opus-5"
 # The week's schedule is the hardest constraint problem the product asks a
@@ -1058,6 +1066,12 @@ MODELS = {
     "staff_brief":         ("STAFF_BRIEF_MODEL",      HAIKU),
     "staff_translation":   ("STAFF_TRANSLATION_MODEL", HAIKU),
     "staff_answer":        ("STAFF_ANSWER_MODEL",     SONNET),
+    # The schedule's small calls (scheduler audit 10/10/26): each sentence of
+    # the owner's notes, the draft's instruction and staff notes read into a
+    # typed rule (owner_rules — RM-9, AI-9, AI-19), and the three bullets
+    # written from the FINISHED week (schedule_narrative — TRUST-15, AI-21).
+    "schedule_rules":      ("SCHEDULE_RULES_MODEL",   HAIKU_55),
+    "schedule_note":       ("SCHEDULE_NOTE_MODEL",    HAIKU_55),
 }
 
 
@@ -1092,7 +1106,9 @@ def accepts_disabled_thinking(model, kwargs=None):
         return False
     if any(m.startswith(prefix) for prefix, _cfg in _THINKING_LOWEST):
         return False
-    if m.startswith("claude-opus-5"):
+    # Claude Opus 5 and Claude Haiku 5.5 accept "disabled" only at effort
+    # high or below.
+    if m.startswith("claude-opus-5") or m.startswith("claude-haiku-5"):
         if _effort_of(kwargs) in ("xhigh", "max"):
             return False
     return True
@@ -2275,7 +2291,7 @@ def _ensure_usage_columns(conn):
 # 'repriced-2026-09-22' where init_ai_ops corrected them once (Sonnet 5 at
 # the $3/$15 Sonnet-4 rate until 9/22; Perplexity tokens at the Sonnet-4 or
 # unknown-model rate).
-PRICE_VERSION = "2026-10-04"   # cache reads priced per model (PROMPT-9)
+PRICE_VERSION = "2026-10-10"   # Claude Haiku 5.5 added (AI-27); cache reads priced per model since 10/4 (PROMPT-9)
 REPRICED_VERSION = "repriced-2026-09-22"
 
 # $ per million tokens (input, output), Anthropic list prices — update here if
@@ -2283,6 +2299,9 @@ REPRICED_VERSION = "repriced-2026-09-22"
 # a list price of $2/$10, so every budget tripped 50% early (AI-12).
 _MODEL_PRICING = {
     "claude-haiku-4-5-20251001": (1.00, 5.00),
+    # Claude Haiku 5.5 (scheduler audit 10/10/26 AI-27): the list price for a
+    # prompt up to 100K tokens ($0.50 / $2.50 beyond — no call here sends one).
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-sonnet-5": (2.00, 10.00),
     # invoices.py reads prices off photos with the most capable model.
     "claude-opus-5": (5.00, 25.00),
@@ -2473,6 +2492,7 @@ _FAMILY_PRICING = (
     ("claude-opus-4", (5.00, 25.00)),
     ("claude-sonnet-5", (2.00, 10.00)),
     ("claude-sonnet-4", (3.00, 15.00)),
+    ("claude-haiku-5", (0.10, 0.50)),
     ("claude-haiku-4", (1.00, 5.00)),
     ("claude-fable", (10.00, 50.00)),
     ("claude-mythos", (10.00, 50.00)),

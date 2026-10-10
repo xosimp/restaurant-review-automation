@@ -8,7 +8,7 @@ The model for each call comes from one registry, `ai_utils.MODELS` (purpose → 
 
 | Provider | Used for | Default model | Env override |
 |---|---|---|---|
-| Anthropic (Claude) | everything except AI-visibility checks | `claude-haiku-4-5-20251001` for the high-volume classifiers (review analysis, competitor menu extraction, email personalisation, marketing insight) and Ask's conversation notes; `claude-sonnet-5` for everything an owner reads as advice (insights, diagnoses, drafts, Ask Cavnar); `claude-opus-5-5` for the week's schedule (a constraint problem, run with adaptive thinking — schedule audit 10/3/26); `claude-opus-5` for invoice transcription only | per call site — see the table under *Call sites* |
+| Anthropic (Claude) | everything except AI-visibility checks | `claude-haiku-4-5-20251001` for the high-volume classifiers (review analysis, competitor menu extraction, email personalisation, marketing insight) and Ask's conversation notes — tier T1 is Claude Haiku 5.5 (`claude-haiku-5-5`, $0.10/$0.50) on the canary restaurants (`AI_TIER_CANARY`, scheduler audit 10/10/26 AI-27) and Haiku 4.5 elsewhere until the canary ends; `claude-haiku-5-5` for the schedule's small calls (the owner's words read into typed rules, the note written from the finished week); `claude-sonnet-5` for everything an owner reads as advice (insights, diagnoses, drafts, Ask Cavnar); `claude-opus-5-5` for the week's schedule (a constraint problem, run with adaptive thinking — schedule audit 10/3/26); `claude-opus-5` for invoice transcription only | per call site — see the table under *Call sites* |
 | Perplexity | Intel's AI-visibility check only | `sonar` | `AI_VISIBILITY_MODEL` |
 
 No OpenAI usage anywhere in this codebase.
