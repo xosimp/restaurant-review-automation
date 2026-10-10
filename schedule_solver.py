@@ -432,11 +432,16 @@ class Problem:
         # The multi-week rotation (schedule_intel.rotation_plan), per role:
         # who is due a weekend off, who should rest from closing — what
         # fairness now judges a week against.
-        self.rot_weekend, self.rot_rest = {}, {}
+        self.rot_weekend, self.rot_rest, self.rot_rich, self.rich_slots = {}, {}, {}, {}
         for role, plan in (((s.get("rotation") or {}).get("roles")) or {}).items():
             key = _low(role)
             self.rot_weekend[key] = {self.pidx[self.key(n)] for n in (plan.get("weekend_due") or []) if self.key(n) in self.pidx}
             self.rot_rest[key] = {self.pidx[self.key(n)] for n in (plan.get("rest_from_close") or []) if self.key(n) in self.pidx}
+            # The tip opportunity (tip_opportunity, MARKET-17): who should
+            # rest from the role's best-tipped slots, and which slots those are.
+            tips = plan.get("tips") or {}
+            self.rot_rich[key] = {self.pidx[self.key(n)] for n in (tips.get("rest_from_rich") or []) if self.key(n) in self.pidx}
+            self.rich_slots[key] = {(s_.get("day"), s_.get("part")) for s_ in (tips.get("rich_slots") or [])}
         c = self.c
         self.maxh = [float(c.max_hours(n)) if c is not None else sq.WEEKLY_HOURS_CEILING for n in self.names]
         self.line = []
@@ -1501,6 +1506,9 @@ class Problem:
             out["rotation_weekend"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         if u.closing and any(p in self.rot_rest.get(r, ()) for r in u.roles):
             out["rotation_close"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
+        if self.rot_rich and any(p in self.rot_rich.get(r, ()) and any((u.day, part) in self.rich_slots.get(r, ())
+                                                                     for part in u.primary) for r in u.roles):
+            out["rotation_tips"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         # Preferences, a week-level measure: a daypart they said they do not
         # want, a slot they keep dropping (half weight), a slot somebody else
         # keeps picking up taken by somebody who does not (L-19, D-36).
@@ -2919,6 +2927,7 @@ _WHY = {
     "learned_preference": lambda P, u, o, n: f"{P.names[o]} keeps dropping that shift",
     "rotation_weekend": lambda P, u, o, n: f"{P.names[o]} is due a weekend off by the rotation",
     "rotation_close": lambda P, u, o, n: f"{P.names[o]} has closed more than their share and is due a rest from it",
+    "rotation_tips": lambda P, u, o, n: f"{P.names[o]} has had more than their share of the best-tipped shifts",
     "role": lambda P, u, o, n: f"it is {P.names[n]}'s own role",
     "dollars": lambda P, u, o, n: "the same shift at a lower wage",
     "learned": lambda P, u, o, n: "it is what the manager keeps doing on that shift",
