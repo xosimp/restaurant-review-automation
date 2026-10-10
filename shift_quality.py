@@ -373,6 +373,10 @@ class ShiftContext:
     day_hours: float = 0.0                             # hours scheduled this day
     week_assignments: dict = field(default_factory=dict)   # {name: [assignment]}
     prior_pattern: dict = field(default_factory=dict)  # {name: {"days": [...], "dayparts": [...]}}
+    # Last PUBLISHED week on this weekday and daypart (RM-3): [(name key,
+    # role family, start minute)] — None when no week was published, []
+    # when one was and nobody worked this slot.
+    last_week_slots: list | None = None
     history_weeks: int = 0                             # how many weeks the shift history spans
     ledger: dict = field(default_factory=dict)         # {name: {weekend, closing, holiday, shifts, weeks}} over ~8 published weeks
     availability: dict = field(default_factory=dict)   # {name: set(unavailable days)}
@@ -698,7 +702,12 @@ DEFAULT_WEIGHTS = {
     "coverage": 20,
     "operational_strength": 18,
     "leadership": 15,
-    "demand_match": 10,
+    # Folded into operational strength (scheduler audit 10/10/26 LOGIC-30):
+    # both judged the rated people's averages against a bar raised for
+    # demand — 28 of 162 points on ratings most restaurants do not have,
+    # double-counting a strong team. The key stays (stored weeks, saved
+    # weights, the clients decode it); it no longer scores.
+    "demand_match": 0,
     "labor_efficiency": 10,
     "coverage_curve": 8,
     "experience_balance": 8,
@@ -707,7 +716,12 @@ DEFAULT_WEIGHTS = {
     "fairness": 6,
     "reliability": 5,
     "pairings": 4,
-    "stability": 2,
+    # About a tenth of the week (scheduler audit 10/10/26 RM-3, LOGIC-18):
+    # judged per slot against the last PUBLISHED week — the same person on
+    # the same weekday and daypart, starting within 30 minutes. At 2 of 162
+    # it moved nothing, and the model's rewrite of the week each time read
+    # as perfectly stable.
+    "stability": 18,
     "cross_training": 2,
     "preferences": 3,
     # Sales per labor hour against the daypart's target (#48). Beside labor
@@ -928,36 +942,49 @@ def _strength_crew(ctx: ShiftContext, family: str, target: float) -> tuple:
     return max(1, int(math.ceil(float(target) / SCORE_SCALE_MAX - 1e-9))), "the fewest people who could reach it"
 
 
+# Ratings on file before a rating dimension counts at its full weight
+# (scheduler audit 10/10/26 LOGIC-30): rating one person used to move every
+# shift's score through renormalisation. Below this many rated people the
+# dimension's weight is scaled by the share rated.
+RATED_FOR_FULL_WEIGHT = 8
+RATED_SHARE_FOR_FULL_WEIGHT = 0.5      # ...or half the roster, when that is fewer
+
+
 def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
-    """Each role's Operational Score on this shift, per person, against the
-    bar its strength target sets.
+    """The rated people on this shift, each role against ONE bar: the
+    stronger of the owner's strength target and the level this restaurant's
+    own ratings say a shift this busy wants (scheduler audit 10/10/26
+    LOGIC-30 — demand match and strength were two rating measures of the
+    same thing, 28 of 162 points, a strong team counted twice).
 
     The owner's target is a combined score for a full crew ("Bartender 8":
     two bartenders who together make 8). It is judged per person: the
     average rating of the role's rated people here against the target ÷ the
-    crew it was set for (the most of that role any shift the target governs
-    needs; strength_crews). Three findings of the 10/3/26 schedule audit,
-    one design:
-      SQ-3  an unrated person counted 0 as soon as anybody in the role was
-            rated, while the prompt and the solver treat unrated as
-            unknown — the bar is judged over the rated share now, and the
-            unrated are named as a blind spot;
-      SQ-4  the full crew's total was asked of every shift, so a quiet
-            lunch that needs one bartender read 4 of 8 and was capped;
-      SQ-5  a sum rewarded bodies — a third average bartender cleared a
-            target two never could. An average does not.
-    A role's AM/PM job codes are one role here (role_family). Nobody rated
-    in a role on the shift: its strength is unknown, not zero.
+    crew it was set for (strength_crews). Three findings of the 10/3/26
+    schedule audit, one design:
+      SQ-3  an unrated person is unknown, never 0 — the bar is judged over
+            the rated share, and the unrated are named as a blind spot;
+      SQ-4  a quiet lunch that needs one bartender is not held to the full
+            crew's total;
+      SQ-5  an average, not a sum, so bodies are not rewarded.
+    The demand bar (SQ-12, _demand_bars) is the restaurant's own level for
+    the role, raised for a busy shift, never past what its strongest people
+    could make: an average team can score 100 on a busy night when it is the
+    team there is. It only ever raises a bar, so a strong team on a quiet
+    Tuesday is never marked down. A role's AM/PM job codes are one role.
+    Nobody rated in a role on the shift: its strength is unknown, not zero.
+    With few people rated, the dimension counts for less (RATED_FOR_FULL_
+    WEIGHT, `weight_share`).
     """
-    targets = {r: v for r, v in (ctx.profile.min_strength or {}).items() if v}
-    if not targets or not ctx.scores:
+    if not ctx.scores:
         return None
-
+    targets = {r: v for r, v in (ctx.profile.min_strength or {}).items() if v}
     on = ctx.by_family
     roles_on = {}
     for role, names in ctx.by_role.items():
         roles_on.setdefault(ctx.family(role), set()).add(role)
-    ratios, shorts, mets = [], [], []
+    demand = _demand_bars(ctx)
+    entries = {}
     unrated_by_role = {}
     for role, target in targets.items():
         # A target on an AM or PM job is that half of the day's, judged on
@@ -978,38 +1005,91 @@ def dim_operational_strength(ctx: ShiftContext) -> DimensionResult | None:
         crew, crew_source = _strength_crew(ctx, fam, target)
         bar = round(max(float(SCORE_SCALE_MIN), min(float(SCORE_SCALE_MAX), target / crew)), 2)
         avg = round(sum(float(ctx.scores[n]) for n in rated) / len(rated), 2)
-        ratios.append(min(1.0, avg / bar))
-        entry = {"role": role, "strength": avg, "average": avg, "bar": bar, "target": target,
-                 "crew": crew, "crew_source": crew_source, "rated": len(rated), "on": len(people),
-                 "roles": sorted(roles_on.get(fam) or ())}
-        (mets if avg >= bar else shorts).append((entry, rated))
-
-    if not ratios:
+        entries[fam] = {"role": role, "strength": avg, "average": avg, "bar": bar, "target": target,
+                        "crew": crew, "crew_source": crew_source, "rated": len(rated), "on": len(people),
+                        "roles": sorted(roles_on.get(fam) or ()), "basis": "target", "names": rated}
+    # Each family's score: against the owner's target, average ÷ bar; against
+    # the busy-shift level, the points per rating point under it
+    # (DEMAND_POINT_STEP — read on the distance, so a scale the owner shifts
+    # up or down moves nothing, SQ-12). The lower of the two is the role's.
+    target_scores, scores_by = {}, {}
+    for fam, e in entries.items():
+        target_scores[fam] = int(round(min(1.0, e["average"] / e["bar"]) * 100))
+        scores_by[fam] = target_scores[fam]
+    for fam, d in demand.items():
+        dm = SCORE_MAX if d["average"] >= d["wanted"] - 1e-9 else \
+            max(0, int(round(SCORE_MAX - (d["wanted"] - d["average"]) * DEMAND_POINT_STEP)))
+        e = entries.get(fam)
+        if e is None:
+            entries[fam] = {"role": fam, "strength": d["average"], "average": d["average"], "bar": d["wanted"],
+                            "target": None, "crew": None,
+                            "rated": d["rated"], "on": len(on.get(fam) or []), "roles": sorted(roles_on.get(fam) or ()),
+                            "basis": "demand", "team_average": d["team_average"], "demand": d["demand"],
+                            "names": d["names"]}
+            scores_by[fam] = dm
+        elif dm < scores_by[fam]:
+            e.update(target_bar=e["bar"], bar=d["wanted"], basis="demand", team_average=d["team_average"],
+                     demand=d["demand"])
+            scores_by[fam] = dm
+    if not entries:
         return None
-
     # The weakest role sets the tone rather than the mean. A kitchen at
-    # half strength is not rescued by an over-strong bar, and an operator
-    # reading "82%" would never guess one station was in trouble.
-    score = int(round(min(ratios) * 100))
+    # half strength is not rescued by an over-strong bar.
+    worst = min(scores_by, key=lambda f: (scores_by[f], f))
+    score = scores_by[worst]
+    shorts = [e for f, e in entries.items() if scores_by.get(f, SCORE_MAX) < SCORE_MAX]
+    mets = [e for f, e in entries.items() if scores_by.get(f, SCORE_MAX) >= SCORE_MAX]
+    n_rated = len([v for v in (ctx.role_ratings or {}).get("*") or [] if v is not None]) or \
+        len([v for v in (ctx.scores or {}).values() if v is not None])
+    roster_n = len(ctx.roster_roles or {}) or len(ctx.week_assignments or {}) or len(ctx.people)
+    need_rated = max(1, min(RATED_FOR_FULL_WEIGHT, int(math.ceil(RATED_SHARE_FOR_FULL_WEIGHT * roster_n))))
+    share = min(1.0, n_rated / float(need_rated))
     res = DimensionResult(
         key="operational_strength", label="Operational strength", score=score,
         weight=DEFAULT_WEIGHTS["operational_strength"], floor=_floor(ctx, "operational_strength"),
         facts={"targets": {r: float(v) for r, v in targets.items()},
-               "shortfalls": [e for e, _p in shorts], "met": [e for e, _p in mets],
+               "shortfalls": [{k: v for k, v in e.items() if k != "names"} for e in shorts],
+               "met": [{k: v for k, v in e.items() if k != "names"} for e in mets],
                "unrated": sorted({n for names in unrated_by_role.values() for n in names}),
-               "judged": "the average of the rated people in each role against target ÷ crew"},
+               "demand": ctx.profile.demand or "normal", "weight_share": round(share, 3), "rated_people": n_rated,
+               "judged": "the average of the rated people in each role against the stronger of target ÷ crew "
+                         "and the level a shift this busy wants here"},
     )
-    for e, rated in shorts:
-        res.weaknesses.append(
-            f"{e['role']} strength averages {e['average']:g} against a bar of {e['bar']:g} "
-            f"({e['target']:g} for a crew of {e['crew']}): {_names(rated, ctx.scores)}.")
-    for e, _rated in mets[:2]:
-        res.strengths.append(f"{e['role']} averages {e['average']:g}, clear of its {e['bar']:g} bar "
-                             f"({e['target']:g} for a crew of {e['crew']}).")
+    floor_now = res.floor
+    if floor_now is not None and not any(v < floor_now for v in target_scores.values()):
+        # Only the owner's strength target is a critical floor: a team below
+        # the busy-shift level is marked down, never capped for it (demand
+        # match never capped a shift).
+        res.floor = None
+    res.facts["target_score"] = min(target_scores.values()) if target_scores else None
+    for e in sorted(shorts, key=lambda x: x["average"] / x["bar"]):
+        if e.get("basis") == "demand":
+            busy = "your busiest" if e.get("demand") == "peak" else f"a {e.get('demand') or 'normal'}-demand"
+            res.weaknesses.append(
+                f"{e['role'].title() if e['role'] == e['role'].lower() else e['role']} team averages "
+                f"{e['average']:.1f} on {busy} shift — about {e['bar']:.1f} would match it; your rated team "
+                f"averages {e.get('team_average', e['average']):.1f}: {_names(e['names'], ctx.scores)}.")
+        else:
+            res.weaknesses.append(
+                f"{e['role']} strength averages {e['average']:g} against a bar of {e['bar']:g} "
+                f"({e['target']:g} for a crew of {e['crew']}): {_names(e['names'], ctx.scores)}.")
+    for e in mets[:2]:
+        if e.get("basis") == "target":
+            res.strengths.append(f"{e['role']} averages {e['average']:g}, clear of its {e['bar']:g} bar "
+                                 f"({e['target']:g} for a crew of {e['crew']}).")
+        else:
+            res.strengths.append(f"{e['role'].title() if e['role'] == e['role'].lower() else e['role']} averages "
+                                 f"{e['average']:g} against the {e['bar']:g} a "
+                                 f"{e.get('demand') or 'normal'}-demand shift here wants.")
     for role, names in unrated_by_role.items():
         res.blind_spots.append(
             f"{_names(sorted(set(names)))} " + _plural(len(set(names)), "has", "have")
             + f" no Operational Score, so {role_words(role)} strength was judged on the rated people only.")
+    if share < 1.0:
+        res.blind_spots.append(f"Only {n_rated} of your people are rated, so strength counts for less "
+                               f"until {need_rated} are.")
+    if ctx.demand_pct is None and demand:
+        res.blind_spots.append("No sales history yet for this day, so demand is the profile's.")
     return res
 
 
@@ -1495,80 +1575,50 @@ DEMAND_POINT_STEP = 25
 DEMAND_MIN_RATED = 3
 
 
-def dim_demand_match(ctx: ShiftContext) -> DimensionResult | None:
-    """Does the quality of the team track how busy the shift will be?
-
-    Only penalises under-quality on a busy shift. Putting a strong team on
-    a quiet Tuesday is not a fault this dimension should punish — that is
-    labor efficiency's question, and double-counting it would push the
-    scheduler toward deliberately weak quiet shifts.
-
-    Judged against the restaurant's OWN ratings, role by role: the rated
-    people on the shift against their role's average here, raised for a
-    busy shift (DEMAND_BAR_OFFSET) but never past what the role's strongest
-    people could make in those places. The bars were fixed — 4.0 for a peak
-    shift on a scale where 3 means average — so an average team could never
-    score 100 on a busy night and rating everybody a point higher cleared
-    them (schedule audit 10/3/26 SQ-12). Scored on the distance under the
-    bar, so a scale shifted up or down by the owner moves nothing.
-    """
+def _demand_bars(ctx: ShiftContext) -> dict:
+    """{family: {"average", "wanted", "team_average", "best_possible",
+    "rated", "names"}} — the rated people of each family on this shift
+    against the level this restaurant's own ratings say a shift this busy
+    wants: the role's own level once it has DEMAND_MIN_RATED ratings, else
+    everybody's, raised for a busy shift (DEMAND_BAR_OFFSET) but never past
+    what the role's strongest people could make in those places (SQ-12).
+    {} with too few ratings to know the restaurant's level (noted)."""
     rated = ctx.rated(ctx.people)
     if not rated:
-        return None
+        return {}
     every = list((ctx.role_ratings or {}).get("*") or [])
     if not every:
         every = [float(v) for v in (ctx.scores or {}).values() if v is not None]
     if len(every) < DEMAND_MIN_RATED:
-        ctx.notes.append(f"Demand match was not judged — it takes {DEMAND_MIN_RATED} rated people to know "
-                         "this team's own level.")
-        return None
+        ctx.notes.append(f"Strength against how busy the shift is was not judged — it takes {DEMAND_MIN_RATED} "
+                         "rated people to know this team's own level.")
+        return {}
     demand = ctx.profile.demand or "normal"
     offset = DEMAND_BAR_OFFSET.get(demand, 0.0)
-    have_sum = want_sum = mean_sum = 0.0
-    count = 0
-    by_role = {}
+    out = {}
     for fam, names in ctx.by_family.items():
         here = ctx.rated(names)
         if not here:
             continue
         own = sorted((float(v) for v in ((ctx.role_ratings or {}).get(fam) or [])), reverse=True)
-        # The role's own level once it has enough ratings, else everybody's;
-        # the best it could field is always its own people — a 5-rated
-        # bartender is no bar for the cooks.
         pool = own if len(own) >= DEMAND_MIN_RATED else sorted((float(v) for v in every), reverse=True)
         mean = sum(pool) / len(pool)
         best = (own or pool)[:len(here)]
         best_possible = sum(best) / len(best)
         want = max(float(SCORE_SCALE_MIN), min(mean + offset, best_possible))
         have = sum(float(ctx.scores[n]) for n in here) / len(here)
-        by_role[fam] = {"average": round(have, 2), "wanted": round(want, 2), "team_average": round(mean, 2),
-                        "best_possible": round(best_possible, 2), "rated": len(here)}
-        have_sum += have * len(here)
-        want_sum += want * len(here)
-        mean_sum += mean * len(here)
-        count += len(here)
-    avg, wanted, mean = have_sum / count, want_sum / count, mean_sum / count
-    score = SCORE_MAX if avg >= wanted - 1e-9 else max(0, int(round(SCORE_MAX - (wanted - avg) * DEMAND_POINT_STEP)))
+        out[fam] = {"average": round(have, 2), "wanted": round(want, 2), "team_average": round(mean, 2),
+                    "best_possible": round(best_possible, 2), "rated": len(here), "names": here,
+                    "demand": demand, "offset": offset}
+    return out
 
-    res = DimensionResult(
-        key="demand_match", label="Demand match", score=score,
-        weight=DEFAULT_WEIGHTS["demand_match"],
-        facts={"demand": demand, "average_score": round(avg, 2), "wanted": round(wanted, 2),
-               "team_average": round(mean, 2), "offset": offset, "by_role": by_role,
-               "vs_average_day_pct": ctx.demand_pct},
-    )
-    if score >= SCORE_MAX:
-        res.strengths.append(
-            f"Team averages {avg:.1f} against the {wanted:.1f} a {demand}-demand shift here wants "
-            f"(your rated team averages {mean:.1f}).")
-    else:
-        busy = "your busiest" if demand == "peak" else f"a {demand}-demand"
-        res.weaknesses.append(
-            f"Team averages {avg:.1f} on {busy} shift — about {wanted:.1f} would match it; "
-            f"your rated team averages {mean:.1f}.")
-    if ctx.demand_pct is None:
-        res.blind_spots.append("No sales history yet for this day, so demand is the profile's.")
-    return res
+
+def dim_demand_match(ctx: ShiftContext) -> DimensionResult | None:
+    """Folded into operational strength (scheduler audit 10/10/26 LOGIC-30):
+    one rating measure, its bar the stronger of the owner's strength target
+    and the level a shift this busy wants (_demand_bars). Always withdraws;
+    the key stays for stored weeks and saved weights."""
+    return None
 
 
 def dim_labor_efficiency(ctx: ShiftContext) -> DimensionResult | None:
@@ -2240,43 +2290,104 @@ USUAL_HOURS_FLOOR = 16.0
 USUAL_HOURS_CUT = 0.6
 
 
-def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
-    """Are people getting roughly the schedule they had last week?
+STABILITY_START_MINUTES = 30
 
-    Predictability is a real benefit to staff and costs the restaurant
-    nothing when demand has not moved. Weighted lightly, because a genuine
-    demand change should always win over the comfort of the same rota.
-    """
-    if not ctx.prior_pattern:
-        return None
-    # A date the owner flagged (an event, a large party) is exactly when the
-    # usual rota should change; holding it to last week's pattern would mark
-    # the right response down.
+
+def _slot_stability(ctx: ShiftContext):
+    """(kept, moved_on, moved_off): this shift's people against the last
+    published week's same weekday and daypart — kept: the same person in
+    the same role family starting within STABILITY_START_MINUTES; moved_on:
+    on this week, not then; moved_off: on then, not now."""
+    last = list(ctx.last_week_slots or [])
+    now = []
+    for r in ctx.rows:
+        n = (r.get("employee") or "").strip()
+        if not n or ctx._is_flagged(r):
+            continue
+        s0 = _slot_minutes(r.get("shift_start") or "")
+        now.append((n, name_key(n), ctx.family(r.get("role")), s0))
+    kept, on = [], []
+    used = set()
+    for n, k, fam, s0 in now:
+        hit = next((i for i, (k2, f2, s2) in enumerate(last) if i not in used and k2 == k and f2 == fam
+                    and s0 is not None and s2 is not None and abs(s0 - s2) <= STABILITY_START_MINUTES), None)
+        if hit is None:
+            on.append(n)
+        else:
+            used.add(hit)
+            kept.append(n)
+    off = sorted({k2 for i, (k2, _f, _s) in enumerate(last) if i not in used}
+                 - {name_key(n) for n in kept})
+    return kept, on, off
+
+
+def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
+    """Are people getting the schedule they had last week?
+
+    Judged per slot against the last PUBLISHED week (scheduler audit
+    10/10/26 RM-3, LOGIC-18): the share of this shift's slots, last week's
+    and this week's together, that are the same person on the same weekday
+    and daypart in the same role, starting within 30 minutes. It used to
+    ask only whether this was a weekday and daypart the person usually
+    works, so Ana moved from Tue/Thu dinner to Wed/Fri dinner and an hour
+    later still scored 100 — churn a GM would not make, which staff see.
+    With no published week yet, the person's usual days and dayparts are
+    the reference, as before. A date the owner flagged (an event, a large
+    party) is exactly when the rota should change: not judged. A regular cut
+    well below their usual week is named either way (D-37)."""
     if ctx.profile.source == "what you told us about this date":
+        return None
+    cut = []
+    for name in ctx.people:
+        pattern = ctx.prior_pattern.get(name) or {}
+        usual = pattern.get("avg_hours")
+        if usual and float(usual) >= USUAL_HOURS_FLOOR:
+            week = sum(float(e.get("hours") or 0) for e in (ctx.week_assignments.get(name) or [])
+                       if not e.get("prior"))
+            if week + 0.05 < USUAL_HOURS_CUT * float(usual):
+                cut.append((name, float(usual), round(week, 1)))
+    if ctx.last_week_slots is not None:
+        kept, on, off = _slot_stability(ctx)
+        total = len(kept) + len(on) + len(off)
+        if not total:
+            return None
+        cut_names = {n for n, _u, _w in cut}
+        good = sum(1 for n in kept if n not in cut_names)
+        score = _pct(good, total)
+        part = "lunch" if ctx.daypart == "morning" else "dinner"
+        res = DimensionResult(
+            key="stability", label="Schedule stability", score=score,
+            weight=DEFAULT_WEIGHTS["stability"],
+            facts={"basis": "last_published_week", "kept": kept, "new": on, "off": off, "checked": total,
+                   "familiar": good, "changed": on,
+                   "hours_cut": [{"name": n, "usual": u, "week": w} for n, u, w in cut]})
+        if on:
+            res.weaknesses.append(f"{_names(on[:3])} " + _plural(len(on), "is", "are")
+                                  + f" on {ctx.day} {part} this week and {_plural(len(on), 'was', 'were')} not "
+                                  "on that slot in your last published week.")
+        if off:
+            res.weaknesses.append(f"{len(off)} of last week's {ctx.day} {part} "
+                                  + _plural(len(off), "person is", "people are") + " off it this week.")
+        for n, u, w in cut[:2]:
+            res.weaknesses.append(f"{n} usually works about {u:g}h a week; {w:g}h this week.")
+        if not on and not off and not cut:
+            res.strengths.append(f"The same people as last week's {ctx.day} {part}.")
+        return res
+    if not ctx.prior_pattern:
         return None
     people = [n for n in ctx.people if n in ctx.prior_pattern]
     if not people:
         return None
     familiar = 0
-    changed, cut = [], []
+    changed = []
+    cut_names = {n for n, _u, _w in cut}
     for name in people:
         pattern = ctx.prior_pattern.get(name) or {}
         days = {d.strip().lower() for d in (pattern.get("days") or [])}
         parts = {p.strip().lower() for p in (pattern.get("dayparts") or [])}
         day_ok = not days or (ctx.day or "").strip().lower() in days
         part_ok = not parts or (ctx.daypart or "").lower() in parts
-        # Their usual hours too (schedule audit 10/3/26 D-37): a regular cut
-        # well below the week they usually work is not getting the schedule
-        # they had, whatever day this shift is on.
-        usual = pattern.get("avg_hours")
-        hours_ok = True
-        if usual and float(usual) >= USUAL_HOURS_FLOOR:
-            week = sum(float(e.get("hours") or 0) for e in (ctx.week_assignments.get(name) or [])
-                       if not e.get("prior"))
-            if week + 0.05 < USUAL_HOURS_CUT * float(usual):
-                hours_ok = False
-                cut.append((name, float(usual), round(week, 1)))
-        if day_ok and part_ok and hours_ok:
+        if day_ok and part_ok and name not in cut_names:
             familiar += 1
         elif not (day_ok and part_ok):
             changed.append(name)
@@ -2284,7 +2395,7 @@ def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
     res = DimensionResult(
         key="stability", label="Schedule stability", score=score,
         weight=DEFAULT_WEIGHTS["stability"],
-        facts={"familiar": familiar, "changed": changed, "checked": len(people),
+        facts={"basis": "usual_pattern", "familiar": familiar, "changed": changed, "checked": len(people),
                "hours_cut": [{"name": n, "usual": u, "week": w} for n, u, w in cut]},
     )
     if changed:
@@ -3762,6 +3873,10 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
             skipped.append({"key": key, "reason": reason})
             continue
         result.weight = float(merged.get(key, result.weight) or 0)
+        # A rating measure counts for less until enough people are rated
+        # (LOGIC-30): one rating no longer renormalises every shift.
+        if result.facts.get("weight_share") is not None:
+            result.weight *= float(result.facts["weight_share"])
         if result.weight <= 0:
             # An admin who weighted a dimension to zero said it does not
             # count here. It must then not cap the shift either, or the
@@ -5262,6 +5377,19 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
                            int(signals.get("section_cap") or 0), set(signals.get("cap_roles") or ()), families)
     runs = role_runs(typical_all, role_floors_all, signals.get("role_minimums") or {}, profiles, families)
     ratings = role_ratings(signals.get("scores") or {}, signals.get("roster_roles") or {}, rows, families)
+    # Last PUBLISHED week, slot by slot (RM-3): {(weekday, daypart): [(name
+    # key, family, start)]}; None when no published week was handed in.
+    last_slots = None
+    if signals.get("last_published_rows") is not None:
+        last_slots = {}
+        for r in signals.get("last_published_rows") or []:
+            n = (r.get("employee") or "").strip()
+            wd = _day_name(r.get("date") or "", r.get("day") or "")
+            if not n or not wd:
+                continue
+            for part in present_dayparts(r):
+                last_slots.setdefault((wd, part), []).append(
+                    (name_key(n), role_family(r.get("role"), families), _slot_minutes(r.get("shift_start") or "")))
     # The week's demand-scaled requirements ({(date, daypart): {role:
     # people}}, schedule_requirements.requirements_map) — what the model was
     # told each shift needs, judged here instead of the weekday's usual crew
@@ -5330,6 +5458,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             day_hours=day_hours.get(date, 0.0),
             week_assignments=week_assignments,
             prior_pattern=signals.get("prior_pattern") or {},
+            last_week_slots=(None if last_slots is None else list(last_slots.get((day, part)) or [])),
             history_weeks=int(signals.get("history_weeks") or 0),
             ledger=signals.get("ledger") or {},
             availability=signals.get("availability") or {},

@@ -1475,6 +1475,19 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
             "gain": round((draft_cost or 0) - (solved["objective"] or 0), 1)}
     stats["kept"] = "solver"
     out.update(applied=True, rows=rows_out, changes=[head] + lines)
+    # Shift Quality before and after, for the owner's report only — it chose
+    # nothing here (LOGIC-19)
+    try:
+        def _q(rs):
+            viols = _rules.violations(rs, constraints)
+            sig = dict(signals, flagged=_solver._flagged(rs, constraints, viols),
+                       hard_breaches=[v for v in viols if v.get("hard")])
+            return sq.score_rows(rs, profiles=inputs.get("shift_profiles"), weights=weights, **sig)
+        qb, qa = _q(base), _q(rows_out)
+        out.update(before_score=qb.get("score"), after_score=qa.get("score"), quality=qa)
+        stats["after_score"] = qa.get("score")
+    except Exception as e:
+        stats.setdefault("notes", []).append(f"score not computed: {e!r}")
     return out
 
 

@@ -824,9 +824,12 @@ def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requ
                                      source="quality", short=int(short)))
             elif dim.get("key") == "operational_strength":
                 for miss in facts.get("shortfalls") or []:
-                    out.append(_item("strength", f"{miss.get('role')} strength target on {when}",
-                                     f"{float(miss.get('strength') or 0):g} against a target of "
-                                     f"{float(miss.get('target') or 0):g}", d, part, source="quality"))
+                    # one bar: the owner's target ÷ crew, or the level a shift
+                    # this busy wants here (LOGIC-30)
+                    out.append(_item("strength", f"{miss.get('role')} strength on {when}",
+                                     f"{float(miss.get('strength') or 0):g} against a bar of "
+                                     f"{float(miss.get('bar') or miss.get('target') or 0):g}", d, part,
+                                     source="quality"))
             elif dim.get("key") == "leadership":
                 for miss in facts.get("misses") or []:
                     out.append(_item("leadership", f"Needs {miss.get('rule')} on {when}",

@@ -1678,7 +1678,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "owner words": "your notes and instruction read as rules",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
     "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
@@ -3369,6 +3369,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
                                            for k in ("source", "week_start", "week_end")},
                                   "left_out": list(code_draft.get("dropped") or [])[:50],
                                   "unassigned": len(code_draft.get("unassigned") or [])}
+        if code_draft.get("solver"):
+            # The solver-first draft's own account (RM-12, LOGIC-32): why each
+            # person, what to relax, what it could not staff.
+            merged["draft_source"]["solver"] = code_draft["solver"]
         merged["generation_notes"].insert(0, code_draft["line"])
     # Dates the week leaves empty — closed, never traded, nobody able, not
     # written — are closed to every pass after this one, so no backstop
@@ -3540,23 +3544,106 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
             clock = current_clock()
             if clock is not None:
                 secs = max(1.0, min(secs, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
-            got = _sfb.solver_rows(dates, (facts or {}).get("requirements_by_date") or {}, c, base_rows=hist,
-                                   context_rows=plan, open_times=fallback.get("open_times"),
-                                   close_times=fallback.get("close_times"), signals=signals, weights=weights,
-                                   roster_roles=roles or None, max_seconds=secs)
+            got = _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts,
+                                     fallback)
+            if got is None or not got.get("rows"):
+                # The v0 code draft (requirement counts on the usual shift
+                # templates, people by the backtracking solver): what runs
+                # where OR-Tools is not installed or the solver-first draft
+                # found nothing.
+                got = _sfb.solver_rows(dates, (facts or {}).get("requirements_by_date") or {}, c, base_rows=hist,
+                                       context_rows=plan, open_times=fallback.get("open_times"),
+                                       close_times=fallback.get("close_times"), signals=signals, weights=weights,
+                                       roster_roles=roles or None, max_seconds=secs)
             rows, unassigned, used = got["rows"], got["unassigned"], "solver"
+            solver_first = got if got.get("stats", {}).get("engine") == "shapes+cp-sat" else None
         if not rows:
             return None
         drafted = sorted({r["date"] for r in rows if r.get("date")})
         reasons = [why.get(d) for d in drafted if why.get(d)]
         main = max(set(reasons), key=reasons.count) if reasons else "other"
         redo = bool(fallback.get("code_redo"))
-        return {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
-                "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
-                                                         base if used == "carry_forward" else None, redo=redo)}
+        out = {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
+               "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
+                                                        base if used == "carry_forward" else None, redo=redo)}
+        if used == "solver" and locals().get("solver_first"):
+            out["solver"] = solver_explain(locals()["solver_first"])
+        return out
     except Exception as e:
         _soft_fail("code draft", e, rid)
         return None
+
+
+# How long the solver-first draft (schedule_cpsat.solver_draft: Stage 1
+# shapes, Stage 2 assignment) may take inside a generation.
+SOLVER_DRAFT_SECONDS = float(os.getenv("SCHEDULE_SOLVER_DRAFT_SECONDS", "25"))
+
+
+def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts, fallback):
+    """The "solver" draft source, solver-first (scheduler audit 10/10/26
+    LOGIC-24, RM-8, RM-11, RM-21): the week's shapes from the restaurant's
+    own people-on-at-once curve (the baseline's `concurrent`, the week's
+    requirement rows and their demand factors), then who works each, as one
+    CP-SAT model — with `plan` (the manager plan, a redo's kept days) held
+    and last PUBLISHED week as the stability reference. None when OR-Tools
+    is not installed here or it raised (the v0 code draft runs instead)."""
+    try:
+        import schedule_cpsat as _cps
+        if not _cps.available():
+            return None
+        facts = facts or {}
+        concurrent = facts.get("concurrent")
+        if concurrent is None and rid is not None:
+            try:
+                import labor as _lab_sf
+                concurrent = (_lab_sf.staffing_baseline(rid) or {}).get("concurrent")
+            except Exception as e:
+                _soft_fail("concurrent baseline", e, rid)
+        last = base if (base or {}).get("source") == "published" else None
+        if last is None and rid is not None:
+            try:
+                import schedule_fallback as _sfb_l
+                got = _sfb_l.base_week(rid, fallback.get("week_dates") or dates, shifts)
+                last = got if got.get("source") == "published" else None
+            except Exception as e:
+                _soft_fail("last published week", e, rid)
+        clock = current_clock()
+        budget = SOLVER_DRAFT_SECONDS
+        if clock is not None:
+            budget = max(2.0, min(budget, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
+        sig = dict(signals or {})
+        if not sig.get("overtime") and c is not None and rid is not None:
+            try:
+                sig["overtime"] = _overtime_inputs(rid, c)
+            except Exception as e:
+                _soft_fail("overtime inputs", e, rid)
+        return _cps.solver_draft(sorted(dates), c, facts.get("requirements") or [], concurrent=concurrent,
+                                 history_rows=hist, context_rows=plan,
+                                 last_week_rows=(last or {}).get("rows") or [], signals=sig, weights=weights,
+                                 profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
+                                 budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget)
+    except Exception as e:
+        _soft_fail("solver-first draft", e, rid)
+        return None
+
+
+def solver_explain(got) -> dict:
+    """What the solver-first draft says about itself, for the review and
+    the pre-publish screen: each assignment's reason ("Kim, not Lee: Lee
+    would hit overtime (+$27)" — RM-12), the smallest set of rules to relax
+    for what could not be met (LOGIC-32), the shifts left unfilled and the
+    named cost terms (LOGIC-19)."""
+    got = got or {}
+    st = dict(got.get("stats") or {})
+    return {"engine": st.get("engine"), "status": st.get("status"), "seconds": st.get("seconds"),
+            "proved_optimal": bool(st.get("proved_optimal")),
+            "reasons": [{k: r.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "employee",
+                                                "instead", "text")} for r in (got.get("reasons") or [])][:200],
+            "conflicts": list(got.get("conflicts") or [])[:12],
+            "unfilled": [{k: e.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "floor", "text")}
+                         for e in (got.get("unassigned") or [])][:40],
+            "short": list(got.get("short") or [])[:20],
+            "terms": {k: {"label": v.get("label"), "count": v.get("count")} for k, v in (got.get("terms") or {}).items()}}
 
 
 def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock):
@@ -7187,6 +7274,17 @@ def _quality_signals(restaurant_id, result, **extra):
         except Exception as _sx:
             _soft_fail(key, _sx, restaurant_id)
             signals[key] = {}
+    # The last PUBLISHED week's rows (scheduler audit 10/10/26 RM-3,
+    # LOGIC-18): what schedule stability is judged against slot by slot, and
+    # what the CP-SAT solver keeps people on — never a discarded draft.
+    try:
+        _first = (_sig_week or [None])[0]
+        if _first:
+            _lp = frozen_read(("last_published", restaurant_id, _first),
+                              lambda: _last_published_week(restaurant_id, _first)) or {}
+            signals["last_published_rows"] = _versions.rows_from_csv(_lp.get("schedule_csv") or "") if _lp else None
+    except Exception as _sx:
+        _soft_fail("last published week", _sx, restaurant_id)
     try:
         signals["experienced"] = frozen_read(("experienced", restaurant_id),
                                              lambda: _staff.experienced_names(restaurant_id))
@@ -8670,7 +8768,14 @@ _STAGE_TIER = {k: t for k, t, _w, _c in REPAIR_STAGES}
 # solving its own answer again finds nothing new; the top-up fills at most a
 # quarter of a day's target (its own cap, P-20), which a second cycle would
 # have doubled.
-_REPAIR_ONCE = frozenset({"solver", "top_up"})
+_REPAIR_ONCE = frozenset({"top_up"})
+# Run again in a later cycle only when the week changed since its last run:
+# the solver re-solves the whole assignment, deterministically, so its own
+# answer solved again is the same week; but a floor, a close-out or the
+# budget's trim in a later cycle changes the week it solved, and its answer
+# was then edited by passes that do not optimise who works (scheduler audit
+# 10/10/26 LOGIC-28).
+_REPAIR_ON_CHANGE = frozenset({"solver"})
 _REPAIR_SEARCHES = frozenset({"solver", "optimizer"})
 _COLS_ROW = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 
@@ -9168,25 +9273,45 @@ def _stage_stagger(rows, x):
 
 
 def _stage_solver(rows, x):
-    """Who works each shift, solved over the hard rules and judged by Shift
-    Quality (schedule_solver) — this week's experiment arm says whether it
-    runs (schedule_experiments; pinned on until the experiment can conclude,
-    P-21)."""
+    """Who works each shift, solved as one model (schedule_cpsat — CP-SAT
+    over the draft's shapes: legality hard, the manager every minute,
+    coverage, overtime with its teammate cost, minimum hours, the budget and
+    the quality terms each a named cost; scheduler audit 10/10/26 RM-11,
+    LOGIC-19), the backtracking solver (schedule_solver) when OR-Tools is
+    not here, SCHEDULE_ASSIGN_ENGINE=backtracking, or CP-SAT finds nothing in
+    time. This week's experiment arm says whether it runs (schedule_
+    experiments; pinned on until the experiment can conclude, P-21)."""
     if not (x.solver_on and x.searches):
         return {"rows": rows, "report": {"summary": None}}
     import schedule_solver as _solver
+    import schedule_cpsat as _cps
     viols = _rules.violations(rows, x.c)
     x.result["flagged_rows"] = _flagged_rows(viols)
+    sig = dict(x.signals, flagged=x.result["flagged_rows"])
     # The budget the loop judges this stage by (RepairContext.over_budget):
     # each candidate is held to it, so one over it never costs the others.
-    res = _solver.improve(rows, x.result, signals=dict(x.signals, flagged=x.result["flagged_rows"]),
-                          weights=x.weights, constraints=x.c, only_dates=x.editable,
-                          max_seconds=max(0.5, min(_solver.DEFAULT_SECONDS, x.search_seconds())),
-                          hours_budget=x.budget or None)
-    summary = _solver.summary(res)
-    print(f"[schedule] solver {summary['status']} {res['before_score']} -> {res['after_score']} "
-          f"kept={summary['kept']} ({summary['seconds']}s)")
+    if assign_engine() == "cpsat":
+        res = _cps.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
+                           max_seconds=max(0.5, min(_cps.DEFAULT_SECONDS, x.search_seconds())),
+                           hours_budget=x.budget or None)
+        summary = _cps.summary(res)
+    else:
+        res = _solver.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
+                              max_seconds=max(0.5, min(_solver.DEFAULT_SECONDS, x.search_seconds())),
+                              hours_budget=x.budget or None)
+        summary = _solver.summary(res)
+        summary["engine"] = "backtracking"
+    print(f"[schedule] solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
+          f"{res.get('after_score')} kept={summary['kept']} ({summary['seconds']}s)")
     return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
+
+
+def assign_engine() -> str:
+    """Which solver re-solves who works each shift: "cpsat" (the default,
+    schedule_cpsat) or "backtracking" (schedule_solver, also the fallback) —
+    SCHEDULE_ASSIGN_ENGINE."""
+    v = str(os.getenv("SCHEDULE_ASSIGN_ENGINE", "cpsat") or "cpsat").strip().lower()
+    return "backtracking" if v == "backtracking" else "cpsat"
 
 
 def _stage_optimizer(rows, x):
@@ -9317,12 +9442,17 @@ def repair_week(rows, x: RepairContext) -> dict:
             _raise_if_stopped(x.clock)
             if key in failed or (key in _REPAIR_ONCE and key in ran):
                 continue
+            if key in _REPAIR_ON_CHANGE and ledger.setdefault("solved_sig", {}).get(key) == \
+                    tuple(sorted(map(_full_sig, state))):
+                continue
             if key in _REPAIR_SEARCHES and x.search_seconds() < REPAIR_MIN_SEARCH_SECONDS:
                 if not any(s["stage"] == key for s in ledger["skipped"]):
                     ledger["skipped"].append({"stage": key, "cycle": cycle, "why": "time"})
                 continue
             ran.add(key)
             state, prof, outcome = _run_stage(key, state, prof, x, ledger)
+            if key in _REPAIR_ON_CHANGE:
+                ledger["solved_sig"][key] = tuple(sorted(map(_full_sig, state)))
             if outcome == "failed":
                 failed.add(key)
             elif outcome == "kept":
