@@ -107,6 +107,7 @@ def init_labor_live(db_path=None):
             UNIQUE (restaurant_id, move_key)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_live_moves_day ON live_labor_moves (restaurant_id, business_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_live_moves_date ON live_labor_moves (business_date)")
         conn.execute("""CREATE TABLE IF NOT EXISTS live_labor_reads (
             restaurant_id INTEGER NOT NULL,
             business_date TEXT NOT NULL,
@@ -114,6 +115,7 @@ def init_labor_live(db_path=None):
             body_json     TEXT NOT NULL,
             PRIMARY KEY (restaurant_id, business_date)
         )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_live_reads_date ON live_labor_reads (business_date)")
         conn.commit()
     finally:
         conn.close()

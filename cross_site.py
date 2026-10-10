@@ -68,6 +68,7 @@ def init_cross_site(db_path=None):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_site_offers_home ON cross_site_offers "
                      "(home_restaurant_id, status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_site_offers_created ON cross_site_offers (created_at)")
         conn.commit()
     finally:
         conn.close()

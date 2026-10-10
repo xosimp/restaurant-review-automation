@@ -91,9 +91,13 @@ def init_pos_schedule_push(db_path=None):
             start_at      TEXT,
             end_at        TEXT,
             status        TEXT NOT NULL,
-            reason        TEXT
+            reason        TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pos_push_shifts ON pos_schedule_push_shifts (push_id)")
+        # The retention deletes' columns (ops._RETENTION_COLUMN).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pos_pushes_created ON pos_schedule_pushes (created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pos_push_shifts_created ON pos_schedule_push_shifts (created_at)")
         conn.commit()
     finally:
         conn.close()

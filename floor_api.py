@@ -49,9 +49,22 @@ def floor_settings_get(u):
     import pos
     name, mod = pos.connected_provider(_rid(u))
     caps = pos.capabilities(mod) if mod else {}
+    # The week the preview opens on: the nearest published one not yet over.
+    from models import get_conn
+    import time_utils as _tu
+    today = _tu.restaurant_now(_restaurant(u), naive=True).date().isoformat()
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND "
+                           "superseded_by IS NULL AND substr(week_end,1,10) >= ? ORDER BY week_start, id DESC LIMIT 1",
+                           (_rid(u), today)).fetchone()
+    finally:
+        conn.close()
     return {"ok": True, "settings": floor_settings.get(_restaurant(u)), "can_edit": _sr()._may_publish(u),
-            "pos": {"provider": name, "schedule_push": bool(caps.get("schedule_push")),
+            "pos": {"provider": name, "label": {"rpower": "RPOWER"}.get(name, (name or "").title() or None),
+                    "schedule_push": bool(caps.get("schedule_push")),
                     "schedule_preview": bool(caps.get("schedule_preview"))},
+            "published_schedule_id": row["id"] if row else None,
             "autopilot": {k: labor_live.trust(_rid(u), k) for k in labor_live.KINDS}}, 200
 
 

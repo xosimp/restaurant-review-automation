@@ -446,7 +446,8 @@ def live_offers(restaurant_id, db_path=DB_PATH, name=None, today=None) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT o.id, o.request_id, o.name, o.status, o.note, o.issue_id, o.created_at, r.date, r.shift_start, "
+            "SELECT o.id, o.request_id, o.name, o.status, o.note, o.issue_id, o.created_at, o.created_by, r.date, "
+            "r.shift_start, "
             "r.shift_end, r.role, r.employee_name, r.kind FROM shift_offers o JOIN shift_change_requests r "
             "ON r.id=o.request_id WHERE o.restaurant_id=? AND o.status='offered' AND r.status='open' AND r.date >= ? "
             "ORDER BY r.date, r.shift_start", (restaurant_id, today.isoformat())).fetchall()
