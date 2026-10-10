@@ -210,6 +210,39 @@ def test_the_nws_day_and_night_periods_are_lunch_and_dinner():
     assert ddr.conditions_of(fp["night"], "night") == {"cold"}
 
 
+def test_the_hourly_forecast_gives_each_meal_its_own_weather(monkeypatch):
+    import weather
+    import demand_drivers as ddr
+
+    def hour(h, pct, temp, words):
+        return {"startTime": f"2026-10-16T{h:02d}:00:00-05:00", "temperature": temp,
+                "probabilityOfPrecipitation": {"value": pct}, "shortForecast": words}
+    hourly = [hour(h, 80 if h < 15 else 5, 58 if h < 15 else 36, "Rain" if h < 15 else "Clear") for h in range(8, 23)]
+
+    class R:
+        def __init__(self, p):
+            self.p, self.status_code = p, 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.p
+    pts = {"properties": {"forecast": "https://x/forecast", "forecastHourly": "https://x/forecast/hourly"}}
+    monkeypatch.setattr(weather.requests, "get", lambda url, **k: R(pts) if "/points/" in url else (
+        R({"properties": {"periods": hourly}}) if url.endswith("/hourly") else
+        R({"properties": {"periods": [{"startTime": "2026-10-16T06:00:00-05:00", "isDaytime": True}]}})))
+    periods, failure = weather._fetch_periods_ex(41.9, -87.6)
+    assert failure is None and len(periods.hourly) == len(hourly)
+    mw = weather.meal_weather(hourly, "2026-10-16")
+    assert mw["lunch_precip_pct"] == 80 and mw["dinner_precip_pct"] == 5 and mw["dinner_temp_f"] == 36.0
+    row = dict({"date": "2026-10-16", "precip_pct": 30, "short_forecast": "Chance Rain", "high_f": 60,
+                "stale": False}, **mw)
+    fp = ddr.forecast_parts([row])["2026-10-16"]
+    assert fp["morning"]["rain"] == 1 and fp["night"]["rain"] == 0
+    assert ddr.conditions_of(fp["night"], "night") == {"cold"} and fp["night"]["source"] == "hourly"
+
+
 def test_weather_is_learned_per_meal_and_band(db_path):
     import demand_drivers as ddr
     today = date(2026, 10, 10)

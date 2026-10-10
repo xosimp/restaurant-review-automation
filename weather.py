@@ -166,23 +166,79 @@ def _backing_off(key):
         return False
 
 
+class _Periods(list):
+    """The forecast's 12-hour periods, carrying the HOURLY forecast fetched
+    with them (`hourly`, [] when NWS gave none) — so a caller that replaces
+    _fetch_periods_ex with a plain list still works."""
+    hourly = ()
+
+
 def _fetch_periods_ex(lat, lon):
-    """(periods, failure) — failure is None, "transient" or "not_covered"."""
+    """(periods, failure) — failure is None, "transient" or "not_covered".
+    The periods carry `.hourly`: the same office's hourly forecast (its
+    `forecastHourly`), each meal's own weather (scheduler audit 10/10/26
+    LEARNING-21); a failed hourly read leaves it empty and fails nothing."""
     headers = {"User-Agent": _USER_AGENT, "Accept": "application/geo+json"}
     try:
         points_resp = requests.get(f"https://api.weather.gov/points/{lat},{lon}", headers=headers, timeout=10)
         if getattr(points_resp, "status_code", 200) == 404:
             return [], "not_covered"
         points_resp.raise_for_status()
-        forecast_url = points_resp.json().get("properties", {}).get("forecast")
+        props = points_resp.json().get("properties", {})
+        forecast_url = props.get("forecast")
         if not forecast_url:
             return [], "not_covered"
         fc_resp = requests.get(forecast_url, headers=headers, timeout=10)
         fc_resp.raise_for_status()
         periods = fc_resp.json().get("properties", {}).get("periods", [])
-        return (periods, None) if periods else ([], "transient")
+        if not periods:
+            return [], "transient"
+        out = _Periods(periods)
+        hourly_url = props.get("forecastHourly")
+        if hourly_url:
+            try:
+                hr = requests.get(hourly_url, headers=headers, timeout=10)
+                hr.raise_for_status()
+                out.hourly = list(hr.json().get("properties", {}).get("periods", []) or [])
+            except Exception:
+                out.hourly = []
+        return out, None
     except Exception:
         return [], "transient"
+
+
+# The hours each meal's weather is read over: the core service windows
+# (schedule_time.CORE_WINDOWS — lunch 11:00-2:30, dinner 5:30-8:30).
+def meal_weather(hourly, day) -> dict:
+    """{"lunch_precip_pct", "lunch_temp_f", "lunch_short", "dinner_…"} for one
+    date from the hourly forecast periods: each meal's highest chance of
+    precipitation, mean temperature and its most common words over its core
+    window. {} when the hourly forecast does not cover the date."""
+    import schedule_time as _stime
+    out = {}
+    for meal, part in (("lunch", "morning"), ("dinner", "night")):
+        lo, hi = _stime.CORE_WINDOWS[part]
+        pts = []
+        for p in hourly or []:
+            st = str(p.get("startTime") or "")
+            if st[:10] != str(day)[:10]:
+                continue
+            try:
+                m = int(st[11:13]) * 60 + int(st[14:16])
+            except (TypeError, ValueError):
+                continue
+            if lo <= m < hi:
+                pts.append(p)
+        if not pts:
+            continue
+        precs = [(x.get("probabilityOfPrecipitation") or {}).get("value") for x in pts]
+        precs = [v for v in precs if v is not None]
+        temps = [x.get("temperature") for x in pts if isinstance(x.get("temperature"), (int, float))]
+        words = [str(x.get("shortForecast") or "") for x in pts if x.get("shortForecast")]
+        out[f"{meal}_precip_pct"] = max(precs) if precs else None
+        out[f"{meal}_temp_f"] = round(sum(temps) / len(temps), 1) if temps else None
+        out[f"{meal}_short"] = max(set(words), key=words.count) if words else ""
+    return out
 
 
 def _fetch_periods(lat, lon):
@@ -269,12 +325,26 @@ def _periods_by_date(restaurant, db_path=DB_PATH):
         if failure is None:
             from datetime import timezone as _tz
             fetched = datetime.now(_tz.utc).isoformat()
-            update_restaurant(restaurant.id, {
-                "weather_cache_json": json.dumps(periods),
+            fields = {
+                "weather_cache_json": json.dumps(list(periods)),
                 # UTC with an offset: it was server-local naive, one of the
                 # five stamp formats time_utils.parse_stamp now reconciles.
                 "weather_cached_at": fetched,
-            }, db_path=db_path)
+            }
+            hourly = getattr(periods, "hourly", None)
+            # Only what a meal reads (time, chance, temperature, words): the
+            # hourly feed is ~156 periods of a dozen keys each. Written with
+            # every refresh — none this time is none, never an older copy
+            # aged as this one.
+            fields["weather_hourly_json"] = json.dumps([
+                {"startTime": h.get("startTime"), "temperature": h.get("temperature"),
+                 "probabilityOfPrecipitation": h.get("probabilityOfPrecipitation"),
+                 "shortForecast": h.get("shortForecast")} for h in hourly]) if hourly else None
+            try:
+                restaurant.weather_hourly_json = fields["weather_hourly_json"]
+            except Exception:
+                pass
+            update_restaurant(restaurant.id, fields, db_path=db_path)
             periods_as_of = fetched
             _record(restaurant, True, db_path=db_path, data_through=fetched[:10])
         else:
@@ -345,21 +415,35 @@ def get_forecast_for_week(restaurant, week_dates, db_path=DB_PATH):
     if not restaurant:
         return []
     by_day, by_night = _periods_by_date(restaurant, db_path=db_path)
-    return [_with_night(_row(d, by_day[d]), by_night.get(d)) for d in week_dates if d in by_day]
+    hourly = _hourly(restaurant)
+    return [_with_night(_row(d, by_day[d]), by_night.get(d), hourly) for d in week_dates if d in by_day]
 
 
-def _with_night(row, night):
+def _with_night(row, night, hourly=None):
     """A daytime row with its night period beside it (`night_precip_pct`,
-    `low_f`, `night_short_forecast`): the schedule reads the day period as
-    lunch's weather and the night period as dinner's (demand_drivers.
+    `low_f`, `night_short_forecast`) and, where the hourly forecast covers
+    the date, each meal's own weather over its core window
+    (`lunch_precip_pct`, `lunch_temp_f`, `lunch_short`, `dinner_…` —
+    meal_weather): the schedule reads lunch and dinner apart (demand_drivers.
     forecast_parts — scheduler audit 10/10/26 LEARNING-21: a rainy-lunch
-    forecast cut dinner too). Unchanged without a night period."""
-    if not night:
-        return row
-    row["night_precip_pct"] = (night.get("probabilityOfPrecipitation") or {}).get("value")
-    row["low_f"] = night.get("temperature")
-    row["night_short_forecast"] = night.get("shortForecast", "")
+    forecast cut dinner too). Unchanged without either."""
+    if night:
+        row["night_precip_pct"] = (night.get("probabilityOfPrecipitation") or {}).get("value")
+        row["low_f"] = night.get("temperature")
+        row["night_short_forecast"] = night.get("shortForecast", "")
+    if hourly:
+        row.update(meal_weather(hourly, row.get("date")))
     return row
+
+
+def _hourly(restaurant):
+    """The cached hourly forecast periods, or [] (aged with the periods by
+    weather_cached_at, so the rows' `stale` covers them too)."""
+    try:
+        got = json.loads(getattr(restaurant, "weather_hourly_json", None) or "[]")
+    except (TypeError, ValueError):
+        return []
+    return got if isinstance(got, list) else []
 
 
 def cached_forecast_for_week(restaurant, week_dates) -> list:
@@ -380,7 +464,8 @@ def cached_forecast_for_week(restaurant, week_dates) -> list:
         pdate = (p.get("startTime") or "")[:10]
         if pdate:
             (by_day if p.get("isDaytime") else by_night)[pdate] = dict(p, _as_of=as_of)
-    return [_with_night(_row(d, by_day[d]), by_night.get(d)) for d in week_dates or [] if d in by_day]
+    hourly = _hourly(restaurant)
+    return [_with_night(_row(d, by_day[d]), by_night.get(d), hourly) for d in week_dates or [] if d in by_day]
 
 
 def forecast_for_day(restaurant, day, db_path=DB_PATH):

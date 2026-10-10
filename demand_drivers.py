@@ -444,7 +444,9 @@ def patio_effects(restaurant_id, patio_roles, db_path=DB_PATH, today=None, obser
 def forecast_parts(weather_rows) -> dict:
     """{iso date: {"morning": row, "night": row}} from the NWS rows the
     schedule already holds (weather.get_forecast_for_week /
-    cached_forecast_for_week): the daytime period is lunch's, the night
+    cached_forecast_for_week): each meal's own hours from the hourly
+    forecast where the row carries them (`lunch_*` / `dinner_*`,
+    weather.meal_weather), else the daytime period is lunch's and the night
     period dinner's (`night_precip_pct`, `low_f`, `night_short_forecast`
     when the row carries them, else the day's own). Each part row has
     {"rain", "snow", "high_f"/"low_f"} for conditions_of; a stale row is
@@ -476,6 +478,16 @@ def forecast_parts(weather_rows) -> dict:
                           "high_f": w.get("low_f") if w.get("low_f") is not None else w.get("high_f"),
                           "low_f": w.get("low_f"), "precip_pct": night_p},
             }
+            # The HOURLY forecast over each meal's core window, where the
+            # row carries it (weather.meal_weather): it wins over the 12-hour
+            # periods — dinner at 7pm is not "Tonight" from 6pm to 6am.
+            for part, meal in (("morning", "lunch"), ("night", "dinner")):
+                if w.get(f"{meal}_precip_pct") is None and w.get(f"{meal}_temp_f") is None:
+                    continue
+                p = w.get(f"{meal}_precip_pct")
+                text = str(w.get(f"{meal}_short") or "").lower()
+                out[d][part] = {"rain": _wet(p, text), "snow": _snow(text) and _wet(p, text),
+                                "high_f": w.get(f"{meal}_temp_f"), "precip_pct": p, "source": "hourly"}
         except Exception:
             continue
     return out

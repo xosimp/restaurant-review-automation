@@ -411,6 +411,10 @@ class Restaurant:
     longitude: Optional[float]           = None
     weather_cache_json: Optional[str]    = None   # cached NWS forecast periods
     weather_cached_at: Optional[str]     = None
+    # The NWS HOURLY forecast, fetched with the periods above and aged by the
+    # same weather_cached_at: each meal's own weather (scheduler audit
+    # 10/10/26 LEARNING-21 — demand_drivers.forecast_parts).
+    weather_hourly_json: Optional[str]   = None
     # When a geocode last resolved to nothing usable. A place_id that returns
     # no geometry is permanent until someone corrects it, and without this the
     # retry re-billed Google on every call — 570 requests for one restaurant
@@ -1409,6 +1413,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "longitude", "REAL"),
         ("restaurants", "weather_cache_json", "TEXT"),
         ("restaurants", "weather_cached_at", "TEXT"),
+        ("restaurants", "weather_hourly_json", "TEXT"),
         ("restaurants", "geocode_failed_at", "TEXT"),
         # Morning brief (audit #18): on by default — it is the owner's own
         # phone, and a brief that has to be discovered in settings is a brief
@@ -5122,7 +5127,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
-        "latitude","longitude","weather_cache_json","weather_cached_at",
+        "latitude","longitude","weather_cache_json","weather_cached_at","weather_hourly_json",
         "geocode_failed_at", "aivis_city_json",
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
@@ -6101,6 +6106,7 @@ def _restaurant_from_row(row) -> Restaurant:
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
         weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
+        weather_hourly_json=row["weather_hourly_json"] if "weather_hourly_json" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
         aivis_city_json=row["aivis_city_json"]         if "aivis_city_json" in row.keys() else None,
         preshift_nudge_hour=(row["preshift_nudge_hour"] if "preshift_nudge_hour" in row.keys()
