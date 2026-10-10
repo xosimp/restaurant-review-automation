@@ -252,8 +252,10 @@ def real_hours(row, tz=None) -> float:
 
 
 def wall_hours(row) -> float:
-    """The hours between a row's two wall-clock times (no zone), 2 decimals."""
-    return real_hours(row, None)
+    """The hours between a row's two wall-clock times (no zone, no date
+    needed), 2 decimals; 0.0 when unreadable."""
+    sp = span(row)
+    return round((sp[1] - sp[0]) / 60, 2) if sp is not None else 0.0
 
 
 def hours_text(hours) -> str:
@@ -268,8 +270,10 @@ def hours_text(hours) -> str:
 
 def row_hours_text(row, tz=None) -> str:
     """hours_text(real_hours(row, tz)) — what every pass that writes a row's
-    times writes as its scheduled_hours (BUGSGEN-6)."""
-    return hours_text(real_hours(row, tz))
+    times writes as its scheduled_hours (BUGSGEN-6); the wall clock when the
+    row has no readable date."""
+    h = real_hours(row, tz)
+    return hours_text(h if h or span(row) is None else wall_hours(row))
 
 
 def retime(row, start_m=None, end_m=None, tz=None) -> dict:

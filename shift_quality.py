@@ -2723,14 +2723,17 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     if not gaps:
         held_lo, held_hi = fwin if (fwin and not curve_needs) else (lo, hi)
         res.strengths.append(f"Every floor is held from {_fmt_minutes(held_lo)} to {_fmt_minutes(held_hi)}.")
-    in_window = {h: v for h, v in (ctx.demand_curve or {}).items() if lo <= int(h) * 60 < hi}
+    # Hours on the business timeline (schedule_time.business_hour): a 1am
+    # hour is the night's tail, never the start of the day (BUGSGEN-19).
+    in_window = {_stime.business_hour(int(h)): v for h, v in (ctx.demand_curve or {}).items()
+                 if 0 <= int(h) <= 23 and lo <= _stime.business_hour(int(h)) * 60 < hi}
     if in_window:
         # The busiest hour of THIS daypart by sales share, and whether it is
         # the best-staffed — lunch was being told about the dinner peak.
         peak_hour = max(in_window.items(), key=lambda kv: kv[1])[0]
         on_peak = len({p for _f, p, s, e in spans if s <= int(peak_hour) * 60 < e})
         on_max = max((len({p for _f, p, s, e in spans if s <= t < e}) for t in slots), default=0)
-        res.facts["peak_hour"] = int(peak_hour)
+        res.facts["peak_hour"] = int(peak_hour) % 24
         res.facts["on_at_peak"] = on_peak
         if on_max and on_peak < on_max:
             res.weaknesses.append(
@@ -2778,11 +2781,14 @@ def _peak_requirement(ctx: ShiftContext):
     if not ctx.demand_curve or not ctx.typical_headcount:
         return None
     split_h = _stime.daypart_split() // 60
-    lo, hi = (0, split_h) if ctx.daypart == "morning" else (split_h, 24)
-    hours = {int(h): v for h, v in ctx.demand_curve.items() if lo <= int(h) < hi and v}
+    lo, hi = (0, split_h) if ctx.daypart == "morning" else (split_h, 24 + _stime.BUSINESS_DAY_START_HOUR)
+    # On the business timeline: a bar's 1am hour is the night's, never a
+    # candidate for the lunch peak (BUGSGEN-19).
+    hours = {_stime.business_hour(int(h)): v for h, v in ctx.demand_curve.items()
+             if 0 <= int(h) <= 23 and lo <= _stime.business_hour(int(h)) < hi and v}
     if not hours:
         return None
-    hour = max(hours.items(), key=lambda kv: kv[1])[0]
+    hour = max(hours.items(), key=lambda kv: kv[1])[0] % 24
     import math
     needs = {role: max(1, int(math.ceil(PEAK_SHARE * int(n)))) for role, n in ctx.typical_headcount.items() if n}
     return (hour, needs) if needs else None

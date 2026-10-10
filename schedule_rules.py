@@ -1573,9 +1573,14 @@ def _expired_certs(restaurant_id, week_dates, db_path=None) -> dict:
     try:
         from datetime import date as _date
         import staff_knowledge
+        from models import _restaurant_today
+        # The restaurant's own date, never the server's UTC one: from about
+        # 7pm Chicago a card expiring today read as expired for the current
+        # week's regeneration (BUGSGEN-16).
+        today = _restaurant_today(restaurant_id)
         days = sorted(str(d)[:10] for d in (week_dates or []) if d)
-        first = _date.fromisoformat(days[0]) if days else _date.today()
-        on = max(first, _date.today())
+        first = _date.fromisoformat(days[0]) if days else today
+        on = max(first, today)
         kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
         raw = staff_knowledge.expired_certs(restaurant_id, today=on, **kw) or {}
         return {k: {cert_key(x) for x in v} for k, v in raw.items()}
@@ -4358,12 +4363,17 @@ def end_minutes(row):
 
 def role_time_for(c, row) -> dict:
     """The owner's start/end rule for this row's role on its weekday and
-    daypart (Constraints.role_times, L-33), or {}."""
+    daypart (Constraints.role_times, L-33), or {}. The row's daypart is the
+    one it serves (schedule_time.primary_daypart — the core window it covers
+    most), never its start's side of 3pm: "servers start Friday dinner at
+    2:30pm" retimed a 4pm row to 2:30pm, which then read as lunch, so the
+    rule could never check or keep the row it had just written, and a
+    model's 2:30pm dinner row was never checked at all (BUGSGEN-14)."""
     times = getattr(c, "role_times", None) or {}
     if not times:
         return {}
     role = (row.get("role") or "").strip().lower()
-    return times.get((role, _weekday_of(row.get("date") or ""), daypart_of(row.get("shift_start", "")))) or {}
+    return times.get((role, _weekday_of(row.get("date") or ""), _stime.primary_daypart(row))) or {}
 
 
 def _role_cap_violations(rows: list, c: Constraints) -> list:
@@ -4486,8 +4496,9 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
             left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
                          "reason": f"the rule would leave a {span / 60:g}h shift"})
             continue
-        new = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)),
-                   scheduled_hours=f"{span / 60:g}")
+        new = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
+        # Its hours from the real span in the restaurant's zone (BUGSGEN-6).
+        new["scheduled_hours"] = hours_text(span_hours(new, tz_of(c)))
         trial = out_rows[:i] + [new] + out_rows[i + 1:]
         ok, why = c.can_add(new, trial)
         if ok:
@@ -6560,8 +6571,11 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
                 s0 = parse_minutes(r.get("shift_start", ""))
                 if s0 is None:
                     continue
-                new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)),
-                           scheduled_hours=str(round((target - s0) / 60.0, 2)).rstrip("0").rstrip("."))
+                new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)))
+                # Its hours from the real span in the restaurant's zone: a
+                # closer run on to a 2am close on 10/31/26 works 10 hours,
+                # not the wall clock's 9 (BUGSGEN-6).
+                new["scheduled_hours"] = hours_text(span_hours(new, tz_of(c)))
                 ok, _why = c.can_add(new, [x for j, x in enumerate(rows) if j != i], line=line)
                 sweeps += 1
                 if not ok:

@@ -30,6 +30,8 @@ Every surface that shows a half-hour need says so (INTERPOLATED_NOTE).
 """
 import math
 
+import schedule_time as _stime
+
 SLOT = 30                    # minutes in one requirement slot
 PEAK_SHARE = 0.75            # share of the usual crew the busiest half hour needs
 MIN_SLOT_RATIO = 0.3         # a half hour under this share of the peak adds no curve need
@@ -37,20 +39,26 @@ INTERPOLATED_NOTE = "interpolated to the half hour from hourly sales"
 
 
 def _hour_rates(curve: dict) -> dict:
+    """{business hour: sales} — each clock hour on the business day's
+    timeline (schedule_time.business_hour): a bar's 1am sales are hour 25,
+    the night's tail, never the start of the day. Read by clock hour, 0-1am
+    sat before the morning, 2am-10am was interpolated from bar sales and the
+    12am-2am ramp asked for nobody (BUGSGEN-19)."""
     out = {}
     for h, v in (curve or {}).items():
         try:
             hour, val = int(h), float(v or 0)
         except (TypeError, ValueError):
             continue
-        if val > 0:
-            out[hour] = val
+        if val > 0 and 0 <= hour <= 23:
+            out[_stime.business_hour(hour)] = val
     return out
 
 
 def half_hour_shares(curve: dict) -> dict:
     """{minute: relative sales rate} for every half hour the hourly curve
-    spans, linearly interpolated between hour midpoints. Beyond the first
+    spans, on the business day's timeline (an hour after midnight is past
+    1440), linearly interpolated between hour midpoints. Beyond the first
     and last measured hour the edge value holds (no invented ramp)."""
     rates = _hour_rates(curve)
     if not rates:

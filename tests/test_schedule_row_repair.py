@@ -224,11 +224,11 @@ def test_shift_scheduled_past_close_is_trimmed_not_just_flagged(monkeypatch):
     assert len(result["preview_rows"]) == 1
     row = result["preview_rows"][0]
     assert row["shift_end"] == "9:00pm"
-    assert row["scheduled_hours"] == "5.0"
+    assert row["scheduled_hours"] == "5"
     assert "auto-capped to close time" in row["notes"]
     assert "needs_review" not in row
     # The shared/exported CSV must reflect the trim too.
-    assert "9:00pm,5.0" in result["schedule_csv"]
+    assert "9:00pm,5," in result["schedule_csv"]
 
 
 def test_role_with_configured_after_close_buffer_is_left_alone(monkeypatch):

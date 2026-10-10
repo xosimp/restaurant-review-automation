@@ -91,7 +91,11 @@ def _shift_sales(restaurant_id, today=None, db_path=DB_PATH) -> dict:
     checks over the last SALES_WEEKS weeks, the check's open time on the
     same 3pm split; {} when the POS sends no checks."""
     from models import get_conn
-    today = today or date.today()
+    if today is None:
+        # The restaurant's own date, never the server's UTC one: from about
+        # 7pm Chicago the sales window slid a day (BUGSGEN-16).
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True).date()
     since = (today - timedelta(days=7 * SALES_WEEKS)).isoformat()
     conn = get_conn(db_path)
     try:
@@ -110,7 +114,11 @@ def _shift_sales(restaurant_id, today=None, db_path=DB_PATH) -> dict:
             bd = date.fromisoformat(str(t["business_date"])[:10])
         except ValueError:
             continue
-        part = "morning" if 5 <= opened.hour < 15 else "night"
+        # The check's open time against the one boundary (schedule_time,
+        # ARCH-12): the small hours are the night's, the restaurant's
+        # daypart boundary (3pm unless set) splits the day.
+        import schedule_time as _stime
+        part = _stime.daypart_at(_stime.business_minute(opened.hour * 60 + opened.minute))
         k = (bd.isoformat(), part)
         per[k] = per.get(k, 0.0) + float(t["net_sales"] or 0)
     by = {}

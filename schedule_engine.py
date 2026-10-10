@@ -25,6 +25,7 @@ from models import get_restaurant
 import schedule_output as _sched_out
 import schedule_prompt as _sp
 import schedule_rules as _rules
+import schedule_time as _stime
 import schedule_versions as _versions
 import staff_settings as _staff
 import demand_signals as _signals
@@ -3214,11 +3215,10 @@ def _span_lines(rows, dates, exclude=()) -> list:
         for r in rows:
             if r.get("date") != d or " ".join(str(r.get("employee") or "").lower().split()) in exclude:
                 continue
-            s, e = _rules.parse_minutes(r.get("shift_start")), _rules.parse_minutes(r.get("shift_end"))
-            if s is None or e is None:
+            sp = _stime.span(r)
+            if sp is None:
                 continue
-            if e <= s:
-                e += 24 * 60
+            s, e = sp
             lo = s if lo is None else min(lo, s)
             hi = e if hi is None else max(hi, e)
         if lo is not None:
@@ -3257,11 +3257,9 @@ def _neighbour_lines(kept, dates, cap: int = 60) -> list:
         d, name = r.get("date"), (r.get("employee") or "").strip()
         if not name or d not in before | after:
             continue
-        s, e = _rules.parse_minutes(r.get("shift_start")), _rules.parse_minutes(r.get("shift_end"))
+        s, e = _stime.start_of(r), _stime.end_of(r)
         slot = by.setdefault(name, {})
         if d in before and e is not None:
-            if s is not None and e <= s:
-                e += 24 * 60
             slot[d] = ("until", max(e, slot[d][1]) if d in slot else e)
         if d in after and s is not None:
             slot[d] = ("from", min(s, slot[d][1]) if d in slot else s)
@@ -3910,27 +3908,26 @@ def _reconcile_scheduled_hours(row, tz=None):
     wrote, never the clock change), or 0.0 when the row was already right or
     its times can't be parsed.
     """
-    start = _parse_time_to_minutes(row.get("shift_start", ""))
-    end = _parse_time_to_minutes(row.get("shift_end", ""))
-    if start is None or end is None:
+    if _stime.span(row) is None:
         return 0.0
-    span = end - start
-    if span < 0:
-        span += 24 * 60          # closing shift running past midnight
-    wall = round(span / 60, 1)
+    # Two decimals, never a tenth's banker's rounding: 4:45pm-11pm is 6.25,
+    # which round(6.25, 1) wrote as 6.2, so the rows of one week carried
+    # mixed precision and payroll totals drifted near the 40.05 overtime
+    # test (BUGSGEN-7). Drift is compared at 0.01.
+    wall = _stime.wall_hours(row)
     correct = wall
     clock = 0.0
     if tz:
-        real = _rules.span_hours(row, tz) if row.get("date") else 0.0
+        real = _stime.real_hours(row, tz) if row.get("date") else 0.0
         if real and abs(real - wall) >= 0.1:
-            correct, clock = round(real, 1), round(real - wall, 1)
+            correct, clock = real, round(real - wall, 2)
     raw_hours = (row.get("scheduled_hours") or "").strip() if isinstance(row.get("scheduled_hours"), str) \
         else row.get("scheduled_hours")
     if raw_hours in (None, ""):
         stated = None            # nothing was stated, so nothing was wrong
     else:
         try:
-            stated = round(float(raw_hours), 1)
+            stated = round(float(raw_hours), 2)
         except (ValueError, TypeError):
             stated = None
     if clock:
@@ -3941,45 +3938,31 @@ def _reconcile_scheduled_hours(row, tz=None):
         if text not in note:
             row["notes"] = f"{note} ({text})".strip() if note else f"({text})"
     if stated is None:
-        row["scheduled_hours"] = str(correct)
+        row["scheduled_hours"] = _stime.hours_text(correct)
         return 0.0
-    drift = round(wall - stated, 1)
-    if abs(drift) < 0.1 and not clock:
+    drift = round(wall - stated, 2)
+    if abs(drift) < 0.01 and not clock:
         return 0.0          # already right — leave the row exactly as written
-    row["scheduled_hours"] = str(correct)
-    if abs(drift) < 0.1:
+    row["scheduled_hours"] = _stime.hours_text(correct)
+    if abs(drift) < 0.01:
         return 0.0          # the model counted the wall clock right; the clock change is ours to add
-    row["hours_corrected_from"] = str(stated)
+    row["hours_corrected_from"] = str(raw_hours).strip()
     return drift
 
 
 def _parse_time_to_minutes(t: str):
-    """Parses a "9:00pm"/"9:30 am" style string (the exact format the AI is
-    instructed to always produce) to minutes-since-midnight, or None if it
-    doesn't match that format at all."""
-    if not t or not _TIME_FIELD_RE.match(t.strip()):
-        return None
-    t_clean = t.strip().lower().replace(" ", "")
-    period, hm = t_clean[-2:], t_clean[:-2]
-    try:
-        hour_str, minute_str = hm.split(":")
-        hour, minute = int(hour_str), int(minute_str)
-    except (ValueError, IndexError):
-        return None
-    if period == "pm" and hour != 12:
-        hour += 12
-    if period == "am" and hour == 12:
-        hour = 0
-    return hour * 60 + minute
+    """A clock time as minutes since midnight (schedule_time.parse_minutes:
+    "9:00pm", "9:30 am", "21:30", "noon", "midnight", "12:00 a.m."), or None.
+    It read only the "9:00pm" form, so a close stored from the web's time
+    input ("01:00") silently dropped the close cap for that day
+    (BUGSGEN-20)."""
+    return _stime.parse_minutes(t)
 
 
 def _format_minutes_to_time(total_minutes: int) -> str:
-    """Inverse of _parse_time_to_minutes — "9:00pm" style."""
-    total_minutes %= 24 * 60
-    hour24, minute = divmod(total_minutes, 60)
-    period = "am" if hour24 < 12 else "pm"
-    hour12 = hour24 % 12 or 12
-    return f"{hour12}:{minute:02d}{period}"
+    """Inverse of _parse_time_to_minutes — "9:00pm" style (any day's minutes:
+    1500 is 1:00am)."""
+    return _stime.fmt_minutes(total_minutes)
 
 
 def _summarize_schedule_csv_by_day_role(csv_text: str) -> dict:
@@ -4055,7 +4038,8 @@ def _normalise_row_times(row: dict) -> None:
             row[key] = _format_minutes_to_time(m)
 
 
-def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict) -> None:
+def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict,
+                        constraints=None) -> None:
     """Hard-caps a row's shift_end at that day's actual close time (plus any
     role-specific after-close allowance, e.g. a bartender's stated "stay 1h
     after close") — mutates `row` in place. A no-op for any restaurant that
@@ -4069,30 +4053,43 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
     note to Friday's later close time too) — this is the deterministic
     backstop for a rule that must never be violated, not one more request
     the model can occasionally miss.
+
+    With the week's `constraints` the ceiling is the sweep's own
+    (schedule_rules.close_cap_minutes): a manager may stay as long as any
+    role does, so the model's manager row to midnight behind 60-minute
+    bartenders is no longer cut at an 11pm close — which opened an hour with
+    nobody managing that the closing-manager allowance then hid
+    (BUGSGEN-15). The close is read against that day's open, and the hours
+    written are the real ones in the restaurant's zone, two decimals
+    (BUGSGEN-6, -7, -22).
     """
     if not real_day or real_day not in close_times:
         return
     close_minutes = _parse_time_to_minutes(close_times[real_day])
     if close_minutes is None:
         return
-    # A close in the small hours is the next morning: "1:00am" is 25:00, not
-    # one in the morning before the doors open (SCHED-13).
-    if close_minutes < _rules._OVERNIGHT_LATEST_BEFORE:
-        close_minutes += 24 * 60
-    role = (row.get("role") or "").strip()
-    # By role family: "Bartender": 30 holds for a "Bartender PM" row, which
-    # was clamped at close while the stays-after-close rule wanted it on
-    # (schedule audit 10/3/26 D-13, D-43).
-    ceiling = close_minutes + int(_rules.role_minutes(role_buffers, role) or 0)
+    ceiling = None
+    if constraints is not None and getattr(constraints, "close_times", None):
+        ceiling = _rules.close_cap_minutes(constraints, row)
+    if ceiling is None:
+        # A close in the small hours is the next morning: "1:00am" is 25:00,
+        # not one in the morning before the doors open (SCHED-13).
+        open_m = _parse_time_to_minutes((getattr(constraints, "open_times", None) or {}).get(real_day, "")) \
+            if constraints is not None else None
+        close_minutes = _stime.close_on_timeline(close_minutes, open_m)
+        role = (row.get("role") or "").strip()
+        # By role family: "Bartender": 30 holds for a "Bartender PM" row, which
+        # was clamped at close while the stays-after-close rule wanted it on
+        # (schedule audit 10/3/26 D-13, D-43).
+        ceiling = close_minutes + int(_rules.role_minutes(role_buffers, role) or 0)
 
-    start_minutes = _parse_time_to_minutes(row.get("shift_start", ""))
-    end_minutes = _parse_time_to_minutes(row.get("shift_end", ""))
+    start_minutes = _stime.start_of(row)
+    end_minutes = _stime.end_of(row)
     if end_minutes is None:
         return
-    # A shift that ends past midnight ends on the next day's clock; reading
-    # 2:00am as 120 minutes let a 5pm-2am shift through a 10pm close.
-    if start_minutes is not None and end_minutes <= start_minutes:
-        end_minutes += 24 * 60
+    # On the row's business timeline: a shift that ends past midnight ends
+    # on the next day's clock; reading 2:00am as 120 minutes let a 5pm-2am
+    # shift through a 10pm close.
     if end_minutes <= ceiling:
         return
 
@@ -4104,7 +4101,8 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
         return
 
     row["shift_end"] = _format_minutes_to_time(ceiling)
-    row["scheduled_hours"] = str(round((ceiling - start_minutes) / 60, 1))
+    row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(constraints) if constraints is not None
+                                                   else None)
     note = (row.get("notes") or "").strip()
     row["notes"] = f"{note} (auto-capped to close time)" if note else "auto-capped to close time"
 
@@ -4254,14 +4252,11 @@ def _ramp_end(day, part, c=None):
     midnight with no close on file — the service window the requirements
     table builds the ramp over. None for any other daypart: its last step
     holds for one half hour."""
-    split = 15 * 60
+    split = _stime.daypart_split()
     if part == "morning":
         return split
     if part == "night":
-        closes = (getattr(c, "close_times", None) or {}) if c is not None else {}
-        m = _rules.parse_minutes(closes.get(day, "") or "")
-        if m is not None and m < _rules._OVERNIGHT_LATEST_BEFORE:
-            m += 24 * 60
+        m = _rules.close_minutes(c, day) if (c is not None and getattr(c, "close_times", None)) else None
         return m if (m is not None and m > split) else 24 * 60
     return None
 
@@ -4557,7 +4552,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         # Keyed by daypart: a Saturday with seven morning servers and no
         # dinner ones used to read as "seven servers", and the template it
         # cloned was the first morning row. (role, daypart) is the unit.
-        part = _rules.daypart_of(r.get("shift_start", ""))
+        part = _stime.primary_daypart(r)
         if r.get("shift_start") and r.get("shift_end"):
             tpl = (r["shift_start"], r["shift_end"], role)
             for book, k in ((tpl_by_date, (date, key, part)), (tpl_by_part, (key, part))):
@@ -4642,7 +4637,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         probe = {"date": target_date, "day": day_name, "employee": "", "role": row_role,
                  "shift_start": start, "shift_end": end, "scheduled_hours": "0",
                  "notes": "added — coverage top-up"}
-        _enforce_close_time(probe, day_name, close_times, role_buffers)
+        _enforce_close_time(probe, day_name, close_times, role_buffers, constraints=c)
         sp = _span_minutes(probe)
         # A template (borrowed from another day) that does not produce a sane
         # shift once capped to this day's close, that would not count where
@@ -4653,8 +4648,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         if probe.get("needs_review") or not sp or not counts:
             exhausted.add(target)
             continue
-        hrs = round((sp[1] - sp[0]) / 60, 1)
-        probe["scheduled_hours"] = str(hrs)
+        probe["scheduled_hours"] = _stime.row_hours_text(probe, _rules.tz_of(c))
+        hrs = float(probe["scheduled_hours"])
         if hrs <= 0 or hrs > remaining_gap + 0.01:
             exhausted.add(target)
             continue
@@ -4885,7 +4880,7 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
             for r in ranked:
                 if legal and (_priority(r)[:2] != _priority(legal[0][0])[:2] or len(legal) >= want):
                     break
-                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap)
+                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap, constraints=c)
                 if cut is False:
                     continue
                 ok, why = _cut_ok(r, cut, date, day_name)
@@ -4927,7 +4922,8 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     return preview_rows, rows_trimmed, trimmed_dates
 
 
-def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int):
+def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int,
+                 constraints=None):
     """The row cut to end at `peak_time` (a new dict), None when that would
     leave under half an hour (the row goes), False when it cannot be read.
     `peak_time` past midnight (24:30) is the next morning's 12:30am."""
@@ -4939,11 +4935,12 @@ def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_bu
     out = dict(row)
     out["shift_end"] = _format_minutes_to_time(peak_time)
     if day_name:
-        _enforce_close_time(out, day_name, close_times, role_buffers)
+        _enforce_close_time(out, day_name, close_times, role_buffers, constraints=constraints)
     sp = _span_minutes(out)
     if not sp:
         return False
-    out["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
+    out["scheduled_hours"] = _stime.row_hours_text(out, _rules.tz_of(constraints) if constraints is not None
+                                                   else None)
     note = (out.get("notes") or "").strip()
     out["notes"] = f"{note} (trimmed — over the {cap}-server cap)" if note else f"trimmed — over the {cap}-server cap"
     return out
@@ -5008,9 +5005,12 @@ def _window_overlap(row: dict, window: tuple) -> bool:
     return bool(sp) and sp[0] < window[1] and sp[1] > window[0]
 
 
-_MORNING_WINDOW = (_parse_time_to_minutes("11:00am"), _parse_time_to_minutes("2:30pm"))
-_NIGHT_WINDOW = (_parse_time_to_minutes("5:30pm"), _parse_time_to_minutes("8:30pm"))
-_DAYPART_SPLIT = 15 * 60   # the same 3pm the rules and the quality engine use
+# The core service windows and the default daypart boundary are
+# schedule_time's (the one daypart rule, BUGSGEN-25); the boundary in force
+# is schedule_time.daypart_split().
+_MORNING_WINDOW = _stime.CORE_WINDOWS["morning"]
+_NIGHT_WINDOW = _stime.CORE_WINDOWS["night"]
+_DAYPART_SPLIT = _stime.DAYPART_SPLIT
 
 
 def _daypart_windows(constraints, day_name: str) -> list:
@@ -5020,15 +5020,15 @@ def _daypart_windows(constraints, day_name: str) -> list:
     measured on a fixed 11am–2:30pm slot counted a 6am–10:30am cook as
     nobody and added a second one. A close in the small hours is the next
     morning (a 2am close runs dinner to 26:00)."""
-    open_m = _parse_time_to_minutes((getattr(constraints, "open_times", None) or {}).get(day_name, "")) if constraints else None
-    close_m = _parse_time_to_minutes((getattr(constraints, "close_times", None) or {}).get(day_name, "")) if constraints else None
+    open_m, close_m = _stime.day_hours(
+        (getattr(constraints, "open_times", None) or {}).get(day_name, "") if constraints else "",
+        (getattr(constraints, "close_times", None) or {}).get(day_name, "") if constraints else "")
+    split = _stime.daypart_split()
     if open_m is None:
         open_m = 6 * 60
-    if close_m is not None and close_m < _rules._OVERNIGHT_LATEST_BEFORE:
-        close_m += 24 * 60
-    if close_m is None or close_m <= _DAYPART_SPLIT:
+    if close_m is None or close_m <= split:
         close_m = 24 * 60 - 1
-    return [("morning", (open_m, _DAYPART_SPLIT)), ("night", (_DAYPART_SPLIT, close_m))]
+    return [("morning", (open_m, split)), ("night", (split, close_m))]
 
 
 # The fill-in and trim passes (#12): each chooses, among the legal options
@@ -5143,7 +5143,7 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
         if role:
             key = _role_key(role, c)
             role_people.setdefault(key, set()).add(emp)
-            part = _rules.daypart_of(r.get("shift_start", ""))
+            part = _stime.primary_daypart(r)
             if part in ("morning", "night") and r.get("shift_start") and r.get("shift_end"):
                 templates.setdefault((key, part), (r["shift_start"], r["shift_end"]))
     for name, role in (getattr(c, "roster_roles", None) or {}).items():
@@ -5187,13 +5187,13 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
                     probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
                              "shift_start": start, "shift_end": end, "scheduled_hours": "0",
                              "notes": f"added — {role_name} floor"}
-                    _enforce_close_time(probe, day_name, close_times, role_buffers)
+                    _enforce_close_time(probe, day_name, close_times, role_buffers, constraints=c)
                     sp = _span_minutes(probe)
                     # A template that does not produce a sane shift, or one
                     # that would not count toward this daypart's floor.
                     if probe.get("needs_review") or not sp or part not in _present(probe):
                         break
-                    probe["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
+                    probe["scheduled_hours"] = _stime.row_hours_text(probe, _rules.tz_of(c))
                     # The fewest hours so far, and among those the most reliable,
                     # is the order; the score chooses among the first few
                     # legal ones (_fill_pick).
@@ -5266,11 +5266,11 @@ def _ensure_station_coverage(preview_rows: list, week_dates: list, week_days: li
             row = {"date": date, "day": day, "employee": name, "role": person_role,
                    "shift_start": start, "shift_end": end, "scheduled_hours": "0",
                    "notes": f"added — {station} station"}
-            _enforce_close_time(row, day, close_times, role_buffers)
+            _enforce_close_time(row, day, close_times, role_buffers, constraints=c)
             sp = _span_minutes(row)
             if row.get("needs_review") or not sp or part not in _ks.parts_of(row):
                 continue
-            row["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
+            row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(c))
             options.append((name, row))
         legal, _refused = _legal_fills(c, preview_rows, options, date, coverage=True)
         if not legal:
@@ -5308,17 +5308,19 @@ def _daypart_fallback(constraints, day_name: str, part: str) -> tuple:
     next morning: a 2am close gives dinner 6pm–2am (at most eight hours to
     the close), not the four-hour 3–7pm stub it read as when 2am was taken
     for 2 in the morning before the doors opened."""
-    open_m = _parse_time_to_minutes((constraints.open_times or {}).get(day_name, "")) if constraints else None
-    close_m = _parse_time_to_minutes((constraints.close_times or {}).get(day_name, "")) if constraints else None
-    late = close_m is not None and close_m < _rules._OVERNIGHT_LATEST_BEFORE
+    open_m, close_m = _stime.day_hours(
+        (constraints.open_times or {}).get(day_name, "") if constraints else "",
+        (constraints.close_times or {}).get(day_name, "") if constraints else "")
+    split = _stime.daypart_split()
+    late = close_m is not None and close_m >= 24 * 60
     if part == "morning":
         start = open_m if open_m is not None else _parse_time_to_minutes("11:00am")
-        end = min(close_m, 15 * 60) if (close_m is not None and not late) else 15 * 60
+        end = min(close_m, split) if (close_m is not None and not late) else split
     elif late:
-        end = close_m + 24 * 60
-        start = max(open_m if open_m is not None else 0, 15 * 60, end - 8 * 60)
+        end = close_m
+        start = max(open_m if open_m is not None else 0, split, end - 8 * 60)
     else:
-        start = max(open_m, 15 * 60) if open_m is not None else 16 * 60
+        start = max(open_m, split) if open_m is not None else 16 * 60
         end = close_m if close_m is not None else 22 * 60
     if end <= start:
         end = start + 4 * 60
@@ -5650,7 +5652,8 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
                 _dt.strptime(date, "%Y-%m-%d")
             except ValueError:
                 continue
-            part = _sq.daypart_of(start)
+            part = _stime.primary_daypart({"date": date, "shift_start": start,
+                                           "shift_end": parts[5] if len(parts) > 5 else ""})
             entry = {"date": date, "daypart": part,
                      "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A")}
             bucket = out.setdefault(name, [])
@@ -5684,7 +5687,7 @@ def _prior_week_from_punches(restaurant_id, before, days_back=7) -> dict:
         date, name = str(r.get("date") or "")[:10], (r.get("employee") or "").strip()
         if not (date and name) or not (start <= date <= end):
             continue
-        part = _sq.daypart_of(r.get("shift_start") or "")
+        part = _stime.primary_daypart(r)
         bucket = out.setdefault(name, [])
         if not any(e["date"] == date and e["daypart"] == part for e in bucket):
             bucket.append({"date": date, "daypart": part, "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A"),
@@ -5766,9 +5769,10 @@ def _breach_dayparts(v: dict, row: dict = None) -> list:
         return [v["daypart"]]
     if v.get("gap_start") is not None and v.get("gap_end") is not None:
         out = []
-        if int(v["gap_start"]) < _sq.DAYPART_CUTOVER:
+        split = _stime.daypart_split()
+        if int(v["gap_start"]) < split:
             out.append("morning")
-        if int(v["gap_end"]) > _sq.DAYPART_CUTOVER:
+        if int(v["gap_end"]) > split:
             out.append("night")
         return out
     if row is not None:
@@ -6995,8 +6999,8 @@ def _gate_someone_free(v, rows, c) -> bool:
         role = next((r for k, r in (c.managers or {}).items()), "Manager") or "Manager"
         stretch = {"date": d, "day": _weekday_name(d), "role": role, "notes": "",
                    "shift_start": _rules._fmt_minutes(int(gs) % (24 * 60)),
-                   "shift_end": _rules._fmt_minutes(int(ge) % (24 * 60)),
-                   "scheduled_hours": str(round((int(ge) - int(gs)) / 60.0, 2))}
+                   "shift_end": _rules._fmt_minutes(int(ge) % (24 * 60))}
+        stretch["scheduled_hours"] = _stime.row_hours_text(stretch, _rules.tz_of(c))
         return any(takes(n, dict(stretch, role=(c.managers or {}).get(str(n).strip().lower()) or role), rows)
                    for n in managers)
     if kind in ("keyholder_until_close", "nobody_at_close"):
@@ -8541,7 +8545,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _dropped_rows.append(_line[:120])
                     continue
 
-                _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers)
+                # The sweep's own ceiling (close_cap_minutes) with the rules
+                # the prompt was built from: a manager stays as long as any
+                # role does (BUGSGEN-15).
+                _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers,
+                                    constraints=result.get("constraints"))
 
                 # Times win over the model's own arithmetic — see
                 # _reconcile_scheduled_hours — in real hours, so the night

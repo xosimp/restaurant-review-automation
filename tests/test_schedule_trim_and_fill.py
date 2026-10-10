@@ -512,7 +512,7 @@ def test_the_cap_backstop_sees_and_cuts_past_midnight():
     out, n, dates = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=4)
     assert n == 1 and se._peak_server_overlap(out)[0] == 4
     s0 = next(r for r in out if r["employee"] == "S0")
-    assert s0["shift_end"] == "8:00pm" and s0["scheduled_hours"] == "2.0", "the top-up row absorbs the cut"
+    assert s0["shift_end"] == "8:00pm" and s0["scheduled_hours"] == "2", "the top-up row absorbs the cut"
 
 
 def test_the_optimizer_cap_check_reads_past_midnight_too():
