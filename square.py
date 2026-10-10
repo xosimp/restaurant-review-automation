@@ -502,3 +502,51 @@ def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: d
             continue
         out.add(business_date(r, local.replace(tzinfo=None)).isoformat())
     return out
+
+
+# ── during service (schedule audit 10/10/26 MARKET-10, MARKET-24) ──────────
+#
+# The intraday pulse, the coverage check and live labor read a POS while the
+# restaurant trades; only Toast and RPOWER answered. Square's Orders and Labor
+# APIs answer during service too: today's orders so far, and today's shifts
+# with their clock-in (an open shift has no end yet).
+
+class SquareNoSalesYet(RuntimeError):
+    """Square answered, with nothing posted yet today (not a POS that
+    didn't answer — intraday.capture reads `not_yet`)."""
+    not_yet = True
+    provider = "square"
+
+
+def fetch_sales_today(restaurant_id: int, business_date) -> float:
+    """Net sales so far for the business date (pos.py's net contract:
+    completed orders' total less tax, tips and service charges)."""
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    _tz, _r, start, end = _day_window(restaurant_id, day)
+    orders = _search_orders(restaurant_id, {"created_at": {"start_at": start.isoformat(), "end_at": end.isoformat()}},
+                            "CREATED_AT")
+    done = [o for o in orders if str(o.get("state") or "").upper() == "COMPLETED"]
+    if not done:
+        raise SquareNoSalesYet(f"Square has no completed orders for {day.isoformat()} yet")
+    return round(sum(_order_net_cents(o) for o in done) / 100.0, 2)
+
+
+def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
+    """Everyone who clocked in this business day: [{"employee", "role",
+    "clocked_in_at", "clocked_out_at", "hourly_wage", "external_id"}] —
+    the shape intraday.coverage_gaps and labor_live read."""
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    _tz, _r, start, end = _day_window(restaurant_id, day)
+    shifts = _search_shifts(restaurant_id, start, end)
+    team = _fetch_team_members(restaurant_id) if shifts else {}
+    out = []
+    for s in shifts:
+        tid = s.get("team_member_id") or s.get("employee_id")
+        name = (team.get(tid) or {}).get("name")
+        if not name or name == "Unknown" or not s.get("start_at"):
+            continue
+        wage = s.get("wage") or {}
+        out.append({"employee": name, "role": wage.get("title") or "Staff", "clocked_in_at": s.get("start_at"),
+                    "clocked_out_at": s.get("end_at") or None, "hourly_wage": _cents(wage, "hourly_rate") or None,
+                    "external_id": tid})
+    return out

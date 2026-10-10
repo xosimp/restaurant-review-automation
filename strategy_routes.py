@@ -3743,9 +3743,16 @@ def _do_shift_requests_list(u):
     except Exception as e:
         print(f"[requests] automatic decisions unread rid={_rid(u)}: {e!r}")
         auto_recent = []
+    # `group`: this location has sibling locations, so an open shift can be
+    # offered to people there who travel (cross_site, MARKET-16).
+    try:
+        import schedule_rules as _sr_grp
+        group = bool(_sr_grp.org_sibling_ids(_rid(u)))
+    except Exception:
+        group = False
     return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
             "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_decide_requests(u),
-            "autonomy": autonomy, "auto_recent": auto_recent}, 200
+            "autonomy": autonomy, "auto_recent": auto_recent, "group": group}, 200
 
 
 def _do_shift_request_decide(u, request_id):

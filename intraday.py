@@ -9,8 +9,11 @@ the room — which is exactly the stretch of the day they are working.
 Toast can be asked during service (businessDay net sales, and the labor
 timeEntries feed), and so can RPOWER: its above-store database is fed while
 the store trades (measured on Simple EJ's 9/29/26: a sale posted within
-minutes; rpower.fetch_sales_today / fetch_clock_ins_today). A POS that
-cannot be read is still reported honestly as not seeing today.
+minutes; rpower.fetch_sales_today / fetch_clock_ins_today). Since 10/10/26
+Square and Clover answer as well (square / clover fetch_sales_today and
+fetch_clock_ins_today), and the live labor read (labor_live) sets the
+punches so far against these sales every 15 minutes. A POS that cannot be
+read is still reported honestly as not seeing today.
 
 TWO THINGS, BOTH ACTIONABLE BEFORE THE NEXT SERVICE:
 

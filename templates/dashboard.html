@@ -37097,6 +37097,7 @@ window._cuRole=window.CAV_BOOT.role;
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrOffer('+(+o.id)+',this)">Offer</button>'
         +(auto&&!ao?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
         +(ao&&d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrOfferReverse('+(+ao.id)+',this)">Withdraw offer</button>':'')
+        +(d.group&&d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCrossSite('+(+o.id)+',this)">Other locations</button>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCancelOpen('+(+o.id)+',this)">Take it off</button></div>';
     }
     /* A swap that approved itself and went through can still be traded back. */
@@ -37145,6 +37146,32 @@ window._cuRole=window.CAV_BOOT.role;
       if(!d.ok){toast(d.error||'Could not change that','error');return;}
       toast('Saved','success');
       loadShiftRequests();
+    });
+  };
+  /* People at the group's other locations who said they travel, judged by
+     this location's rules (cross_site, MARKET-16). */
+  window.shrCrossSite=function(id,btn){
+    var done=busy(btn,'Looking…');
+    jget('/api/labor/cross-site/candidates?request_id='+id,function(d){
+      done();
+      var row=document.querySelector('[data-shr-open="'+id+'"]');if(!row)return;
+      var box=row.querySelector('.shr-xsite');
+      if(!box){box=document.createElement('div');box.className='shr-xsite lb2-intro';row.appendChild(box);}
+      if(!d.ok){box.textContent=d.error||'Could not look that up.';return;}
+      var c=d.candidates||[],h='',i;
+      if(!c.length)h='Nobody at your other locations who said they travel works that role.';
+      for(i=0;i<c.length;i++){
+        h+='<div>'+esc(c[i].name)+' <span class="sub">('+esc(c[i].home)+')</span> '+(c[i].ok?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-name="'+esc(c[i].name)+'" onclick="shrCrossOffer('+(+id)+','+(+c[i].home_restaurant_id)+',this)">Offer</button>':'<span class="sub">can’t: '+esc(c[i].why||'')+'</span>')+'</div>';}
+      box.innerHTML=h;
+    });
+  };
+  window.shrCrossOffer=function(id,home,btn){
+    var name=btn.getAttribute('data-name')||'';
+    var done=busy(btn,'Offering…');
+    jsend('/api/labor/cross-site/offer',{request_id:id,home_restaurant_id:home,name:name},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not offer that','error');return;}
+      toast('Offered to '+name,'success');loadShiftRequests();
     });
   };
   window.shrOfferReverse=function(id,btn){

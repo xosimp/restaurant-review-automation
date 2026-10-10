@@ -239,3 +239,39 @@ def test_a_new_pos_plugs_in_with_one_registration_and_a_broken_one_is_left_out(m
     got = pos.get_providers()
     assert got["spoton"] is good and "broken" not in got and "missing" not in got and "toast" in got
     assert pos.capabilities(good)["archive"] is False
+
+
+# ── Square and Clover read during service (MARKET-10, MARKET-24) ───────────
+
+def test_square_answers_during_service_with_sales_so_far_and_who_is_on(db_path, monkeypatch):
+    import square
+    rid = _restaurant(db_path, square_access_token="sq", square_location_id="L1")
+
+    def fake(fn, url, **kw):
+        if url.endswith("/orders/search"):
+            return _Resp({"orders": [
+                {"id": "A", "state": "COMPLETED", "created_at": "2026-10-08T17:00:00Z", "total_money": {"amount": 2200},
+                 "total_tax_money": {"amount": 200}},
+                {"id": "B", "state": "OPEN", "created_at": "2026-10-08T17:30:00Z", "total_money": {"amount": 5000}}]})
+        if url.endswith("/labor/shifts/search"):
+            return _Resp({"shifts": [{"id": "S", "team_member_id": "TM1", "start_at": "2026-10-08T15:00:00Z",
+                                      "wage": {"title": "Server", "hourly_rate": {"amount": 1500}}}]})
+        if url.endswith("/team-members/search"):
+            return _Resp({"team_members": [{"id": "TM1", "given_name": "Ana", "family_name": "Cruz"}]})
+        raise AssertionError(url)
+    monkeypatch.setattr(square, "_http", fake)
+    assert square.fetch_sales_today(rid, date(2026, 10, 8)) == 20.0          # completed orders only, net
+    rows = square.fetch_clock_ins_today(rid, date(2026, 10, 8))
+    assert rows == [{"employee": "Ana Cruz", "role": "Server", "clocked_in_at": "2026-10-08T15:00:00Z",
+                     "clocked_out_at": None, "hourly_wage": 15.0, "external_id": "TM1"}]
+    assert pos.fetch_sales_today(rid, date(2026, 10, 8)) == (20.0, "square")
+
+
+def test_a_pos_with_nothing_posted_yet_says_so_rather_than_zero(db_path, monkeypatch):
+    import clover
+    rid = _restaurant(db_path, clover_api_token="cl", clover_merchant_id="M1")
+    monkeypatch.setattr(clover, "_http", lambda fn, url, **kw: _Resp({"elements": []}))
+    with pytest.raises(clover.CloverNoSalesYet) as e:
+        clover.fetch_sales_today(rid, date(2026, 10, 8))
+    assert e.value.not_yet is True
+    assert clover.fetch_clock_ins_today(rid, date(2026, 10, 8)) == []

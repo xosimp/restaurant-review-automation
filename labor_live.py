@@ -302,6 +302,28 @@ def _sales(restaurant, day, now_local, live=True, db_path=None) -> dict:
     elif typical:
         out.update(projected=round(max(typical, out["so_far"] or 0), 2),
                    projected_basis=f"the {weekday} forecast — too little of the day has traded to project from")
+    # The weather nowcast (MARKET-24): today's NWS forecast from the copy on
+    # file (never a fetch), and what rain does to THIS restaurant's sales —
+    # measured from its own nights (schedule_economics._rain_effect), never
+    # assumed. Applied only while the close comes from the forecast: once
+    # the day's own pace projects it, today's weather is already in it.
+    try:
+        import weather
+        import schedule_economics as _se_w
+        fc_rows = weather.cached_forecast_for_week(restaurant, [day.isoformat()])
+        wet = fc_rows and not fc_rows[0].get("stale") and (fc_rows[0].get("precip_pct") or 0) >= 50
+        eff = _se_w._rain_effect(rid, **({"db_path": db_path} if db_path else {})) if wet else None
+        if wet:
+            out["weather"] = {"precip_pct": fc_rows[0].get("precip_pct"),
+                              "rain_lift_pct": float(eff["median_lift_pct"]) if eff else None}
+        if eff and out.get("projected") and "forecast" in (out.get("projected_basis") or ""):
+            lift = float(eff["median_lift_pct"]) / 100.0
+            rest = max(0.0, out["projected"] - (out["so_far"] or 0))
+            out["projected"] = round((out["so_far"] or 0) + rest * (1 + lift), 2)
+            out["projected_basis"] += (f", moved {eff['median_lift_pct']:+g}% for the rain forecast "
+                                       f"(what rain does here, measured)")
+    except Exception:
+        pass
     if out["projected"] and out["typical"]:
         out["pace_pct"] = round((out["projected"] / out["typical"] - 1) * 100, 1)
     try:

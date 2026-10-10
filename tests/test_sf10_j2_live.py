@@ -209,3 +209,20 @@ def test_the_managers_hear_a_move_at_most_three_times_a_night(db, monkeypatch):
         labor_live._offer_to_managers(r, mid, m)
     assert len(fired) == labor_live.MAX_MOVE_PUSHES_PER_DAY
     assert fired[0][1] == "intraday_pulse"
+
+
+def test_the_rain_forecast_moves_the_close_only_while_it_comes_from_the_forecast(db, monkeypatch):
+    rid, r = _live(db, monkeypatch, SLOW, sales_so_far=200.0)
+    import schedule_economics
+    import weather
+    monkeypatch.setattr(weather, "cached_forecast_for_week",
+                        lambda rest, dates: [{"date": dates[0], "precip_pct": 80, "stale": False}])
+    monkeypatch.setattr(schedule_economics, "_rain_effect", lambda *a, **k: {"median_lift_pct": -20.0})
+    # Early in the day (11am: none of a typical Friday's sales done yet) the
+    # close is the forecast, moved by what rain measurably does here.
+    s = labor_live.read(r, now_local=dt.datetime(2026, 10, 9, 11, 0))["sales"]
+    assert "rain forecast" in s["projected_basis"] and s["projected"] == pytest.approx(200 + 4800 * 0.8)
+    assert s["weather"] == {"precip_pct": 80, "rain_lift_pct": -20.0}
+    # From the day's own pace, today's weather is already in it.
+    s = labor_live.read(r, now_local=SIX)["sales"]
+    assert "rain" not in s["projected_basis"]

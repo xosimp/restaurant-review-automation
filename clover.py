@@ -467,3 +467,55 @@ def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: d
         if o.get("createdTime"):
             out.add(_business_date_ms(int(o["createdTime"]), tz, restaurant).isoformat())
     return out
+
+
+# ── during service (schedule audit 10/10/26 MARKET-10, MARKET-24) ──────────
+#
+# Clover's orders and shifts answer while the restaurant trades: today's paid
+# orders so far, and today's shifts with their clock-in (an open one has no
+# outTime yet).
+
+class CloverNoSalesYet(RuntimeError):
+    """Clover answered, with nothing paid yet today (intraday.capture reads
+    `not_yet`)."""
+    not_yet = True
+    provider = "clover"
+
+
+def _today_ms(restaurant_id, business_date):
+    from time_utils import BUSINESS_DAY_START_HOUR
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    tz, _r = _tz_and_restaurant(restaurant_id)
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR, tzinfo=tz)
+    return day, int(start.timestamp() * 1000), int((start + timedelta(days=1)).timestamp() * 1000)
+
+
+def fetch_sales_today(restaurant_id: int, business_date) -> float:
+    """Net sales so far for the business date (pos.py's net contract: paid
+    orders' total less the tax on their payments)."""
+    day, start_ms, end_ms = _today_ms(restaurant_id, business_date)
+    paid = [o for o in _orders_window(restaurant_id, "createdTime", start_ms, end_ms)
+            if str(o.get("paymentState") or o.get("state") or "").lower() in ("paid", "locked")]
+    if not paid:
+        raise CloverNoSalesYet(f"Clover has no paid orders for {day.isoformat()} yet")
+    return _dollars(sum(_order_net_cents(o) for o in paid))
+
+
+def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
+    """Everyone who clocked in this business day: [{"employee", "role",
+    "clocked_in_at", "clocked_out_at", "hourly_wage", "external_id"}]."""
+    _day, start_ms, end_ms = _today_ms(restaurant_id, business_date)
+    shifts = [s for s in _fetch_shifts(restaurant_id, start_ms, end_ms + 16 * 3600 * 1000)
+              if s.get("inTime") and start_ms <= int(s["inTime"]) < end_ms]
+    employees = _fetch_employees(restaurant_id) if shifts else {}
+    out = []
+    for s in shifts:
+        eid = str((s.get("employee") or {}).get("id") or "").strip()
+        emp = employees.get(eid) or {}
+        if not emp.get("name") or emp.get("name") == "Unknown":
+            continue
+        stamp = lambda ms: datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).isoformat()  # noqa: E731
+        out.append({"employee": emp["name"], "role": emp.get("role") or "Staff", "clocked_in_at": stamp(s["inTime"]),
+                    "clocked_out_at": stamp(s["outTime"]) if s.get("outTime") else None, "hourly_wage": None,
+                    "external_id": eid})
+    return out

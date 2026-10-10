@@ -625,7 +625,9 @@ def fetch_sales_today(restaurant_id, business_date):
     Returns (net_sales, provider). Raises POSCapabilityError where the POS
     cannot answer intraday. Toast and RPOWER both can: RPOWER's above-store
     data posts during service (measured 9/29/26 — see rpower.py, "during
-    service"); its "a month at most" is how much one request may span. Never
+    service"); its "a month at most" is how much one request may span. Since
+    10/10/26 (MARKET-10/24) Square and Clover answer too, from the Orders
+    and Labor reads their integrations already make. Never
     returns 0 for "don't know": a restaurant told it has done no business
     by 5pm would act on it.
     """
