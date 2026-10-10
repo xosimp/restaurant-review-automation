@@ -16,6 +16,8 @@
 # Image/ImageOps, all unchanged across these versions.
 # 9/30/26: webauthn 3.0.1 added for passkeys (with cbor2, pyopenssl, pyasn1,
 # pyasn1-modules); every existing pin held.
+# 10/10/26: psycopg[binary] 3.2.3 added (with psycopg-binary) for the Postgres
+# readiness work (db_dialect, scripts/pg_copy.py); every existing pin held.
 annotated-types==0.8.0
     # via pydantic
 anthropic==0.125.0
@@ -97,6 +99,10 @@ pillow==12.3.0
     #   -r requirements.in
     #   qrcode
     #   reportlab
+psycopg[binary]==3.2.3
+    # via -r requirements.in
+psycopg-binary==3.2.3
+    # via psycopg
 pyasn1==0.6.4
     # via
     #   pyasn1-modules
@@ -140,6 +146,7 @@ typing-extensions==4.16.0
     # via
     #   anthropic
     #   anyio
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   pyopenssl

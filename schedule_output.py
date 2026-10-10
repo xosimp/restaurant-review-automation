@@ -37,6 +37,7 @@ import dataclasses
 import json
 import os
 import re
+import uuid
 import zlib
 from datetime import date as _date, datetime as _datetime
 
@@ -1153,6 +1154,11 @@ def _z(obj) -> bytes:
 def _unz(blob):
     if not blob:
         return None
+    try:
+        import blob_store
+        blob = blob_store.resolve(blob)
+    except ImportError:
+        pass
     return json.loads(zlib.decompress(blob).decode("utf-8"))
 
 
@@ -1211,6 +1217,15 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
                 "SELECT 1 FROM schedule_model_calls WHERE generation_id=? AND shared_z IS NOT NULL LIMIT 1",
                 (generation_id,)).fetchone():
             shared = None                       # this generation's first call holds it
+        # The blobs in object storage when BLOB_STORE says so (blob_store —
+        # scheduler audit 10/10/26 RM-14): the row keeps a pointer.
+        import blob_store as _bs
+        _bkey = f"{int(restaurant_id or 0)}/{generation_id or 'none'}/{uuid.uuid4().hex[:12]}"
+        _req_z = _bs.store("model-calls", _bkey + "/request", _z(req))
+        _in_z = _bs.store("model-calls", _bkey + "/inputs", _z(enc_inputs)) if enc_inputs is not None else None
+        _sh_z = _bs.store("model-calls", _bkey + "/shared", _z(shared)) if shared else None
+        _ans_z = _bs.store("model-calls", _bkey + "/answer", zlib.compress(
+            _scrub(str(answer), names).encode("utf-8", "replace"))) if answer else None
         cur = conn.execute(
             "INSERT INTO schedule_model_calls (restaurant_id, generation_id, week_start, dates_json, ai_call_id, "
             "model, effort, contract, stop_reason, outcome, error, seconds, usage_json, rows, answer_chars, "
@@ -1218,10 +1233,7 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (restaurant_id, generation_id, week_start, json.dumps(list(dates or [])), ai_call_id, model, effort,
              contract, stop_reason, outcome, (str(error)[:500] if error else None), seconds,
-             json.dumps(usage or {}), rows, answer_chars, _z(req),
-             _z(enc_inputs) if enc_inputs is not None else None,
-             _z(shared) if shared else None,
-             zlib.compress(_scrub(str(answer), names).encode("utf-8", "replace")) if answer else None,
+             json.dumps(usage or {}), rows, answer_chars, _req_z, _in_z, _sh_z, _ans_z,
              call_kind if call_kind in CALL_KINDS else None, (str(tier)[:16] if tier else None),
              (str(job_id)[:64] if job_id else None), _key))
         conn.commit()
@@ -1340,7 +1352,7 @@ def load_calls(generation_id=None, history_id=None, db_path=None) -> list:
                     "tier": r["tier"] if "tier" in r.keys() else None,
                     "request": decode(_unz(r["request_z"]) or {}),
                     "inputs": inputs,
-                    "answer": zlib.decompress(r["answer_z"]).decode("utf-8") if r["answer_z"] else ""})
+                    "answer": _answer_text(r["answer_z"])})
     return out
 
 

@@ -496,6 +496,18 @@ JOBS = {
         target=("strategy_jobs", "run_demand_opportunity"), claim="intraday", max_minutes=10),
 
     # ── the Daily Sales Report, every 10 minutes ─────────────────────────
+    "blob_offload": dict(
+        # Scheduler audit 10/10/26 RM-14: nothing while BLOB_STORE=db.
+        cadence="daily 2am CT while BLOB_STORE is s3 or local", sla_minutes=None, sends=False, runnable=True,
+        label="Blob offload",
+        description="Move old inline model-call and quality blobs to object storage, leaving a pointer",
+        target=("blob_store", "offload"), max_minutes=10),
+    "pg_shadow": dict(
+        # Scheduler audit 10/10/26 RM-13: off unless PG_SHADOW_WRITE=1.
+        cadence="every 10 minutes while PG_SHADOW_WRITE is on", sla_minutes=None, sends=False, runnable=True,
+        label="Postgres shadow",
+        description="Write the schedule revisions noted in the shadow outbox to the normalized model on Postgres",
+        target=("pg_shadow", "run_shadow_pass"), max_minutes=5),
     "dsr_sweep": dict(
         # Delivery inside is gated on scheduling_allowed (dsr.deliver._allowed).
         cadence="every 10 minutes", sla_minutes=60, sends=False, runnable=True,

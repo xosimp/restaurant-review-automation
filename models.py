@@ -1140,6 +1140,13 @@ class _HandleFinal:
 
 
 def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+    # Postgres behind the same door when DATABASE_URL names one (db_dialect —
+    # scheduler audit 10/10/26 RM-13): the platform's own database only; an
+    # explicit other path (a test's file, a restore, a script's copy) stays
+    # SQLite. SQLite is the default and costs one env read here.
+    if db_path == DB_PATH and _db_backend() == "postgres":
+        import db_dialect
+        return db_dialect.connect()
     if not _pool_enabled():
         conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
         conn.row_factory = sqlite3.Row
@@ -1155,6 +1162,15 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     except TypeError:
         pass
     return conn
+
+
+def _db_backend() -> str:
+    """db_dialect.backend() without importing it on SQLite: "postgres" only
+    when DATABASE_URL is a postgres URL and DB_BACKEND does not pin sqlite."""
+    url = os.getenv("DATABASE_URL") or ""
+    if not url.startswith(("postgres://", "postgresql://")):
+        return "sqlite"
+    return "sqlite" if (os.getenv("DB_BACKEND") or "").strip().lower() == "sqlite" else "postgres"
 
 
 def checkpoint(db_path: str = DB_PATH) -> None:
@@ -4510,6 +4526,10 @@ def init_db(db_path: str = DB_PATH):
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
     init_model_gateway(db_path)
+    # The Postgres shadow's outbox (pg_shadow — RM-13) and the blob store's
+    # index (blob_store — RM-14).
+    from pg_shadow import init_pg_shadow
+    init_pg_shadow(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).

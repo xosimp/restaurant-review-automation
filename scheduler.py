@@ -2137,11 +2137,22 @@ def _write_consistent_snapshot(dest_path):
                 os.unlink(leftover)          # VACUUM INTO refuses an existing file
             except FileNotFoundError:
                 pass
-        src = sqlite3.connect(DB_PATH, timeout=30)
-        try:
-            src.execute("VACUUM INTO ?", (partial,))
-        finally:
-            src.close()
+        import models as _m_snap
+        if _m_snap._db_backend() == "postgres":
+            # On Postgres the provider's point-in-time recovery is the first
+            # line; this nightly copy is a consistent snapshot of it exported
+            # into a SQLite file built by the boot migrations (pg_copy.
+            # export_to_sqlite — scheduler audit 10/10/26 SCALE-20), so the
+            # scrubbed, encrypted off-site copy below is made from a restored
+            # copy, never the live database, by the same code as always.
+            import pg_copy
+            pg_copy.export_to_sqlite(partial)
+        else:
+            src = sqlite3.connect(DB_PATH, timeout=30)
+            try:
+                src.execute("VACUUM INTO ?", (partial,))
+            finally:
+                src.close()
         dst = sqlite3.connect(partial)
         try:
             # Integrity-check the artifact itself, so a corrupt backup is
@@ -5389,6 +5400,20 @@ def scheduler_loop():
             if _ops.claim_period("dsr_sweep", f"{today}-{now.hour}-{now.minute // 10}"):
                 from dsr.pipeline import run_sweep
                 _ops.run_job("dsr_sweep", run_sweep)
+
+            # Every 10 minutes while the Postgres shadow is on (PG_SHADOW_WRITE,
+            # scheduler audit 10/10/26 RM-13): the schedule revisions noted in
+            # its outbox are written to the normalized model on
+            # SHADOW_DATABASE_URL. Bounded; the outbox rows are the queue.
+            # Daily at 2am while BLOB_STORE names object storage (RM-14): old
+            # inline model-call and quality blobs moved out, bounded.
+            import blob_store as _bstore
+            if _bstore.active() != "db" and _due(now, 2) and _ops.claim_period("blob_offload", str(today)):
+                _ops.run_job("blob_offload", _bstore.offload)
+
+            import pg_shadow as _pgs
+            if _pgs.enabled() and _ops.claim_period("pg_shadow", f"{today}-{now.hour}-{now.minute // 10}"):
+                _ops.run_job("pg_shadow", _pgs.run_shadow_pass)
 
             # Every tick, claimed per 10-minute slot — DSR pushes held through
             # a restaurant's quiet hours go out once they end

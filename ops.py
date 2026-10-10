@@ -2795,6 +2795,8 @@ _RETENTION_DAYS = {
     # two weeks reads what a week of passes did. The generation watchers are
     # taken when their draft lands; a row left is a job that never finished.
     "jobs": int(os.getenv("RETAIN_JOBS_DAYS", "14")),
+    # The Postgres shadow's outbox (pg_shadow, RM-13): a sent row is done.
+    "pg_shadow_outbox": int(os.getenv("RETAIN_PG_SHADOW_OUTBOX_DAYS", "30")),
     "generation_watchers": int(os.getenv("RETAIN_GENERATION_WATCHERS_DAYS", "7")),
     # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
     # batch answers within 24 hours and every answer is in ai_usage and
@@ -2883,6 +2885,7 @@ _RETENTION_COLUMN = {
     "web_analytics_daily": "day",
     "schedule_model_calls": "created_at", "schedule_generation_metrics": "created_at",
     "schedule_check_snapshots": "created_at", "jobs": "created_at", "generation_watchers": "created_at",
+    "pg_shadow_outbox": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
@@ -3019,7 +3022,7 @@ _RETENTION_FLOOR_DAYS = {
     # a replay wants a quarter of real weeks at the least.
     "schedule_model_calls": 90, "schedule_check_snapshots": 90,
     # The queue's rows: job_queue.stats reads an hour; a week of passes.
-    "jobs": 7, "generation_watchers": 2,
+    "jobs": 7, "generation_watchers": 2, "pg_shadow_outbox": 7,
     # schedule_metrics.summary reads 90 days of generations.
     "schedule_generation_metrics": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
@@ -3574,7 +3577,19 @@ def _gc_quality_blobs(conn, deadline) -> int:
     """Stored evaluations no version points at any more (thinned, pruned, or
     their week deleted), in chunks. An hour's grace: a blob is written in
     the same transaction as the version that names it, so nothing newer
-    can be waiting on it."""
+    can be waiting on it. One kept in object storage (blob_store, RM-14) is
+    deleted there first."""
+    try:
+        import blob_store
+        if blob_store.active() != "db":
+            for r in conn.execute(
+                    "SELECT body FROM quality_blobs WHERE created_at < datetime('now', '-1 hour') AND "
+                    "substr(body, 1, ?) = ? AND NOT EXISTS (SELECT 1 FROM schedule_versions v WHERE "
+                    "v.quality_ref = quality_blobs.hash) LIMIT ?",
+                    (len(blob_store.POINTER), blob_store.POINTER, int(RETENTION_CHUNK_ROWS))).fetchall():
+                blob_store.delete(r["body"])
+    except Exception as e:
+        log.warning(f"stored quality objects not deleted: {e}")
     return _chunked_delete(
         conn, "quality_blobs",
         "created_at < datetime('now', '-1 hour') AND NOT EXISTS "

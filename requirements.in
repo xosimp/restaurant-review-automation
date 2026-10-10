@@ -35,3 +35,8 @@ pillow==12.3.0
 # Passkeys (owner, 9/30/26): WebAuthn registration and sign-in verification
 # (webauthn_auth.py). Duo Labs' py_webauthn; attestation "none" only.
 webauthn==3.0.1
+# Postgres readiness (scheduler audit 10/10/26 RM-13/RM-14, workstream H2):
+# the driver db_dialect.PgConnection uses behind models.get_conn when
+# DATABASE_URL names a Postgres database, and scripts/pg_copy.py's. Imported
+# only then — SQLite stays the default and never loads it.
+psycopg[binary]==3.2.3

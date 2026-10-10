@@ -715,8 +715,13 @@ def store_quality(conn, restaurant_id, quality) -> tuple:
     import zlib
     raw = _quality_text(quality)
     ref = hashlib.sha256(f"{int(restaurant_id)}:{raw}".encode("utf-8")).hexdigest()[:40]
-    conn.execute("INSERT OR IGNORE INTO quality_blobs (hash, restaurant_id, body, raw_bytes) VALUES (?,?,?,?)",
-                 (ref, int(restaurant_id), zlib.compress(raw.encode("utf-8"), 6), len(raw)))
+    if conn.execute("SELECT 1 FROM quality_blobs WHERE hash=?", (ref,)).fetchone() is None:
+        # In object storage when BLOB_STORE says so (blob_store — RM-14):
+        # the row keeps a pointer; an identical evaluation is stored once.
+        import blob_store
+        body = blob_store.store("quality", f"{int(restaurant_id)}/{ref}", zlib.compress(raw.encode("utf-8"), 6))
+        conn.execute("INSERT OR IGNORE INTO quality_blobs (hash, restaurant_id, body, raw_bytes) VALUES (?,?,?,?)",
+                     (ref, int(restaurant_id), body, len(raw)))
     return json.dumps(quality_headline(quality)), ref
 
 
@@ -729,7 +734,8 @@ def version_quality(conn, quality_json, quality_ref=None) -> dict:
             import zlib
             row = conn.execute("SELECT body FROM quality_blobs WHERE hash=?", (quality_ref,)).fetchone()
             if row is not None:
-                return json.loads(zlib.decompress(row[0]).decode("utf-8")) or {}
+                import blob_store
+                return json.loads(zlib.decompress(blob_store.resolve(row[0])).decode("utf-8")) or {}
         except Exception as e:
             log.warning("quality detail %s unreadable: %s", quality_ref, e)
     try:
@@ -882,6 +888,10 @@ def _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quali
          (saved_by or "").strip()[:120] or None, saved_authority,
          json.dumps(row_origins) if row_origins else None, delta, base_v))
     row_id = cur.lastrowid
+    # The Postgres shadow of the schedule model (pg_shadow — RM-13): one
+    # outbox row in this same transaction when PG_SHADOW_WRITE is on.
+    import pg_shadow
+    pg_shadow.note_revision(conn, restaurant_id, history_id, version)
     if open_recs and d and d.get("changes"):
         _record_implied_acceptance(conn, restaurant_id, open_recs, before_rows, after_rows, saved_by)
     return row_id, version
