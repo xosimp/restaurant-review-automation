@@ -526,8 +526,11 @@ def test_the_clock_writes_the_days_drafted_once_per_new_day_and_a_pending_poll_r
     clock.plan_days(WEEK[:2])                                  # the gate's rewrite never re-plans the count
     assert [w["days_drafted"] for w in writes] == [0, 1, 2] and writes[-1]["days_total"] == 7
     got = ops.read_async_job(job, restaurant_id=rid)
-    assert got["status"] == "pending" and got["progress"] == {"days_total": 7, "days_drafted": 2,
-                                                              "dates_drafted": [WEEK[0], WEEK[1]]}
+    p = got["progress"]
+    assert got["status"] == "pending" and {k: p[k] for k in ("days_total", "days_drafted", "dates_drafted")} == \
+        {"days_total": 7, "days_drafted": 2, "dates_drafted": [WEEK[0], WEEK[1]]}
+    # The stage the job reached rides with it (schedule audit 10/10/26 TRUST-16).
+    assert p["stage"] == "draft" and [s["key"] for s in p["stages"] if s["done"]] == ["inputs"]
     ops.finish_async_job(job, "done", {"ok": True})
     ops.set_async_job_progress(job, {"days_total": 7, "days_drafted": 7})   # a finished job is never rewritten
     assert "progress" not in ops.read_async_job(job, restaurant_id=rid)

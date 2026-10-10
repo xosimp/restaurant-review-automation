@@ -6826,7 +6826,7 @@ svg:hover .hb-xh{opacity:1}
     var box=document.createElement('div');box.className='hb-chk-ack';box.style.padding='4px 0 10px 22px';
     var h='<div class="sr-k">Read before this goes out</div>',i;
     for(i=0;i<list.length;i++)h+='<div class="sr-line bad"><span class="d"></span><span>'+esc(list[i])+'</span></div>';
-    if(mf.length)h+='<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="cavNav(\'schedule/'+(+b.schedule_id||0)+'\')">Open the week to fix '+mf.length+' thing'+(mf.length===1?'':'s')+'</button>';
+    if(mf.length)h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cavNav(\'schedule/'+(+b.schedule_id||0)+'\')">Open the week to fix '+mf.length+' thing'+(mf.length===1?'':'s')+'</button>';
     else h+='<button type="button" class="cbtn cbtn-danger cbtn-sm" data-body="'+esc(JSON.stringify(b))+'" onclick="hbActionDo(\''+esc(route)+'\',this)">Send with '+list.length+' warning'+(list.length===1?'':'s')+' read\u2026</button>';
     box.innerHTML=h;row.parentNode.insertBefore(box,row.nextSibling);
   }

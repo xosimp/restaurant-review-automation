@@ -1681,6 +1681,9 @@ def _soft_fail(what, exc, restaurant_id):
 _INPUT_WORDS = {
     # The closing manager's assumed stay, said and priced (TRUST-21).
     "assumed stays": "the closing manager's assumed stay",
+    # The owner's pinned shifts a regenerate keeps (TRUST-17), and the standby
+    # odds of a week reopened later (TRUST-25).
+    "locked shifts": "the shifts you pinned", "standby": "the standby days",
     # The shape contract's slot filling (AI cost audit 10/7/26 #69, off by default).
     "shape slot assignment": "who fills each slot the draft asked for",
     # The notice rule that sets which week a draft targets (MARKET-1).
