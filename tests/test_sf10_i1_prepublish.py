@@ -555,3 +555,11 @@ def test_a_failed_pos_push_is_said_on_the_sent_week(db, monkeypatch):
     monkeypatch.setattr(psp, "last_push", lambda r, ws, db_path=None: None)
     assert prepublish.pos_push_status(rid, row) is None
     assert prepublish.pos_push_status(rid, {"published_at": None, "week_start": "2026-10-12"}) is None
+
+
+def test_the_held_week_push_never_offers_send_now_past_a_must_fix_item():
+    import delayed
+    items = [{"key": "notice_short", "text": "late", "tier": sp.DECIDE},
+             {"key": "input:availability:ana", "text": "Ana's settings", "tier": sp.MUST_FIX}]
+    assert delayed._send_now_keys({}, {"blocker_items": items, "new_blockers": ["late"]}) is None
+    assert delayed._send_now_keys({}, {"blocker_items": items[:1], "new_blockers": ["late"]}) == ["notice_short"]

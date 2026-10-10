@@ -532,10 +532,16 @@ def _send_now_keys(payload, out):
     # A hard rule — no manager on the floor first of all, a coverage gap,
     # overtime past the cap, approved time off — is never acknowledged from
     # the lock screen: the week is opened and read (re-audit 10/8/26).
+    # Nor any must-fix item (schedule audit 10/10/26 TRUST-3, ARCH-30): it
+    # needs an override of its own with a reason, which a lock screen cannot
+    # give — the gate would refuse the keys anyway.
     from schedule_rules import HARD
+    import schedule_publish as _sp_snk
     for b in items:
         parts = str(b.get("key") or "").split(":")
         if len(parts) > 1 and parts[0] == "rule" and parts[1] in HARD:
+            return None
+        if b.get("tier") == _sp_snk.MUST_FIX:
             return None
     keys = [str(b.get("key")) for b in items if b.get("key")]
     return keys if len(keys) == len(items) else None
