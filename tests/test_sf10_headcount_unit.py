@@ -132,6 +132,23 @@ def test_the_section_cap_never_cuts_a_count_of_different_people():
     assert out["Server AM"] + out["Server PM"] == 5 and sum(trimmed.values()) == 2
 
 
+def test_the_section_cap_trim_reads_a_floor_as_people_on_at_once(no_avail):
+    # The only cut there is (A and B are pinned) leaves 7:30-8:30pm with one
+    # server under a floor of two: the floor holds it — not a generic "rule",
+    # as the old daypart count read it (A is still "present" for dinner).
+    floors = {"Server": {"morning": 0, "night": 2, "days": {}}}
+    c = _c(role_floors=floors, section_cap=2)
+    rows = [dict(_row("A", "5:00pm", "7:30pm"), _pinned="manager"), dict(_row("B", "5:00pm", "11:00pm"),
+                                                                          _pinned="manager"),
+            _row("C", "6:30pm", "11:00pm")]
+    rep = {}
+    out, n, _dates = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=2, constraints=c,
+                                                 floors=floors, report=rep)
+    assert n == 0
+    held = rep["conflicts"][0]["held_by"]
+    assert held == [{"kind": "floor", "role": "Server", "daypart": "night", "floor": 2}]
+
+
 def test_the_owners_most_on_at_once_holds_the_half_hours_not_the_crew():
     import schedule_requirements as req
     curve = {"Friday": {17: 0.1, 18: 0.3, 19: 0.5, 20: 0.1}}

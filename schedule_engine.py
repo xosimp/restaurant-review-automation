@@ -4821,18 +4821,30 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     rows_trimmed = 0
     conflicts = []
 
-    def _on(rs, date, key, part):
-        return len({_name_key(x.get("employee")) for x in rs if x.get("date") == date
-                    and _family(x.get("role"), fams) == key and part in _present(x)})
+    import types as _types_cap
+    _fc = c if c is not None else _types_cap.SimpleNamespace(open_times={}, close_times=close_times or {},
+                                                             role_families=None)
 
     def _cut_ok(r, cut, date, day_name):
         """(ok, why) for `r` becoming `cut` (None: removed)."""
         after = [x for x in preview_rows if x is not r] + ([cut] if cut is not None else [])
         key = _family(r.get("role"), fams)
-        for part in _present(r):
-            floor = max((_rules.floor_for(floors, role, day_name, part) for role in floors
-                         if _family(role, fams) == key), default=0)
-            if floor and _on(after, date, key, part) < min(floor, _on(preview_rows, date, key, part)):
+        # A floor is people on at once at every half hour of the core window
+        # (the coverage_floor test, _floor_short_slots): a cut that leaves the
+        # role's family further under it, at any half hour, is held by the
+        # floor. It used to count who was merely present for the daypart, so
+        # a cut to 6:30pm that left 7-8:30pm under the floor read as fine here
+        # (schedule audit 10/10/26 — one headcount unit).
+        for part in ("morning", "night"):
+            floor = sum(_rules.floor_for(floors, role, day_name, part) for role in floors
+                        if _family(role, fams) == key)
+            if not floor:
+                continue
+            was = _floor_short_slots(_fc, day_name, [x for x in preview_rows if x.get("date") == date],
+                                     r.get("role"), floor, part)
+            now = _floor_short_slots(_fc, day_name, [x for x in after if x.get("date") == date],
+                                     r.get("role"), floor, part)
+            if sum(now.values()) > sum(was.values()):
                 return False, {"kind": "floor", "role": r.get("role"), "daypart": part, "floor": floor}
         worse = change_regressions(preview_rows, after, c, date, [r.get("employee")],
                                    upto=_rules.TIER_MIN_HOURS, hard_only=False)
