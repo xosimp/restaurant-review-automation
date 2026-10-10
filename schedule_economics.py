@@ -57,6 +57,17 @@ TRIM_TAIL_STEP_MIN = 30
 TRIM_MIN_SHIFT_HOURS = 4.0
 TRIM_MAX_TAIL_CUTS = 120
 TRIM_MAX_SECONDS = 20.0         # past this the trim stops where it is and says what is left over
+# Somebody's only shift of the week is a cost to cut, not a refusal (sched
+# audit 10/10/26 LOGIC-14): it ranks as though its day were this many hours
+# less over its target — a Tuesday-lunch extra on a day far over can still
+# go, before a regular's Saturday tail. A minimum-hours promise still holds.
+ONLY_SHIFT_COST_HOURS = 2.0
+# What staffing cuts measured worse here weigh in the trim at full strength
+# (rec_learning.learned_cut_penalty, 0-1): the slot ranks as though its day
+# were this many hours less over target — graded, never a freeze of the
+# weekday (LOGIC-15); improved cuts the mirror, half as much.
+LEARNED_CUT_COST_HOURS = 4.0
+LEARNED_LEAN_BONUS_HOURS = 2.0
 STAGGER_STEP_MIN = 30
 STAGGER_MAX_MIN = 90
 
@@ -1593,10 +1604,20 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                    tolerance: float = TRIM_TOLERANCE, score_fn=None,
                    score_seconds: float = TRIM_SCORE_SECONDS, only_dates=None, requirements=None,
                    learned_worse: dict = None, outcomes: dict = None, report: dict = None,
-                   soft_asks: list = None) -> tuple:
+                   soft_asks: list = None, cost_fn=None, budget_value: float = None,
+                   pricing: dict = None) -> tuple:
     """Take the most discretionary hours out until the week is within the
     budget — the tails of shifts first, then whole shifts — every change
     reported.
+
+    In dollars (sched audit 10/10/26 LOGIC-13): with `cost_fn` (rows ->
+    the week's hourly pay, each person at their own rate and overtime at its
+    premium — schedule_engine.RepairContext.cost) and `budget_value` (the
+    hourly budget's dollars), the week is over, and each change saves, by
+    that measure: a $9 tipped hour and a $24 cook hour no longer count the
+    same, and 20h of overtime no longer reads "on budget" in hours.
+    `pricing` (week_pricing) ranks equally discretionary hours by what they
+    cost — overtime first. Without them, hours (the display view).
 
     1. Tails, the close stagger (schedule audit 10/3/26 P-27). Where another
        person in the role stays on through it, the end of a shift goes first
@@ -1607,11 +1628,11 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     2. Whole shifts: rows the top-up added, then the later leg of a double,
        then the latest starter of a role on the day furthest over its own
        target — preferring the daypart with the lowest sales per labor hour
-       and, on a rainy day, a patio role. Never somebody's only shift of the
-       week, never under their minimum hours, never the last of a role on a
-       daypart they were on the floor for or the one who stays latest in
-       their role that night, never below a role floor, never the only
-       trained cover for a kitchen station.
+       and, on a rainy day, a patio role — somebody's only shift of the week
+       a cost, not a refusal (LOGIC-14). Never under their minimum hours,
+       never the last of a role on a daypart they were on the floor for or
+       the one who stays latest in their role that night, never below a role
+       floor, never the only trained cover for a kitchen station.
 
     Neither ever (E-2, P-13, SQ-7, L-24, P-10):
       * makes a rule breach new or worse at any rank above the budget's —
@@ -1623,10 +1644,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         SHIFT REQUIREMENTS rows: the usual headcount, floors and demand, and
         the half-hour ramp) — the coverage score judges the draft by them,
         and a trim that cut under them made the shortfalls it then scored;
-      * touches a weekday where staffing cuts measured worse here
-        (`learned_worse`, rec_learning.worsened_levers through schedule_
-        engine.learned_worse_levers) or a daypart that has gone wrong before
-        (`outcomes`, schedule_intel.outcomes_by_daypart's "troubled"), or
+      * touches a daypart that has gone wrong before (`outcomes`,
+        schedule_intel.outcomes_by_daypart's "troubled"), or
         takes back a "+1" the reviews or the nightly reports asked for
         (`soft_asks`, staffing_signals.soft_requirements: the role is kept
         at its usual number plus the ask on that night);
@@ -1641,7 +1660,11 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     discretionary candidates the one whose change costs the week the least
     Shift Quality: the order says which hours are optional, the score which
     of them the floor can best spare. Past `score_seconds` the order alone
-    decides.
+    decides. Staffing cuts measured worse in a slot (`learned_worse`,
+    rec_learning.worsened_levers through schedule_engine.learned_worse_
+    levers) push its rows later in that order by their graded strength
+    (learned_cut_penalty) — the optimizer's one meaning of the same memory,
+    never a whole weekday frozen by one result (LOGIC-15).
 
     `report`, a dict when given, says why a week is still over the budget —
     once, for the review: report["conflict"] = {"over_by", "budget",
@@ -1669,7 +1692,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         return not (_sal and _sal(r.get("employee")))
     if budget <= 0:
         return rows, [], 0.0
-    total = sum(_hours(r) for r in rows if _paid(r))
+    dollars = bool(cost_fn is not None and budget_value and float(budget_value) > 0)
+    if dollars:
+        budget = float(budget_value)
+    total = cost_fn(rows) if dollars else sum(_hours(r) for r in rows if _paid(r))
     if total <= budget * (1 + tolerance):
         return rows, [], 0.0
 
@@ -1685,9 +1711,31 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         except Exception:
             no_show = set()
     if no_show:
-        total = sum(_hours(r) for r in rows if id(r) not in no_show and _paid(r))
+        total = (cost_fn([r for r in rows if id(r) not in no_show]) if dollars else
+                 sum(_hours(r) for r in rows if id(r) not in no_show and _paid(r)))
         if total <= budget * (1 + tolerance):
             return rows, [], 0.0
+
+    def _cost(rs):
+        """The week's measure of `rs` (its live rows): hourly pay in dollars,
+        else hourly hours."""
+        live = [x for x in rs if id(x) not in no_show]
+        return cost_fn(live) if dollars else sum(_hours(x) for x in live if _paid(x))
+
+    _rates = {str(k).strip().lower(): float(v) for k, v in ((pricing or {}).get("role_rates") or {}).items()
+              if k and k != "_default" and v}
+    _people = (pricing or {}).get("person_rates") or {}
+    _blend = float((pricing or {}).get("blended_rate") or 0) or 1.0
+
+    def _rate(r, person_hours):
+        """What an hour of `r` costs, for ordering equally discretionary
+        hours (dollars mode; 1 an hour otherwise): the person's rate, else
+        the role's, at the overtime premium once they are past 40h."""
+        if not dollars:
+            return 1.0
+        n = " ".join(str(r.get("employee") or "").lower().split())
+        base = float(_people.get(n) or _rates.get(str(r.get("role") or "").strip().lower()) or _blend)
+        return base * (1.5 if person_hours.get(n, 0.0) > 40.05 else 1.0)
 
     import schedule_engine as _se
     from schedule_rules import floor_for, TIER_MIN_HOURS
@@ -1716,8 +1764,19 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             spec = index.setdefault(d, {}).setdefault(part, {}).setdefault(
                 k, {"role": str(role).strip(), "required": 0, "typical": 0, "half": {}})
             spec["required"] = max(spec["required"], int(spec.get("typical") or 0) + delta)
-    worse_days = {str(k).strip().lower() for k, v in (learned_worse or {}).items()
-                  if isinstance(v, dict) and int(v.get("worsened") or 0) > 0}
+    import rec_learning as _rl
+
+    def _learned(r):
+        """(strength not to cut, strength the slot runs leaner) from what
+        staffing cuts measured here, for `r`'s weekday, dayparts and role
+        (rec_learning.learned_cut_penalty — LOGIC-15)."""
+        if not learned_worse:
+            return 0.0, 0.0
+        wd = _day(r.get("date"))
+        fam = _se._role_key(r.get("role"), c)
+        parts = _se._present(r) or [None]
+        return (max(_rl.learned_cut_penalty(learned_worse, wd, p, fam) for p in parts),
+                max(_rl.learned_cut_penalty(learned_worse, wd, p, fam, lean=True) for p in parts))
     troubled = {(str(wd).strip().lower(), part) for wd, parts in (outcomes or {}).items() if isinstance(parts, dict)
                 for part, e in parts.items() if isinstance(e, dict) and e.get("troubled")}
     trimmed = []
@@ -1729,6 +1788,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
 
     def _out_of_time():
         return _time.monotonic() - _t0 > TRIM_MAX_SECONDS
+
+    def _learned_note(r) -> str:
+        worse_s, _lean = _learned(r)
+        if worse_s <= 0:
+            return ""
+        return (f" (staffing cuts on {_day(r.get('date'))}s measured worse here — weighed, at "
+                f"{round(worse_s * 100):d}% strength, not a veto)")
 
     def _day(d):
         try:
@@ -1756,8 +1822,6 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         if not (d and (r.get("role") or "").strip()):
             return ("unreadable", None)
         wd = _day(d)
-        if wd.lower() in worse_days:
-            return ("learned", wd)
         for part in _se._present(r):
             if (wd.lower(), part) in troubled:
                 return ("troubled", (wd, part))
@@ -1823,7 +1887,9 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         steps = int(math.floor(room * 60 / TRIM_TAIL_STEP_MIN + 1e-9))
         if steps <= 0:
             return None
-        steps = min(steps, max(1, int(math.ceil((total - budget) * 60 / TRIM_TAIL_STEP_MIN - 1e-9))))
+        # Hours enough to close the overage at this row's own cost an hour.
+        unit = per_hour.get(id(r)) or 1.0
+        steps = min(steps, max(1, int(math.ceil((total - budget) / unit * 60 / TRIM_TAIL_STEP_MIN - 1e-9))))
         d, k, day = r.get("date"), keys.get(id(r)), _day(r.get("date"))
         me = (r.get("employee") or "").strip().lower()
         mates = [(x, spans[id(x)]) for x in groups.get((d, k), []) if x is not r and spans.get(id(x))
@@ -1863,6 +1929,15 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             return new, round(n * TRIM_TAIL_STEP_MIN / 60.0, 2)
         return None
 
+    def _saved(r, new):
+        """What changing `r` into `new` (None: removed) takes off the week's
+        measure — dollars at each person's rate with the overtime premium,
+        or hours."""
+        if not dollars:
+            return _hours(r) - (_hours(new) if new is not None else 0.0)
+        after = [x for x in rows if x is not r] + ([new] if new is not None else [])
+        return _cost(rows) - _cost(after)
+
     for _ in range(TRIM_MAX_TAIL_CUTS):
         if total <= budget:
             break
@@ -1872,9 +1947,11 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         live = _live(rows)
         spans = {id(x): _se._span_minutes(x) for x in rows}
         keys = {id(x): _se._role_key(x.get("role"), c) for x in rows}
-        groups, day_hours = {}, {}
+        groups, day_hours, person_hours = {}, {}, {}
         for x in live:
             groups.setdefault((x.get("date"), keys[id(x)]), []).append(x)
+            pn = " ".join(str(x.get("employee") or "").lower().split())
+            person_hours[pn] = person_hours.get(pn, 0.0) + _hours(x)
             # A day's "over" is on its target's basis: hourly hours against
             # the hourly daily target. Salaried hours ranked the day a
             # salaried GM works as the most over and cut it while it sat
@@ -1882,14 +1959,21 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             if _paid(x):
                 day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
 
+        per_hour = {id(x): _rate(x, person_hours) for x in rows}
+
         def _tail_order(r):
             d = r.get("date")
             tgt = float((daily_targets or {}).get(d) or 0)
             over = (day_hours.get(d, 0.0) - tgt) if tgt else day_hours.get(d, 0.0)
+            worse_s, lean_s = _learned(r)
+            over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
             rain = 0 if (d in rainy and (r.get("role") or "").strip().lower() in patio) else 1
             s = splh_for(r)
             sp = spans.get(id(r)) or (0, 0)
-            return (rain, -over, s if s is not None else 10 ** 9, sp[0], -sp[1], (r.get("employee") or ""))
+            # Equally discretionary hours: the dearer first — overtime at its
+            # premium, a $24 cook hour before a $9 tipped one (LOGIC-13).
+            return (rain, -round(over), -per_hour.get(id(r), 1.0), s if s is not None else 10 ** 9, sp[0], -sp[1],
+                    (r.get("employee") or ""))
 
         refusals.clear()
         want = TRIM_SCORE_CANDIDATES if _scoring() else 1
@@ -1907,15 +1991,19 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         if not options:
             break
         r, new, h = _choose(options)
+        saved = _saved(r, new)
         rows[rows.index(r)] = new
         cut_rows.add(id(new))
-        total -= h
+        total -= saved
         removed += h
         entry = {"date": r.get("date"), "day": r.get("day"), "employee": r.get("employee"), "role": r.get("role"),
                  "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"), "hours": h,
                  "kind": "cut", "to": new.get("shift_end"),
                  "reason": f"ends {new.get('shift_end')}, {h:g}h early — another "
-                           f"{_role_words(r.get('role'), 1, 'person in the role')} stays on until {r.get('shift_end')}"}
+                           f"{_role_words(r.get('role'), 1, 'person in the role')} stays on until {r.get('shift_end')}"
+                           + _learned_note(r)}
+        if dollars:
+            entry["dollars"] = round(saved, 2)
         trimmed.append(entry)
         entry_of[id(new)] = entry
 
@@ -1931,6 +2019,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         parts_of = {id(x): _se._present(x) for x in rows}
         ends = {id(x): (_se._span_minutes(x) or (0, 0))[1] for x in rows}
         day_hours, person_rows, person_hours, crew, by_person_day, last_out = {}, {}, {}, {}, {}, {}
+        rate_hours = {}
+        for x in live:
+            pn = " ".join(str(x.get("employee") or "").lower().split())
+            rate_hours[pn] = rate_hours.get(pn, 0.0) + _hours(x)
         for x in live:
             low = (x.get("employee") or "").strip().lower()
             if _paid(x):
@@ -1965,11 +2057,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                 return False, held
             d, name = r.get("date"), r.get("employee")
             low = (name or "").strip().lower()
-            # Never somebody's only shift of the week, and never under the
-            # minimum hours they asked for (SCHED-23). A row the top-up added
-            # is the pipeline's own addition, so taking it back is allowed.
-            if "top-up" not in (r.get("notes") or "").lower() and person_rows.get(low, 0) <= 1:
-                return False, ("only_shift", None)
+            # Never under the minimum hours they asked for (SCHED-23).
+            # Somebody's only shift is a cost (priority, ONLY_SHIFT_COST_
+            # HOURS), not a refusal: the most discretionary row of the week
+            # may be a part-timer's one Tuesday lunch (LOGIC-14).
             if c is not None:
                 try:
                     mn = c.min_hours(name)
@@ -2006,7 +2097,14 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             s = splh_for(r)
             splh_rank = s if s is not None else 10 ** 9
             start = _minutes(r.get("shift_start", "")) or 0
-            return (tier, rain, -day_over(r.get("date")), splh_rank, -start)
+            over = day_over(r.get("date"))
+            low = (r.get("employee") or "").strip().lower()
+            if tier == 2 and person_rows.get(low, 0) <= 1:
+                over -= ONLY_SHIFT_COST_HOURS          # retention: a cost, not a refusal (LOGIC-14)
+            worse_s, lean_s = _learned(r)
+            over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
+            rate = _rate(r, rate_hours)
+            return (tier, rain, -round(over), -rate, splh_rank, -start)
 
         refusals.clear()
         cands = []
@@ -2029,14 +2127,19 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         if not options:
             break
         victim, _none, h = _choose(options)
+        saved = _saved(victim, None)
         rows.remove(victim)
-        total -= h
+        total -= saved
         removed += h
         why = ("added by the top-up" if "top-up" in (victim.get("notes") or "").lower()
                else "second leg of a double" if second_leg(victim)
                else f"latest {victim.get('role')} on a day {day_over(victim.get('date')):.0f}h over its target")
         if victim.get("date") in rainy and (victim.get("role") or "").strip().lower() in patio:
             why += ", rain forecast on a patio role"
+        if person_rows.get((victim.get("employee") or "").strip().lower(), 0) <= 1 \
+                and "top-up" not in (victim.get("notes") or "").lower():
+            why += f" — {victim.get('employee')}'s only shift this week"
+        why += _learned_note(victim)
         earlier = entry_of.pop(id(victim), None)
         if earlier is not None:
             # Ended early first, then taken out: one entry, the whole shift.
@@ -2046,9 +2149,19 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             trimmed.append({"date": victim.get("date"), "day": victim.get("day"), "employee": victim.get("employee"),
                             "role": victim.get("role"), "shift_start": victim.get("shift_start"),
                             "shift_end": victim.get("shift_end"), "hours": h, "kind": "removed", "reason": why})
+            if dollars:
+                trimmed[-1]["dollars"] = round(saved, 2)
 
     if report is not None and total > budget * (1 + tolerance):
-        report["conflict"] = _conflict(total, budget, refusals, timed_out)
+        if dollars:
+            # Said in hours too (the display view): how far over in dollars,
+            # and the hourly hours against the hours budget.
+            hrs = sum(_hours(x) for x in _live(rows) if _paid(x))
+            report["conflict"] = _conflict(hrs, float(hours_budget or 0), refusals, timed_out)
+            report["conflict"].update({"over_by_dollars": round(total - budget, 0), "budget_dollars": round(budget, 0),
+                                       "scheduled_dollars": round(total, 0)})
+        else:
+            report["conflict"] = _conflict(total, budget, refusals, timed_out)
     return rows, trimmed, round(removed, 1)
 
 
@@ -2137,6 +2250,13 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
         bits.insert(0, "its time limit")
     if not bits:
         return ""
+    if conflict.get("over_by_dollars") is not None and conflict.get("budget_dollars"):
+        # The budget is held in dollars (LOGIC-13): said that way, the
+        # hours beside it.
+        return (f"The trim stopped ${float(conflict['over_by_dollars']):,.0f} over the "
+                f"${float(conflict['budget_dollars']):,.0f} hourly budget ({float(conflict.get('scheduled') or 0):,.0f}h "
+                f"against {float(conflict.get('budget') or 0):,.0f}h): the rest is held by "
+                + "; ".join(bits[:3]) + ". Raise the budget, or lower the floors or staffing you set, to close it.")
     return (f"The trim stopped {over:,.0f}h over the {b:,.0f}h budget: the rest is held by "
             + "; ".join(bits[:3]) + ". Raise the hours budget, or lower the floors or staffing you set, to close it.")
 

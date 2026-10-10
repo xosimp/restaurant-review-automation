@@ -150,20 +150,35 @@ def test_the_food_drivers_are_weighed_by_what_that_kind_of_fix_measured_here(mon
 
 
 def test_a_cut_on_a_day_whose_cuts_measured_worse_pays_for_it():
+    # Graded evidence, never a veto (sched audit 10/10/26 LOGIC-15,
+    # LEARNING-10): Friday's cuts went worse 4 of 4 against a restaurant
+    # whose other cuts mostly did not; one bad Tuesday among five is noise.
     import schedule_optimizer as opt
     rid = _rid()
-    for v in ("worsened", "worsened", "improved"):
-        _episode(rid, "trim_day:Friday", "labor", verdict=v, title="Trim Friday dinner by one server")
-    _episode(rid, "coverage:Monday", "schedule", verdict="worsened", title="Add a Monday opener")
+    _n[0] = 0           # this restaurant's own result windows, recent enough to weigh (decay_weight)
+    for _ in range(4):
+        _episode(rid, "trim_day:Monday", "labor", verdict="improved", title="Trim Monday lunch by one server")
+    _episode(rid, "trim_day:Tuesday", "labor", verdict="worsened", title="Trim Tuesday by one server")
+    for _ in range(4):
+        _episode(rid, "trim_day:Tuesday", "labor", verdict="no_clear_change", title="Trim Tuesday by one server")
+    # (each result decays by its age: these are the oldest — still clear)
+    for _ in range(4):
+        _episode(rid, "trim_day:Friday", "labor", verdict="worsened", title="Trim Friday dinner by one server")
+    _episode(rid, "coverage:Monday", "schedule", verdict="worsened", title="Add a Monday opener")   # not a cut
     levers = rec_learning.worsened_levers(rid)
-    assert levers == {"friday": {"worsened": 2, "measured": 3, "label": "staffing cuts on Fridays"}}
+    fri, tue, mon_l = levers["friday"], levers["tuesday"], levers["monday"]
+    assert (fri["worsened"], fri["measured"]) == (4, 4) and 0.05 < fri["strength"] < 1.0
+    assert (tue["worsened"], tue["measured"]) == (1, 5) and tue["strength"] == 0.0     # one noisy week
+    assert mon_l["strength"] == 0.0 and mon_l["leaner"] > 0                            # cutting worked
+    assert rec_learning.learned_cut_penalty(levers, "Friday") == fri["strength"]
     worse = opt.learned_worse_days({"learned_worse": levers})
-    fri = "2026-10-02"                                           # a Friday
-    before = [{"date": fri, "scheduled_hours": "6", "shift_start": "5:00pm", "shift_end": "11:00pm"}] * 2
+    fri_d = "2026-10-02"                                           # a Friday
+    before = [{"date": fri_d, "scheduled_hours": "6", "shift_start": "5:00pm", "shift_end": "11:00pm",
+               "role": "Server"}] * 2
     pen, why = opt.learned_penalty(worse, before, before[:1])
-    assert pen == 1.0 and "staffing cuts on Fridays measured worse here 2 times" in why
+    assert pen == round(opt.LEARNED_WORSE_MAX * fri["strength"], 3) and "staffing cuts on Fridays" in why
     assert opt.learned_penalty(worse, before, before) == (0.0, None)          # no cut, no cost
-    mon = [{"date": "2026-10-05", "scheduled_hours": "6"}] * 2
-    assert opt.learned_penalty(worse, mon, mon[:1]) == (0.0, None)            # another day
+    tue_d = [{"date": "2026-10-06", "scheduled_hours": "6", "role": "Server"}] * 2
+    assert opt.learned_penalty(worse, tue_d, tue_d[:1]) == (0.0, None)        # graded to nothing
     import schedule_engine
     assert schedule_engine.learned_worse_levers(rid) == levers

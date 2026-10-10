@@ -1463,6 +1463,8 @@ def _soft_fail(what, exc, restaurant_id):
 # the review's one line about what the draft was made without (P-17). An
 # input not named here reads as its own name.
 _INPUT_WORDS = {
+    # The closing manager's assumed stay, said and priced (TRUST-21).
+    "assumed stays": "the closing manager's assumed stay",
     # The shape contract's slot filling (AI cost audit 10/7/26 #69, off by default).
     "shape slot assignment": "who fills each slot the draft asked for",
     "staff_availability": "staff availability", "staffing_baseline": "the usual crew from past weeks",
@@ -7551,6 +7553,12 @@ class RepairContext:
         self.roster = list(result.get("roster") or [])
         self.profiles = result.get("shift_profiles") or None
         self.budget = float(result.get("hours_budget") or 0)
+        # The hourly budget in dollars (labor.py: the all-in target's dollars
+        # less salaries): what the week is held to, priced at each person's
+        # rate with overtime at its premium (sched audit 10/10/26 LOGIC-13);
+        # the hours budget stays the display view.
+        self.budget_dollars = float(result.get("labor_budget_dollars") or 0)
+        self._pricing = None
         self.trim_on = bool(int(getattr(restaurant, "trim_to_budget", 1) or 0)) if restaurant is not None else True
         # A budget mostly priced at the assumed wage is not cut to (E-24):
         # budget_basis.trim_ok, said in the review.
@@ -7607,12 +7615,45 @@ class RepairContext:
     def hourly(self, rows) -> float:
         return _hourly_hours_sum(rows, self.c)
 
+    def pricing(self):
+        """The week's pricing inputs (schedule_economics.week_pricing — each
+        person's rate, the 40h line per payroll week, salaried people free),
+        read once; None when they cannot be read."""
+        if self._pricing is None:
+            try:
+                import schedule_economics as _econ
+                self._pricing = _econ.week_pricing(self.rid, self.c, blended_rate=self.result.get("blended_rate")) \
+                    if self.rid is not None else {}
+            except Exception as exc:
+                print(f"[schedule] week pricing unavailable: {exc!r}")
+                self._pricing = {}
+        return self._pricing or None
+
+    def cost(self, rows):
+        """The week's hourly pay in dollars — each person at their own rate,
+        overtime at its premium, and an hourly closing manager's assumed stay
+        counted (schedule_rules.with_assumed_stays, TRUST-21) — or
+        None without a dollar budget or the rates to price it."""
+        if self.budget_dollars <= 0:
+            return None
+        p = self.pricing()
+        if not p:
+            return None
+        import schedule_economics as _econ
+        return _econ.price_week(_rules.with_assumed_stays(rows, self.c), p, rounded=False)["total"]
+
     def over_budget(self, rows) -> float:
-        """Hourly hours past the budget and the trim's own tolerance."""
+        """How far the week is past the budget and the trim's own tolerance:
+        dollars when the week can be priced (LOGIC-13), else hourly hours
+        (an hourly closing manager's assumed stay counted either way)."""
+        import schedule_economics as _econ
+        cost = self.cost(rows)
+        if cost is not None:
+            return round(max(0.0, cost - self.budget_dollars * (1 + _econ.TRIM_TOLERANCE)), 2)
         if self.budget <= 0:
             return 0.0
-        import schedule_economics as _econ
-        return round(max(0.0, self.hourly(rows) - self.budget * (1 + _econ.TRIM_TOLERANCE)), 2)
+        return round(max(0.0, self.hourly(_rules.with_assumed_stays(rows, self.c))
+                         - self.budget * (1 + _econ.TRIM_TOLERANCE)), 2)
 
 
 def _full_sig(r) -> tuple:
@@ -7920,7 +7961,11 @@ def _stage_budget(rows, x):
         splh=x.result.get("splh_by_daypart") or {}, rainy_dates=x.rainy, patio_roles=x.c.patio_roles,
         score_fn=score_fn, only_dates=x.editable, requirements=x.requirements,
         learned_worse=x.result.get("learned_worse"), outcomes=x.result.get("outcomes_by_daypart"),
-        soft_asks=x.result.get("soft_requirements"), report=rep)
+        soft_asks=x.result.get("soft_requirements"), report=rep,
+        # In dollars, the loop's own measure (LOGIC-13): the trim stops where
+        # the judge says the week fits.
+        cost_fn=x.cost if x.cost([]) is not None else None, budget_value=x.budget_dollars or None,
+        pricing=x.pricing() if x.budget_dollars > 0 else None)
     return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
 
 
@@ -8856,7 +8901,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     # on a week that owes none (NS3 H5).
                     _pricing = _econ.week_pricing(restaurant_id, _constraints,
                                                   blended_rate=result.get("blended_rate"))
-                    _priced = _econ.price_week(_rows, _pricing)
+                    # An hourly closing manager's assumed stay is paid time:
+                    # priced (sched audit 10/10/26 TRUST-21).
+                    _priced = _econ.price_week(_rules.with_assumed_stays(_rows, _constraints), _pricing)
                     result["projected_cost"] = _priced
                     _lbd = float(result.get("labor_budget_dollars") or 0)
                     result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
@@ -8953,6 +9000,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"]["manager_plan"] = {
                 "question": _mplan.get("question"), "unknown_pattern": list(_mplan.get("unknown_pattern") or []),
                 "uncovered": _skeleton.payload(_mplan)["uncovered"]}
+            # The closing manager the owner's verdict assumes stays past their
+            # scheduled end until the last person leaves: said per day, with
+            # the one tap that writes it into the schedule, and priced for an
+            # hourly manager (sched audit 10/10/26 TRUST-21).
+            try:
+                _stays = _rules.assumed_stays(preview_rows, _constraints)
+            except Exception as _sx:
+                _soft_fail("assumed stays", _sx, restaurant_id)
+                _stays = []
+            result["review"]["assumed_stays"] = _stays
+            result["review"]["stay_lines"] = [_s["text"] for _s in _stays]
+            result["review"]["lines"].extend(result["review"]["stay_lines"])
             # Why the manager rule could not be met, once for the week (each
             # day's stretch is already its own day-level line), and who is
             # still under the minimum hours set for them, with why (E-12,
@@ -9993,6 +10052,19 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
         if not still:
             mc["shortfall"] = None
         out["manager_coverage"] = mc
+    # The closing stays the owner's verdict assumes, as the rows now stand
+    # (TRUST-21): an edit that wrote a manager to the last person out, or
+    # moved the last person, changes them.
+    old_stay_lines = list(saved.get("stay_lines") or [])
+    if constraints is not None:
+        try:
+            stays = _rules.assumed_stays(rows or [], constraints)
+        except Exception as _sx:
+            print(f"[schedule] assumed stays unavailable: {_sx!r}")
+            stays = None
+        if stays is not None:
+            out["assumed_stays"] = stays
+            out["stay_lines"] = [s["text"] for s in stays]
     if isinstance(saved.get("min_hours"), dict):
         short = {(v.get("employee") or "").strip().lower() for v in violations or [] if v.get("kind") == "under_min_hours"}
         mh = dict(saved["min_hours"])
@@ -10009,6 +10081,8 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
                 if ln not in rule_lines and ln not in set(budget_old) and ln not in set(lead)]
     else:
         tail = [ln for ln in saved.get("lines") or [] if not str(ln).startswith("⚠")]
+    if "stay_lines" in out and out.get("stay_lines") != old_stay_lines:
+        tail = [ln for ln in tail if ln not in set(old_stay_lines)] + list(out["stay_lines"])
     # A day the generation could not write, or nobody could work, that the
     # owner has since filled is not said as empty any more.
     on = {r.get("date") for r in rows or [] if (r.get("employee") or "").strip()}

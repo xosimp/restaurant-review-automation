@@ -57,7 +57,10 @@ def _c(**kw):
     c.salaried = {"erik", "jim"}
     c.open_times = {d: "11:00am" for d in DAYS}
     c.close_times = dict(CLOSES)
+    # The owner's one "stays until close + 60" setting for the bar writes
+    # both the must-stay and the after-close allowance (D-43).
     c.role_buffers = {"Bartender": 60}
+    c.close_mins = {"bartender": 60}
     for k, v in kw.items():
         setattr(c, k, v)
     return c
@@ -199,7 +202,7 @@ def test_time_off_unavailable_days_and_hour_windows_are_kept():
 def test_usual_days_and_hours_come_from_published_weeks_and_punches():
     hist = (_hist("Jim", [1], "4:00pm", "10:00pm") + _hist("Jim", [3], "5:00pm", "12:00am", role="Bartender PM")
             + _hist("Andrew", [0, 2], "10:30", "17:00", published=False))
-    plan = sk.plan_manager_coverage(_c(role_buffers={}), WEEK, history=hist)
+    plan = sk.plan_manager_coverage(_c(role_buffers={}, close_mins={}), WEEK, history=hist)
     jim_tue, jim_thu = _on(plan, "2026-10-06", "Jim"), _on(plan, "2026-10-08", "Jim")
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_tue] == [("4:00pm", "10:00pm", "usual")]
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_thu] == [("5:00pm", "12:00am", "usual")]

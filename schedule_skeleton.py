@@ -344,12 +344,52 @@ def _stay_after_close(c) -> int:
     return max(0, min(max(vals), 4 * 60))
 
 
+def _must_stay(c) -> int:
+    """The longest any role MUST stay past close (close_mins): the latest
+    the last person is certainly on."""
+    vals = [0]
+    for v in (getattr(c, "close_mins", None) or {}).values():
+        try:
+            vals.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return max(0, min(max(vals), 4 * 60))
+
+
+def _rule_spans(c, wd) -> list:
+    """When the owner's hours & shift rules put somebody on this weekday —
+    a role's earliest start or latest end (role_windows), a role's start or
+    end time (role_times) — as short spans around those times: an event
+    day's 7am delivery the owner wrote down is part of the day (ARCH-13)."""
+    out = []
+    for by_day in (getattr(c, "role_windows", None) or {}).values():
+        w = (by_day or {}).get(wd) or {}
+        if w.get("earliest") is not None:
+            out.append((int(w["earliest"]), int(w["earliest"]) + 60))
+        if w.get("latest") is not None:
+            out.append((int(w["latest"]) - 60, int(w["latest"])))
+    for (role, day, _part), t in (getattr(c, "role_times", None) or {}).items():
+        if day != wd or not isinstance(t, dict):
+            continue
+        if t.get("start") is not None:
+            out.append((int(t["start"]), int(t["start"]) + 60))
+        if t.get("end") is not None:
+            out.append((int(t["end"]) - 60, int(t["end"])))
+    return out
+
+
 def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
-    """(start, end, source) minutes of the day a manager has to be on: from
-    the earlier of the opening time and the usual first start on file (prep
-    arrives before the doors open) to the close plus the longest stay after
-    it — or, with no close on file, the usual last end. None when neither
-    the hours nor the record say when this day runs."""
+    """(start, end, source) minutes of the day a manager has to be on — the
+    check's own requirement (schedule_rules.manager_need: the hours open on
+    file and when people are on), over the spans this week is expected to
+    have: the usual first start to the usual last end on file (prep
+    arrives before the doors open), the owner's hours & shift rules for the
+    day, and the close to when the last person usually leaves — at least
+    the longest stay a role must make, at most the longest any role may run
+    past close (schedule audit 10/10/26 ARCH-13: planned to the close plus
+    the longest allowance whatever the night really needs, checked against
+    the hours and the rows). With no close on file, the usual last end.
+    None when neither the hours nor the record say when this day runs."""
     wd = _weekday(date_iso)
     o = _clock((open_times or {}).get(wd))
     cl = _clock((close_times or {}).get(wd))
@@ -357,16 +397,27 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
         cl += 24 * 60                       # a close in the small hours is the next morning
     hist = (spans or {}).get(wd) or {}
     hs, he = hist.get("start"), hist.get("end")
-    starts = [x for x in (o, hs) if x is not None]
-    if not starts:
+    if o is None and hs is None:
         return None
-    start = min(starts)
+    expected = _rule_spans(c, wd)
+    must, cap = _must_stay(c), _stay_after_close(c)
+    if cl is not None and he is not None:
+        he = min(he, cl + cap)              # nobody's row may run past the longest allowance
+    if hs is not None and he is not None and he > hs:
+        expected.append((hs, he))
     if cl is not None:
-        end = cl + _stay_after_close(c)
-    elif he is not None:
-        end = he
-    else:
+        last = cl + cap
+        if he is not None:
+            # When the last person usually leaves, kept between what a role
+            # must stay and what any role may run.
+            last = min(cl + cap, max(he, cl + must))
+        expected.append((min(x for x in (o, hs, cl) if x is not None), last))
+    elif he is None:
         return None
+    need = _rules.manager_need(c, date_iso, expected, hours=(o, cl))
+    if not need:
+        return None
+    start, end = min(s for s, _e in need), max(e for _s, e in need)
     start, end = _down(start), _up(end)
     if end - start < 60 or end - start > 24 * 60:
         return None

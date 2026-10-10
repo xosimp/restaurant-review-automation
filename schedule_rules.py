@@ -50,7 +50,11 @@ DEFAULTS = {
     # What "full-time" means when the owner set no minimum for the person
     # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
     # the field said nothing): at least this many hours a week. 30 is the
-    # usual US full-time line (the ACA's); 0 or blank turns it off.
+    # usual US full-time line (the ACA's); 0 or blank turns it off. Only a
+    # line the owner CONFIRMED (full_time_min_confirmed) is a minimum the
+    # passes fill and the trim protects; until then it is a preference — an
+    # employment field a POS import typed "full" silently made a 30h promise
+    # (sched audit 10/10/26 LOGIC-29).
     "full_time_min_hours": 30.0,
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hours": (1, 12), "daily_ot_hours": (4, 24),
@@ -371,6 +375,7 @@ def compliance(restaurant) -> dict:
     out["manager_on_duty"] = False
     if "keyholder_until_close" in data:
         out["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    out["full_time_min_confirmed"] = bool(data.get("full_time_min_confirmed"))
     return _with_pack(out, restaurant, data)
 
 
@@ -574,6 +579,8 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
         clean["manager_on_duty"] = bool(data["manager_on_duty"])
     if "keyholder_until_close" in data:
         clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    if "full_time_min_confirmed" in data:
+        clean["full_time_min_confirmed"] = bool(data["full_time_min_confirmed"])
     return clean
 
 
@@ -1162,6 +1169,10 @@ class Constraints:
     # {lower: last worked iso date}. Still on the roster — a row the owner
     # writes for them is legal — but never a candidate for a fill.
     dormant: dict = field(default_factory=dict)
+    # The days of a begun payroll week still to come, never published here,
+    # whose hours toward the overtime line are each person's usual ones
+    # (BUGSGEN-21): {"dates", "hours", "people"}, or None.
+    projected_tail: dict = None
     # A person's scheduling note nobody has confirmed as a rule (D-34):
     # {lower: {"days": set(weekday names), "dates": set(iso), "text": str}}.
     # The model is told it; the fill passes keep off those days.
@@ -1181,6 +1192,11 @@ class Constraints:
     # Full-timers whose minimum is the restaurant's full-time line, not one
     # the owner set for them (D-41) — said so wherever the minimum is.
     full_time_default: set = field(default_factory=set)
+    # Full-timers the full-time line would apply to, while the owner has not
+    # confirmed it (LOGIC-29): {key: the line}. Their week aims at it as a
+    # preference (desired hours); nothing fills or protects it as a minimum,
+    # and the setup review asks the owner to confirm the line.
+    full_time_unconfirmed: dict = field(default_factory=dict)
     # Per-person inputs whose name matches nobody on the roster, active or
     # not (D-8): [{"source", "name", "detail"}] — the review names each,
     # so a fact typed under a spelling nobody goes by is never silent.
@@ -2841,8 +2857,13 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     if st.get("employment_type") == "full" and st.get("min_hours") is None and ft and key not in c.salaried:
         mx = st.get("max_hours")
         if mx is None or float(mx) >= float(ft):
-            c.hours_limits[key] = (float(ft), mx)
-            c.full_time_default.add(key)
+            if c.compliance.get("full_time_min_confirmed"):
+                c.hours_limits[key] = (float(ft), mx)
+                c.full_time_default.add(key)
+            else:
+                # Not confirmed (LOGIC-29): a preference, below every rule —
+                # read with the preferred hours below.
+                c.full_time_unconfirmed[key] = float(ft)
     if st.get("daypart_availability"):
         c.daypart_avail[key] = dict(st["daypart_availability"])
     if st.get("is_minor") or st.get("minor_age_band"):
@@ -2883,6 +2904,11 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     if st.get("preferred_dayparts") or st.get("desired_hours"):
         c.preferred[e["name"]] = {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
                                   "desired_hours": st.get("desired_hours")}
+    if key in c.full_time_unconfirmed and not st.get("desired_hours"):
+        # The unconfirmed full-time line is what they'd like, not a promise:
+        # the scorer, the solver and the optimizer weigh it as wanted hours.
+        c.preferred.setdefault(e["name"], {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
+                                           "desired_hours": None})["desired_hours"] = c.full_time_unconfirmed[key]
     if not e["active"]:
         return
     # Standing in as the manager on given dates (E-13).
@@ -3918,6 +3944,20 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                           "punches")
         except Exception as exc:
             _input_problem(c, "last week's punches", exc)
+    # The rest of a payroll week that has begun and was never published here
+    # (sched audit 10/10/26 BUGSGEN-21): its past days read the time clock
+    # above, but its days still to come counted nothing, so next week's
+    # overtime line could not see this Friday to Sunday. Each person's own
+    # usual hours on that weekday (their punches over the last four of
+    # them) stand in, toward the payroll week's hours only — never as rows
+    # a rest, overlap or run of days is judged on — and the review says so.
+    ahead = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 8))
+                   if d not in covered and d >= today and c.bucket(d) in buckets)
+    if ahead:
+        try:
+            _projected_tail(c, restaurant_id, ahead, today, db_path)
+        except Exception as exc:
+            _input_problem(c, "this payroll week's remaining days", exc)
     # The organisation's other sites (E-26, D-40).
     for sib_id, label, sib_rows in _sibling_weeks(restaurant_id, lo, hi, db_path):
         names = sorted({(r.get("employee") or "").strip() for r in sib_rows} - {""})
@@ -3946,6 +3986,52 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                     c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + row_hours(row)
             else:
                 _take(r, "published", site=label, key=k)
+
+
+PROJECTED_WEEKS = 4
+
+
+def _projected_tail(c: Constraints, restaurant_id, ahead, today, db_path) -> None:
+    """Each person's usual hours on the dates `ahead` (the begun payroll
+    week's days still to come, nothing published covers them): the mean of
+    their punched hours over the last PROJECTED_WEEKS same weekdays, a week
+    they did not work counted as 0, added to c.base_hours for the payroll
+    week (BUGSGEN-21). c.projected_tail says which dates and how much, for
+    the review."""
+    import shift_facts
+    first = datetime.strptime(min(ahead), "%Y-%m-%d") - timedelta(weeks=PROJECTED_WEEKS)
+    rows = shift_facts.person_rows(restaurant_id, since=first.strftime("%Y-%m-%d"), until=today,
+                                   db_path=None if db_path == DB_PATH else db_path)
+    by = {}
+    for r in rows or []:
+        d = str(r.get("date") or "")[:10]
+        if not d or d >= today:
+            continue
+        k = c.key(r.get("employee"))
+        if not k:
+            continue
+        hours = r.get("actual_hours") if r.get("actual_hours") not in (None, "") else r.get("scheduled_hours")
+        try:
+            h = float(hours or 0)
+        except (TypeError, ValueError):
+            continue
+        by.setdefault(k, {})[d] = by.get(k, {}).get(d, 0.0) + h
+    total, people = 0.0, set()
+    for d in ahead:
+        dt = datetime.strptime(d, "%Y-%m-%d")
+        past = [(dt - timedelta(weeks=w)).strftime("%Y-%m-%d") for w in range(1, PROJECTED_WEEKS + 1)]
+        b = c.bucket(d)
+        for k, days in by.items():
+            if any(r.get("date") == d for r in (c.base_rows.get(k) or [])):
+                continue
+            mean = round(sum(days.get(p, 0.0) for p in past) / float(PROJECTED_WEEKS), 2)
+            if mean <= 0:
+                continue
+            c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + mean
+            total += mean
+            people.add(k)
+    if total > 0:
+        c.projected_tail = {"dates": list(ahead), "hours": round(total, 1), "people": len(people)}
 
 
 def _fold_name(name) -> str:
@@ -5214,7 +5300,7 @@ def opening_prep(gap, manager_starts, open_min) -> bool:
             and gap[1] <= open_min - OPENING_MANAGER_LEAD_MINUTES)
 
 
-def manager_need(c: "Constraints", d: str, spans) -> list:
+def manager_need(c: "Constraints", d: str, spans, hours=None) -> list:
     """The stretches of date `d` a manager has to be on, merged (business
     minutes): the hours the restaurant is open on file, and every span in
     `spans` — when people are on. The one definition of the manager
@@ -5223,13 +5309,13 @@ def manager_need(c: "Constraints", d: str, spans) -> list:
     week to have, so the plan covers exactly what the check will ask
     (schedule audit 10/10/26 ARCH-13: planned from the usual first start to
     close plus the longest stay, checked against open hours and the week's
-    rows)."""
+    rows). `hours` (open, close) stands in for the hours on file."""
     need = [tuple(sp) for sp in (spans or ()) if sp and sp[1] > sp[0]]
     try:
         day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
     except (ValueError, TypeError):
         day = ""
-    o, cl = open_hours(c, day) if day else (None, None)
+    o, cl = hours if hours is not None else (open_hours(c, day) if day else (None, None))
     if o is not None or cl is not None:
         lo = o if o is not None else (min(s for s, _e in need) if need else None)
         hi = cl if cl is not None else (max(e for _s, e in need) if need else None)
@@ -5505,41 +5591,56 @@ TIER_REQUIREMENT = 6
 TIER_BUDGET = 7
 TIER_QUALITY = 8
 
-# The one ranked table: what each tier is, in the words the model reads
-# (schedule_prompt.PRIORITIES is built from it — LOGIC-20) and the owner's
-# review shows. Order is rank.
+# The one ranked table: what each tier is, in the words the model reads —
+# schedule_prompt.PRIORITIES is built from it, item by item (PRIORITY_LAYOUT),
+# so the prompt can never rank a rule differently from the code (LOGIC-20:
+# it put requirements and leadership above the hours ceiling while the code
+# stopped the top-up at the budget and held leadership to it). Order is rank.
 TIER_TABLE = (
-    (TIER_LEGAL, "legal", "Each person's own limits and the law: their availability and approved time off, "
-     "STAFF CONSTRAINTS, closed dates, the roles they may work, a minor's hours, their own weekly maximum in the "
-     "ROSTER, and any rest or days-in-a-row rule the jurisdiction makes law — and each date's opening and closing "
-     "times"),
+    (TIER_LEGAL, "legal", "Employee availability and approved time off (the person cannot be there), STAFF "
+     "CONSTRAINTS, closed dates, and each person's own limits in the ROSTER and the rules — the roles they may "
+     "work, a minor's hours, their own weekly maximum, and rest between shifts or days in a row where the law "
+     "requires them (a minor's hours and the law are the owner's legal exposure) — and each date's opening and "
+     "closing times."),
     (TIER_MANAGER, "manager", "A manager or owner on the floor every minute anyone is scheduled — the owner's "
-     "highest staffing rule. It gives way only to a manager's own availability, time off and legal limits; "
-     "overtime and the restaurant's own scheduling limits give way to it when no manager can cover a stretch "
-     "inside them"),
-    (TIER_COVERAGE, "coverage", "The owner's staffing rules: the staffing floors, each role's closer and somebody "
-     "on until close, the hours a role may start and end by the RESTAURANT HOURS & SHIFT RULES (all [HARD]), and "
-     "the owner's standing rules (OWNER_RULE, as their tags say)"),
-    (TIER_POLICY, "policy", "The restaurant's own scheduling limits that are not law: the weekly hours ceiling, "
-     "the longest shift, days in a row and rest between shifts. They hold for everything below; the manager rule "
-     "and the staffing rules above may go past them only when nobody can cover inside them"),
-    (TIER_OVERTIME, "overtime", "No overtime while a teammate in the same role has room (OT in the ROSTER): "
-     "overtime is a cost the owner does not want, only for a shift nobody else in the role can legally work"),
-    (TIER_MIN_HOURS, "min_hours", "Each person's minimum hours (MIN in the ROSTER): fill from the people still "
-     "under their minimum first"),
+     "highest staffing rule: somebody is always in charge of the floor. It gives way only to a manager's own "
+     "availability and time off and the legal limits in 1b; overtime and the restaurant's own scheduling limits "
+     "(2b) give way to it when no manager can cover a stretch inside them. Where MANAGER COVERAGE plans the "
+     "managers' shifts, code adds those rows to your answer: do not write them, and write no other shift for "
+     "those managers on those dates; a stretch it says no manager can legally cover is staffed as usual, and the "
+     "owner is told."),
+    (TIER_COVERAGE, "coverage", "First the staffing rules: the staffing floors, each role's closer and somebody "
+     "on until close, and the hours a role may start and end by the RESTAURANT HOURS & SHIFT RULES (all [HARD]), "
+     "and the owner's standing rules (OWNER_RULE, as their tags say)."),
+    (TIER_POLICY, "policy", "Then the restaurant's own scheduling limits that are not law: the weekly hours "
+     "ceiling, the longest shift, days in a row and rest between shifts as the rules give them. They hold for "
+     "everything below; 1a and 2a may go past them only for a shift nobody can cover inside them."),
+    (TIER_OVERTIME, "overtime", "Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the "
+     "same role has room: overtime is a cost the owner does not want, only for a shift nobody else in the role "
+     "can legally work."),
+    (TIER_MIN_HOURS, "min_hours", "Fill shifts from the people still under their minimum hours first (MIN in "
+     "the ROSTER; a full-timer's is the full-time line), then from those with the most room before their "
+     "overtime line."),
     (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS, the people each role needs on each shift, with the "
-     "floors the hard minimum inside them — met even when they cost more than the hours budget (the owner is "
-     "told the overrun)"),
-    (TIER_BUDGET, "budget", "The hourly labor budget, in dollars at each person's rate with overtime at its "
-     "premium — trim toward it only in ways that keep everything above intact; it never adds hours"),
-    (TIER_QUALITY, "quality", "Quality preferences — leadership first (every shift that needs somebody to run it "
-     "has one, met by WHO works the shifts the requirements call for, never by hours past the budget), then the "
-     "owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT, then every [SOFT] preference: "
-     "strength and pairing, the experience mix, a fair share of closes, weekends and busy shifts, people's usual "
-     "days, dayparts and hours, what staff want — and last the defaults above, which apply only where this "
-     "restaurant's own data says nothing"),
+     "floors the hard minimum inside them — met even when that costs more than the hours budget (4): the "
+     "owner is told the overrun."),
+    (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling) — the code holds the week to its dollars "
+     "at each person's own rate, overtime at its premium. Trim toward it only in ways that keep 1-3 intact; it "
+     "never adds hours."),
+    (TIER_QUALITY, "quality", "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S "
+     "REQUEST FOR THIS DRAFT first, then leadership (every shift that needs somebody to run it has one and every "
+     "SHIFT LEADER REQUIREMENT is met — by WHO works the shifts 3 calls for, never by hours past the budget), "
+     "then every [SOFT] preference: strength and pairing, the experience mix, a fair share of closes, weekends "
+     "and busy shifts, people's usual days, dayparts and hours, what staff want — and last the defaults above, "
+     "which apply only where this restaurant's own data says nothing."),
 )
 TIER_NAMES = {t: name for t, name, _text in TIER_TABLE}
+# Where each tier sits in PRIORITIES: (item, tier). 1a states the manager
+# rule before 1b's legal limits it yields to — the text says so; every
+# other item is in rank order.
+PRIORITY_LAYOUT = (("1a", TIER_MANAGER), ("1b", TIER_LEGAL), ("2a", TIER_COVERAGE), ("2b", TIER_POLICY),
+                   ("3a", TIER_OVERTIME), ("3b", TIER_MIN_HOURS), ("3c", TIER_REQUIREMENT), ("4", TIER_BUDGET),
+                   ("5", TIER_QUALITY))
 
 # The restaurant's own limits that are policy, not law, unless a
 # jurisdiction pack makes them law (law_backed): ranked TIER_POLICY.
