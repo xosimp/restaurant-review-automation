@@ -31,8 +31,10 @@ restaurant's own nights:
 
 Outcomes: sales against the meal's forecast (the same weekday's median for
 the meal over the 8 weeks before — a log ratio, said in dollars at the
-meal's typical sales), the comp rate (comps / net), the median table turn
-(minutes), from the ticket archive.
+meal's typical sales), the comp and void rates (of net), the median table
+turn and the median kitchen fire-to-bump minutes (where the POS records
+them) from the ticket archive, and the meal's attributed review rating
+(schedule_outcomes' `daypart` attribution — sparse, so it speaks rarely).
 
 The two are pooled by inverse variance. decide() moves a requirement by one
 person only when an interval clears zero: up when one more person's sales
@@ -64,8 +66,12 @@ Z90 = 1.645
 CURSOR_KEY = "staffing_elasticity_cursor"
 RUN_MAX_SECONDS = 15 * 60
 PARTS = ("morning", "night")
-OUTCOMES = ("sales", "comps", "turn")
-OUTCOME_GOOD = {"sales": 1, "comps": -1, "turn": -1}   # the direction one more person should move it
+OUTCOMES = ("sales", "comps", "voids", "turn", "kitchen", "review")
+# The direction one more person should move each outcome: sales and the
+# meal's attributed review up; comps, voids, table turns and kitchen
+# fire-to-bump minutes down.
+OUTCOME_GOOD = {"sales": 1, "comps": -1, "voids": -1, "turn": -1, "kitchen": -1, "review": 1}
+SERVICE_OUTCOMES = ("comps", "voids", "turn", "kitchen", "review")
 DEFAULT_SHIFT_HOURS = 6.0        # a shift's length where the punches give none
 
 
@@ -212,7 +218,7 @@ def decide(est: dict, typical_sales, shift_cost, target_pct) -> dict:
     # clears zero in the good direction) — equally, one fewer measurably
     # worsens it.
     better = []
-    for o in ("comps", "turn"):
+    for o in SERVICE_OUTCOMES:
         e = (est or {}).get(o)
         if e and (e["hi"] < 0 if OUTCOME_GOOD[o] < 0 else e["lo"] > 0):
             better.append(o)
@@ -237,19 +243,28 @@ def _meals(restaurant_id, start, end, db_path=DB_PATH) -> dict:
     for d, e in sales.items():
         for part in PARTS:
             if e.get(part):
-                out[(d, part)] = {"sales": float(e[part]), "comps_rate": None, "turn": None}
+                out[(d, part)] = {"sales": float(e[part]), "comps_rate": None, "voids_rate": None, "turn": None,
+                                  "kitchen": None, "review": None}
     conn = get_conn(db_path)
     try:
         tickets = conn.execute(
-            "SELECT ticket_id, business_date, opened_at, closed_at, room_name, is_bar, net_sales FROM pos_tickets "
-            "WHERE restaurant_id=? AND business_date>=? AND business_date<? AND COALESCE(cancelled,0)=0",
-            (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
-        comps = {r[0]: float(r[1] or 0) for r in conn.execute(
-            "SELECT ticket_id, SUM(COALESCE(loss_amount, 0)) FROM pos_ticket_lines WHERE restaurant_id=? AND "
-            "business_date>=? AND business_date<? AND kind='comp' GROUP BY ticket_id",
+            "SELECT ticket_id, business_date, opened_at, closed_at, fired_at, bumped_at, room_name, is_bar, "
+            "net_sales FROM pos_tickets WHERE restaurant_id=? AND business_date>=? AND business_date<? "
+            "AND COALESCE(cancelled,0)=0", (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
+        losses = {}
+        for r in conn.execute(
+                "SELECT ticket_id, kind, SUM(COALESCE(loss_amount, 0)) AS amt FROM pos_ticket_lines WHERE "
+                "restaurant_id=? AND business_date>=? AND business_date<? AND kind IN ('comp','void') "
+                "GROUP BY ticket_id, kind", (restaurant_id, str(start)[:10], str(end)[:10])).fetchall():
+            losses.setdefault(r["kind"], {})[r["ticket_id"]] = float(r["amt"] or 0)
+        # The meal's reviews put on the shift they were about (schedule_intel
+        # .record_outcomes' `daypart` attribution only).
+        reviews = {(str(r["date"])[:10], r["daypart"]): float(r["rating"]) for r in conn.execute(
+            "SELECT date, daypart, review_rating_attributed AS rating FROM schedule_outcomes WHERE restaurant_id=? "
+            "AND date>=? AND date<? AND review_rating_attributed IS NOT NULL",
             (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()}
     except Exception:
-        tickets, comps = [], {}
+        tickets, losses, reviews = [], {}, {}
     finally:
         conn.close()
     import service_performance as _sp
@@ -261,16 +276,27 @@ def _meals(restaurant_id, start, end, db_path=DB_PATH) -> dict:
         except (TypeError, ValueError):
             continue
         part = "morning" if hh * 60 + mm < split and hh >= 5 else "night"
-        e = agg.setdefault((str(t["business_date"])[:10], part), {"net": 0.0, "comps": 0.0, "turns": []})
+        e = agg.setdefault((str(t["business_date"])[:10], part),
+                           {"net": 0.0, "comps": 0.0, "voids": 0.0, "turns": [], "kitchen": []})
         e["net"] += float(t["net_sales"] or 0)
-        e["comps"] += comps.get(t["ticket_id"], 0.0)
+        e["comps"] += (losses.get("comp") or {}).get(t["ticket_id"], 0.0)
+        e["voids"] += (losses.get("void") or {}).get(t["ticket_id"], 0.0)
         m = _sp._turn(dict(t))
         if m is not None:
             e["turns"].append(m)
+        if t["fired_at"] and t["bumped_at"]:
+            km = _sp._minutes(t["fired_at"], t["bumped_at"])
+            if km is not None and 0 < km <= 120:
+                e["kitchen"].append(km)
     for k, e in agg.items():
         if k in out:
             out[k]["comps_rate"] = (e["comps"] / e["net"]) if e["net"] > 0 else None
+            out[k]["voids_rate"] = (e["voids"] / e["net"]) if e["net"] > 0 else None
             out[k]["turn"] = _median(e["turns"]) if len(e["turns"]) >= 5 else None
+            out[k]["kitchen"] = _median(e["kitchen"]) if len(e["kitchen"]) >= 5 else None
+    for k, v in reviews.items():
+        if k in out:
+            out[k]["review"] = v
     return out
 
 
@@ -354,7 +380,9 @@ def units_for(restaurant_id, today=None, db_path=DB_PATH, days=ESTIMATE_DAYS, ho
             out.setdefault((fam, part), []).append({
                 "date": d, "weekday": day.strftime("%A"), "people": on, "fc": math.log(base),
                 "absent": (d, part, fam) in absent, "typical": base,
-                "y": {"sales": math.log(m["sales"] / base), "comps": m.get("comps_rate"), "turn": m.get("turn")}})
+                "y": {"sales": math.log(m["sales"] / base), "comps": m.get("comps_rate"),
+                      "voids": m.get("voids_rate"), "turn": m.get("turn"), "kitchen": m.get("kitchen"),
+                      "review": m.get("review")}})
     return out
 
 
@@ -438,16 +466,20 @@ def reason(fam, part, e) -> str:
     net = e.get("net") or {}
     oc = e.get("outcomes") or {}
     if e.get("move") == 1 and str(e.get("why") or "").startswith("service"):
-        bits = []
+        bits, n = [], 0
         for o in str(e["why"]).split(":", 1)[1].split(","):
             x = oc.get(o) or {}
+            n = max(n, int(x.get("n") or 0))
+            lo, hi = abs(x.get("hi") or 0), abs(x.get("lo") or 0)
             if o == "turn":
-                bits.append(f"tables turned {abs(x.get('est') or 0):.0f} min faster (90% CI {abs(x.get('hi') or 0):.0f}"
-                            f"-{abs(x.get('lo') or 0):.0f})")
-            elif o == "comps":
-                bits.append(f"comps {abs((x.get('est') or 0) * 100):.1f} points lower")
-        return (f"one more {who} at {meal} measured better service here: " + "; ".join(bits)
-                + f" (over {oc.get(o, {}).get('n')} meals)")
+                bits.append(f"tables turned {abs(x.get('est') or 0):.0f} min faster (90% CI {lo:.0f}-{hi:.0f})")
+            elif o == "kitchen":
+                bits.append(f"kitchen tickets out {abs(x.get('est') or 0):.1f} min faster (90% CI {lo:.1f}-{hi:.1f})")
+            elif o in ("comps", "voids"):
+                bits.append(f"{o} {abs((x.get('est') or 0) * 100):.1f} points of sales lower")
+            elif o == "review":
+                bits.append(f"the meal's reviews {abs(x.get('est') or 0):.1f} stars higher")
+        return f"one more {who} at {meal} measured better service here: " + "; ".join(bits) + f" (over {n} meals)"
     if net:
         word = "one more" if e.get("move") == 1 else "one fewer" if e.get("move") == -1 else "one more"
         return (f"{word} {who} at {meal}: one more measured {net.get('sales', 0):+,.0f} in sales a meal here "

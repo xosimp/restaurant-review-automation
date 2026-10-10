@@ -573,6 +573,36 @@ def test_the_trim_cuts_where_an_hour_measurably_returns_least():
     assert removed({("bartender", "night"): {"lo": -20.0, "hi": 5.0}}) == ["Server"]
 
 
+def test_the_weekly_estimate_reads_the_restaurants_own_nights(db_path):
+    import staffing_elasticity as se
+    import staff_settings
+    rid = _rid()
+    today = date(2026, 10, 10)
+    rnd = random.Random(4)
+    for k in range(1, 118):
+        d = (today - timedelta(days=k)).isoformat()                                  # every night
+        absent = k % 9 == 0
+        for i in range(4):
+            if absent and i == 3:
+                _exec("INSERT INTO attendance_events (restaurant_id, employee_name, employee_key, business_date, "
+                      "shift_start, role, outcome, source) VALUES (?,?,?,?,?,?,?,?)",
+                      (rid, "S3", staff_settings.name_key("S3"), d, "5:00pm", "Server", "no_show", "manual"))
+                continue
+            _exec("INSERT INTO shift_facts (restaurant_id, business_date, employee_name, employee_key, role, "
+                  "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source) "
+                  "VALUES (?,?,?,?,?,?,?,NULL,?,?,?)",
+                  (rid, d, f"S{i}", staff_settings.name_key(f"S{i}"), "Server", "17:00", "22:00", 5, 12.0, "rpower"))
+        net = (900.0 if absent else 1000.0) * (1 + rnd.gauss(0, 0.01))
+        _exec("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, opened_at, guest_count, "
+              "net_sales) VALUES (?,?,?,?,?,?,?)", (rid, "rpower", f"t{k}", d, f"{d}T18:30:00", 10, net))
+    got = se.estimate_restaurant(rid, today=today, db_path=db_path)
+    e = got[("server", "night")]
+    s = e["outcomes"]["sales"]
+    # An uncovered no-show cost ~10% of the meal: one more server is worth it.
+    assert e["absences"] >= se.NAT_MIN and s["lo"] > 0 and s["est"] == pytest.approx(0.105, abs=0.03)
+    assert se.stored(rid, db_path=db_path)[("server", "night")]["meals"] == e["meals"]
+
+
 def test_the_requirement_carries_the_measured_move_and_never_takes_the_last_person():
     import schedule_requirements as req
     typical = {("Friday", "night"): {"Server": 4, "Dishwasher": 1}}
@@ -602,6 +632,22 @@ def test_a_few_lucky_tickets_are_shrunk_toward_the_house():
     assert got["few"]["raw"] == pytest.approx(0.12) and got["many"]["raw"] == pytest.approx(0.12)
     assert got["few"]["est"] < got["many"]["est"] < 0.12
     assert (got["few"]["hi"] - got["few"]["lo"]) > (got["many"]["hi"] - got["many"]["lo"])
+
+
+def test_the_weekly_productivity_estimate_is_stored_for_the_owner(db_path):
+    import staff_productivity as sp
+    rid = _rid()
+    rnd = random.Random(8)
+    day = (date.today() - timedelta(days=3)).isoformat()
+    for s, spg in (("Ana", 42.0), ("Bo", 30.0), ("Cy", 35.0), ("Di", 34.0)):
+        for i in range(40):
+            _exec("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, server_id, server_name, "
+                  "guest_count, net_sales, mealtime) VALUES (?,?,?,?,?,?,?,?,?)",
+                  (rid, "rpower", f"{s}{i}", day, s, s, 2, 2 * spg * (1 + rnd.gauss(0, 0.05)), "Dinner"))
+    got = sp.estimate_restaurant(rid, db_path=db_path)
+    stored = sp.stored(rid, db_path=db_path)
+    ana = next(v for k, v in stored.items() if v["name"] == "Ana")["measures"]["sales_per_guest"]
+    assert len(got) == 4 and ana["measured"] and ana["lo"] > 0
 
 
 def test_a_rating_that_disagrees_with_the_measure_is_flagged():
