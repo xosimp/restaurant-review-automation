@@ -556,6 +556,7 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `schedule_calibration_runs` | 400 (`RETAIN_SCHED_CALIBRATION_RUNS_DAYS`; schedule audit 10/10/26 LEARNING-9: the weights' weekly shadow runs and promotions — an undo holds for eight weeks) | `run_at` | 90 | — |
 | `schedule_generation_tags` | 400 (`RETAIN_SCHED_GENERATION_TAGS_DAYS`; schedule audit 10/10/26 RM-4, AI-29: what made each draft — commit, arms, row origins, the learning ablation's two drafts; read until the week's scorecard row is frozen) | `created_at` | 120 | — |
 | `schedule_publish_overrides` | 400 (`RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS`; schedule audit 10/10/26 TRUST-28: the publish warnings shown and sent past, by key — the override rate per kind reads 180 days) | `shown_at` | 180 | — |
+| `offer_response_platforms` | 400 (`RETAIN_OFFER_PLATFORMS_DAYS`; scheduler audit 10/10/26 MARKET-18: each staff offer answer's client — iPhone app, installed portal, phone browser — and minutes to answer; the admin reads 90 days) | `answered_at` | 90 | — |
 | `schedule_learning_records` | 168 (`RETAIN_SCHED_LEARNING_RECORDS_DAYS`; schedule audit 10/10/26 SCALE-33: each week as the edit learners read it, a cache rewritten whenever the week changes — older than the learners' window is a week they no longer read) | `created_at` | 168 | — |
 | `job_period_claims` | 45 | `claimed_at` | 35 | — |
 | `alert_holds` | 30 | `created_at` | 7 | — |

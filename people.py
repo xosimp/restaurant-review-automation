@@ -1015,6 +1015,17 @@ NAME_STORES = (
     # An availability cut waiting on a manager or not yet in force
     # (availability_changes, schedule audit 10/10/26 MARKET-15).
     {"table": "staff_availability_changes", "cols": ("employee_name",), "no_person_id": True},
+    # Scheduler audit 10/10/26 (J3): an on-call slot and its consent
+    # (standby_insurance), how firm each published shift was for them
+    # (commitment_ladder), and their organization-bench opt-in and asks
+    # (org_bench, the home site's row) — re-pointed on a rename, deleted on an
+    # erase. A bench ask lives at the ASKING site (org_bench_requests) and is
+    # that site's record of whom it asked.
+    {"table": "standby_slots", "cols": ("employee_name",), "key": "name_key",
+     "unique": ("date", "name_key", "shift_start"), "fold": "newest", "no_person_id": True},
+    {"table": "shift_commitments", "cols": ("employee_name",), "key": "name_key",
+     "unique": ("date", "name_key", "shift_start"), "fold": "newest", "no_person_id": True},
+    {"table": "org_bench_members", "cols": ("employee_name",), "no_person_id": True},
 )
 
 # Stores keyed only by a staff login (memberships.id), with no name to

@@ -12,7 +12,9 @@ cross-site identity or consent to offer them a shift.
 What is built (organization-internal):
 
   identity     one login (auth users) with a membership at the home site;
-               the bench row is (user, home restaurant). Siblings are
+               the bench row is (user, home restaurant — its restaurant_id,
+               so people.NAME_STORES re-points it on a rename and deletes it
+               on an erase). Siblings are
                schedule_rules.org_sibling_ids — the same organization (or
                the same group under the same owner) — never an unrelated
                restaurant.
@@ -92,13 +94,13 @@ def init_org_bench(db_path=None):
         conn.execute("""CREATE TABLE IF NOT EXISTS org_bench_members (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id             INTEGER NOT NULL,
-            home_restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            restaurant_id       INTEGER NOT NULL REFERENCES restaurants(id),
             employee_name       TEXT    NOT NULL,
             consent_at          TEXT    NOT NULL,
             consent_text        TEXT    NOT NULL,
             consent_version     INTEGER NOT NULL,
             revoked_at          TEXT,
-            UNIQUE(user_id, home_restaurant_id)
+            UNIQUE(user_id, restaurant_id)
         )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS org_bench_requests (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,13 +202,13 @@ def join(user_id, home_restaurant_id, employee_name, agree=False, db_path=None) 
     text = consent_text(home_restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
-        conn.execute("INSERT INTO org_bench_members (user_id, home_restaurant_id, employee_name, consent_at, "
-                     "consent_text, consent_version) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id, home_restaurant_id) "
+        conn.execute("INSERT INTO org_bench_members (user_id, restaurant_id, employee_name, consent_at, "
+                     "consent_text, consent_version) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id, restaurant_id) "
                      "DO UPDATE SET employee_name=excluded.employee_name, consent_at=excluded.consent_at, "
                      "consent_text=excluded.consent_text, consent_version=excluded.consent_version, revoked_at=NULL",
                      (int(user_id), home_restaurant_id, employee_name, _now(), text, CONSENT_VERSION))
         conn.commit()
-        row = conn.execute("SELECT * FROM org_bench_members WHERE user_id=? AND home_restaurant_id=?",
+        row = conn.execute("SELECT * FROM org_bench_members WHERE user_id=? AND restaurant_id=?",
                            (int(user_id), home_restaurant_id)).fetchone()
     finally:
         conn.close()
@@ -217,10 +219,10 @@ def leave(user_id, home_restaurant_id, db_path=None) -> bool:
     """Consent withdrawn: off the bench at once, every open ask withdrawn."""
     conn = get_conn(db_path)
     try:
-        cur = conn.execute("UPDATE org_bench_members SET revoked_at=? WHERE user_id=? AND home_restaurant_id=? AND "
+        cur = conn.execute("UPDATE org_bench_members SET revoked_at=? WHERE user_id=? AND restaurant_id=? AND "
                            "revoked_at IS NULL", (_now(), int(user_id), home_restaurant_id))
         conn.execute("UPDATE org_bench_requests SET status='withdrawn', answered_at=? WHERE status='asked' AND "
-                     "member_id IN (SELECT id FROM org_bench_members WHERE user_id=? AND home_restaurant_id=?)",
+                     "member_id IN (SELECT id FROM org_bench_members WHERE user_id=? AND restaurant_id=?)",
                      (_now(), int(user_id), home_restaurant_id))
         conn.commit()
         return cur.rowcount == 1
@@ -231,7 +233,7 @@ def leave(user_id, home_restaurant_id, db_path=None) -> bool:
 def membership(user_id, home_restaurant_id, db_path=None):
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT * FROM org_bench_members WHERE user_id=? AND home_restaurant_id=?",
+        r = conn.execute("SELECT * FROM org_bench_members WHERE user_id=? AND restaurant_id=?",
                          (int(user_id), home_restaurant_id)).fetchone()
     finally:
         conn.close()
@@ -242,7 +244,7 @@ def opted_in(home_restaurant_id, employee_name, db_path=None) -> bool:
     """Whether this person has consented to the bench (J2's travel flag)."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT employee_name FROM org_bench_members WHERE home_restaurant_id=? AND revoked_at IS "
+        rows = conn.execute("SELECT employee_name FROM org_bench_members WHERE restaurant_id=? AND revoked_at IS "
                             "NULL", (home_restaurant_id,)).fetchall()
     finally:
         conn.close()
@@ -283,13 +285,13 @@ def candidates(restaurant_id, day, role, shift_start, shift_end, db_path=None) -
     conn = get_conn(db_path)
     try:
         members = [dict(r) for r in conn.execute(
-            f"SELECT * FROM org_bench_members WHERE revoked_at IS NULL AND home_restaurant_id IN "
+            f"SELECT * FROM org_bench_members WHERE revoked_at IS NULL AND restaurant_id IN "
             f"({','.join('?' for _ in sibs)})", sibs).fetchall()]
     finally:
         conn.close()
     out = []
     for m in members:
-        home = m["home_restaurant_id"]
+        home = m["restaurant_id"]
         try:
             import shift_facts
             import staff_settings
@@ -419,7 +421,7 @@ def owner_view(restaurant_id, db_path=None) -> dict:
     conn = get_conn(db_path)
     try:
         mine = [dict(r) for r in conn.execute(
-            "SELECT employee_name, consent_at FROM org_bench_members WHERE home_restaurant_id=? AND revoked_at IS NULL "
+            "SELECT employee_name, consent_at FROM org_bench_members WHERE restaurant_id=? AND revoked_at IS NULL "
             "ORDER BY employee_name", (restaurant_id,)).fetchall()]
         asks = [dict(r) for r in conn.execute(
             "SELECT * FROM org_bench_requests WHERE restaurant_id=? ORDER BY asked_at DESC LIMIT 50",

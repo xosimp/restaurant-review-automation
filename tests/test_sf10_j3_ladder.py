@@ -105,6 +105,23 @@ def test_a_published_week_is_committed_once_and_later_changes_are_counted_per_pe
     assert cl.committed_for_week(rid, [FRI, SAT]) == {(FRI, "ana", "5:00pm"): "firm"}
 
 
+def test_a_rename_carries_the_commitments_and_an_erase_removes_them(monkeypatch):
+    import people
+    _forecasts(monkeypatch)
+    rid = create_restaurant(Restaurant(name="Ladder Co", owner_email="l@x.test", module_labor=1))
+    models.add_manual_team_member(rid, "Ana", role="Server")
+    hid = _publish(rid, [_row(FRI, "Ana"), _row(SAT, "Ana")])
+    cl.ensure(rid, hid, today=TODAY)
+    pid = people.person_id_for(rid, "Ana")
+    people.rename_person(rid, pid, "Anabel")
+    got = cl.levels_for(rid, FRI, SAT)
+    assert (FRI, "anabel", "5:00pm") in got and (FRI, "ana", "5:00pm") not in got
+    import staff_settings
+    staff_settings.upsert(rid, "Anabel", active=False, db_path=models.DB_PATH)
+    people.erase_person(rid, pid)
+    assert cl.levels_for(rid, FRI, SAT) == {}
+
+
 WEEK = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", FRI, SAT, "2026-10-18"]
 
 

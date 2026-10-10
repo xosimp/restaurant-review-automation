@@ -39,6 +39,7 @@ log = logging.getLogger(__name__)
 
 PLATFORMS = ("ios_app", "android_pwa", "android_browser", "ios_browser", "pwa", "browser")
 MIN_N = 5                       # answers on a platform before its median is stated
+RESPONSE_DAYS = 90              # the admin's read of offer answers by client
 
 
 def get_conn(db_path=None):
@@ -213,7 +214,7 @@ def record_offer_answer(restaurant_id, offer_id, platform, accepted, db_path=Non
         log.warning("offer platform not recorded rid=%s: %s", restaurant_id, e)
 
 
-def response_times(db_path=None, days=90) -> dict:
+def response_times(db_path=None, days=RESPONSE_DAYS) -> dict:
     """{platforms: [{platform, n, median_minutes, accepted_share}]} over the
     last `days` — the median stated from MIN_N answers."""
     conn = get_conn(db_path)
