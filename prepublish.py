@@ -49,7 +49,7 @@ CONFIDENCE_MIN_PARTS = 1       # measured parts before a week-level confidence i
 # Soft kinds that are reminders, not decisions: one FYI line each (TRUST-22).
 REMINDER_KINDS = ("meal_break", "shift_too_short")
 # The edit and endpoint names a `post` action may name (API_REFERENCE).
-POST_PATHS = ("labor/crew-matrix", "labor/standby/ask")
+POST_PATHS = ("labor/crew-matrix", "labor/standby/ask", "labor/rules")
 
 
 def _capture(e, what, restaurant_id):
@@ -464,6 +464,10 @@ def _decide(rid, gate, keep, crew, left_off) -> list:
     # reads it (crew_answers_json / role_floors_json), the scope on the button.
     for cell in (_crew_under(crew) or [])[:CREW_DECIDE]:
         out.append(_crew_decision(rid, keep, crew, cell))
+    # A floor the work never needed (G2, MARKET-33): the evidence, with the
+    # change the owner can make — written to their own role floors.
+    for f in _safe(lambda: __import__("staffing_model").floor_suggestions(rid), [], "floor suggestions", rid)[:3]:
+        out.append(_floor_decision(rid, f))
     # A regular left with no shift (D-37), with the first reason (TRUST-13).
     for p in left_off:
         if p.get("kind") in ("regular",):
@@ -476,6 +480,30 @@ def _decide(rid, gate, keep, crew, left_off) -> list:
                                     {"label": "Leave them off this week", "scope": "week", "action": "dismiss",
                                      "payload": {"key": f"left_off:{_low(p['name'])}"}}]})
     return [d for d in out if d]
+
+
+def _floor_decision(rid, f):
+    """One owner floor the work never needed, as a decision: lower it on that
+    weekday and meal (the role's floors as stored, with that one day changed
+    — crew_matrix's own writer of a day's floor), or keep it."""
+    import schedule_rules as _sr
+    import schedule_time as _st
+    from models import get_restaurant
+    role, day, part = f["role"], f["day"], f["daypart"]
+    pw = _st.part_word(part, capital=False)
+    key = f"floor:{role.lower()}:{day}:{part}"
+    options = []
+    try:
+        import crew_matrix as _cm
+        floors = _sr.role_floors(get_restaurant(rid)) or {}
+        new = _cm._put_floor(floors, role, day, part, {"present": True, "value": int(f["suggest"])})
+        name = _cm._floor_name(new, role) or role
+        options.append({"label": f"Lower it to {f['suggest']} on {day} {pw}s", "scope": "every", "action": "post",
+                        "payload": {"path": "labor/rules", "body": {"role_floors": {name: new.get(name)}}}})
+    except Exception as e:
+        _capture(e, "floor decision", rid)
+    options.append({"label": f"Keep {f['floor']}", "scope": None, "action": "dismiss", "payload": {"key": key}})
+    return {"key": key, "kind": "floor", "text": f.get("text"), "holds": False, "options": options}
 
 
 def _crew(rid, row, rows):
@@ -854,12 +882,20 @@ def _fragile(rid, rows, c, dates, quality) -> list:
     import schedule_rules as _sr
     out = []
     try:
-        import schedule_learning as _sl
-        for d in _sl.standby_days(rid, dates, rows=rows, limit=2):
-            pct = int(round(100 * float(d["chance_of_a_no_show"])))
+        import schedule_engine as _se_sb
+        for d in _se_sb.standby_for_rows(rid, rows, dates, limit=2):
+            pct = int(round(100 * float(d.get("chance_of_a_no_show") or 0)))
             sb = d.get("standby") or {}
-            text = (f"{d['day'][:3]} {_mdy(d['date'])}: about a {pct}% chance someone doesn't show (from each person's "
-                    f"record; the overall no-show rate here is {100 * float(d.get('base_rate') or 0):.1f}%).")
+            sh = d.get("standby_shift") or {}
+            if sh:
+                # A busy shift likely to come up short asks for a standby
+                # (G2, RM-18): its expected attendance against its requirement.
+                text = f"A standby is needed on {sh.get('text') or _mdy(d['date'])}."
+                pct = max(pct, int(round(100 * float(sh.get("p_short") or 0))))
+            else:
+                text = (f"{d['day'][:3]} {_mdy(d['date'])}: about a {pct}% chance someone doesn't show (from each "
+                        f"person's record; the overall no-show rate here is "
+                        f"{100 * float(d.get('base_rate') or 0):.1f}%).")
             action = None
             if sb.get("employee"):
                 text += f" {sb['employee']} is off and could be on call."
@@ -867,8 +903,10 @@ def _fragile(rid, rows, c, dates, quality) -> list:
                           "payload": {"path": "labor/standby/ask",
                                       "body": {"date": d["date"], "employee": sb["employee"],
                                                "shift_start": sb.get("shift_start"), "shift_end": sb.get("shift_end")}}}
-            out.append({"key": f"standby:{d['date']}", "kind": "no_show", "text": text, "rank": 1 - pct / 100.0,
-                        "action": action})
+            elif sh:
+                text += " Nobody in the role is free to be on call — add one more if the budget has room."
+            out.append({"key": f"standby:{d['date']}", "kind": "standby" if sh else "no_show", "text": text,
+                        "rank": (0.0 if sh else 0.2) + (1 - pct / 100.0) / 10.0, "action": action})
     except Exception as e:
         _capture(e, "standby", rid)
     if c is not None:
@@ -1214,4 +1252,31 @@ def _send(rid, row, rows, gate, payload, can_publish) -> dict:
                    and not (review["blockers"] or review["soft"] or review["notes"] or review["held_unattended"])
                    and reach["total"] > 0)
     return {"reach": reach, "label": label, "overriding": over, "unsent_changes": unsent, "delivery": delivery,
-            "one_tap_safe": one_tap}
+            "one_tap_safe": one_tap, "pos_push": _safe(lambda: pos_push_status(rid, row), None, "pos push", rid)}
+
+
+def pos_push_status(rid, row):
+    """How the sent week's write to the POS went (J2, RM-16:
+    pos_schedule_push.last_push) — {status, failed, sent_on, text}, or None
+    when the week was never pushed. A failure is said after Send, never
+    only in the owner's inbox."""
+    if not row.get("published_at"):
+        return None
+    import pos_schedule_push as _psp
+    p = _psp.last_push(rid, row["week_start"])
+    if not p:
+        return None
+    status = p.get("status")
+    failed = sum(1 for s in p.get("shifts") or [] if s.get("status") in ("failed", "problem"))
+    why = str(p.get("error") or p.get("reason") or "").strip()
+    if status in ("failed", "refused"):
+        text = "The week didn't reach your POS" + (f": {why}" if why else "") + "."
+    elif status == "partial" or failed:
+        text = f"{failed} {_plural(failed, 'shift')} didn't reach your POS" + (f": {why}" if why else "") + "."
+    elif status in ("queued", "sending"):
+        text = "Writing the week to your POS now."
+    elif status in ("sent", "unchanged"):
+        text = "In your POS" + (f" since {p['sent_on']}" if p.get("sent_on") else "") + "."
+    else:
+        text = None
+    return {"status": status, "failed": failed, "sent_on": p.get("sent_on"), "text": text}

@@ -8283,6 +8283,26 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
     return ((sched_notes or "").strip() + "\n\n" + SCHED_FINDINGS_HEADER + "\n" + "\n".join(lines)).strip()
 
 
+def standby_for_rows(restaurant_id, rows: list, week_dates: list, inputs=None, limit=2) -> list:
+    """schedule_learning.standby_days for a week nobody just generated, with
+    the generation's own requirement inputs re-derived (quality_inputs_from_db
+    — the SHIFT REQUIREMENTS rows and the busy shifts), so a week reopened
+    later or checked before Send carries the same `standby_shift` a fresh
+    draft does (RM-18), not only the no-show odds."""
+    import schedule_learning as _sl
+    import schedule_requirements as _req_sb
+    reqs, busy = None, None
+    try:
+        inputs = inputs if inputs is not None else quality_inputs_from_db(restaurant_id, week_rows=rows)
+        reqs = inputs.get("requirements") or None
+        busy = _req_sb.busy_shifts(list(week_dates or []), inputs.get("shift_profiles") or None,
+                                   inputs.get("demand_by_day") or {}, inputs.get("demand_by_date") or {})
+    except Exception as e:
+        print(f"[schedule] standby requirements unavailable for {restaurant_id}: {e!r}")
+    return _sl.standby_days(restaurant_id, list(week_dates or []), rows=rows, limit=limit, requirements=reqs,
+                            busy=busy)
+
+
 def generation_aids(restaurant_id, rows: list, week_dates: list, constraints=None, roster_roles=None) -> dict:
     """The aids a fresh draft carries, worked out again for a week reopened
     later (schedule audit 10/10/26 TRUST-25): who the rows put past the
@@ -8304,7 +8324,7 @@ def generation_aids(restaurant_id, rows: list, week_dates: list, constraints=Non
     except Exception as e:
         _soft_fail("overtime forecast", e, restaurant_id)
     try:
-        out["standby_days"] = _sl.standby_days(restaurant_id, list(week_dates or []), rows=rows)
+        out["standby_days"] = standby_for_rows(restaurant_id, rows, week_dates)
     except Exception as e:
         _soft_fail("standby", e, restaurant_id)
     try:

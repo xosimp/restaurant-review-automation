@@ -469,9 +469,14 @@ def test_the_aids_are_the_generations_own_functions(db, monkeypatch):
     rid = _rid(db)
     monkeypatch.setattr(sl, "overtime_forecast", lambda rows, constraints=None, roster_roles=None: [{"text": "ot"}])
     monkeypatch.setattr(sl, "price_overtime_moves", lambda f, *a, **k: f)
-    monkeypatch.setattr(sl, "standby_days", lambda r, dates, rows=None: [{"date": dates[0]}])
+    asked = {}
+    monkeypatch.setattr(sl, "standby_days", lambda r, dates, rows=None, limit=2, requirements=None, busy=None:
+                        asked.update(req=requirements) or [{"date": dates[0]}])
+    # The generation's own requirement inputs, re-derived (G2's standby_shift).
+    monkeypatch.setattr(se, "quality_inputs_from_db", lambda r, week_rows=None: {"requirements": [{"date": "x"}]})
     monkeypatch.setattr(se, "likely_edits", lambda r, rows: [{"text": "likely"}])
     got = se.generation_aids(rid, [], ["2026-10-12"])
+    assert asked["req"] == [{"date": "x"}]
     assert got == {"overtime_forecast": [{"text": "ot"}], "standby_days": [{"date": "2026-10-12"}],
                    "likely_edits": [{"text": "likely"}]}
 
@@ -495,3 +500,58 @@ def test_the_why_names_the_runner_up_and_never_dresses_up_a_coin_flip():
     assert "nothing on file" in even["text"] and "could legally have taken it too" in even["text"]
     alone = prepublish.weigh_one(1, rows, 0, C(), {}, {}, runner=None)
     assert alone["runner_up"] is None and "nobody else" in alone["text"]
+
+
+# ── G2: a standby the requirement asks for is fragile; a floor the work never
+#    needed is a decision written to the owner's floors ─────────────────────
+
+def test_a_standby_shift_is_fragile_with_its_ask(db, monkeypatch):
+    import schedule_engine as se
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,"])
+    monkeypatch.setattr(se, "standby_for_rows", lambda r, rows, dates, inputs=None, limit=2: [{
+        "date": "2026-10-16", "day": "Friday", "chance_of_a_no_show": 0.1, "base_rate": 0.04,
+        "standby_shift": {"text": "Fri 10/16/26 dinner (servers: 4 needed, 3.4 expected)", "p_short": 0.42},
+        "standby": {"employee": "Lee", "role": "Server", "shift_start": "4:00pm", "shift_end": "10:00pm"}}])
+    fr = prepublish.review(rid, hid)["fragile"]
+    sb = [f for f in fr if f["kind"] == "standby"]
+    assert sb and sb[0]["text"].startswith("A standby is needed on Fri 10/16/26 dinner")
+    assert sb[0]["action"]["payload"]["path"] == "labor/standby/ask"
+    assert sb[0]["action"]["payload"]["body"]["employee"] == "Lee"
+    assert fr[0]["kind"] == "standby"                 # ranked first
+
+
+def test_a_floor_the_work_never_needed_is_a_scoped_decision(db, monkeypatch):
+    import staffing_model
+    import schedule_rules as sr
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    models.update_restaurant(rid, {"role_floors_json": json.dumps({"Server": {"morning": 2, "night": 3, "days": {}}})})
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,"])
+    monkeypatch.setattr(staffing_model, "floor_suggestions", lambda r, **k: [{
+        "day": "Monday", "daypart": "night", "role": "Server", "floor": 3, "suggest": 2,
+        "text": "Monday dinner: your floor holds 3 Server on at once, but the work never needed more than 2."}])
+    dec = [d for d in prepublish.review(rid, hid)["decide"] if d["kind"] == "floor"]
+    assert dec and dec[0]["holds"] is False
+    lower = dec[0]["options"][0]
+    assert lower["scope"] == "every" and lower["action"] == "post" and lower["payload"]["path"] == "labor/rules"
+    spec = lower["payload"]["body"]["role_floors"]["Server"]
+    assert sr.floor_for({"Server": spec}, "Server", "Monday", "night") == 2
+    assert sr.floor_for({"Server": spec}, "Server", "Tuesday", "night") == 3   # every other floor as it was
+    assert dec[0]["options"][1]["action"] == "dismiss"
+
+
+# ── J2: a POS write that failed is said after Send ─────────────────────────
+
+def test_a_failed_pos_push_is_said_on_the_sent_week(db, monkeypatch):
+    import pos_schedule_push as psp
+    rid = _rid(db)
+    row = {"published_at": "2026-10-10 12:00:00", "week_start": "2026-10-12"}
+    monkeypatch.setattr(psp, "last_push", lambda r, ws, db_path=None: {
+        "status": "failed", "error": "RPOWER refused the job code", "shifts": [], "sent_on": None})
+    got = prepublish.pos_push_status(rid, row)
+    assert got["status"] == "failed" and got["text"] == "The week didn't reach your POS: RPOWER refused the job code."
+    monkeypatch.setattr(psp, "last_push", lambda r, ws, db_path=None: None)
+    assert prepublish.pos_push_status(rid, row) is None
+    assert prepublish.pos_push_status(rid, {"published_at": None, "week_start": "2026-10-12"}) is None
