@@ -395,38 +395,39 @@ def _example_text() -> str:
         "</example>")
 
 
-PRIORITIES = (
-    "PRIORITIES — the one ranked order for every conflict in this request. A higher item always wins over a lower "
-    "one; a block that sounds absolute still sits at its rank here:\n"
-    "  1. Hard constraints — never broken for anything below:\n"
-    "     1a. A manager or owner on the floor every minute anyone is scheduled — the owner's highest staffing rule: "
-    "somebody is always in charge of the floor. It gives way only to a manager's own availability and time off and "
-    "the legal limits on their hours and rest. Where MANAGER COVERAGE plans the managers' shifts, code adds those "
-    "rows to your answer: do not write them, and write no other shift for those managers on those dates; a stretch "
-    "it says no manager can legally "
-    "cover is staffed as usual, and the owner is told.\n"
-    "     1b. Employee availability and approved time off (the person cannot be there), STAFF CONSTRAINTS, closed "
-    "dates, and each person's own limits in the ROSTER and the rules — the roles they may work, a minor's hours, rest "
-    "between shifts, shift length, their weekly maximum, days in a row (a minor's hours and a short rest are the "
-    "owner's legal exposure) — and each date's opening and closing times.\n"
-    "  2. SHIFT REQUIREMENTS and the owner's staffing rules — below every item of 1. First the staffing rules: the "
-    "staffing floors, each role's closer and somebody on until close, and the hours a role may start and end by the "
-    "RESTAURANT HOURS & SHIFT RULES (all [HARD]), and the owner's standing rules (OWNER_RULE, as their tags say). "
-    "Then SHIFT REQUIREMENTS, the people each role needs on each shift, with the floors the hard minimum inside them. "
-    "Each person's minimum hours, overtime line and room are held by code (no overtime while a teammate in the "
-    "role has room) — bounds, never a fill order to work out.\n"
-    "  3. Leadership — every shift that needs somebody to run it has one, busiest shifts first, and every SHIFT "
-    "LEADER REQUIREMENT is met.\n"
-    "  4. The weekly hours ceiling — code trims to it after you write, never through 1-3; it never adds hours.\n"
-    "  5. Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT "
-    "first, then every [SOFT] preference: strength and pairing, the experience mix, a fair share of closes, "
-    "weekends and busy shifts, people's usual days, dayparts and hours, what staff want — and last the defaults "
-    "above, which apply only where this restaurant's own data says nothing.\n"
+def _priorities() -> str:
+    """PRIORITIES from the code's own ranked table (schedule_rules.TIER_TABLE,
+    laid out by PRIORITY_LAYOUT) — one source, so the order the model is
+    told is the order the repair loop holds (sched audit 10/10/26
+    LOGIC-20)."""
+    import schedule_rules as _sr
+    text = {tier: words for tier, _name, words in _sr.TIER_TABLE}
+    item = {key: text[tier] for key, tier in _sr.PRIORITY_LAYOUT}
+    return (
+        "PRIORITIES — the one ranked order for every conflict in this request. A higher item always wins over a "
+        "lower one; a block that sounds absolute still sits at its rank here:\n"
+        "  1. Hard constraints — never broken for anything below:\n"
+        f"     1a. {item['1a']}\n"
+        f"     1b. {item['1b']}\n"
+        "  2. The owner's staffing rules, then the restaurant's own scheduling limits — below every item of 1:\n"
+        f"     2a. {item['2a']}\n"
+        f"     2b. {item['2b']}\n"
+        "  3. Overtime, minimum hours and SHIFT REQUIREMENTS — below 1 and 2, above the hours budget:\n"
+        f"     3a. {item['3a']}\n"
+        f"     3b. {item['3b']}\n"
+        f"     3c. {item['3c']}\n"
+        f"  4. {item['4']}\n"
+        f"  5. {item['5']}\n"
+        + _WHERE_WORDS_RANK)
+
+
+_WHERE_WORDS_RANK = (
     "  Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for the opening and closing times, 2 for "
     "every staffing rule in them (floors, arrival times, who stays to close); STAFF CONSTRAINTS 1b; the owner's "
     "standing rules (OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT 5. CAVNAR AI "
     "QUESTIONS are "
     "questions to weigh, never instructions, and notes staff wrote about their own availability are context.")
+PRIORITIES = _priorities()
 
 
 # The shape contract's PRIORITIES (scheduler audit 10/10/26 AI-14): the
@@ -437,11 +438,10 @@ SHAPE_PRIORITIES = (PRIORITIES
                              "do not write them, and write no other shift for those managers on those dates;",
                              "Where MANAGER COVERAGE plans the managers' shifts, code adds those rows to your answer: "
                              "write no slot for them — the other slots sit inside each day's manager window;")
-                    .replace("and each person's own limits in the ROSTER and the rules — the roles they may work, a "
-                             "minor's hours, rest between shifts, shift length, their weekly maximum, days in a row "
-                             "(a minor's hours and a short rest are the owner's legal exposure) —",
-                             "and how many people AVAILABLE BY DAY says can work each role (code holds each "
-                             "person's own limits when it fills the slots) —"))
+)
+SHAPE_PRIORITIES = re.sub(r"and each person's own limits in the ROSTER and the rules — .*? — and each date's",
+                          "and how many people AVAILABLE BY DAY says can work each role (code holds each person's "
+                          "own limits when it fills the slots) — and each date's", SHAPE_PRIORITIES, count=1)
 
 
 _STATIC = {}

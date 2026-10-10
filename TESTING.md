@@ -80,6 +80,14 @@ Five Critical parity bugs were one bug: a hand-written Swift `Encodable` body le
 
 When it fails on new code, fix the Swift body, and add an XCTest for the body's shape (`RequestBodyParityTests.swift`). Don't extend the allowlist to get it passing.
 
+## iOS responses against the server's real payloads (`tests/test_ios_schedule_payload_contract.py`, schedule audit 10/10/26 TRUST-1)
+
+The other direction. The server sent the schedule's `narrative` as a list; the phone declared a string, so every finished generation polled on the phone failed to decode — and the XCTest that should have caught it decoded a hand-written fixture holding a string. A fixture an iOS test decodes is now **captured**, never typed:
+
+- The Python test runs a real generation (only the model's answer stubbed), polls `/mobile/api/labor/schedule-status` while it runs and when it is done, and reopens the week through `/mobile/api/labor/schedule-history/<id>`. It fails when any of the three payloads has changed the KIND of a value the fixture holds (a list where a string was, a fractional number where only whole ones were), and when a key `GeneratedSchedule` declares is sent but missing from the fixture.
+- `CAVNAR_WRITE_IOS_FIXTURES=1 python -m pytest -q tests/test_ios_schedule_payload_contract.py` re-captures `ios/CavnarAI/CavnarAITests/Fixtures/schedule_status_done.json`, `schedule_status_pending.json` and `schedule_history_detail.json` (volatile timestamps written as `<volatile>`). Review the diff.
+- `ScheduleStatusContractTests.swift` decodes each one whole and key by key and asserts `undecodedKeys` is empty: `GeneratedSchedule` decodes field by field, so an odd field costs that field (named in `undecodedKeys`), never the week.
+
 ## Strategic features
 `tests/test_strategic_foundations.py` (metrics, outcomes, goals, menu, demand, loss, issues) and `tests/test_strategic_features.py` (invoices with a fake Anthropic client, the web/mobile route twins and permission lines, the public issue link, the scheduled jobs). Both patch `get_conn` on every module they touch — each binds it at import.
 

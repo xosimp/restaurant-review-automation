@@ -142,12 +142,10 @@ struct ScheduleHistoryDetailView: View {
                             ParHoursCheck(budget: budget, scheduled: scheduled, hourly: detail.hoursHourly,
                                           salaried: detail.hoursSalaried, basis: detail.budgetBasis?.value)
                         }
-                        if let narrative = detail.narrative?.trimmingCharacters(in: .whitespacesAndNewlines),
-                           !narrative.isEmpty {
+                        if let split = LaborView.noteCard(detail.narrative) {
                             // The answer card's anatomy, as on Labor (L13):
-                            // the first sentence the headline, the rest
+                            // the first bullet the headline, the rest
                             // behind More.
-                            let split = LaborView.firstSentence(narrative)
                             CavnarAnswerCard(kicker: "Cavnar AI\u{2019}s note", headline: split.head,
                                              summary: showingFullNarrative ? split.rest : nil) {
                                 if split.rest != nil {

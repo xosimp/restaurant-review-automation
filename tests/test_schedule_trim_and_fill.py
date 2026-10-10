@@ -97,7 +97,10 @@ def test_the_budget_trim_never_opens_a_manager_gap_and_says_why_it_stopped(monke
     staying, which the next test holds."""
     monkeypatch.setattr(sr, "CLOSING_MANAGER_STAYS_MINUTES", 0)
     c = _c(managers={"max": "Manager", "ida": "Manager"}, roster_names=["Max", "Ida", "Bo"],
-           active={"max", "ida", "bo"}, close_times={"Friday": "2:00am"})
+           active={"max", "ida", "bo"}, close_times={"Friday": "2:00am"},
+           # Bo's one shift is a minimum the owner set (an only shift alone
+           # is a cost, not a hold — LOGIC-14).
+           hours_limits={"bo": (4, None)})
     rows = [_row(FRI, "Max", "Manager", "3:00pm", "11:00pm"), _row(FRI, "Ida", "Bartender", "5:00pm", "2:00am"),
             _row(FRI, "Bo", "Bartender", "10:00pm", "2:00am"), _row(THU, "Ida", "Manager", "3:00pm", "11:00pm")]
     assert not _kinds(rows, c, "no_manager")
@@ -115,17 +118,21 @@ def test_the_budget_trim_never_opens_a_manager_gap_and_says_why_it_stopped(monke
     assert any(r["employee"] == "Ida" and r["date"] == FRI and r["shift_end"] == "2:00am" for r in out)
 
 
-def test_the_trim_may_take_an_hour_off_the_closing_manager_who_stays_to_close():
-    """Owner, 10/9/26: the closing manager never leaves before anyone else,
-    so their end time is soft - an hour off Ida's 2am with Bo on until 2am
-    is no gap, and nothing past the allowance is ever taken."""
+def test_the_trim_never_shortens_the_closing_manager_into_the_stay_the_owner_assumes():
+    """Owner, 10/9/26: the closing manager never leaves before anyone else —
+    the verdict forgives the hour she is assumed to stay. That allowance is
+    the owner's verdict only (sched audit 10/10/26 BUGSGEN-4): a pass that
+    took an hour off Ida's 2am with Bo on until 2am made the manager's
+    'stay' the plan, unpaid in the hours, the overtime line and the budget.
+    The judges read raw unmanaged minutes, so her 2am stands."""
     c = _c(managers={"max": "Manager", "ida": "Manager"}, roster_names=["Max", "Ida", "Bo"],
            active={"max", "ida", "bo"}, close_times={"Friday": "2:00am"})
     rows = [_row(FRI, "Max", "Manager", "3:00pm", "11:00pm"), _row(FRI, "Ida", "Bartender", "5:00pm", "2:00am"),
             _row(FRI, "Bo", "Bartender", "10:00pm", "2:00am"), _row(THU, "Ida", "Manager", "3:00pm", "11:00pm")]
     out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 20, {}, constraints=c)
     ida = next(r for r in out if r["employee"] == "Ida" and r["date"] == FRI)
-    assert ida["shift_end"] in ("1:00am", "2:00am") and not _kinds(out, c, "no_manager")
+    assert ida["shift_end"] == "2:00am" and not _kinds(out, c, "no_manager")
+    assert not any(t["employee"] == "Ida" for t in trimmed)
 
 
 def test_the_trim_never_touches_a_pinned_row():
@@ -252,20 +259,29 @@ def test_the_engine_says_the_budget_conflict_once_beside_the_over_budget_line():
 
 # ── L-24: what was learned is protected ──────────────────────────────────
 
-def test_the_trim_keeps_off_a_day_cuts_measured_worse_and_a_troubled_daypart():
+def test_the_trim_weighs_a_day_cuts_measured_worse_and_keeps_off_a_troubled_daypart():
+    # Staffing cuts measured worse are a graded cost (LOGIC-15): Friday's
+    # strong evidence sends the cut to Wednesday first, but never freezes
+    # Friday — over budget with only Friday cuttable, Friday is cut and the
+    # reason says what was weighed. A troubled daypart is still held.
     rows = [_row(d, n, "Server", "4:00pm", "8:00pm") for d in (FRI, THU, WED) for n in ("Ana", "Bob", "Cy")]
-    worse = {"friday": {"worsened": 2, "measured": 3, "label": "staffing cuts on Fridays"}}
+    worse = {"friday": {"worsened": 4, "measured": 4, "strength": 0.6, "leaner": 0.0, "parts": {},
+                        "roles": [], "whole_day": True, "label": "staffing cuts on Fridays"}}
     troubled = {"Thursday": {"night": {"weeks": 6, "troubled": True}}}
-    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 28, {}, constraints=_c(),
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 32, {}, constraints=_c(),
                                                 learned_worse=worse, outcomes=troubled)
     assert trimmed and {t["date"] for t in trimmed} == {WED}
     report = {}
-    econ.trim_to_budget([dict(r) for r in rows if r["date"] != WED], 16, {}, constraints=_c(),
-                        learned_worse=worse, outcomes=troubled, report=report)
-    held = report["conflict"]["held"]
-    assert held.get("learned") == 3 and held.get("troubled") == 3
-    line = econ.budget_conflict_line(report["conflict"])
-    assert "Fridays, where staffing cuts measured worse here" in line and "Thursday dinner" in line
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows if r["date"] != WED], 20, {},
+                                                constraints=_c(), learned_worse=worse, outcomes=troubled,
+                                                report=report)
+    assert {t["date"] for t in trimmed} == {FRI}
+    assert all("measured worse here" in t["reason"] and "not a veto" in t["reason"] for t in trimmed)
+    assert (report.get("conflict") or {}).get("held", {}).get("learned") is None
+    # One noisy result is no reason at all (strength 0): the old shape of
+    # 1 worse in 5 grades to nothing.
+    import rec_learning
+    assert rec_learning.learned_cut_penalty({"friday": {"worsened": 1, "measured": 5}}, "Friday") == 0.0
 
 
 def test_the_trim_keeps_the_extra_person_the_reviews_asked_for():
@@ -365,11 +381,24 @@ def test_the_floor_pass_never_lands_a_minor_past_their_end_or_a_seventh_day(no_a
                                                constraints=c)
     mon = [r for r in out if r["date"] == MON]
     assert [r["employee"] for r in mon] == ["Ok"], mon
-    # with nobody legal the floor stays open (and flagged), never filled illegally
+    # With only the minor and Sev left: never filled illegally — the minor
+    # may get a shift built over the short half hours that ends before his
+    # limit (schedule audit 10/10/26 BUGSGEN-3); only when nobody can inside
+    # the restaurant's own limits does the floor outrank its six-days-in-a-row
+    # policy and Sev take the seventh day (LOGIC-1) — never the minor past
+    # his end, which is the law.
     c.roster_roles = {"Kid": "Cook", "Sev": "Cook"}
     out, added, dates = se._ensure_role_floors([dict(r) for r in rows], WEEK, DAYS, 1, {}, {}, floors=floors,
                                                constraints=c)
-    assert MON not in dates
+    mon = [r for r in out if r["date"] == MON]
+    assert [r["employee"] for r in mon] in (["Kid"], ["Sev"])
+    assert all(se._span_minutes(r)[1] <= 22 * 60 for r in mon if r["employee"] == "Kid")
+    assert not _kinds(out, c, "minor_late")
+    # Where the jurisdiction makes the run law, Sev never takes it.
+    c.compliance["_pack"] = {"code": "IL", "law": ["max_consecutive_days"]}
+    out, added, dates = se._ensure_role_floors([dict(r) for r in rows], WEEK, DAYS, 1, {}, {}, floors=floors,
+                                               constraints=c)
+    assert "Sev" not in [r["employee"] for r in out if r["date"] == MON]
     assert not _kinds(out, c, "minor_late") and not _kinds(out, c, "long_run")
 
 
@@ -406,7 +435,11 @@ def test_a_fill_never_opens_a_manager_gap(no_avail):
             _row(TUE, "Dee", "Dish", "5:00pm", "11:30pm")]
     out, added, dates = se._ensure_role_floors([dict(r) for r in rows], [MON], ["Monday"], 1, {}, {},
                                                floors=floors, constraints=c)
-    assert MON not in dates, "a dish shift to 11:30pm would leave 10-11:30pm with no manager"
+    # The 11:30pm template is refused; a shift over the short half hours
+    # (5:30-8:30pm) inside the manager's hours fills it instead (BUGSGEN-3).
+    added_mon = [r for r in out if r["date"] == MON and r["role"] == "Dish"]
+    assert all(se._span_minutes(r)[1] <= 22 * 60 for r in added_mon), \
+        "a dish shift to 11:30pm would leave 10-11:30pm with no manager"
     assert not [v for v in _kinds(out, c, "no_manager") if v["date"] == MON]
     # a template inside the manager's hours is added
     rows[2] = _row(TUE, "Dee", "Dish", "5:00pm", "10:00pm")

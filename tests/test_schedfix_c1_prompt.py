@@ -229,6 +229,7 @@ def test_pr4_minimum_hours_are_ranked_counted_and_carried_across_the_seam():
     # AI-12 (10/10/26): code holds minimums, overtime and room; the prompt
     # states them as bounds, never a fill order for the model to count.
     assert "bounds, never a fill order to work out" in static
+    assert "Fill shifts from the people still under their minimum hours first" not in static
     assert "Fill them from the people still under their minimum hours first" not in static
     assert "[SOFT] minimum, [HARD] maximum" in sp.ROSTER_HEAD
     prior = [{"date": WEEK[4], "day": "Friday", "employee": "S0", "role": "Server", "shift_start": "5:00pm",
