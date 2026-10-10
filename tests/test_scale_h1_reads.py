@@ -285,14 +285,14 @@ def test_the_learning_weeks_are_replayed_once_per_scope_and_handed_out_as_copies
     sv.append(rid, hid, "generated", _csv([_row(d, "Ana")]), saved_by="Cavnar AI", saved_authority="system")
     sv.append(rid, hid, "edited", _csv([_row(d, "Bo")]), saved_by="erik", saved_authority="principal")
     built = []
-    real = sv._WeekData.__init__
-    monkeypatch.setattr(sv._WeekData, "__init__", lambda self, *a, **k: (built.append(1), real(self, *a, **k))[1])
+    real = sv._learning_weeks
+    monkeypatch.setattr(sv, "_learning_weeks", lambda *a, **k: (built.append(1), real(*a, **k))[1])
     with models.read_scope():
         first = sv.learning_weeks(rid)
         first[0]["items"].clear()                    # a caller's change never reaches the next one
         second = sv.learning_weeks(rid)
         third = sv.learning_weeks(rid)
-    assert len(built) == 1, built                    # was one replay per call
+    assert len(built) == 1, built                    # was one read per call
     assert second == third and second[0]["items"]
-    sv.learning_weeks(rid)                           # outside a scope: read every time
+    sv.learning_weeks(rid)                           # outside a scope: read every time (G1's kept records)
     assert len(built) == 2
