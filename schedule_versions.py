@@ -18,6 +18,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 
+import learning_stats as _stats
 import models as _models_mod
 from models import DB_PATH
 
@@ -914,8 +915,8 @@ LEARN_DAYS = LEARN_WEEKS * 7        # the retention registry's reader window (op
 # Evidence fades by half-life rather than falling off an 8- or 16-week cliff
 # (L-27, raw_L §3 B): a person on a slot 120 days, a role's headcount or
 # start time 180 days.
-PERSON_HALF_LIFE_DAYS = 120
-SLOT_HALF_LIFE_DAYS = 180
+PERSON_HALF_LIFE_DAYS = _stats.PERSON_HALF_LIFE_DAYS      # 120 — one value for the three learners (ARCH-28)
+SLOT_HALF_LIFE_DAYS = _stats.SLOT_HALF_LIFE_DAYS          # 180
 HALF_LIFE_DAYS = {"moved_off": PERSON_HALF_LIFE_DAYS, "moved_on": PERSON_HALF_LIFE_DAYS,
                   "role_change": PERSON_HALF_LIFE_DAYS, "leader_swap": SLOT_HALF_LIFE_DAYS,
                   "retime_start": SLOT_HALF_LIFE_DAYS, "retime_end": SLOT_HALF_LIFE_DAYS,
@@ -925,7 +926,7 @@ HALF_LIFE_DAYS = {"moved_off": PERSON_HALF_LIFE_DAYS, "moved_on": PERSON_HALF_LI
 PATTERN_MIN_RATE = 0.5
 # The confidence bound on a rate: the Wilson lower bound at 90%, the level the
 # experiment readout's intervals use.
-WILSON_Z = 1.645
+WILSON_Z = _stats.WILSON_Z
 PRE_PUBLISH, POST_PUBLISH = "pre_publish", "post_publish"
 # Answers to the one-tap "why" that keep a change out of the habits (L-35).
 ONE_OFF_ANSWERS = ("this_week", "call_off")
@@ -935,28 +936,15 @@ def half_life(kind) -> int:
     return HALF_LIFE_DAYS.get(kind, PERSON_HALF_LIFE_DAYS)
 
 
-def recency_weight(age_days, half_life_days) -> float:
-    """1.0 for evidence from today, 0.5 one half-life ago."""
-    try:
-        return 0.5 ** (max(0.0, float(age_days or 0)) / float(half_life_days))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 1.0
+# The shared statistics (learning_stats, ARCH-28): the names stay here too,
+# because tests and other modules call them on this module.
+recency_weight = _stats.recency_weight
 
 
 def wilson_lower(hits, n, z=WILSON_Z) -> float:
     """The lower bound of the rate hits/n — 2 of 2 is far less sure than 20
-    of 20. Weighted counts are allowed. 0.0 with no opportunities."""
-    try:
-        n, hits = float(n), float(hits)
-    except (TypeError, ValueError):
-        return 0.0
-    if n <= 0:
-        return 0.0
-    p = min(1.0, max(0.0, hits / n))
-    z2 = z * z
-    centre = p + z2 / (2 * n)
-    margin = z * math.sqrt(max(0.0, p * (1 - p) / n + z2 / (4 * n * n)))
-    return max(0.0, (centre - margin) / (1 + z2 / n))
+    of 20 (learning_stats.wilson_lower). 0.0 with no opportunities."""
+    return _stats.wilson_lower(hits, n, z)
 
 
 def _col(row, name):
@@ -1534,10 +1522,9 @@ def weeks_phrase(n, of=None) -> str:
 
 
 def _strength(hits_w, opps_w) -> tuple:
-    """(rate, confidence) of weighted hits over weighted opportunities."""
-    if opps_w <= 0:
-        return 0.0, 0.0
-    return round(min(1.0, hits_w / opps_w), 3), round(wilson_lower(hits_w, opps_w), 3)
+    """(rate, confidence) of weighted hits over weighted opportunities
+    (learning_stats.strength)."""
+    return _stats.strength(hits_w, opps_w)
 
 
 def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PATH, min_rate=PATTERN_MIN_RATE) -> list:

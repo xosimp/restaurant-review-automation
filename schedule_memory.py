@@ -195,28 +195,17 @@ def half_life(kind) -> int:
 
 
 def recency_weight(age_days, half_life_days) -> float:
-    """1.0 for evidence from today, 0.5 one half-life ago (the edit
-    learners' own rule, schedule_versions.recency_weight)."""
-    try:
-        return 0.5 ** (max(0.0, float(age_days or 0)) / float(half_life_days))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 1.0
+    """1.0 for evidence from today, 0.5 one half-life ago — the one rule the
+    three schedule learners share (learning_stats.recency_weight, ARCH-28)."""
+    import learning_stats
+    return learning_stats.recency_weight(age_days, half_life_days)
 
 
 def wilson_lower(hits, n, z=1.645) -> float:
     """The Wilson lower bound of hits/n at 90% — 2 of 2 is far less sure
-    than 20 of 20; weighted counts allowed (schedule_versions.wilson_lower)."""
-    try:
-        n, hits = float(n), float(hits)
-    except (TypeError, ValueError):
-        return 0.0
-    if n <= 0:
-        return 0.0
-    p = min(1.0, max(0.0, hits / n))
-    z2 = z * z
-    centre = p + z2 / (2 * n)
-    margin = z * math.sqrt(max(0.0, p * (1 - p) / n + z2 / (4 * n * n)))
-    return max(0.0, (centre - margin) / (1 + z2 / n))
+    than 20 of 20; weighted counts allowed (learning_stats.wilson_lower)."""
+    import learning_stats
+    return learning_stats.wilson_lower(hits, n, z)
 
 
 def _nk(name) -> str:
@@ -1447,25 +1436,18 @@ def _learn_overruns(ctx) -> list:
 
 
 def binom_tail(k, n, p, upper=True) -> float:
-    """P(X >= k) (or P(X <= k) with upper False) for X ~ Binomial(n, p)."""
-    n, k = int(n), int(k)
-    p = min(1.0, max(0.0, float(p)))
-    rng = range(k, n + 1) if upper else range(0, k + 1)
-    return min(1.0, sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in rng))
+    """P(X >= k) (or P(X <= k) with upper False) for X ~ Binomial(n, p)
+    (learning_stats.binom_tail, ARCH-28)."""
+    import learning_stats
+    return learning_stats.binom_tail(k, n, p, upper)
 
 
 def fisher_tail(hits, n, other_hits, other_n, upper=True) -> float:
     """One-sided Fisher exact p-value that `hits` of `n` is higher (upper)
     or lower than `other_hits` of `other_n` beyond chance — both rates
-    measured, neither taken as known (the hypergeometric tail)."""
-    hits, n, oh, on = int(hits), int(n), int(other_hits), int(other_n)
-    total, good = n + on, hits + oh
-    if n <= 0 or on <= 0:
-        return 1.0
-    denom = math.comb(total, n)
-    lo, hi = max(0, n - (total - good)), min(n, good)
-    rng = range(hits, hi + 1) if upper else range(lo, hits + 1)
-    return min(1.0, sum(math.comb(good, i) * math.comb(total - good, n - i) for i in rng) / float(denom))
+    measured, neither taken as known (learning_stats.fisher_tail)."""
+    import learning_stats
+    return learning_stats.fisher_tail(hits, n, other_hits, other_n, upper)
 
 
 def significant_teams(stats, base, alpha=PAIR_ALPHA) -> dict:
