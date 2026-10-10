@@ -325,3 +325,16 @@ def test_the_studio_review_reads_short_and_its_actions_are_primary_buttons_under
     assert "module: 'schedule', pill: true})" in s
     assert ".sq-rec .acts{display:inline-flex;align-items:center;gap:10px;" in s
     assert ".ss .sw-right .sq-all,.ss .sw-right #sq-why-btn{margin-left:0!important;" in s
+
+
+def test_generate_puts_the_building_view_in_before_the_studio_switches_to_build():
+    """ssBuilding() counts a generation only while #sched-week exists, so
+    Generate must insert the Building view (with Stop) BEFORE studioOnGenerate
+    switches stage — switching first left Setup on screen with the button
+    counting and the Building view and Stop hidden (10/9/26)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
+    insert = src.index("_swCtr.insertBefore(_wk, _swCtr.firstChild)")
+    switch = src.index("if (window.studioOnGenerate) studioOnGenerate();")
+    assert insert < switch
+    assert 'id="sched-stop-btn"' in src[src.rindex("_wk.innerHTML = cavnarWeekHtml", 0, insert):insert]

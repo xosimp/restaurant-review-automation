@@ -23960,10 +23960,14 @@ function generateSchedule(btn, opts) {
   // panel), where the draft will appear; elsewhere it follows the actions row.
   // The Schedule Studio's Build stage when it is there; the workspace
   // column otherwise.
-  if (window.studioOnGenerate) studioOnGenerate();
   var _swCtr = document.getElementById('ss-build-host') || document.getElementById('sw-center');
   if (_swCtr) { _swCtr.insertBefore(_wk, _swCtr.firstChild); if (window.swActive) swActive('building'); }
   else (btn.closest('.lb2-actions') || btn).insertAdjacentElement('afterend', _wk);
+  // Then the Studio goes to Build: ssBuilding() counts a generation only
+  // while #sched-week exists, so switching first (before it was inserted)
+  // read as nothing building and left Setup on screen with the button
+  // counting, the Building view and its Stop hidden (10/9/26).
+  if (window.studioOnGenerate) studioOnGenerate();
   startScheduleSteps(_schedStart);
 
   // Update elapsed time every 5s so owner knows it's working
