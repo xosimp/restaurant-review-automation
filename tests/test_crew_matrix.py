@@ -130,3 +130,12 @@ def test_with_no_week_built_it_shows_the_usual_crew_and_asks_nothing(monkeypatch
     assert out["has_usual"] and out["week_start"] is None
     assert out["open"] == 0 and out["differences"] == 0
     assert {c["status"] for r in out["roles"] for c in r["cells"]} == {"usual"}
+
+
+def test_managers_and_owners_are_the_manager_rules_not_the_grids(monkeypatch):
+    rid = create_restaurant(Restaurant(name="Mgr", owner_email="m@x.test"))
+    monkeypatch.setattr("labor.staffing_baseline", lambda *_a, **_k: BASE)
+    _week(rid, [("2026-10-12", "Monday", "Jim", "Manager FOH", "3:00pm", "11:00pm"),
+                ("2026-10-12", "Monday", "Erik", "Owner", "10:00am", "4:00pm")])
+    roles = {r["role"] for r in cm.build(rid)["roles"]}
+    assert "Manager FOH" not in roles and "Owner" not in roles and "Kitchen" in roles

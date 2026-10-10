@@ -153,6 +153,12 @@ def build(restaurant_id, history_id=None, db_path=DB_PATH, today=None, baseline=
                 usual[(role, day, part)] = int(n)
     names = []
     for role in [k[0] for k in usual] + [k[0] for k in draft] + list(floors):
+        # Managers and owners are the manager-on-the-floor rule's, and the
+        # salaried never count toward the usual crew (labor.historical_patterns
+        # D-4), so every manager shift read as "heavier than usual" (EJ's,
+        # 10/10/26: 17 of them). Left off the grid.
+        if sr.is_manager_role(role):
+            continue
         if not _match(role, names):
             names.append(role)
 
