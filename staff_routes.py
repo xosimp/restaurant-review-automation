@@ -1183,6 +1183,13 @@ def api_offer_respond(offer_id, current_user):
         out = shift_requests.respond_offer(rid, offer_id, name, body["accept"])
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
+    # Which client answered and how long after the offer (staff_pwa,
+    # scheduler audit 10/10/26 MARKET-18): the iPhone app, the installed
+    # portal or a phone browser. Never fails the answer.
+    import staff_pwa
+    staff_pwa.record_offer_answer(rid, offer_id, staff_pwa.platform_of(
+        request.headers, bool(not request.cookies.get("staff_session")
+                              and request.headers.get("Authorization", "").startswith("Bearer "))), body["accept"])
     from models import log_event
     try:
         log_event(rid, "shift_offer_answered", {"employee": name, "offer_id": offer_id, "accepted": body["accept"]})
@@ -1576,3 +1583,6 @@ import staff_comms_routes  # noqa: E402,F401
 # at the bottom, so whoever registers staff_bp — the app or a test — gets them
 # before the blueprint is registered (Flask refuses a route added after).
 import staff_account_routes  # noqa: E402,F401
+# The installable portal (manifest, service worker, Web Push), on-call offers
+# and the organization's bench (scheduler audit 10/10/26 MARKET-18, -26, -30).
+import staff_pwa_routes  # noqa: E402,F401

@@ -4488,6 +4488,9 @@ def init_db(db_path: str = DB_PATH):
     # The organization's certified bench: site switches, consents, asks (org_bench, MARKET-30).
     from org_bench import init_org_bench
     init_org_bench(db_path)
+    # The installable staff portal: Web Push subscriptions and offer answers by platform (staff_pwa, MARKET-18).
+    from staff_pwa import init_staff_pwa
+    init_staff_pwa(db_path)
     # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
     from schedule_calibration import init_schedule_calibration
     init_schedule_calibration(db_path)
