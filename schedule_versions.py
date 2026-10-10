@@ -679,9 +679,9 @@ def prepare_rows(restaurant_id, rows, prior_rows, db_path=None, known_ids=None) 
 
 
 def apply_locks(rows, stored_rows, step=None, explicit=None) -> list:
-    """`locked` on each row of a person's save (contract #4): the client's
-    own answer for a row when it sent one (`explicit`: {shift_id: bool}, a
-    lock toggled on screen); else the row's lock as stored (by shift id);
+    """`locked` on each row of a person's save (contract #4): the owner's
+    own pin or unpin of a row (`explicit`: {shift_id: bool} — the save
+    route reads a row's `lock`); else the row's lock as stored (by shift id);
     and a row the manager changed in this save (step_origins' changes of
     origin "manager") locks — an owner's edit is kept exactly by every
     later pass, the solver and a regenerate. Cavnar AI's own changes

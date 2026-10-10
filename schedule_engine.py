@@ -9303,6 +9303,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     if len(_stored) == len(preview_rows):
                         for _pr, _sr_ in zip(preview_rows, _stored):
                             _pr["shift_id"], _pr["person_id"] = _sr_["shift_id"], _sr_["person_id"]
+                            _pr["locked"] = _srows_out.is_locked(_sr_)
             except _DraftChanged as _moved:
                 _verdict = _redo_base_moved(_moved, _base_rows, dates, _answer, _reruns)
                 if _verdict == "again":

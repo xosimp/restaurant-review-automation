@@ -8479,14 +8479,16 @@ def mobile_score_schedule(current_user):
             rows = _skel_save.carry_pins(_skel_save.mark_pins(rows, sent=[r for r in raw_rows if isinstance(r, dict)]),
                                          _stored_rows)
             # Each row with the id it keeps against the week as stored, and
-            # the lock a client set on screen (`locked` true/false on a row;
-            # absent means "as it was") — contract #4.
+            # the owner's own pin or unpin of a row on screen (`lock`
+            # true/false on the row — contract #4). A row's `locked`, as the
+            # client echoes it back, is not an instruction: the stored lock
+            # and this save's own edits decide it (schedule_versions.apply_locks).
             import schedule_rows as _srows_save
             rows = _srows_save.carry_ids(rows, _stored_rows)
             _explicit_locks = {}
             for _r, _raw in zip(rows, [r for r in raw_rows if isinstance(r, dict)]):
-                if "locked" in _raw and _raw.get("locked") is not None:
-                    _explicit_locks[_r["shift_id"]] = _srows_save.is_locked(_raw)
+                if _raw.get("lock") is not None:
+                    _explicit_locks[_r["shift_id"]] = _srows_save.is_locked(_raw.get("lock"))
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
             # The week, its version row and its review are one write: the
