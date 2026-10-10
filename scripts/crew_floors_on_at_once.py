@@ -42,7 +42,8 @@ def main(argv=None) -> int:
         return 0
     word = {"morning": "lunch", "night": "dinner"}
     if not out["changes"]:
-        print("Every floor already holds on the restaurant's own usual night, on at once. Nothing to change.")
+        print("No floor to lower: every floor the history can read already holds on the restaurant's own usual "
+              "night, on at once.")
     for c in out["changes"]:
         print(f"{c['role']:<20} {c['day']:<10} {word[c['part']]:<7} {c['old']:>2} -> {c['new']:>2}"
               f"   (usual on at once: this code "
