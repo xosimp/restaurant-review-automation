@@ -499,7 +499,11 @@ def test_a_late_rate_needs_clocked_shifts_and_reaches_who_opens(monkeypatch):
     import schedule_prompt
     people = labor._roster_people([("Ana", "Server")], facts={"Ana": {"reliability": rel["Ana"]}})
     assert people[0]["reliability"] == "late to 4 of 8 clocked"
-    assert "never make them the only one of their role who opens or closes a day" in schedule_prompt.static_block()
+    # Reworded with the prompt's one-clause rules (scheduler audit 10/10/26
+    # AI-12): pair them with a dependable teammate, never the only opener or closer.
+    assert "never the only one who opens or closes a day" in schedule_prompt.static_block()
+    assert "missing shifts or arriving late: pair them with a dependable teammate of their" in \
+        schedule_prompt.static_block()
     assert schedule_engine._reliability_block({"Ana": rel["Ana"]}) == ""
 
     # The scorer: Ana alone opening the bar costs the shift; with Bo opening

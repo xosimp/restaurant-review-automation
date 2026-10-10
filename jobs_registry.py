@@ -555,6 +555,23 @@ JOBS = {
                     "task line is due (claimed once per person), and send the staff texts held overnight",
         target=("staff_reminders", "run_job"), max_minutes=10),
 
+    # ── the schedule on the floor (schedule audit 10/10/26 MARKET-7/8/24) ──
+    "pos_schedule_push": dict(
+        # Writes to a POS, never to a person: held on a local copy inside
+        # (pos_schedule_push.run_push checks scheduler.scheduling_allowed).
+        cadence="every 10 minutes", sla_minutes=60, sends=False, runnable=True,
+        label="POS schedule push",
+        description="Write each published week whose owner turned the POS push on to the POS time clock (preview "
+                    "first, per-shift status, retries a POS-side failure; bounded, the queue is the cursor)",
+        target=("pos_schedule_push", "run_queue"), max_minutes=5),
+    "live_labor": dict(
+        cadence="every 15 minutes while open", sla_minutes=60, sends=True, runnable=True,
+        label="Live labor",
+        description="Labor to date and the day's projected labor % against sales, and the one legal, priced cut, "
+                    "extension or call-in offered to the managers (or, earned, sent to the person) — bounded, "
+                    "resumable",
+        target=("labor_live", "run_live_labor"), max_minutes=5),
+
     # ── every tick ──────────────────────────────────────────────────────
     "morning_brief": dict(
         cadence="every tick (each restaurant's own brief hour)", sla_minutes=60, sends=True, runnable=True,

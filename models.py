@@ -638,6 +638,10 @@ class Restaurant:
     # request_autonomy (schedule audit 10/10/26 MARKET-14/15): {"auto_approve": bool, "kinds": ["drop","swap"],
     # "notice_hours": n, "max_quality_drop": n, "availability_approval": bool}. None = the defaults (off; approval on).
     staff_request_policy_json: Optional[str] = None
+    # The schedule on the floor (schedule audit 10/10/26 MARKET-7/8/24, J2): {"pos_push": bool — write the
+    # published week to the POS time clock (pos_schedule_push), "autopilot": bool — live labor moves may act on
+    # their own once earned (labor_live), "live_moves": bool}. None = every switch off.
+    floor_settings_json: Optional[str] = None
 
     def reply_program_in(self, text) -> dict:
         """The membership program a reply names (reply_programs) — its name
@@ -1259,6 +1263,9 @@ def ensure_columns(db_path: str = DB_PATH):
         # staff availability cut waits on a manager (request_autonomy,
         # schedule audit 10/10/26 MARKET-14/15).
         ("restaurants", "staff_request_policy_json", "TEXT"),
+        # The schedule on the floor: the POS schedule push, live labor moves
+        # and their autopilot (pos_schedule_push, labor_live; J2 10/10/26).
+        ("restaurants", "floor_settings_json", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -4546,6 +4553,17 @@ def init_db(db_path: str = DB_PATH):
     # it takes effect (availability_changes, schedule audit 10/10/26 MARKET-15).
     from availability_changes import init_availability_changes
     init_availability_changes(db_path)
+    # The published week written to the POS time clock, per push and per
+    # shift (pos_schedule_push, schedule audit 10/10/26 MARKET-7), and the
+    # live labor moves offered during service (labor_live, MARKET-8/24).
+    from pos_schedule_push import init_pos_schedule_push
+    init_pos_schedule_push(db_path)
+    from labor_live import init_labor_live
+    init_labor_live(db_path)
+    # Who travels to the group's other locations and the shifts offered to
+    # them there (cross_site, MARKET-16).
+    from cross_site import init_cross_site
+    init_cross_site(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
@@ -5073,7 +5091,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json","floor_settings_json",
         "jurisdiction","compliance_profile_json","school_calendar_json","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5944,6 +5962,7 @@ def _restaurant_from_row(row) -> Restaurant:
         reply_programs=row["reply_programs"] if "reply_programs" in row.keys() else None,
         crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
         staff_request_policy_json=row["staff_request_policy_json"] if "staff_request_policy_json" in row.keys() else None,
+        floor_settings_json=row["floor_settings_json"] if "floor_settings_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         compliance_profile_json=row["compliance_profile_json"] if "compliance_profile_json" in row.keys() else None,

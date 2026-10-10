@@ -49,6 +49,12 @@ NOT_APPLICABLE_SITES = {
     # AI orchestration design (10/7/26): the Haiku rubric reads a draft the
     # rules engine already passed, and the context its writer was given.
     ("ai_reviewer.py", "_call"): "a score for a draft that already passed its own gate, from that draft",
+    # Scheduler audit 10/10/26: the owner's typed words read into rules
+    # (RM-9, AI-9 — the sentences and the roster's names, nothing else), and
+    # the finished week's note (TRUST-15, AI-21 — written from the rows of a
+    # generation that already passed the gate, each bullet checked against them).
+    ("owner_rules.py", "_model_call"): "the owner's own sentences read into typed rules, against the roster's names",
+    ("schedule_narrative.py", "write"): "a note on the finished week, from that week's rows, checked against them",
 }
 
 

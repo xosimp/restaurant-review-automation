@@ -642,7 +642,9 @@ def test_the_reads_carry_what_the_panels_draw(world, monkeypatch):
     ph = c.get("/admin/api/intelligence/pattern-history?key=reply_x:platform").get_json()
     assert [r["week"] for r in ph["rows"]] == ["2026-W37", "2026-W38"]
     ex = c.get("/admin/api/schedule-experiments").get_json()
-    assert ex["method"] == "cluster_robust_v1" and ex["max_weeks_per_restaurant"] == 8
+    # v2 judges on the primaries (Draft Rework Rate, outcomes), not on
+    # acceptance (scheduler audit 10/10/26 LEARNING-25).
+    assert ex["method"] == "cluster_robust_outcomes_v2" and ex["max_weeks_per_restaurant"] == 8
     assert ex["experiments"][0]["verdict_history"][0]["week"] == "2026-W39"
     jobs = c.get("/admin/api/jobs").get_json()
     assert "value_snapshots" in {j["job"] for j in jobs["jobs"]}          # the new job is on the page

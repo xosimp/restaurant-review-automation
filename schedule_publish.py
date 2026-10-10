@@ -1116,6 +1116,11 @@ def _after_send(rid, schedule_id, version, review, acked, override_reasons, acto
         _srq_follow.reconcile(rid)
     except Exception as _fx:
         _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # The week to the POS time clock where the owner turned that on — queued
+    # for the pos_schedule_push job, never waited on, never raising
+    # (schedule audit 10/10/26 MARKET-7).
+    import pos_schedule_push as _psp
+    _psp.after_publish(rid, schedule_id, actor=actor)
 
 
 def _record_pay(rid, schedule_id, rows, sent_by, before_rows=None, replacement=False):

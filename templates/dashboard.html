@@ -13031,6 +13031,22 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
+  <!-- On the floor (schedule audit 10/10/26 J2) — labor so far against
+       sales so far and the projected close, the one move worth making now,
+       and the published week on the POS time clock. -->
+  <div class="lb2-srow s7">
+    <div class="lb2-subsection" onclick="lb2RowClick(event,toggleFloorPanel)">
+      <div class="lb2-subsection-title">On the floor <span id="floor-chip" class="lb2-subsection-chip"></span></div>
+      <button type="button" onclick="toggleFloorPanel()" class="cbtn cbtn-text cbtn-inline lb2-subsection-toggle" id="floor-toggle-btn">Open ↓</button>
+    </div>
+    <div id="floor-panel" style="display:none">
+      <div class="lb2-avail">
+        <div class="lb2-intro">Labor so far against sales so far, where tonight is heading, and the one legal, priced move worth making now. Checked every 15 minutes while you are open.</div>
+        <div id="floor-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px"></div></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Shift requests — a published shift somebody cannot work, and the
        open shifts nobody has picked up yet. -->
   <div class="lb2-srow s7">
@@ -37042,6 +37058,111 @@ window._cuRole=window.CAV_BOOT.role;
     jsend('/api/labor/demand-signals/'+id,{},function(d){done();if(!d.ok){toast(d.error||'Could not remove that','error');return;}toast(d.event_id?'Removed — Put back under Games you removed brings it back':'Removed','success');loadSignals();},'DELETE');
   };
 
+  // ── On the floor (schedule audit 10/10/26 J2) ──
+  // The live labor read and its moves (labor_live), the switches
+  // (floor_settings) and the POS schedule push (pos_schedule_push).
+  var _floor={live:null,set:null,preview:null};
+  window.toggleFloorPanel=function(){_lbToggle('floor',loadFloor,'Open ↓');};
+  window.loadFloor=function(){
+    jget('/api/labor/live',function(d){_floor.live=d;renderFloor();});
+    jget('/api/labor/floor-settings',function(d){_floor.set=d;renderFloor();});
+  };
+  function _flMoney(v){return v===null||v===undefined?'—':'<span class="hb-num">$'+esc(Math.round(v).toLocaleString())+'</span>';}
+  function _flPct(v){return v===null||v===undefined?'—':'<span class="hb-num">'+esc(v)+'%</span>';}
+  function _flWhen(iso){
+    if(!iso)return '';
+    var d=String(iso).slice(0,10),t=String(iso).slice(11,16),h=+t.slice(0,2),m=t.slice(3,5);
+    return esc(_dayShort(d))+' <span class="hb-num">'+esc(mdy(d))+' '+esc((h%12||12)+(m!=='00'?':'+m:'')+(h<12?'am':'pm'))+'</span>';
+  }
+  var _flActLabel={cut:'Let them go',extend:'Ask them to stay',call_in:'Call them in'};
+  var _flStatus={would_send:'will go',sent:'sent',skipped:'skipped',problem:'the POS would refuse it',started:'already started',salaried:'salaried, doesn’t clock in',unchanged:'already there',failed:'didn’t go through',removed_unconfirmed:'taken off: check the POS'};
+  window.renderFloor=function(){
+    var el=document.getElementById('floor-body');if(!el)return;
+    var L=_floor.live,S=_floor.set,h='',i;
+    if(!L||!S){return;}
+    if(!L.ok||!S.ok){el.innerHTML='<div class="hb-empty">'+esc((L&&L.error)||(S&&S.error)||'Could not load this.')+'</div>';return;}
+    var r=L.read||{},s=r.sales||{},lab=r.labor||{},p=r.pct||{};
+    var chip=document.getElementById('floor-chip');
+    if(!r.available){h+='<div class="hb-empty">'+esc(r.reason||'Nothing to read yet today.')+'</div>';if(chip)chip.textContent='';}
+    else{
+      if(chip)chip.textContent=p.all_in_projected!==null&&p.all_in_projected!==undefined?p.all_in_projected+'% projected':'';
+      h+='<div class="lb2-intro"><b>'+esc(r.sentence||'')+'</b></div>';
+      h+='<div class="shr-row"><div class="who"><b>Sales</b><span class="sub">'+_flMoney(s.so_far)+' so far ('+esc(s.basis||'no reading yet')+') · '+_flMoney(s.projected)+' projected at close: '+esc(s.projected_basis||'not enough to project from yet')+(s.covers_booked?' · <span class="hb-num">'+esc(s.covers_booked)+'</span> covers booked':'')+'</span></div></div>';
+      h+='<div class="shr-row"><div class="who"><b>Labor</b><span class="sub">'+_flMoney(lab.to_date)+' so far ('+_flPct(p.hourly_so_far)+' of sales, hourly) · '+_flMoney(lab.rest)+' still scheduled · '+_flPct(p.all_in_projected)+' projected all-in'+(p.target!==null&&p.target!==undefined?' against '+esc(p.target_label||'your target')+' of '+_flPct(p.target):'')+(lab.basis==='schedule'?' · the POS has no live clock feed, so labor so far is the schedule’s':'')+'</span></div></div>';
+      var ms=r.moves||[];
+      if(ms.length)h+='<div class="sr-k" style="margin:14px 0 4px">Worth doing now</div>';
+      for(i=0;i<ms.length;i++){h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(ms[i].kind.replace('_','-'))+'</span> <span class="sub">'+esc(ms[i].text)+'</span></div></div>';}
+    }
+    var today=L.moves_today||[];
+    if(today.length){h+='<div class="sr-k" style="margin:14px 0 4px">Tonight’s moves</div>';
+      for(i=0;i<today.length;i++){var m=today[i],open=m.status==='suggested'||m.status==='pushed';
+        h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(m.kind.replace('_','-'))+'</span> <b>'+esc(m.employee||'')+'</b><span class="sub">'+esc(m.text||'')+(open?'':' · '+esc(m.status)+(m.how==='auto'?' automatically':''))+'</span></div>'
+          +(open&&L.can_act?'<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="floorAct('+(+m.id)+',this)">'+esc(_flActLabel[m.kind]||'Do it')+'</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorMove('+(+m.id)+',\'dismiss\',this)">Not now</button>':'')
+          +(m.how==='auto'&&m.status==='offered'&&L.can_act?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorMove('+(+m.id)+',\'reverse\',this)">Reverse</button>':'')+'</div>';}
+    }
+    var st=S.settings||{},pos=S.pos||{},ap=S.autopilot||{};
+    h+='<div class="sr-k" style="margin:18px 0 6px">Your switches</div>';
+    h+='<div class="lb2-intro">Suggestions during service: '+(st.live_moves?'on':'off')+'. Autopilot: '+(st.autopilot?'on':'off')+'. With autopilot on, an extension or call-in you have approved <span class="hb-num">'+esc((ap.extend||{}).needed||6)+'</span> times yourself is offered to the person without your tap (extensions: '+((ap.extend||{}).earned?'earned':'<span class="hb-num">'+esc((ap.extend||{}).approvals||0)+'</span> so far')+'; call-ins: '+((ap.call_in||{}).earned?'earned':'<span class="hb-num">'+esc((ap.call_in||{}).approvals||0)+'</span> so far')+'). A cut always waits for you. Reverse one and it comes back to you.</div>';
+    if(S.can_edit)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorSet({live_moves:'+(st.live_moves?'false':'true')+'},this)">'+(st.live_moves?'Turn suggestions off':'Turn suggestions on')+'</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorSet({autopilot:'+(st.autopilot?'false':'true')+'},this)">'+(st.autopilot?'Turn autopilot off':'Turn autopilot on')+'</button></div>';
+    h+='<div class="sr-k" style="margin:18px 0 6px">The week on the POS time clock</div>';
+    if(!pos.schedule_push&&!pos.schedule_preview){h+='<div class="lb2-intro">'+(pos.provider?esc(pos.label||pos.provider)+' has no schedule write Cavnar AI can use: the week stays in Cavnar AI and the staff app.':'No POS is connected.')+'</div>';}
+    else{
+      h+='<div class="lb2-intro">'+(st.pos_push?'On: every week you send to staff also goes to '+esc(pos.label||'your POS')+'’s time clock, which holds early clock-ins and late clock-outs to it.':'Off: nothing is written to '+esc(pos.label||'your POS')+'. Look at the preview first: it shows every shift and what the POS would do with it.')+'</div>';
+      if(S.published_schedule_id)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorPreview('+(+S.published_schedule_id)+',this)">Preview this week</button></div>';
+      else h+='<div class="hb-empty">Send a week to staff and its preview shows here.</div>';
+      var pv=_floor.preview;
+      if(pv){
+        if(!pv.ok)h+='<div class="hb-empty">'+esc(pv.error||'The preview could not be read.')+'</div>';
+        else{
+          if(pv.external)h+='<div class="lb2-intro">'+esc(pv.external)+'</div>';
+          var sh=pv.shifts||[];
+          for(i=0;i<sh.length;i++){h+='<div class="shr-row"><div class="who"><b>'+esc(sh[i].employee||'')+'</b> '+(sh[i].start?_flWhen(sh[i].start):'')+(sh[i].role?' · '+esc(sh[i].role):'')+'<span class="sub">'+esc(_flStatus[sh[i].status]||sh[i].status)+(sh[i].reason?': '+esc(sh[i].reason):'')+'</span></div></div>';}
+          var lp=pv.last_push;
+          if(lp)h+='<div class="lb2-intro">Last push: '+esc(lp.status)+(lp.sent_on?' on <span class="hb-num">'+esc(lp.sent_on)+'</span>':'')+(lp.error?' · '+esc(lp.error):'')+'</div>';
+          if(S.can_edit&&pv.supported&&!st.pos_push&&!pv.external)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="floorSet({pos_push:true,previewed:true},this)">Send published weeks to '+esc(pos.label||'the POS')+'</button></div>';
+          if(S.can_edit&&st.pos_push)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorPush('+(+pv.history_id)+',this)">Send this week now</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorSet({pos_push:false},this)">Stop sending to the POS</button></div>';
+        }
+      }
+    }
+    el.innerHTML=h;
+  };
+  window.floorSet=function(body,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/floor-settings',body,function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not change that','error');return;}
+      toast('Saved','success');loadFloor();
+    });
+  };
+  window.floorPreview=function(id,btn){
+    var done=busy(btn,'Reading the POS…');
+    jget('/api/labor/pos-schedule-push?schedule_id='+id,function(d){done();_floor.preview=d;renderFloor();});
+  };
+  window.floorPush=function(id,btn){
+    var done=busy(btn,'Sending…');
+    jsend('/api/labor/pos-schedule-push',{schedule_id:id},function(d){
+      done();
+      if(!d.ok){toast(d.error||'It didn’t all go through: each shift says why','error');}
+      else toast(d.status==='unchanged'?'Already on the POS: nothing changed':'Sent to the POS','success');
+      floorPreview(id,btn);
+    });
+  };
+  window.floorAct=function(id,btn){
+    var done=busy(btn,'Working…');
+    jsend('/api/labor/live/moves/'+id+'/act',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not do that','error');return;}
+      toast(d.status==='offered'?'Offered to them in the Cavnar AI app':(d.note||'Done, and they have been told'),'success');loadFloor();
+    });
+  };
+  window.floorMove=function(id,what,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/live/moves/'+id+'/'+what,{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not do that','error');return;}
+      toast(what==='reverse'?(d.undone?'Withdrawn. Autopilot comes back to you':(d.note||'Autopilot comes back to you')):'Okay','success');loadFloor();
+    });
+  };
   // ── Shift requests ──
   var _requests=null;
   window.toggleRequestsPanel=function(){_lbToggle('requests',loadShiftRequests,'Review ↓');};
@@ -37077,7 +37198,10 @@ window._cuRole=window.CAV_BOOT.role;
     // Offers waiting on one named person (H2): the coverage issue's ask or
     // a manager's pick, answered in the staff app.
     var offers=d.offers||[],byReq={};
-    for(i=0;i<offers.length;i++){(byReq[offers[i].request_id]=byReq[offers[i].request_id]||[]).push(offers[i].name);}
+    var autoOffer={};
+    for(i=0;i<offers.length;i++){(byReq[offers[i].request_id]=byReq[offers[i].request_id]||[]).push(offers[i].name);
+      /* Offered to its best legal fit by Cavnar AI, once earned (MARKET-25). */
+      if(offers[i].created_by==='Cavnar AI (automatic)')autoOffer[offers[i].request_id]={id:offers[i].id,name:offers[i].name};}
     h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
     if(!open.length)h+='<div class="hb-empty">No open shifts. An approved drop without a named replacement, or one you post below, shows here until somebody picks it up in the Cavnar AI app.</div>';
     for(i=0;i<open.length;i++){var o=open[i],who=o.employee_name?'was '+esc(o.employee_name):'extra shift',asked=byReq[o.id]||[];
@@ -37085,10 +37209,14 @@ window._cuRole=window.CAV_BOOT.role;
          itself (MARKET-14, reversible) say so on the row. */
       var held=o.held_claimant?' · '+esc(o.held_claimant)+' asked for it — into overtime, answer it in Waiting on you':'';
       var auto=o.decided_how==='auto'&&!o.reversed_at?' · approved automatically':'';
+      var ao=autoOffer[o.id];
+      if(ao)auto+=' · offered to '+esc(ao.name)+' automatically, the best legal fit';
       h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+held+auto+'</span></div>'
         +'<input type="text" class="ac-input" data-shr-offer list="lb2-people-names" autocomplete="off" placeholder="Offer it to…" aria-label="Offer it to" style="width:150px">'
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrOffer('+(+o.id)+',this)">Offer</button>'
-        +(auto?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
+        +(auto&&!ao?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
+        +(ao&&d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrOfferReverse('+(+ao.id)+',this)">Withdraw offer</button>':'')
+        +(d.group&&d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCrossSite('+(+o.id)+',this)">Other locations</button>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCancelOpen('+(+o.id)+',this)">Take it off</button></div>';
     }
     /* A swap that approved itself and went through can still be traded back. */
@@ -37122,9 +37250,12 @@ window._cuRole=window.CAV_BOOT.role;
     h+='<div class="lb2-intro">'+(p.auto_approve?'On: a drop or swap that keeps a manager on every minute and the closers, adds no overtime, is the same role, is more than <span class="hb-num">'+esc(p.notice_hours)+'</span> hours out and costs Shift Quality no more than <span class="hb-num">'+esc(p.max_quality_drop)+'</span> points approves itself — once your own approvals of that kind earn it. Reverse one and that kind comes back to you.':'Off: every drop and swap waits on you.')+'</div>';
     for(k=0;k<kinds.length;k++){var tr=t[kinds[k]]||{};
       h+='<div class="lb2-intro">'+(kinds[k]==='drop'?'Drops':'Swaps')+': '+(tr.earned?'earned':'<span class="hb-num">'+esc(tr.approvals||0)+'</span> of the <span class="hb-num">'+esc(tr.needed||0)+'</span> approvals it needs')+(tr.lapse_reason&&!tr.earned?' (back to you: '+esc(tr.lapse_reason)+')':'')+'</div>';}
+    var to=t.offer||{};
+    h+='<div class="lb2-intro">Open shifts offered to their best legal fit first: '+(p.auto_offer?'on':'off')+' — '+(to.earned?'earned':'<span class="hb-num">'+esc(to.approvals||0)+'</span> of the <span class="hb-num">'+esc(to.needed||0)+'</span> offers you make yourself it needs')+(to.lapse_reason&&!to.earned?' (back to you: '+esc(to.lapse_reason)+')':'')+'. Never into overtime while a teammate has room; withdraw one and it comes back to you.</div>';
     h+='<div class="lb2-intro">Less availability: '+(p.availability_approval?'waits for your approval, from the first week you haven’t built':'starts on its own, from the first week you haven’t built')+'.</div>';
     if(canDecide)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrPolicy({auto_approve:'+(p.auto_approve?'false':'true')+'},this)">'+(p.auto_approve?'Turn automatic approval off':'Turn automatic approval on')+'</button>'
-      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({availability_approval:'+(p.availability_approval?'false':'true')+'},this)">'+(p.availability_approval?'Let less availability start on its own':'Approve less availability first')+'</button></div>';
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({availability_approval:'+(p.availability_approval?'false':'true')+'},this)">'+(p.availability_approval?'Let less availability start on its own':'Approve less availability first')+'</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({auto_offer:'+(p.auto_offer?'false':'true')+'},this)">'+(p.auto_offer?'Stop offering open shifts automatically':'Offer open shifts to the best fit automatically')+'</button></div>';
     return h;
   }
   window.shrPolicy=function(body,btn){
@@ -37133,6 +37264,41 @@ window._cuRole=window.CAV_BOOT.role;
       done();
       if(!d.ok){toast(d.error||'Could not change that','error');return;}
       toast('Saved','success');
+      loadShiftRequests();
+    });
+  };
+  /* People at the group's other locations who said they travel, judged by
+     this location's rules (cross_site, MARKET-16). */
+  window.shrCrossSite=function(id,btn){
+    var done=busy(btn,'Looking…');
+    jget('/api/labor/cross-site/candidates?request_id='+id,function(d){
+      done();
+      var row=document.querySelector('[data-shr-open="'+id+'"]');if(!row)return;
+      var box=row.querySelector('.shr-xsite');
+      if(!box){box=document.createElement('div');box.className='shr-xsite lb2-intro';row.appendChild(box);}
+      if(!d.ok){box.textContent=d.error||'Could not look that up.';return;}
+      var c=d.candidates||[],h='',i;
+      if(!c.length)h='Nobody at your other locations who said they travel works that role.';
+      for(i=0;i<c.length;i++){
+        h+='<div>'+esc(c[i].name)+' <span class="sub">('+esc(c[i].home)+')</span> '+(c[i].ok?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-name="'+esc(c[i].name)+'" onclick="shrCrossOffer('+(+id)+','+(+c[i].home_restaurant_id)+',this)">Offer</button>':'<span class="sub">can’t: '+esc(c[i].why||'')+'</span>')+'</div>';}
+      box.innerHTML=h;
+    });
+  };
+  window.shrCrossOffer=function(id,home,btn){
+    var name=btn.getAttribute('data-name')||'';
+    var done=busy(btn,'Offering…');
+    jsend('/api/labor/cross-site/offer',{request_id:id,home_restaurant_id:home,name:name},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not offer that','error');return;}
+      toast('Offered to '+name,'success');loadShiftRequests();
+    });
+  };
+  window.shrOfferReverse=function(id,btn){
+    var done=busy(btn,'Withdrawing…');
+    jsend('/api/labor/shift-offers/'+id+'/reverse',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not withdraw that','error');return;}
+      toast(d.undone?'Withdrawn. Automatic offers come back to you':(d.note||'Automatic offers come back to you'),'success');
       loadShiftRequests();
     });
   };

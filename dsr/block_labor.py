@@ -579,6 +579,16 @@ def collect(ctx):
     except Exception as e:
         log.warning("dsr labor: earned hours unavailable rid=%s: %s", ctx.restaurant_id, e)
         earned = None
+    # Overtime drift (schedule audit 10/10/26 MARKET-7): minutes punched
+    # outside the published shift — early in, late out — by person and role,
+    # from the archived punches. The plan never adds overtime; this is what
+    # the floor did to it.
+    try:
+        import pos_schedule_push as _psp
+        drift = _psp.overtime_drift(ctx.restaurant_id, ctx.day)
+    except Exception as e:
+        log.warning("dsr labor: overtime drift failed rid=%s: %s", ctx.restaurant_id, e)
+        drift = {"available": False, "reason": "unreadable"}
 
     metrics = {
         "cost": cost, "pct": pct, "hours": hours, "overtime_hours": ot,
@@ -595,6 +605,10 @@ def collect(ctx):
         # standards, and the worked hours of the same roles (MARKET-33).
         "earned_hours": earned["earned"] if earned else None,
         "earned_roles_worked_hours": earned["worked"] if earned else None,
+        # Minutes punched outside the scheduled shifts and what they cost;
+        # None when the punches or the published week aren't there to say.
+        "drift_minutes": drift.get("minutes") if drift.get("available") else None,
+        "drift_dollars": drift.get("dollars") if drift.get("available") else None,
     }
     # The owner's labor, salaries in (owner, 9/30/26: "Erik is going to want
     # to see labor with salaries included in the report - that's his actual
@@ -639,6 +653,14 @@ def collect(ctx):
         observations.append({"key": "earned_hours", "facts": ["labor.earned_hours", "labor.earned_roles_worked_hours"],
                              "text": f"The night's work earned {earned['earned']:g} hours at this restaurant's own "
                                      f"labor standards; those roles worked {earned['worked']:g}."})
+    if drift.get("available") and drift.get("minutes", 0) >= 30:
+        top = drift["people"][0]
+        observations.append({"key": "overtime_drift", "facts": ["labor.drift_minutes", "labor.drift_dollars"],
+                             "text": f"{drift['minutes']} minutes were punched outside scheduled shifts "
+                                     f"({drift['early']} early in, {drift['late']} late out)"
+                                     + (f", about ${drift['dollars']:,.0f}" if drift.get("dollars") else "")
+                                     + f" — most by {top['employee']} ({top['role'] or 'staff'}, "
+                                       f"{top['early'] + top['late']} min)."})
     if cov["measured"] and cov["no_shows"]:
         n = len(cov["no_shows"])
         observations.append({"key": "no_shows", "facts": ["labor.no_shows"],
@@ -679,6 +701,7 @@ def collect(ctx):
                               "name"),
         "hourly_hours": {str(h): v for h, v in hourly_hours(day_rows).items()},
         "coverage": cov,
+        "overtime_drift": drift,
         "shift_quality": quality,
         # Earned against scheduled and worked hours, per meal and role family
         # (MARKET-33; staffing_model.earned) — read week over week by

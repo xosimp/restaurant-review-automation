@@ -1871,6 +1871,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # owner typed for this draft, hard — applied just below.
     import owner_rules as _owr
     _owner_words = {"instruction": []}
+    # A stopped run starts no further model call (10/9/26) — the reading
+    # below is one.
+    _raise_if_stopped(current_clock())
     try:
         _owner_words = _owr.prepare(restaurant_id, next_week_dates, instruction=instruction)
     except Exception as _sfx:
@@ -11064,6 +11067,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         # prompt only. schedule_narrative writes them from the final rows,
         # the diff and the unmet list, or keeps the model's own only where
         # the final week still holds them.
+        # The note is a model call: a stopped run starts no further one
+        # (10/9/26) — stopped by the owner is said as stopped, called dead by
+        # a poll as out of time, the same verdicts as the save check below.
+        _raise_if_stopped(clock, owner_only=True)
+        if clock is not None and clock.stopped():
+            raise ScheduleGenerationError(_TIMED_OUT_MESSAGE)
         try:
             import schedule_narrative as _snar
             _note = _snar.write(restaurant_id, preview_rows, changes=result.get("summary") or [],
