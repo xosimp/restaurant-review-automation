@@ -107,6 +107,11 @@ def _gen(answers, calls):
     """A stubbed generate_optimized_schedule: each call pops its answer — a
     list of CSV lines, or a dict merged into the result, or an exception."""
     def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
+        if kwargs.get("prepare_only"):
+            # labor's prepare_only (scheduler audit 10/10/26): the week's
+            # figures with no model call — never one of the answers.
+            return {"schedule_csv": HEADER + "\n", "rows": [], "narrative": [], "generation_seconds": 0.0,
+                    "week_dates": WEEK, "hours_budget": 0, "requirements_by_date": {}, "prepared": True}
         calls.append({"slice": list(week_slice) if week_slice else None, "prior": list(prior_rows or []),
                       "kwargs": kwargs})
         ans = answers.pop(0)
@@ -266,7 +271,9 @@ def test_the_gate_and_an_owner_redo_regenerate_only_their_dates_through_the_job(
     assert len(calls) == 1 and calls[0]["slice"] == [WEEK[5]]
     assert calls[0]["kwargs"]["instruction"] == "What was wrong with the previous draft: The wrong people on"
     assert res["regenerated_dates"] == [WEEK[5]]
-    assert res["redo"] == {"dates": [WEEK[5]], "base_history_id": base, "by": "owner"}
+    # Drafted in code first (scheduler audit 10/10/26 AI-28); this harness has
+    # no SHIFT REQUIREMENTS for code to lay out, so the model redid the day.
+    assert res["redo"] == {"dates": [WEEK[5]], "base_history_id": base, "by": "owner", "how": "model"}
     saturday = [r for r in res["preview_rows"] if r["date"] == WEEK[5]]
     assert [r["employee"] for r in saturday] == ["Bo"]                 # rewritten
     assert {r["date"] for r in res["preview_rows"] if r["employee"] == "Ana"} == set(WEEK) - {WEEK[5]}   # kept

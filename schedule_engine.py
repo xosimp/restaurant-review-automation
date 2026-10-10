@@ -1605,8 +1605,14 @@ def _no_history_analysis() -> dict:
 
 
 def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None,
-                           instruction=None):
+                           instruction=None, code_redo=False):
     """Shared logic for both schedule endpoints.
+
+    code_redo — an owner's redo of `dates` drafted in code first (scheduler
+    audit 10/10/26 AI-28): the days re-shaped from SHIFT REQUIREMENTS on the
+    restaurant's usual shifts and solved against every rule — the reason
+    they gave read as typed rules — with no model call; the job sends the
+    days to the model only when that changes nothing.
 
     focus — named weaknesses of the previous draft (a list of strings), for
     a regeneration of chosen dates; rendered into the prompt as "THE
@@ -2306,7 +2312,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail("experiment arm", _sfx, restaurant_id)
     import schedule_fallback as _sfb
-    _fallback = {"source": _sfb.draft_source(restaurant_id, _arms), "restaurant_id": restaurant_id,
+    _fallback = {"source": "solver" if code_redo else _sfb.draft_source(restaurant_id, _arms),
+                 "code_redo": bool(code_redo and dates), "restaurant_id": restaurant_id,
                  "constraints": constraints, "roster_names": [n for n, _r in roster_pairs],
                  "roster_roles": {n: r for n, r in roster_pairs}, "week_dates": next_week_dates,
                  "plan_rows": list(manager_plan.get("rows") or []),
@@ -2530,6 +2537,61 @@ def with_redo_reason(instruction, reason):
     return " ".join(w for w in (instruction, said) if w)[:500] or None
 
 
+_REDO_MARKER = "What was wrong with the previous draft:"
+
+
+def _redo_reads_as_rules(restaurant_id, instruction, week_start=None) -> bool:
+    """Whether an owner's redo is drafted in code first (scheduler audit
+    10/10/26 AI-28): no reason, a reason chip's own words, or words that read
+    as typed rules (owner_rules — read once, cached; the same reading the
+    generation then holds). A judgement code cannot read ("make Friday feel
+    less chaotic") goes straight to the model. Never raises (False: the model)."""
+    text = str(instruction or "").strip()
+    if not text:
+        return True
+    try:
+        import owner_rules as _owr
+        chips = {str(v).strip().lower() for v in REDO_REASONS.values()}
+        week = None
+        if week_start:
+            try:
+                week = week_dates_from(_week_monday(_date_of(week_start), week_start,
+                                                    start_day=week_start_day_of(get_restaurant(restaurant_id))))
+            except Exception:
+                week = None
+        todo = []
+        for s in _owr._sentences(text):
+            bare = s.replace(_REDO_MARKER, "").strip(" .;")
+            if bare.lower() in chips or not bare:
+                continue
+            todo.append(s)
+        if not todo:
+            return True
+        names, roles = _owr._roster(restaurant_id)
+        got = _owr.read(restaurant_id, todo, "instruction", names, roles, week_dates=week)
+        return all(got.get(s) for s in todo)
+    except Exception as e:
+        print(f"[schedule] redo reason not read: {e!r}")
+        return False
+
+
+def _redo_changed(base_rows, rows, dates) -> bool:
+    """Whether the redo's days differ from the draft it redid (who, role,
+    start and end on each of `dates`)."""
+    want = set(dates or ())
+
+    def sig(rs):
+        out = {}
+        for r in rs or []:
+            d = r.get("date")
+            if d in want:
+                out.setdefault(d, []).append((" ".join(str(r.get("employee") or "").lower().split()),
+                                              str(r.get("role") or "").strip().lower(),
+                                              str(r.get("shift_start") or ""), str(r.get("shift_end") or "")))
+        return {d: sorted(v) for d, v in out.items()}
+    return sig(base_rows) != sig(rows)
+
+
 def _acceptable_missing(missing, trading_dates, roster_pairs, max_days) -> bool:
     """Whether dates the model left empty are a legitimate week: a closure
     holiday, or the day off a roster too small to cover every trading day
@@ -2739,7 +2801,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # A week drafted without the model (schedule_fallback — contract #7): no
     # call is made at all; every date is drafted in code below.
     chosen = (fallback or {}).get("source") or "model"
-    if redo is None and chosen != "model":
+    code_redo = bool((fallback or {}).get("code_redo")) and redo is not None
+    if (redo is None and chosen != "model") or code_redo:
         queue = []
     parallel_cap = parallel_calls()
     while queue:
@@ -2957,7 +3020,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # owner's rows instead (the caller puts them back); data that is not
     # current is never papered over.
     code_draft = None
-    if fallback is not None and redo is None:
+    if fallback is not None and (redo is None or code_redo):
         import schedule_fallback as _sfb
         if chosen != "model":
             gaps = {d: "chosen" for d in want if d not in {x[0] for x in written if x[0] and x[3] and not x[4]}}
@@ -2968,7 +3031,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
             if facts is None:
                 facts = _prepared_week(analysis, shifts, kwargs, rules_c, extra_rest, managers, kept, no_one, clock,
                                        open_dates, generate_optimized_schedule)
-            code_draft = _code_draft(sorted(gaps), gaps, fallback, facts, shifts, chosen)
+            code_draft = _code_draft(sorted(gaps), gaps, fallback, facts, shifts, chosen, kept=kept)
             if code_draft and code_draft.get("rows"):
                 done_dates = sorted({r["date"] for r in code_draft["rows"] if r.get("date")})
                 for d in done_dates:
@@ -3132,7 +3195,7 @@ def _prepared_week(analysis, shifts, kwargs, rules_c, extra_rest, managers, kept
                 "rows": [], "generation_seconds": 0.0}
 
 
-def _code_draft(dates, why, fallback, facts, shifts, chosen):
+def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
     """The days `dates` drafted without the model (schedule_fallback): the
     last published week carried forward, else — or when the "solver"
     source was chosen — SHIFT REQUIREMENTS shaped on the restaurant's usual
@@ -3154,7 +3217,10 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen):
             since = (_date_of(first) - __import__("datetime").timedelta(days=56)).isoformat()
             hist = list((base or {}).get("rows") or []) + [s for s in shifts or []
                                                             if since <= str(s.get("date") or "")[:10] < first]
-            plan = [r for r in (fallback.get("plan_rows") or []) if r.get("date") in set(dates)]
+            # The plan's rows on these dates, and a redo's kept days (their
+            # hours, rest and runs count toward each person's week).
+            plan = [r for r in (fallback.get("plan_rows") or []) if r.get("date") in set(dates)] + \
+                [dict(r) for r in (kept or [])]
             roles = dict(fallback.get("roster_roles") or {})
             signals, weights = None, None
             try:
@@ -3176,8 +3242,10 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen):
         drafted = sorted({r["date"] for r in rows if r.get("date")})
         reasons = [why.get(d) for d in drafted if why.get(d)]
         main = max(set(reasons), key=reasons.count) if reasons else "other"
+        redo = bool(fallback.get("code_redo"))
         return {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
-                "why": dict(why), "line": _sfb.note_line(used, main, drafted, base if used == "carry_forward" else None)}
+                "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
+                                                         base if used == "carry_forward" else None, redo=redo)}
     except Exception as e:
         _soft_fail("code draft", e, rid)
         return None
@@ -9004,7 +9072,7 @@ def _in_frozen_inputs(fn):
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
                       focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0,
-                      _gate_fill=None):
+                      _gate_fill=None, _code_redo=None):
     """week_start picks the week (any date in it); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
@@ -9071,11 +9139,37 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _build_kw["instruction"] = instruction
         if redo:
             _build_kw.update(dates=sorted(set(dates)), prior_rows=_pinned)
+        # An owner's redo is drafted in code first (scheduler audit 10/10/26
+        # AI-28): a one-day redo used to pay a whole week's thinking for a
+        # few rows. The days are re-shaped and solved against every rule —
+        # their reason read as typed rules — and go to the model only when
+        # that changes nothing, or when the reason is a judgement code
+        # cannot read (_redo_reads_as_rules). Never the quality gate's redo
+        # (its own fill runs first), never a re-run over an edited draft.
+        _code_redo_on = False
+        import inspect as _insp_cr
+        if redo and not focus and _gate_fill is None and _model_result is None and _code_redo is not False \
+                and "code_redo" in _insp_cr.signature(_build_schedule_result).parameters:
+            _code_redo_on = bool(_code_redo) or _redo_reads_as_rules(restaurant_id, instruction, week_start)
+            if _code_redo_on:
+                _build_kw["code_redo"] = True
         with _timer.stage("inputs_and_model"):
             if _model_result is not None:
                 # Run again over a draft edited while the model wrote: the
                 # model's answer is reused as it came back (PIPE-2).
                 result = copy.deepcopy(_model_result)
+            elif _code_redo_on:
+                try:
+                    result = _build_schedule_result(restaurant_id, **_build_kw)
+                except ScheduleStopped:
+                    raise
+                except ScheduleGenerationError as _crx:
+                    # Code could not redraft the days (nothing it could
+                    # legally staff): the model redoes them (AI-28).
+                    print(f"[schedule] the code's redo drafted nothing ({_crx}) — the model redoes the days")
+                    return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=dates,
+                                             base_history_id=base_history_id, focus=focus, gate=gate,
+                                             instruction=instruction, _reruns=_reruns, _code_redo=False)
             else:
                 result = _build_schedule_result(restaurant_id, **_build_kw)
         _answer = None
@@ -9126,7 +9220,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # The owner's reason rides `instruction` into the prompt and is
             # recorded from the request (schedule_versions.record_rejection).
             result["redo"] = {"dates": sorted(set(dates)), "base_history_id": int(base_history_id),
-                              "by": "gate" if (focus or _gate_fill) else "owner"}
+                              "by": "gate" if (focus or _gate_fill) else "owner",
+                              # Redone in code, no model call (AI-28), or by the model.
+                              "how": "code" if _code_redo_on else "model"}
         from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
         _raw_notes = frozen_read(("staff_notes", restaurant_id), lambda: _gsn_sched(restaurant_id)) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
@@ -9329,6 +9425,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             for _k, _s in (_loop.get("seconds") or {}).items():
                 _timer.add(f"repair.{_k}", _s)
             preview_rows = _loop["rows"]
+            if _code_redo_on and not _redo_changed(_base_rows, preview_rows, dates):
+                # The code's redo changed nothing on the owner's days: the
+                # model redoes them after all (AI-28), nothing saved here.
+                print("[schedule] the code's redo changed nothing — the model redoes the days")
+                return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=dates,
+                                         base_history_id=base_history_id, focus=focus, gate=gate,
+                                         instruction=instruction, _reruns=_reruns, _code_redo=False)
             hours_scheduled = _safe_hours_sum(preview_rows)
             _apply_repair_reports(result, _loop)
             hours_added = round(float((_loop.get("hours_added") or {}).get("top_up") or 0.0), 1)

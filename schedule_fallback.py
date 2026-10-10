@@ -72,6 +72,7 @@ _WHY_WORDS = {
     "cut": "the model ran out of room",
     "skipped": "the model left them empty",
     "chosen": "this week's drafts are built in code",
+    "redo": "the reason you gave, read as rules",
 }
 
 
@@ -247,7 +248,7 @@ def _default_times(day, part, open_times=None, close_times=None):
     return (o, "3:00pm") if part == "morning" else ("4:30pm", c)
 
 
-def note_line(source, why, dates, base=None) -> str:
+def note_line(source, why, dates, base=None, redo=False) -> str:
     """The review's line for days drafted in code: which days, from what,
     and why — "Built without the AI model: Saturday 10/17/26 and Sunday
     10/18/26 — your published week of 10/3/26 carried forward and checked
@@ -263,4 +264,4 @@ def note_line(source, why, dates, base=None) -> str:
     else:
         how = "your usual crew and shifts, solved against every rule"
     words = _WHY_WORDS.get(why, _WHY_WORDS["other"])
-    return f"Built without the AI model: {which} — {how} ({words})."
+    return f"{'Redone' if redo else 'Built'} without the AI model: {which} — {how} ({words})."
