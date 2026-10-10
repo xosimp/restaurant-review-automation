@@ -132,6 +132,17 @@ def test_the_section_cap_never_cuts_a_count_of_different_people():
     assert out["Server AM"] + out["Server PM"] == 5 and sum(trimmed.values()) == 2
 
 
+def test_the_owners_most_on_at_once_holds_the_half_hours_not_the_crew():
+    import schedule_requirements as req
+    curve = {"Friday": {17: 0.1, 18: 0.3, 19: 0.5, 20: 0.1}}
+    rows = req.shift_requirements([FRI], typical_headcount={("Friday", "night"): {"Server": 8}}, demand_curve=curve,
+                                  role_caps={"server": {"Friday": {"any": 4}}})
+    night = next(r for r in rows if r["daypart"] == "night")
+    srv = night["roles"][0]
+    assert srv["required"] == 8 and "your maximum of 4 on at once" in srv["reason"]
+    assert max(n for _m, n in night["half_hours"]["Server"]) <= 4
+
+
 # ── LOGIC-8: the setup's suggested floors ─────────────────────────────────
 
 STAGGERED = [("Ann", "11:00am", "7:00pm"), ("Bo", "4:00pm", "11:00pm"), ("Cy", "4:30pm", "11:00pm"),

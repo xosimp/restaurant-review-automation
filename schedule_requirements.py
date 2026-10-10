@@ -69,12 +69,30 @@ def _limit_for(limits, role, day):
     return (got or {}).get(day) if isinstance(got, dict) else None
 
 
-def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=1, idx_floor=2, idx_why=5):
+def _role_cap(role_caps, role, day, part):
+    """The owner's "most of a role on at once" for a shift, or None."""
+    caps = _limit_for(role_caps, role, day) or {}
+    cap = caps.get(part) if isinstance(caps, dict) else None
+    if cap is None and isinstance(caps, dict):
+        cap = caps.get("any")
+    try:
+        return int(cap) if cap is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=1, idx_floor=2, idx_why=5,
+                  concurrent=False):
     """Hold one shift's numbers to the owner's RESTAURANT HOURS & SHIFT
     RULES (PROMPT-1): a role outside the hours they give it is asked for
-    only its floor (none, normally — a floor is never set outside them), and
-    no role for more than their ceiling — never below its floor. `need` is
-    {key: [display, required, floor, ...]}, changed in place."""
+    only its floor (none, normally — a floor is never set outside them).
+    Their "most on at once" ceiling cuts a number only when it is itself
+    people on at once (`concurrent` — the late segment's crew); a daypart's
+    count of different people is never cut to it (staggered starts fit more
+    people than the most on at once — schedule audit 10/10/26, LOGIC-7's
+    rule for the section cap, the same for the owner's ceiling): the row
+    says the ceiling instead, and the half-hour needs are held to it.
+    `need` is {key: [display, required, floor, ...]}, changed in place."""
     for k in list(need):
         v = need[k]
         w = _limit_for(role_windows, v[idx_name], day)
@@ -84,14 +102,14 @@ def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=
             else:
                 del need[k]
                 continue
-        caps = _limit_for(role_caps, v[idx_name], day) or {}
-        cap = caps.get(part) if isinstance(caps, dict) else None
-        if cap is None and isinstance(caps, dict):
-            cap = caps.get("any")
-        if cap is not None and v[idx_req] > int(cap):
-            v[idx_req] = max(int(cap), int(v[idx_floor] or 0))
-            if idx_why is not None:
-                v[idx_why].append(f"held to your maximum of {int(cap)} on at once")
+        cap = _role_cap(role_caps, v[idx_name], day, part)
+        if cap is not None and v[idx_req] > cap:
+            if concurrent:
+                v[idx_req] = max(cap, int(v[idx_floor] or 0))
+                if idx_why is not None:
+                    v[idx_why].append(f"held to your maximum of {cap} on at once")
+            elif idx_why is not None:
+                v[idx_why].append(f"your maximum of {cap} on at once: stagger them")
 
 
 def demand_factor(ratio=1.0, hold=1.0) -> float:
@@ -417,6 +435,13 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                         for r_t, k_t in trimmed.items():
                             held[r_t] = max(held.get(r_t, 0), k_t)
                     needs = capped_needs
+                if role_caps:
+                    # The owner's "most of a role on at once", in its own unit.
+                    for m, rn in needs.items():
+                        for r_c in list(rn):
+                            cap_c = _role_cap(role_caps, r_c, day, part)
+                            if cap_c is not None and rn[r_c] > cap_c:
+                                rn[r_c] = cap_c
                 if roles is not None:
                     needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in roles} for m, rn in needs.items()}
                 half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1
@@ -525,7 +550,9 @@ def _late_row(d, day, late_typical, close_times, ratio, hold, why_date, roles, s
     if role_windows or role_caps:
         # [display, required, floor] for the shared limits (PROMPT-1).
         view = {r: [r, v[0], 0] for r, v in need.items()}
-        _apply_limits(view, day, LATE_PART, role_windows, role_caps, idx_why=None)
+        # The late crew is people on across the window (labor's late_headcount
+        # is the median on at each half hour): the ceiling's own unit.
+        _apply_limits(view, day, LATE_PART, role_windows, role_caps, idx_why=None, concurrent=True)
         need = {r: [view[r][1], v[1]] for r, v in need.items() if r in view}
     if not need:
         return None
