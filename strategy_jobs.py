@@ -1305,14 +1305,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
         # week without a notice rule; two or three weeks out under a 14-day
         # predictive-scheduling notice, which next week never met (schedule
         # audit 10/10/26 MARKET-1).
-        # Counted from the draft day itself, on the fallback day too: from
-        # the day after, a 14-day notice can push the first on-time week out
-        # by one, and the week the draft day targeted would never be drafted.
-        from datetime import datetime as _dt_ad, timedelta as _td_ad
-        anchor = _dt_ad.strptime(local[r.id][1], "%Y-%m-%d")
-        if anchor.weekday() != auto_draft_weekday(r):
-            anchor -= _td_ad(days=1)
-        target = _se.default_week_start(r, anchor, publish_lag_days=1).strftime("%Y-%m-%d")
+        target = auto_draft_target(r, local[r.id][1])
         # A week this job already drafted is done, even if the owner then
         # removed the draft: the fallback day never drafts it again.
         if ops.period_claimed(f"auto_draft_done:{r.id}", target):
@@ -1358,6 +1351,23 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
     attempted = counts["drafted"] + counts["failed"]
     return _counts(attempted, counts["drafted"], counts["failed"], counts["skipped"], ran_out,
                    drafted=counts["drafted"], complete=not ran_out)
+
+
+def auto_draft_target(r, period) -> str:
+    """The week the auto-draft writes on `period` (the restaurant's own ISO
+    date, its draft day or the fallback day after it): the first week that
+    can still be published on time, its auto-publish the next day
+    (schedule_engine.default_week_start — MARKET-1). Counted from the draft
+    day itself on the fallback day too: from the day after, a 14-day notice
+    can push the first on-time week out by one, and the week the draft day
+    targeted would never be drafted."""
+    import schedule_engine as _se
+    from models import auto_draft_weekday
+    from datetime import datetime as _dt_ad, timedelta as _td_ad
+    anchor = _dt_ad.strptime(str(period)[:10], "%Y-%m-%d")
+    if anchor.weekday() != auto_draft_weekday(r):
+        anchor -= _td_ad(days=1)
+    return _se.default_week_start(r, anchor, publish_lag_days=1).strftime("%Y-%m-%d")
 
 
 def _auto_draft_ended_undone(conn, restaurant_id) -> bool:

@@ -225,6 +225,25 @@ def test_generate_and_the_auto_draft_target_the_first_week_publishable_on_time(d
     assert se.default_week_start(r, thu, publish_lag_days=1).strftime("%Y-%m-%d") == "2026-10-26"
 
 
+def test_the_auto_drafts_fallback_day_writes_the_week_its_draft_day_targeted(db):
+    """H1's fallback day (the day after the draft day) counts the notice
+    horizon from the draft day, so a failed draft is retried for the same
+    week rather than one further out — a week is never skipped."""
+    import strategy_jobs as sj
+    rid = T._restaurant(db)
+    models.update_restaurant(rid, {"compliance_profile_json": json.dumps(CHICAGO_BIG), "week_start_day": 2,
+                                   "auto_draft_weekday": 0})             # Wednesday weeks, Monday drafts
+    r = models.get_restaurant(rid)
+    assert models.auto_draft_weekday(r) == 0
+    on_day = sj.auto_draft_target(r, "2026-10-12")                     # Monday
+    assert on_day == "2026-10-28"                                      # 16 days out: 14 notice + 1 lag
+    assert sj.auto_draft_target(r, "2026-10-13") == on_day             # Tuesday, the fallback
+    models.update_restaurant(rid, {"compliance_profile_json": json.dumps(EJS)})
+    r = models.get_restaurant(rid)
+    assert sj.auto_draft_target(r, "2026-10-12") == "2026-10-14"       # no notice rule: next week
+    assert sj.auto_draft_target(r, "2026-10-13") == "2026-10-14"
+
+
 # ── the predictability-pay ledger (MARKET-2) ─────────────────────────────────
 
 def test_changes_are_classified_per_person_and_shift():
