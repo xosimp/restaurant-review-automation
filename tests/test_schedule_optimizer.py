@@ -153,9 +153,12 @@ def test_the_gate_leaves_roster_limits_and_quiet_shifts_alone():
 
 def test_learned_headcount_moves_the_requirement_both_ways(monkeypatch):
     import labor, schedule_learning
-    monkeypatch.setattr(schedule_learning, "learned_headcount_adjustments",
-                        lambda rid: {("Friday", "night"): {"server": 1, "Busser": -1},
-                                     ("Monday", "morning"): {"Host": 1}})
+    # learned_headcount (10/10/26, LEARNING-3) carries each delta beside the
+    # level the manager settled on; with none read the delta applies whole.
+    monkeypatch.setattr(schedule_learning, "learned_headcount",
+                        lambda rid: {("Friday", "night"): {"server": {"delta": 1, "settled": None},
+                                                           "Busser": {"delta": -1, "settled": None}},
+                                     ("Monday", "morning"): {"Host": {"delta": 1, "settled": None}}})
     out = labor.apply_learned_headcount(1, {("Friday", "night"): {"Server": 4, "Busser": 1}})
     assert out[("Friday", "night")] == {"Server": 5}
     assert out[("Monday", "morning")] == {"Host": 1}

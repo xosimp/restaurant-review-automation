@@ -72,7 +72,9 @@ def test_the_arm_is_a_pure_function_of_restaurant_and_week(db, monkeypatch):
     _powered(monkeypatch)
     first = sx.arms_for(rid, "2026-10-05")
     assert first == sx.arms_for(rid, "2026-10-05")          # a regeneration keeps its arm
-    assert [a["experiment"] for a in first] == [EXP["key"]] and not first[0]["pinned"]
+    # One entry per active experiment (learning_v1 joined assign_v1 on 10/10/26).
+    assert [a["experiment"] for a in first] == [e["key"] for e in sx.EXPERIMENTS if e["active"]]
+    assert first[0]["experiment"] == EXP["key"] and not first[0]["pinned"]
     assert first[0]["arm"] == sx.hashed_arm(EXP, rid, "2026-10-05")
     weeks = [(dt.date(2026, 1, 5) + dt.timedelta(weeks=k)).isoformat() for k in range(80)]
     arms = [sx.hashed_arm(EXP, rid, w) for w in weeks]
@@ -84,10 +86,11 @@ def test_a_new_experiment_is_one_registry_entry(monkeypatch):
     extra = {"key": "stagger_v1", "active": True, "control": "off", "question": "", "started": "2026-10-01",
              "arms": ({"key": "off", "label": "Off", "weight": 1, "flags": {"stagger": False}},
                       {"key": "on", "label": "On", "weight": 3, "flags": {"stagger": True}})}
+    live = [e["key"] for e in sx.EXPERIMENTS if e["active"]]
     monkeypatch.setattr(sx, "EXPERIMENTS", sx.EXPERIMENTS + (extra,))
     monkeypatch.setattr(sx, "_restaurant_pins", lambda rid, db_path: {})
     arms = sx.arms_for(7, "2026-10-05")
-    assert [a["experiment"] for a in arms] == [EXP["key"], "stagger_v1"]
+    assert [a["experiment"] for a in arms] == live + ["stagger_v1"]
     assert isinstance(sx.flag(arms, "stagger"), bool) and isinstance(sx.flag(arms, "solver"), bool)
     assert sx.flag([], "solver") is sx.DEFAULT_FLAGS["solver"]
 
@@ -96,14 +99,16 @@ def test_the_kill_switches_pin_every_restaurant_or_one(db, monkeypatch):
     rid = _restaurant(db)
     _powered(monkeypatch)
     monkeypatch.setenv(sx.PIN_ENV, "off")
-    [a] = sx.arms_for(rid, "2026-10-05")
+    a = sx.arms_for(rid, "2026-10-05")[0]
     assert a["arm"] == EXP["control"] and a["pinned"] and a["pin_source"] == "env" and not sx.flag([a], "solver")
+    # Every experiment to its control: the learned memory stays on.
+    assert sx.flag(sx.arms_for(rid, "2026-10-05"), "learned") is True
     monkeypatch.setenv(sx.PIN_ENV, f"{EXP['key']}:solver")
     assert sx.arms_for(rid, "2026-10-05")[0]["arm"] == "solver"
     monkeypatch.delenv(sx.PIN_ENV)
     assert sx.set_pin(rid, EXP["key"], "nonsense")["ok"] is False
     assert sx.set_pin(rid, EXP["key"], "off")["ok"]
-    [a] = sx.arms_for(rid, "2026-10-05")
+    a = sx.arms_for(rid, "2026-10-05")[0]
     assert a["arm"] == "model" and a["pin_source"] == "restaurant"
     sx.set_pin(rid, EXP["key"], None)
     assert not sx.arms_for(rid, "2026-10-05")[0]["pinned"]
@@ -150,7 +155,8 @@ def test_each_arm_is_recorded_and_costs_no_extra_model_call(db, monkeypatch, arm
     assert len(calls) == 1                                   # one generation, whichever the arm
     res = out["result"]
     conn = models.get_conn(db)
-    got = [dict(r) for r in conn.execute("SELECT * FROM schedule_experiment_weeks WHERE restaurant_id=?", (rid,)).fetchall()]
+    got = [dict(r) for r in conn.execute("SELECT * FROM schedule_experiment_weeks WHERE restaurant_id=? AND "
+                                         "experiment=?", (rid, EXP["key"])).fetchall()]
     conn.close()
     assert len(got) == 1 and got[0]["history_id"] == res["history_id"] and got[0]["arm"] == arm
     assert got[0]["experiment"] == EXP["key"] and got[0]["pinned"] == 1 and got[0]["week_start"] == WEEK[0]

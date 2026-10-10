@@ -177,13 +177,6 @@ HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 EXP = sx.EXPERIMENTS[0]
 
 
-@pytest.fixture
-def _assign_v1_alone(monkeypatch):
-    """The verdict tests read assign_v1 alone; draft_v1 (contract #7) is
-    tested in tests/test_sf10_e_fallback.py."""
-    monkeypatch.setattr(sx, "EXPERIMENTS", tuple(e for e in sx.EXPERIMENTS if e["key"] == EXP["key"]))
-
-
 def _csv(rows):
     return HEADER + "\n" + "\n".join(",".join(r) for r in rows)
 
@@ -256,13 +249,15 @@ def test_quality_is_the_published_versions_and_a_demo_account_is_not_read(db):
     assert solver["quality"]["mean"] == 80 and solver["restaurants"] == 1 and solver["acceptance"]["n"] == 1
 
 
-def test_the_verdict_is_stored_once_a_week(db, _assign_v1_alone):
+def test_the_verdict_is_stored_once_a_week(db):
     rid = _rid(db, "Stored Grill")
     _week(db, rid, _ws(0), "solver", 8)
     out = sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 5))
-    assert out["written"] == 1 and {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
+    # One row per experiment and week (the readout once named every experiment
+    # after its last metric, so the rows collapsed into one).
+    assert out["written"] == len(sx.EXPERIMENTS) and {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
     assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 7))["written"] == 0     # the same ISO week
-    assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 12))["written"] == 1
+    assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 12))["written"] == len(sx.EXPERIMENTS)
     rows = sx.verdicts(EXP["key"], db_path=db)
     assert [r["week"] for r in rows] == ["2026-W42", "2026-W41"] and rows[0]["method"] == sx.VERDICT_METHOD
     # One restaurant can never reach a verdict: paused, said (P-21).

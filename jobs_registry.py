@@ -163,9 +163,19 @@ JOBS = {
         label="Marketing metrics", description="Refresh Instagram / Facebook post metrics",
         target=("scheduler", "run_marketing_metrics_sync"), max_minutes=40, retry=True),
     "schedule_outcomes": dict(
-        cadence="Mon 4am CT", sla_minutes=_W, sends=False, runnable=True,
+        cadence="4am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Schedule outcomes", description="Record what each published week actually did, by daypart",
         target=("strategy_jobs", "run_schedule_outcomes"), max_minutes=30, retry=True),
+    "schedule_scorecard": dict(
+        # Schedule audit 10/10/26 RM-4, LEARNING-7: one row per published
+        # week, frozen 14 days after it ended, after schedule_outcomes and
+        # the memory have read the week.
+        cadence="Mon 7am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="Schedule Learning Scorecard",
+        description="Score each ended published week: the draft's rework rate, requirement error, labor against "
+                    "the hourly target, overtime, unmanaged minutes, shortfall, uncovered no-shows, forecast "
+                    "error, row origins and the learning ablation (bounded, resumable)",
+        target=("schedule_scorecard", "run_scorecard"), max_minutes=20, retry=True),
     "schedule_memory": dict(
         # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
         # sources, after people_nightly.
@@ -344,7 +354,7 @@ JOBS = {
     "open_shift_watch": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
         label="Open shifts",
-        description="Expire shift requests whose shift has passed; tell deciders about open shifts still unclaimed 12 hours before they start",
+        description="Expire shift requests whose shift has passed; follow the week they are about; tell deciders about open shifts still unclaimed 12 hours before they start; put approved availability changes in force on their date",
         target=("shift_requests", "run_open_shift_watch"), max_minutes=15),
     "auto_draft_schedule": dict(
         cadence="hourly (6am local on each restaurant's draft day)", sla_minutes=_H, sends=True, runnable=True,

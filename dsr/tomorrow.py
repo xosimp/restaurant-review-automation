@@ -291,11 +291,10 @@ REST_RUN_DAYS = 6             # worked this many days straight → tomorrow is t
 def _worked_shifts(rid, db_path):
     """Every synced/uploaded shift row (labor.load_shifts), or []."""
     try:
-        from models import get_client_data
-        from labor import load_shifts
-        data = (get_client_data(rid, db_path=db_path) if db_path else get_client_data(rid)) or {}
-        raw = data.get("shifts_csv") or ""
-        return load_shifts(csv_string=raw) if raw.strip() else []
+        # The one reader (shift_facts once they are the record, else the
+        # file — scheduler audit 10/10/26, SCALE-5).
+        from labor import shift_history
+        return shift_history(rid, db_path=db_path)
     except Exception:
         return []
 

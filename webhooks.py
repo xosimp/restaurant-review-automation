@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     disabled_reason TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_webhooks_rid ON webhooks(restaurant_id, is_active);
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     webhook_id      INTEGER NOT NULL,
@@ -68,6 +69,8 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 );
 -- ops.prune_ledgers deletes by created_at (DATA-40).
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
+-- The console's per-restaurant reads (newest first) - SCALE-30.
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_rid ON webhook_deliveries(restaurant_id, id);
 -- Every event, written before it is handed to the pool (#75). state:
 -- queued -> delivering -> delivered | failed; 'expired' when a restart left
 -- it behind for longer than it is worth sending.

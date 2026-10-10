@@ -145,7 +145,7 @@ def capture_request(restaurant_id, week_start=None):
     return None
 
 
-def submit_auto_draft(r, period=None, week_start=None):
+def submit_auto_draft(r, period=None, week_start=None, target=None, attempt=None):
     """The auto-draft's first model call sent as one batch item. "submitted"
     when it went (the answer finishes the draft, on_auto_draft); "blocked"
     when a gate refused it (nothing will be drafted — the synchronous call
@@ -165,7 +165,8 @@ def submit_auto_draft(r, period=None, week_start=None):
             "custom_id": cid, "restaurant_id": r.id, "action": "labor_schedule", "request": request,
             "readiness": request.get("readiness") or data_health.NOT_APPLICABLE, "callback": CALLBACK,
             "cutoff_at": datetime.utcnow() + timedelta(hours=BATCH_CUTOFF_HOURS),
-            "context": {"key": call_key(request), "period": period, "week_start": week_start}}])
+            "context": {"key": call_key(request), "period": period, "week_start": week_start, "target": target,
+                        "attempt": attempt}}])
         status = res.get(cid)
         if status == ai_batches.SUBMITTED:
             return "submitted"
@@ -195,12 +196,10 @@ def on_auto_draft(item, message=None, error=None):
         return
     import strategy_jobs as sj
     import schedule_engine as se
-    if ctx.get("period"):
+    target = ctx.get("week_start") or ctx.get("target")
+    if target:
         # The owner may have made the week while the batch was out: theirs
         # stands, and the answer is not used.
-        from datetime import datetime as _dt
-        target = se._week_monday(_dt.strptime(ctx["period"], "%Y-%m-%d"),
-                                 start_day=se.week_start_day_of(r)).strftime("%Y-%m-%d")
         conn = sj.get_conn(sj.DB_PATH)
         try:
             if sj._week_has_schedule(conn, rid, target):
@@ -213,9 +212,11 @@ def on_auto_draft(item, message=None, error=None):
         counts[k] = counts.get(k, 0) + 1
     try:
         if error is not None or message is None:
-            sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), batch=False)
+            sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
+                          attempt=ctx.get("attempt"), batch=False)
         else:
             with answering(ctx.get("key"), message):
-                sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), batch=False)
+                sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
+                              attempt=ctx.get("attempt"), batch=False)
     except Exception as e:
         ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch)")

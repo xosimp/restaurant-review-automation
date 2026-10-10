@@ -1653,6 +1653,9 @@ def _do_trust(u):
         import automation_trust
         import delayed
         out["lapsed"] = automation_trust.lapsed_items(_rid(u))
+        # Drops and swaps that approve themselves once earned (MARKET-14).
+        import request_autonomy
+        out["shift_requests"] = request_autonomy.status(_rid(u))
         _undone = delayed.last_undo(_rid(u), "schedule_publish")
         if _undone:
             from time_utils import mdy
@@ -1785,14 +1788,24 @@ def _do_time_off_list(u):
         return _forbidden("Only someone who can see labor can review time off.")
     import time_off
     rows = time_off.recent(_rid(u))
-    return {"ok": True, "requests": rows, "pending": sum(1 for r in rows if r["status"] == "pending")}, 200
+    # Approved time off still on a published shift — kept until the shift is
+    # covered, posted or moved (schedule audit 10/10/26 BUGSLIFE-5).
+    try:
+        follow = time_off.follow_ups(_rid(u))
+    except Exception as e:
+        print(f"[time off] follow-ups unread rid={_rid(u)}: {e!r}")
+        follow = []
+    return {"ok": True, "requests": rows, "pending": sum(1 for r in rows if r["status"] == "pending"),
+            "follow_ups": follow}, 200
 
 
 def _do_time_off_decide(u, request_id):
-    # Deciding time off changes who can be scheduled — the same power as
-    # deciding a shift request, not a view-only labor login's (SCHED-22).
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not decide time off.")
+    # Deciding time off changes who can be scheduled on a week staff already
+    # have and messages the person — the same power as deciding a shift
+    # request: SCHEDULE_PUBLISH (schedule audit 10/10/26 BUGSLIFE-15; it was
+    # SCHEDULE_DRAFT, SCHED-22).
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
     import time_off
     from client_api import log_account_event
     b = _body()
@@ -1874,6 +1887,20 @@ def _may_rate(u):
 def _may_draft(u):
     from permissions import has_permission, SCHEDULE_DRAFT
     return bool(u.get("is_admin")) or has_permission(u, SCHEDULE_DRAFT)
+
+
+def _may_decide_requests(u):
+    """Answering a staff request — a drop, a swap, a pickup held for
+    overtime, time off — or posting, offering or taking down an open shift:
+    each rewrites the week staff already have and messages them, so it is
+    SCHEDULE_PUBLISH, the power F2-2 kept for Send, never SCHEDULE_DRAFT
+    alone (schedule audit 10/10/26 BUGSLIFE-15: a drafter could hand
+    tonight's shift to a friend through a named cover)."""
+    return _may_publish(u)
+
+
+_REQUEST_REFUSAL = ("Your login can draft schedules but not answer staff requests — that changes the week staff "
+                    "have and messages them.")
 
 
 def _who(u):
@@ -2566,6 +2593,9 @@ def _do_compliance_get(u):
             # (schedule_rules over_section_cap). Moved here from the admin
             # page, its only editor until 9/30/26.
             "section_count": int(getattr(r, "section_count", 0) or 0) or None,
+            # Where lunch ends and dinner starts for a shift covering neither
+            # core window (schedule_time, ARCH-12): "3:00pm" unless set.
+            "daypart_boundary": getattr(r, "daypart_boundary", None) or None,
             # Dayparts whose floors for the section-counted roles add up to
             # more people than there are sections — no draft can hold both,
             # so the rules screen says so (schedule audit 10/3/26 P-29).
@@ -2830,6 +2860,14 @@ def _do_compliance_set(u):
                 return _refuse("Dining sections must be a whole number from 1 to 30, or blank.")
         settings["section_count"] = n
         out["section_count"] = n
+    if "daypart_boundary" in b:
+        import schedule_time as _stime_b
+        v = b.get("daypart_boundary")
+        m = None if v in (None, "") else _stime_b.split_minutes(str(v))
+        if v not in (None, "") and m is None:
+            return _refuse("Where lunch ends must be a time from 12:00pm to 6:00pm, or blank for 3:00pm.")
+        settings["daypart_boundary"] = None if m is None else _stime_b.fmt_minutes(m)
+        out["daypart_boundary"] = settings["daypart_boundary"]
     if "trim_to_budget" in b:
         settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
         out["trim_to_budget"] = bool(b.get("trim_to_budget"))
@@ -3261,6 +3299,19 @@ def _do_schedule_optimize(u):
     out_rows, gone = _svo.stamp_cavnar(rows, res["rows"], "optimize", flagged_rows=body.get("rows"))
     return {"ok": True, "rows": out_rows, "optimizer": summary, "rec_key": rec_key, "cavnar_removed": gone,
             "quality": quality, "what_if": what_if}, 200
+
+
+def _do_calibration_revert(u):
+    """Undo the weights Cavnar AI moved on its own (schedule audit 10/10/26
+    LEARNING-9, schedule_calibration.revert): the weights before back, and
+    no automatic change for eight weeks. The account owner's."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can change how schedules are scored.")
+    import schedule_calibration as _scal
+    try:
+        return _scal.revert(_rid(u), user=u), 200
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
 
 
 def _do_calibration_apply(u):
@@ -3741,16 +3792,30 @@ def _do_shift_requests_list(u):
     # `offers`: shifts offered to one named person, still waiting on them
     # (H2) — an open shift offered only by name is in `open` with
     # offer_only = 1.
-    # `can_decide`: SCHEDULE_DRAFT, the gate every write below holds (decide,
-    # post, offer, take off, agreed in person) — the phone gated those on
-    # the roster's can_edit (TEAM_RATE), which is looser (parity follow-up).
+    # `can_decide`: SCHEDULE_PUBLISH, the gate every write below holds
+    # (decide, post, offer, take off, agreed in person, reverse) — each
+    # changes the week staff have and messages them (BUGSLIFE-15).
+    # `autonomy`: the earned automatic approval of drops and swaps
+    # (request_autonomy, MARKET-14).
+    try:
+        import request_autonomy
+        autonomy = request_autonomy.status(_rid(u))
+    except Exception as e:
+        print(f"[requests] autonomy unread rid={_rid(u)}: {e!r}")
+        autonomy = None
+    try:
+        auto_recent = _sq_req.auto_recent(_rid(u))
+    except Exception as e:
+        print(f"[requests] automatic decisions unread rid={_rid(u)}: {e!r}")
+        auto_recent = []
     return {"ok": True, "requests": _sq_req.for_manager(_rid(u)), "open": _sq_req.open_shifts(_rid(u)),
-            "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_draft(u)}, 200
+            "offers": _sq_req.live_offers(_rid(u)), "can_decide": _may_decide_requests(u),
+            "autonomy": autonomy, "auto_recent": auto_recent}, 200
 
 
 def _do_shift_request_decide(u, request_id):
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not decide shift requests.")
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
     import shift_requests as _sq_req
     from client_api import log_account_event
     b = _body()
@@ -3770,11 +3835,12 @@ def _do_shift_request_decide(u, request_id):
     # The account log is owner-facing: M/D/YY, as time off's is (F2-15).
     log_account_event(_rid(u), "shift_request_decided", current_user=u,
                       detail=f"{row['employee_name']} {mdy(row['date'])} {row['shift_start']}: {row['status']}")
-    # A drop that leaves the floor without a manager is said with the
-    # answer (shift_requests.drop_manager_gap, RULES-15).
+    # A drop that leaves the week short — no manager on, a role under its
+    # floor, nobody to close — is said with the answer
+    # (shift_requests.drop_warning, RULES-15, BUGSLIFE-13).
     out = {"ok": True, "request": row}
-    if row.get("manager_gap"):
-        out["warning"] = row["manager_gap"]
+    if row.get("drop_warning") or row.get("manager_gap"):
+        out["warning"] = row.get("drop_warning") or row["manager_gap"]
     return out, 200
 
 
@@ -3807,8 +3873,8 @@ def _do_open_shift_post(u):
     published week (`employee`), or an extra one (`shift_end` + `role`).
     With `offer_to` it is offered to that one person in their app instead
     of the whole team (H2). Audited on the account log."""
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not change the schedule.")
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
     import shift_requests as _sq_req
     from client_api import log_account_event
     b = _body()
@@ -3828,8 +3894,8 @@ def _do_open_shift_post(u):
 
 def _do_shift_request_offer(u, request_id):
     """{name, note?} — offer an open shift to one named person (H2)."""
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not change the schedule.")
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
     import shift_requests as _sq_req
     from client_api import log_account_event
     b = _body()
@@ -3851,8 +3917,8 @@ def _do_shift_request_colleague_agreed(u, request_id):
     """The colleague in a swap said yes in person — a decider records it
     for someone who isn't on the app (LG-12). An approved swap then goes
     ahead. Audited on the account log."""
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not decide shift requests.")
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
     import shift_requests as _sq_req
     from client_api import log_account_event
     try:
@@ -3869,8 +3935,8 @@ def _do_shift_request_colleague_agreed(u, request_id):
 def _do_shift_request_cancel(u, request_id):
     """Take an open shift off the board. The holder, anyone it was offered
     to and the teammates told about it hear it's gone. Audited."""
-    if not _may_draft(u):
-        return _forbidden("Your login can view labor but not change the schedule.")
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
     import shift_requests as _sq_req
     from client_api import log_account_event
     row = _sq_req.cancel_open(_rid(u), request_id, actor=_who(u))
@@ -3878,6 +3944,88 @@ def _do_shift_request_cancel(u, request_id):
         return {"ok": False, "error": "That shift isn't open any more."}, 404
     log_account_event(_rid(u), "open_shift_cancelled", current_user=u, detail=_shift_label(row))
     return {"ok": True, "request": row}, 200
+
+
+def _do_shift_request_reverse(u, request_id):
+    """A manager reverses a drop or swap that approved itself (MARKET-14):
+    undone where it still can be, and automatic approval of that kind goes
+    back to the manager at once. Audited."""
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
+    import request_autonomy
+    from client_api import log_account_event
+    out = request_autonomy.reverse(_rid(u), request_id, actor=_who(u))
+    if not out.get("ok"):
+        return {"ok": False, "error": out.get("error") or "That can't be reversed."}, 404
+    row = out.get("request") or {}
+    log_account_event(_rid(u), "shift_request_auto_reversed", current_user=u,
+                      detail=(_shift_label(row) if row else f"request {request_id}")
+                      + (": undone" if out.get("undone") else ": trust withdrawn"))
+    return out, 200
+
+
+def _do_request_policy_get(u):
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import request_autonomy
+    return {"ok": True, **request_autonomy.status(_rid(u)), "can_edit": _may_publish(u)}, 200
+
+
+def _do_request_policy_set(u):
+    """{auto_approve?, kinds?, notice_hours?, max_quality_drop?,
+    availability_approval?} — the restaurant's staff-request policy
+    (MARKET-14/15). SCHEDULE_PUBLISH: it decides what reaches the live week
+    without a manager."""
+    if not _may_publish(u):
+        return _forbidden("Your login can't change how staff requests are approved.")
+    import request_autonomy
+    try:
+        request_autonomy.save_policy(_rid(u), _body(), user=u)
+    except request_autonomy.PolicyError as e:
+        return {"ok": False, "error": str(e)}, 400
+    return {"ok": True, **request_autonomy.status(_rid(u)), "can_edit": True}, 200
+
+
+def _do_availability_changes_list(u):
+    """Staff availability cuts waiting on a manager, approved for a date not
+    yet come, and recently decided (MARKET-15)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see availability changes.")
+    import availability_changes
+    import request_autonomy
+    return {"ok": True, "changes": availability_changes.recent(_rid(u)), "can_decide": _may_decide_requests(u),
+            "approval": request_autonomy.policy_for(_rid(u))["availability_approval"]}, 200
+
+
+def _do_availability_change_decide(u, change_id):
+    """{decision: approve|deny, effective_from?, note?} — a manager's answer
+    to an availability cut (MARKET-15): who can be scheduled changes, so it
+    is SCHEDULE_PUBLISH like every staff request. Audited."""
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
+    import availability_changes
+    from client_api import log_account_event
+    b = _body()
+    decision = (b.get("decision") or "").strip().lower()
+    if decision not in ("approve", "deny"):
+        return {"ok": False, "error": "decision must be approve or deny."}, 400
+    try:
+        row = availability_changes.decide(_rid(u), change_id, decision == "approve", decided_by=_who(u),
+                                          effective_from=b.get("effective_from") if isinstance(b.get("effective_from"), str) else None,
+                                          note=b.get("note") if isinstance(b.get("note"), str) else None)
+    except availability_changes.ChangeError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if not row:
+        return {"ok": False, "error": "That change was already answered."}, 404
+    from time_utils import mdy
+    log_account_event(_rid(u), "availability_change_decided", current_user=u,
+                      detail=f"{row['employee_name']} from {mdy(row['effective_from'])}: {row['status']}")
+    out = {"ok": True, "change": row}
+    if row.get("conflicts"):
+        import staff_settings
+        out["warning"] = (f"{row['employee_name']} is still on the published schedule for "
+                          + staff_settings._listed(row["conflicts"][:4]) + " — cover or move those shifts.")
+    return out, 200
 
 
 def _keyholders(rid) -> bool:
@@ -3888,6 +4036,32 @@ def _keyholders(rid) -> bool:
         return bool(c.keyholders)
     except Exception:
         return False
+
+
+def _do_publish_overrides(u):
+    """The publish warnings this restaurant keeps sending past (schedule
+    audit 10/10/26 TRUST-28): per kind, the weeks it was shown and sent
+    past, the rate, when last and why, whether it is hard (it keeps holding
+    the send however often) and whether it was demoted to a note."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_overrides as _so
+    st = sorted(_so.stats(_rid(u)).values(), key=lambda s: (-(s.get("rate") or 0), -s["overridden"], s["kind"]))
+    return {"ok": True, "kinds": st, "always_overridden": [s for s in st if s["overridden"] >= _so.ALWAYS_MIN_WEEKS
+                                                           and (s.get("rate") or 0) >= _so.ALWAYS_MIN_RATE]}, 200
+
+
+def _do_learning_scorecard(u):
+    """The Schedule Learning Scorecard for this restaurant (schedule audit
+    10/10/26 RM-4): per published week, the draft's rework rate with its
+    interval and what the week did as it ran — labor against the hourly
+    target, overtime, minutes with no manager, the shortfall, uncovered
+    no-shows, the forecast against a plain average — and whether the drafts
+    are needing fewer edits (a slope with its interval)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_scorecard as _ssc
+    return _ssc.owner_view(_rid(u)), 200
 
 
 def _do_learned_patterns(u):
@@ -4734,6 +4908,14 @@ def _present_calibration(u, cal):
             cal = dict(cal, rec_key="calibration:weights", answerable=rec_delivery.answerable("calibration:weights"))
     except Exception as e:
         print(f"[schedule] calibration not presented rid={_rid(u)}: {e}")
+    # What Cavnar AI changed on its own, said with an Undo (LEARNING-9).
+    try:
+        import schedule_calibration as _scal
+        prom = _scal.latest_promotion(_rid(u))
+        if prom:
+            cal = dict(cal or {}, promoted=dict(prom, can_undo=bool(_principal(u))))
+    except Exception as e:
+        print(f"[schedule] calibration promotion not read rid={_rid(u)}: {e}")
     return cal
 
 
@@ -4771,6 +4953,10 @@ def _do_schedule_intel(u):
             # outcomes (suggested weights, never applied), and no-show rates
             # by weekday.
             "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
+            # The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4):
+            # the rework each draft needed and what each week did as it ran.
+            "learning_scorecard": _safe(lambda: __import__("schedule_scorecard").owner_view(rid),
+                                        {"ok": True, "available": False, "weeks": []}),
             "weight_calibration": _present_calibration(u, _safe(lambda: _sl.calibrate_weights(rid), {"ready": False})),
             # Schedule learning (#42, #46, #48, #43): how well the edit
             # predictor would have done on past drafts, the multi-week
@@ -7216,6 +7402,7 @@ _ROUTES = [
     ("/recs/what-worked", ["GET"], _do_recs_what_worked, "recs_what_worked"),
     ("/recs/checkin", ["POST"], _do_recs_checkin, "recs_checkin"),
     ("/labor/quality/calibration/apply", ["POST"], _do_calibration_apply, "calibration_apply"),
+    ("/labor/quality/calibration/revert", ["POST"], _do_calibration_revert, "calibration_revert"),
     ("/labor/shift-requests", ["GET"], _do_shift_requests_list, "shift_requests_list"),
     ("/labor/shift-requests/<int:request_id>/decide", ["POST"], _do_shift_request_decide, "shift_request_decide"),
     ("/labor/shift-requests/<int:request_id>/candidates", ["POST"], _do_shift_request_candidates,
@@ -7225,7 +7412,15 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/colleague-agreed", ["POST"], _do_shift_request_colleague_agreed,
      "shift_request_colleague_agreed"),
     ("/labor/shift-requests/<int:request_id>/cancel", ["POST"], _do_shift_request_cancel, "shift_request_cancel"),
+    ("/labor/shift-requests/<int:request_id>/reverse", ["POST"], _do_shift_request_reverse, "shift_request_reverse"),
+    ("/labor/request-policy", ["GET"], _do_request_policy_get, "request_policy_get"),
+    ("/labor/request-policy", ["POST"], _do_request_policy_set, "request_policy_set"),
+    ("/labor/availability-changes", ["GET"], _do_availability_changes_list, "availability_changes_list"),
+    ("/labor/availability-changes/<int:change_id>/decide", ["POST"], _do_availability_change_decide,
+     "availability_change_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
+    ("/labor/publish-overrides", ["GET"], _do_publish_overrides, "publish_overrides"),
+    ("/labor/learning-scorecard", ["GET"], _do_learning_scorecard, "learning_scorecard"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/learned-patterns/adopt", ["POST"], _do_learned_patterns_adopt, "learned_patterns_adopt"),
     ("/labor/schedule-memory", ["GET"], _do_schedule_memory, "schedule_memory"),

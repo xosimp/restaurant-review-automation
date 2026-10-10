@@ -107,6 +107,7 @@ from datetime import datetime
 
 import schedule_rules as _rules
 import shift_quality as sq
+import schedule_time as _stime
 
 # The same order of budget the repair loop uses on the background job.
 DEFAULT_SECONDS = 12.0
@@ -396,7 +397,7 @@ class Problem:
         prefs = {self.key(k): v or {} for k, v in (s.get("preferences") or {}).items()}
         learned_prefs = {self.key(k): v or {} for k, v in (s.get("learned_preferences") or {}).items()}
         self.pref_parts, self.desired, self.l_avoid, self.l_prefer, self.l_weight = [], [], [], [], []
-        self.usual = []
+        self.usual, self.usual_up = [], []
         for n in self.names:
             p = prefs.get(self.key(n)) or {}
             self.pref_parts.append({x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")})
@@ -412,6 +413,9 @@ class Problem:
             # Their usual week, for somebody who never stated one (shift_quality
             # USUAL_HOURS_BAND, at the learned weight).
             self.usual.append(sq._usual_hours(_lp, p))
+            # Wider above for somebody who keeps picking up open shifts: the
+            # usual week is what they were assigned (LEARNING-28).
+            self.usual_up.append(sq.usual_band(_lp)[1])
             self.l_avoid.append(avoid)
             self.l_prefer.append(prefer)
             self.l_weight.append(wt)
@@ -643,7 +647,9 @@ class Problem:
             primary.setdefault((r["date"], part), []).append(r)
         closes_on = {}
         for (date, part), rs in primary.items():
-            latest = max((sq._end_minutes(r.get("shift_end")) for r in rs), default=-1)
+            # Each row's end on its own business timeline — the scorer's
+            # reading (shift_quality._row_end), so the two name one closer.
+            latest = max((sq._row_end(r) for r in rs), default=-1)
             latest_end[date] = max(latest_end.get(date, -1), latest)
             if latest > closes_on.get(date, (-1, None))[0]:
                 closes_on[date] = (latest, part)
@@ -700,7 +706,7 @@ class Problem:
             u.dw = sq.DEMAND_WEIGHT.get(u.demand, 1.0)
             u.hard = sq.DEMAND_RANK.get(u.demand, 1) >= sq.DEMAND_RANK[sq.HARD_DEMAND]
             u.closing = any(p == self.closes_on.get(u.date) or
-                            (sq._end_minutes(r.get("shift_end")) >= 0 and sq._end_minutes(r.get("shift_end")) == latest_end.get(u.date))
+                            (sq._row_end(r) >= 0 and sq._row_end(r) == latest_end.get(u.date))
                             for r, p in zip(rs, u.primary))
             u.weekend = u.day in ("Friday", "Saturday", "Sunday")
             name = (rs[0].get("employee") or "").strip()
@@ -1366,8 +1372,9 @@ class Problem:
                             f"a manager on {sq._day_name(d)} from {_rules._fmt_minutes(a % 1440)}", True)
             for m, spans in soft.items():
                 minutes = sum(b - a for a, b in spans)
-                parts = {("morning" if a < sq.DAYPART_CUTOVER else "night") for a, _b in spans} | \
-                        {("night" if b > sq.DAYPART_CUTOVER else "morning") for _a, b in spans}
+                split = _stime.daypart_split()
+                parts = {("morning" if a < split else "night") for a, _b in spans} | \
+                        {("night" if b > split else "morning") for _a, b in spans}
                 dw = sum(self.shift_dw.get((d, p), 0.0) for p in parts) or 1.0
                 cap_loss = (CAP_REF - sq.HARD_BREACH_CAP) * dw
                 self._cover(("m", d, tuple(sorted(m))), m, ok, f"no manager on {sq._day_name(d)}", False,
@@ -1879,7 +1886,7 @@ class Problem:
         # Their usual week (learned): past it by the band, once.
         usual = self.usual[p]
         if usual:
-            band = usual * (1 + sq.USUAL_HOURS_BAND)
+            band = usual * (1 + self.usual_up[p])
             if st.total[p] <= band + 1e-9 < st.total[p] + u.hours:
                 c += self.week_unit("preferences") / self.n_pref * 100.0 * self.l_weight[p]
         # Overtime premium (only ever less than the draft's: the caps hold
@@ -2262,42 +2269,79 @@ class _Search:
         self.best, self.best_assign = cost, snap
         self.incumbents.append((cost, snap))
 
-    def _dfs(self, free, persons, disc):
-        """Depth-first branch-and-bound over the open units in `free`. Stops
-        gracefully (every frame undoes its own assignment) when the clock or
-        a node cap says so; `disc` limits discrepancies, None is complete."""
+    def _enter(self, free, persons, disc):
+        """A node of the search: the clock read, then the next open unit
+        chosen. None when the search stops here — out of time, or a leaf
+        (every unit placed: its cost recorded when it is the best yet)."""
         self._tick()
         if self.stop:
-            return
+            return None
         u = self._select(free)
         if u is None:
             total = self.g + self.prob.leaf_penalty(persons, self.st)
             if total < self.best - 1e-9:
                 self._record(total)
-            return
+            return None
         unit = self.prob.units[u]
         vals = sorted(((self.static[u][p] + self.prob.dynamic(unit, p, self.st), p) for p in self.dom[u]))
-        rest_lb = self.lb - self.minc[u]
-        taken = 0              # values that survived propagation; the first is the heuristic's
-        for c, p in vals:
-            if self.stop:
-                break
-            if self.g + c + rest_lb >= self.best - 1e-9:
-                break               # sorted: nothing after this can do better
-            ok, rec = self._assign(u, p, c)
-            if not ok:
-                # refuted by forward checking: no branch is skipped, so it
-                # costs no discrepancy
+        # [unit, values, next value, bound of the rest, values taken, discrepancies left, branch open]
+        return [u, vals, 0, self.lb - self.minc[u], 0, disc, None]
+
+    def _dfs(self, free, persons, disc):
+        """Depth-first branch-and-bound over the open units in `free`. Stops
+        gracefully (every frame undoes its own assignment) when the clock or
+        a node cap says so; `disc` limits discrepancies, None is complete.
+
+        An explicit stack of frames, never Python recursion (schedule audit
+        10/10/26 SCALE-9): it recursed once per assigned unit, so a week of
+        about a thousand units (some 220 people) raised RecursionError and
+        the solver never ran for exactly the large restaurants it is for.
+        Each frame walks its unit's values in cost order exactly as the
+        recursive version did — the same nodes, in the same order."""
+        root = self._enter(free, persons, disc)
+        if root is None:
+            return
+        stack = [root]
+        while stack:
+            f = stack[-1]
+            u, vals = f[0], f[1]
+            if f[6] is not None:                # back from the branch below
+                _p, rec = f[6]
+                f[6] = None
+                f[4] += 1
+                self._unassign(u, _p, rec)
+            child = None
+            while f[2] < len(vals):
+                c, p = vals[f[2]]
+                f[2] += 1
+                if self.stop:
+                    f[2] = len(vals)
+                    break
+                if self.g + c + f[3] >= self.best - 1e-9:
+                    f[2] = len(vals)
+                    break               # sorted: nothing after this can do better
+                ok, rec = self._assign(u, p, c)
+                if not ok:
+                    # refuted by forward checking: no branch is skipped, so it
+                    # costs no discrepancy
+                    self._unassign(u, p, rec)
+                    continue
+                if f[4] and f[5] is not None and f[5] <= 0:
+                    self._unassign(u, p, rec)
+                    self.cut = True     # a live branch left unexplored: no proof this pass
+                    f[2] = len(vals)
+                    break
+                if self.g + self.lb < self.best - 1e-9:
+                    child = self._enter(free, persons, None if f[5] is None else f[5] - (1 if f[4] else 0))
+                    if child is not None:
+                        f[6] = (p, rec)
+                        break
+                f[4] += 1
                 self._unassign(u, p, rec)
-                continue
-            if taken and disc is not None and disc <= 0:
-                self._unassign(u, p, rec)
-                self.cut = True     # a live branch left unexplored: no proof this pass
-                break
-            if self.g + self.lb < self.best - 1e-9:
-                self._dfs(free, persons, None if disc is None else disc - (1 if taken else 0))
-            taken += 1
-            self._unassign(u, p, rec)
+            if child is not None:
+                stack.append(child)
+            else:
+                stack.pop()
 
     def _fix(self, units, values):
         """Place `values` on `units` in order; (ok, undo list)."""

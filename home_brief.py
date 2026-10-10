@@ -1221,7 +1221,12 @@ def _build(current_user, present=True, reads=None):
             or ("inventory" in active_keys and "inventory" not in reads):
         from models import get_client_data as _get_client_data
         try:
-            stored = _get_client_data(rid)
+            # The row without the shift file: the labor read fetches its
+            # shifts through the one reader (facts or file — SCALE-5), and a
+            # stale export is never rebuilt for a Home load.
+            import shift_facts as _sf_hb
+            stored = (_get_client_data(rid, with_shifts=False) if _sf_hb.store_of(rid) == "facts"
+                      else _get_client_data(rid))
         except Exception:
             stored = None
 

@@ -10531,6 +10531,19 @@ def staff_schedule_page(token):
         oc = getattr(_ss_av, "own_conflicts", None)
         if oc is not None:
             saved_conflicts = _ss_av.conflicts_text(oc(share["restaurant_id"], share["employee_name"]))
+    # Days they asked off that wait for a manager or start on a later date
+    # (schedule audit 10/10/26 MARKET-15): ticked as asked, and said.
+    pending_line = ""
+    try:
+        import availability_changes as _avc_pg
+        for ch in _avc_pg.mine(share["restaurant_id"], share["employee_name"]):
+            unavailable = list(unavailable) + [d for d, s in (ch.get("days") or {}).items()
+                                               if s.get("status") == "off" and d not in unavailable]
+            pending_line = ((f"Waiting for your manager: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."
+                             if ch["status"] == "pending" else
+                             f"Approved: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."))
+    except Exception as _pgx:
+        print(f"[schedule link] availability changes unread: {_pgx!r}")
 
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
@@ -10560,6 +10573,7 @@ def staff_schedule_page(token):
         note=saved_note,
         saved=request.args.get("saved") == "1",
         saved_conflicts=saved_conflicts,
+        pending_line=pending_line,
         all_days_blocked=request.args.get("error") == "all_days",
         throttled=request.args.get("error") == "throttled",
         stale=request.args.get("error") == "stale",
@@ -10744,18 +10758,31 @@ def _do_account_hours(rid, data, current_user=None):
     if current_user is not None and not is_principal(current_user):
         return {"ok": False, "error": "Only the account owner can change opening hours and closures."}, 403
 
-    def _clean_times(raw):
+    import schedule_time as _stime_h
+    bad = []
+
+    def _clean_times(raw, which):
+        # Each time in the one spelling every reader parses ("9:00pm" — the
+        # web sends "21:00", the phone "9:00pm"); one no reader can parse is
+        # named back, never stored for the close rules to drop silently
+        # (BUGSGEN-20).
         out = {}
         for day in _ACCOUNT_DAYS:
             v = (raw or {}).get(day)
             if isinstance(v, str) and v.strip():
-                out[day] = v.strip()[:12]
+                norm = _stime_h.normalise_clock(v.strip()[:20])
+                if norm is None:
+                    bad.append(f"{day}'s {which} time \u201c{v.strip()[:20]}\u201d")
+                else:
+                    out[day] = norm
         return _json_h.dumps(out) if out else None
 
-    update_restaurant(rid, {
-        "open_times_json": _clean_times((data or {}).get("open")),
-        "close_times_json": _clean_times((data or {}).get("close")),
-    })
+    opens = _clean_times((data or {}).get("open"), "opening")
+    closes = _clean_times((data or {}).get("close"), "closing")
+    if bad:
+        return {"ok": False, "error": "Nothing was saved: " + "; ".join(bad[:3])
+                + (" isn't a time" if len(bad) == 1 else " aren't times") + " we can read — use a time like 9:00pm."}, 400
+    update_restaurant(rid, {"open_times_json": opens, "close_times_json": closes})
     out = {"ok": True}
     # Closures are the scheduler's closed dates (schedule_rules.save_closures,
     # the list Labor -> Scheduling rules edits too). This box said "used when
@@ -11987,6 +12014,18 @@ def _live_week(restaurant_id, week_start, not_id):
         conn.close()
 
 
+def _in_restaurant_dayparts(fn):
+    """schedule_engine.in_restaurant_dayparts, read at call time."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        import schedule_engine as _se_dp
+        return _se_dp.in_restaurant_dayparts(fn)(*a, **k)
+    return wrapper
+
+
+@_in_restaurant_dayparts
 def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
     """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
     "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the
@@ -12215,7 +12254,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         if below:
             note("below_profile",
                  f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
-    return {"blockers": out, "soft": soft, "notes": notes, "hours": hours, "schedule_id": row["id"]}
+    # What the owner has sent past before, by key (schedule audit 10/10/26
+    # TRUST-28): each blocker's record beside it, the ones they always send
+    # past ranked last, a demotable one they always override (the hourly
+    # budget, the draft's own review lines — never a rule) moved to a note,
+    # and the review of the warnings they always override.
+    import schedule_overrides as _so_pr
+    return _so_pr.annotate(restaurant_id, {"blockers": out, "soft": soft, "notes": notes, "hours": hours,
+                                           "schedule_id": row["id"]}, unattended=unattended)
 
 
 def _drop_share(token, schedule_id):
@@ -12337,10 +12383,11 @@ def _send_week_to_staff(rid, restaurant, schedule_id, csv_text, names, week_labe
     return sent, unreachable, failed
 
 
-def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False):
+def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False, override_reasons=None):
     """Shared by the route, the mobile twin and delayed.py (auto-publish).
     Returns (payload, http_status). `actor` is the user dict acting, or
-    delayed.AUTOMATION_ACTOR.
+    delayed.AUTOMATION_ACTOR. `override_reasons` ({key: reason}) are kept
+    with the keys the send went out past (schedule_overrides, TRUST-28).
 
     A schedule with blockers (publish_blockers) is refused with
     needs_ack=True until the caller says acknowledge — a human reading the
@@ -12500,6 +12547,21 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
                                   saved_authority=_pub_auth, return_version=True)
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # The warnings the send went out past, by key, with the published
+    # version and any reason (schedule audit 10/10/26 TRUST-28): what lets
+    # the list learn which ones this owner always overrides. Never blocks.
+    import schedule_overrides as _so_pub
+    _so_pub.record_overridden(rid, schedule_id, locals().get("_pub_version"), review["blockers"], _acked,
+                              reasons=override_reasons, actor=actor if isinstance(actor, dict) else None,
+                              authority=locals().get("_pub_auth"))
+    # A replacement copy now live: the live requests on its dates follow it —
+    # a retimed shift carries its request, a removed one closes it and its
+    # requester is told (schedule audit 10/10/26 ARCH-9). Never blocks.
+    try:
+        import shift_requests as _srq_follow
+        _srq_follow.reconcile(rid)
+    except Exception as _fx:
+        _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # What the week's first publish says, into the observation log: every
     # change from the original draft by origin (the manager's, Cavnar AI's
     # kept ones, an admin's), and whether a person sent it (schedule audit
@@ -12566,6 +12628,21 @@ def _ack_gate(review, acknowledge):
 
 
 def _needs_ack(review, unacked, schedule_id):
+    # Every blocker a person is shown is kept by key (TRUST-28): the
+    # denominator of "you sent past this 9 of 9 times".
+    try:
+        import schedule_overrides as _so_na
+        _rid_na = None
+        conn = get_conn()
+        try:
+            r_ = conn.execute("SELECT restaurant_id FROM schedule_history WHERE id=?", (schedule_id,)).fetchone()
+            _rid_na = r_["restaurant_id"] if r_ else None
+        finally:
+            conn.close()
+        if _rid_na:
+            _so_na.record_shown(_rid_na, schedule_id, review.get("blockers") or [])
+    except Exception as _nax:
+        print(f"[publish] shown blockers not recorded for {schedule_id}: {_nax}")
     return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
             # The keys, parallel to `blockers` (and as {key, text} items):
             # the client sends back `acknowledge: [the keys it showed]` (F2-9).
@@ -12574,11 +12651,13 @@ def _needs_ack(review, unacked, schedule_id):
             # Worth a look, never holding the send (the quality verdict,
             # SQ-29): shown beside the blockers, nothing to acknowledge.
             "notes": review.get("notes") or [],
+            # The warnings this owner always sends past (TRUST-28).
+            "always_overridden": review.get("always_overridden") or [],
             "schedule_id": schedule_id,
             "error": "This week has things to look at before it goes to staff."}, 409
 
 
-def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=False):
+def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, override_reasons=None):
     """Tell the people whose shifts changed on a week staff already have —
     the explicit second step after a save (F2-2). Returns (payload, status).
 
@@ -12670,6 +12749,11 @@ def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=Fa
             conn.commit()
         finally:
             conn.close()
+    # The warnings this send went out past, by key (TRUST-28).
+    import schedule_overrides as _so_ch
+    _so_ch.record_overridden(rid, row["id"], locals().get("_changes_version"), review["blockers"], _acked,
+                             reasons=override_reasons, actor=actor if isinstance(actor, dict) else None,
+                             authority=_sv.authority_of(actor))
     log_account_event(rid, "schedule_changes_sent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
                              f"{len(sent)} of {len(pending['people'])} told"
@@ -12721,6 +12805,14 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=False, error="Reload the schedule before sending — this copy doesn't say which week it is."), 400
     ack = data.get("acknowledge")
     acknowledge = [str(k) for k in ack] if isinstance(ack, (list, tuple)) else bool(ack)
+    # The pre-publish screen's overrides (TRUST-28, the I1 contract):
+    # `overrides: [{key, reason}]` acknowledges each key and keeps its reason.
+    import schedule_overrides as _so_rq
+    reasons = _so_rq.reasons_from(data.get("overrides"))
+    if reasons:
+        acknowledge = sorted(set(acknowledge if isinstance(acknowledge, list) else []) | set(reasons)) \
+            if acknowledge is not True else True
+    _why = {"override_reasons": reasons} if reasons else {}
     # A send nobody read a sheet for — Waiting on you's Send, the drafted
     # push's Send to staff (re-audit 10/8/26 #1). It acknowledges nothing,
     # and goes only when the unattended gate (draft_one_tap_safe: no
@@ -12758,7 +12850,7 @@ def _publish_schedule_request(current_user):
         import schedule_versions as _sv
         changes = (_sv.unsent_changes(rid, row["id"]) or {}).get("people") or []
         if not changes:
-            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
+            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
             return jsonify(**out), status
     restaurant = get_restaurant(rid)
     delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0) if restaurant else 0
@@ -12784,7 +12876,7 @@ def _publish_schedule_request(current_user):
             import schedule_versions as _sv_q
             newest = _sv_q.newest_version(rid, row["id"])
             act = delayed.schedule(rid, "schedule_changes_send",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     # The version the person saw: an edit in the
                                     # window voids the send (delayed.py).
                                     "version": newest[0]["version"] if newest else None, **_by},
@@ -12793,7 +12885,7 @@ def _publish_schedule_request(current_user):
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
             act = delayed.schedule(rid, "schedule_publish",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     # The window's end runs the unattended
                                     # gate again for a one-tap send (#1).
                                     **({"one_tap": True} if one_tap else {}), **_by},
@@ -12802,9 +12894,9 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
     if changes:
-        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge)
+        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
     else:
-        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
+        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
     return jsonify(**out), status
 
 

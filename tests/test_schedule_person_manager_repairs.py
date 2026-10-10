@@ -548,7 +548,7 @@ def test_halloween_close_counts_its_extra_hour():
     from schedule_engine import _reconcile_scheduled_hours
     row = {"date": "2026-10-31", "shift_start": "5:00pm", "shift_end": "2:00am", "scheduled_hours": "9", "notes": ""}
     drift = _reconcile_scheduled_hours(row, tz="America/Chicago")
-    assert row["scheduled_hours"] == "10.0" and row["dst_hours"] == 1.0
+    assert row["scheduled_hours"] == "10" and row["dst_hours"] == 1.0
     assert drift == 0.0, "the model's wall-clock arithmetic was right; the clock change is ours"
     assert "extra hour when the clocks go back" in row["notes"]
     plain = {"date": "2026-10-24", "shift_start": "5:00pm", "shift_end": "2:00am", "scheduled_hours": "9"}

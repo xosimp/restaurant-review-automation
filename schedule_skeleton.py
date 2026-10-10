@@ -49,6 +49,7 @@ from datetime import datetime, timedelta
 import models as _models_mod
 from models import DB_PATH
 import schedule_rules as _rules
+import schedule_time as _stime
 
 
 def get_conn(db_path=None):
@@ -109,14 +110,25 @@ def _clock(value):
 
 
 def _span(row):
-    """(start, end) minutes on the row's own date, an end past midnight
-    beyond 1440; None when unreadable or longer than a day could be."""
-    s, e = _clock(row.get("shift_start")), _clock(row.get("shift_end"))
-    if s is None or e is None:
-        return None
-    if e <= s:
-        e += 24 * 60
-    return (s, e) if 0 < e - s <= 16 * 60 else None
+    """(start, end) minutes on the row's business date's timeline
+    (schedule_time.span — the one placement, BUGSGEN-8: it applied no night
+    offset, so a 1:00-5:30am porter read as the dawn of its date while the
+    sweep put it after that night's midnight); None when unreadable or
+    longer than a day could be."""
+    sp = _stime.span(row)
+    return sp if sp is not None and 0 < sp[1] - sp[0] <= 16 * 60 else None
+
+
+def _night_tail(sp) -> bool:
+    """Whether a placed span starts in the small hours of its night (before
+    EARLIEST_REAL_START on the clock) — last night's tail, never when a
+    working day starts."""
+    return sp[0] >= _stime.DAY
+
+
+def row_daypart(row) -> str:
+    """The daypart a row is (schedule_time.primary_daypart — the one rule)."""
+    return _stime.primary_daypart(row)
 
 
 def _median(values):
@@ -137,10 +149,6 @@ def _up(m, step=15):
 
 def _fmt(m) -> str:
     return _rules._fmt_minutes(int(m) % (24 * 60))
-
-
-def _hours_text(minutes) -> str:
-    return str(round(minutes / 60.0, 2)).rstrip("0").rstrip(".")
 
 
 def _names(names) -> str:
@@ -241,7 +249,7 @@ def day_spans(history) -> dict:
     for r in history or []:
         d = str(r.get("date") or "")[:10]
         sp = _span(r)
-        if len(d) != 10 or not sp or sp[0] < EARLIEST_REAL_START:
+        if len(d) != 10 or not sp or _night_tail(sp):
             continue
         lo, hi = per_date.get(d, sp)
         per_date[d] = (min(lo, sp[0]), max(hi, sp[1]))
@@ -272,16 +280,22 @@ def trading_weekdays(history):
     return {wd for wd, w in by_day.items() if len(w) * 2 >= len(weeks)}
 
 
-def usual_shifts(history, names) -> dict:
-    """{lower name: {"weeks", "days": {weekday: {"start", "end", "weeks",
+def usual_shifts(history, names, key_of=None) -> dict:
+    """{key: {"weeks", "days": {weekday: {"start", "end", "weeks",
     "share"}}, "parts": {"morning": n, "night": n}}} — the days a person
     usually works and their usual hours on each. A weekday is usual once it
     recurs in USUAL_MIN_WEEKS distinct weeks and in USUAL_SHARE of the weeks
-    they appear in at all; a single week is no pattern."""
-    want = {str(n).strip().lower() for n in (names or ()) if n and str(n).strip()}
+    they appear in at all; a single week is no pattern.
+
+    `key_of` is the Constraints' key (aliases — people's identity): a
+    manager's punches carry the POS's spelling ("Gabe Huerta" for "Gabriel
+    Huerta"), and read by the raw name they were nobody's usual days
+    (BUGSGEN-13). Without it, names are folded to lower case."""
+    fold = key_of or (lambda n: " ".join(str(n or "").split()).lower())
+    want = {fold(n) for n in (names or ()) if n and str(n).strip()}
     per = {}
     for r in history or []:
-        key = (r.get("employee") or "").strip().lower()
+        key = fold(r.get("employee"))
         if key not in want:
             continue
         d = str(r.get("date") or "")[:10]
@@ -293,7 +307,7 @@ def usual_shifts(history, names) -> dict:
         p["weeks"].add(dt.strftime("%G-%V"))
         sp = _span(r)
         cur = p["dates"].get(d)
-        if sp and sp[0] >= EARLIEST_REAL_START:
+        if sp and not _night_tail(sp):
             p["dates"][d] = (min(cur[0], sp[0]), max(cur[1], sp[1])) if cur else sp
         else:
             p["dates"].setdefault(d, None)
@@ -313,7 +327,11 @@ def usual_shifts(history, names) -> dict:
                 slot["roles"][role] = slot["roles"].get(role, 0) + n
             if sp:
                 slot["spans"].append(sp)
-                parts["night" if sp[0] >= 15 * 60 else "morning"] += 1
+                # The day's daypart by the one rule (BUGSGEN-25): the
+                # core window the day covers most, not its start's side of 3pm.
+                part = _stime.span_dayparts(sp)[0]
+                if part in parts:
+                    parts[part] += 1
         days = {}
         for wd, slot in by_day.items():
             k = len(slot["weeks"])
@@ -392,9 +410,9 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
     None when neither the hours nor the record say when this day runs."""
     wd = _weekday(date_iso)
     o = _clock((open_times or {}).get(wd))
-    cl = _clock((close_times or {}).get(wd))
-    if cl is not None and (cl <= o if o is not None else cl < _rules._OVERNIGHT_LATEST_BEFORE):
-        cl += 24 * 60                       # a close in the small hours is the next morning
+    # A close at or before the open, or in the small hours, is the next
+    # morning (schedule_time.close_on_timeline, BUGSGEN-22).
+    cl = _stime.close_on_timeline(_clock((close_times or {}).get(wd)), o)
     hist = (spans or {}).get(wd) or {}
     hs, he = hist.get("start"), hist.get("end")
     if o is None and hs is None:
@@ -507,7 +525,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     single_max = max(min_len, min(SINGLE_SHIFT_MAX_MIN, max_shift - 60))
     spans = day_spans(history)
     trading = trading_weekdays(history)
-    usual = usual_shifts(history, managers + sorted(acting))
+    usual = usual_shifts(history, managers + sorted(acting), key_of=c.key)
     prior = [dict(r) for r in (prior_rows or []) if (r.get("employee") or "").strip()]
     plan, skipped, uncovered, unplanned, windows = [], [], [], [], {}
     if not managers and not acting:
@@ -531,24 +549,33 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         the manager on the floor")."""
         return [(k, False) for k in managers] + [(k, True) for k in sorted(acting) if c.manages(name_of(k), d)]
 
+    # Every person by the Constraints' key — the roster's spelling of the
+    # one person a name means (aliases) — so a manager whose rows carry
+    # another spelling still counts toward their own hours and days
+    # (BUGSGEN-13).
     def hours_in(key, bucket):
         total = float((c.base_hours.get(key) or {}).get(bucket, 0.0) or 0.0)
         for r in prior + plan:
-            if (r.get("employee") or "").strip().lower() == key and r.get("date") and c.bucket(r["date"]) == bucket:
+            if c.key(r.get("employee")) == key and r.get("date") and c.bucket(r["date"]) == bucket:
                 total += _rules.row_hours(r)
         return total
 
     def days_on(key):
-        return len({r["date"] for r in prior + plan if (r.get("employee") or "").strip().lower() == key})
+        return len({r["date"] for r in prior + plan if c.key(r.get("employee")) == key})
 
     def on_day(key, d):
-        return [r for r in plan if r["date"] == d and (r.get("employee") or "").strip().lower() == key]
+        return [r for r in plan if r["date"] == d and c.key(r.get("employee")) == key]
 
     def make_row(key, d, s, e, role, source, reason):
-        return {"date": d, "day": _weekday(d), "employee": name_of(key), "role": role,
-                "shift_start": _fmt(s), "shift_end": _fmt(e), "scheduled_hours": _hours_text(e - s),
-                "notes": f"{PLAN_NOTE} — {reason}", "_pinned": PLAN_SOURCE, "_pin_reason": reason,
-                "_plan_source": source}
+        row = {"date": d, "day": _weekday(d), "employee": name_of(key), "role": role,
+               "shift_start": _fmt(s), "shift_end": _fmt(e),
+               "notes": f"{PLAN_NOTE} — {reason}", "_pinned": PLAN_SOURCE, "_pin_reason": reason,
+               "_plan_source": source}
+        # Its hours from the real span in the restaurant's zone (BUGSGEN-6):
+        # a planned close on the night the clocks go back is an hour longer
+        # than the wall clock, and planned rows are never reconciled later.
+        row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(c))
+        return row
 
     # A standing shift is the owner writing the person in, not code choosing
     # them: "dormant" (no shift in weeks — a guess, and managers rarely
@@ -572,7 +599,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         ok, why = (owner_fill if standing else c).fillable(row["employee"], row["date"])
         if not ok:
             return False, why
-        key = row["employee"].strip().lower()
+        key = c.key(row["employee"])
         bucket = c.bucket(row["date"])
         cap = _week_cap(c, row["employee"], line, cur["mode"])
         have = hours_in(key, bucket) - (_rules.row_hours(without) if without is not None
@@ -589,8 +616,8 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     # plan (the generation accepts it empty, schedule_engine._trading_weekdays).
     for d in dates:
         wd = _weekday(d)
-        hours_set = _clock((open_times or {}).get(wd)) is not None or _clock((close_times or {}).get(wd)) is not None
-        if trading is not None and wd not in trading and not hours_set:
+        # The one trading-day rule the generation reads too (BUGSGEN-5).
+        if not _rules.trading_day(wd, open_times, close_times, trading):
             continue
         w = day_window(c, d, open_times, close_times, spans)
         if w is None:
@@ -770,7 +797,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
             if not sp:
                 continue
             s0, e0 = sp
-            key = r["employee"].strip().lower()
+            key = c.key(r["employee"])
             if gap[0] >= e0:
                 tries = [(s0, ne) for ne in range(min(gap[1], s0 + max_shift), e0, -30)]
             elif gap[1] <= s0:

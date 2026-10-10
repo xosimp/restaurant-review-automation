@@ -5303,6 +5303,19 @@ def schedule_experiments():
                 "error": "The experiment tables are not on this database yet."}
 
 
+def schedule_learning_scorecard(db_path=None):
+    """The platform's Schedule Learning Scorecard (schedule audit 10/10/26
+    RM-4): each figure's within-restaurant trend with a restaurant-cluster
+    interval, the learning ablation, row survival by origin, the cost per
+    accepted week and the owner rules honoured. Internal only - read-only."""
+    import schedule_scorecard as _ssc
+    try:
+        return _ssc.admin_view(db_path=db_path)
+    except Exception as e:           # the tables predate this database
+        log.warning("schedule scorecard unavailable: %s", e)
+        return {"ok": False, "error": "The scorecard tables are not on this database yet."}
+
+
 def schedule_generations(limit=20, db_path=None):
     """The recent schedule generations as engineering reads them (schedule
     audit 10/3/26 B1-3): per week its total and per-stage seconds

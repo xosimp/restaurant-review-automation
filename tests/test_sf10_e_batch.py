@@ -98,7 +98,8 @@ def test_submit_sends_the_captured_request_with_a_cutoff_and_the_callback(monkey
     assert sb.submit_auto_draft(r, period="2026-10-08") == "submitted"
     it = items[0]
     assert it["callback"] == sb.CALLBACK and it["restaurant_id"] == 7 and it["cutoff_at"] is not None
-    assert it["context"] == {"key": sb.call_key(request), "period": "2026-10-08", "week_start": None}
+    assert it["context"] == {"key": sb.call_key(request), "period": "2026-10-08", "week_start": None,
+                             "target": None, "attempt": None}
     ai_batches._resolve(it["callback"])                       # resolves by name
 
 
@@ -113,11 +114,14 @@ def test_no_batch_when_batches_are_off_or_nothing_would_be_sent(monkeypatch):
 
 def test_the_auto_draft_submits_first_and_holds_no_job_or_slot(monkeypatch):
     import ops
-    monkeypatch.setattr(sb, "submit_auto_draft", lambda r, period=None: "submitted")
+    import schedule_engine
+    monkeypatch.setattr(schedule_engine, "generation_request", lambda rid, today=None: {"week_start": WEEK[0]})
+    got = {}
+    monkeypatch.setattr(sb, "submit_auto_draft", lambda r, **k: got.update(k) or "submitted")
     monkeypatch.setattr(ops, "claim_async_job", lambda *a, **k: (_ for _ in ()).throw(AssertionError("claimed")))
     bumped = []
     sj._draft_one(types.SimpleNamespace(id=3), None, None, bumped.append, period="2026-10-08")
-    assert bumped == ["batched"]
+    assert bumped == ["batched"] and got["week_start"] == WEEK[0] and got["period"] == "2026-10-08"
 
 
 def test_the_answer_runs_the_ordinary_auto_draft_with_the_answer_in_hand(monkeypatch):
@@ -126,7 +130,7 @@ def test_the_answer_runs_the_ordinary_auto_draft_with_the_answer_in_hand(monkeyp
     monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: r)
     seen = []
 
-    def draft(rr, db_path, se_, bump, period=None, batch=True):
+    def draft(rr, db_path, se_, bump, period=None, target=None, attempt=None, batch=True):
         h = sb._HOOK.get()
         seen.append((batch, h and h["mode"], h and h["key"]))
     monkeypatch.setattr(sj, "_draft_one", draft)

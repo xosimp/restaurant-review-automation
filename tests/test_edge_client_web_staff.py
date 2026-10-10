@@ -177,6 +177,10 @@ def test_the_portal_refuses_all_seven_days_blocked(client, db_path):
 
 def test_the_portal_keeps_available_and_unavailable_days_disjoint(client, db_path):
     rid = _restaurant(db_path)
+    # Cuts in force at once (no approval, nothing built): this checks the
+    # row's shape, not the approval (schedule audit 10/10/26 MARKET-15).
+    import request_autonomy
+    request_autonomy.save_policy(rid, {"availability_approval": False}, db_path=db_path)
     uid, _ = _staff(db_path, rid)
     client.set_cookie("staff_session", create_staff_session(uid, rid, db_path=db_path))
     # The version the screen loaded (no row yet: null) — PERF-05, fix_B8.

@@ -30,6 +30,7 @@ from datetime import date, datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+import schedule_time as _stime
 
 
 def get_conn(db_path=None):
@@ -92,8 +93,18 @@ def _hours(r):
 
 
 def _daypart(r):
-    from schedule_rules import daypart_of
-    return daypart_of(r.get("shift_start", ""))
+    """A row's daypart by the one rule (schedule_time.primary_daypart,
+    BUGSGEN-25): the core window it covers most, else its start's."""
+    import schedule_time as _stime
+    return _stime.primary_daypart(r)
+
+
+def _hours_text(row, constraints=None) -> str:
+    """A re-timed row's scheduled_hours from its real span in the
+    restaurant's zone, two decimals (BUGSGEN-6, BUGSGEN-7): the stagger and
+    the trim wrote wall-clock hours rounded to a tenth."""
+    import schedule_time as _stime
+    return _stime.row_hours_text(row, getattr(constraints, "tz", None) if constraints is not None else None)
 
 
 # ── overtime-priced cost ───────────────────────────────────────────────────
@@ -766,7 +777,6 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
 
 CURVE_WEEKS = 8
 CURVE_MIN_DAYS = 3               # same-weekday measured days before a curve or a split is stated
-MORNING_SPLIT_HOUR = 15          # shift_quality.DAYPART_CUTOVER: sales before 3pm are lunch's
 LATE_START_HOUR = 22             # shift_quality.LATE_WINDOW_START: from 10pm is the late segment (D-32)
 
 
@@ -919,7 +929,11 @@ def measured_sales_curve(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PAT
             "hours": {h: round(sorted(s.get(h, 0.0) for _n, s in entries)[n // 2], 4) for h in hours},
             "days": n,
             "sources": {k: sum(1 for nm, _s in entries if nm == k) for k in ("tickets", "intraday", "dsr")},
-            "morning_share": round(_median([sum(v for h, v in s.items() if h < MORNING_SPLIT_HOUR)
+            # Sales before the restaurant's lunch/dinner boundary (3pm unless
+            # set — schedule_time.daypart_split) are lunch's; a 1am hour is
+            # the night's tail, never lunch (ARCH-12, BUGSGEN-19).
+            "morning_share": round(_median([sum(v for h, v in s.items()
+                                                if _stime.business_hour(int(h)) * 60 < _stime.daypart_split())
                                             for _n, s in entries]), 4),
             "late_share": round(_median([sum(v for h, v in s.items() if h >= LATE_START_HOUR)
                                          for _n, s in entries]), 4),
@@ -946,11 +960,11 @@ def _late_minutes(row) -> float:
     """Minutes a shift is on the floor from 10pm (LATE_START_HOUR) to its
     end, on its own date's clock (an end at or before the start crosses
     midnight)."""
-    s, e = _minutes(row.get("shift_start", "")), _minutes(row.get("shift_end", ""))
-    if s is None or e is None:
+    import schedule_time as _stime
+    sp = _stime.span(row)
+    if sp is None:
         return 0.0
-    if e <= s:
-        e += 24 * 60
+    s, e = sp
     return float(max(0, e - max(s, LATE_START_HOUR * 60)))
 
 
@@ -1532,7 +1546,9 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             continue
         peak_hour = max(curve.items(), key=lambda kv: kv[1])[0]
         try:
-            peak_hour = int(peak_hour)
+            # On the business timeline: a bar's 1am peak is hour 25, after
+            # the dinner starts it would stagger, never before them (BUGSGEN-19).
+            peak_hour = _stime.business_hour(int(peak_hour))
         except (TypeError, ValueError):
             continue
         if peak_hour * 60 <= s + STAGGER_STEP_MIN:
@@ -1548,10 +1564,11 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             sp = _se._span_minutes(r)
             if e is None or not sp or sp[1] <= s + off + 120:
                 continue      # would leave under two hours: not worth it
-            end_m = sp[1]
 
             def _moved(step):
-                return dict(r, shift_start=_fmt(s + step), scheduled_hours=str(round((end_m - (s + step)) / 60, 1)))
+                moved = dict(r, shift_start=_fmt(s + step))
+                moved["scheduled_hours"] = _hours_text(moved, c)
+                return moved
 
             def _legal(step):
                 trial = list(rows)
@@ -1589,11 +1606,11 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
                 if off <= 0:
                     continue  # every stagger of this row costs the week score
             r["shift_start"] = _fmt(s + off)
-            r["scheduled_hours"] = str(round((end_m - (s + off)) / 60, 1))
+            r["scheduled_hours"] = _hours_text(r, c)
             note = (r.get("notes") or "").strip()
             r["notes"] = f"{note}; staggered start" if note else "staggered start"
             changes.append({"date": date, "employee": r.get("employee"), "role": r.get("role"),
-                            "from": start, "to": r["shift_start"], "reason": f"{wd}'s sales climb until {peak_hour}:00"})
+                            "from": start, "to": r["shift_start"], "reason": f"{wd}'s sales climb until {peak_hour % 24}:00"})
     return rows, changes
 
 
@@ -1903,7 +1920,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                 continue
             # The owner's floor holds through the hours cut, half hour by
             # half hour, as the coverage score holds it.
-            if any(_floor(k, day, "night" if t >= 15 * 60 else "morning")
+            if any(_floor(k, day, _stime.daypart_at(t))
                    > sum(1 for _x, (xs, xe) in mates if xs <= t < xe)
                    for t in range(new_end, e, TRIM_TAIL_STEP_MIN)):
                 continue
@@ -1919,7 +1936,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                         continue
             new = dict(r)
             new["shift_end"] = _fmt(new_end)
-            new["scheduled_hours"] = str(round((new_end - s) / 60.0, 2)).rstrip("0").rstrip(".")
+            new["scheduled_hours"] = _hours_text(new, c)
             note = (r.get("notes") or "").strip()
             new["notes"] = f"{note} (ends early — hours budget)" if note else "ends early — hours budget"
             ok, why = _guard(r, new)
