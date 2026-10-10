@@ -156,8 +156,6 @@ K_OFF_ROLE = 0.3          # a cross-trained fill-in rather than the role's own
 K_CLOSE = 0.5             # per close they already have this week (× the fairness weight's share)
 K_WEEKEND = 0.3           # per weekend shift they already have
 K_HARD = 0.1              # per busy shift they already have
-K_DAYS_OFF = 25.0         # fewer consecutive days off than the rule, for somebody the draft already had short
-K_DAYS_OFF_NEW = 1000.0   # ...for somebody the draft (after the fix pass) gave their run: never worth it
 K_MIN_HOURS_NEW = 1000.0  # per hour under what the draft kept somebody at toward their minimum: never worth it
 # What the edit predictor costs: points of the shift a row the manager is
 # expected to change is kept on (schedule_optimizer.LIKELY_EDIT_SHIFT_POINTS
@@ -217,7 +215,6 @@ class Problem:
         # staff; kept as drafted and named (solve's relaxation loop)
         self.relax = dict(relax or {})
         self.draft_overcommitted = set()
-        self.draft_days_off = set()
         self.c = constraints
         # One person, one key, as the rules file them (Constraints.key:
         # spacing folded, the roster's spelling of an alias — D-8).
@@ -241,24 +238,14 @@ class Problem:
                 p = self.pidx.get(self.key(v.get("employee")))
                 if (v.get("hard") or v["kind"] == "over_hours_ceiling") and v["kind"] in per_person and p is not None:
                     self.draft_overcommitted.add(p)
-                if v["kind"] == "days_off" and p is not None:
-                    self.draft_days_off.add(p)
-        # The run of days off the draft gives somebody (after the fix pass,
-        # which repairs a missed one) is theirs to keep: a propagated rule in
-        # the search, not a cost. Only whoever the draft already had short
-        # is left to the soft penalty. (Retired 10/2/26 for every restaurant;
-        # only a rule set built by hand still carries it.)
+        # The days-off run (min_consecutive_days_off) is no rule here: the
+        # owner retired it 10/2/26 and compliance() forces it off for every
+        # restaurant; the solver's propagation and costs for it are gone with
+        # the CP-SAT replacement (scheduler audit 10/10/26 LOGIC-31). The
+        # sweep still names a hand-built rule set's days_off, and the judge
+        # refuses a candidate that brings one back (_soft_repaired).
         self.week_ords = sorted(o for o in (_ordinal(d) for d in self.week_dates) if o is not None)
         self.week_ord_set = set(self.week_ords)
-        full_req, part_req = self.days_off_rule
-        self.off_req = []
-        for p in range(len(self.names)):
-            req = part_req if self.employment[p] == "part" else full_req
-            try:
-                req = int(req or 0)
-            except (TypeError, ValueError):
-                req = 0
-            self.off_req.append(0 if p in self.draft_days_off else req)
         self._build_units(only_dates)
         self._build_caps()
         self._build_scale()
@@ -480,7 +467,6 @@ class Problem:
             self.daily_line = 0.0
         self.min_hours = [c.min_hours(n) if c is not None else None for n in self.names]
         self.employment = [(getattr(c, "employment", None) or {}).get(self.key(n)) for n in self.names]
-        self.days_off_rule = (comp.get("min_consecutive_days_off"), comp.get("part_time_days_off"))
         self.week_dates = list(getattr(c, "week_dates", None) or [])
         # Labor dollars (P-32): each person's own rate, else the role's, the
         # role's typical, the blended; salaried people's hours cost no more.
@@ -1168,28 +1154,6 @@ class Problem:
                 self.fx_ords[p][u.dord] = self.fx_ords[p].get(u.dord, 0) + 1
                 self.fx_units[p].append(u)
 
-    def _off_ok(self, p, ords, add=None) -> bool:
-        """Whether p keeps a run of `off_req` days off inside the week with
-        the dates in `ords` (and `add`) worked — the sweep's days_off rule,
-        asked only once two or more of the week's dates are worked. Adding a
-        date can only make it harder, so the search checks it forward."""
-        req = self.off_req[p]
-        if not req or not self.week_ords:
-            return True
-        worked = {o for o in ords if o in self.week_ord_set}
-        if add is not None:
-            worked.add(add)
-        if len(worked) < 2:
-            return True
-        run = best = 0
-        for o in self.week_ords:
-            if o in worked:
-                run = 0
-            else:
-                run += 1
-                best = max(best, run)
-        return best >= req
-
     def _fixed_blocks(self, u, p):
         for f in self.fx_units[p]:
             if self._conflict(u, f):
@@ -1198,8 +1162,6 @@ class Problem:
             return "past their overtime line"
         if self.max_run and self._run_with(self.fx_ords[p], u.dord) > self.max_run:
             return _rules.LABELS["long_run"]
-        if not self._off_ok(p, self.fx_ords[p], u.dord):
-            return _rules.LABELS["days_off"]
         return None
 
     def _infeasible_entry(self, u):
@@ -1933,7 +1895,6 @@ class Problem:
     def leaf_penalty(self, persons, st) -> float:
         """Soft rules that are only known once a person's week is complete."""
         pen = 0.0
-        full_req, part_req = self.days_off_rule
         for p in persons:
             mn = self.min_hours[p]
             if mn:
@@ -1952,19 +1913,6 @@ class Problem:
             usual = self.usual[p]
             if usual and st.total[p] < usual * (1 - sq.USUAL_HOURS_BAND) - 1e-9:
                 pen += self.week_unit("preferences") / self.n_pref * 100.0 * self.l_weight[p]
-            req = part_req if self.employment[p] == "part" else full_req
-            if req and self.week_dates:
-                worked = st.dates[p]
-                if sum(1 for d in self.week_dates if worked.get(d)) >= 2:
-                    best = run = 0
-                    for d in self.week_dates:
-                        if worked.get(d):
-                            run = 0
-                        else:
-                            run += 1
-                            best = max(best, run)
-                    if best < int(req):
-                        pen += K_DAYS_OFF if p in self.draft_days_off else K_DAYS_OFF_NEW
         return pen
 
     def evaluate(self, assign) -> float:
@@ -2009,8 +1957,6 @@ class Problem:
             if any(h > self.capf(p, b) + 0.05 for b, h in hours.items()):
                 return False
             if self.max_run and any(self._run_with(ords - {x}, x) > self.max_run for x in ords):
-                return False
-            if not self._off_ok(p, ords):
                 return False
         for k, members in self.kgroups.items():
             if not any(assign[i] in self.kok[k] for i in members):
@@ -2198,8 +2144,6 @@ class _Search:
                 bad = vu.hours + self.st.hours[p].get(vu.bucket, 0.0) > prob.capf(p, vu.bucket) + 0.05
                 if not bad and prob.max_run and vu.dord is not None and abs(vu.dord - unit.dord) <= prob.max_run:
                     bad = prob._run_with(ords, vu.dord) > prob.max_run
-                if not bad and prob.off_req[p] and vu.dord not in ords:
-                    bad = not prob._off_ok(p, ords, vu.dord)
                 if bad:
                     if not self._remove(v, p):
                         ok = False
