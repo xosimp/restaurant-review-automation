@@ -59,9 +59,76 @@ DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
 #     partial day is never stored as a whole one (Square MOD-LAB-7, Clover).
 
 
+# ── the provider registry (schedule audit 10/10/26 MARKET-10) ──────────────
+#
+# Every POS this build can read, by name -> the module that speaks to it. A
+# new POS plugs in with ONE line here (or register_provider at import time)
+# and a module implementing PROVIDER_API; what else it can answer is read off
+# the module itself (capabilities), never kept in a second list. The four
+# below are the ones with an integration in this repo; SpotOn, Aloha (NCR
+# Voyix), Lightspeed, Oracle Simphony, PAR Brink, Revel, Heartland and an
+# aggregator (Omnivore-style) each need the vendor's partner credentials
+# before a module can be written against their API — see docs/integrations.
+PROVIDER_MODULES = {"toast": "toast", "square": "square", "clover": "clover", "rpower": "rpower"}
+
+# Optional contracts beyond PROVIDER_API / DATA_API:
+#   archive_rows(restaurant_id, business_date) -> {"tickets", "lines",
+#     "punches", "payments", "payouts", "max_stamp"} — the ticket archive
+#     (pos_archive.py); changed_business_dates(restaurant_id, since_utc,
+#     until_utc) -> set of ISO dates rewritten since a moment (restatements).
+#   preview_labor_schedule(restaurant_id, shifts) / push_labor_schedule(
+#     restaurant_id, shifts) — the schedule written back to the POS, where
+#     its clock enforces it (pos_schedule_push.py).
+ARCHIVE_API = ("archive_rows",)
+SCHEDULE_API = ("preview_labor_schedule", "push_labor_schedule")
+
+
+def register_provider(name, module_name):
+    """Add (or replace) a provider: `name` is how restaurants and the
+    archive key it, `module_name` the module that implements PROVIDER_API.
+    Clears the loaded registry so the next read imports it."""
+    global PROVIDERS
+    PROVIDER_MODULES[str(name).strip().lower()] = module_name
+    PROVIDERS = None
+
+
 def _load_providers():
-    import toast, square, clover, rpower
-    return {"toast": toast, "square": square, "clover": clover, "rpower": rpower}
+    """{name: module} for every registered provider that imports and keeps
+    PROVIDER_API. A provider whose import fails, or that lacks a required
+    function, is left out and logged — one broken integration never takes
+    down the other POS systems or the boot."""
+    import importlib
+    out = {}
+    for name, module_name in PROVIDER_MODULES.items():
+        try:
+            mod = importlib.import_module(module_name)
+        except Exception as e:
+            log.error(f"POS provider {name} ({module_name}) failed to import: {e}")
+            continue
+        missing = [f for f in PROVIDER_API if not callable(getattr(mod, f, None))]
+        if missing:
+            log.error(f"POS provider {name} lacks {', '.join(missing)}; left out")
+            continue
+        out[name] = mod
+    return out
+
+
+def capabilities(mod) -> dict:
+    """What one provider module can answer, read off the module:
+    {"data": [DATA_API names it defines], "archive": bool, "restatements":
+    bool, "schedule_push": bool, "schedule_preview": bool}."""
+    have = lambda f: callable(getattr(mod, f, None))  # noqa: E731
+    return {"data": [f for f in DATA_API if have(f)],
+            "archive": all(have(f) for f in ARCHIVE_API),
+            "restatements": have("changed_business_dates"),
+            "schedule_preview": have("preview_labor_schedule"),
+            "schedule_push": have("push_labor_schedule")}
+
+
+def provider_matrix() -> dict:
+    """{name: capabilities} for every loaded provider — what the admin
+    console and the docs say each POS can do."""
+    return {name: capabilities(mod) for name, mod in get_providers().items()}
 
 
 # Populated lazily so tests can inject fakes and a broken provider import

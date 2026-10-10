@@ -305,3 +305,200 @@ def sync_to_db(restaurant_id: int) -> dict:
         except Exception:
             pass
         return {"ok": False, "error": str(e)}
+
+
+# ── the ticket archive (schedule audit 10/10/26 MARKET-9) ───────────────────
+#
+# pos_archive's provider-neutral rows from Square's Orders API (each order's
+# opened/closed times, line items, discounts, tenders) and Labor API (shifts
+# with wage, breaks and declared tips). Square's Orders API carries no server,
+# table or guest count, so those stay None (labor standards that need covers
+# say they are not measured, never 0), and no kitchen fire/bump times.
+
+def _cents(obj, field=None) -> float:
+    m = (obj or {}).get(field) if field else obj
+    try:
+        return round(int((m or {}).get("amount") or 0) / 100.0, 2)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
+def _local_iso(stamp, tz):
+    try:
+        dt = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(tz).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _day_window(restaurant_id, day):
+    """(tz, restaurant, aware start, aware end) of one business day:
+    BUSINESS_DAY_START_HOUR local to the same hour the next day."""
+    from models import get_restaurant
+    from time_utils import BUSINESS_DAY_START_HOUR
+    tz = _tz_for(restaurant_id)
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR, tzinfo=tz)
+    return tz, get_restaurant(restaurant_id), start, start + timedelta(days=1)
+
+
+def _search_orders(restaurant_id, date_filter: dict, sort_field: str) -> list:
+    """Every order /orders/search returns for one date filter, paged to the
+    end; a page that fails fails the read (never a partial day)."""
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    headers = _headers(restaurant_id)
+    out, cursor = [], None
+    while True:
+        body = {"location_ids": [r.square_location_id], "limit": 500,
+                "query": {"filter": {"date_time_filter": date_filter},
+                          "sort": {"sort_field": sort_field, "sort_order": "ASC"}}}
+        if cursor:
+            body["cursor"] = cursor
+        resp = _http(requests.post, f"{SQUARE_BASE}/orders/search", headers=headers, json=body, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Square orders search returned {resp.status_code} partway through; nothing was saved")
+        data = resp.json()
+        out.extend(data.get("orders", []))
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+    return out
+
+
+def _search_shifts(restaurant_id, start_dt, end_dt) -> list:
+    """Every Labor shift (open or closed) that started in [start, end)."""
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    headers = _headers(restaurant_id)
+    out, cursor = [], None
+    while True:
+        body = {"query": {"filter": {"location_ids": [r.square_location_id],
+                                     "start": {"start_at": start_dt.isoformat(), "end_at": end_dt.isoformat()}}},
+                "limit": 200}
+        if cursor:
+            body["cursor"] = cursor
+        resp = _http(requests.post, f"{SQUARE_BASE}/labor/shifts/search", headers=headers, json=body, timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Square shifts search returned {resp.status_code} partway through; nothing was saved")
+        data = resp.json()
+        out.extend(data.get("shifts", []))
+        cursor = data.get("cursor")
+        if not cursor:
+            break
+    return out
+
+
+def archive_rows(restaurant_id: int, business_date) -> dict:
+    """One business date as pos_archive rows: {"tickets", "lines",
+    "punches", "payments", "payouts", "max_stamp"}. A ticket is an order
+    opened in the business day; its net is pos.py's contract
+    (_order_net_cents: total less tax, tips and service charges); a
+    CANCELED order is kept with `cancelled` 1 and no net. Lines: each line
+    item at its gross (base price x quantity) and each discount as a
+    negative "discount" line. Punches: Labor shifts started in the day,
+    pay = the shift's hourly wage x its unpaid-break-adjusted hours."""
+    day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(str(business_date)[:10])
+    iso = day.isoformat()
+    tz, restaurant, start, end = _day_window(restaurant_id, day)
+    orders = _search_orders(restaurant_id, {"created_at": {"start_at": start.isoformat(), "end_at": end.isoformat()}},
+                            "CREATED_AT")
+    tickets, lines, payments, stamps = [], [], [], []
+    for o in orders:
+        oid = str(o.get("id") or "").strip()
+        if not oid:
+            continue
+        stamp = str(o.get("updated_at") or "")[:19] or None
+        stamps.append(str(o.get("updated_at") or ""))
+        cancelled = str(o.get("state") or "").upper() == "CANCELED"
+        opened = _local_iso(o.get("created_at"), tz)
+        for li in o.get("line_items") or []:
+            lid = str(li.get("uid") or "")
+            try:
+                qty = float(li.get("quantity") or 0)          # Square sends quantity as a string
+            except (TypeError, ValueError):
+                qty = 0.0
+            gross = _cents(li, "gross_sales_money")
+            lines.append({"line_id": f"{oid}:{lid}", "ticket_id": oid, "business_date": iso,
+                          "item_id": li.get("catalog_object_id"), "item_name": (li.get("name") or "").strip() or None,
+                          "item_kind": None, "kind": "void" if cancelled else "sale", "qty": qty,
+                          "sales": 0.0 if cancelled else gross, "price": _cents(li, "base_price_money"),
+                          "loss_amount": gross if cancelled else None, "item_at": opened, "source_stamp": stamp})
+        for d in o.get("discounts") or []:
+            amt = _cents(d, "applied_money")
+            if amt and not cancelled:
+                lines.append({"line_id": f"{oid}:{d.get('uid') or d.get('name') or 'discount'}", "ticket_id": oid,
+                              "business_date": iso, "kind": "discount", "qty": 1.0, "sales": round(-amt, 2),
+                              "price": round(-amt, 2), "reason": (d.get("name") or "").strip() or None,
+                              "item_at": opened, "source_stamp": stamp})
+        for t in o.get("tenders") or []:
+            kind = str(t.get("type") or "").upper()
+            payments.append({"payment_id": str(t.get("id") or f"{oid}:tender"), "ticket_id": oid,
+                             "business_date": iso, "method": kind.title() or None,
+                             "is_cash": 1 if kind == "CASH" else 0, "is_card": 1 if kind == "CARD" else 0,
+                             "amount": _cents(t, "amount_money"), "tip": _cents(t, "tip_money"), "tip_fee": None})
+        tickets.append({
+            "ticket_id": oid, "business_date": iso, "ticket_no": None, "opened_at": opened,
+            "closed_at": _local_iso(o.get("closed_at"), tz) if o.get("closed_at") else None,
+            "fired_at": None, "bumped_at": None, "need_at": None, "server_id": None, "server_name": None,
+            "table_id": None, "table_name": None, "room_name": None, "is_bar": 0, "guest_count": None,
+            "entree_count": None, "bev_count": None,
+            "net_sales": 0.0 if cancelled else round(_order_net_cents(o) / 100.0, 2),
+            "discount": _cents(o, "total_discount_money"), "tip": _cents(o, "total_tip_money"), "grat": None,
+            "tax": _cents(o, "total_tax_money"), "mealtime": None, "profit_center": None,
+            "cancelled": 1 if cancelled else 0, "source_stamp": stamp})
+    team = _fetch_team_members(restaurant_id)
+    punches = []
+    for s in _search_shifts(restaurant_id, start, end):
+        sid = str(s.get("id") or "").strip()
+        if not sid:
+            continue
+        tid = s.get("team_member_id") or s.get("employee_id")
+        wage = s.get("wage") or {}
+        rate = _cents(wage, "hourly_rate") or None
+        a, z = _local_iso(s.get("start_at"), tz), _local_iso(s.get("end_at"), tz) if s.get("end_at") else None
+        unpaid = 0.0
+        brk = 0.0
+        for b in s.get("breaks") or []:
+            ba, bz = _local_iso(b.get("start_at"), tz), _local_iso(b.get("end_at"), tz) if b.get("end_at") else None
+            if ba and bz:
+                m = (datetime.fromisoformat(bz) - datetime.fromisoformat(ba)).total_seconds() / 60.0
+                brk += m
+                unpaid += 0.0 if b.get("is_paid") else m
+        hours = None
+        if a and z:
+            hours = round(max(0.0, (datetime.fromisoformat(z) - datetime.fromisoformat(a)).total_seconds() / 3600.0
+                              - unpaid / 60.0), 2)
+        stamps.append(str(s.get("updated_at") or ""))
+        punches.append({
+            "punch_id": sid, "business_date": iso, "employee_id": tid,
+            "employee_name": (team.get(tid) or {}).get("name") if tid else None, "job_id": None,
+            "role": (wage.get("title") or None), "clock_in": a, "clock_out": z, "reg_hours": hours,
+            "ot_hours": None, "dt_hours": None, "reg_rate": rate, "ot_rate": None,
+            "pay": round(hours * rate, 2) if (hours is not None and rate) else None, "ot_pay": None,
+            "tips": _cents(s, "declared_cash_tip_money") or None, "tips_net": None, "grats": None,
+            "break_minutes": round(brk, 1), "meal_minutes": None, "rest_minutes": None, "edited_by": None,
+            "edited_at": None, "edit_what": None, "is_station": 0,
+            "source_stamp": str(s.get("updated_at") or "")[:19] or None})
+    return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": [],
+            "max_stamp": (max(x for x in stamps if x)[:19] if any(stamps) else None)}
+
+
+def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
+    """Business dates of the orders Square updated between two UTC moments
+    (the orders search's updated_at filter): a day re-posted after it was
+    archived is archived again."""
+    from models import get_restaurant
+    from time_utils import business_date
+    tz = _tz_for(restaurant_id)
+    r = get_restaurant(restaurant_id)
+    out = set()
+    for o in _search_orders(restaurant_id, {"updated_at": {"start_at": since_utc.isoformat(),
+                                                           "end_at": until_utc.isoformat()}}, "UPDATED_AT"):
+        try:
+            local = datetime.fromisoformat(str(o.get("created_at")).replace("Z", "+00:00")).astimezone(tz)
+        except Exception:
+            continue
+        out.add(business_date(r, local.replace(tzinfo=None)).isoformat())
+    return out
