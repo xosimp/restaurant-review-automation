@@ -4472,6 +4472,10 @@ def init_db(db_path: str = DB_PATH):
     init_schedule_overrides(db_path)
     from schedule_scorecard import init_schedule_scorecard
     init_schedule_scorecard(db_path)
+    # Call-out insurance: consented, paid on-call slots and the owner's
+    # standby policy (standby_insurance, scheduler audit 10/10/26 MARKET-26).
+    from standby_insurance import init_standby
+    init_standby(db_path)
     # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
     from schedule_calibration import init_schedule_calibration
     init_schedule_calibration(db_path)
