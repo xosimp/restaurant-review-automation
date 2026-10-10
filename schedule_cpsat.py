@@ -132,6 +132,7 @@ TERM_LABELS = {
     "role": "a fill-in from another role",
     "pending": "a day someone asked off",
     "hours_wanted": "the hours people asked for",
+    "standby": "a standby on a shift likely to come up short",
 }
 _STATIC_TERMS = {"pending": "pending", "reliability": "reliability", "rotation_weekend": "fairness",
                  "rotation_close": "fairness", "preference": "preferences", "learned_preference": "preferences",
@@ -450,8 +451,16 @@ class _Model:
 
     def _unfilled(self):
         prob = self.prob
+        per_cent = self._per_cent()
         for u in self.live:
             hours = max(0.25, u.hours)
+            if any(r.get("_standby") for r in u.rows):
+                # worth twice its wage in the quality terms: filled while the
+                # week is under budget, left when it would push it over
+                # (a dollar over costs BUDGET_OVER_FACTOR)
+                cents = hours * (prob.blended or 15.0) * 100
+                self.book.add("standby", self.unf[u.id], max(1.0, 2 * cents * per_cent), {"unit": u.id})
+                continue
             if self.mode == "draft":
                 floor = any(r.get("_floor") for r in u.rows)
                 self.book.add("floor" if floor else "requirement", self.unf[u.id],
@@ -1821,7 +1830,7 @@ def summary(result: dict) -> dict:
 
 def solver_draft(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                  last_week_rows=None, signals=None, weights=None, profiles=None, roster_roles=None,
-                 budget_dollars=None, max_seconds=None, seed=SEED) -> dict:
+                 budget_dollars=None, max_seconds=None, seed=SEED, standby_slots=None) -> dict:
     """The week drafted with no model call: schedule_shapes (Stage 1) picks
     each role's shifts to cover its people-on-at-once demand, floors, the
     section cap and the closers within the budget priced; assign (Stage 2)
@@ -1844,9 +1853,13 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                                 context_rows=context_rows, last_week_rows=last_week_rows, rates=rates,
                                 blended_rate=ot.get("default_rate") or (ot.get("rates") or {}).get("_default"),
                                 budget_dollars=budget_dollars, roster_roles=roster_roles,
-                                max_seconds=max(1.0, min(_shapes.DEFAULT_SECONDS, secs * 0.3)), seed=seed)
+                                max_seconds=max(1.0, min(_shapes.DEFAULT_SECONDS, secs * 0.3)), seed=seed,
+                                staffing_value=sig.get("staffing_value"))
     stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat"}
-    slots = shaped["rows"]
+    # A standby on a busy shift likely to come up short (RM-18, G2's
+    # attendance_risk.standby_needed): one more of the role over the
+    # daypart's core window, staffed only while the budget has room.
+    slots = shaped["rows"] + [dict(r, _standby=True, employee="") for r in standby_slots or []]
     if not slots:
         return {"rows": [], "unassigned": [], "short": shaped["short"], "conflicts": [], "reasons": [], "terms": {},
                 "stats": dict(stats, status="nothing_to_solve", seconds=round(_time.monotonic() - t0, 3))}

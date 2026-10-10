@@ -289,6 +289,51 @@ def test_improve_falls_back_to_the_backtracking_solver_without_cp_sat(monkeypatc
     assert res["stats"]["engine"] == "backtracking"
 
 
+# ── G2's requirements and prices in the shapes (MARKET-23, RM-18) ─────────
+
+def test_the_requirements_own_half_hour_need_is_the_demand():
+    names, roles, c, concurrent, reqs = _shape_inputs()
+    d = WEEK[0]
+    for r in reqs:
+        if r["date"] == d and r["daypart"] == "night":
+            r["half_need"] = {t: {"Server": 3} for t in range(1080, 1230, 30)}   # 3, not the history's 5
+    got = shp.shape_week([d], c, [r for r in reqs if r["date"] == d], concurrent=concurrent, roster_roles=roles,
+                         max_seconds=5)
+    spans = [sr._span(r) for r in got["rows"]]
+    on = [sum(1 for s, e in spans if s <= t and t + 30 <= e) for t in range(1080, 1230, 30)]
+    assert max(on) == 3, on
+
+
+def test_one_more_person_is_staffed_only_where_it_measurably_pays():
+    names, roles, c, concurrent, reqs = _shape_inputs()
+    c.section_cap = 0
+    d = WEEK[0]
+    day_reqs = [r for r in reqs if r["date"] == d]
+
+    def peak(value):
+        got = shp.shape_week([d], c, day_reqs, concurrent=concurrent, roster_roles=roles, max_seconds=5,
+                             rates={"server": 10.0}, staffing_value=value)
+        spans = [sr._span(r) for r in got["rows"]]
+        return max(sum(1 for s, e in spans if s <= t and t + 30 <= e) for t in range(1080, 1230, 30))
+    assert peak(None) == 5
+    assert peak({("server", "night"): {"per_hour": 40.0, "lo": 12.0, "hi": 70.0}}) == 6
+    assert peak({("server", "night"): {"per_hour": 40.0, "lo": -5.0, "hi": 70.0}}) == 5     # interval not clear of zero
+
+
+def test_a_standby_is_staffed_only_while_the_budget_has_room():
+    names = ["Ana", "Ben", "Cy"]
+    roles = {n: "Server" for n in names}
+    c = cons(names, roles)
+    d = WEEK[0]
+    kept = [dict(row(d, "Ana"), _pinned=True)]
+    slot = dict(row(d, "", "Server", "5:00pm", "9:00pm"), _standby=True)
+    sig = _sig(names, roles)
+    under = cs.assign(kept + [slot], c, signals=sig, budget_dollars=1000, max_seconds=3)
+    over = cs.assign(kept + [slot], c, signals=sig, budget_dollars=40, max_seconds=3)
+    assert len([r for r in under["rows"] if r["date"] == d]) == 2
+    assert len([r for r in over["rows"] if r["date"] == d]) == 1
+
+
 # ── the quality gate solved exactly before any model call (LOGIC-26) ──────
 
 def _gate_week(lee_free):

@@ -3649,14 +3649,63 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
                 sig["overtime"] = _overtime_inputs(rid, c)
             except Exception as e:
                 _soft_fail("overtime inputs", e, rid)
-        return _cps.solver_draft(sorted(dates), c, facts.get("requirements") or [], concurrent=concurrent,
-                                 history_rows=hist, context_rows=plan,
-                                 last_week_rows=(last or {}).get("rows") or [], signals=sig, weights=weights,
-                                 profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
-                                 budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget)
+        if not sig.get("staffing_value") and rid is not None:
+            sig["staffing_value"] = _staffing_value(rid)
+        got = _cps.solver_draft(sorted(dates), c, facts.get("requirements") or [], concurrent=concurrent,
+                                history_rows=hist, context_rows=plan,
+                                last_week_rows=(last or {}).get("rows") or [], signals=sig, weights=weights,
+                                profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
+                                budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget)
+        if got.get("rows") and rid is not None:
+            _solver_standby(rid, dates, got, plan, facts, c, sig, weights)
+        return got
     except Exception as e:
         _soft_fail("solver-first draft", e, rid)
         return None
+
+
+def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
+    """A standby on each busy shift the drafted week is likely to come up
+    short on (scheduler audit 10/10/26 RM-18 — attendance_risk.standby_
+    needed over the drafted people's own weekday no-show rates): one more of
+    the role over the daypart's core window, staffed by the solver only
+    while the week is under its budget. In place on `got`."""
+    import attendance_risk as _ar
+    import schedule_cpsat as _cps
+    import schedule_requirements as _req_sb
+    reqs = facts.get("requirements") or []
+    try:
+        busy = _req_sb.busy_shifts(sorted(dates), facts.get("shift_profiles") or None,
+                                   facts.get("demand_by_day") or {}, facts.get("demand_by_date") or {})
+        risks = _ar.shift_risks(list(plan) + got["rows"], reqs, _ar.rates(rid), busy=busy)
+        need = _ar.standby_needed(risks)
+    except Exception as e:
+        _soft_fail("solver-first draft", e, rid)
+        return
+    slots = []
+    for x in need[:7]:
+        role = next((r.get("role") for r in got["rows"] if r.get("date") == x["date"]
+                     and c.family(r.get("role")) == x.get("role")), None)
+        day = _weekday_name(x["date"])
+        o, cl = _rules.open_hours(c, day)
+        win = __import__("shift_quality").floor_window(x["daypart"], o, cl)
+        if not role or not win:
+            continue
+        slot = {"date": x["date"], "day": day, "employee": "", "role": role,
+                "shift_start": _rules._fmt_minutes(win[0] % 1440), "shift_end": _rules._fmt_minutes(win[1] % 1440),
+                "scheduled_hours": "", "notes": "standby"}
+        slot["scheduled_hours"] = _stime.row_hours_text(slot, _rules.tz_of(c))
+        slots.append(dict(slot, _standby=True))
+    if not slots:
+        return
+    kept = [dict(r, _pinned=True) for r in list(plan) + got["rows"]]
+    res = _cps.assign(kept + slots, c, signals=sig, weights=weights, only_dates=sorted(dates), max_seconds=5.0,
+                      mode="draft", budget_dollars=facts.get("labor_budget_dollars") or None, reasons=False,
+                      explain=False)
+    added = [{k: v for k, v in r.items() if k not in ("_pinned", "_standby", "_open")}
+             for r in res.get("rows", [])[len(kept):] if (r.get("employee") or "").strip()]
+    got["rows"] = got["rows"] + added
+    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added)}
 
 
 def solver_explain(got) -> dict:

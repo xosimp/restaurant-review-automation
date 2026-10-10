@@ -255,6 +255,13 @@ def demand_curves(dates, requirements, concurrent=None, demand_curve=None, open_
             lo_p, hi_p = (0, split) if part == "morning" else (split, 48 * 60)
             conc = (concurrent or {}).get((day, part)) or {}
             low_conc = {str(k).strip().lower(): v for k, v in conc.items()}
+            # The requirement's own people-on-at-once per half hour (G2:
+            # work ÷ the labor standard at the rush plus the fixed crew, each
+            # role's lead or lag measured) — the one the score judges.
+            half_need = {}
+            for m, need_at in (row.get("half_need") or {}).items():
+                for r_h, n_h in (need_at or {}).items():
+                    half_need.setdefault(str(r_h).strip().lower(), {})[int(m)] = int(n_h or 0)
             for entry in row.get("roles") or []:
                 role = str(entry.get("role") or "").strip()
                 if not role or (roles is not None and role.lower() not in roles):
@@ -263,6 +270,12 @@ def demand_curves(dates, requirements, concurrent=None, demand_curve=None, open_
                 if need <= 0 and not entry.get("floor"):
                     continue
                 cur = out.setdefault((d, role), {})
+                own = half_need.get(role.lower())
+                if own:
+                    for m, n in own.items():
+                        if lo_p <= m < hi_p and n > 0:
+                            cur[m] = max(cur.get(m, 0), n)
+                    continue
                 figs = low_conc.get(role.lower())
                 slots = (figs or {}).get("slots") or {}
                 if slots:
@@ -313,11 +326,16 @@ def _available(c, role, d, roster_roles) -> int:
 
 def shape_week(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                last_week_rows=None, rates=None, blended_rate=None, budget_dollars=None, roster_roles=None,
-               demand_curve=None, max_seconds=DEFAULT_SECONDS, seed=7) -> dict:
+               demand_curve=None, max_seconds=DEFAULT_SECONDS, seed=7, staffing_value=None) -> dict:
     """The week's shift shapes: {"rows": [slot rows, no employee, `_open`,
     `_floor` where a floor needs them], "short": [{date, role, minutes,
     people}], "stats": {...}}. `context_rows` (the manager plan, a redo's
-    kept days, locked rows) count toward coverage and bound the span."""
+    kept days, locked rows) count toward coverage and bound the span.
+    `staffing_value` — {(family, daypart): {"per_hour", "lo", "hi"}}
+    (staffing_elasticity.marginal_values, MARKET-23): where one more person
+    measurably returns more than they cost (the interval clear of zero),
+    each half hour one person over the demand earns that net value back,
+    so the model staffs the extra person exactly where it pays."""
     c = constraints
     out = {"rows": [], "short": [], "stats": {"status": "nothing_to_solve"}}
     if not available() or not dates:
@@ -415,6 +433,19 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                 short = m.new_int_var(0, gap, f"sh{d}_{role}_{t}")
                 m.add(sum(have) + short >= gap)
                 obj.append((W_DEMAND_SLOT * sq.DEMAND_WEIGHT.get("normal", 1.0), short))
+                # one more person over the demand, where it measurably pays
+                part_t = "morning" if t < _stime.daypart_split() else "night"
+                val = (staffing_value or {}).get((fam, part_t)) or {}
+                try:
+                    net = float(val.get("per_hour") or 0) if float(val.get("lo") or 0) > 0 else 0.0
+                except (TypeError, ValueError):
+                    net = 0.0
+                if net > 0 and have:
+                    extra = m.new_bool_var(f"ex{d}_{role}_{t}")
+                    m.add(sum(have) >= gap + extra)
+                    # the wage is charged on the pattern's hours already:
+                    # credit the gross value, so the net is what one earns
+                    obj.append((-(W_DOLLAR * (net + wage) / 2.0), extra))
             # the requirement's count of different people per daypart
             for row in requirements or []:
                 if row.get("date") != d or row.get("daypart") not in ("morning", "night"):
