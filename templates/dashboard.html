@@ -1590,6 +1590,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-send{width:44px;height:44px;border-radius:50%;border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--paper3);color:var(--ink3);cursor:pointer;padding:0;transition:background .15s,box-shadow .15s,color .15s}
 .ask-send.on,.ask-send:not(:disabled):hover{background:linear-gradient(180deg,#e8956a,#c84b2f);color:#fff;box-shadow:0 8px 20px color-mix(in srgb,var(--ember) 40%,transparent)}
 .ask-send:disabled{opacity:.55;cursor:default;box-shadow:none}
+.ask-mic[aria-pressed="true"]{background:linear-gradient(180deg,#e8956a,#c84b2f);color:#fff;box-shadow:0 0 0 4px color-mix(in srgb,var(--ember) 30%,transparent)}
 @media(max-width:520px){.ask-panel{right:12px;bottom:90px;height:min(620px,calc(100vh - 110px))}.ask-fab{right:16px;bottom:16px}}
 /* Expanded: a 720px side sheet on a large monitor (density audit #49). The
    same panel, the same conversation - only the frame changes, and the
@@ -10399,6 +10400,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div class="ask-compose">
     <input type="text" id="ask-cavnar-input" placeholder="How can I help?" maxlength="2000" autocomplete="off"
       onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}" oninput="askInputChanged()">
+    {# Push to talk (scheduler audit 10/10/26 MARKET-31): the browser's own
+       speech recognition fills the question and sends it to the same Ask
+       tools; the answer is read back. Hidden where the browser has none. #}
+    <button type="button" id="ask-cavnar-mic" class="ask-send ask-mic" aria-label="Speak your question" aria-pressed="false" hidden onclick="askMicToggle()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
     <button onclick="sendAskCavnar()" id="ask-cavnar-send-btn" class="ask-send" aria-label="Send question"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
   </div>
 </div>
@@ -11248,6 +11253,27 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink3);margin:0 0 14px}
 .ss-crew-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .ss-crew-empty{padding:28px;border-radius:18px;border:1px dashed var(--hb-line);color:var(--ink2);font-size:15px;line-height:1.55}
+/* Bench (studio_bench, scheduler audit 10/10/26): one card per capability,
+   each loading on its own, each saying what it rests on. */
+.ss-bn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr));gap:14px}
+.ss-bn{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:18px 18px 14px;box-shadow:var(--elev-card);min-width:0}
+.ss-bn h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink);margin:4px 0 6px}
+.ss-bn .lede{font-size:14px;line-height:1.5;color:var(--ink3);margin:0 0 12px}
+.ss-bn .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}
+.ss-bn .line{font-size:14.5px;line-height:1.5;color:var(--ink2);margin:6px 0}
+.ss-bn .line b{color:var(--ink)}
+.ss-bn .basis{font-size:12.5px;line-height:1.45;color:var(--ink3);margin-top:10px}
+.ss-bn .item{border-top:1px solid var(--hb-line);padding:10px 0}
+.ss-bn .item:first-of-type{border-top:0}
+.ss-bn .big{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:22px;color:var(--ink)}
+.ss-bn .tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:1px 8px}
+.ss-bn .tag.critical{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
+.ss-bn .tag.fragile,.ss-bn .tag.watch,.ss-bn .tag.tentative{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent)}
+.ss-bn .tag.ok,.ss-bn .tag.firm,.ss-bn .tag.accepted{color:var(--green);background:color-mix(in srgb,var(--green) 14%,transparent)}
+.ss-bn .tag.high{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
+.ss-bn .tag.likely,.ss-bn .tag.offered,.ss-bn .tag.none{color:var(--ink2);background:color-mix(in srgb,var(--ink3) 18%,transparent)}
+.ss-bn select,.ss-bn input[type=number]{min-height:36px}
+.ss-bn-empty{padding:12px 0;color:var(--ink2);font-size:14.5px;line-height:1.5}
 /* History */
 .ss-hist-list{display:flex;flex-direction:column;gap:10px;margin-top:22px}
 .ss-hrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:18px;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:16px 20px;box-shadow:var(--elev-card)}
@@ -12309,6 +12335,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <span class="ss-steps-sep" aria-hidden="true"></span>
         <button type="button" role="tab" data-ss-go="history">History</button>
         <button type="button" role="tab" data-ss-go="crew">Crew</button>
+        <button type="button" role="tab" data-ss-go="bench">Bench</button>
         <button type="button" role="tab" data-ss-go="team">Team</button>
       </nav>
       <div class="ss-top-r">
@@ -12733,6 +12760,22 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <p class="ss-crew-lede">Each cell is how many of the role are on at once through the heart of the shift (11am–2:30pm, 5:30–8:30pm): what your clock-ins show you usually run, then this draft. Where the draft runs leaner, answer once: keep your usual every week (it becomes that shift's minimum, reviewed in a season), add one for this week only, or keep the saving.</p>
         <div class="ss-crew-bar" id="ss-crew-bar" role="group" aria-label="Show"></div>
         <div id="ss-crew-body"><div class="dr-pulse" role="status" aria-label="Loading your crew"><i></i></div></div>
+      </div>
+    </section>
+
+    {# Bench (studio_bench, scheduler audit 10/10/26 MARKET-17, -21, -22,
+       -26..-30, -32): what a cut costs the guest (the service simulator),
+       call-out insurance, how firm each published shift is, events that
+       changed after publish, bench strength and when to hire, the tip
+       rotation and retention (owner only), the organization's bench and
+       Cavnar AI's weeks against yours. Each card loads on its own and says
+       what it rests on. Loads when it shows (ssRenderBench). #}
+    <section class="ss-stage" data-stage="bench" data-nav="labor/bench" aria-label="Bench">
+      <div class="ss-crew">
+        <div class="ss-kick">Bench</div>
+        <h1>What could go wrong, priced before it does</h1>
+        <p class="ss-crew-lede">Replay a past night with a different crew, line up a paid stand-by for the nights most likely to lose someone, see how firm each published shift is, and act on events that changed after you published. Every figure comes from your own nights; where there aren't enough yet, it says so.</p>
+        <div id="ss-bench-body" class="ss-bn-grid"></div>
       </div>
     </section>
 
@@ -17582,6 +17625,61 @@ function _pollAskCavnarJob(p, card, btn, statusUrl, onDone) {
   setTimeout(poll, 1500);
 }
 
+// ── Voice (scheduler audit 10/10/26 MARKET-31) ─────────────────────────────
+// Push to talk on the floor: the browser's own speech recognition (Chrome,
+// Edge, Safari) fills the question and sends it to the same Ask tools —
+// "Maria's out tonight, who can close bar?" reaches find_cover, and an offer
+// still waits for a tap on its confirm card. The answer is read back with
+// the browser's speech synthesis. Nothing is recorded or sent but the text.
+var _askRec = null, _askListening = false;
+function askVoiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function askMicInit() {
+  var b = document.getElementById('ask-cavnar-mic');
+  if (b && askVoiceSupported()) b.hidden = false;
+}
+function askMicToggle() {
+  if (_askListening && _askRec) { try { _askRec.stop(); } catch (e) { } return; }
+  var R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) return;
+  var input = document.getElementById('ask-cavnar-input'), b = document.getElementById('ask-cavnar-mic');
+  _askRec = new R();
+  _askRec.lang = (navigator.language || 'en-US');
+  _askRec.interimResults = true;
+  _askRec.maxAlternatives = 1;
+  var finalText = '';
+  _askRec.onresult = function (ev) {
+    var interim = '';
+    for (var i = ev.resultIndex; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
+      else interim += ev.results[i][0].transcript;
+    }
+    if (input) { input.value = (finalText + interim).replace(/^\s+/, ''); if (window.askInputChanged) askInputChanged(); }
+  };
+  _askRec.onerror = function (ev) {
+    if (ev && ev.error === 'not-allowed') toast('The microphone isn’t allowed for this site in your browser.', 'error');
+  };
+  _askRec.onend = function () {
+    _askListening = false;
+    if (b) b.setAttribute('aria-pressed', 'false');
+    if (input && input.value.trim() && finalText.trim()) { window._askSpeakNext = true; sendAskCavnar(); }
+  };
+  _askListening = true;
+  if (b) b.setAttribute('aria-pressed', 'true');
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  try { _askRec.start(); } catch (e) { _askListening = false; if (b) b.setAttribute('aria-pressed', 'false'); }
+}
+function askSpeak(text, proposals) {
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+  var plain = String(text || '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_#>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!plain) return;
+  if (plain.length > 600) plain = plain.slice(0, 600).replace(/\s+\S*$/, '') + '.';
+  if (proposals) plain += ' Tap the card to send it.';
+  var u = new window.SpeechSynthesisUtterance(plain);
+  u.lang = navigator.language || 'en-US';
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', askMicInit); else askMicInit();
 window.sendAskCavnar = function() {
   var input = document.getElementById('ask-cavnar-input');
   var question = input.value.trim();
@@ -17670,6 +17768,9 @@ window.sendAskCavnar = function() {
       _appendAskCavnarSuggestions(d.suggestions || []);
       _appendAskCavnarFeedback(d.message_id);
     }
+    // A spoken question gets a spoken answer (MARKET-31); a proposal still
+    // waits for a tap on its card.
+    if (window._askSpeakNext) { window._askSpeakNext = false; askSpeak(answer, d.ok ? (d.proposals || []).length : 0); }
   }
 
   // Streamed, because the tool loop can take several round trips and a
@@ -26741,7 +26842,7 @@ function swOpenTeam(which) {
 // DESIGN_SYSTEM.md -> Schedule Studio.
 var _ssOpen = false, _ssStage = 'setup', _ssFromDash = false, _ssGenerating = false, _ssReview = null;
 var _swSel = null, _swSelRow = null, _swDrag = null, _swLeftLoaded = false;
-var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'crew', 'team'];
+var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'crew', 'bench', 'team'];
 function _ssHost() { var st = document.getElementById('studio'); return st && !st.hidden ? st : null; }
 function _ssHasDraft() {
   var p = document.getElementById('schedule-preview-panel');
@@ -26937,6 +27038,7 @@ function studioGo(stage) {
   else if (stage === 'publish') ssRenderPublish();
   else if (stage === 'history') ssLoadHistory();
   else if (stage === 'crew') ssRenderCrew();
+  else if (stage === 'bench') ssRenderBench();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
   else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
@@ -27499,6 +27601,192 @@ function studioPublished(d, text) {
 var _ssCrew = null, _ssCrewShow = 'diff', _ssCrewBusy = false;
 try { _ssCrewShow = window.localStorage.getItem('cavnar_crew_show') || 'diff'; } catch (e) { }
 var SS_CREW_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+// ── Bench (studio_bench) ────────────────────────────────────────────────
+// One card per capability; each is fetched on its own from
+// /api/labor/bench?part=... so a slow one never holds the others.
+var SS_BENCH_PARTS = [
+  ['what_if', 'What a cut costs the guest', 'Replay your last four of a weekday with one more or one fewer person, from your own ticket times and punches.'],
+  ['standby', 'Stand-by for no-shows', 'The nights this week most likely to lose someone, a person off who could be on call, and what it costs against what a short night costs you.'],
+  ['events', 'Events that changed after you published', 'A game added, moved or cancelled since the week went out: the change in people your own nights measure, priced.'],
+  ['ladder', 'How firm each shift is', 'Firm, likely or tentative, as your staff see it, and how often each person’s published shifts were changed.'],
+  ['strength', 'Bench strength', 'Where one absence leaves a gap, who to train next, and when the hours will need another hire.'],
+  ['tips', 'Tip opportunity', 'Which shifts are worth the most in tips, and who is next for one. Only you see this.'],
+  ['retention', 'People to keep', 'Warning signs on the schedule side. Only you see this; nobody is told.'],
+  ['org', 'Your other locations', 'Staff at your other locations who opted in to pick up shifts here.'],
+  ['outcomes', 'Cavnar AI weeks against yours', 'What actually happened in the weeks Cavnar AI drafted and the weeks built without it.']
+];
+var _ssBench = {};
+function ssBenchHid() { return (typeof _schedHistoryId !== 'undefined' && _schedHistoryId) ? _schedHistoryId : ''; }
+function ssRenderBench() {
+  var body = document.getElementById('ss-bench-body'); if (!body) return;
+  var h = '', i;
+  for (i = 0; i < SS_BENCH_PARTS.length; i++) {
+    var p = SS_BENCH_PARTS[i];
+    h += '<article class="ss-bn" id="ss-bn-' + p[0] + '"><div class="ss-kick">' + _escHtml(p[1]) + '</div><p class="lede">' + _escHtml(p[2]) + '</p>'
+      + '<div class="ss-bn-in"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div></article>';
+  }
+  body.innerHTML = h;
+  for (i = 0; i < SS_BENCH_PARTS.length; i++) ssBenchLoad(SS_BENCH_PARTS[i][0]);
+}
+function ssBenchLoad(part, extra) {
+  var url = '/api/labor/bench?part=' + part + (ssBenchHid() ? '&history_id=' + encodeURIComponent(ssBenchHid()) : '') + (extra || '');
+  if (part === 'what_if' && !extra) { ssBenchDraw(part, {ok: true, form: true}); return; }
+  fetch(url, {credentials: 'same-origin'}).then(apiJson).then(function (d) { _ssBench[part] = d; ssBenchDraw(part, d); })
+    .catch(function () { ssBenchDraw(part, {ok: false, error: 'This couldn’t be read just now.'}); });
+}
+function ssBenchIn(part) { var c = document.getElementById('ss-bn-' + part); return c ? c.querySelector('.ss-bn-in') : null; }
+function ssBnEmpty(t) { return '<div class="ss-bn-empty">' + _escHtml(t) + '</div>'; }
+function ssBnMoney(v) { return v == null ? '—' : '$' + Math.round(+v).toLocaleString('en-US'); }
+function ssBenchDraw(part, d) {
+  var el = ssBenchIn(part); if (!el) return;
+  if (!d || (!d.ok && !d.form)) {
+    if (d && d.http_status === 403) { var card = document.getElementById('ss-bn-' + part); if (card) card.hidden = true; return; }
+    el.innerHTML = ssBnEmpty((d && d.error) || 'This couldn’t be read just now.'); return;
+  }
+  var h = '', i, j;
+  if (part === 'what_if') {
+    var days = (typeof _schedWeekDates !== 'undefined' && _schedWeekDates && _schedWeekDates.length === 7)
+      ? _schedWeekDates.map(function (x) { return new Date(x + 'T12:00:00').toLocaleDateString('en-US', {weekday: 'long'}); })
+      : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    h += '<div class="row"><select id="ss-wi-day" aria-label="Weekday">';
+    for (i = 0; i < days.length; i++) h += '<option' + (days[i] === 'Saturday' ? ' selected' : '') + '>' + days[i] + '</option>';
+    h += '</select><select id="ss-wi-role" aria-label="Role"><option value="server">Servers</option><option value="line_cook">Cooks</option></select>'
+      + '<select id="ss-wi-change" aria-label="Change"><option value="-1">1 fewer</option><option value="-2">2 fewer</option><option value="1">1 more</option></select>'
+      + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-bn-act="whatif">Replay</button></div>';
+    if (!d.form) {
+      if (!d.available) h += ssBnEmpty(d.reason || 'Not enough timed tickets yet.');
+      else {
+        h += '<div class="line"><b>' + _escHtml(d.sentence || 'No change the model can measure.') + '</b></div>';
+        var st = d.stages || {};
+        for (var k in st) if (st.hasOwnProperty(k) && st[k].available) {
+          h += '<div class="line">' + (k === 'kitchen' ? 'Ticket time' : 'Table time') + ': <span class="hb-num">' + st[k].as_run + '</span> min as run → <span class="hb-num">' + st[k].predicted + '</span> min'
+            + (st[k].turns_pct != null ? ' · turns <span class="hb-num">' + (st[k].turns_pct > 0 ? '+' : '') + st[k].turns_pct + '%</span> at a full room' : '') + '</div>';
+        }
+        if (d.comps) h += '<div class="line">Comps: <span class="hb-num">' + d.comps.as_run + '</span> → <span class="hb-num">' + d.comps.predicted + '</span> a night</div>';
+        h += '<div class="basis">Nights: ' + _escHtml((d.nights || []).join(', ')) + '. ' + _escHtml(d.basis || '') + '</div>';
+      }
+    }
+  } else if (part === 'standby') {
+    var sug = d.suggestions || [], slots = d.slots || [], pol = d.policy || {};
+    if (!sug.length && !slots.length) h += ssBnEmpty(ssBenchHid() ? 'No night in this week looks likely to lose someone.' : 'Open a week to see its stand-by nights.');
+    for (i = 0; i < sug.length; i++) {
+      var s = sug[i], who = s.standby || {}, pr = s.price || {};
+      h += '<div class="item"><div class="line"><b>' + _escHtml(s.day + ' ' + mdy(s.date)) + '</b> · <span class="hb-num">' + Math.round((s.chance_of_a_no_show || 0) * 100) + '%</span> chance someone doesn’t show</div>';
+      if (who.employee) {
+        h += '<div class="line">' + _escHtml(who.employee) + ' (' + _escHtml(who.role || '') + ') is off and could be on call · ' + ssBnMoney(pr.standby_pay) + ' standby pay'
+          + (pr.expected_short_cost != null ? ' · a short night here costs about ' + ssBnMoney(pr.expected_short_cost) + ' in expected sales' : '') + '</div>';
+        if (pr.verdict) h += '<div class="basis">' + _escHtml(pr.verdict) + '</div>';
+        else if (pr.short_night && pr.short_night.sales_note) h += '<div class="basis">' + _escHtml(pr.short_night.sales_note) + '</div>';
+        var taken = (s.slots || []).length;
+        if (!taken) h += '<div class="row"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-bn-act="sb-offer" data-date="' + _escHtml(s.date) + '" data-role="' + _escHtml(who.role || '')
+          + '" data-emp="' + _escHtml(who.employee) + '" data-start="' + _escHtml(who.shift_start || '') + '" data-end="' + _escHtml(who.shift_end || '') + '">Offer ' + _escHtml(who.employee) + ' on call</button></div>';
+      }
+      h += '</div>';
+    }
+    for (i = 0; i < slots.length; i++) {
+      var x = slots[i];
+      h += '<div class="item"><div class="line"><span class="tag ' + _escHtml(x.status) + '">' + _escHtml(x.called_in ? 'called in' : x.status) + '</span> ' + _escHtml(x.employee_name) + ' · '
+        + _escHtml(mdy(x.date)) + ' ' + _escHtml(x.shift_start + '–' + x.shift_end) + (x.consent_at ? ' · agreed ' + _escHtml(mdy(String(x.consent_at).slice(0, 10))) : '')
+        + (x.pay_owed ? ' · ' + ssBnMoney(x.pay_owed) + ' owed' : '') + '</div>'
+        + ((x.status === 'offered' || x.status === 'accepted') ? '<div class="row"><button type="button" class="cbtn cbtn-text cbtn-sm" data-bn-act="sb-withdraw" data-id="' + x.id + '">Withdraw</button></div>' : '') + '</div>';
+    }
+    h += '<div class="row"><span class="basis" style="margin:0">Standby pay: ' + (pol.flat_pay != null ? ssBnMoney(pol.flat_pay) + ' a night' : (pol.pay_hours || 2) + ' hours at their rate') + (pol.stated ? '' : ' (the default)') + '</span>'
+      + '<input type="number" id="ss-sb-hours" min="0" max="12" step="0.5" aria-label="Hours of standby pay" placeholder="hours" style="width:80px">'
+      + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-bn-act="sb-policy">Set</button></div>';
+    h += '<div class="basis">A person’s yes is kept with the time and the exact terms they agreed to. If someone doesn’t show, the person on call is offered the shift the moment it’s noticed.</div>';
+  } else if (part === 'events') {
+    var ps = d.proposals || [];
+    if (!ps.length) h += ssBnEmpty('No event has changed on a published week.');
+    for (i = 0; i < ps.length && i < 8; i++) {
+      var p = ps[i], c = p.cost || {};
+      h += '<div class="item"><div class="line"><b>' + _escHtml(mdy(p.date)) + '</b> · ' + _escHtml(p.summary) + '</div>';
+      if (c.predictability_text) h += '<div class="basis">' + _escHtml(c.predictability_text) + '</div>';
+      if (p.status === 'open') h += '<div class="row"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-bn-act="ev-approve" data-id="' + p.id + '">Make the change</button>'
+        + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-bn-act="ev-dismiss" data-id="' + p.id + '">Keep the week</button></div>';
+      else h += '<div class="basis">' + _escHtml(p.status === 'applied' ? 'Done' + ((p.result || []).some(function (r) { return r.studio; }) ? ' — remove the named shift in Schedule and send it' : '') : (p.status === 'noted' ? 'Nothing to change' : 'Kept as it was')) + '</div>';
+      h += '</div>';
+    }
+  } else if (part === 'ladder') {
+    var wk = d.week || [], ppl = d.people || [];
+    if (wk.length) {
+      h += '<div class="line">';
+      for (i = 0; i < wk.length; i++) h += '<span style="display:inline-block;margin-right:14px">' + _escHtml(wk[i].label) + ': <span class="tag firm">' + wk[i].firm + ' firm</span> <span class="tag likely">' + wk[i].likely + '</span> <span class="tag tentative">' + wk[i].tentative + '</span></span>';
+      h += '</div>';
+    } else h += ssBnEmpty('Publish a week and each shift is marked firm, likely or tentative for the person who works it.');
+    for (i = 0; i < ppl.length && i < 8; i++) {
+      if (ppl[i].kept_share == null || ppl[i].kept_share >= 1) continue;
+      h += '<div class="line">' + _escHtml(ppl[i].name) + ': <span class="hb-num">' + Math.round(ppl[i].kept_share * 100) + '%</span> of <span class="hb-num">' + ppl[i].committed + '</span> published shifts kept</div>';
+    }
+    h += '<div class="basis">' + _escHtml(d.basis || '') + '</div>';
+  } else if (part === 'strength') {
+    var pools = (d.pools || []).filter(function (x) { return x.status !== 'ok'; });
+    if (!d.available) h += ssBnEmpty('Bench strength fills in once a few weeks of shifts are on file.');
+    else if (!pools.length) h += ssBnEmpty('No role and shift is one absence from a gap.');
+    for (i = 0; i < pools.length; i++) h += '<div class="line"><span class="tag ' + pools[i].status + '">' + pools[i].status + '</span> ' + _escHtml(pools[i].family) + ' ' + (pools[i].daypart === 'morning' ? 'lunch' : 'dinner') + ' — ' + _escHtml(pools[i].why || '') + '</div>';
+    for (i = 0; i < (d.cross_train || []).length; i++) h += '<div class="line">' + _escHtml(d.cross_train[i].text) + '</div>';
+    for (i = 0; i < (d.hiring || []).length; i++) if (d.hiring[i].text) h += '<div class="line"><b>' + _escHtml(d.hiring[i].text) + '</b></div>';
+    h += '<div class="basis">' + _escHtml(d.basis || '') + '</div>';
+  } else if (part === 'tips') {
+    if (!d.available) h += ssBnEmpty(d.reason || 'Not enough tipped shifts yet.');
+    for (i = 0; i < (d.families || []).length; i++) {
+      var f = d.families[i];
+      h += '<div class="item"><div class="line"><b>' + _escHtml(f.family) + '</b> · ' + f.slots.slice(0, 3).map(function (sl) { return _escHtml(sl.day + ' ' + (sl.part === 'morning' ? 'lunch' : 'dinner')) + ' ' + ssBnMoney(sl.mean); }).join(' · ') + '</div>';
+      for (j = 0; j < (f.lines || []).length; j++) h += '<div class="line">' + _escHtml(f.lines[j]) + '</div>';
+      h += '</div>';
+    }
+    if (d.basis) h += '<div class="basis">' + _escHtml(d.basis) + '</div>';
+  } else if (part === 'retention') {
+    var rp = (d.people || []).filter(function (x) { return x.level !== 'none'; });
+    if (!rp.length) h += ssBnEmpty('No warning signs on the schedule side.');
+    for (i = 0; i < rp.length && i < 10; i++) {
+      var r = rp[i];
+      h += '<div class="item"><div class="line"><span class="tag ' + r.level + '">' + r.level + '</span> <b>' + _escHtml(r.name) + '</b>' + (r.risk != null ? ' · <span class="hb-num">' + Math.round(r.risk * 100) + '%</span>' : '') + (r.valued ? ' · ' + _escHtml(r.valued_because || '') : '') + '</div>'
+        + '<div class="basis">' + _escHtml((r.reasons || []).join('; ')) + '</div>'
+        + '<div class="row"><button type="button" class="cbtn ' + (r.protect ? 'cbtn-secondary' : 'cbtn-text') + ' cbtn-sm" data-bn-act="ret-protect" data-name="' + _escHtml(r.name) + '" data-on="' + (r.protect ? '0' : '1') + '">'
+        + (r.protect ? 'Protecting their hours · stop' : 'Protect their hours') + '</button></div></div>';
+    }
+    h += '<div class="basis">' + _escHtml(d.basis || '') + ' ' + _escHtml(d.note || '') + '</div>';
+  } else if (part === 'org') {
+    if (!(d.siblings || []).length) h += ssBnEmpty('You have no other locations in Cavnar AI.');
+    else {
+      h += '<div class="row"><button type="button" class="cbtn ' + (d.enabled ? 'cbtn-secondary' : 'cbtn-primary') + ' cbtn-sm" data-bn-act="org-site" data-on="' + (d.enabled ? '0' : '1') + '">' + (d.enabled ? 'Bench on here · turn off' : 'Turn on the bench here') + '</button></div>';
+      h += '<div class="line">' + (d.siblings || []).map(function (sb) { return _escHtml(sb.name) + (sb.enabled ? ' (on)' : ' (off)'); }).join(' · ') + '</div>';
+      h += '<div class="line"><span class="hb-num">' + (d.members || []).length + '</span> of your staff opted in to work at your other locations.</div>';
+    }
+    h += '<div class="basis">' + _escHtml(d.external || '') + '</div>';
+  } else if (part === 'outcomes') {
+    if (!d.available) h += ssBnEmpty(d.floor || 'Not enough weeks on both sides yet.');
+    for (i = 0; i < (d.lines || []).length; i++) h += '<div class="line">' + _escHtml(d.lines[i]) + '</div>';
+    h += '<div class="basis">' + _escHtml(d.caveat || '') + '</div>';
+  }
+  el.innerHTML = h;
+}
+function ssBenchPost(payload, part, btn) {
+  if (btn) btn.disabled = true;
+  fetch('/api/labor/bench', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
+    .then(apiJson).then(function (d) {
+      if (btn) btn.disabled = false;
+      if (!d || !d.ok) { toast((d && d.error) || 'That didn’t go through. Try again.', 'error'); return; }
+      ssBenchLoad(part);
+    }).catch(function () { if (btn) btn.disabled = false; toast('That didn’t go through. Check your connection.', 'error'); });
+}
+document.addEventListener('click', function (e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-bn-act]') : null; if (!t) return;
+  var a = t.getAttribute('data-bn-act');
+  if (a === 'whatif') {
+    var q = '&weekday=' + encodeURIComponent(document.getElementById('ss-wi-day').value) + '&role=' + encodeURIComponent(document.getElementById('ss-wi-role').value)
+      + '&change=' + encodeURIComponent(document.getElementById('ss-wi-change').value);
+    var el = ssBenchIn('what_if'); if (el) el.insertAdjacentHTML('beforeend', '<div class="dr-pulse" role="status" aria-label="Replaying"><i></i></div>');
+    ssBenchLoad('what_if', q);
+  } else if (a === 'sb-offer') ssBenchPost({action: 'standby_offer', date: t.getAttribute('data-date'), role: t.getAttribute('data-role'), employee: t.getAttribute('data-emp'),
+    shift_start: t.getAttribute('data-start'), shift_end: t.getAttribute('data-end'), history_id: ssBenchHid() || null}, 'standby', t);
+  else if (a === 'sb-withdraw') ssBenchPost({action: 'standby_withdraw', slot_id: +t.getAttribute('data-id')}, 'standby', t);
+  else if (a === 'sb-policy') ssBenchPost({action: 'standby_policy', pay_hours: document.getElementById('ss-sb-hours').value}, 'standby', t);
+  else if (a === 'ev-approve') ssBenchPost({action: 'event_approve', proposal_id: +t.getAttribute('data-id')}, 'events', t);
+  else if (a === 'ev-dismiss') ssBenchPost({action: 'event_dismiss', proposal_id: +t.getAttribute('data-id')}, 'events', t);
+  else if (a === 'ret-protect') ssBenchPost({action: 'retention_protect', name: t.getAttribute('data-name'), protect: t.getAttribute('data-on') === '1'}, 'retention', t);
+  else if (a === 'org-site') ssBenchPost({action: 'bench_site', enabled: t.getAttribute('data-on') === '1'}, 'org', t);
+});
 function ssRenderCrew() {
   var body = document.getElementById('ss-crew-body'); if (!body) return;
   var hid = (typeof _schedHistoryId !== 'undefined' && _schedHistoryId) ? _schedHistoryId : '';

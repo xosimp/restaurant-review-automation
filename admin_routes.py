@@ -3833,6 +3833,23 @@ def admin_api_schedule_learning_scorecard(current_user):
     return jsonify(**admin_ops.schedule_learning_scorecard())
 
 
+@admin_bp.route("/admin/api/schedule-outcome-benchmark")
+@admin_required
+def admin_api_schedule_outcome_benchmark(current_user):
+    """Cavnar AI weeks against manager weeks, as run (internal only,
+    read-only; scheduler audit 10/10/26 MARKET-21, RM-22)."""
+    import admin_ops
+    return jsonify(**admin_ops.schedule_outcome_benchmark())
+
+
+@admin_bp.route("/admin/api/staff-platforms")
+@admin_required
+def admin_api_staff_platforms(current_user):
+    """Offer answers by client (internal only, read-only; MARKET-18)."""
+    import admin_ops
+    return jsonify(**admin_ops.staff_platforms())
+
+
 @admin_bp.route("/admin/api/schedule-generations")
 @admin_required
 def admin_api_schedule_generations(current_user):

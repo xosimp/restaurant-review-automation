@@ -1786,6 +1786,21 @@ def mobile_labor_crew_matrix(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 400
 
 
+@mobile_bp.route("/labor/bench", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_labor_bench(current_user):
+    """Twin of /api/labor/bench: the Studio's Bench stage (studio_bench)."""
+    import studio_bench as _sb
+    from permissions import has_permission, SCHEDULE_DRAFT
+    may = bool(current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT))
+    try:
+        payload, status = _sb.api_body(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                       args=request.args, user=current_user, may_write=may)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @mobile_bp.route("/reviews/programs", methods=["GET", "POST"])
 @mobile_login_required
 def mobile_reviews_programs(current_user):

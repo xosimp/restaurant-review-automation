@@ -133,10 +133,14 @@ TERM_LABELS = {
     "pending": "a day someone asked off",
     "hours_wanted": "the hours people asked for",
     "standby": "a standby on a shift likely to come up short",
+    "commitment": "a shift staff were told is committed, moved",
 }
 _STATIC_TERMS = {"pending": "pending", "reliability": "reliability", "rotation_weekend": "fairness",
                  "rotation_close": "fairness", "preference": "preferences", "learned_preference": "preferences",
-                 "role": "role", "learned": "memory", "likely_edit": "memory"}
+                 "role": "role", "learned": "memory", "likely_edit": "memory",
+                 # a published shift handed to somebody else, at its commitment
+                 # level (J3's commitment ladder, MARKET-27)
+                 "commitment": "commitment"}
 
 
 def available() -> bool:

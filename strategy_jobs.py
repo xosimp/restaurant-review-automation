@@ -2588,6 +2588,7 @@ def _raise_coverage(r, bday, due, gaps, local, db_path=DB_PATH) -> int:
                 meta["scheduled_in_role"] = in_role
                 return True
             issues.update_coverage(r.id, iss["id"], _merge, renotify=True, db_path=db_path)
+            _dispatch_standby(r, bday, people, iss["id"], db_path)
             continue
         seq = 1
         if iss is not None:
@@ -2603,7 +2604,23 @@ def _raise_coverage(r, bday, due, gaps, local, db_path=DB_PATH) -> int:
                                             db_path=db_path)
         if token:
             opened += 1
+        if _issue and _issue.get("id"):
+            _dispatch_standby(r, bday, people, _issue["id"], db_path)
     return opened
+
+
+def _dispatch_standby(r, bday, people, issue_id, db_path=DB_PATH):
+    """Call-out insurance (standby_insurance, scheduler audit 10/10/26
+    MARKET-26): the person who agreed to be on call tonight for the missing
+    person's role is offered the shift the moment the issue names the gap —
+    the manager is not left phoning round. Never raises."""
+    try:
+        import standby_insurance
+        standby_insurance.dispatch_for(r.id, bday, people, issue_id,
+                                       db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id} standby dispatch")
 
 
 def _coverage_constraints(r, day, due, db_path=DB_PATH):

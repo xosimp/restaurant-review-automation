@@ -4505,6 +4505,25 @@ def init_db(db_path: str = DB_PATH):
     init_schedule_overrides(db_path)
     from schedule_scorecard import init_schedule_scorecard
     init_schedule_scorecard(db_path)
+    # Call-out insurance: consented, paid on-call slots and the owner's
+    # standby policy (standby_insurance, scheduler audit 10/10/26 MARKET-26).
+    from standby_insurance import init_standby
+    init_standby(db_path)
+    # How firm each published shift is (commitment_ladder, MARKET-27).
+    from commitment_ladder import init_commitments
+    init_commitments(db_path)
+    # Events that changed after a week was published (event_reactive, MARKET-28).
+    from event_reactive import init_event_reactive
+    init_event_reactive(db_path)
+    # The owner's protect switch for people at risk of leaving (retention_risk, MARKET-29).
+    from retention_risk import init_retention
+    init_retention(db_path)
+    # The organization's certified bench: site switches, consents, asks (org_bench, MARKET-30).
+    from org_bench import init_org_bench
+    init_org_bench(db_path)
+    # The installable staff portal: Web Push subscriptions and offer answers by platform (staff_pwa, MARKET-18).
+    from staff_pwa import init_staff_pwa
+    init_staff_pwa(db_path)
     # What one more of a role on a meal is worth here, and each person's
     # measured effect (scheduler audit 10/10/26 RM-20, LEARNING-26): the
     # weekly staffing_learning job's estimates.
