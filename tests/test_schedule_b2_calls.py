@@ -1120,6 +1120,11 @@ def test_an_unreadable_shifts_file_is_named_as_that(db, monkeypatch):
 # ── E-29 / PR-17: a department call gets its own rules and rows ─────────────
 
 def test_a_department_call_gets_only_its_own_managers_floors_and_people(monkeypatch):
+    # One call at a time, so the managers' part sees the kitchen's rows (the
+    # addendum below). Since 10/10/26 (scheduler audit AI-4) the departments
+    # go out together by default and the managers' part relies on the plan
+    # made in code — tests/test_sf10_e_parallel.py holds that.
+    monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
     _pin_week(monkeypatch)
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 4 * se.CHUNK_ROWS_PER_CALL)   # by department
     c = _c(roster_names=["Ana", "Mo", "Cy"], active={"ana", "mo", "cy"},

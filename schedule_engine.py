@@ -2660,7 +2660,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         share = (len(task["people"]) / heads) if task.get("people") is not None else 1.0
         return per_date * len(task["dates"]) * share
     if clock is not None:
-        clock.plan(len(plan), seconds=sum(call_seconds(task_rows(t), costs, contract=contract) for t in plan))
+        # Planned as the calls go out — batches of independent calls at once
+        # (_take_batch), each batch as long as its longest call (AI-4).
+        clock.plan(len(plan), seconds=_planned_model_seconds(
+            plan, lambda t: call_seconds(task_rows(t), costs, contract=contract), parallel_calls()))
         # The days the Building screen counts (#36).
         clock.plan_days(want)
     try:
@@ -2691,29 +2694,74 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     merged, failure = None, None
     parts_kept = []
     labels = []
+    parallel_cap = parallel_calls()
     while queue:
-        t = queue.pop(0)
-        # A call is not started with less model time left than it is
-        # measured to take: cut while still thinking, it keeps nothing and
-        # its tokens are billed (PROMPT-4). Before any measurement, the
-        # floor alone — the assumed speed is a guess, not a reason to refuse.
-        need = MIN_CALL_SECONDS
-        if _call_measured(costs):
-            need = max(need, call_seconds(task_rows(t), costs, headroom=False, contract=contract))
-        # Stopped by the owner (10/9/26): no further paid call starts; the
-        # job's row already says "Stopped", and nothing is saved.
-        if clock is not None and clock.stopped():
-            raise ScheduleStopped(STOPPED_MESSAGE)
-        # The run's dollar and call caps, checked before EVERY planned call
-        # (scheduler audit 10/10/26 AI-16): they were read only before the
-        # gate's escalation, so a 250-person Opus week could spend ~$14 at
-        # plan + 8 extras against a documented $6 cap. A call whose expected
-        # cost would cross the cap is not started; the days already written
-        # are kept and the rest are said (and filled without the model —
-        # schedule_fallback).
-        capped = _run_cap_reached(task_rows(t), costs, contract, len(t["people"] or roster_pairs or []))
-        if calls >= call_cap or capped or (clock is not None and clock.model_seconds_left() < need):
-            why = "calls" if calls >= call_cap else ("capped" if capped else "time")
+        # The next calls to send together (scheduler audit 10/10/26 AI-4,
+        # AI-18, SCALE-23): one per department part — the managers are
+        # planned in code before any call (schedule_skeleton), so the
+        # kitchen and the front of house no longer need to see each other's
+        # rows — and a part's own first date slices, each told its share of
+        # every person's weekly room (parallel_room), since none of them can
+        # see the others' rows. A part's later calls (its retries, its
+        # splits) still follow one another: each sees what the last wrote.
+        batch = _take_batch(queue, parallel_cap)
+        ready, stop = [], None
+        inflight_usd, inflight_n = 0.0, 0
+        for bi, t in enumerate(batch):
+            # A call is not started with less model time left than it is
+            # measured to take: cut while still thinking, it keeps nothing
+            # and its tokens are billed (PROMPT-4). Before any measurement,
+            # the floor alone — the assumed speed is a guess, not a reason
+            # to refuse.
+            need = MIN_CALL_SECONDS
+            if _call_measured(costs):
+                need = max(need, call_seconds(task_rows(t), costs, headroom=False, contract=contract))
+            # Stopped by the owner (10/9/26): no further paid call starts;
+            # the job's row already says "Stopped", and nothing is saved.
+            if clock is not None and clock.stopped():
+                raise ScheduleStopped(STOPPED_MESSAGE)
+            # The run's dollar and call caps, checked before EVERY planned
+            # call (scheduler audit 10/10/26 AI-16), the calls this batch
+            # already started counted in: they were read only before the
+            # gate's escalation, so a 250-person Opus week could spend ~$14
+            # at plan + 8 extras against a documented $6 cap. A call whose
+            # expected cost would cross the cap is not started; the days
+            # already written are kept and the rest are said (and filled
+            # without the model — schedule_fallback).
+            heads_t = len(t["people"] or roster_pairs or [])
+            capped = _run_cap_reached(task_rows(t), costs, contract, heads_t, inflight_usd=inflight_usd,
+                                      inflight_calls=inflight_n)
+            if calls + inflight_n >= call_cap or capped or (clock is not None and clock.model_seconds_left() < need):
+                if bi:
+                    # A later call of the batch: back to the queue's front,
+                    # where the next round checks it on its own.
+                    queue[0:0] = batch[bi:]
+                    break
+                stop = (t, "calls" if calls >= call_cap else ("capped" if capped else "time"), capped)
+                break
+            inflight_n += 1
+            inflight_usd += expected_call_usd(task_rows(t), costs, contract, heads_t)
+            if t["label"] and t["label"] not in labels:
+                labels.append(t["label"])
+            dk = _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock,
+                              open_dates=open_dates)
+            whole = redo is None and t["people"] is None and t["dates"] == open_dates and not kept
+            dk["call_kind"] = kind_base or ("week" if whole else "slice")
+            # Only calls sent the SAME schema share a cached prefix
+            # (scheduler audit 10/10/26 AI-24): a changed output format
+            # invalidates the cache, and each department's schema carries
+            # its own roster enum, so the standing block is shared by this
+            # call's own part's calls alone — never "every planned call",
+            # which bought a 1h (2x) write on department-split weeks that no
+            # later call read.
+            same_schema = sharing.get(week_key(t), 1)
+            dk["cache_ttls"] = _sp.cache_ttls(same_schema, same_schema,
+                                              call_seconds(task_rows(t), costs, contract=contract), read_rate)
+            entry = {"dates": list(t["dates"]), "part": t["what"], "retried": False,
+                     "parallel": len(batch) > 1}
+            ready.append((t, dk, whole, entry))
+        if stop is not None:
+            t, why, capped = stop
             if capped:
                 _note_capped(capped)
             for task in [t] + queue:
@@ -2721,133 +2769,135 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
                     unwritten.setdefault(d, why)
             queue = []
             break
-        if t["label"] and t["label"] not in labels:
-            labels.append(t["label"])
-        dk = _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock)
-        whole = redo is None and t["people"] is None and t["dates"] == open_dates and not kept
-        dk["call_kind"] = kind_base or ("week" if whole else "slice")
-        # Only calls sent the SAME schema share a cached prefix (scheduler
-        # audit 10/10/26 AI-24): a changed output format invalidates the
-        # cache, and each department's schema carries its own roster enum,
-        # so the standing block is shared by this call's own part's calls
-        # alone — never "every planned call", which bought a 1h (2x) write
-        # on department-split weeks that no later call read.
-        same_schema = sharing.get(week_key(t), 1)
-        dk["cache_ttls"] = _sp.cache_ttls(same_schema, same_schema,
-                                          call_seconds(task_rows(t), costs, contract=contract), read_rate)
-        entry = {"dates": list(t["dates"]), "part": t["what"], "retried": False}
-        try:
-            if whole:
-                part = generate_optimized_schedule(analysis, shifts, **dk)
-            else:
-                part = generate_optimized_schedule(analysis, shifts, week_slice=list(t["dates"]),
-                                                   prior_rows=kept + written_rows, **dk)
-        except Exception as e:
+        outcomes = _dispatch_calls(ready, analysis, shifts, kept, written_rows, generate_optimized_schedule)
+        front = []
+        halt = None
+        for (t, dk, whole, entry), (part, exc) in zip(ready, outcomes):
             calls += 1
-            kind = _failure_kind(e)
-            entry.update({"error": kind, "rows_by_date": {}, "missing": list(t["dates"])})
-            slices_log.append(entry)
-            smaller = _split_task(t, roster_pairs, managers) if _can_split(t) else []
-            if kind == "timeout" and smaller and calls < call_cap \
-                    and (clock is None or clock.model_seconds_left() >= MIN_CALL_SECONDS):
-                # A call that ran out of time is not sent again as it was —
-                # it would time out again in less — but re-planned smaller.
-                queue[0:0] = smaller
-                continue
-            failure = e
-            for task in [t] + queue:
-                for d in _required(task["dates"]):
+            if exc is not None:
+                e = exc
+                kind = _failure_kind(e)
+                entry.update({"error": kind, "rows_by_date": {}, "missing": list(t["dates"])})
+                slices_log.append(entry)
+                smaller = _split_task(t, roster_pairs, managers) if _can_split(t) else []
+                if kind == "timeout" and smaller and calls < call_cap and halt is None \
+                        and (clock is None or clock.model_seconds_left() >= MIN_CALL_SECONDS):
+                    # A call that ran out of time is not sent again as it
+                    # was — it would time out again in less — but
+                    # re-planned smaller.
+                    front.extend(smaller)
+                    continue
+                failure = e
+                for d in _required(t["dates"]):
                     unwritten.setdefault(d, kind)
+                if halt is None:
+                    halt = kind
+                continue
+            seconds += float(part.get("generation_seconds") or 0)
+            if part.get("shape_rows"):
+                # The shape contract (AI cost audit 10/7/26 #69): the model
+                # wrote slots without names; who works each is solved here,
+                # against every row already on the week, before the call's
+                # rows are read.
+                part = _assign_part_slots(part, t, rules_c, kept + written_rows, kwargs, roster_pairs, clock)
+            merged = merged or part
+            tdates = set(t["dates"])
+            lines = _part_lines(part)
+            if not whole:
+                lines = [x for x in lines if x[0] in tdates]
+            else:
+                # A whole-week answer keeps a line it cannot date (the
+                # parser counts it as unreadable), never one on a closed
+                # date (re-audit 10/4/26 PIPE-4): it was saved, swept clean
+                # and sent.
+                on_closed = [x for x in lines if x[0] and x[0] in closed]
+                if on_closed:
+                    lines = [x for x in lines if not (x[0] and x[0] in closed)]
+                    _quality_note("closed_day", kwargs.get("restaurant_id"), len(on_closed),
+                                  f"{len(on_closed)} row(s) on a closed date dropped")
+            names = None if t["people"] is None else {" ".join(str(n).lower().split()) for n, _r in t["people"]}
+            off_list = [x for x in lines if names is not None and x[0] and not x[4] and x[1] not in names]
+            if off_list:
+                # A department call that wrote someone off its own list
+                # (E-29) is never kept: that person's shifts are another
+                # part's to write.
+                lines = [x for x in lines if x not in off_list]
+                _quality_note("off_list", kwargs.get("restaurant_id"), len(off_list),
+                              f"{len(off_list)} row(s) for people outside the {t['what'].lower()} part dropped")
+            cut = bool(part.get("truncated")) or part.get("stop_reason") in (
+                "max_tokens", "model_context_window_exceeded", "deadline", "timeout")
+            model_dates = {x[0] for x in lines if x[3] and not x[4]}
+            if part.get("complete_dates") is not None:
+                # The structured answer's own account (schedule_output.
+                # parse_answer): the days written whole; a day it stopped
+                # inside carries no rows.
+                finished = [d for d in part["complete_dates"] if whole or d in tdates]
+            else:
+                finished = [d for d in _complete_dates([x for x in lines if x[3] and not x[4]], cut)
+                            if whole or d in tdates]
+            # A day is done when the model wrote it whole and wrote
+            # something: an empty day, or one carrying only planned rows,
+            # is still missing.
+            done = [d for d in finished if d in model_dates]
+            if clock is not None:
+                # The days kept, for the Building screen's count (#36) — the
+                # CSV fallback and a call whose stream was not watched count
+                # here.
+                clock.days_streamed(done)
+            parts_kept.append((part, set(done)))
+            keep = [x for x in lines if (x[0] in done) or (not x[0] and not cut)]
+            written.extend(keep)
+            written_rows.extend(_tuple_row(x) for x in keep if x[3])
+            left = [d for d in t["dates"] if d not in done]
+            rows_kept = sum(1 for x in keep if x[3] and not x[4])
+            entry.update({"rows_by_date": _rows_by_date("x\n" + "\n".join(x[2] for x in lines)),
+                          "seconds": part.get("generation_seconds"), "stop_reason": part.get("stop_reason"),
+                          "cut": cut, "rows": rows_kept, "partial_dates": list(part.get("partial_dates") or []),
+                          # What the call cost, as labor recorded it (tokens,
+                          # seconds, rows, tokens a row — schedule_model_calls),
+                          # for re-sizing the calls (rows_per_call).
+                          "model_call": part.get("model_call"),
+                          "off_list_dropped": len(off_list),
+                          "pinned_dropped": len(part.get("pinned_dropped") or [])})
+            if rows_kept:
+                notes_by_part.append((t, done, list(part.get("narrative") or [])))
+            if cut and left:
+                entry["missing"] = left
+                smaller = _split_task(dict(t, dates=left), roster_pairs, managers) if _can_split(t) else []
+                if smaller and calls < call_cap and halt is None:
+                    front.extend(smaller)
+                else:
+                    for d in _required(left):
+                        unwritten.setdefault(d, "cut")
+            elif not cut:
+                missing = _required(left)
+                entry["missing"] = missing
+                if missing and not t["retry"] and halt is None:
+                    # One retry, told exactly which days it skipped, asked
+                    # for just those days with everything else in view. An
+                    # answer whose JSON broke partway kept its finished days
+                    # (#71), and a shape whose slots nobody could legally
+                    # work (#69) wrote them: each retry is told what really
+                    # went wrong.
+                    entry["retried"] = True
+                    why = ("broken" if part.get("json_recovered") else
+                           "unstaffed" if set(missing) & set(part.get("shape_unstaffed_dates") or ()) else None)
+                    front.append(dict(t, dates=missing, retry=True, missed=missing, missed_why=why,
+                                      parallel_room=False))
+                elif missing:
+                    for d in missing:
+                        unwritten.setdefault(d, "skipped")
+            slices_log.append(entry)
+        if halt is not None:
+            # A call failed for a reason a retry will not fix (the provider,
+            # the budget, a refusal): every part not yet written stops here,
+            # named with why — the parts this batch finished are kept.
+            for task in front + queue:
+                for d in _required(task["dates"]):
+                    unwritten.setdefault(d, halt)
             queue = []
             break
-        calls += 1
-        seconds += float(part.get("generation_seconds") or 0)
-        if part.get("shape_rows"):
-            # The shape contract (AI cost audit 10/7/26 #69): the model wrote
-            # slots without names; who works each is solved here, against
-            # every row already on the week, before the call's rows are read.
-            part = _assign_part_slots(part, t, rules_c, kept + written_rows, kwargs, roster_pairs, clock)
-        merged = merged or part
-        tdates = set(t["dates"])
-        lines = _part_lines(part)
-        if not whole:
-            lines = [x for x in lines if x[0] in tdates]
-        else:
-            # A whole-week answer keeps a line it cannot date (the parser
-            # counts it as unreadable), never one on a closed date (re-audit
-            # 10/4/26 PIPE-4): it was saved, swept clean and sent.
-            on_closed = [x for x in lines if x[0] and x[0] in closed]
-            if on_closed:
-                lines = [x for x in lines if not (x[0] and x[0] in closed)]
-                _quality_note("closed_day", kwargs.get("restaurant_id"), len(on_closed),
-                              f"{len(on_closed)} row(s) on a closed date dropped")
-        names = None if t["people"] is None else {" ".join(str(n).lower().split()) for n, _r in t["people"]}
-        off_list = [x for x in lines if names is not None and x[0] and not x[4] and x[1] not in names]
-        if off_list:
-            # A department call that wrote someone off its own list (E-29) is
-            # never kept: that person's shifts are another part's to write.
-            lines = [x for x in lines if x not in off_list]
-            _quality_note("off_list", kwargs.get("restaurant_id"), len(off_list),
-                          f"{len(off_list)} row(s) for people outside the {t['what'].lower()} part dropped")
-        cut = bool(part.get("truncated")) or part.get("stop_reason") in (
-            "max_tokens", "model_context_window_exceeded", "deadline", "timeout")
-        model_dates = {x[0] for x in lines if x[3] and not x[4]}
-        if part.get("complete_dates") is not None:
-            # The structured answer's own account (schedule_output.parse_answer):
-            # the days written whole; a day it stopped inside carries no rows.
-            finished = [d for d in part["complete_dates"] if whole or d in tdates]
-        else:
-            finished = [d for d in _complete_dates([x for x in lines if x[3] and not x[4]], cut)
-                        if whole or d in tdates]
-        # A day is done when the model wrote it whole and wrote something:
-        # an empty day, or one carrying only planned rows, is still missing.
-        done = [d for d in finished if d in model_dates]
-        if clock is not None:
-            # The days kept, for the Building screen's count (#36) — the CSV
-            # fallback and a call whose stream was not watched count here.
-            clock.days_streamed(done)
-        parts_kept.append((part, set(done)))
-        keep = [x for x in lines if (x[0] in done) or (not x[0] and not cut)]
-        written.extend(keep)
-        written_rows.extend(_tuple_row(x) for x in keep if x[3])
-        left = [d for d in t["dates"] if d not in done]
-        rows_kept = sum(1 for x in keep if x[3] and not x[4])
-        entry.update({"rows_by_date": _rows_by_date("x\n" + "\n".join(x[2] for x in lines)),
-                      "seconds": part.get("generation_seconds"), "stop_reason": part.get("stop_reason"),
-                      "cut": cut, "rows": rows_kept, "partial_dates": list(part.get("partial_dates") or []),
-                      # What the call cost, as labor recorded it (tokens, seconds,
-                      # rows, tokens a row — schedule_model_calls), for re-sizing
-                      # the calls (rows_per_call).
-                      "model_call": part.get("model_call"),
-                      "off_list_dropped": len(off_list),
-                      "pinned_dropped": len(part.get("pinned_dropped") or [])})
-        if rows_kept:
-            notes_by_part.append((t, done, list(part.get("narrative") or [])))
-        if cut and left:
-            entry["missing"] = left
-            smaller = _split_task(dict(t, dates=left), roster_pairs, managers) if _can_split(t) else []
-            if smaller and calls < call_cap:
-                queue[0:0] = smaller
-            else:
-                for d in _required(left):
-                    unwritten.setdefault(d, "cut")
-        elif not cut:
-            missing = _required(left)
-            entry["missing"] = missing
-            if missing and not t["retry"]:
-                # One retry, told exactly which days it skipped, asked for
-                # just those days with everything else in view. An answer
-                # whose JSON broke partway kept its finished days (#71), and
-                # a shape whose slots nobody could legally work (#69) wrote
-                # them: each retry is told what really went wrong.
-                entry["retried"] = True
-                why = ("broken" if part.get("json_recovered") else
-                       "unstaffed" if set(missing) & set(part.get("shape_unstaffed_dates") or ()) else None)
-                queue.insert(0, dict(t, dates=missing, retry=True, missed=missing, missed_why=why))
-            elif missing:
-                for d in missing:
-                    unwritten.setdefault(d, "skipped")
-        slices_log.append(entry)
+        queue[0:0] = front
 
     # A day is written whole or not at all: what one part wrote for a date
     # another part could not finish is not kept as though it were the day.
@@ -3231,6 +3281,130 @@ def _plan_tasks(rows: float, dates: list, roster_pairs, managers=(), per_call: i
     return out or [task(dates)]
 
 
+# How many of one generation's calls run at once (scheduler audit 10/10/26
+# AI-4, AI-18, SCALE-23): a 250-person week's department calls ran one after
+# another, ~5 x 450 s against a 36-minute model deadline. Per generation,
+# and the generation pool (SCHEDULE_GEN_WORKERS) bounds the generations —
+# so at most SCHEDULE_GEN_WORKERS x this many streams per process.
+PARALLEL_CALLS = 3
+
+
+def parallel_calls() -> int:
+    """SCHEDULE_PARALLEL_CALLS, else PARALLEL_CALLS; 1 sends one at a time."""
+    try:
+        return max(1, int(os.getenv("SCHEDULE_PARALLEL_CALLS", str(PARALLEL_CALLS)) or 1))
+    except ValueError:
+        return PARALLEL_CALLS
+
+
+def _lane(t) -> tuple:
+    """The part of the week a task writes for: its department (and group of
+    people), the order its own calls must keep."""
+    return (t.get("label"), tuple(t.get("group") or ()))
+
+
+def _first_slice(t) -> bool:
+    return not t.get("retry") and int(t.get("depth") or 0) == 0
+
+
+def _take_batch(queue, cap) -> list:
+    """The calls to send together, taken from the queue's front in order:
+    the first; then each later one in another part of the week whose part
+    has no earlier call still waiting; and a part's own first date slices
+    beside each other (never a retry or a split — those read what the call
+    before them wrote). Same-part slices sent together carry
+    "parallel_room": each is told its share of every person's week
+    (_call_kwargs). Pops what it takes."""
+    first = queue.pop(0)
+    batch = [first]
+    if cap <= 1:
+        return batch
+    lanes = {_lane(first): [first]}
+    blocked = set()
+    i = 0
+    while i < len(queue) and len(batch) < cap:
+        t = queue[i]
+        lane = _lane(t)
+        if lane in blocked:
+            i += 1
+            continue
+        if lane not in lanes:
+            lanes[lane] = [t]
+            batch.append(queue.pop(i))
+            continue
+        if _first_slice(t) and all(_first_slice(x) for x in lanes[lane]):
+            lanes[lane].append(t)
+            batch.append(queue.pop(i))
+            continue
+        blocked.add(lane)
+        i += 1
+    for members in lanes.values():
+        if len(members) > 1:
+            for t in members:
+                t["parallel_room"] = True
+    return batch
+
+
+def _planned_model_seconds(plan, seconds_of, cap) -> float:
+    """The model time `plan` takes when its calls go out as _take_batch
+    sends them: each batch as long as its longest call."""
+    queue = [dict(t) for t in plan]
+    total = 0.0
+    while queue:
+        batch = _take_batch(queue, cap)
+        total += max(seconds_of(t) for t in batch)
+    return total
+
+
+def _dispatch_calls(ready, analysis, shifts, kept, written_rows, generate):
+    """[(part, exception)] for each (task, kwargs, whole, entry) in `ready`,
+    in order: one call inline; several at once, each in its own thread with
+    a copy of the generation's context (its clock, its run, its read-once
+    store, its correlation id), every one waited for. Each call sees the
+    week as it stood when the batch went out."""
+    import contextvars as _cv
+
+    def one(t, dk, whole):
+        if whole:
+            return generate(analysis, shifts, **dk)
+        return generate(analysis, shifts, week_slice=list(t["dates"]), prior_rows=kept + written_rows, **dk)
+
+    def safe(t, dk, whole):
+        try:
+            return one(t, dk, whole), None
+        except Exception as e:
+            return None, e
+    if len(ready) <= 1:
+        return [safe(t, dk, whole) for t, dk, whole, _e in ready]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(ready), thread_name_prefix="sched-call") as pool:
+        futures = [pool.submit(_cv.copy_context().run, safe, t, dk, whole) for t, dk, whole, _e in ready]
+        return [f.result() for f in futures]
+
+
+def _room_lines(c, people, dates, week_dates) -> list:
+    """Each person's share of their weekly room for a date slice written
+    beside its siblings (AI-18): the hours before their overtime line (or
+    their maximum, if lower) less what is already published in the payroll
+    week, split by the slice's share of the week's open dates."""
+    if c is None or not people:
+        return []
+    from labor import OVERTIME_THRESHOLD_HOURS
+    share = len(dates) / float(max(1, len(week_dates)))
+    out = []
+    for name, _role in people:
+        key = c.key(name)
+        try:
+            mx = float(c.max_hours(name) or OVERTIME_THRESHOLD_HOURS)
+        except Exception:
+            mx = float(OVERTIME_THRESHOLD_HOURS)
+        line = min(mx, float(OVERTIME_THRESHOLD_HOURS))
+        base = max((float(h or 0) for h in (getattr(c, "base_hours", {}) or {}).get(key, {}).values()), default=0.0)
+        room = max(0.0, line - base) * share
+        out.append(f"- {name}: up to {room:.1f}h on these dates")
+    return out
+
+
 def _can_split(t) -> bool:
     if t["depth"] >= MAX_SPLIT_DEPTH:
         return False
@@ -3264,7 +3438,8 @@ def _split_task(t, roster_pairs, managers=()) -> list:
             for i, half in enumerate((ordered[:h], ordered[h:])) if half]
 
 
-def _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock) -> dict:
+def _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, redo, no_one, clock,
+                 open_dates=None) -> dict:
     """The keyword arguments one call is sent: every generation input as it
     is (the manager plan, the demand, the budget, the generation id, the
     owner's instruction, the week's context — labor filters the plan to the
@@ -3289,6 +3464,17 @@ def _call_kwargs(t, kwargs, rules_c, extra_rest, managers, written_rows, kept, r
             # its own rules only.
             dk["extra_blocks"] = extra_rest
         notes += _department_addendum(t, written_rows, managers)
+    if t.get("parallel_room"):
+        # Written beside this part's other date slices, none of which it can
+        # see (scheduler audit 10/10/26 AI-18): each person's share of their
+        # week, computed in code; the repair loop's overtime and minimum-
+        # hours stages and the solver reconcile the week afterwards.
+        room = _room_lines(rules_c, t["people"] if t["people"] is not None else list(kwargs.get("roster") or []),
+                           t["dates"], open_dates or t["dates"])
+        if room:
+            notes += ("\n\nTHIS PART'S OTHER DATES ARE WRITTEN AT THE SAME TIME BY ANOTHER CALL, SO ALREADY WRITTEN "
+                      "CANNOT SHOW THEM. Keep each person inside their share of the week on these dates:\n"
+                      + "\n".join(room))
     if redo is not None and kept:
         notes += _redo_addendum(t["dates"], kept)
     if no_one:

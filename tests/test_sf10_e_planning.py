@@ -86,6 +86,7 @@ def test_a_call_that_would_cross_the_runs_dollar_cap_is_not_started(monkeypatch)
 def test_the_planned_calls_stop_at_the_cap_and_keep_the_days_written(monkeypatch):
     """_generate_in_parts reads the cap before every planned call: the slice
     that would cross it is never sent, its days are unwritten "capped"."""
+    monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
     sent = []
     monkeypatch.setattr(se, "_run_cap_reached",
                         lambda rows, costs=None, contract=None, heads=0, **k: ({"calls": 1, "usd": 5.9, "next_usd": 1,

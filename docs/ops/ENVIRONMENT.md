@@ -333,6 +333,7 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULER_LEASE_STALE_SECONDS` | `"1800"` | ops.py |
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
 | `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
+| `SCHEDULE_PARALLEL_CALLS` | `"3"` | schedule_engine.py |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
 | `SWEEP_MAX_SECONDS` | `str(45 * 60` | scheduler.py |
 | `SWEEP_WORKERS` | `"1"` | scheduler.py |
