@@ -64,7 +64,7 @@ _K = {
     # The owner's targets: models.OWNER_TARGET_FIELDS, named once there.
     "target": tuple(_models.OWNER_TARGET_FIELDS),
     "never_say": ("never_say",),
-    "voice": ("voice_notes", "reply_keywords", "sign_off_name", "tone_preset", "response_language", "known_for", "vibe",
+    "voice": ("voice_notes", "reply_keywords", "reply_programs", "sign_off_name", "tone_preset", "response_language", "known_for", "vibe",
               "neighborhood", "brand_name", "brand_color", "brand_logo_url", "email_theme"),
     "hours": ("open_times_json", "close_times_json", "hours_notes", "skip_holidays"),
     "profile": ("service_model", "concept", "bar_led", "ownership", "opened_year", "category"),
@@ -568,7 +568,7 @@ FIELD_LABELS = {
     "auto_publish_schedule": "Auto-publish schedules", "auto_approve_5star": "Auto-approve 5-star replies",
     "auto_approve_4star": "Auto-approve 4-star replies", "auto_draft_schedule": "Auto-draft schedules",
     "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
-    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases",
+    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies",
     "dsr_budget_mode": "Budget by day or week",
     "data_retention_months": "Review retention (months)", "timezone": "Time zone",
     "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",

@@ -10156,6 +10156,27 @@ svg:hover .hb-xh{opacity:1}
 .rv2-kw-add{display:flex;gap:8px;margin-top:12px;max-width:460px}
 .rv2-kw-add .ac-input{flex:1}
 .draft-lbl .rv2-kw{color:var(--ink3);font-weight:600;letter-spacing:.02em;text-transform:none}
+/* Membership programs pitched in replies (reply_programs) */
+.rv2-prg-box{margin-top:30px}
+.rv2-prg-form[hidden],#rv-prg-add[hidden]{display:none}
+.rv2-prg-list{display:grid;gap:10px;margin-top:12px;max-width:760px}
+.rv2-prg{padding:14px 16px;border-radius:14px;border:1px solid var(--hb-line2,var(--paper3));background:var(--paper2)}
+.rv2-prg-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rv2-prg-h b{font-size:15px;color:var(--ink)}
+.rv2-prg-h .n{font-size:12.5px;color:var(--ink3)}
+.rv2-prg-h .act{margin-left:auto;display:flex;gap:6px}
+.rv2-prg-perk{font-size:14px;color:var(--ink2);margin-top:4px}
+.rv2-prg-m{font-size:12.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
+.rv2-prg-form{display:grid;gap:10px;margin-top:12px;max-width:760px;padding:16px;border-radius:14px;border:1px solid var(--hb-line2,var(--paper3));background:var(--paper2)}
+.rv2-prg-form label{display:grid;gap:5px;font-size:12.5px;font-weight:600;color:var(--ink2)}
+.rv2-prg-form label small{font-weight:500;color:var(--ink3)}
+.rv2-prg-form textarea.ac-input{min-height:64px;resize:vertical;padding:8px 10px;line-height:1.45}
+.rv2-prg-form .chk{display:flex;align-items:center;gap:8px;font-weight:500}
+.rv2-prg-form .row{display:flex;gap:8px;flex-wrap:wrap}
+.rv2-prg-fu{margin-top:8px;font-size:13px}
+.rv2-prg-fu>summary{cursor:pointer;color:var(--ink2);font-weight:600}
+.rv2-prg-fu-t{margin-top:6px;padding:10px 12px;border-radius:10px;background:var(--paper3);color:var(--ink);line-height:1.5;white-space:pre-wrap}
+.rv2-prg-fu-a{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;color:var(--ink3);font-size:12.5px}
 .rv2-analytics>summary,.hb-results>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:14px 0;font-size:13px;color:var(--ink2)}
 .rv2-analytics>summary::-webkit-details-marker,.hb-results>summary::-webkit-details-marker{display:none}
 .rv2-analytics>summary:after,.hb-results>summary:after{content:'';margin-left:auto;flex:0 0 auto;align-self:center;display:block;width:30px;height:30px;border-radius:50%;background:var(--hb-tint,color-mix(in srgb,var(--ember) 8%,transparent)) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4.5 2.5 8 6l-3.5 3.5' fill='none' stroke='%23c84b2f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px 12px no-repeat;transition:transform .2s ease,background-color .15s ease}
@@ -10287,6 +10308,25 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="rv2-kw-sub">Cavnar AI works one of these into a reply when it reads naturally — never more than one, never in a reply to an unhappy guest.</span></div>
     <div class="rv2-kw-list" id="rv-kw-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-kw-add" id="rv-kw-form" onsubmit="rvKwAdd(event)"><input class="ac-input" id="rv-kw-in" maxlength="60" placeholder="e.g. brunch in St. Charles" aria-label="Add a search phrase" autocomplete="off"><button type="submit" class="cbtn cbtn-secondary cbtn-sm">Add</button></form>
+  </section>
+
+  {# Memberships invited to in happy guests' replies (reply_programs; Danny,
+     10/9/26): anyone with Reviews edits them; each add, edit or remove
+     saves on its own. #}
+  <section class="rv2-prg-box" id="rv-programs" aria-labelledby="rv-prg-h">
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="rv2-kw-sub">When a happy guest mentions what a program is for, Cavnar AI invites them to it in one sentence: one program per reply, no prices, never on a 1-3 star review or on Yelp.</span></div>
+    <div class="rv2-prg-list" id="rv-prg-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
+    <form class="rv2-prg-form" id="rv-prg-form" onsubmit="rvPrgSave(event)" hidden>
+      <input type="hidden" id="rv-prg-orig" value="">
+      <label for="rv-prg-name">Name<input class="ac-input" id="rv-prg-name" maxlength="40" placeholder="e.g. Charlie's Crew" autocomplete="off"></label>
+      <label for="rv-prg-perk">What members get <small>Said in public replies. No price.</small><input class="ac-input" id="rv-prg-perk" maxlength="160" placeholder="e.g. kids under 12 eat free Monday to Friday, 4 to 6pm" autocomplete="off"></label>
+      <label for="rv-prg-trig">Words that make it relevant <small>Separate with commas. A review that uses one of these can get the invite.</small><textarea class="ac-input" id="rv-prg-trig" placeholder="kids, family, son, daughter, high chair, kids menu"></textarea></label>
+      <label for="rv-prg-link">Sign-up link <small>Optional. Added on Google replies only.</small><input class="ac-input" id="rv-prg-link" maxlength="200" placeholder="simpleejs.com/loyalty" autocomplete="off"></label>
+      <label class="chk" for="rv-prg-21"><input type="checkbox" id="rv-prg-21"> 21 and over only</label>
+      <label for="rv-prg-fu">Private follow-up <small>Optional. Never posted: shown on the review with Copy, to send when you can reach the guest. Prices are fine here.</small><textarea class="ac-input" id="rv-prg-fu" maxlength="600"></textarea></label>
+      <div class="row"><button type="submit" class="cbtn cbtn-primary cbtn-sm" id="rv-prg-go">Save program</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="rvPrgClose()">Cancel</button></div>
+    </form>
+    <button type="button" class="cbtn cbtn-secondary cbtn-sm" id="rv-prg-add" onclick="rvPrgOpen(null)" style="margin-top:12px">Add a program</button>
   </section>
 
   <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics" open>
@@ -19533,7 +19573,7 @@ function switchTab(n,btn){
   _swPanel.style.animation = 'panelIn .22s ease forwards';
   animateStatNums('panel-'+n);
   animateBars('panel-'+n);
-  if(n==='reviews'){staggerCards();if(!window._rvFiltered){window._rvFiltered=true;filterReviews();}if(!window._rvWhyDone){window._rvWhyDone=true;rvLoadWhy();rvLoadKeywords();}}
+  if(n==='reviews'){staggerCards();if(!window._rvFiltered){window._rvFiltered=true;filterReviews();}if(!window._rvWhyDone){window._rvWhyDone=true;rvLoadWhy();rvLoadKeywords();rvLoadPrograms();}}
   if(n==='labor'){
     var _gapEl=document.getElementById('gap-current-pct');
     if(_gapEl&&!_gapEl.dataset.animated){_gapEl.dataset.animated='1';var _gapRaw=parseFloat((_gapEl.textContent||'').replace('%','').trim());if(!isNaN(_gapRaw))countUp(_gapEl,_gapRaw,900,'','%',1);}
@@ -19984,6 +20024,65 @@ function rvKwSend(body){
     .then(apiJson).then(done).catch(function(){if(body)toast('Could not save that','error');});
 }
 function rvLoadKeywords(){rvKwSend(null);}
+// Membership programs (reply_programs): each add, edit or remove saves on
+// its own, so an edit never overwrites a list someone else just changed.
+var _rvPrgs=[];
+function rvPrgRender(d){
+  var el=document.getElementById('rv-prg-list');if(!el)return;
+  _rvPrgs=(d&&d.programs)||[];
+  var add=document.getElementById('rv-prg-add');if(add)add.hidden=_rvPrgs.length>=((d&&d.max)||4);
+  if(!_rvPrgs.length){el.innerHTML='<span class="rv2-kw-empty">No programs yet. Add a membership or loyalty program and the words that make it relevant, and happy guests who mention them get a one-line invite.</span>';return;}
+  var h='',i,p,t;
+  for(i=0;i<_rvPrgs.length;i++){
+    p=_rvPrgs[i];t=p.triggers||[];
+    h+='<div class="rv2-prg"><div class="rv2-prg-h"><b>'+esc(p.name)+'</b>'+(p.adults_only?'<span class="ac-chip">21+</span>':'')
+      +'<span class="n"><span class="hb-num">'+(+p.used||0)+'</span> posted replies in 90 days</span>'
+      +'<span class="act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-prg-edit="'+i+'">Edit</button><button type="button" class="cbtn cbtn-text cbtn-sm" data-prg-rm="'+i+'">Remove</button></span></div>'
+      +'<div class="rv2-prg-perk">'+esc(p.perk)+'</div>'
+      +'<div class="rv2-prg-m">'+t.length+' trigger word'+(t.length===1?'':'s')+': '+esc(t.slice(0,8).join(', '))+(t.length>8?', and '+(t.length-8)+' more':'')
+      +(p.link?' · '+esc(String(p.link).replace(/^https?:\/\//,''))+' on Google':'')+(p.followup?' · private follow-up set':'')+'</div></div>';
+  }
+  el.innerHTML=h;
+}
+function rvPrgSend(body,after){
+  function done(d){if(!d||!d.ok){toast((d&&d.error)||'Could not save that','error');return;}rvPrgRender(d);if(body){toast('Saved','success');if(after)after();}}
+  // window.fetch carries the CSRF header (_csrf_fetch.html).
+  fetch('/api/reviews/programs',body?{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{credentials:'same-origin'})
+    .then(apiJson).then(done).catch(function(){if(body)toast('Could not save that','error');});
+}
+function rvLoadPrograms(){rvPrgSend(null);}
+function _rvPrgVal(id){var e=document.getElementById(id);return e?String(e.value||''):'';}
+window.rvPrgOpen=function(i){
+  var f=document.getElementById('rv-prg-form');if(!f)return;
+  var p=(i===null||i===undefined)?null:_rvPrgs[i];
+  document.getElementById('rv-prg-orig').value=p?p.name:'';
+  document.getElementById('rv-prg-name').value=p?p.name:'';
+  document.getElementById('rv-prg-perk').value=p?p.perk:'';
+  document.getElementById('rv-prg-trig').value=p?(p.triggers||[]).join(', '):'';
+  document.getElementById('rv-prg-link').value=p&&p.link?String(p.link).replace(/^https?:\/\//,''):'';
+  document.getElementById('rv-prg-21').checked=!!(p&&p.adults_only);
+  document.getElementById('rv-prg-fu').value=p&&p.followup?p.followup:'';
+  f.hidden=false;document.getElementById('rv-prg-name').focus();
+};
+window.rvPrgClose=function(){var f=document.getElementById('rv-prg-form');if(f)f.hidden=true;};
+window.rvPrgSave=function(ev){
+  if(ev)ev.preventDefault();
+  var prog={name:_rvPrgVal('rv-prg-name'),perk:_rvPrgVal('rv-prg-perk'),triggers:_rvPrgVal('rv-prg-trig'),
+    link:_rvPrgVal('rv-prg-link'),adults_only:document.getElementById('rv-prg-21').checked,followup:_rvPrgVal('rv-prg-fu')};
+  var orig=_rvPrgVal('rv-prg-orig');
+  rvPrgSend(orig?{update:prog,name:orig}:{add:prog},rvPrgClose);
+};
+document.addEventListener('click',function(e){
+  var t=e.target&&e.target.closest?e.target:null;if(!t)return;
+  var b=t.closest('[data-prg-edit]');if(b){rvPrgOpen(+b.getAttribute('data-prg-edit'));return;}
+  b=t.closest('[data-prg-rm]');
+  if(b){var p=_rvPrgs[+b.getAttribute('data-prg-rm')];if(p)rvPrgSend({remove:p.name});return;}
+  b=t.closest('[data-copy-from]');
+  if(b){
+    var src=document.getElementById(b.getAttribute('data-copy-from')),txt=src?(src.innerText||src.textContent||''):'';
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(function(){toast('Copied','success');},function(){toast('Select the text to copy it','error');});}
+  }
+});
 // The header's "Search phrases" link (owner, 10/9/26: easy to find): down
 // to the section, the cursor in its box.
 window.rvKwJump=function(){var b=document.getElementById('rv-keywords');if(!b)return;b.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(function(){var i=document.getElementById('rv-kw-in');if(i)try{i.focus({preventScroll:true});}catch(e){i.focus();}},450);};

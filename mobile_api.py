@@ -1771,6 +1771,19 @@ def mobile_reviews_keywords(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 400
 
 
+@mobile_bp.route("/reviews/programs", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_reviews_programs(current_user):
+    """Twin of /api/reviews/programs: the memberships pitched in replies."""
+    import reply_programs as _rp
+    try:
+        payload, status = _rp.api(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                  user=current_user)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @mobile_bp.route("/reviews/<int:review_id>/approve", methods=["POST"])
 @mobile_login_required
 def mobile_approve_review(review_id, current_user):

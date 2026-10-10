@@ -1842,6 +1842,21 @@ def reviews_keywords_api(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 400
 
 
+@client_bp.route("/api/reviews/programs", methods=["GET", "POST"])
+@login_required
+def reviews_programs_api(current_user):
+    """The memberships Cavnar AI invites happy guests to in review replies
+    (reply_programs; Danny, 10/9/26). Anyone with the Reviews module (the
+    /api/reviews prefix gate) reads and edits them, as with search phrases."""
+    import reply_programs as _rp
+    try:
+        payload, status = _rp.api(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                  user=current_user)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):

@@ -73,7 +73,9 @@
       <div class="draft-box" id="draft-box-{{ r.id }}">
         {# The search phrase this reply works in (reply_keywords; Danny, 10/9/26). #}
         {% set _kwu = restaurant.reply_keyword_in(r.draft_response) if (restaurant is defined and restaurant and restaurant.reply_keyword_in is defined) else '' %}
-        <div class="draft-lbl">Cavnar AI's reply{% if _kwu %} <span class="rv2-kw" title="A search phrase from your list, worked in once">· {{ _kwu|e }}</span>{% endif %}</div>
+        {# The membership this reply invites the guest to (reply_programs; Danny, 10/9/26). #}
+        {% set _prg = restaurant.reply_program_in(r.draft_response) if (restaurant is defined and restaurant and restaurant.reply_program_in is defined) else {} %}
+        <div class="draft-lbl">Cavnar AI's reply{% if _kwu %} <span class="rv2-kw" title="A search phrase from your list, worked in once">· {{ _kwu|e }}</span>{% endif %}{% if _prg and _prg.name %} <span class="rv2-kw" title="A membership program from your list">· {{ _prg.name|e }}</span>{% endif %}</div>
         {# Click-to-edit (friction #7): a drafted or skipped reply opens its
            editor from the text itself. Edit is not a Skip, so it records no
            "no" against auto-approve trust (client_api._do_skip). Approved and
@@ -140,6 +142,15 @@
           {% endif %}
 
         </div>
+        {# The program's private follow-up: never posted — copy it to send
+           when there is a way to reach this guest. #}
+        {% if _prg and _prg.followup %}
+        <details class="rv2-prg-fu">
+          <summary>Private follow-up for {{ _prg.name|e }}</summary>
+          <div class="rv2-prg-fu-t" id="prg-fu-{{ r.id }}">{{ _prg.followup|e }}</div>
+          <div class="rv2-prg-fu-a"><span>Not posted. Send it only if you have a way to reach this guest.</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-copy-from="prg-fu-{{ r.id }}">Copy</button></div>
+        </details>
+        {% endif %}
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{ r.id }}" placeholder="Write your own response…">{{ r.draft_response|e }}</textarea>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">

@@ -1194,6 +1194,15 @@ _FREE_BEFORE_SKIP = frozenset((
 _FREE_AFTER_SKIP = frozenset("to from of time will spirit spirits spirited and or range flowing the a an".split())
 
 
+# The thing an "X is free" / "X is on us" phrase gives away: the nouns the
+# on-us pattern opens with, and the words skipped looking back for X.
+_FREE_SUBJECT_NOUNS = frozenset("dinner lunch brunch drink drinks round dessert meal coffee appetizer glass".split())
+_FREE_SUBJECT_SKIP = frozenset((
+    "it that this everything which and the a an your our my their his her is are will be next second first one "
+    "two any every each all always totally completely entirely also just really then so under over to for at on in "
+    "with of from").split())
+
+
 def _norm_copy(s) -> str:
     """Lower-case, curly quotes straightened, dashes and hyphens as spaces."""
     s = str(s or "").lower().replace("’", "'")
@@ -1229,6 +1238,23 @@ def _offer_hits(text) -> list:
     for fam, pat in _OFFER_RES:
         for m in pat.finditer(text):
             f, key = fam, fam
+            if fam == "free":
+                # "dessert is free", "your second drink is free", "dinner is
+                # on us": the thing is named before the phrase (or opens it),
+                # and is held to the owner's words as "free dessert" is — a
+                # program's "second drink is free" never allows "dessert is
+                # free" (10/9/26). "it/that/this is on us" names nothing.
+                ph = m.group(0).lower()
+                lead = re.match(r"([a-z][a-z'’]*)", ph)
+                if lead and lead.group(1) in _FREE_SUBJECT_NOUNS:
+                    add(m.start(), m.end(), "free", "free", [lead.group(1)])
+                    continue
+                if re.match(r"(?:is|are|will|comes?|['’])", ph) or re.match(r"(?:eats?|drinks?|dine)", ph):
+                    before = [w for w in re.findall(r"[a-z][a-z'’]*", text[max(0, m.start() - 40):m.start()].lower())]
+                    subj = next((w for w in reversed(before) if w not in _FREE_SUBJECT_SKIP), None)
+                    if subj:
+                        add(m.start(), m.end(), "free", "free", [subj])
+                        continue
             if fam == "pct":
                 key = "half" if int(m.group(1)) == 50 else f"{int(m.group(1))}%"
                 f = "half" if key == "half" else "pct"
@@ -1268,7 +1294,10 @@ def _offers_judged(text, source=""):
     src_roots = _roots(source)
     out = []
     for fam, key, phrase, items, span in hits:
-        if _norm_copy(phrase) and _norm_copy(phrase) in src:
+        # The phrase as the owner wrote it allows it — unless it is a free
+        # thing named apart from the phrase ("dessert is free" against the
+        # owner's "drink is free"), which is judged on the thing below.
+        if _norm_copy(phrase) and _norm_copy(phrase) in src and not (fam == "free" and items):
             ok = True
         elif fam in ("pct", "money", "half", "multi"):
             ok = key in keys

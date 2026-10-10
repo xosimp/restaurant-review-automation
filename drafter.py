@@ -452,7 +452,16 @@ def reply_context(restaurant=None, *, restaurant_id=None, review_id=None, review
         voice_notes = r_get("voice_notes")
     if never_say is None:
         never_say = r_get("never_say")
-    owner_said = " ".join(x for x in (voice_notes or "", r_get("menu_notes")) if x)
+    # The restaurant's own programs and their perks (reply_programs) are the
+    # owner's words too: "kids eat free on weeknights" from Charlie's Crew is
+    # theirs to repeat, never an invented comp — on every path a reply
+    # takes, auto-approve and bulk publish included.
+    try:
+        import reply_programs as _rp_ctx
+        programs_said = _rp_ctx.offer_text(restaurant) if restaurant is not None else ""
+    except Exception:
+        programs_said = ""
+    owner_said = " ".join(x for x in (voice_notes or "", r_get("menu_notes"), programs_said) if x)
     names = {n for n in (reviewer_name, author, author.split()[0] if author else "",
                          restaurant_name or r_get("name"), sign_off or r_get("sign_off_name")) if n}
     tenants = set()
@@ -752,8 +761,22 @@ def draft_response(review_id: int, rating: int, text: str,
         _kw_all = _rk.of(_gr_kw(restaurant_id)) if restaurant_id else []
     except Exception:
         _kw_all = []
-    _kw = _rk.pick(restaurant_id, _kw_all, rating, text, urgency=urgency, sentiment=sentiment) if _kw_all else None
+    # A star rating with no words gets one warm sentence: no search phrase
+    # and no program (Danny's guardrails, 10/9/26).
+    _kw = (_rk.pick(restaurant_id, _kw_all, rating, text, urgency=urgency, sentiment=sentiment)
+           if (_kw_all and not rating_only) else None)
     keyword_note = _rk.prompt_note(_kw)
+    # The restaurant's memberships (reply_programs; Danny, 10/9/26): one,
+    # the one the review names most, only on a happy guest's reply.
+    import reply_programs as _rp
+    try:
+        from models import get_restaurant as _gr_rp
+        _rp_all = _rp.of(_gr_rp(restaurant_id)) if restaurant_id else []
+    except Exception:
+        _rp_all = []
+    _prog = _rp.pick(_rp_all, rating, text, urgency=urgency, sentiment=sentiment, platform=platform,
+                     rating_only=rating_only) if _rp_all else None
+    keyword_note += _rp.prompt_note(_prog, platform)
     if rating_only:
         opener_ban = ("\nRATING ONLY: the guest left " + str(rating) + " stars and wrote nothing. Reply to the rating in "
                       "1-2 sentences. Never mention, hint at or apologise for the review having no words or details, "
@@ -788,7 +811,7 @@ Sign off as: {sign_off_name}
 Length: {length_note}{never_note}{keyword_note}{style_block}{template_block}{edit_note}{theme_note}{fix_note}{health_note}{memory_note}
 LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
-FACTS: State only what the restaurant has told you above (Voice{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary — you cannot know any of it is true.
+FACTS: State only what the restaurant has told you above (Voice{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary{" (the MEMBERSHIP perk above, in its own words, is the one exception)" if _prog else ""} — you cannot know any of it is true.
 
 Review ({rating}/5 stars, {sentiment}):
 {"(a star rating only — the guest wrote nothing)" if rating_only else wrap_untrusted(text)}
@@ -859,6 +882,9 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
                                       restaurant_name=restaurant_name, sign_off=sign_off, action="draft_response")
         if not reason:
             reason = _rk.check(draft, _kw_all, rating, urgency=urgency, sentiment=sentiment) or None
+        if not reason:
+            reason = _rp.check(draft, _rp_all, _prog, rating, urgency=urgency, sentiment=sentiment,
+                               platform=platform, rating_only=rating_only) or None
         if fixes and uses_confirmed_fix(draft, fixes):
             # Drawing on a change the owner marked done: always read before it
             # goes out, never bulk- or auto-published (drafter_fixes). A refusal
