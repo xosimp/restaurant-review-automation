@@ -13,7 +13,7 @@ final class ScheduleReviewDecodingTests: XCTestCase {
      "week_dates": ["2026-09-28", "2026-10-04"],
      "hours_scheduled": 212.5, "hours_budget": 220.0,
      "summary": ["+12h this week (200h → 212h).", "Saturday Server 4:00pm: Ana → Bob."],
-     "narrative": "Kept Saturday night heavy for the two parties on the books.",
+     "narrative": ["Kept Saturday night heavy for the two parties on the books.", "Ana and Bob split lunches."],
      "generation_seconds": 71.4, "chunked": true,
      "roster": ["Ana", "Bob", "Cara"], "roster_roles": {"Ana": "Server"},
      "pending_time_off": {"Cara": ["2026-10-02", "2026-10-03"]},
@@ -54,7 +54,13 @@ final class ScheduleReviewDecodingTests: XCTestCase {
         let schedule = try JSONDecoder().decode(GeneratedSchedule.self, from: Data(Self.fullJSON.utf8))
 
         XCTAssertEqual(schedule.historyId, 91)
-        XCTAssertEqual(schedule.narrative, "Kept Saturday night heavy for the two parties on the books.")
+        // A list of bullets — what the server sends (schedule audit
+        // 10/10/26 TRUST-1: this fixture used to hold a string, and the
+        // phone failed every real one). The real payloads are decoded by
+        // ScheduleStatusContractTests.
+        XCTAssertEqual(schedule.narrative, ["Kept Saturday night heavy for the two parties on the books.",
+                                            "Ana and Bob split lunches."])
+        XCTAssertEqual(schedule.undecodedKeys, [])
         XCTAssertEqual(schedule.generationSeconds, 71.4)
         XCTAssertEqual(schedule.chunked, true)
         XCTAssertEqual(schedule.roster, ["Ana", "Bob", "Cara"])
@@ -128,6 +134,37 @@ final class ScheduleReviewDecodingTests: XCTestCase {
         XCTAssertEqual(again.ruleViolations, decoded.ruleViolations)
         XCTAssertEqual(again.quality?.shifts?.first?.assignments, decoded.quality?.shifts?.first?.assignments)
         XCTAssertEqual(again.previewRows?.first?.reviewReason, "approved time off")
+    }
+
+    /// A note cached as one string (never sent so, but kept in an older
+    /// cache) is one bullet; anything else the note can't be is nil and
+    /// named, never a failed week.
+    func testNarrativeReadsAListAStringOrNothingAndNeverFailsTheWeek() throws {
+        func decode(_ json: String) throws -> GeneratedSchedule {
+            try JSONDecoder().decode(GeneratedSchedule.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(try decode(#"{"ok": true, "narrative": ["One.", " ", "Two."]}"#).narrative, ["One.", "Two."])
+        XCTAssertEqual(try decode(#"{"ok": true, "narrative": "Only one."}"#).narrative, ["Only one."])
+        XCTAssertNil(try decode(#"{"ok": true, "narrative": []}"#).narrative)
+        XCTAssertNil(try decode(#"{"ok": true, "narrative": null}"#).narrative)
+        let odd = try decode(#"{"ok": true, "narrative": {"x": 1}, "version": 3.5, "preview_rows": []}"#)
+        XCTAssertNil(odd.narrative)
+        XCTAssertNil(odd.version)
+        XCTAssertEqual(Set(odd.undecodedKeys), ["version", "narrative"])
+        XCTAssertEqual(odd.previewRows?.count, 0)
+    }
+
+    /// The note on screen: the first bullet the headline, the rest behind
+    /// More as bullets; one bullet splits at its first sentence.
+    func testTheNoteCardReadsBullets() {
+        XCTAssertNil(LaborView.noteCard(nil))
+        XCTAssertNil(LaborView.noteCard([" "]))
+        let one = LaborView.noteCard(["Labor lands at 29%. Two closers Friday."])
+        XCTAssertEqual(one?.head, "Labor lands at 29%.")
+        XCTAssertEqual(one?.rest, "Two closers Friday.")
+        let many = LaborView.noteCard(["Kept Saturday heavy.", "Ana takes lunches.", "Ed closes."])
+        XCTAssertEqual(many?.head, "Kept Saturday heavy.")
+        XCTAssertEqual(many?.rest, "\u{2022} Ana takes lunches.\n\u{2022} Ed closes.")
     }
 
     func testHistoryDetailCarriesPublishedAtAndBy() throws {
