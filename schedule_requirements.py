@@ -280,7 +280,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        section_cap: int = 0, cap_roles=None, date_demand: dict = None, splh_hold: dict = None,
                        adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None,
                        role_windows: dict = None, role_caps: dict = None, crew_answers: dict = None,
-                       staffing_model: dict = None, concurrent: dict = None, half_curve: dict = None) -> list:
+                       staffing_model: dict = None, concurrent: dict = None, half_curve: dict = None,
+                       elasticity: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -364,6 +365,10 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     half_curve — {weekday: {minute: share}}, the curve measured at the half
                 hour from the ticket archive (schedule_economics.
                 measured_half_hours), used over the hourly one.
+    elasticity — {(role family, daypart): {"move": +1 | -1, "reason"}}
+                (staffing_elasticity.moves): one person more or fewer where
+                what one more person is worth here was measured with an
+                interval clear of zero (RM-20, LEARNING-6, MARKET-23).
     Each row also carries `half_need` — {minute: {role: people on}}, every
     half hour's full need after the caps — the one the score judges
     (half_hours_map).
@@ -423,6 +428,26 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 std = standard_here.get(r.strip().lower())
                 if std and std.get("people") is not None and r not in driven:
                     typical_here[r] = int(std["people"])
+            # What one more (or one fewer) of a role on this meal measured
+            # here, where its interval cleared zero (staffing_elasticity,
+            # RM-20): one person, on the role of the family the restaurant
+            # runs most of; never the last of a role, and the owner's floors
+            # still hold over it.
+            moved_by = {}
+            if elasticity:
+                from intelligence.staffing import family_of as _fo_e
+                for (fam_e, part_e), mv in elasticity.items():
+                    if part_e != part or not int((mv or {}).get("move") or 0):
+                        continue
+                    cands = [r for r in typical_here if _fo_e(r) == fam_e and int(typical_here[r] or 0) > 0]
+                    if not cands:
+                        continue
+                    r_e = max(cands, key=lambda r: (int(typical_here[r]), r))
+                    step = int(mv["move"])
+                    if step < 0 and int(typical_here[r_e]) <= 1:
+                        continue
+                    typical_here[r_e] = int(typical_here[r_e]) + step
+                    moved_by[r_e.strip().lower()] = mv
             floors_here = {}
             for role, spec in (role_floors or {}).items():
                 f = floor_for(spec or {}, day, part)
@@ -447,6 +472,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     why.append(f"usual {typ}" + (f"; this role's own record on nights like it "
                                                  f"{int(round((rf - 1) * 100)):+d}%"
                                                  if key in role_ratios and abs(rf - factor) >= 0.005 else ""))
+                if key in moved_by and moved_by[key].get("reason"):
+                    why.append(f"{int(moved_by[key]['move']):+d}: {moved_by[key]['reason']}")
                 need[key] = [role.strip(), int(n), floor, typ, 0, why]
             # Asks folded in (PR-7): +1 of a role, with its reason.
             for key, word, a in _adjust_for(adjustments, d, part, need, raw_by_part):

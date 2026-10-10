@@ -3294,6 +3294,25 @@ def suggested_ratings(restaurant_id, db_path=None, today=None, days=SUGGEST_DAYS
         by.setdefault(_nk(name), []).append(t)
     scores = models.get_operational_scores(restaurant_id, db_path or models.DB_PATH) or {}
     current = {_nk(n): v for n, v in scores.items()}
+    try:
+        caps = models.get_capabilities(restaurant_id, attribute="overall",
+                                       **({"db_path": db_path} if db_path else {})) or {}
+    except Exception:
+        caps = {}
+    rated_at = {_nk(n): ((c or {}).get("overall") or {}).get("updated_at") for n, c in caps.items()}
+    # The mixed model (staff_productivity, scheduler audit 10/10/26
+    # LEARNING-26): each ticket against its own slot — date x meal x party
+    # size — and every person shrunk toward the house by how little of their
+    # own record there is, with a 90% interval. The fixed bands used to read
+    # 22 lucky tickets as a 5.
+    import staff_productivity as _prod
+    tickets_named = [dict(t, server_name=canon.get(t["server_name"], t["server_name"])) for t in rows]
+    effects = {}
+    try:
+        effects = _prod.estimate_from(tickets_named)
+    except Exception as e:
+        log.warning("schedule_memory: productivity unavailable for %s: %s", restaurant_id, e)
+    import staff_settings as _ss_n
     out = []
     for k, ts in by.items():
         if k not in roster or len(ts) < SUGGEST_MIN_TICKETS:
@@ -3304,20 +3323,40 @@ def suggested_ratings(restaurant_id, db_path=None, today=None, days=SUGGEST_DAYS
         if not covers or not expected:
             continue
         ratio = sales / expected
-        score = _band(ratio)
+        meas = (effects.get(_ss_n.name_key(roster[k])) or effects.get(k) or {}).get("measures") or {}
+        spg = meas.get("sales_per_guest")
+        measured = bool(spg and spg.get("measured"))
+        shrunk = 1.0 + spg["est"] if spg else 1.0
+        # A suggestion only where the interval clears the house; else the
+        # house's own 3, said as "about the house".
+        score = _band(shrunk) if measured else 3
         cur = current.get(k)
-        out.append({"name": roster[k], "tickets": len(ts), "covers": covers,
-                    "sales_per_cover": round(sales / covers, 2),
-                    "house_sales_per_cover": round(expected / covers, 2), "ratio": round(ratio, 3),
-                    "suggested": score, "current": cur, "differs": cur is None or int(cur) != score,
-                    "reason": (f"{roster[k]} sold ${sales / covers:,.2f} a guest over {len(ts)} tickets against "
-                               f"${expected / covers:,.2f} for the house at the same mealtimes "
-                               f"({int(round((ratio - 1) * 100)):+d}%).")})
+        judged = _prod.judge_rating(meas, cur, rated_at.get(k))
+        entry = {"name": roster[k], "tickets": len(ts), "covers": covers,
+                 "sales_per_cover": round(sales / covers, 2),
+                 "house_sales_per_cover": round(expected / covers, 2), "ratio": round(ratio, 3),
+                 "shrunk_ratio": round(shrunk, 3), "measured": measured,
+                 "interval_pct": ([int(round(spg["lo"] * 100)), int(round(spg["hi"] * 100))] if spg else None),
+                 "effects": meas, "suggested": score, "current": cur,
+                 "differs": cur is None or (measured and int(cur) != score) or judged["disagrees"] or judged["stale"],
+                 "disagrees": judged["disagrees"], "stale_rating": judged["stale"],
+                 "reason": (f"{roster[k]} sold ${sales / covers:,.2f} a guest over {len(ts)} tickets against "
+                            f"${expected / covers:,.2f} for the house at the same mealtimes "
+                            f"({int(round((ratio - 1) * 100)):+d}%)"
+                            + (f"; against the same date, meal and party size, and shrunk toward the house for "
+                               f"the tickets on file, {int(round((shrunk - 1) * 100)):+d}% (90% interval "
+                               f"{int(round(spg['lo'] * 100)):+d}% to {int(round(spg['hi'] * 100)):+d}%)" if spg else "")
+                            + ("" if measured else " — not clearly different from the house yet")
+                            + (f". Your rating of {cur} {judged['why']}" if judged["disagrees"] else "")
+                            + (". Your rating is over six months old" if judged["stale"] else "") + ".")}
+        out.append(entry)
     out.sort(key=lambda x: (-x["tickets"], x["name"]))
     return {"available": bool(out), "window": [start.isoformat(), end.isoformat()], "servers": out,
             "min_tickets": SUGGEST_MIN_TICKETS,
-            "note": ("Measured from the POS's own tickets: what each server sells a guest against the house at the "
-                     "same mealtimes. A suggestion only — nothing is rated until you confirm it.")}
+            "note": ("Measured from the POS's own tickets: what each server sells a guest against the house on the "
+                     "same date, meal and party size, shrunk toward the house for how few tickets there are, with a "
+                     "90% interval. A suggestion only — nothing is rated until you confirm it, and none of it is "
+                     "shown to staff.")}
 
 
 def confirm_suggested_rating(restaurant_id, name, score=None, user=None, db_path=None) -> dict:

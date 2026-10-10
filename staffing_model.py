@@ -474,11 +474,93 @@ def earned(model, day_iso, part, actual_work: dict, scheduled_hours: dict, worke
             continue
         lag = int(fe.get("lag") or 0)
         fixed = int(pe.get("fixed") or 0)
-        hours = 0.0
+        hours, peak = 0.0, 0
         for t in sorted(w):
             n = max(fixed, int(math.ceil(w[t] / (float(std) * 0.5) - 1e-9)))
             hours += n * SLOT / 60.0
+            peak = max(peak, n)
         out[fam] = {"earned": round(hours, 1), "scheduled": round(float((scheduled_hours or {}).get(fam) or 0), 1),
                     "worked": round(float((worked_hours or {}).get(fam) or 0), 1), "unit": unit,
-                    "work": int(sum(w.values())), "std": std, "lag": lag}
+                    "work": int(sum(w.values())), "std": std, "lag": lag, "peak": peak}
     return out
+
+
+FLOOR_WEEKS = 4                  # same-weekday nights the earned need must stay under a floor
+
+
+def floor_suggestions(restaurant_id, db_path=DB_PATH, weeks=FLOOR_WEEKS, today=None) -> list:
+    """MARKET-33: [{"day", "daypart", "role", "floor", "suggest", "nights":
+    [{date, earned_peak, earned, scheduled}], "text"}] — an owner's floor
+    (people on at once) that the work of each of the last `weeks` same
+    weekdays never needed: the most people on at once the night's work
+    earned at the standard (the nightly report's `earned`, per family) stayed
+    under the floor every time, and scheduled hours ran above earned. The
+    owner's floor stays until they change it; this is the evidence."""
+    try:
+        import schedule_rules as _rules
+        from intelligence.staffing import family_of
+        from time_utils import mdy
+        r = _models_mod.get_restaurant(restaurant_id) if db_path in (None, DB_PATH) else \
+            _models_mod.get_restaurant(restaurant_id, db_path)
+        floors = _rules.role_floors(r) or {}
+        if not floors:
+            return []
+        today = today or date.today()
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT business_date, facts_json FROM dsr_reports WHERE restaurant_id=? AND business_date>=? AND "
+                "business_date<? AND status IN ('final','provisional') ORDER BY business_date, version",
+                (restaurant_id, (today - timedelta(weeks=weeks + 1)).isoformat(), today.isoformat())).fetchall()
+        finally:
+            conn.close()
+        import json as _json
+        nights = {}
+        for row in rows:                                   # later versions overwrite earlier ones
+            try:
+                lab = ((_json.loads(row["facts_json"] or "{}") or {}).get("blocks") or {}).get("labor") or {}
+            except (TypeError, ValueError):
+                continue
+            e = (lab.get("detail") or {}).get("earned")
+            if e:
+                nights[str(row["business_date"])[:10]] = e
+        import schedule_requirements as _req
+        out = []
+        for role, spec in floors.items():
+            fam = family_of(role)
+            if not fam:
+                continue
+            for wd in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"):
+                for part in PARTS:
+                    floor = _req.floor_for(spec or {}, wd, part)
+                    if floor <= 1:
+                        continue
+                    seen = []
+                    for d in sorted(nights, reverse=True):
+                        if date.fromisoformat(d).strftime("%A") != wd:
+                            continue
+                        f = ((nights[d].get("by_part") or {}).get(part) or {}).get(fam)
+                        if f:
+                            seen.append({"date": d, "earned_peak": int(f.get("peak") or 0), "earned": f["earned"],
+                                         "scheduled": f["scheduled"]})
+                        if len(seen) >= weeks:
+                            break
+                    if len(seen) < weeks:
+                        continue
+                    top = max(x["earned_peak"] for x in seen)
+                    if top >= floor or not all(x["scheduled"] > x["earned"] for x in seen):
+                        continue
+                    suggest = max(1, top)
+                    meal = "lunch" if part == "morning" else "dinner"
+                    out.append({"day": wd, "daypart": part, "role": role, "floor": floor, "suggest": suggest,
+                                "nights": seen,
+                                "text": (f"{wd} {meal}: your floor holds {floor} {role} on at once, but the work of "
+                                         f"the last {len(seen)} {wd}s never needed more than {top} at this "
+                                         f"restaurant's own standard ("
+                                         + "; ".join(f"{mdy(x['date'])}: earned {x['earned']:g}h, scheduled "
+                                                     f"{x['scheduled']:g}h" for x in seen)
+                                         + f"). A floor of {suggest} would still cover every one of them.")})
+        return out
+    except Exception as e:
+        print(f"[staffing_model] floor suggestions unavailable for {restaurant_id}: {e}")
+        return []

@@ -309,6 +309,67 @@ def _quality(ctx):
                         "meets_profile": s.get("meets_profile"), "headline": s.get("headline")} for s in shifts]}
 
 
+def _earned(ctx, all_rows, day_rows):
+    """MARKET-33 (scheduler audit 10/10/26): the hours tonight's measured
+    work EARNED at this restaurant's own labor standards (staffing_model:
+    the work one person carries at the rush, measured over the 8 weeks
+    before tonight, the owner's own standard over it) — each half hour's
+    work ÷ the standard, a whole person at a time, plus the meal's fixed
+    crew — beside the hours scheduled (the published week) and worked (the
+    punches), per role family and meal. {"by_part": {part: {family: {...}}},
+    "earned", "worked", "scheduled"} over the families with a standard, or
+    None when nothing can be measured."""
+    from datetime import date as _date, timedelta as _td
+    import staffing_model as _sm
+    from models import DB_PATH as _DB
+    from shift_quality import present_dayparts
+    from intelligence.staffing import family_of
+    db = ctx.db_path or _DB
+    day = _date.fromisoformat(ctx.day)
+    model = _sm.measure(ctx.restaurant_id, shifts=all_rows, db_path=db, today=day)
+    if not model:
+        return None
+    work = (_sm.work_slots(ctx.restaurant_id, day, day + _td(days=1), db_path=db) or {}).get(ctx.day) or {}
+    if not work:
+        return None
+
+    def _hours(rows, actual):
+        out = {}
+        for r in rows or []:
+            fam = family_of(r.get("role"))
+            if not fam:
+                continue
+            try:
+                h = float((r.get("actual_hours") if actual else r.get("scheduled_hours")) or 0)
+            except (TypeError, ValueError):
+                h = 0.0
+            if h <= 0:
+                continue
+            part = (present_dayparts(r) or ["night"])[0]
+            if part in ("morning", "night"):
+                out.setdefault(part, {})[fam] = out.setdefault(part, {}).get(fam, 0.0) + h
+        return out
+    try:
+        import intraday
+        published = intraday.published_rows(ctx.restaurant_id, ctx.business_date, db_path=ctx.db_path) or []
+    except Exception:
+        published = []
+    sched, worked = _hours(published, False), _hours(day_rows, True)
+    by_part, tot = {}, {"earned": 0.0, "worked": 0.0, "scheduled": 0.0}
+    for part in ("morning", "night"):
+        got = _sm.earned(model, ctx.day, part, work, sched.get(part) or {}, worked.get(part) or {})
+        if got:
+            by_part[part] = got
+            for e in got.values():
+                tot["earned"] += e["earned"]
+                tot["worked"] += e["worked"]
+                tot["scheduled"] += e["scheduled"]
+    if not by_part:
+        return None
+    return {"by_part": by_part, "earned": round(tot["earned"], 1), "worked": round(tot["worked"], 1),
+            "scheduled": round(tot["scheduled"], 1) if published else None}
+
+
 def hourly_hours(rows):
     """{clock hour: labor hours worked in it} — each shift's recorded hours
     shared over its clock span (as _hours_after does), so a break is not
@@ -514,6 +575,11 @@ def collect(ctx):
     cov = _coverage(ctx, day_rows)
     quality = _quality(ctx)
     scheduled = _scheduled(ctx)
+    try:
+        earned = _earned(ctx, all_rows, day_rows)
+    except Exception as e:
+        log.warning("dsr labor: earned hours unavailable rid=%s: %s", ctx.restaurant_id, e)
+        earned = None
 
     metrics = {
         "cost": cost, "pct": pct, "hours": hours, "overtime_hours": ot,
@@ -526,6 +592,10 @@ def collect(ctx):
         # People on the published schedule for the night (the Manager DSR's
         # "Employees scheduled"); None without a published schedule.
         "scheduled": scheduled,
+        # The hours the night's work earned at the restaurant's own labor
+        # standards, and the worked hours of the same roles (MARKET-33).
+        "earned_hours": earned["earned"] if earned else None,
+        "earned_roles_worked_hours": earned["worked"] if earned else None,
     }
     # The owner's labor, salaries in (owner, 9/30/26: "Erik is going to want
     # to see labor with salaries included in the report - that's his actual
@@ -566,6 +636,10 @@ def collect(ctx):
     if ot:
         observations.append({"key": "overtime", "facts": ["labor.overtime_hours"],
                              "text": f"{ot:g} overtime hours worked."})
+    if earned and earned["worked"] and abs(earned["worked"] - earned["earned"]) >= max(2.0, 0.1 * earned["worked"]):
+        observations.append({"key": "earned_hours", "facts": ["labor.earned_hours", "labor.earned_roles_worked_hours"],
+                             "text": f"The night's work earned {earned['earned']:g} hours at this restaurant's own "
+                                     f"labor standards; those roles worked {earned['worked']:g}."})
     if cov["measured"] and cov["no_shows"]:
         n = len(cov["no_shows"])
         observations.append({"key": "no_shows", "facts": ["labor.no_shows"],
@@ -607,6 +681,10 @@ def collect(ctx):
         "hourly_hours": {str(h): v for h, v in hourly_hours(day_rows).items()},
         "coverage": cov,
         "shift_quality": quality,
+        # Earned against scheduled and worked hours, per meal and role family
+        # (MARKET-33; staffing_model.earned) — read week over week by
+        # staffing_model.floor_suggestions.
+        "earned": earned,
         "observations": observations,
     }
     return dsr.block(dsr.READY, source=source, metrics=metrics, detail=detail, block_name="labor")

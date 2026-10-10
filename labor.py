@@ -5687,6 +5687,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         staffing_model=(labor_standards or {}).get("model") or None,
         concurrent=_patterns.get("concurrent") or None,
         half_curve=(labor_standards or {}).get("half_curve") or None,
+        # One person more or fewer where its measured value cleared zero
+        # (staffing_elasticity, RM-20).
+        elasticity=(labor_standards or {}).get("elasticity") or None,
     )
     _requirements_block = _req.requirements_block(
         _req.shift_requirements(_gen_dates, roles=_can_work, **_req_inputs),

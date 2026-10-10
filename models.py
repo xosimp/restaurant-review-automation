@@ -4472,6 +4472,13 @@ def init_db(db_path: str = DB_PATH):
     init_schedule_overrides(db_path)
     from schedule_scorecard import init_schedule_scorecard
     init_schedule_scorecard(db_path)
+    # What one more of a role on a meal is worth here, and each person's
+    # measured effect (scheduler audit 10/10/26 RM-20, LEARNING-26): the
+    # weekly staffing_learning job's estimates.
+    from staffing_elasticity import init_staffing_elasticity
+    init_staffing_elasticity(db_path)
+    from staff_productivity import init_staff_productivity
+    init_staff_productivity(db_path)
     # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
     from schedule_calibration import init_schedule_calibration
     init_schedule_calibration(db_path)
