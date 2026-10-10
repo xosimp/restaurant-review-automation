@@ -69,6 +69,10 @@ ONLY_SHIFT_COST_HOURS = 2.0
 # weekday (LOGIC-15); improved cuts the mirror, half as much.
 LEARNED_CUT_COST_HOURS = 4.0
 LEARNED_LEAN_BONUS_HOURS = 2.0
+# What one more of a role on a meal measured here (staffing_elasticity,
+# MARKET-23): a slot whose hour clearly pays ranks as though its day were
+# this many hours less over target — cut last; one clearly not, more — first.
+VALUE_KEEP_HOURS = 3.0
 STAGGER_STEP_MIN = 30
 STAGGER_MAX_MIN = 90
 
@@ -2109,7 +2113,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                    score_seconds: float = TRIM_SCORE_SECONDS, only_dates=None, requirements=None,
                    learned_worse: dict = None, outcomes: dict = None, report: dict = None,
                    soft_asks: list = None, cost_fn=None, budget_value: float = None,
-                   pricing: dict = None) -> tuple:
+                   pricing: dict = None, staffing_value: dict = None) -> tuple:
     """Take the most discretionary hours out until the week is within the
     budget — the tails of shifts first, then whole shifts — every change
     reported.
@@ -2281,6 +2285,24 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         parts = _se._present(r) or [None]
         return (max(_rl.learned_cut_penalty(learned_worse, wd, p, fam) for p in parts),
                 max(_rl.learned_cut_penalty(learned_worse, wd, p, fam, lean=True) for p in parts))
+    def _valued(r):
+        """Hours the cut of `r` is held back (+) or brought forward (-) by
+        what one more of its role on its meal measured here (staffing_
+        elasticity.marginal_values — scheduler audit 10/10/26 MARKET-23):
+        an hour whose return's interval clears zero is cut last, one whose
+        interval is below zero first — never on a figure inside its noise."""
+        if not staffing_value:
+            return 0.0
+        from intelligence.staffing import family_of as _fo_v
+        fam = _fo_v(r.get("role"))
+        best = 0.0
+        for p in (_se._present(r) or []):
+            v = staffing_value.get((fam, p)) or {}
+            if v.get("lo") is not None and float(v["lo"]) > 0:
+                best = max(best, VALUE_KEEP_HOURS)
+            elif v.get("hi") is not None and float(v["hi"]) < 0:
+                best = min(best, -VALUE_KEEP_HOURS)
+        return best
     troubled = {(str(wd).strip().lower(), part) for wd, parts in (outcomes or {}).items() if isinstance(parts, dict)
                 for part, e in parts.items() if isinstance(e, dict) and e.get("troubled")}
     trimmed = []
@@ -2471,6 +2493,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             over = (day_hours.get(d, 0.0) - tgt) if tgt else day_hours.get(d, 0.0)
             worse_s, lean_s = _learned(r)
             over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
+            over -= _valued(r)
             rain = 0 if (d in rainy and (r.get("role") or "").strip().lower() in patio) else 1
             s = splh_for(r)
             sp = spans.get(id(r)) or (0, 0)
@@ -2607,6 +2630,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                 over -= ONLY_SHIFT_COST_HOURS          # retention: a cost, not a refusal (LOGIC-14)
             worse_s, lean_s = _learned(r)
             over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
+            over -= _valued(r)
             rate = _rate(r, rate_hours)
             return (tier, rain, -round(over), -rate, splh_rank, -start)
 

@@ -522,6 +522,24 @@ def test_a_requirement_moves_only_when_the_interval_clears_zero():
     assert service["move"] == 1 and service["why"].startswith("service")
 
 
+def test_the_trim_cuts_where_an_hour_measurably_returns_least():
+    import schedule_economics as econ
+    rows = [{"date": "2026-10-16", "day": "Friday", "employee": n, "role": role, "shift_start": "5:00pm",
+             "shift_end": "11:00pm", "scheduled_hours": 6}
+            for n, role in (("Ana", "Server"), ("Al", "Server"), ("Bo", "Bartender"), ("Bea", "Bartender"))]
+
+    def removed(value):
+        _new, tr, _h = econ.trim_to_budget([dict(r) for r in rows], 18.0, {"2026-10-16": 18.0},
+                                           staffing_value=value)
+        return [t["role"] for t in tr if t.get("kind") == "removed"]
+    assert removed(None) == ["Server"]
+    # One more server at dinner measured to pay; one more bartender not.
+    assert removed({("server", "night"): {"lo": 5.0, "hi": 20.0}, ("bartender", "night"): {"lo": -20.0, "hi": -5.0}}) \
+        == ["Bartender"]
+    # Inside its noise, a figure moves nothing.
+    assert removed({("bartender", "night"): {"lo": -20.0, "hi": 5.0}}) == ["Server"]
+
+
 def test_the_requirement_carries_the_measured_move_and_never_takes_the_last_person():
     import schedule_requirements as req
     typical = {("Friday", "night"): {"Server": 4, "Dishwasher": 1}}

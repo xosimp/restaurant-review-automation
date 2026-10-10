@@ -9247,8 +9247,20 @@ def _stage_budget(rows, x):
         # In dollars, the loop's own measure (LOGIC-13): the trim stops where
         # the judge says the week fits.
         cost_fn=x.cost if x.cost([]) is not None else None, budget_value=x.budget_dollars or None,
-        pricing=x.pricing() if x.budget_dollars > 0 else None)
+        pricing=x.pricing() if x.budget_dollars > 0 else None,
+        # Hours go where their measured return is highest (MARKET-23).
+        staffing_value=_staffing_value(x.rid))
     return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
+
+
+def _staffing_value(restaurant_id) -> dict:
+    """staffing_elasticity.marginal_values (the weekly job's stored figure),
+    {} on any failure."""
+    try:
+        import staffing_elasticity as _sel
+        return _sel.marginal_values(restaurant_id) or {}
+    except Exception:
+        return {}
 
 
 def _stage_top_up(rows, x):
