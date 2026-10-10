@@ -1590,6 +1590,7 @@ details[open]>summary~*{animation:askIn .3s ease both}
 .ask-send{width:44px;height:44px;border-radius:50%;border:none;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--paper3);color:var(--ink3);cursor:pointer;padding:0;transition:background .15s,box-shadow .15s,color .15s}
 .ask-send.on,.ask-send:not(:disabled):hover{background:linear-gradient(180deg,#e8956a,#c84b2f);color:#fff;box-shadow:0 8px 20px color-mix(in srgb,var(--ember) 40%,transparent)}
 .ask-send:disabled{opacity:.55;cursor:default;box-shadow:none}
+.ask-mic[aria-pressed="true"]{background:linear-gradient(180deg,#e8956a,#c84b2f);color:#fff;box-shadow:0 0 0 4px color-mix(in srgb,var(--ember) 30%,transparent)}
 @media(max-width:520px){.ask-panel{right:12px;bottom:90px;height:min(620px,calc(100vh - 110px))}.ask-fab{right:16px;bottom:16px}}
 /* Expanded: a 720px side sheet on a large monitor (density audit #49). The
    same panel, the same conversation - only the frame changes, and the
@@ -10399,6 +10400,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div class="ask-compose">
     <input type="text" id="ask-cavnar-input" placeholder="How can I help?" maxlength="2000" autocomplete="off"
       onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}" oninput="askInputChanged()">
+    {# Push to talk (scheduler audit 10/10/26 MARKET-31): the browser's own
+       speech recognition fills the question and sends it to the same Ask
+       tools; the answer is read back. Hidden where the browser has none. #}
+    <button type="button" id="ask-cavnar-mic" class="ask-send ask-mic" aria-label="Speak your question" aria-pressed="false" hidden onclick="askMicToggle()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
     <button onclick="sendAskCavnar()" id="ask-cavnar-send-btn" class="ask-send" aria-label="Send question"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
   </div>
 </div>
@@ -17582,6 +17587,61 @@ function _pollAskCavnarJob(p, card, btn, statusUrl, onDone) {
   setTimeout(poll, 1500);
 }
 
+// ── Voice (scheduler audit 10/10/26 MARKET-31) ─────────────────────────────
+// Push to talk on the floor: the browser's own speech recognition (Chrome,
+// Edge, Safari) fills the question and sends it to the same Ask tools —
+// "Maria's out tonight, who can close bar?" reaches find_cover, and an offer
+// still waits for a tap on its confirm card. The answer is read back with
+// the browser's speech synthesis. Nothing is recorded or sent but the text.
+var _askRec = null, _askListening = false;
+function askVoiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function askMicInit() {
+  var b = document.getElementById('ask-cavnar-mic');
+  if (b && askVoiceSupported()) b.hidden = false;
+}
+function askMicToggle() {
+  if (_askListening && _askRec) { try { _askRec.stop(); } catch (e) { } return; }
+  var R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) return;
+  var input = document.getElementById('ask-cavnar-input'), b = document.getElementById('ask-cavnar-mic');
+  _askRec = new R();
+  _askRec.lang = (navigator.language || 'en-US');
+  _askRec.interimResults = true;
+  _askRec.maxAlternatives = 1;
+  var finalText = '';
+  _askRec.onresult = function (ev) {
+    var interim = '';
+    for (var i = ev.resultIndex; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
+      else interim += ev.results[i][0].transcript;
+    }
+    if (input) { input.value = (finalText + interim).replace(/^\s+/, ''); if (window.askInputChanged) askInputChanged(); }
+  };
+  _askRec.onerror = function (ev) {
+    if (ev && ev.error === 'not-allowed') toast('The microphone isn’t allowed for this site in your browser.', 'error');
+  };
+  _askRec.onend = function () {
+    _askListening = false;
+    if (b) b.setAttribute('aria-pressed', 'false');
+    if (input && input.value.trim() && finalText.trim()) { window._askSpeakNext = true; sendAskCavnar(); }
+  };
+  _askListening = true;
+  if (b) b.setAttribute('aria-pressed', 'true');
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  try { _askRec.start(); } catch (e) { _askListening = false; if (b) b.setAttribute('aria-pressed', 'false'); }
+}
+function askSpeak(text, proposals) {
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+  var plain = String(text || '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_#>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!plain) return;
+  if (plain.length > 600) plain = plain.slice(0, 600).replace(/\s+\S*$/, '') + '.';
+  if (proposals) plain += ' Tap the card to send it.';
+  var u = new window.SpeechSynthesisUtterance(plain);
+  u.lang = navigator.language || 'en-US';
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', askMicInit); else askMicInit();
 window.sendAskCavnar = function() {
   var input = document.getElementById('ask-cavnar-input');
   var question = input.value.trim();
@@ -17670,6 +17730,9 @@ window.sendAskCavnar = function() {
       _appendAskCavnarSuggestions(d.suggestions || []);
       _appendAskCavnarFeedback(d.message_id);
     }
+    // A spoken question gets a spoken answer (MARKET-31); a proposal still
+    // waits for a tap on its card.
+    if (window._askSpeakNext) { window._askSpeakNext = false; askSpeak(answer, d.ok ? (d.proposals || []).length : 0); }
   }
 
   // Streamed, because the tool loop can take several round trips and a
