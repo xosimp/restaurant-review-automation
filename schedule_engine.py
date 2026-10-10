@@ -6007,7 +6007,7 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
             except ValueError:
                 continue
             part = _stime.primary_daypart({"date": date, "shift_start": start,
-                                           "shift_end": parts[5] if len(parts) > 5 else ""})
+                                           "shift_end": _pr.get("shift_end") or ""})
             entry = {"date": date, "daypart": part,
                      "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A")}
             bucket = out.setdefault(name, [])
