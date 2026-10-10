@@ -331,17 +331,21 @@ def test_a_full_timer_on_7h_is_given_shifts_from_teammates_above_their_target():
     assert not _hard(out["rows"], c)
 
 
-def test_minimum_hours_are_added_inside_the_budget_only():
+def test_a_minimum_outranks_the_budget_both_ways():
+    # The trim never cuts anyone under a minimum the owner set; the fill now
+    # adds to it past the budget too, the overrun said — one order whichever
+    # way a pass moves (sched audit 10/10/26 LOGIC-4). It used to stop at the
+    # budget, so the week depended on whether the draft started light.
     c = _c(roster_names=["Cook", "Lee"], active={"cook", "lee"}, hours_limits={"cook": (24, None)})
     rows = [_row(0, "Cook", "11:00am", "7:00pm", "Line Cook")]
     rows += [_row(i, "Lee", "11:00am", "7:00pm", "Line Cook") for i in range(1, 4)]     # Lee's target is 0, but
     c.hours_limits["lee"] = (24, None)                                                  # now Lee needs his 24h
     out = sr.fill_min_hours(rows, c, roster_roles={"Cook": "Line Cook", "Lee": "Line Cook"}, hours_budget=40)
-    assert _hours(out["rows"], "Cook") == 16 and len(out["added"]) == 1          # 32h + 8h = the 40h budget
-    assert out["left"] and out["left"][0]["employee"] == "Cook"
-    assert sr.hourly_hours(out["rows"], c) <= 40
+    assert _hours(out["rows"], "Cook") == 24 and not out["left"]
+    assert sr.hourly_hours(out["rows"], c) > 40
+    assert any(a["past_budget"] and "past the hours budget" in a["reason"] for a in out["added"])
     none = sr.fill_min_hours(rows, c, roster_roles={"Cook": "Line Cook", "Lee": "Line Cook"})
-    assert not none["added"], "no budget, no added hours"
+    assert _hours(none["rows"], "Cook") == 24 and not any(a["past_budget"] for a in none["added"])
 
 
 def test_under_min_hours_is_fixable_and_the_solver_may_not_bring_it_back():
@@ -645,8 +649,11 @@ def test_the_rebalance_keeps_the_reserve_where_a_teammate_has_room():
 def test_generation_keeps_day_level_breaches_off_rows_and_says_why_once():
     import schedule_engine
     src = inspect.getsource(schedule_engine._run_schedule_job)
-    # The replacement stage hands apply_fixes no day-level breach (E-13).
-    assert 'v.get("hard") and not v.get("day_level")' in inspect.getsource(schedule_engine._stage_replace)
+    # The replacement stages (the person's, the policy limits') hand
+    # apply_fixes no day-level breach (E-13).
+    assert "_replace_tier(" in inspect.getsource(schedule_engine._stage_replace)
+    assert "_replace_tier(" in inspect.getsource(schedule_engine._stage_policy)
+    assert 'v.get("hard") and not v.get("day_level")' in inspect.getsource(schedule_engine._replace_tier)
     assert 'result["review"]["lines"].append(_short)' in src
     assert "manager_coverage=result.get(\"manager_coverage\")" in src and "min_hours=result.get(\"min_hours\")" in src
 

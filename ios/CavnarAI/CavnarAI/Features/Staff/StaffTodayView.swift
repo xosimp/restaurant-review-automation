@@ -192,7 +192,9 @@ struct StaffTodayView: View {
                 .cavnarCard()
         } else {
             let week = shifts.week ?? []
-            let hero = StaffTodayPlan.hero(week: week, now: now)
+            // On the restaurant's clock: its shifts are its wall-clock times
+            // (BUGSLIFE-21).
+            let hero = StaffTodayPlan.hero(week: week, now: now, calendar: shifts.calendar)
             heroCard(hero, shifts: shifts)
                 .staffRise(0, clock)
             strips
@@ -247,8 +249,9 @@ struct StaffTodayView: View {
         if let hero {
             let progress = tasks.progress
             StaffHeroCard(hero: hero,
-                          primary: StaffTodayPlan.heroPrimary(hero, now: now, hasTasks: progress != nil),
-                          offersLate: StaffTodayPlan.offersRunningLate(hero, now: now),
+                          primary: StaffTodayPlan.heroPrimary(hero, now: now, hasTasks: progress != nil,
+                                                              calendar: shifts.calendar),
+                          offersLate: StaffTodayPlan.offersRunningLate(hero, now: now, calendar: shifts.calendar),
                           tasks: progress,
                           lateReport: { leg in store.lateReport(date: hero.day.date, shiftStart: leg.shiftStart) },
                           onLate: { lateLeg = LateTarget(date: hero.day.date, leg: hero.nextLeg) },

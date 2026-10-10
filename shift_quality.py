@@ -800,11 +800,12 @@ def shift_role_requirements(typical: dict = None, floors: dict = None, minimums:
 
 
 def _capped(ctx: ShiftContext, required: dict) -> tuple:
-    """(required, trimmed) under the section cap (staffing_curve.cap_requirement)."""
+    """(required, trimmed) under the section cap (staffing_curve.cap_requirement)
+    — for a half hour's need only: people on at once, the cap's own unit."""
     if not ctx.section_cap:
         return dict(required), {}
     from staffing_curve import cap_requirement
-    return cap_requirement(required, ctx.section_cap, ctx.cap_roles)
+    return cap_requirement(required, ctx.section_cap, ctx.cap_roles, getattr(ctx, "role_families", None) or None)
 
 
 def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
@@ -821,10 +822,13 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     if not reqs:
         return None
     required = {r: n for r, (n, _src) in reqs.items()}
-    # Never more of the section-counted roles than there are sections: the
-    # generator and the backstop hold the draft to the cap, so a requirement
-    # over it marked every such shift short however it was built.
-    required, over_cap = _capped(ctx, required)
+    # Different people on the floor for the daypart — NOT cut to the section
+    # cap, which counts people on at once: six staggered servers fit five
+    # sections, and holding the requirement to five scored five as full
+    # coverage and never asked for the sixth (schedule audit 10/10/26
+    # LOGIC-7). The cap holds where it is in its own unit — the half-hour
+    # needs (dim_coverage_curve) and the sweep's over_section_cap.
+    over_cap = {}
     sources = sorted({src for _n, src in reqs.values()})
     source = sources[0] if len(sources) == 1 else ", ".join(sources)
 
@@ -2540,6 +2544,127 @@ def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes
     out["short_minutes"] = out["short_slots"] * SLOT_MINUTES
     out["held"] = not out["short_slots"]
     return out
+
+
+# ── the one headcount unit: people on at once ─────────────────────────────
+# Every requirement, floor, usual crew and cap is "how many people are on at
+# once" at a half hour (schedule audit 10/10/26 LOGIC-2, BUGSGEN-1/2): a
+# floor is held at every half hour of the core window (floor_shortfall), a
+# section cap is a count on at once. "How many different people worked some
+# part of dinner" is a second number — six staggered servers who are never
+# more than four on at once — and saving it as a floor made the restaurant's
+# own usual night break its own minimum. concurrent_on is the one count the
+# Crew stage, the staffing baseline and the setup's suggested floors read.
+
+def daypart_span(daypart: str, open_minutes=None, close_minutes=None):
+    """(lo, hi) minutes of a daypart's half of the business day: open (5am
+    when unknown) to the 3pm changeover for lunch, the changeover to close
+    (midnight when unknown; a small-hours close is past 24h) for dinner.
+    None for any other daypart."""
+    # The restaurant's boundary and the close read against the open
+    # (schedule_time — ARCH-12, BUGSGEN-22).
+    split = _stime.daypart_split()
+    if daypart == "morning":
+        lo = int(open_minutes) if open_minutes is not None and int(open_minutes) < split else 5 * 60
+        return (lo, split) if split - lo >= SLOT_MINUTES else None
+    if daypart == "night":
+        hi = 24 * 60
+        if close_minutes is not None:
+            c = _stime.close_on_timeline(int(close_minutes),
+                                         int(open_minutes) if open_minutes is not None else None)
+            if c > split:
+                hi = c
+        return (split, hi)
+    return None
+
+
+def _counted_key(role, families=None, by_family=True) -> str:
+    if by_family:
+        return role_family(role, families)
+    return " ".join(str(role or "").split()).casefold()
+
+
+def concurrent_on(rows: list, daypart: str, role=None, open_minutes=None, close_minutes=None,
+                  families: dict = None, by_family: bool = True, skip=None) -> dict:
+    """People on at once across one date's `rows` for one daypart:
+    {"held": the fewest on at any half hour of the floor window (the count a
+    staffing floor is tested against — floor_shortfall), None when the
+    restaurant serves none of the core window; "peak": the most on at once
+    over the daypart's half of the day (daypart_span); "slots": {minute:
+    people on} at each half hour of it}.
+
+    `role` keeps the count to its AM/PM job codes as one role (role_family,
+    by `families`) or, with by_family False, to that job code alone; None
+    counts every row given. A person on two overlapping rows is one; a row
+    `skip(row)` says does not stand (time off, a double booking) is nobody."""
+    want = _counted_key(role, families, by_family) if role is not None else None
+    spans = []
+    for r in rows or []:
+        person = " ".join(str(r.get("employee") or "").split()).casefold()
+        if not person or (skip is not None and skip(r)):
+            continue
+        if want is not None and _counted_key(r.get("role"), families, by_family) != want:
+            continue
+        sp = _row_span(r)
+        if sp:
+            spans.append((person, sp[0], sp[1]))
+    return _concurrency(spans, daypart, open_minutes, close_minutes)
+
+
+def _concurrency(spans, daypart, open_minutes=None, close_minutes=None) -> dict:
+    """concurrent_on's figures for spans [(person, start, end)] already kept
+    to one role."""
+    out = {"held": None, "peak": 0, "slots": {}}
+    span = daypart_span(daypart, open_minutes, close_minutes)
+    if not span:
+        return out
+    lo, hi = span
+    for t in range(lo + (-lo) % SLOT_MINUTES, hi, SLOT_MINUTES):
+        out["slots"][t] = len({p for p, s, e in spans if s <= t < e})
+    out["peak"] = max(out["slots"].values()) if out["slots"] else 0
+    fslots = floor_slots(daypart, open_minutes, close_minutes)
+    if fslots:
+        out["held"] = min(len({p for p, s, e in spans if s <= t < e}) for t in fslots)
+    return out
+
+
+def concurrent_groups(rows: list, daypart: str, open_minutes=None, close_minutes=None,
+                      families: dict = None, skip=None) -> dict:
+    """concurrent_on for every role in one date's `rows` at once:
+    {"role": {job code: figures}, "family": {role family: figures}} — the
+    job code as the rows spell it (its first spelling). Training codes are
+    nobody's crew and are left out."""
+    by_code, by_fam, spelled = {}, {}, {}
+    for r in rows or []:
+        person = " ".join(str(r.get("employee") or "").split()).casefold()
+        role = " ".join(str(r.get("role") or "").split())
+        if not person or not role or is_training_role(role) or (skip is not None and skip(r)):
+            continue
+        sp = _row_span(r)
+        if not sp:
+            continue
+        key = role.casefold()
+        spelled.setdefault(key, role)
+        by_code.setdefault(key, []).append((person, sp[0], sp[1]))
+        by_fam.setdefault(role_family(role, families), []).append((person, sp[0], sp[1]))
+    return {"role": {spelled[k]: _concurrency(v, daypart, open_minutes, close_minutes) for k, v in by_code.items()},
+            "family": {f: _concurrency(v, daypart, open_minutes, close_minutes) for f, v in by_fam.items()}}
+
+
+def present_people(rows: list, daypart: str, role, families: dict = None, by_family: bool = False,
+                   skip=None) -> int:
+    """How many different people of `role` are on the floor for `daypart`
+    (present_dayparts — the requirement's own count, labor.historical_
+    patterns'): the second number beside concurrent_on's, never mixed with it."""
+    want = _counted_key(role, families, by_family)
+    names = set()
+    for r in rows or []:
+        person = " ".join(str(r.get("employee") or "").split()).casefold()
+        if not person or (skip is not None and skip(r)) or _counted_key(r.get("role"), families, by_family) != want:
+            continue
+        if daypart in present_dayparts(r):
+            names.add(person)
+    return len(names)
 
 
 def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
@@ -4707,8 +4832,9 @@ def strength_crews(profiles: list = None, typical_headcount: dict = None, role_f
     """{(family, target): (crew, source)} — the full crew each strength
     target was set for: the most of the target's role that any weekday and
     daypart the target governs needs (each resolved to its profile, the
-    requirement read as coverage reads it — shift_role_requirements under
-    the section cap — and a role's AM/PM job codes added up). A target
+    requirement read as coverage reads it — shift_role_requirements, in
+    different people, never cut to the section cap (LOGIC-7) — and a role's
+    AM/PM job codes added up). A target
     written for Saturday's two bartenders is judged as 4 a person, so a
     lunch that needs one bartender asks for a 4, not for 8 (SQ-4). A target
     the profile set apart keeps its own crew. Pure; the scorer and, through
@@ -4726,10 +4852,11 @@ def strength_crews(profiles: list = None, typical_headcount: dict = None, role_f
                                            profile.critical_positions)
             if not reqs:
                 continue
+            # The crew is different people across the daypart, as coverage
+            # reads it — the section cap (people on at once) is not this
+            # unit's limit (LOGIC-7); `section_cap` / `cap_roles` are kept
+            # for the callers and read nowhere here.
             need = {r: n for r, (n, _s) in reqs.items()}
-            if section_cap:
-                from staffing_curve import cap_requirement
-                need, _trimmed = cap_requirement(need, section_cap, cap_roles)
             by_family = {}
             for r, n in need.items():
                 entry = by_family.setdefault(role_family(r, families), [0, set()])
@@ -6286,7 +6413,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
                     after = _rules.breach_profile(trial, c, viols=viols)
                     if after["by_id"].get(target, 0.0) >= before["by_id"].get(target, 0.0) - 1e-9:
                         continue            # the breach this fix is for is still there
-                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_COVERAGE,
+                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_POLICY,
                                           hard_only=not under_line):
                         continue            # a fix that trades one breach for another is not a fix
                     fl = {((x.get("employee") or "").strip().lower(), x.get("date") or "", x.get("shift_start") or "")

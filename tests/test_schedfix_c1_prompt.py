@@ -223,7 +223,7 @@ def test_pr3_the_roster_max_is_the_codes_max_and_no_literal_40_is_left(monkeypat
 
 def test_pr4_minimum_hours_are_ranked_counted_and_carried_across_the_seam():
     static = sp.static_block(True, NOTE_WORDS)
-    assert ("Fill them from the people still under their minimum hours first (MIN in the ROSTER; a full-timer's "
+    assert ("Fill shifts from the people still under their minimum hours first (MIN in the ROSTER; a full-timer's "
             "is the full-time line)") in static
     assert "[SOFT] minimum, [HARD] maximum" in sp.ROSTER_HEAD
     prior = [{"date": WEEK[4], "day": "Friday", "employee": "S0", "role": "Server", "shift_start": "5:00pm",

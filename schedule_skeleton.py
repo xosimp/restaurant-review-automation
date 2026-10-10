@@ -362,12 +362,52 @@ def _stay_after_close(c) -> int:
     return max(0, min(max(vals), 4 * 60))
 
 
+def _must_stay(c) -> int:
+    """The longest any role MUST stay past close (close_mins): the latest
+    the last person is certainly on."""
+    vals = [0]
+    for v in (getattr(c, "close_mins", None) or {}).values():
+        try:
+            vals.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return max(0, min(max(vals), 4 * 60))
+
+
+def _rule_spans(c, wd) -> list:
+    """When the owner's hours & shift rules put somebody on this weekday —
+    a role's earliest start or latest end (role_windows), a role's start or
+    end time (role_times) — as short spans around those times: an event
+    day's 7am delivery the owner wrote down is part of the day (ARCH-13)."""
+    out = []
+    for by_day in (getattr(c, "role_windows", None) or {}).values():
+        w = (by_day or {}).get(wd) or {}
+        if w.get("earliest") is not None:
+            out.append((int(w["earliest"]), int(w["earliest"]) + 60))
+        if w.get("latest") is not None:
+            out.append((int(w["latest"]) - 60, int(w["latest"])))
+    for (role, day, _part), t in (getattr(c, "role_times", None) or {}).items():
+        if day != wd or not isinstance(t, dict):
+            continue
+        if t.get("start") is not None:
+            out.append((int(t["start"]), int(t["start"]) + 60))
+        if t.get("end") is not None:
+            out.append((int(t["end"]) - 60, int(t["end"])))
+    return out
+
+
 def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
-    """(start, end, source) minutes of the day a manager has to be on: from
-    the earlier of the opening time and the usual first start on file (prep
-    arrives before the doors open) to the close plus the longest stay after
-    it — or, with no close on file, the usual last end. None when neither
-    the hours nor the record say when this day runs."""
+    """(start, end, source) minutes of the day a manager has to be on — the
+    check's own requirement (schedule_rules.manager_need: the hours open on
+    file and when people are on), over the spans this week is expected to
+    have: the usual first start to the usual last end on file (prep
+    arrives before the doors open), the owner's hours & shift rules for the
+    day, and the close to when the last person usually leaves — at least
+    the longest stay a role must make, at most the longest any role may run
+    past close (schedule audit 10/10/26 ARCH-13: planned to the close plus
+    the longest allowance whatever the night really needs, checked against
+    the hours and the rows). With no close on file, the usual last end.
+    None when neither the hours nor the record say when this day runs."""
     wd = _weekday(date_iso)
     o = _clock((open_times or {}).get(wd))
     # A close at or before the open, or in the small hours, is the next
@@ -375,16 +415,27 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
     cl = _stime.close_on_timeline(_clock((close_times or {}).get(wd)), o)
     hist = (spans or {}).get(wd) or {}
     hs, he = hist.get("start"), hist.get("end")
-    starts = [x for x in (o, hs) if x is not None]
-    if not starts:
+    if o is None and hs is None:
         return None
-    start = min(starts)
+    expected = _rule_spans(c, wd)
+    must, cap = _must_stay(c), _stay_after_close(c)
+    if cl is not None and he is not None:
+        he = min(he, cl + cap)              # nobody's row may run past the longest allowance
+    if hs is not None and he is not None and he > hs:
+        expected.append((hs, he))
     if cl is not None:
-        end = cl + _stay_after_close(c)
-    elif he is not None:
-        end = he
-    else:
+        last = cl + cap
+        if he is not None:
+            # When the last person usually leaves, kept between what a role
+            # must stay and what any role may run.
+            last = min(cl + cap, max(he, cl + must))
+        expected.append((min(x for x in (o, hs, cl) if x is not None), last))
+    elif he is None:
         return None
+    need = _rules.manager_need(c, date_iso, expected, hours=(o, cl))
+    if not need:
+        return None
+    start, end = min(s for s, _e in need), max(e for _s, e in need)
     start, end = _down(start), _up(end)
     if end - start < 60 or end - start > 24 * 60:
         return None
@@ -399,13 +450,23 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
 
 # ── the plan ───────────────────────────────────────────────────────────────
 
-def _week_cap(c, name, line=None) -> float:
+def _week_cap(c, name, line=None, mode=None) -> float:
     """The most a manager is planned in a payroll week: a salaried person's
     own limit, else the restaurant's salaried cap, else SALARIED_WEEK_CAP —
-    never the 84h ceiling (E-17); an hourly person's overtime line."""
+    never the 84h ceiling (E-17); an hourly person's overtime line. In the
+    plan's later rounds (schedule_rules.FILL_ROUNDS — only for a stretch no
+    manager can cover inside them, sched audit 10/10/26 LOGIC-1) an hourly
+    manager may go past the line to their hours ceiling, then past the
+    restaurant's ceiling to their own maximum (the manager on the floor
+    outranks the restaurant's limits; a person's own maximum stays theirs)."""
     if c.is_salaried(name):
         return float(c.salaried_limit(name))
-    return float(_rules.overtime_line(c, name, line))
+    mode = mode or _rules.FILL_ROUNDS[0]
+    if mode[0]:
+        return float(_rules.overtime_line(c, name, line))
+    if mode[1] or c.own_max(name):
+        return float(c.max_hours(name))
+    return float(_rules.SALARIED_HOURS_MAX)
 
 
 def _standing_for(c, key, date_iso):
@@ -521,12 +582,18 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     # punch) does not stand against it; an unconfirmed note about the day
     # still does (fillable, with the dormant guess set aside).
     owner_fill = replace(c, dormant={}) if getattr(c, "dormant", None) else c
+    # The round the plan is in (schedule_rules.FILL_ROUNDS): inside the
+    # overtime line and the restaurant's limits first; a stretch nobody can
+    # cover that way is tried again past the line, then past the restaurant's
+    # own limits — never the law or a person's own maximum (LOGIC-1).
+    cur = {"mode": _rules.FILL_ROUNDS[0]}
 
     def legal(row, without=None, standing=False):
         """(ok, why): the one legality question (can_add), who code may
         choose (fillable), and a salaried manager's weekly cap."""
         others = [r for r in prior + plan if r is not without]
-        ok, why = c.can_add(row, others, line=line, overtime=True)
+        mode = cur["mode"]
+        ok, why = c.can_add(row, others, line=line, overtime=mode[0], policy=mode[1])
         if not ok:
             return False, why
         ok, why = (owner_fill if standing else c).fillable(row["employee"], row["date"])
@@ -534,7 +601,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
             return False, why
         key = c.key(row["employee"])
         bucket = c.bucket(row["date"])
-        cap = _week_cap(c, row["employee"], line)
+        cap = _week_cap(c, row["employee"], line, cur["mode"])
         have = hours_in(key, bucket) - (_rules.row_hours(without) if without is not None
                                         and c.bucket(without["date"]) == bucket else 0.0)
         if have + _rules.row_hours(row) > cap + 0.05:
@@ -659,7 +726,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
             else:
                 out.append((max(s, CORE_WINDOWS["morning"][1] - PRESENCE_MIN_OVERLAP + 15), e))
         opens = s <= S and e < E
-        left = int((_week_cap(c, name_of(key), line) - hours_in(key, c.bucket(d))) * 60)
+        left = int((_week_cap(c, name_of(key), line, cur["mode"]) - hours_in(key, c.bucket(d))) * 60)
         if 0 < left < e - s:
             # Short of a whole leg: the end of the day before its start (a
             # manager at close matters most), unless the leg opens the day.
@@ -708,7 +775,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                     if full:
                         tried.setdefault(name_of(key), why)
                     continue
-                cap = _week_cap(c, name_of(key), line) or 1.0
+                cap = _week_cap(c, name_of(key), line, cur["mode"]) or 1.0
                 load = (hours_in(key, c.bucket(d)) + (e - s) / 60.0) / cap
                 # A day they usually work first; then the fair split — the
                 # share of their own cap the week would have used, in tenths
@@ -778,22 +845,40 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         # 4-10pm) is the manager beside it staying on, not somebody else's
         # four hours; a longer one is a new opener or closer.
         short = gap[1] - gap[0] < min_len
-        ext = best_extend(d, gap, tried, f" — stays on {_fmt(gap[0])}–{_fmt(gap[1])}, less than a shift for "
-                                         f"anybody else") if short else None
-        if ext:
-            _rank, old, new = ext
-            plan[plan.index(old)] = new
-            return True
-        for leg in reversed(legs(gap, S, E, cov)):
-            row = best_new(d, leg, gap, S, E, tried)
-            if row:
-                plan.append(row)
-                return True
-        ext = None if short else best_extend(d, gap, tried)
-        if ext:
-            _rank, old, new = ext
-            plan[plan.index(old)] = new
-            return True
+        # Inside the overtime line and the restaurant's limits first; past
+        # the line only when no manager can cover the stretch inside it, and
+        # past the restaurant's own limits only when nobody can inside them
+        # (the teammate test, FILL_ROUNDS — LOGIC-1). An hourly manager is
+        # planned past 40h rather than the floor left with nobody running it.
+        for mode in _rules.FILL_ROUNDS:
+            cur["mode"] = mode
+            said = ("" if mode == _rules.FILL_ROUNDS[0] else
+                    " — overtime: no manager could cover it inside their hours" if mode == _rules.FILL_ROUNDS[1]
+                    else " — past your scheduling limits: no manager could cover it inside them")
+            try:
+                ext = best_extend(d, gap, tried, f" — stays on {_fmt(gap[0])}–{_fmt(gap[1])}, less than a shift "
+                                                 f"for anybody else" + said) if short else None
+                if ext:
+                    _rank, old, new = ext
+                    plan[plan.index(old)] = new
+                    return True
+                for leg in reversed(legs(gap, S, E, cov)):
+                    row = best_new(d, leg, gap, S, E, tried)
+                    if row:
+                        if said:
+                            row["notes"] += said
+                            row["_pin_reason"] += said
+                            row["_plan_overtime"] = mode
+                        plan.append(row)
+                        return True
+                ext = None if short else best_extend(d, gap, tried, " — runs on: nobody else can manage that "
+                                                                    "stretch" + said)
+                if ext:
+                    _rank, old, new = ext
+                    plan[plan.index(old)] = new
+                    return True
+            finally:
+                cur["mode"] = _rules.FILL_ROUNDS[0]
         if not pool(d):
             why = "nobody on the roster is a manager"
         elif tried:

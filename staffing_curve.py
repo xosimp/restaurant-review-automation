@@ -16,12 +16,17 @@ them:
                      fully covered.
 
   cap_requirement  — the section count is how many front-of-house people
-                     can work at once. A requirement that asks for more
-                     than that cannot be met by any legal draft: the
-                     backstop trims it back and the score then marks every
-                     such shift short. The requirement is held under the
-                     cap, and a history that runs over it is told to the
-                     owner (the cap is probably wrong) instead.
+                     can work AT ONCE. A half-hour need that asks for more
+                     than that cannot be met by any legal draft, so it is
+                     held under the cap; a daypart's count of different
+                     people is a different unit and is never capped
+                     (staggered starts fit more people than sections —
+                     schedule audit 10/10/26 LOGIC-7). A history that runs
+                     more on at once than the cap is told to the owner
+                     (cap_conflicts: the cap is probably wrong) instead.
+                     Roles count by family (capped_role), as the sweep's
+                     over_section_cap counts them; role_family is read
+                     from shift_quality inside the function.
 
 The intraday capture (pos_intraday) is hourly, so the half-hour curve is
 INTERPOLATED from it: each hour's sales are read as a rate at the middle of
@@ -115,20 +120,37 @@ def half_hour_needs(curve: dict, typical: dict, lo: int, hi: int) -> dict:
     return out
 
 
-def cap_requirement(required: dict, cap, cap_roles) -> tuple:
-    """(required, trimmed) with the roles the section cap counts held to at
-    most `cap` people between them. The largest of them gives way first,
-    one person at a time, never below one. `trimmed` is {role: people
-    removed}; {} when nothing was over. With no cap it is unchanged."""
+def capped_role(role, cap_roles, families=None) -> bool:
+    """Whether the section cap counts `role`: named in `cap_roles` (servers
+    when none are), or one of their job codes — "Server AM" and "Server PM"
+    are servers, as the sweep's over_section_cap counts them by family
+    (D-13). Matching the literal name left the cap off every requirement at
+    a restaurant whose codes carry the daypart."""
+    from shift_quality import role_family
+    names = {str(r).strip().lower() for r in (cap_roles or ()) if str(r).strip()} or {"server"}
+    low = str(role or "").strip().lower()
+    if low in names:
+        return True
+    fam = role_family(role, families)
+    return fam in {role_family(n, families) for n in names}
+
+
+def cap_requirement(required: dict, cap, cap_roles, families=None) -> tuple:
+    """(required, trimmed) with the roles the section cap counts
+    (capped_role) held to at most `cap` people between them. The largest of
+    them gives way first, one person at a time, never below one. `trimmed`
+    is {role: people removed}; {} when nothing was over. With no cap it is
+    unchanged. `required` must be people ON AT ONCE (a half hour's need) —
+    the cap's own unit; a daypart's count of different people is never
+    capped (schedule audit 10/10/26 LOGIC-7)."""
     try:
         cap = int(cap or 0)
     except (TypeError, ValueError):
         cap = 0
-    roles = {str(r).strip().lower() for r in (cap_roles or ()) if str(r).strip()} or {"server"}
     out = dict(required or {})
     if cap <= 0:
         return out, {}
-    counted = [r for r in out if r.strip().lower() in roles and int(out[r] or 0) > 0]
+    counted = [r for r in out if capped_role(r, cap_roles, families) and int(out[r] or 0) > 0]
     total = sum(int(out[r]) for r in counted)
     trimmed = {}
     while total > cap:
@@ -142,26 +164,39 @@ def cap_requirement(required: dict, cap, cap_roles) -> tuple:
     return out, trimmed
 
 
-def cap_conflicts(typical_headcount: dict, cap, cap_roles) -> list:
-    """Where the restaurant's own history runs more of the capped roles on
-    a daypart than the section count allows: [{day, daypart, typical, cap}],
-    busiest first. The requirement is held to the cap either way; this is
-    what the owner is told, because a history that runs over it every week
-    says the cap is wrong, not the history."""
+def cap_conflicts(concurrent: dict, cap, cap_roles, families=None) -> list:
+    """Where the restaurant's own history runs more of the capped roles ON
+    AT ONCE than the section count allows: [{day, daypart, typical, cap}],
+    busiest first. `concurrent` is the staffing baseline's people-on-at-once
+    figure ({(weekday, daypart): {role: {"peak", "slots": {minute: n}}}},
+    labor.concurrent_patterns): the capped roles' usual counts added at each
+    half hour, the most of them at once. It used to add up the different
+    people who worked the daypart — six staggered servers "ran over" five
+    sections they never filled at once, and the owner was told the cap was
+    probably wrong (schedule audit 10/10/26 LOGIC-7). The half-hour needs
+    are held to the cap either way; this is what the owner is told, because
+    a history that runs over it every week says the cap is wrong."""
     try:
         cap = int(cap or 0)
     except (TypeError, ValueError):
         cap = 0
     if cap <= 0:
         return []
-    roles = {str(r).strip().lower() for r in (cap_roles or ()) if str(r).strip()} or {"server"}
     out = []
-    for key, crew in (typical_headcount or {}).items():
+    for key, crew in (concurrent or {}).items():
         try:
             day, part = key
         except (TypeError, ValueError):
             continue
-        n = sum(int(v or 0) for r, v in (crew or {}).items() if str(r).strip().lower() in roles)
+        at = {}
+        peaks = 0
+        for r, figs in (crew or {}).items():
+            if not isinstance(figs, dict) or not capped_role(r, cap_roles, families):
+                continue
+            for m, v in (figs.get("slots") or {}).items():
+                at[m] = at.get(m, 0) + int(v or 0)
+            peaks = max(peaks, int(figs.get("peak") or 0))
+        n = max(at.values()) if at else peaks
         if n > cap:
             out.append({"day": day, "daypart": part, "typical": n, "cap": cap})
     order = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -176,9 +211,9 @@ def cap_conflict_line(conflicts: list, role_label: str = "servers") -> str:
     top = conflicts[0]
     part = {"morning": "lunch", "night": "dinner"}.get(top["daypart"], top["daypart"])
     more = len(conflicts) - 1
-    return (f"Your history runs {top['typical']} {role_label} on {top['day']} {part}, but the section count "
-            f"is {top['cap']}" + (f" (and {more} other shift{'s' if more != 1 else ''} run over it too)" if more else "")
-            + f" — the requirement is held to {top['cap']}. If you really run {top['typical']} at once, "
+    return (f"Your history runs {top['typical']} {role_label} on at once on {top['day']} {part}, but the section "
+            f"count is {top['cap']}" + (f" (and {more} other shift{'s' if more != 1 else ''} run over it too)" if more else "")
+            + f" — no more than {top['cap']} are asked for at once. If you really run {top['typical']} at once, "
               "raise the section count; otherwise the history is the thing to change.")
 
 

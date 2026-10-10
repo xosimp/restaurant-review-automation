@@ -369,8 +369,13 @@ def test_a_week_over_forty_hours_is_flagged(monkeypatch):
             for d, n in (("17", "Monday"), ("18", "Tuesday"), ("19", "Wednesday"),
                          ("20", "Thursday"))]
     result = _run(monkeypatch, HEADER + "\n" + "\n".join(rows), roster=["Jamie L."])
-    assert all(r.get("needs_review") for r in result["preview_rows"])
-    assert "over 40h" in result["preview_rows"][0]["review_reason"]
+    # Past the restaurant's 40h ceiling with nobody else on the roster to
+    # take a shift: overtime, said and priced — a policy limit, not a row
+    # that cannot stand (sched audit 10/10/26 LOGIC-1). A maximum of the
+    # person's own is still hard (test_schedule_breach_identity).
+    over = [v for v in result["rule_violations"] if v["kind"] == "over_hours_ceiling"]
+    assert over and not over[0]["hard"] and "4h of overtime" in over[0]["detail"]
+    assert not any(r.get("needs_review") for r in result["preview_rows"])
 
 
 def test_a_flagged_row_carries_its_warning_into_the_published_csv(monkeypatch):
