@@ -107,14 +107,39 @@ def test_clock_in_times_become_quarter_hours():
     assert ded._usual(hist, "bartender", "Monday", "night") == ("Bartender PM", 16 * 60, 23 * 60 + 15)
 
 
-def test_the_position_is_one_more_on_top_of_the_usual_crew():
+def test_a_position_the_restaurant_runs_is_one_of_the_usual_crew_never_one_more():
+    # Simple EJ's has been running bar tables: its punches already count
+    # that bartender in the usual crew, so the requirement is the usual
+    # crew, never a +1 on top (sched audit 10/10/26 LOGIC-16).
     import schedule_requirements as req
     p = ded.plan(_c(), WEEK, ded.rules_of(_R()), history=_history(), roster_roles=ROSTER)
+    adj = ded.requirement_adjustments(p)
+    assert len(adj) == 9 and all(a["delta"] == 0 and a["at_least"] == 1 and a["firm"] for a in adj)
+    typical = {("Wednesday", "night"): {"Bartender PM": 2}}
+    rows = req.shift_requirements(["2026-10-14"], typical_headcount=typical, adjustments=adj)
+    night = next(r for r in rows if r["daypart"] == "night")
+    bar = next(e for e in night["roles"] if e["role"] == "Bartender PM")
+    assert bar["required"] == 2, "the usual 2 already include the bar-tables bartender"
+    assert "one of its role's usual crew" in ded.prompt_block(p)
+
+
+def test_a_position_newer_than_the_history_is_one_more_on_top():
+    # Its "since" says when the restaurant started running it: history
+    # before then never had it, so it is one more (LOGIC-16).
+    import schedule_requirements as req
+
+    class _New:
+        dedicated_shifts_json = json.dumps([dict(RULE[0], since="2026-10-01")])
+    p = ded.plan(_c(), WEEK, ded.rules_of(_New()), history=_history(), roster_roles=ROSTER)
     adj = ded.requirement_adjustments(p)
     assert len(adj) == 9 and all(a["delta"] == 1 and a["firm"] for a in adj)
     typical = {("Wednesday", "night"): {"Bartender PM": 2}}
     rows = req.shift_requirements(["2026-10-14"], typical_headcount=typical, adjustments=adj)
     night = next(r for r in rows if r["daypart"] == "night")
-    bar = next(e for e in night["roles"] if e["role"] == "Bartender PM")
-    assert bar["required"] == 3, "the usual 2 plus the bar-tables bartender"
-    assert "one more" in ded.prompt_block(p) and "MORE of its role on top of the usual crew" in ded.prompt_block(p)
+    assert next(e for e in night["roles"] if e["role"] == "Bartender PM")["required"] == 3
+    assert "MORE of its role on top of the usual crew" in ded.prompt_block(p)
+    # Started long enough ago, it is in the usual crew again.
+
+    class _Old:
+        dedicated_shifts_json = json.dumps([dict(RULE[0], since="2026-08-01")])
+    assert ded.in_usual(ded.rules_of(_Old())[0], WEEK[0])

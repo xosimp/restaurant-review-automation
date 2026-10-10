@@ -475,7 +475,11 @@ def test_the_requirements_table_follows_the_owners_rules_not_the_punches(ejs, db
         assert re.search(r"Host \d \(floor 1\)", shift(day, "morning")), day   # a host whenever it is open
         assert "Dishwasher" in shift(day, "morning"), day              # one from 10:00am
     assert re.search(r"Host \d \(floor \d\)", shift("Sun", "night"))
-    assert "held to your maximum of 5 on at once" in shift("Sat", "night")
+    # The owner's "Servers: maximum 5 at once" is people on at once: the
+    # Saturday crew (different people) is not cut to it; the row says the
+    # ceiling and the half-hour needs hold it (schedule audit 10/10/26 LOGIC-7's
+    # unit rule — this used to assert the crew was cut to 5).
+    assert "your maximum of 5 on at once: stagger them" in shift("Sat", "night")
     # The table no longer claims to hold what the code did not read.
     assert "is not in these numbers: where it says otherwise, it wins over this table" in request
 

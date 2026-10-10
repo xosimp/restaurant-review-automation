@@ -40,7 +40,9 @@ def _c(**kw):
 def test_over_hours_fix_moves_only_the_excess_not_the_whole_week():
     rows = [_row(d, "Ana", "9:00am", "5:00pm") for d in WEEK[:6]]           # 48h
     rows += [_row(d, "Bob", "9:00am", "5:00pm") for d in WEEK[:2]]           # 16h, same role
-    c = _c(active={"ana", "bob"})
+    # Her own 40h maximum (hard); the restaurant's ceiling alone is the soft
+    # over_hours_ceiling the overtime rebalance moves (LOGIC-1).
+    c = _c(active={"ana", "bob"}, hours_limits={"ana": (None, 40)})
     viols = sr.violations(rows, c)
     assert sum(1 for v in viols if v["kind"] == "over_max_hours") == 6
     out = sq.apply_fixes(rows, viols, roster=["Ana", "Bob"], rules=schedule_engine._rules_for_swaps(c))

@@ -291,12 +291,26 @@ struct StaffShiftsResponse: Codable {
     var weekStart: String? = nil
     var weekOf: String? = nil
     var error: String? = nil
+    /// The restaurant's IANA zone (`restaurants.timezone`). A shift's times
+    /// are the dining room's wall clock on its business date, so "On now"
+    /// and Running late are worked out on this clock (schedule audit
+    /// 10/10/26 BUGSLIFE-21). Nil from an older server.
+    var timezone: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case ok, published, today, week, upcoming, error
+        case ok, published, today, week, upcoming, error, timezone
         case weekHours = "week_hours"
         case weekStart = "week_start"
         case weekOf = "week_of"
+    }
+
+    /// The calendar the week's shifts are read on: the restaurant's zone;
+    /// the phone's own only when an older server sent none, or a zone this
+    /// device doesn't know.
+    var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = timezone.flatMap(TimeZone.init(identifier:)) ?? .current
+        return c
     }
 }
 

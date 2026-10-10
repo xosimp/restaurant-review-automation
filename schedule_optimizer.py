@@ -86,13 +86,16 @@ BUDGET_TOLERANCE = 1.02
 # How far a shift may be stretched in one move.
 MAX_EXTEND_MINUTES = 150
 STEP = 30
-# A move that takes hours out of a weekday where cutting staffing was taken
-# and measured WORSE here (inputs["learned_worse"], rec_learning.
-# worsened_levers — memory audit 9/29/26, "what_worked") pays this much of
-# its gain per worse result, capped: a small score gain no longer repeats a
-# cut that went badly, a large one (a breach fixed) still goes through and
-# says what it overrode.
-LEARNED_WORSE_STEP = 0.5
+# A move that takes hours out of a slot where cutting staffing was taken and
+# measured WORSE here (inputs["learned_worse"], rec_learning.
+# worsened_levers — memory audit 9/29/26, "what_worked") pays up to this
+# much of its gain, graded by the evidence's strength there (rec_learning.
+# learned_cut_penalty: the Wilson lower bound of the worsened share above
+# the restaurant's own base rate, scoped to the daypart and role the cuts
+# named) — the trim's one meaning of the same memory (sched audit 10/10/26
+# LOGIC-15): a small score gain no longer repeats a cut that went badly, a
+# large one (a breach fixed) still goes through and says what it overrode.
+LEARNED_WORSE_STEP = 0.5          # kept for readers of the old per-result rate
 LEARNED_WORSE_MAX = 1.5
 # What labor dollars are worth against the score (schedule audit 10/3/26
 # P-32): week points per 1% of the week's labor dollars a move adds over the
@@ -1608,36 +1611,51 @@ def _what_if_moves(state: _State, quality: dict, limit: int = WHAT_IF_CANDIDATES
 
 
 def learned_worse_days(inputs) -> dict:
-    """{weekday (lower): {worsened, measured, label}} from
-    inputs["learned_worse"], keeping the days with a worse result."""
+    """{weekday (lower): lever} from inputs["learned_worse"] (rec_learning.
+    worsened_levers), keeping the days with a worse result."""
     return {str(k).strip().lower(): v for k, v in ((inputs or {}).get("learned_worse") or {}).items()
             if isinstance(v, dict) and int(v.get("worsened") or 0) > 0}
 
 
 def learned_penalty(worse, before_rows, after_rows):
-    """(penalty, note) for a move that takes hours out of a weekday whose
-    cuts measured worse here (learned_worse_days), else (0.0, None). Pure."""
+    """(penalty, note) for a move that takes hours out of a slot whose cuts
+    measured worse here, graded by the evidence there (rec_learning.
+    learned_cut_penalty — the trim's own meaning, LOGIC-15): LEARNED_WORSE_MAX
+    times the strongest slot it cuts into, by weekday, daypart and role;
+    (0.0, None) when it cuts nothing the evidence weighs. Pure."""
     if not worse:
         return 0.0, None
-    hb, ha = {}, {}
-    for r in before_rows or []:
-        hb[r.get("date")] = hb.get(r.get("date"), 0.0) + sq._row_hours(r)
-    for r in after_rows or []:
-        ha[r.get("date")] = ha.get(r.get("date"), 0.0) + sq._row_hours(r)
-    hit = set()
-    for d, h in hb.items():
-        if ha.get(d, 0.0) < h - 0.01:
+    import rec_learning as _rl
+
+    def _hours_by(rows):
+        out = {}
+        for r in rows or []:
+            d = r.get("date")
             try:
-                hit.add(_dt.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A").lower())
+                wd = _dt.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A").lower()
             except (TypeError, ValueError):
                 continue
-    hit &= set(worse)
-    if not hit:
+            fam = sq.role_family(r.get("role")) if r.get("role") else None
+            for part in (sq.present_dayparts(r) or [None]):
+                k = (wd, part, fam)
+                out[k] = out.get(k, 0.0) + sq._row_hours(r)
+        return out
+    hb, ha = _hours_by(before_rows), _hours_by(after_rows)
+    best, hit = 0.0, set()
+    for (wd, part, fam), h in hb.items():
+        if ha.get((wd, part, fam), 0.0) >= h - 0.01 or wd not in worse:
+            continue
+        s = _rl.learned_cut_penalty(worse, wd, part, fam)
+        if s > 0:
+            hit.add(wd)
+            best = max(best, s)
+    if best <= 0:
         return 0.0, None
+    pen = round(LEARNED_WORSE_MAX * best, 3)
     n = sum(int(worse[d].get("worsened") or 0) for d in hit)
-    pen = min(LEARNED_WORSE_MAX, LEARNED_WORSE_STEP * n)
     labels = ", ".join(sorted(str(worse[d].get("label") or d) for d in hit))
-    return pen, f"{labels} measured worse here {n} time{'s' if n != 1 else ''} (before and after, not proof)"
+    return pen, (f"{labels} measured worse here {n} time{'s' if n != 1 else ''} — weighed at "
+                 f"{round(best * 100):d}% strength (before and after, not proof)")
 
 
 def _pinned_rows(rows) -> list:

@@ -246,10 +246,13 @@ def test_the_last_of_a_role_must_stay_until_its_minutes_after_close():
     assert "Stays after close" in sr.prompt_block(c)
 
 
-def test_manager_on_duty_with_nobody_to_satisfy_it_says_so():
+def test_the_retired_manager_on_duty_switch_says_nothing():
+    # Retired 10/2/26 and its sweep removed (sched audit 10/10/26 LOGIC-22):
+    # the manager-every-minute rule is the one rule about who runs the floor.
     c = _c(compliance={**sr.DEFAULTS, "manager_on_duty": True})
     v = sr.violations([_row(WEEK[0], "Ana", "4:00pm", "10:00pm")], c)
-    assert [x["kind"] for x in v] == ["manager_rule_unusable"] and not v[0]["hard"]
+    assert "manager_rule_unusable" not in [x["kind"] for x in v]
+    assert sr.IncrementalSweep(c).violations([_row(WEEK[0], "Ana", "4:00pm", "10:00pm")]) == v
 
 
 def test_sibling_collisions_read_only_published_weeks():

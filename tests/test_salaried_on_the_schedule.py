@@ -36,14 +36,14 @@ def test_a_salaried_week_on_the_floor_is_never_overtime_or_over_a_ceiling():
     c = _c()
     rows = [_row(i, "Erik Baylis") for i in range(5)]            # 5 x 12h = 60h
     kinds = {v["kind"] for v in sr.violations(rows, c)}
-    assert not kinds & {"over_max_hours", "daily_ot"}
+    assert not kinds & {"over_max_hours", "over_hours_ceiling", "daily_ot"}
     # The owner may put them past the 55h code works them to (E-17): the
     # hard maximum is a week of long days, the code's own line is the cap.
     assert c.max_hours("Erik Baylis") == sr.SALARIED_HOURS_MAX
     assert sr.overtime_line(c, "Erik Baylis") == sr.SALARIED_HOURS_CAP == 55
     # the same week for an hourly person is still both
     hourly = [_row(i, "Ana B.") for i in range(5)]
-    assert {"over_max_hours", "daily_ot"} <= {v["kind"] for v in sr.violations(hourly, c)}
+    assert {"over_hours_ceiling", "daily_ot"} <= {v["kind"] for v in sr.violations(hourly, c)}
 
 
 def test_the_owners_own_limit_for_a_salaried_person_still_holds():

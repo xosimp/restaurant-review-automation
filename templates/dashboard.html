@@ -11238,7 +11238,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-chip.slow{color:var(--ink2);background:color-mix(in srgb,var(--ink3) 18%,transparent)}
 .ss-crew-chip.min{color:var(--green);background:color-mix(in srgb,var(--green) 14%,transparent)}
 .ss-crew-a{display:flex;flex-direction:column;gap:4px;margin-top:6px}
-.ss-crew-a .cbtn{width:100%;justify-content:center}
+.ss-crew-a .cbtn{width:100%;justify-content:center;white-space:normal;height:auto;min-height:30px;line-height:1.25;padding-top:5px;padding-bottom:5px}
 .ss-crew-done{font-size:11.5px;color:var(--ink2);margin-top:5px}
 .ss-crew-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink3);margin:0 0 14px}
 .ss-crew-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
@@ -12693,14 +12693,17 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </section>
 
     {# Crew (crew_matrix, owner 10/10/26): every role's usual crew per weekday
-       and shift beside the week on screen, and one answer where the draft
-       runs leaner - Keep usual (becomes that shift's minimum) or Leaner is
-       fine. Loads when it shows (ssRenderCrew). #}
+       and shift beside the week on screen, in people on at once (the unit a
+       minimum is held in, schedule audit 10/10/26), and one answer where the
+       draft runs leaner - Keep N every weekday (that shift's minimum, with a
+       review date), Add 1 this week (an edit to this draft only) or Leaner
+       is fine (the draft is built to it until its review). Loads when it
+       shows (ssRenderCrew). #}
     <section class="ss-stage" data-stage="crew" data-nav="labor/crew" aria-label="Crew">
       <div class="ss-crew">
         <div class="ss-kick">Crew</div>
         <h1>Your usual crew, shift by shift</h1>
-        <p class="ss-crew-lede">Each cell is the crew your clock-ins show you usually run, then this draft. Where the draft runs leaner, answer once: keep your usual, and it becomes that shift's minimum, or let Cavnar AI keep the saving.</p>
+        <p class="ss-crew-lede">Each cell is how many of the role are on at once through the heart of the shift (11am–2:30pm, 5:30–8:30pm): what your clock-ins show you usually run, then this draft. Where the draft runs leaner, answer once: keep your usual every week (it becomes that shift's minimum, reviewed in a season), add one for this week only, or keep the saving.</p>
         <div class="ss-crew-bar" id="ss-crew-bar" role="group" aria-label="Show"></div>
         <div id="ss-crew-body"><div class="dr-pulse" role="status" aria-label="Loading your crew"><i></i></div></div>
       </div>
@@ -27239,6 +27242,8 @@ function ssRenderCrew() {
   fetch('/api/labor/crew-matrix' + (hid ? '?history_id=' + encodeURIComponent(hid) : ''), {credentials: 'same-origin'})
     .then(apiJson).then(function (d) {
       if (!d || !d.ok) { body.innerHTML = '<div class="ss-crew-empty">' + _escHtml((d && d.error) || 'Your crew couldn’t be read just now.') + '</div>'; return; }
+      // An Add waiting to be saved belongs to the week it was made on.
+      if (!_ssCrew || _ssCrew.history_id !== d.history_id) _ssCrewAdded = {};
       _ssCrew = d; ssCrewDraw();
     }).catch(function () { body.innerHTML = '<div class="ss-crew-empty">Your crew couldn’t be read just now. Check your connection and open Crew again.</div>'; });
 }
@@ -27257,14 +27262,14 @@ function ssCrewDraw() {
   }
   var roles = (d.roles || []).filter(function (r) {
     if (_ssCrewShow !== 'diff' || !d.week_start) return true;
-    for (var i = 0; i < r.cells.length; i++) if (r.cells[i].status !== 'match') return true;
+    for (var i = 0; i < r.cells.length; i++) if (r.cells[i].status !== 'match' || r.cells[i].answer_state === 'review' || r.cells[i].peak_note) return true;
     return false;
   });
   var legend = '<div class="ss-crew-legend"><span><i style="background:var(--green)"></i>The draft matches your usual</span>'
     + '<span><i style="background:var(--amber)"></i>The draft runs leaner</span><span><i style="background:var(--ink3)"></i>The draft runs heavier</span>'
-    + '<span><i style="background:var(--red)"></i>Under a minimum you set</span></div>';
+    + '<span><i style="background:var(--red)"></i>Under a minimum you set</span><span>Every number is people on at once</span></div>';
   // No week built yet: the usual crew alone, nothing to compare or answer.
-  if (!d.week_start) legend = '<div class="ss-crew-legend"><span>Your usual crew per shift. Build a week and each shift shows the draft beside it.</span></div>';
+  if (!d.week_start) legend = '<div class="ss-crew-legend"><span>Your usual crew per shift, people on at once. Build a week and each shift shows the draft beside it.</span></div>';
   if (!roles.length) {
     body.innerHTML = legend + '<div class="ss-crew-empty">This draft matches your usual crew on every shift.</div>';
     return;
@@ -27273,12 +27278,12 @@ function ssCrewDraw() {
   var cdays = (d.days && d.days.length === 7) ? d.days : SS_CREW_DAYS;
   var h = legend + '<div class="ss-crew-list">', i, j;
   for (i = 0; i < roles.length; i++) {
-    var r = roles[i], by = {}, parts = [];
+    var r = roles[i], by = {}, parts = [], ur = ssCrewRange(r.cells, 'usual'), dr = ssCrewRange(r.cells, 'draft');
     for (j = 0; j < r.cells.length; j++) by[r.cells[j].day + '|' + r.cells[j].part] = r.cells[j];
     if (ssCrewHas(by, 'morning')) parts.push('morning');
     if (ssCrewHas(by, 'night')) parts.push('night');
-    h += '<article class="ss-crew-role"><div class="ss-crew-rh"><b>' + _escHtml(r.role) + '</b><span><span class="hb-num">' + r.usual_week
-      + '</span> shifts usual a week' + (d.week_start ? ' · <span class="hb-num">' + r.draft_week + '</span> in this draft' : '') + '</span></div>'
+    h += '<article class="ss-crew-role"><div class="ss-crew-rh"><b>' + _escHtml(r.role) + '</b><span>Usually <span class="hb-num">' + ur
+      + '</span> on at once' + (d.week_start ? ' · <span class="hb-num">' + dr + '</span> in this draft' : '') + '</span></div>'
       + '<div class="ss-crew-scroll"><table class="ss-crew-t"><thead><tr><th class="p"></th>';
     for (j = 0; j < 7; j++) h += '<th scope="col">' + cdays[j].slice(0, 3) + '</th>';
     h += '</tr></thead><tbody>';
@@ -27291,24 +27296,55 @@ function ssCrewDraw() {
   }
   body.innerHTML = h + '</div>';
 }
+// "2-5": the fewest and most on at once a role runs across its shifts.
+function ssCrewRange(cells, k) {
+  var lo = null, hi = null, n, i;
+  for (i = 0; i < cells.length; i++) {
+    n = +cells[i][k] || 0;
+    if (!n) continue;
+    if (lo === null || n < lo) lo = n;
+    if (hi === null || n > hi) hi = n;
+  }
+  if (lo === null) return '0';
+  return lo === hi ? String(lo) : lo + '–' + hi;
+}
 function ssCrewHas(by, part) {
   for (var k in by) if (by.hasOwnProperty(k) && k.split('|')[1] === part) return true;
   return false;
 }
+var _ssCrewAdded = {};
 function ssCrewCell(role, c) {
   if (!c) return '<td class="e"></td>';
-  var sub = [], chips = '', act = '';
+  var sub = [], chips = '', act = '', d3 = c.day.slice(0, 3), meal = c.part === 'morning' ? 'lunch' : 'dinner';
+  var core = c.part === 'morning' ? '11am–2:30pm' : '5:30–8:30pm', ck = role + '|' + c.day + '|' + c.part;
   if (c.trend && c.trend.was != null) sub.push('was ' + c.trend.was + (c.trend.since ? ' before ' + c.trend.since : ''));
+  if (c.status === 'usual') { if (c.usual_peak && c.usual_peak !== c.usual) sub.push('peak ' + c.usual_peak); }
+  else if ((c.usual_peak && c.usual_peak !== c.usual) || (c.draft_peak && c.draft_peak !== c.draft)) sub.push('peak ' + (c.usual_peak || 0) + ' → ' + (c.draft_peak || 0));
+  if (c.peak_note) sub.push(c.peak_note);
+  if (c.answer_state === 'short_of_accepted') sub.push('leaner than you accepted');
   if (c.floor) chips += '<span class="ss-crew-chip min">min ' + c.floor + '</span> ';
   if (c.demand) chips += '<span class="ss-crew-chip ' + c.demand + '">' + c.demand + '</span>';
   var attrs = ' data-crew-role="' + _escHtml(role) + '" data-crew-day="' + c.day + '" data-crew-part="' + c.part + '"';
-  if (c.answer === 'hold') act = '<div class="ss-crew-done">You kept ' + c.usual + ' · <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-crew-answer="clear"' + attrs + '>Undo</button></div>';
-  else if (c.answer === 'lean') act = '<div class="ss-crew-done">Leaner is fine · <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-crew-answer="clear"' + attrs + '>Undo</button></div>';
-  else if (c.status === 'under') act = '<div class="ss-crew-a"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-crew-answer="hold"' + attrs + '>Keep ' + c.usual + '</button>'
-    + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-crew-answer="lean"' + attrs + '>Leaner is fine</button></div>';
-  var title = c.day + ' ' + (c.part === 'morning' ? 'lunch' : 'dinner') + ': usual ' + c.usual + ', this draft ' + c.draft
+  var kept = c.kept != null ? c.kept : c.floor;
+  var undo = '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-crew-answer="clear"' + attrs + '>Undo</button>';
+  var keepBtn = '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-crew-answer="hold"' + attrs
+    + ' title="' + _escHtml('Keep at least ' + c.usual + ' ' + role + ' on at once, ' + core + ', every ' + c.day + ' ' + meal + ' from now on (reviewed in a season)') + '">Keep ' + c.usual + ' every ' + d3 + '</button>';
+  var addBtn = (c.can_add && !_ssCrewAdded[ck]) ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-crew-answer="add"' + attrs
+    + ' title="' + _escHtml('One more ' + role + ' this ' + c.day + ' only: Cavnar AI picks somebody who can legally work it') + '">Add 1 this week</button>' : '';
+  var leanBtn = '<button type="button" class="cbtn cbtn-text cbtn-sm" data-crew-answer="lean"' + attrs
+    + ' title="' + _escHtml('Run ' + c.draft + ' on ' + c.day + ' ' + meal + 's: the draft is built to it until its review') + '">Leaner is fine on ' + d3 + '</button>';
+  if (c.answer === 'hold' && c.answer_state === 'review') act = '<div class="ss-crew-done">You kept ' + kept + ' since ' + _escHtml(c.since || '') + ' · time to review</div><div class="ss-crew-a">'
+    + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-crew-answer="hold"' + attrs + '>Still keep ' + (c.usual || kept) + '</button>' + undo + '</div>';
+  else if (c.answer === 'hold') act = '<div class="ss-crew-done">Kept ' + kept + ' every ' + d3 + (c.review ? ' · review ' + _escHtml(c.review) : '') + ' · ' + undo + '</div>';
+  else if (c.answer === 'lean' && c.answer_state === 'review') act = '<div class="ss-crew-done">Leaner is fine since ' + _escHtml(c.since || '') + ' · time to review</div><div class="ss-crew-a">' + keepBtn + leanBtn + undo + '</div>';
+  else if (c.answer === 'lean') act = '<div class="ss-crew-done">Leaner is fine' + (c.accepted != null ? ' (' + c.accepted + ')' : '') + (c.review ? ' · review ' + _escHtml(c.review) : '') + ' · ' + undo + '</div>';
+  else if (c.status === 'under') act = '<div class="ss-crew-a">' + keepBtn + addBtn + leanBtn + '</div>';
+  // Under a minimum (one just kept included): the fix for this week, here.
+  if (c.status === 'below_rule' && addBtn) act += '<div class="ss-crew-a">' + addBtn + '</div>';
+  if (_ssCrewAdded[ck]) act += '<div class="ss-crew-done">' + _escHtml(_ssCrewAdded[ck]) + ' · save the week to keep it</div>';
+  var title = c.day + ' ' + meal + ': usually ' + c.usual + ' on at once through ' + core + (c.usual_peak ? ' (' + c.usual_peak + ' at the busiest half hour)' : '')
+    + (c.status === 'usual' ? '' : ', this draft ' + c.draft + (c.draft_peak ? ' (' + c.draft_peak + ' at the busiest)' : ''))
     + (c.sales ? ', shift sales about $' + Math.round(c.sales).toLocaleString('en-US') : '');
-  if (c.status === 'usual') title = c.day + ' ' + (c.part === 'morning' ? 'lunch' : 'dinner') + ': usually ' + c.usual;
   return '<td class="' + c.status + '" title="' + _escHtml(title) + '"><div class="ss-crew-n">' + c.usual + (c.status === 'usual' ? '' : '<i>→</i>' + c.draft) + '</div>'
     + (sub.length ? '<div class="ss-crew-s">' + _escHtml(sub.join(' · ')) + '</div>' : '') + (chips ? '<div>' + chips + '</div>' : '') + act + '</td>';
 }
@@ -27318,16 +27354,35 @@ document.addEventListener('click', function (e) {
   if (b) { _ssCrewShow = b.getAttribute('data-crew-show'); try { window.localStorage.setItem('cavnar_crew_show', _ssCrewShow); } catch (x) { } ssCrewDraw(); return; }
   b = t.closest('[data-crew-answer]'); if (!b || _ssCrewBusy) return;
   _ssCrewBusy = true; b.disabled = true;
-  // window.fetch carries the CSRF header (_csrf_fetch.html).
+  var a = b.getAttribute('data-crew-answer'), hid = (_ssCrew && _ssCrew.history_id) || null;
+  var payload = {role: b.getAttribute('data-crew-role'), day: b.getAttribute('data-crew-day'), part: b.getAttribute('data-crew-part'),
+                 answer: a, history_id: hid};
+  // The week on screen, unsaved edits and all, for an Add: a second Add
+  // counts the first.
+  var onScreen = (typeof _schedRows !== 'undefined' && _schedRows && _schedRows.length && typeof _schedHistoryId !== 'undefined'
+                  && _schedHistoryId && hid && String(_schedHistoryId) === String(hid));
+  if (a === 'add' && onScreen) payload.rows = _schedRows;
+  // window.fetch carries the CSRF header (_csrf_fetch.html). The answer is
+  // for the week on screen (history_id), and the grid comes back for it.
   fetch('/api/labor/crew-matrix', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({role: b.getAttribute('data-crew-role'), day: b.getAttribute('data-crew-day'), part: b.getAttribute('data-crew-part'),
-                          answer: b.getAttribute('data-crew-answer')})})
+    body: JSON.stringify(payload)})
     .then(apiJson).then(function (d) {
       _ssCrewBusy = false;
       if (!d || !d.ok) { b.disabled = false; toast((d && d.error) || 'That answer didn’t save. Try again.', 'error'); return; }
+      if (a === 'add') {
+        var s = d.suggestion || {};
+        if (!onScreen) { b.disabled = false; toast('Open this week in the Studio to add ' + (s.employee || 'them') + '.', 'error'); return; }
+        _schedRows.push(s);
+        if (typeof _schedSortRows === 'function') _schedSortRows();
+        if (typeof schedAfterEdit === 'function') schedAfterEdit();
+        _ssCrewAdded[payload.role + '|' + payload.day + '|' + payload.part] = d.text || ('Added ' + s.employee);
+        ssCrewDraw();
+        toast((d.text || 'Added') + ' — save the week to keep it', 'success');
+        return;
+      }
       _ssCrew = d; ssCrewDraw();
-      var a = b.getAttribute('data-crew-answer');
-      toast(a === 'hold' ? 'Kept: it’s now that shift’s minimum' : (a === 'lean' ? 'Noted: leaner is fine there' : 'Undone'), 'success');
+      if (d.message) toast(d.message, 'success');
+      else toast(a === 'hold' ? 'Kept: it’s that shift’s minimum every week, reviewed in a season' : (a === 'lean' ? 'Noted: the draft is built to it there until its review' : 'Undone'), 'success');
     }).catch(function () { _ssCrewBusy = false; b.disabled = false; toast('That answer didn’t save. Check your connection.', 'error'); });
 });
 function ssLoadHistory() {
@@ -36459,6 +36514,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
        last of their role to leave), not a key holder (owner, 10/2/26). */
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-kh"'+(rules.keyholder_until_close!==false?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">A closer until close<small>Somebody marked to close stays until close every open day, the last of their role to leave. Checked once anyone is marked a closer.</small></div></div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
+    /* The full-time line is a minimum only once confirmed (LOGIC-29): off,
+       a full-timer's week aims at it as hours they'd like. */
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-ftmin"'+(rules.full_time_min_confirmed?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Full-time line is a minimum<small>Anyone marked full-time with no minimum of their own gets at least the full-time hours above. Off, their week only aims at it.</small></div></div>';
     // Closed days: weekdays and dates the restaurant does not trade. The
     // draft writes no shifts on them and the week is not failed for it.
     var cl=d.closures||{},cdates=cl.closed_dates||[];
@@ -36606,6 +36664,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     rules.manager_on_duty=false;
     var kh=document.getElementById('rul-kh');if(kh)rules.keyholder_until_close=!!kh.checked;
+    var ftm=document.getElementById('rul-ftmin');if(ftm)rules.full_time_min_confirmed=!!ftm.checked;
     var body={rules:rules,role_floors:floors,rules_default:reset};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
@@ -37933,6 +37992,9 @@ function sfw1RatingLine(s) {
       bb: data.budget_basis || null,
       req: data.requirements || [],
       setup: rv.setup || [],
+      /* The closing managers the verdict assumes stay to the last person
+         out (TRUST-21): said, with the tap that writes the stay in. */
+      stays: rv.assumed_stays || data.assumed_stays || [],
       hourly: data.hours_hourly, salaried: data.hours_salaried, budget: data.hours_budget,
       redo: data.redo || null
     };
@@ -37981,6 +38043,11 @@ function sfw1RatingLine(s) {
     }
     var sk = p.skipped || [];
     for (i = 0; i < Math.min(sk.length, 3); i++) h += note('', n(sfw1SkippedLine(sk[i])));
+    var st = S.stays || [];
+    for (i = 0; i < st.length; i++) {
+      var sa = st[i].action || {};
+      h += note('', n(st[i].text), ed && sa.label ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-stay="' + i + '">' + e(sa.label) + '</button>' : '');
+    }
     var mh = (S.minh && S.minh.left) || [];
     for (i = 0; i < Math.min(mh.length, 4); i++) h += note('', n(mh[i].employee + ' is ' + sfw1G(mh[i].short_by) + 'h under the ' + sfw1G(mh[i].min) + 'h minimum you set' + (mh[i].reason ? ' — ' + mh[i].reason : '') + '.'));
     if (S.start && S.start.no_history && S.startLine) h += note('', n(S.startLine.replace(/^A starting point:\s*/, '')), '', '');
@@ -37999,6 +38066,9 @@ function sfw1RatingLine(s) {
       if (!it.text || it.line === false) continue;
       if (it.kind === 'leader_rules_inactive') h += note('warn', n(it.text), it.can_adopt ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-adopt="1">Count them as mine</button>' : '');
       else if (it.kind === 'close_times_missing') h += note('warn', n(it.text), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set the hours</button>');
+      /* The full-time line nobody confirmed (LOGIC-29): one tap makes it the
+         minimum; the next draft fills and keeps it. */
+      else if (it.kind === 'full_time_unconfirmed') h += note('', n(it.text), canEdit() && it.action ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-ftmin="1">' + e(it.action.label) + '</button>' : '');
       else rest.push(it);
     }
     if (rest.length) {
@@ -38318,10 +38388,40 @@ function sfw1RatingLine(s) {
     el.innerHTML = window.sfw1PubHtml(c || window._psCheck);
   };
 
+  /* "Schedule Erik to 11:45pm": the closing manager's assumed stay written
+     into their shift, so the staff schedule shows it and the cost counts it
+     (TRUST-21). An edit like any other: Save keeps it. */
+  function writeStay(i) {
+    var st = (S.stays || [])[i], p = st && st.action && st.action.payload, rs = rows(), j, r;
+    if (!p) return;
+    for (j = 0; j < rs.length; j++) {
+      r = rs[j];
+      if (r.employee === p.employee && r.date === p.date && r.shift_start === p.shift_start && r.shift_end === p.shift_end) break;
+    }
+    if (j >= rs.length) { say('That shift changed since — check the close by hand', 'error'); return; }
+    r.shift_end = p.new_end;
+    if (typeof _schedHoursBetween === 'function') r.scheduled_hours = _schedHoursBetween(r.shift_start, r.shift_end);
+    S.stays.splice(i, 1);
+    if (typeof schedAfterEdit === 'function') schedAfterEdit();
+    renderNotes();
+    say(p.employee + ' now ends ' + p.new_end + ' — save to keep it');
+  }
+
   // ── Clicks ─────────────────────────────────────────────────────────────
   document.addEventListener('click', function (ev) {
-    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-redo],[data-sfw1-chip],[data-sfw1-close],[data-sfw1-redo-go],[data-sfw1-why],[data-sfw1-adopt],[data-sfw1-act],[data-sfw1-wk-save],[data-sfw1-sel],[data-sfw1-sec],[data-sfw1-add-role],[data-sfw1-swap-role],[data-sfw1-mem],[data-sfw1-rate]') : null;
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-redo],[data-sfw1-chip],[data-sfw1-close],[data-sfw1-redo-go],[data-sfw1-why],[data-sfw1-adopt],[data-sfw1-act],[data-sfw1-wk-save],[data-sfw1-sel],[data-sfw1-sec],[data-sfw1-add-role],[data-sfw1-swap-role],[data-sfw1-mem],[data-sfw1-rate],[data-sfw1-stay],[data-sfw1-ftmin]') : null;
     if (!t || t.disabled) return;
+    if (t.hasAttribute('data-sfw1-stay')) { writeStay(+t.getAttribute('data-sfw1-stay')); return; }
+    if (t.hasAttribute('data-sfw1-ftmin')) {
+      var finFt = busy(t, 'Saving…');
+      jpost('/api/labor/rules', {rules: {full_time_min_confirmed: true}}, function (d) {
+        finFt();
+        if (!d.ok) { say(d.error || 'That didn’t save.', 'error'); return; }
+        say('The full-time line is now a minimum — the next draft fills it');
+        t.disabled = true; t.textContent = 'Confirmed';
+      });
+      return;
+    }
     if (t.hasAttribute('data-sfw1-redo')) { sfw1RedoSheet(String(t.getAttribute('data-sfw1-redo')).split(',')); return; }
     if (t.hasAttribute('data-sfw1-chip')) {
       var k = t.getAttribute('data-sfw1-chip'), on = _redo.chip !== k, cs = document.querySelectorAll('#sfw1-modal-card [data-sfw1-chip]'), i;

@@ -1482,8 +1482,7 @@ struct LaborView: View {
     /// what the forecast could not see — each only when carried.
     @ViewBuilder
     private func weekExplanation(_ result: GeneratedSchedule) -> some View {
-        if let narrative = result.narrative?.trimmingCharacters(in: .whitespacesAndNewlines), !narrative.isEmpty {
-            let split = Self.firstSentence(narrative)
+        if let split = Self.noteCard(result.narrative) {
             CavnarAnswerCard(kicker: "Cavnar AI\u{2019}s note", headline: split.head,
                              summary: showingFullNarrative ? split.rest : nil) {
                 if split.rest != nil {
@@ -1500,6 +1499,18 @@ struct LaborView: View {
             }
         }
         ScheduleWeekNotes(result: result, demandAccuracy: viewModel.stats?.demandAccuracy)
+    }
+
+    /// Cavnar AI's note as the answer card reads it: the first bullet the
+    /// headline, the others behind More, one "• " line each. A note of one
+    /// bullet splits at its first sentence, as a paragraph note always did.
+    /// Nil when there is nothing to say (schedule audit 10/10/26 TRUST-1:
+    /// the server sends a list).
+    static func noteCard(_ bullets: [String]?) -> (head: String, rest: String?)? {
+        let lines = (bullets ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard let first = lines.first else { return nil }
+        if lines.count == 1 { return firstSentence(first) }
+        return (first, lines.dropFirst().map { "\u{2022} " + $0 }.joined(separator: "\n"))
     }
 
     /// "Labor lands at 29%. Two closers…" → ("Labor lands at 29%.", "Two closers…").

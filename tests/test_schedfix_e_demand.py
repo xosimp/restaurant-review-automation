@@ -94,9 +94,15 @@ def test_the_scaling_is_bounded_and_the_owners_floor_and_the_cap_still_hold():
     by = {x["role"]: x for x in night["roles"]}
     assert by["Server"]["required"] == 4 and by["Server"]["floor"] == 4          # the floor holds
     assert by["Host"]["required"] == 1                                           # a role that runs keeps one
+    # The section cap counts people on at once: it holds every half-hour
+    # need, never the daypart's count of different people (schedule audit
+    # 10/10/26 LOGIC-7 — this used to assert the 6 cut to 5).
+    curve = {"Friday": {17: 0.1, 18: 0.3, 19: 0.5, 20: 0.1}}
     capped = next(r for r in req.shift_requirements([FRI], typical_headcount=typical, date_demand=huge,
-                                                     section_cap=5, cap_roles=["server"]) if r["daypart"] == "night")
-    assert {x["role"]: x["required"] for x in capped["roles"]}["Server"] == 5
+                                                     section_cap=5, cap_roles=["server"], demand_curve=curve)
+                  if r["daypart"] == "night")
+    assert {x["role"]: x["required"] for x in capped["roles"]}["Server"] == 6
+    assert max(n for _m, n in capped["half_hours"]["Server"]) <= 5
 
 
 def test_the_sales_per_labor_hour_hold_brings_an_overstaffed_crew_in():

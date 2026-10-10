@@ -699,8 +699,14 @@ def api_shifts(current_user):
     """This employee's own shifts. The name is taken from the session, so
     there is no id to tamper with and no other employee to ask for."""
     rid, name = _staff_context(current_user)
+    # The clock the shifts are read on: each row's times are the dining
+    # room's wall clock on its business date, so the app works out "On now"
+    # and Running late in this zone, never by adding seconds to midnight on
+    # the phone's (schedule audit 10/10/26 BUGSLIFE-21: an hour off on the
+    # days the clocks change).
+    zone = _restaurant_zone(rid)
     if not name:
-        return jsonify(ok=True, today=None, upcoming=[], week=[])
+        return jsonify(ok=True, today=None, upcoming=[], week=[], timezone=zone)
     from staff_schedule import shifts_for_employee
     # "Today" is the restaurant's service date, not the server's UTC one
     # (employee audit C5): shifts_for_employee resolves it from the
@@ -714,7 +720,20 @@ def api_shifts(current_user):
         mark_schedule_shares_seen_in_app(rid, week_ids, name)
     except Exception as e:
         print(f"[staff] schedule seen not recorded rid={rid}: {e!r}")
+    out["timezone"] = zone
     return jsonify(ok=True, **out)
+
+
+def _restaurant_zone(rid) -> str:
+    """The restaurant's IANA zone as time_utils resolves it — every
+    server clock's (restaurant_now, business_date): an unset or unknown
+    name is operator time, never the phone's."""
+    from time_utils import restaurant_tz
+    try:
+        from models import get_restaurant
+        return restaurant_tz(get_restaurant(rid)).key
+    except Exception:
+        return restaurant_tz(None).key
 
 
 _DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
