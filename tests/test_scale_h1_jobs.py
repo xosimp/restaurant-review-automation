@@ -54,7 +54,7 @@ def drafting(db, monkeypatch):
     import schedule_engine as se
     state = {"status": "error", "runs": [], "pushes": []}
 
-    def run(job_id, rid):
+    def run(job_id, rid, **_k):
         state["runs"].append(rid)
         ops.finish_async_job(job_id, state["status"], {"ok": state["status"] == "done"})
     monkeypatch.setattr(se, "_run_schedule_job", run)
@@ -123,7 +123,7 @@ def test_a_draft_killed_by_a_deploy_is_tried_again_on_the_next_pass(drafting, db
         """The process going away mid-generation: no finally of ours runs
         a release, and the job row is left pending."""
 
-    def killed(job_id, rid):
+    def killed(job_id, rid, **_k):
         drafting["runs"].append(rid)
         raise Killed()
     monkeypatch.setattr(se, "_run_schedule_job", killed)
@@ -133,7 +133,7 @@ def test_a_draft_killed_by_a_deploy_is_tried_again_on_the_next_pass(drafting, db
     ops.sweep_stale_jobs()
     drafting["status"] = "done"
     monkeypatch.setattr(se, "_run_schedule_job",
-                        lambda job_id, rid: (drafting["runs"].append(rid), ops.finish_async_job(job_id, "done", {"ok": True})))
+                        lambda job_id, rid, **_k: (drafting["runs"].append(rid), ops.finish_async_job(job_id, "done", {"ok": True})))
     out = strategy_jobs.run_auto_draft_schedules(db_path=db, now=_THU_10AM)
     assert drafting["runs"] == [drafting["rid"]] * 2 and out["drafted"] == 1
 
