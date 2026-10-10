@@ -1038,6 +1038,19 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
         if role:
             by_role.setdefault(role, []).append(p)
     roles_out, lines = {}, []
+    # The tip opportunity (tip_opportunity, scheduler audit 10/10/26
+    # MARKET-17): per role family, the slots worth the most in tips and who
+    # is next for one / should rest from them — rotated like closes. A read
+    # that fails, or a POS with no punch archive, leaves the rotation as it
+    # was.
+    try:
+        import tip_opportunity as _tips
+        tip_rot = _tips.rotation(restaurant_id, today=today,
+                                 db_path=None if db_path == DB_PATH else db_path,
+                                 roster=set(roster) if roster else None) or {}
+    except Exception as e:
+        print(f"[schedule_intel] tip opportunity unreadable rid={restaurant_id}: {e}")
+        tip_rot = {}
     for role, members in sorted(by_role.items(), key=lambda kv: kv[0].lower()):
         if len(members) < ROTATION_MIN_GROUP:
             continue
@@ -1092,6 +1105,16 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
             "holiday_work_first": holiday_work[:ROTATION_SHOW * 2],
             "holiday_off_first": holiday_off[:ROTATION_SHOW * 2],
         }
+        tp = tip_rot.get(_role_family(role, _families)) or {}
+        if tp:
+            mine = {p["name"].strip().lower() for p in members}
+            roles_out[role]["tips"] = {
+                "rich_slots": tp.get("rich_slots") or [],
+                "next_rich": [n for n in tp.get("next_rich") or [] if n.strip().lower() in mine][:ROTATION_SHOW * 2],
+                "rest_from_rich": [n for n in tp.get("rest_from_rich") or [] if n.strip().lower() in mine],
+                "role_mean": tp.get("role_mean"),
+                "per_shift": {n: (tp.get("people") or {}).get(n, {}).get("per_shift") for n in (tp.get("people") or {})
+                              if n.strip().lower() in mine}}
         bits = []
         if weekend_q:
             q = weekend_q[:ROTATION_SHOW]
@@ -1101,6 +1124,13 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
             bits.append("next close: " + _then(next_close[:ROTATION_SHOW]))
         if rest_names:
             bits.append("rest from closing: " + ", ".join(rest_names[:ROTATION_SHOW]))
+        tips = roles_out[role].get("tips") or {}
+        if tips.get("rest_from_rich") and tips.get("rich_slots"):
+            top = tips["rich_slots"][0]
+            if tips.get("next_rich"):
+                bits.append(f"next {top['day']} {'lunch' if top['part'] == 'morning' else 'dinner'} (the best tips): "
+                            + _then(tips["next_rich"][:ROTATION_SHOW]))
+            bits.append("rest from the best-tipped shifts: " + ", ".join(tips["rest_from_rich"][:ROTATION_SHOW]))
         if bits:
             lines.append(f"{_plural_role(role)} — " + "; ".join(bits) + ".")
     holiday = None
@@ -1157,6 +1187,14 @@ def rotation_block(plan: dict) -> str:
                 bits.append("hand the week's closes first to " + ", ".join(v["next_close"][:ROTATION_SHOW]))
         if v.get("rest_from_close"):
             bits.append("close " + ", ".join(v["rest_from_close"][:ROTATION_SHOW]) + " less than usual")
+        tips = v.get("tips") or {}
+        if tips.get("rest_from_rich") and tips.get("rich_slots"):
+            slots = ", ".join(f"{s['day']} {'lunch' if s['part'] == 'morning' else 'dinner'}"
+                              for s in tips["rich_slots"][:3])
+            bits.append(f"the best-tipped shifts are {slots}: give them first to "
+                        + (", ".join(tips.get("next_rich")[:ROTATION_SHOW]) if tips.get("next_rich") else "others")
+                        + " and less to " + ", ".join(tips["rest_from_rich"][:ROTATION_SHOW])
+                        + " (they have had more than their share)")
         if bits:
             lines.append(f"  {role}: " + "; ".join(bits) + ".")
     h = plan.get("holiday")

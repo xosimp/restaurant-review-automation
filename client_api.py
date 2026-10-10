@@ -13042,6 +13042,26 @@ def labor_crew_matrix(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 400
 
 
+@client_bp.route("/api/labor/bench", methods=["GET", "POST"])
+@login_required
+def labor_bench(current_user):
+    """The Schedule Studio's Bench stage (studio_bench, scheduler audit
+    10/10/26): the what-if simulator, call-out insurance, the commitment
+    ladder, event changes to published weeks, bench strength, the tip
+    rotation, retention (owner only), the organization's bench and the
+    outcome benchmark. Reading is Labor's (the /api/labor prefix gate);
+    acting needs the schedule-drafting permission."""
+    import studio_bench as _sb
+    from permissions import has_permission, SCHEDULE_DRAFT
+    may = bool(current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT))
+    try:
+        payload, status = _sb.api_body(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                       args=request.args, user=current_user, may_write=may)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @client_bp.route("/api/labor/schedule-history/<int:history_id>", methods=["DELETE"])
 @login_required
 def labor_schedule_history_delete(current_user, history_id):

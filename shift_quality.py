@@ -2179,10 +2179,20 @@ def _rotation_covers(ctx: ShiftContext, kinds: set) -> bool:
     """Whether the rotation plan speaks for a role on this shift at all — a
     weekend or a close judged against it, with or without a finding."""
     plan = (ctx.rotation or {}).get("roles") or {}
-    if not plan or not kinds & {"weekend", "closing"}:
+    if not plan:
         return False
     keys = {str(r).strip().lower() for r in plan}
-    return any(role.strip().lower() in keys for role in ctx.by_role)
+    if kinds & {"weekend", "closing"}:
+        return any(role.strip().lower() in keys for role in ctx.by_role)
+    # A rich tip slot (tip_opportunity, MARKET-17) is judged on any day.
+    by_low = {str(r).strip().lower(): v for r, v in plan.items()}
+    return any(_rich_slot(by_low.get(role.strip().lower()), ctx) for role in ctx.by_role)
+
+
+def _rich_slot(role_plan, ctx) -> bool:
+    """Whether this shift is one of the role's best-tipped slots."""
+    tips = (role_plan or {}).get("tips") or {}
+    return any(s.get("day") == ctx.day and s.get("part") == ctx.daypart for s in tips.get("rich_slots") or [])
 
 
 def _rotation_findings(ctx: ShiftContext, kinds: set):
@@ -2193,9 +2203,11 @@ def _rotation_findings(ctx: ShiftContext, kinds: set):
     person resting from closes on a close, while the next closer in the
     role has none this week."""
     plan = (ctx.rotation or {}).get("roles") or {}
-    if not plan or not kinds & {"weekend", "closing"}:
+    if not plan:
         return [], [], {}
     by_low = {str(r).strip().lower(): v for r, v in plan.items()}
+    if not kinds & {"weekend", "closing"} and not any(_rich_slot(by_low.get(r.strip().lower()), ctx) for r in ctx.by_role):
+        return [], [], {}
     this_week = {}
     for n, entries in (ctx.week_assignments or {}).items():
         mine = [e for e in entries if e.get("date") and not e.get("prior")]
@@ -2238,6 +2250,27 @@ def _rotation_findings(ctx: ShiftContext, kinds: set):
                            else "has carried more than their share of closes")
                     weak.append(f"{n} {had} and closes again here; {nexts[0]} is next to close and has none this week.")
                     facts.setdefault("resting_closer_closing", []).append(n)
+        # The tip opportunity (MARKET-17): somebody resting from the role's
+        # best-tipped slots on one, while the next in line works this week
+        # and is not on it.
+        if _rich_slot(rp, ctx):
+            tips = rp.get("tips") or {}
+            resting = {x.strip().lower() for x in tips.get("rest_from_rich") or []}
+            nexts = [x for x in (tips.get("next_rich") or [])[:3] if x.strip().lower() in this_week
+                     and x.strip().lower() not in on]
+            for low, n in on.items():
+                if low in resting and nexts:
+                    ps = (tips.get("per_shift") or {}).get(n)
+                    mean = tips.get("role_mean")
+                    had = (f"has averaged ${ps:.0f} a shift in tip opportunity against the role's ${mean:.0f}"
+                           if ps is not None and mean else "has had more than their share of the best-tipped shifts")
+                    weak.append(f"{n} {had} and has this {ctx.day} {part} again; {nexts[0]} is next for one.")
+                    facts.setdefault("tips_rest_working", []).append(n)
+            given = [on[x.strip().lower()] for x in (tips.get("next_rich") or [])[:3] if x.strip().lower() in on]
+            if given:
+                good.append(f"{', '.join(given)} {'gets' if len(given) == 1 else 'get'} a best-tipped shift the "
+                            f"rotation said {'was' if len(given) == 1 else 'were'} next.")
+                facts["tips_next_given"] = given
     return weak, good, facts
 
 

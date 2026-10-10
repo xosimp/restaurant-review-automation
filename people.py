@@ -592,7 +592,7 @@ def reach(restaurant_id, names, purpose=None, db_path=None) -> dict:
     for m in _memberships(restaurant_id, db):
         if m.get("is_active") and m.get("user_is_active", 1) and m.get("employee_name"):
             members[staff_settings.name_key(m["employee_name"])] = m
-    tokens, phones, scopes = set(), {}, {}
+    tokens, phones, scopes, web = set(), {}, {}, set()
     ids = [int(m["user_id"]) for m in members.values() if m.get("user_id")]
     if ids:
         try:
@@ -600,6 +600,13 @@ def reach(restaurant_id, names, purpose=None, db_path=None) -> dict:
             tokens = push.staff_device_users(restaurant_id, ids, db_path=db)
         except Exception:
             tokens = set()
+        # The installed browser portal's Web Push (staff_pwa, scheduler audit
+        # 10/10/26 MARKET-18): staff with no iPhone app — Android above all.
+        try:
+            import staff_pwa
+            web = staff_pwa.subscribed_users(restaurant_id, ids, db_path=db)
+        except Exception:
+            web = set()
         conn = get_conn(db)
         try:
             marks = ",".join("?" * len(ids))
@@ -623,7 +630,8 @@ def reach(restaurant_id, names, purpose=None, db_path=None) -> dict:
             if not scope or (purpose is not None and purpose not in scope):
                 sms = None
         out[n] = {"push_user_id": uid if uid in tokens else None, "sms": sms, "sms_scope": scope if sms else [],
-                  "email": ((contacts.get(k) or {}).get("email") or "").strip() or None}
+                  "email": ((contacts.get(k) or {}).get("email") or "").strip() or None,
+                  "webpush_user_id": uid if (uid in web and uid not in tokens) else None}
     # A number that replied STOP is not a text channel, whatever its consent
     # says (#107): staff reach checked the tick-box alone, so a STOP was
     # texted anyway and "reachable by text" counted it.
@@ -779,6 +787,28 @@ def deliver(restaurant_id, name, channel, *, alert_type, title, body, data=None,
             queued = 0
         if queued:
             return "push"
+    # The installed browser portal (staff_pwa / web_push, MARKET-18): a push
+    # through the browser's push service for someone with no iPhone app
+    # device, on the push pool; a push nobody's browser took falls back to
+    # the text/email chain. Not in quiet hours (a browser notice cannot be
+    # silent): the chain then holds a text until the morning as it does.
+    wuid = channel.get("webpush_user_id")
+    if wuid and not quiet:
+        try:
+            import staff_pwa
+
+            def _web(tab=push.staff_tab(alert_type, data)):
+                try:
+                    ok = staff_pwa.send_to_user(restaurant_id, wuid, f"{title} — {place}", " ".join(lines)[:220],
+                                                tab=tab, db_path=db)
+                except Exception as e:
+                    print(f"[people] web push failed rid={restaurant_id}: {e!r}")
+                    ok = False
+                done("push" if ok else _fallback())
+            push._push_executor().submit(_web)
+            return "push"
+        except Exception as e:
+            print(f"[people] web push not queued rid={restaurant_id}: {e!r}")
     res = _fallback()
     done(res)
     return res
@@ -985,6 +1015,17 @@ NAME_STORES = (
     # An availability cut waiting on a manager or not yet in force
     # (availability_changes, schedule audit 10/10/26 MARKET-15).
     {"table": "staff_availability_changes", "cols": ("employee_name",), "no_person_id": True},
+    # Scheduler audit 10/10/26 (J3): an on-call slot and its consent
+    # (standby_insurance), how firm each published shift was for them
+    # (commitment_ladder), and their organization-bench opt-in and asks
+    # (org_bench, the home site's row) — re-pointed on a rename, deleted on an
+    # erase. A bench ask lives at the ASKING site (org_bench_requests) and is
+    # that site's record of whom it asked.
+    {"table": "standby_slots", "cols": ("employee_name",), "key": "name_key",
+     "unique": ("date", "name_key", "shift_start"), "fold": "newest", "no_person_id": True},
+    {"table": "shift_commitments", "cols": ("employee_name",), "key": "name_key",
+     "unique": ("date", "name_key", "shift_start"), "fold": "newest", "no_person_id": True},
+    {"table": "org_bench_members", "cols": ("employee_name",), "no_person_id": True},
 )
 
 # Stores keyed only by a staff login (memberships.id), with no name to

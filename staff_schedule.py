@@ -211,6 +211,14 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
         if week_of is None and w["start"] and w["start"] <= today and (w["end"] is None or today <= w["end"]):
             week_of = detail.get("week_start")
     mine.sort(key=lambda s: (_parse_day(s.get("date")), s.get("start") or ""))
+    # How firm each shift is (commitment_ladder, scheduler audit 10/10/26
+    # MARKET-27): firm / likely / tentative and the words for it, as
+    # recorded when the week was published. A read only; never fails it.
+    try:
+        import commitment_ladder as _cl
+        mine = _cl.annotate(restaurant_id, mine, employee_name)
+    except Exception as _clx:
+        print(f"[staff_schedule] commitment levels unread rid={restaurant_id}: {_clx!r}")
 
     try:
         import shift_requests as _sr
