@@ -2490,6 +2490,14 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                                     str(a.get("updated_at") or "")[:10] or None, None))
     except Exception as exc:
         _input_problem(c, "availability", exc)
+    # An availability cut a manager approved for a date still ahead: in force
+    # for this week's dates from it on, never before (schedule audit 10/10/26
+    # MARKET-15, availability_changes.overlay).
+    try:
+        import availability_changes as _avc
+        _avc.overlay(c, restaurant_id, db_path=db_path)
+    except Exception as exc:
+        _input_problem(c, "availability changes", exc)
     try:
         for n in get_staff_notes(restaurant_id, db_path) or []:
             if not (n.get("employee_name") or "").strip():
@@ -6140,6 +6148,87 @@ def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only:
                                          f"allowance)"})
     out.sort(key=lambda x: (x["tier"], str(x["id"])))
     return out
+
+
+# ── one legality question for a change to a live week (sched audit 10/10/26) ──
+#
+# Every change a person or a manager makes to a week staff already have — a
+# claim, a named cover, an offer accepted, a swap, a drop let go, time off
+# over a published shift — is judged here, and only here: the week as it is
+# against the week as it would be, by the whole rule sweep (ARCH-14: the
+# replacement check used to run the sweep and then shift_quality's own swap
+# index, two engines in two data shapes that disagreed). A swap is ONE
+# change (BUGSLIFE-1): judging each side against a week with both rows
+# blanked put the manager gap the swap creates into the "before", so a
+# manager trading her Saturday close to a non-manager passed.
+
+PENDING_OFF_LABEL = "has a time-off request waiting on you that day — answer it first"
+
+
+def taker_problem(c: "Constraints", name: str, row: dict):
+    """Why `name` cannot take `row` at all — the person's own availability on
+    every daypart the shift reaches into (can_work: roster, time off, the
+    restaurant closed, a day or half-day they can't work) and a time-off
+    request for that day nobody has answered — or None."""
+    from shift_quality import touched_dayparts as _touched
+    d = row.get("date", "")
+    for part in (_touched(row) or [daypart_of(row.get("shift_start", ""))]):
+        ok, why = c.can_work(name, d, part)
+        if not ok:
+            return why
+    if d and d in (c.pending_off.get(c.key(name)) or ()):
+        return PENDING_OFF_LABEL
+    return None
+
+
+def judge_change(before_rows: list, after_rows: list, c: "Constraints", takers=(), before: dict = None,
+                 upto: int = TIER_POLICY) -> list:
+    """What making `before_rows` into `after_rows` would break: [] when the
+    change is legal, else [{id, tier, label, before, after}] most important
+    first — the first is the sentence to say. `takers` [(index into
+    after_rows, name)] are the people the change puts on a shift: each is
+    asked taker_problem first. Then the week is swept before and after and
+    any hard breach at or above `upto` that is new or worse refuses it (a
+    manager on the floor every minute, the floors, a closer until close, a
+    person's hours, rest, overlaps, minors, certificates, windows). The
+    default reaches TIER_POLICY: a change a person or a manager makes by
+    hand to a live week is held to the restaurant's own limits too — the
+    weekly ceiling, the longest shift, days in a row, rest — which repair
+    passes may trade for coverage, but a pickup or a swap never breaks.
+    `before` is breach_profile(before_rows, c) when the caller has it."""
+    out = []
+    for i, name in takers or ():
+        why = taker_problem(c, name, after_rows[i])
+        if why:
+            out.append({"id": ("taker", c.key(name), (after_rows[i] or {}).get("date") or ""), "tier": TIER_PERSON,
+                        "label": why, "before": 0.0, "after": 1.0})
+    if out:
+        return out
+    if before is None:
+        before = breach_profile(before_rows, c)
+    return regressions(before, breach_profile(after_rows, c), upto=upto)
+
+
+def overtime_added(c: "Constraints", name: str, row: dict, rows: list, line: float = None) -> float:
+    """Hours past `name`'s overtime line (overtime_line) that taking `row`
+    adds in its payroll week — their rows in `rows` of that week plus what
+    is already published outside it (base_hours) — or 0.0. A salaried
+    person owes no overtime: always 0.0."""
+    if not (name or "").strip() or c.is_salaried(name):
+        return 0.0
+    d = row.get("date") or ""
+    b = c.bucket(d) if d else ""
+    group = c.sweep_key(name)
+    total = sum(row_hours(r) for r in rows or () if r is not row and c.sweep_key(r.get("employee")) == group
+                and r.get("date") and c.bucket(r["date"]) == b)
+    total += sum(float((per or {}).get(b, 0.0) or 0.0) for k, per in (c.base_hours or {}).items()
+                 if k == c.key(name) or c.linked.get(k, k) == group)
+    ot = overtime_line(c, name, line)
+    if not ot:
+        return 0.0
+    was = max(0.0, total - ot)
+    now = max(0.0, total + row_hours(row) - ot)
+    return round(max(0.0, now - was), 2)
 
 
 # ── the sweep, kept by person and by date (schedule audit 10/3/26 P-37) ────

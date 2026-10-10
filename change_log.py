@@ -95,6 +95,9 @@ _K = {
               "dedicated_shifts_json",
               # The Schedule Studio's Crew answers (crew_matrix, 10/10/26).
               "crew_answers_json",
+              # Drops and swaps that approve themselves; availability cuts
+              # waiting on a manager (request_autonomy, 10/10/26).
+              "staff_request_policy_json",
               "section_count", "foh_sections_json", "sched_notes",
               # Role families, the roles with chosen closers, the salaried
               # weekly cap (schedule audit 10/3/26 F1).
@@ -571,7 +574,7 @@ FIELD_LABELS = {
     "auto_publish_schedule": "Auto-publish schedules", "auto_approve_5star": "Auto-approve 5-star replies",
     "auto_approve_4star": "Auto-approve 4-star replies", "auto_draft_schedule": "Auto-draft schedules",
     "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
-    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers",
+    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers", "staff_request_policy_json": "Staff request approvals",
     "dsr_budget_mode": "Budget by day or week",
     "data_retention_months": "Review retention (months)", "timezone": "Time zone",
     "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",

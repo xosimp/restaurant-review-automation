@@ -10531,6 +10531,19 @@ def staff_schedule_page(token):
         oc = getattr(_ss_av, "own_conflicts", None)
         if oc is not None:
             saved_conflicts = _ss_av.conflicts_text(oc(share["restaurant_id"], share["employee_name"]))
+    # Days they asked off that wait for a manager or start on a later date
+    # (schedule audit 10/10/26 MARKET-15): ticked as asked, and said.
+    pending_line = ""
+    try:
+        import availability_changes as _avc_pg
+        for ch in _avc_pg.mine(share["restaurant_id"], share["employee_name"]):
+            unavailable = list(unavailable) + [d for d, s in (ch.get("days") or {}).items()
+                                               if s.get("status") == "off" and d not in unavailable]
+            pending_line = ((f"Waiting for your manager: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."
+                             if ch["status"] == "pending" else
+                             f"Approved: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."))
+    except Exception as _pgx:
+        print(f"[schedule link] availability changes unread: {_pgx!r}")
 
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
@@ -10560,6 +10573,7 @@ def staff_schedule_page(token):
         note=saved_note,
         saved=request.args.get("saved") == "1",
         saved_conflicts=saved_conflicts,
+        pending_line=pending_line,
         all_days_blocked=request.args.get("error") == "all_days",
         throttled=request.args.get("error") == "throttled",
         stale=request.args.get("error") == "stale",
@@ -12583,6 +12597,14 @@ def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=F
                                   saved_authority=_pub_auth, return_version=True)
     except Exception as _px:
         _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    # A replacement copy now live: the live requests on its dates follow it —
+    # a retimed shift carries its request, a removed one closes it and its
+    # requester is told (schedule audit 10/10/26 ARCH-9). Never blocks.
+    try:
+        import shift_requests as _srq_follow
+        _srq_follow.reconcile(rid)
+    except Exception as _fx:
+        _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # What the week's first publish says, into the observation log: every
     # change from the original draft by origin (the manager's, Cavnar AI's
     # kept ones, an admin's), and whether a person sent it (schedule audit

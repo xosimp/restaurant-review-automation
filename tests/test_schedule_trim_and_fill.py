@@ -512,7 +512,9 @@ def test_the_replacement_check_reads_availability_and_sweeps_the_week_once(monke
     prepared = se.prepare_replacements(1, rows, constraints=c)
     for i in range(1, 10):
         assert se.replacement_is_legal(1, rows, 0, f"P{i}", constraints=c, prepared=prepared)[0]
-    assert len(reads) == 1
+    # One legality engine (schedule audit 10/10/26 ARCH-14): availability is
+    # the Constraints' own, never re-read beside them for a second judge.
+    assert len(reads) == 0
     assert len(sweeps) == 1 + 9, "the week as it stands once, then one trial per candidate"
 
 

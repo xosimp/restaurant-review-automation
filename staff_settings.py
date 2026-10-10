@@ -1550,7 +1550,16 @@ def own_availability(restaurant_id, employee_name, db_path=DB_PATH, today=None) 
         _, windows = _windows_for(restaurant_id, employee_name, conn)
     finally:
         conn.close()
-    return _payload(row, windows, today or _today(restaurant_id))
+    out = _payload(row, windows, today or _today(restaurant_id))
+    # What they asked to work less, waiting for a manager or starting on a
+    # later date (MARKET-15): [{effective_from, summary, status, days}].
+    try:
+        import availability_changes as _avc
+        out["pending_changes"] = [{k: ch.get(k) for k in ("id", "effective_from", "summary", "status", "days")}
+                                  for ch in _avc.mine(restaurant_id, employee_name, db_path=db_path)]
+    except Exception:
+        out["pending_changes"] = []
+    return out
 
 
 def own_conflicts(restaurant_id, employee_name, db_path=DB_PATH, today=None) -> list:
@@ -1758,6 +1767,18 @@ def save_own_availability(restaurant_id, employee_name, expected_updated_at, wee
         before = _state_of(row, stored_windows)
         if bounds is None:
             bounds = {d: b for d, b in before["bounds"].items() if d in off}
+        # A cut — a day off, a narrower window — waits for a manager and takes
+        # effect on a date (schedule audit 10/10/26 MARKET-15,
+        # availability_changes); more availability is written at once, as
+        # before. What is written now is the save with the cut days as they
+        # were.
+        import availability_changes as _avc
+        target = {"off": set(off), "bounds": dict(bounds or {}),
+                  "windows": dict(windows if windows is not None else stored_windows or {})}
+        cuts, kept = _avc.split(before, target["off"], target["bounds"], target["windows"])
+        if cuts:
+            off, bounds = kept["off"], kept["bounds"]
+            windows = kept["windows"] if (windows is not None or any(d in (stored_windows or {}) for d in cuts)) else None
         keep_note = (row or {}).get("notes") if clean_notes is KEEP else clean_notes
         stamp = write_staff_availability(conn, restaurant_id, row["employee_name"] if row else name,
                                          off, keep_note, bounds, previous=version)
@@ -1781,6 +1802,34 @@ def save_own_availability(restaurant_id, employee_name, expected_updated_at, wee
     if windows_changed:
         _log_roster_changes(restaurant_id, ss_name or name, {"time_windows": stored_windows},
                             {"time_windows": windows}, {"time_windows": windows}, db_path=db_path)
+    # The cut: filed (pending a manager, or approved for its date when the
+    # restaurant needs no approval) and, when its date is already here, put
+    # in force at once (MARKET-15).
+    change, message = None, None
+    if cuts:
+        try:
+            import request_autonomy as _ra
+            approval = _ra.policy_for(restaurant_id, db_path)["availability_approval"]
+        except Exception:
+            approval = True
+        try:
+            from time_utils import mdy
+            change = _avc.record(restaurant_id, name, cuts, target["off"], target["bounds"], target["windows"],
+                                 source=source, today=today, db_path=db_path, approval=approval)
+            if approval:
+                _avc.tell_deciders(restaurant_id, change, db_path)
+                message = (f"Less availability waits for your manager and starts {mdy(change['effective_from'])} once "
+                           f"they approve it: {change.get('summary')}. Everything else is saved.")
+            else:
+                if _avc.apply_due(restaurant_id, today=today, db_path=db_path):
+                    final_windows = dict(target["windows"])
+                    after = {"off": set(target["off"]), "bounds": target["bounds"],
+                             "windows": {d: w for d, w in final_windows.items() if d not in target["off"]}}
+                    change = dict(change, status="applied")
+                message = f"From {mdy(change['effective_from'])}: {change.get('summary')}."
+        except Exception as e:
+            print(f"[staff_settings] availability change not filed rid={restaurant_id}: {e!r}")
+            message = "Your change couldn't be filed — try again."
     try:
         shifts = _to.published_conflicts(restaurant_id, name, today, today + timedelta(days=70), db_path=db_path)
     except Exception as e:
@@ -1796,7 +1845,14 @@ def save_own_availability(restaurant_id, employee_name, expected_updated_at, wee
                    "time_windows": sorted(after["windows"]), "conflicts": len(conflicts)}, db_path=db_path)
     except Exception:
         pass
-    payload = _payload(staff_availability_for(restaurant_id, name, db_path=db_path), final_windows, today)
-    return {"ok": True, "status": 200, "availability": payload, "updated_at": stamp,
+    current = staff_availability_for(restaurant_id, name, db_path=db_path)
+    payload = _payload(current, final_windows, today)
+    return {"ok": True, "status": 200, "availability": payload,
+            "updated_at": (current or {}).get("updated_at") or stamp,
             "conflicts": conflicts, "conflicts_text": conflicts_text(conflicts),
-            "hint": away_hint(keep_note), "managers_told": told}
+            "hint": away_hint(keep_note), "managers_told": told,
+            # A cut waiting on a manager (MARKET-15): {id, effective_from,
+            # summary, status, days} and the sentence that says so.
+            "pending_change": ({k: change.get(k) for k in ("id", "effective_from", "summary", "status", "days")}
+                               if change else None),
+            "message": message}

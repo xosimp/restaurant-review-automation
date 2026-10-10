@@ -10679,21 +10679,18 @@ def _rows_to_csv_text(rows: list) -> str:
 
 def prepare_replacements(restaurant_id, rows: list, constraints=None) -> dict:
     """What every replacement check against one week of rows shares, built
-    once: the Constraints, the week's breach profile as it stands, and the
-    swap index over the availability map. The replacement picker asks the
-    question for every roster member, and each check used to re-sweep the
-    unchanged week and re-read the availability table — about 128 sweeps
-    and 64 reads per tap for a 64-person roster (schedule audit 10/3/26
-    P-40). Pass the result to replacement_is_legal(..., prepared=)."""
-    import shift_quality as _sq
-    from models import get_unavailability_map
+    once: the Constraints and the week's breach profile as it stands. The
+    replacement picker asks the question for every roster member, and each
+    check used to re-sweep the unchanged week — about 128 sweeps per tap for
+    a 64-person roster (schedule audit 10/3/26 P-40). Pass the result to
+    replacement_is_legal(..., prepared=). The availability map and
+    shift_quality's swap index are no longer read here: the rule sweep is
+    the one legality engine (schedule audit 10/10/26 ARCH-14)."""
     c = constraints
     if c is None:
         dates = sorted({r.get("date") for r in rows if r.get("date")})
         c = _rules.build_constraints(restaurant_id, dates, [_weekday_name(d) for d in dates])
-    availability = get_unavailability_map(restaurant_id, week_dates=list(c.week_dates or []) or None)
-    return {"rows": rows, "constraints": c, "before": _rules.breach_profile(rows, c),
-            "swap": _sq._SwapIndex(rows, availability, {}, _rules_for_swaps(c))}
+    return {"rows": rows, "constraints": c, "before": _rules.breach_profile(rows, c)}
 
 
 
@@ -10711,8 +10708,10 @@ def _breach_reason(worse: dict) -> str:
     """A regression (schedule_rules.regressions) as the sweep's own words:
     the rule's label, with the breach's detail when it says more."""
     kind = (worse.get("id") or ("",))[0]
-    label = _rules.LABELS.get(kind, kind)
     detail = worse.get("label")
+    if kind == "taker":
+        return detail or "can't work it"    # schedule_rules.taker_problem's own sentence
+    label = _rules.LABELS.get(kind, kind)
     return label if detail in (None, "", label) else f"{label} ({detail})"
 
 
@@ -10742,22 +10741,23 @@ def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, const
     `constraints` lets a caller that already built the week's
     schedule_rules.Constraints pass it in; `prepared` (prepare_replacements,
     for these same rows) lets a caller checking many people against one week
-    sweep it and read availability once (P-40)."""
+    sweep it once (P-40).
+
+    One engine (schedule audit 10/10/26 ARCH-14): schedule_rules.judge_change
+    — the person's own availability on every daypart the shift reaches, a
+    time-off request for that day nobody answered, then the sweep before and
+    after. shift_quality's swap index used to be asked as well and refused
+    with "would break a rule (hours, rest, or overlap)" wherever its copy of
+    the rules disagreed with the sweep's."""
     try:
         if prepared is None or prepared.get("rows") is not rows:
             prepared = prepare_replacements(restaurant_id, rows, constraints)
         c = prepared["constraints"]
-        row = rows[index]
-        ok, why = c.can_work(name, row.get("date", ""), _rules.daypart_of(row.get("shift_start", "")))
-        if not ok:
-            return False, why
         trial = [dict(r) for r in rows]
         trial[index]["employee"] = name
-        worse = _rules.regressions(prepared["before"], _rules.breach_profile(trial, c), upto=_rules.TIER_COVERAGE)
+        worse = _rules.judge_change(rows, trial, c, takers=[(index, name)], before=prepared["before"])
         if worse:
             return False, _breach_reason(worse[0])
-        if not prepared["swap"].replacement_legal(index, name, allow_double=True):
-            return False, "would break a rule (hours, rest, or a shift that overlaps one they already have)"
         return True, ""
     except Exception as e:
         # The person asking is an employee or a manager, not a developer:
