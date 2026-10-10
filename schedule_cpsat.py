@@ -962,6 +962,7 @@ class _Model:
             cands = [p for p in prob.dom[u.id] if ok(p, u)]
             if cands:
                 take(u, max(cands, key=lambda p: rank(p, u)))
+        self.greedy = dict(pick)
         for u in self.live:
             want = pick.get(u.id)
             self.m.add_hint(self.unf[u.id], 1 if want is None else 0)
@@ -1030,6 +1031,21 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     mdl = _Model(prob, mode, last, budget_dollars, change)
     mdl.build()
     out["build_seconds"] = round(_time.monotonic() - t0, 3)
+    # A complete starting week first: the greedy legal pick (last week's
+    # person, the draft's, else the most room) with every cost variable
+    # settled at its least — a full hint the search starts from, and the
+    # answer if the search finds nothing better in its budget. A large week
+    # with only the people hinted spent its whole deterministic budget
+    # looking for a first solution.
+    greedy = [u.draft for u in prob.units]
+    for u in live:
+        greedy[u.id] = mdl.greedy.get(u.id)
+    first = _fixed_eval(mdl, prob, greedy, seconds=min(5.0, max(1.0, max_seconds * 0.2)))
+    if first is not None:
+        mdl.m.clear_hints()
+        for i in range(len(mdl.m.proto.variables)):
+            v = mdl.m.get_int_var_from_proto_index(i)
+            mdl.m.add_hint(v, first.value(v))
     solver = _solver_for(max(0.2, max_seconds - (_time.monotonic() - t0)), seed=seed, workers=workers,
                          deterministic=deterministic)
     st = solver.solve(mdl.m)
@@ -1037,12 +1053,16 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     out["seconds"] = round(_time.monotonic() - t0, 3)
     out["solve_seconds"] = round(solver.wall_time, 3)
     if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
-        out["status"] = "no_solution_in_time" if st == _cp.UNKNOWN else name.lower()
-        return out
-    out["status"] = "optimal" if st == _cp.OPTIMAL else "time_limit"
-    out["proved_optimal"] = st == _cp.OPTIMAL
+        if first is None:
+            out["status"] = "no_solution_in_time" if st == _cp.UNKNOWN else name.lower()
+            return out
+        # nothing better in the budget: the complete starting week stands
+        solver, st = first, _cp.FEASIBLE
+        out["start_only"] = True
+    out["status"] = "optimal" if st == _cp.OPTIMAL and not out.get("start_only") else "time_limit"
+    out["proved_optimal"] = out["status"] == "optimal"
     out["objective"] = solver.objective_value
-    out["bound"] = solver.best_objective_bound
+    out["bound"] = solver.best_objective_bound if not out.get("start_only") else None
     assignment = [u.draft for u in prob.units]
     for u in live:
         got = None
@@ -1052,7 +1072,7 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
                 break
         assignment[u.id] = got
     out["assignment"] = assignment
-    exact = _fixed_eval(mdl, prob, assignment)
+    exact = _fixed_eval(mdl, prob, assignment) if not out.get("start_only") else first
     if exact is not None:
         solver = exact
         out["objective"] = exact.objective_value
