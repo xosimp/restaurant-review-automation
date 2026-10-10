@@ -4448,6 +4448,11 @@ svg:hover .hb-xh{opacity:1}
   window.cavBench={card:cardHtml,panel:panel,strip:strip,locations:locations,fill:fillCards,fillPanel:fillPanel,profile:openProfile};
 })();
 </script>
+{# The few server values the large static scripts below read, in one place
+   (scheduler audit 10/10/26, SCALE-28): with no Jinja inside them those
+   scripts are served as content-hashed, immutable files (static_bundles)
+   instead of ~450 KB of inline text on every load. #}
+<script>window.CAV_BOOT={rid:{{ restaurant.id|int }},multi:{{ 'true' if group_locations and group_locations|length > 1 else 'false' }},role:{{ (current_user.role if current_user and current_user.role else "client")|tojson }}};</script>
 <script>
 (function(){
   // ── Home renderer (ES5) ───────────────────────────────────────────────────
@@ -4455,7 +4460,7 @@ svg:hover .hb-xh{opacity:1}
   // the last pick is remembered in this browser.
   var _hbData=null,_hbLoadedAt=0,_hbLoading=false,_hbScope=hbScopeStart(),_hbRange='1M';
   function hbScopeStart(){
-    var multi={{ 'true' if group_locations and group_locations|length > 1 else 'false' }};
+    var multi=window.CAV_BOOT.multi;
     if(!multi)return 'location';
     // Arriving from a group row: this one load shows the location it opened.
     var once=null;try{once=sessionStorage.getItem('cavnar_hb_scope_once');sessionStorage.removeItem('cavnar_hb_scope_once');}catch(e0){once=null;}
@@ -4907,7 +4912,7 @@ svg:hover .hb-xh{opacity:1}
   // switches (switchLocation remembers the pick) - "All locations" is the
   // way back to the group view.
   window.hbSwitchLoc=function(rid){
-    if(+rid==={{ restaurant.id|int }}){hbScope('location');return;}
+    if(+rid===window.CAV_BOOT.rid){hbScope('location');return;}
     if(typeof switchLocation==='function')switchLocation(rid);
   };
   window.hbScope=function(scope){_hbScope=scope;try{localStorage.setItem('cavnar_hb_scope',scope);}catch(e){}_hbLoadedAt=0;hbLoad(false);};
@@ -16739,7 +16744,7 @@ window.askScreen = function() {
 // The chat survives a reload or a location switch (friction #15): the id is
 // kept per restaurant in sessionStorage, and the panel reopens on it. Per
 // viewer convenience only — the transcript itself is on the server.
-var ASK_CONV_KEY = 'cavnar_ask_conv_{{ restaurant.id|int }}';
+var ASK_CONV_KEY = 'cavnar_ask_conv_' + window.CAV_BOOT.rid;
 window.askRememberConversation = function(id) {
   window._askConversationId = id;
   try { sessionStorage.setItem(ASK_CONV_KEY, String(id)); } catch (e) {}
@@ -17704,6 +17709,27 @@ window.sendAskCavnar = function() {
   });
 };
 </script>
+{# The server values the main script below reads (scheduler audit 10/10/26,
+   SCALE-28): set here, read there as window.CAV_BOOT, so the 1 MB script
+   holds no Jinja and is served as a content-hashed, immutable file. One
+   "connected" rule (marketing_publish.channels_of, re-audit OPP-15): the
+   Studio, the Opportunity Feed and Home read the same test each publish
+   route makes - Instagram needs its account id as well as the token. #}
+<script>
+window.CAV_BOOT.ig = {% if social_channels is defined and social_channels.instagram %}true{% else %}false{% endif %};
+window.CAV_BOOT.fb = {% if social_channels is defined and social_channels.facebook %}true{% else %}false{% endif %};
+window.CAV_BOOT.gg = {% if social_channels is defined and social_channels.google %}true{% else %}false{% endif %};
+window.CAV_BOOT.rvTotal = {{ (rstats.total|int) if rstats and rstats.total is not none else 'null' }};
+window.CAV_BOOT.rfilter = {{ (rfilter or '')|tojson }};
+window.CAV_BOOT.dowData = {{labor.dow_summary|tojson}};
+window.CAV_BOOT.laborByDay = {{labor.by_day|tojson if labor.by_day else '{}'}};
+window.CAV_BOOT.laborTarget = {{labor_target|default(30.0)}};
+window.CAV_BOOT.laborDateRange = {{labor.date_range|tojson if labor.date_range else 'null'}};
+window.CAV_BOOT.perfDowPeriod = '{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% endif %}';
+window.CAV_BOOT.mktChannel = { {% for ct in ctypes %}{{ ct.id|tojson }}: {{ (ct.channel or 'social')|tojson }}, {% endfor %}'guest_sms': 'text' };
+window.CAV_BOOT.selCt = {{ (ctypes[0].id if ctypes else '')|tojson }};
+window.CAV_BOOT.bellScope = '{{ 'group' if group_locations and group_locations|length > 1 else '' }}';
+</script>
 
 <script>
 function openEditor(id) {
@@ -17913,12 +17939,11 @@ function saveDraft(id) {
     }).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); });
   }).catch(function(){ settle(); toast('Network error — try again','error'); });
 }
-{# One "connected" rule (marketing_publish.channels_of, re-audit OPP-15): the
-   Studio, the Opportunity Feed and Home read the same test each publish route
-   makes - Instagram needs its account id as well as the token. #}
-var _igConnected = {% if social_channels is defined and social_channels.instagram %}true{% else %}false{% endif %};
-var _fbConnected = {% if social_channels is defined and social_channels.facebook %}true{% else %}false{% endif %};
-var _ggConnected = {% if social_channels is defined and social_channels.google %}true{% else %}false{% endif %};
+// One "connected" rule (marketing_publish.channels_of, re-audit OPP-15),
+// set before this script (window.CAV_BOOT).
+var _igConnected = window.CAV_BOOT.ig;
+var _fbConnected = window.CAV_BOOT.fb;
+var _ggConnected = window.CAV_BOOT.gg;
 
 var _toastTimer=null;
 function toggleRows(tbodyId, btnId, total) {
@@ -19457,7 +19482,7 @@ function _rvMoreState(hasMore,shown,total){
 // The baseline is the total the page was rendered with (rstats), not the
 // first poll on the Reviews tab: reviews that arrived between loading the
 // dashboard and opening Reviews never appeared (re-audit F1-12).
-var _rvKnownTotal={{ (rstats.total|int) if rstats and rstats.total is not none else 'null' }},_rvNewIds=[];
+var _rvKnownTotal=window.CAV_BOOT.rvTotal,_rvNewIds=[];
 function rvNoteTotal(total){
   total=+total;if(!isFinite(total))return;
   if(_rvKnownTotal===null){_rvKnownTotal=total;return;}
@@ -19745,7 +19770,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   }
 });
-var rfilter='{{rfilter}}';
+var rfilter=window.CAV_BOOT.rfilter;
 function setRF(f,btn){
   rfilter=f;
   document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
@@ -20904,11 +20929,11 @@ function skipR(id){
     } else { toast(d.error||'Skip failed — try again','error'); }
   }).catch(function(){ settle(); toast('Network error — check your connection','error'); });
 }
-var dowData={{labor.dow_summary|tojson}};
-var laborByDay={{labor.by_day|tojson if labor.by_day else '{}'}};
-var laborTargetPct={{labor_target|default(30.0)}};
-var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
-var _laborTarget={{labor_target|default(30.0)}};
+var dowData=window.CAV_BOOT.dowData;
+var laborByDay=window.CAV_BOOT.laborByDay;
+var laborTargetPct=window.CAV_BOOT.laborTarget;
+var laborDateRange=window.CAV_BOOT.laborDateRange;
+var _laborTarget=window.CAV_BOOT.laborTarget;
 (function(){
   var elPeriod=document.getElementById('labor-period');
   if(!elPeriod||!laborDateRange||!laborDateRange.start)return;
@@ -20921,7 +20946,7 @@ var _laborTarget={{labor_target|default(30.0)}};
 var _perfTab='daily';
 var _perfTrendData=null;
 var _perfDowData=null;
-var _perfDowPeriod='{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% endif %}';
+var _perfDowPeriod=window.CAV_BOOT.perfDowPeriod;
 var _perfTrendPeriod='';
 
 // Three views of one question (density round #44): Daily, 8 weeks, and By
@@ -21123,7 +21148,7 @@ function _mktBody(){
 // is written and sent from the Campaign Studio (Marketing audit AUX-4 / UX-3:
 // a win-back SMS or a "SUBJECT LINE: ... BODY:" email could be posted to
 // Facebook). guest_sms is the quiet-night job's old guest-text draft.
-var _MKT_CHANNEL = { {% for ct in ctypes %}{{ ct.id|tojson }}: {{ (ct.channel or 'social')|tojson }}, {% endfor %}'guest_sms': 'text' };
+var _MKT_CHANNEL = window.CAV_BOOT.mktChannel;
 function _mktChannelOf(type){ return _MKT_CHANNEL[type] || 'social'; }
 function _mktIsSocial(type){ return _mktChannelOf(type) === 'social'; }
 // A calendar idea's channel: its platform when that names SMS or Email (the
@@ -28817,7 +28842,7 @@ function wtDrawObs(d){
   if(fixable.length)h+='<div class="fc2-wt-obcol warn"><div class="fc2-wt-obhd">Fixable</div>'+fixable.map(wtObBullet).join('')+'</div>';
   wtShow('fc2-wt-obs',true);box.innerHTML=h;
 }
-var selCt='{{ctypes[0].id if ctypes}}';
+var selCt=window.CAV_BOOT.selCt;
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');b.setAttribute('aria-checked','false');});el.classList.add('selected');el.setAttribute('aria-checked','true');}
 // A content-type card by keyboard (AUX-11): Enter or Space picks it.
 function mktCtKey(e,el){
@@ -31608,7 +31633,7 @@ function checkTabParam(){
   // can (its header switcher lists it), and land on the item after the
   // reload, as the bell does.
   window._cavLinkOtherLoc=false;
-  if(loc>0&&loc!=={{ restaurant.id|int }}){
+  if(loc>0&&loc!==window.CAV_BOOT.rid){
     var can=document.querySelector('#loc-switcher-panel button[onclick="switchLocation('+loc+')"]');
     if(can&&typeof window.switchLocation==='function'){
       if(path){try{sessionStorage.setItem('cavnar_pending_nav',path);}catch(e){}}
@@ -33996,8 +34021,8 @@ document.addEventListener('click', function(e) {
   // The rows animate in once per open, never on a re-render after an action.
   var _animate    = false;
   // A multi-location login's bell covers every location (friction #24).
-  var _scope      = '{{ 'group' if group_locations and group_locations|length > 1 else '' }}';
-  var _here       = {{ restaurant.id|int }};
+  var _scope      = window.CAV_BOOT.bellScope;
+  var _here       = window.CAV_BOOT.rid;
 
   // "now", "5m", "2h", "3d", then M/D/YY - one quiet time for both
   // popovers. A bare "YYYY-MM-DD HH:MM:SS" is UTC (SQLite datetime('now')):
@@ -35007,7 +35032,7 @@ document.addEventListener('click', function(e) {
   </div>
 </div>
 <script>
-window._cuRole='{{ current_user.role if current_user and current_user.role else "client" }}';
+window._cuRole=window.CAV_BOOT.role;
 // ── iOS parity ─────────────────────────────────────────────────────────────
 // Everything the phone had first, on the web: profile editing, security
 // (checkup, backup codes, trusted devices, recovery email, sign-in history,

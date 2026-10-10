@@ -91,7 +91,9 @@ def test_f1_1_picking_a_location_is_remembered_and_item_navs_leave_the_group_vie
     src = _src()
     sw = re.search(r"window\.switchLocation = function\(rid(?:, onFail)?\) \{.*?\n\};", src, re.S).group(0)
     assert "localStorage.setItem('cavnar_hb_scope', 'location')" in sw, "a switch remembers the pick"
-    assert "if(+rid==={{ restaurant.id|int }}){hbScope('location');return;}" in src, \
+    # The restaurant's id reaches the static Home script through
+    # window.CAV_BOOT since the scheduler audit of 10/10/26 (SCALE-28).
+    assert "if(+rid===window.CAV_BOOT.rid){hbScope('location');return;}" in src, \
         "the location already on opens its own Home without a reload"
     got = _nav("""
 var calls = [];
@@ -337,6 +339,7 @@ def test_f1_12_new_reviews_come_from_the_lists_own_query_and_only_newer_ones():
     chunk = re.search(r"var _rvKnownTotal=.*?\nwindow\.rvShowNew=", src, re.S).group(0)
     chunk = re.sub(r"\{\{.*?\}\}", "5", chunk).replace("\nwindow.rvShowNew=", "\n")
     js = r"""
+var window = {CAV_BOOT: {rvTotal: 5}};
 var _log = [], urls = [], _rvOffset = 20;
 function Card(id){ this.id = id; this.style = {}; }
 var list = {attrs: {'data-list-key': 'all|salmon|', 'data-total': '3'}, kids: [new Card('rc-10'), new Card('rc-8')],
@@ -362,7 +365,10 @@ console.log(JSON.stringify({urls: urls, ids: list.kids.map(function (c) { return
     assert got["urls"] and "search=salmon" in got["urls"][0], "the list's own search"
     assert got["ids"] == ["rc-12", "rc-10", "rc-8"], "an old non-matching card is not inserted"
     assert got["off"] == 21 and got["text"].startswith("1 new review")
-    assert "_rvKnownTotal={{ (rstats.total|int)" in src, "the baseline is the page's own total"
+    # The baseline is the page's own total, set before the script
+    # (window.CAV_BOOT, scheduler audit 10/10/26 SCALE-28).
+    assert "var _rvKnownTotal=window.CAV_BOOT.rvTotal," in src
+    assert "window.CAV_BOOT.rvTotal = {{ (rstats.total|int)" in src, "the baseline is the page's own total"
 
 
 # ── F1-13: alert emails open the item, at its location ───────────────────────

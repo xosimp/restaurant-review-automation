@@ -1867,6 +1867,10 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/labor/staff-settings", "desired_hours"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",
     ("/mobile/api/labor/staff-settings", "preferred_dayparts"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",
     ("/mobile/api/labor/staff-settings", "work_days"): _WEB_ONLY + " (the web's manager-hours card: a day with no times is any time, 10/9/26)",
+    # The re-score's delta answer (scheduler audit 10/10/26, SCALE-29): the
+    # web Studio merges it; iOS reads the whole quality until it does.
+    ("/mobile/api/labor/schedule/score", "delta"): _WEB_ONLY + " (the re-score's delta answer, SCALE-29)",
+    ("/mobile/api/labor/schedule/score", "quality_etag"): _WEB_ONLY + " (the re-score's delta answer, SCALE-29)",
     ("/mobile/api/labor/rules", "closed_dates"): _WEB_TOO + " (each date saves on its own, /account/closures)",
     ("/mobile/api/people/identity/<int:question_id>", "keep"): _WEB_TOO + " (both send same)",
     ("/mobile/api/templates", "category"): _WEB_TOO + " ('general')",
