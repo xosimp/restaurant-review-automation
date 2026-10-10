@@ -1401,21 +1401,228 @@ def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_id
     _record reads it, oldest first. Unedited weeks are in: they are the
     evidence that the draft was kept (L-6). `history_ids` reads those weeks
     instead of a window; `include_unlooked` keeps the weeks nobody looked at
-    (flagged looked_at False)."""
-    data = _WeekData(restaurant_id, db_path=db_path, lookback_days=int(weeks) * 7, history_ids=history_ids)
-    ids = list(history_ids) if history_ids is not None else data.finals()
+    (flagged looked_at False).
+
+    Each week's record is KEPT (schedule_learning_records — schedule audit
+    10/10/26 SCALE-33) under a signature of everything it is read from: the
+    versions, the owner's answers and redos of every draft of that week, its
+    economics, whether an automatic publish sent it, and the restaurant's
+    people (a rename reads old weeks anew). A week nothing has touched since
+    is read back, not replayed: the nightly learners, the generation and the
+    acceptance read used to rebuild all 24 weeks from their CSV versions on
+    every call."""
+    today = today or date.today()
+    ids, sigs = _record_plan(restaurant_id, int(weeks) * 7, history_ids, db_path)
+    cached = _load_records(restaurant_id, sigs, db_path)
+    stale = [h for h in ids if h not in cached]
+    fresh = {}
+    if stale:
+        data = _WeekData(restaurant_id, db_path=db_path, history_ids=stale)
+        for hid in stale:
+            try:
+                fresh[hid] = _record(data, int(hid), today=today)
+            except Exception as e:          # one unreadable week never hides the rest
+                log.warning("learning week %s unreadable for restaurant %s: %s", hid, restaurant_id, e)
+                continue
+        _store_records(restaurant_id, {h: (sigs.get(h), r) for h, r in fresh.items() if sigs.get(h)}, db_path)
     out = []
     for hid in ids:
-        try:
-            rec = _record(data, int(hid), today=today)
-        except Exception as e:          # one unreadable week never hides the rest
-            log.warning("learning week %s unreadable for restaurant %s: %s", hid, restaurant_id, e)
-            continue
+        rec = cached[hid] if hid in cached else fresh.get(hid)
         if rec is None or (not rec["looked_at"] and not include_unlooked):
             continue
+        wd = rec.get("week_date")
+        rec["age_days"] = max(0, (today - wd).days) if wd else 0
         out.append(rec)
     out.sort(key=lambda w: (str(w["week_start"] or ""), w["history_id"]))
     return out
+
+
+# ── the kept week records (SCALE-33) ───────────────────────────────────────
+
+# Bump when _record's reading of a week changes: every kept record is then
+# read anew once.
+RECORD_VERSION = 1
+
+
+def _people_epoch(conn, restaurant_id) -> str:
+    """A short hash of the restaurant's people and aliases — a rename, a
+    merge or an erase reads every week's names anew."""
+    import hashlib
+    h = hashlib.sha1()
+    try:
+        for r in conn.execute("SELECT id, display_name, name_key, merged_into FROM people WHERE restaurant_id=? "
+                              "ORDER BY id", (restaurant_id,)):
+            h.update(f"{r[0]}|{r[1]}|{r[2]}|{r[3]};".encode())
+        for r in conn.execute("SELECT person_id, name_key FROM person_aliases WHERE restaurant_id=? "
+                              "ORDER BY person_id, name_key", (restaurant_id,)):
+            h.update(f"{r[0]}|{r[1]};".encode())
+    except sqlite3.OperationalError:
+        pass
+    return h.hexdigest()[:16]
+
+
+def _record_plan(restaurant_id, lookback_days, history_ids, db_path=DB_PATH) -> tuple:
+    """(the history ids learning_weeks reads — the window's final draft of
+    each week, as _WeekData.finals picks it, or `history_ids` — and {id:
+    signature}), from a handful of light queries: no CSV is read here."""
+    import hashlib
+    conn = get_conn(db_path)
+    try:
+        if history_ids is not None:
+            want = sorted({int(h) for h in history_ids if h})
+        else:
+            want = [r[0] for r in conn.execute(
+                "SELECT DISTINCT history_id FROM schedule_versions WHERE restaurant_id=? "
+                "AND created_at >= datetime('now', ?)", (restaurant_id, f"-{int(lookback_days or 0)} days"))]
+        hist, weeks = {}, set()
+        for i in range(0, len(want), 400):
+            chunk = want[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json FROM "
+                                  f"schedule_history WHERE restaurant_id=? AND id IN ({marks})", (restaurant_id, *chunk)):
+                hist[h["id"]] = dict(h)
+                if h["week_start"]:
+                    weeks.add(h["week_start"])
+        wk = sorted(weeks)
+        for i in range(0, len(wk), 400):
+            chunk = wk[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json FROM "
+                                  f"schedule_history WHERE restaurant_id=? AND week_start IN ({marks})",
+                                  (restaurant_id, *chunk)):
+                hist.setdefault(h["id"], dict(h))
+        if history_ids is not None:
+            ids = [h for h in want if h in hist]
+        else:
+            by_week = {}
+            for hid in want:
+                h = hist.get(hid)
+                if h:
+                    by_week.setdefault(h["week_start"] or f"#{hid}", []).append(h)
+            ids = []
+            for wkey, hs in by_week.items():
+                if not wkey.startswith("#"):
+                    hs = [h for h in hist.values() if h["week_start"] == wkey]
+                pub = [h for h in hs if h["published_at"]]
+                if pub:
+                    pick = max([h for h in pub if not h["superseded_by"]] or pub, key=lambda h: h["id"])
+                else:
+                    pick = max([h for h in hs if not h["superseded_by"]] or hs, key=lambda h: h["id"])
+                ids.append(pick["id"])
+            ids.sort()
+        every = sorted(hist)
+        vsig, asig, rsig = {}, {}, {}
+        for i in range(0, len(every), 400):
+            chunk = every[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for r in conn.execute(f"SELECT history_id, COUNT(*), MAX(id), MAX(COALESCE(adopted_at, '')) FROM "
+                                  f"schedule_versions WHERE restaurant_id=? AND history_id IN ({marks}) "
+                                  f"GROUP BY history_id", (restaurant_id, *chunk)):
+                vsig[r[0]] = (r[1], r[2], r[3])
+            try:
+                for r in conn.execute(f"SELECT history_id, COUNT(*), MAX(id), MAX(COALESCE(answered_at, '')), "
+                                      f"MAX(COALESCE(adopted_at, '')), GROUP_CONCAT(answer) FROM schedule_edit_answers "
+                                      f"WHERE restaurant_id=? AND history_id IN ({marks}) AND answer IS NOT NULL "
+                                      f"GROUP BY history_id", (restaurant_id, *chunk)):
+                    asig[r[0]] = tuple(r[1:])
+            except sqlite3.OperationalError:
+                pass
+            try:
+                for r in conn.execute(f"SELECT history_id, COUNT(*), MAX(id) FROM schedule_rejections WHERE "
+                                      f"restaurant_id=? AND history_id IN ({marks}) GROUP BY history_id",
+                                      (restaurant_id, *chunk)):
+                    rsig[r[0]] = (r[1], r[2])
+            except sqlite3.OperationalError:
+                pass
+        auto = _auto_published_ids(conn, restaurant_id)
+        epoch = _people_epoch(conn, restaurant_id)
+    finally:
+        conn.close()
+    sigs = {}
+    for hid in ids:
+        h = hist[hid]
+        group = sorted((x for x in hist.values() if x["week_start"] == h["week_start"]) if h["week_start"] else [h],
+                       key=lambda x: x["id"])
+        parts = [RECORD_VERSION, epoch, hid in auto]
+        for x in group:
+            econ = hashlib.sha1(str(x.get("economics_json") or "").encode()).hexdigest()[:12]
+            parts.append([x["id"], str(x["published_at"] or ""), x["superseded_by"], econ, x["id"] in auto,
+                          list(vsig.get(x["id"]) or ()), list(asig.get(x["id"]) or ()), list(rsig.get(x["id"]) or ())])
+        sigs[hid] = hashlib.sha1(json.dumps(parts, default=str).encode()).hexdigest()
+    return ids, sigs
+
+
+def _rec_dumps(rec) -> str:
+    if rec is None:
+        return "null"
+    out = dict(rec)
+    out["items"] = [dict(e, keys=[list(k) for k in sorted(e.get("keys") or [])]) for e in rec.get("items") or []]
+    out["asked"] = [[d, p, r, n] for (d, p, r), n in (rec.get("asked") or {}).items()]
+    out["week_date"] = rec["week_date"].isoformat() if rec.get("week_date") else None
+    out.pop("age_days", None)
+    return json.dumps(out, default=str)
+
+
+def _rec_loads(raw):
+    rec = json.loads(raw)
+    if rec is None:
+        return None
+    rec["items"] = [dict(e, keys={tuple(k) for k in e.get("keys") or []}) for e in rec.get("items") or []]
+    rec["asked"] = {(d, p, r): n for d, p, r, n in rec.get("asked") or []}
+    try:
+        rec["week_date"] = date.fromisoformat(rec["week_date"]) if rec.get("week_date") else None
+    except (TypeError, ValueError):
+        rec["week_date"] = None
+    return rec
+
+
+def _load_records(restaurant_id, sigs, db_path=DB_PATH) -> dict:
+    """{history id: record (None for a week with no generated draft)} for
+    every kept record whose signature still matches."""
+    if not sigs:
+        return {}
+    out = {}
+    conn = get_conn(db_path)
+    try:
+        ids = sorted(sigs)
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for r in conn.execute(f"SELECT history_id, signature, record_json FROM schedule_learning_records "
+                                  f"WHERE restaurant_id=? AND history_id IN ({marks})", (restaurant_id, *chunk)):
+                if r["signature"] != sigs.get(r["history_id"]):
+                    continue
+                try:
+                    out[r["history_id"]] = _rec_loads(r["record_json"])
+                except (TypeError, ValueError, KeyError) as e:
+                    log.warning("kept learning week %s unreadable: %s", r["history_id"], e)
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+    return out
+
+
+def _store_records(restaurant_id, entries, db_path=DB_PATH) -> int:
+    """Keep each freshly read week under its signature. Never raises into
+    the read: a write that failed only means the next read replays it."""
+    if not entries:
+        return 0
+    try:
+        rows = [(restaurant_id, int(hid), sig, _rec_dumps(rec)) for hid, (sig, rec) in entries.items()]
+        conn = get_conn(db_path)
+        try:
+            conn.executemany("INSERT INTO schedule_learning_records (restaurant_id, history_id, signature, "
+                             "record_json, created_at) VALUES (?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, "
+                             "history_id) DO UPDATE SET signature=excluded.signature, "
+                             "record_json=excluded.record_json, created_at=excluded.created_at", rows)
+            conn.commit()
+        finally:
+            conn.close()
+        return len(rows)
+    except Exception as e:
+        log.warning("learning weeks not kept for restaurant %s: %s", restaurant_id, e)
+        return 0
 
 
 def acceptance(restaurant_id, weeks=8, db_path=DB_PATH) -> dict:

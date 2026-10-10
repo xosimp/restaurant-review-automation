@@ -385,6 +385,22 @@ def init_schedule_memory(db_path=None):
                 if "duplicate column" not in str(_e).lower():
                     raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_memory_status ON schedule_memory(restaurant_id, status)")
+        # Each week as the learners read it, kept (schedule audit 10/10/26
+        # SCALE-33, ARCH-28: the feature store the edit learners share) —
+        # schedule_versions.learning_weeks reads a week back while its
+        # signature (its versions, answers, redos, economics, the people)
+        # still matches, instead of replaying 24 weeks of CSV versions on
+        # every call. A cache: dropping a row only means it is read anew.
+        conn.execute("""CREATE TABLE IF NOT EXISTS schedule_learning_records (
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            history_id     INTEGER NOT NULL,
+            signature      TEXT    NOT NULL,
+            record_json    TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, history_id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_learning_records_created "
+                     "ON schedule_learning_records(created_at)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_memory_state (
             restaurant_id     INTEGER PRIMARY KEY REFERENCES restaurants(id),
             consolidated_at   TEXT,
