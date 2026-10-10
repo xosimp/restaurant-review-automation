@@ -9757,10 +9757,23 @@ def _fix_sig(r) -> tuple:
 
 
 def _span_of(frm, to):
-    s, e = _rules.parse_minutes(frm or ""), _rules.parse_minutes(to or "")
-    if s is None or e is None:
-        return None
-    return (s, e + 24 * 60 if e <= s else e)
+    """(start, end) of a stored stretch's clock words on the business
+    timeline (schedule_time.place): a stretch starting in the small hours is
+    that night's, as manager_gaps reads it (BUGSGEN-10). For a review saved
+    before its entries carried their minutes."""
+    return _stime.place(_rules.parse_minutes(frm or ""), _rules.parse_minutes(to or ""))
+
+
+def _left_span(entry):
+    """(start, end) minutes of a manager stretch the backstop left: its own
+    gap_start/gap_end when it carries them (BUGSGEN-10), else read from its
+    words."""
+    try:
+        if entry.get("gap_start") is not None and entry.get("gap_end") is not None:
+            return int(entry["gap_start"]), int(entry["gap_end"])
+    except (TypeError, ValueError):
+        pass
+    return _span_of(entry.get("from"), entry.get("to"))
 
 
 def refresh_review(saved, violations, rows, constraints=None, hours_budget=None, extras=None) -> dict:
@@ -9801,7 +9814,7 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
         mc = dict(saved["manager_coverage"])
         still = []
         for e in mc.get("left") or []:
-            want = _span_of(e.get("from"), e.get("to"))
+            want = _left_span(e)
             if want and any(gs < want[1] and want[0] < ge for gs, ge, _i in gaps.get(e.get("date"), [])):
                 still.append(e)
         mc["left"] = still

@@ -7084,8 +7084,13 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                     break
             if done is None:
                 skipped.add((gs, ge))
+                # The stretch's own minutes on the business timeline beside
+                # its words: a stretch after midnight (1470-1560) re-read from
+                # "12:30am"-"2:00am" was 30-120 and never matched the gap
+                # again (BUGSGEN-10, refresh_review).
                 left.append({"date": d, "day": day, "from": _fmt_minutes(gs % (24 * 60)),
                              "to": _fmt_minutes(ge % (24 * 60)), "minutes": ge - gs,
+                             "gap_start": int(gs), "gap_end": int(ge),
                              "reasons": why_not(d, gs, ge),
                              "could_act": sorted({(x.get("employee") or "").strip() for x in rep.rows
                                                   if x.get("date") == d and _low(x.get("employee")) in c.keyholders

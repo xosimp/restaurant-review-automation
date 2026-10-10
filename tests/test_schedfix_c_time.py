@@ -259,6 +259,23 @@ def test_the_web_hours_grid_reads_a_twelve_hour_time():
     assert out == '["21:00","21:00","09:00","00:00","12:00","21:30","21:00","","","00:00",""]'
 
 
+# ── the no-show watch and running-late read the one placement ───────────────
+
+def test_the_no_show_watch_places_a_baker_and_a_porter_as_the_rules_do():
+    import staff_comms
+    day = date(2026, 10, 9)
+    base = datetime(2026, 10, 9)
+    for start in ("4:30am", "12:30am", "3:59am", "5:00pm", "11:00am"):
+        due = staff_comms._due(day, start)
+        assert due == base + timedelta(minutes=sr.start_minutes({"shift_start": start, "shift_end": "6:00pm"})), start
+    # the baker is that morning (it was put on the next day), the porter tonight
+    assert staff_comms._due(day, "4:30am") == datetime(2026, 10, 9, 4, 30)
+    assert staff_comms._due(day, "12:30am") == datetime(2026, 10, 10, 0, 30)
+    import intraday
+    src = inspect.getsource(intraday)
+    assert "_stime.start_of(" in src and "start.hour < BUSINESS_DAY_START_HOUR" not in src
+
+
 # ── ARCH-24: the floors' week is the restaurant's own week ──────────────────
 
 def test_effective_floors_build_the_restaurants_own_week(monkeypatch):
