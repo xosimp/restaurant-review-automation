@@ -853,8 +853,14 @@ def floors_on_at_once(restaurant_id, roles=None, baseline=None, apply=False, db_
                         continue
                     new = {}
                     for c, n in codes:
-                        own = usual_figures(baseline, c, day, part)
-                        new[c] = min(n, _level(own)) if (want == set() or c.lower() in want) else n
+                        own = _get((baseline.get("concurrent") or {}).get((day, part)) or {}, c)
+                        # A floor named by the family ("Kitchen" over Line
+                        # Cook and Prep) has no figure of its own: only the
+                        # family's total below holds it, never a zero.
+                        if own is not None and (not want or c.lower() in want):
+                            new[c] = min(n, _level(own))
+                        else:
+                            new[c] = n
                     while sum(new.values()) > fam_held:
                         top = max((c for c in new if new[c] > 0 and (not want or c.lower() in want)),
                                   key=lambda c: (new[c], c), default=None)
@@ -863,9 +869,10 @@ def floors_on_at_once(restaurant_id, roles=None, baseline=None, apply=False, db_
                         new[top] -= 1
                     for c, n in codes:
                         if new[c] != n:
+                            own = _get((baseline.get("concurrent") or {}).get((day, part)) or {}, c)
                             changes.append({"role": c, "day": day, "part": part, "old": n, "new": new[c],
                                             "family_usual": fam_held,
-                                            "code_usual": _level(usual_figures(baseline, c, day, part))})
+                                            "code_usual": _level(own) if own is not None else None})
                             new_floors = _put_floor(new_floors, c, day, part, {"present": True, "value": new[c]})
         if not apply or not changes:
             return {"changes": changes, "untouched": untouched, "floors": new_floors, "applied": False}
@@ -877,7 +884,8 @@ def floors_on_at_once(restaurant_id, roles=None, baseline=None, apply=False, db_
                 if not isinstance(a.get("floor_before"), dict):
                     a["floor_before"] = {"present": bool(_int(a.get("floor_before"))),
                                          "value": _int(a.get("floor_before"))}
-                a.update(unit="concurrent", usual=ch["code_usual"], floor_set=ch["new"], restated_at=stamp)
+                a.update(unit="concurrent", floor_set=ch["new"], restated_at=stamp,
+                         usual=ch["code_usual"] if ch["code_usual"] is not None else ch["new"])
                 answers[key] = a
         try:
             update_restaurant(restaurant_id, {"role_floors_json": json.dumps(new_floors) if new_floors else None,

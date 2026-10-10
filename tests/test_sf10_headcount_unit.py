@@ -244,3 +244,22 @@ def test_floors_set_as_different_people_are_translated_once(db_path, monkeypatch
     assert not _floor_breaches(usual, c)
     # and running it again changes nothing
     assert cm.floors_on_at_once(rid, baseline=base)["changes"] == []
+
+
+def test_a_floor_named_by_its_family_is_held_to_the_familys_usual_never_zeroed(db_path, monkeypatch):
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = models.create_restaurant(models.Restaurant(name="EJ", owner_email="e@x.test"))
+    models.update_restaurant(rid, {"role_families_json": json.dumps({"Line Cook": "Kitchen", "Prep Cook": "Kitchen"})})
+    # Two line cooks 4-11pm and a prep cook 2-6pm: three different people,
+    # two on at once through dinner.
+    shifts = [{"date": d, "employee": e, "role": role, "shift_start": st, "shift_end": en}
+              for d in _fridays() for e, role, st, en in (("L1", "Line Cook", "4:00pm", "11:00pm"),
+                                                          ("L2", "Line Cook", "4:00pm", "11:00pm"),
+                                                          ("P1", "Prep Cook", "2:00pm", "6:00pm"))]
+    base = labor.historical_patterns(shifts, families=sr.role_families(models.get_restaurant(rid)))
+    sr.save_role_floors(rid, {"Kitchen": {"morning": 0, "night": 3, "days": {}}})
+    plan = cm.floors_on_at_once(rid, baseline=base, roles=["Kitchen"])
+    fri = [x for x in plan["changes"] if x["day"] == "Friday"]
+    assert [(x["role"], x["old"], x["new"], x["code_usual"]) for x in fri] == [("Kitchen", 3, 2, None)]

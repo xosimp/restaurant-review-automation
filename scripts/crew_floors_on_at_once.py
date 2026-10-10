@@ -45,7 +45,8 @@ def main(argv=None) -> int:
         print("Every floor already holds on the restaurant's own usual night, on at once. Nothing to change.")
     for c in out["changes"]:
         print(f"{c['role']:<20} {c['day']:<10} {word[c['part']]:<7} {c['old']:>2} -> {c['new']:>2}"
-              f"   (usual on at once: this code {c['code_usual']}, the whole family {c['family_usual']})")
+              f"   (usual on at once: this code "
+              f"{c['code_usual'] if c['code_usual'] is not None else '-'}, the whole family {c['family_usual']})")
     for u in out["untouched"]:
         print(f"{u['role']:<20} {u['day']:<10} {word[u['part']]:<7} {u['floor']:>2}    left: no usual crew on "
               "at once in the history to translate it by")
