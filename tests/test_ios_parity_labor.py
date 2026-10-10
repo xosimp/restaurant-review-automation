@@ -22,6 +22,7 @@ import staff_settings, time_off  # noqa: E401,F401
 import ai_utils
 import auth
 import client_api
+import schedule_publish
 import mobile_api
 import models
 import ops
@@ -167,7 +168,7 @@ def test_one_tap_safe_is_waiting_on_yous_rule(db, monkeypatch):
     rid = _rid(db)
     hid = _week(db, rid)
     blockers = []
-    monkeypatch.setattr(client_api, "publish_review", lambda r, s, **k: {"blockers": list(blockers)})
+    monkeypatch.setattr(schedule_publish, "publish_review", lambda r, s, **k: {"blockers": list(blockers)})
     monkeypatch.setattr(people, "reach", lambda r, names, **k: {n: {"email": "a@x.test"} for n in names})
     assert strategy_routes.draft_one_tap_safe(rid, hid) is True
     # A login that may not publish, a blocker to read, nobody on the week.
@@ -178,13 +179,13 @@ def test_one_tap_safe_is_waiting_on_yous_rule(db, monkeypatch):
     # Re-audit 10/8/26: one tap is unattended — a soft flag automation is
     # held by, or any unread note, keeps it to Review.
     seen = {}
-    monkeypatch.setattr(client_api, "publish_review",
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda r, s, **k: seen.update(k) or {"blockers": [], "soft": ["Ana owes a meal break"]})
     assert strategy_routes.draft_one_tap_safe(rid, hid) is False and seen.get("unattended") is True
-    monkeypatch.setattr(client_api, "publish_review",
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda r, s, **k: {"blockers": [], "notes": [{"key": "q", "text": "A weak week"}]})
     assert strategy_routes.draft_one_tap_safe(rid, hid) is False
-    monkeypatch.setattr(client_api, "publish_review", lambda r, s, **k: {"blockers": list(blockers)})
+    monkeypatch.setattr(schedule_publish, "publish_review", lambda r, s, **k: {"blockers": list(blockers)})
     empty = _week(db, rid, csv=HEADER + "\n")
     assert strategy_routes.draft_one_tap_safe(rid, empty) is False
     # A week already sent, or another restaurant's.

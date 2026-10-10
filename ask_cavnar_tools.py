@@ -194,11 +194,12 @@ def _read_schedule(restaurant_id):
     try:
         from models import _ensure_history_columns
         _ensure_history_columns(conn)
-        row = conn.execute(
-            "SELECT id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, hours_budget, "
-            "schedule_csv, quality_json, edited_at FROM schedule_history "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
-            (restaurant_id,)).fetchone()
+        # The week in force (models.newest_draft, ARCH-11) — never a
+        # discarded rewrite or a replaced draft.
+        from models import newest_draft as _newest_draft
+        row = _newest_draft(conn, restaurant_id,
+                            columns="id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, "
+                                    "hours_budget, schedule_csv, quality_json, edited_at")
     finally:
         conn.close()
     if not row:
@@ -1208,19 +1209,38 @@ def _read_schedule_rules(restaurant_id):
     pack = comp.pop("_pack", None) or {}
     minors = []
     try:
+        import compliance_packs as _cp
+        state = _cp.state_of(r) if r else ""
+    except Exception:
+        state = getattr(r, "jurisdiction", None)
+    try:
         for name, st in _ss.get_all(restaurant_id).items():
             if st.get("is_minor") or st.get("minor_age_band"):
                 band = st.get("minor_age_band")
                 minors.append({"name": name, "age_band": band or "not set",
-                               "limits": {k: v for k, v in _sr.minor_rules(band, getattr(r, "jurisdiction", None)).items()
-                                          if k != "source"} or {"latest_end": comp.get("minor_latest_end"),
-                                                                "max_daily_hours": comp.get("minor_max_daily_hours")}})
+                               "limits": {k: v for k, v in _sr.minor_rules(band, state).items()
+                                          if k not in ("source", "sources")} or {
+                                   "latest_end": comp.get("minor_latest_end"),
+                                   "max_daily_hours": comp.get("minor_max_daily_hours")}})
     except Exception:
         pass
+    # Which jurisdictions hold the restaurant and why (compliance_packs,
+    # schedule audit 10/10/26 RM-15): an ordinance named as not covering it
+    # is never quoted as a rule in force.
+    coverage = None
+    try:
+        import compliance_packs as _cp2
+        ev = _cp2.evaluate(r) if r else None
+        if ev:
+            coverage = [{"jurisdiction": j["label"], "law": j.get("law"), "status": j["status"], "why": j["why"]}
+                        for j in ev["jurisdictions"]]
+    except Exception:
+        coverage = None
     return {
         "rules_in_force": {k: v for k, v in comp.items() if v not in (None, "")},
         "jurisdiction_pack": ({"label": pack.get("label"), "starting_values": pack.get("applied"),
-                               "notes": pack.get("notes")} if pack else None),
+                               "sources": pack.get("sources"), "notes": pack.get("notes")} if pack else None),
+        "jurisdictions": coverage,
         # The floors as a draft is held to them this week: the owner's rules
         # card, raised by their staffing rules and confirmed note rules.
         "role_floors": _sr.effective_role_floors(r) if r else {},
@@ -1229,8 +1249,9 @@ def _read_schedule_rules(restaurant_id):
         # (schedule_rules.cut_floor). Not a staffing requirement.
         "never_cut_below": _sr.cut_floor_default(r),
         "minors": minors,
-        "note": ("These are the values set in Cavnar AI, which the schedule is checked against. They are starting "
-                 "values, not legal advice: say them as 'the rule set in Cavnar AI', never as what the law requires, "
+        "note": ("These are the values set in Cavnar AI, which the schedule is checked against. Values a "
+                 "jurisdiction set come from public sources checked on the date shown, and are not legal advice: "
+                 "say them as 'the rule set in Cavnar AI' with where it came from, never as what the law requires, "
                  "and tell the owner to check with counsel for their exact situation."),
     }
 
@@ -4908,7 +4929,7 @@ def proposal_details(name, args, restaurant_id, bulk_preview=None) -> dict:
             # confirm (the card never carries an acknowledgement), so say why
             # before the tap and where to send it knowingly (NS5 C1/H3).
             try:
-                from client_api import publish_blockers
+                from schedule_publish import publish_blockers
                 blockers = publish_blockers(restaurant_id, row["id"])
             except Exception:
                 blockers = []

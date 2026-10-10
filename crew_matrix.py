@@ -267,8 +267,8 @@ def _draft(restaurant_id, history_id=None, db_path=DB_PATH):
             row = conn.execute("SELECT id, week_start, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
                                (int(history_id), restaurant_id)).fetchone()
         else:
-            row = conn.execute("SELECT id, week_start, schedule_csv FROM schedule_history WHERE restaurant_id=? "
-                               "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+            import models as _m_live
+            row = _m_live.newest_draft(conn, restaurant_id, columns="id, week_start, schedule_csv")
     finally:
         conn.close()
     if not row:
@@ -801,8 +801,10 @@ def _matrix_key(restaurant_id, history_id, db_path):
             draft = conn.execute("SELECT id, edited_at FROM schedule_history WHERE id=? AND restaurant_id=?",
                                  (int(history_id), restaurant_id)).fetchone()
         else:
-            draft = conn.execute("SELECT id, edited_at FROM schedule_history WHERE restaurant_id=? "
-                                 "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+            # The week in force (models.newest_draft, ARCH-11) — the one
+            # _draft reads, so the cache key names the week the grid shows.
+            import models as _m_live
+            draft = _m_live.newest_draft(conn, restaurant_id, columns="id, edited_at")
         try:
             pos = conn.execute("SELECT MAX(business_date) FROM pos_tickets WHERE restaurant_id=?",
                                (restaurant_id,)).fetchone()

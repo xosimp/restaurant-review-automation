@@ -79,6 +79,15 @@ def init_note_rules(db_path=DB_PATH):
         for _col, _decl in (("kind", "TEXT NOT NULL DEFAULT 'floor'"), ("at_time", "TEXT")):
             if _col not in cols:
                 conn.execute(f"ALTER TABLE schedule_note_rules ADD COLUMN {_col} {_decl}")
+        # The owner's words as typed rules beyond a floor or a time
+        # (owner_rules — scheduler audit 10/10/26 RM-9): a person kept off,
+        # on, closing or opening, two kept together or apart, a ceiling, a
+        # day lighter or heavier. `person` / `person2` in the roster's
+        # spelling, `value` a count or a weight, `dates` a JSON list of ISO
+        # dates for a one-week rule naming dates.
+        for _col, _decl in (("person", "TEXT"), ("person2", "TEXT"), ("value", "REAL"), ("dates", "TEXT")):
+            if _col not in cols:
+                conn.execute(f"ALTER TABLE schedule_note_rules ADD COLUMN {_col} {_decl}")
         conn.commit()
     finally:
         conn.close()
@@ -554,6 +563,13 @@ def words_for(rule) -> str:
     """"at least 2 Line Cook at lunch and dinner, Fridays · every week" —
     or, for a time rule, "Server at dinner start at 4:30pm, Fri · every week"."""
     from time_utils import mdy
+    kind = rule.get("kind") or "floor"
+    if kind not in ("floor",) + TIME_KINDS:
+        # A typed rule of the owner's words (owner_rules, RM-9): its own words.
+        import owner_rules as _owr
+        scope = ("every week" if rule.get("scope") == "every"
+                 else f"the week of {mdy(rule.get('week_start'))} only")
+        return f"{_owr.words(_owr.from_row(rule))} · {scope}"
     parts = rule.get("dayparts") or list(DAYPARTS)
     when = " and ".join(DAYPART_WORDS[p] for p in DAYPARTS if p in parts)
     days = rule.get("days")
@@ -812,6 +828,8 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
         for r in note_rules(restaurant_id, week_start=c.week_dates[0], db_path=db_path):
             if r["scope"] == "week" and mondays != {r.get("week_start")}:
                 continue
+            if (r.get("kind") or "floor") not in ("floor",) + TIME_KINDS:
+                continue                  # a typed rule of the owner's words: owner_rules.apply, below
             if not _held(r["role"], roles):
                 c.owner_rules_unchecked.append(
                     f"{r.get('source_text') or r['words']} — nobody on the roster is a {r['role']} now")
@@ -845,6 +863,12 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
                     if schedule_rules.floor_for(c.role_floors, key, day, part) < r["min_people"]:
                         spec.setdefault("days", {}).setdefault(day, {})[part] = r["min_people"]
                         c.rule_floor_sources[(key.strip().lower(), day, part)] = src
+        # Every other typed rule of the owner's words in force for the week
+        # (owner_rules — RM-9, AI-9, AI-19): the ones confirmed here (hard),
+        # and the notes' and staff notes' readings not yet confirmed (soft).
+        # Read from the cache — no model call here.
+        import owner_rules as _owr
+        _owr.apply(c, _owr.typed_rules(restaurant_id, c.week_dates, db_path=db_path))
     except Exception as e:
         try:
             import ops

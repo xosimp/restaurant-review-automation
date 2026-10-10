@@ -316,7 +316,13 @@ def test_an_auto_publish_queued_before_an_edit_sends_nothing_once_the_week_is_ed
     hid = _week(db_path, rid)
     delayed.schedule(rid, "schedule_publish", {"schedule_id": hid}, 120, db_path=db_path)
     edited = CLEAN.replace("Bob,Server,4:00pm", "Bob,Server,5:00pm")
-    models.update_schedule_history_rows(rid, edited, history_id=hid, edited_by="manager", db_path=db_path)
+    # A manager's save (schedule_versions.write_on — the one write path;
+    # update_schedule_history_rows, which bypassed versions, is gone).
+    conn = models.get_conn(db_path)
+    conn.execute("BEGIN IMMEDIATE")
+    schedule_versions.write_on(conn, rid, hid, "edited", edited, saved_by="manager")
+    conn.commit()
+    conn.close()
 
     delayed.run_due(db_path=db_path, now=datetime.now(timezone.utc) + timedelta(hours=3))
     assert staff_mail == [], "a week the manager changed after it was queued went out under the 'unchanged' promise"

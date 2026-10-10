@@ -152,6 +152,7 @@ def test_with_nothing_published_last_weeks_punches_are_the_seam():
     _punches(rid, [(LAST[6], "Ana", "Server", "6:00pm", "2:00am", 8.0)] +
                   [(d, "Ben", "Server", "5:00pm", "10:00pm", 5.0) for d in LAST[1:]])
     c = sr.build_constraints(rid, WEEK, list(sr.DAYS))
+    c.compliance["min_rest_hours"] = 10                     # an owner's rest rule (no default since 10/10/26)
     assert any(r.get("_source") == "punches" for r in c.base_rows["ana"])
     rest = [v for v in sr.violations([_row("Ana", "9:00am", "3:00pm", WEEK[0])], c, person_only=True)
             if v["kind"] == "rest_gap"]
@@ -169,6 +170,7 @@ def test_with_this_week_and_next_published_last_week_still_counts():
     _week(rid, WEEK, [(WEEK[2], "Ben", "5:00pm", "10:00pm", 5)])
     _week(rid, NEXT, [(NEXT[0], "Cy", "9:00am", "3:00pm", 6)])
     c = sr.build_constraints(rid, WEEK, list(sr.DAYS))          # regenerating this week
+    c.compliance["min_rest_hours"] = 10                     # an owner's rest rule (no default since 10/10/26)
     assert [r["date"] for r in c.base_rows.get("ana", [])] == [LAST[6]]
     assert [r["date"] for r in c.base_rows.get("cy", [])] == [NEXT[0]]
     assert "ben" not in c.base_rows                              # this week's own rows are never the tail
@@ -278,6 +280,7 @@ def test_a_close_this_week_before_next_weeks_published_open_is_a_rest_breach():
     rid = _rid()
     _week(rid, NEXT, [(NEXT[0], "Ana", "8:00am", "2:00pm", 6)])
     c = sr.build_constraints(rid, WEEK, list(sr.DAYS))
+    c.compliance["min_rest_hours"] = 10                     # an owner's rest rule (no default since 10/10/26)
     sunday_close = _row("Ana", "6:00pm", "2:00am", WEEK[6])
     rest = [v for v in sr.violations([sunday_close], c, person_only=True) if v["kind"] == "rest_gap"]
     assert rest and rest[0]["date"] == WEEK[6] and "before their next shift" in rest[0]["detail"]

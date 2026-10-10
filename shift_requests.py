@@ -67,6 +67,17 @@ class ShiftRequestError(ValueError):
     pass
 
 
+class RestConsentNeeded(ShiftRequestError):
+    """The claim would be legal if the person agreed in writing to a short
+    turnaround — the jurisdiction's rest rule allows it with consent and a
+    premium (schedule audit 10/10/26 MARKET-3). `consent` is what to ask:
+    {"kind": "rest_waiver", "date", "text", "gap_hours", "need_hours",
+    "premium"}; the claim is sent again with consent_rest=true."""
+    def __init__(self, consent):
+        super().__init__(consent.get("text") or "this needs your written consent to a short turnaround")
+        self.consent = consent
+
+
 class NotOnApp(ShiftRequestError):
     """The person has no active employee login, so an in-app offer could
     never be answered (intraday.ask_to_cover falls back to asking them by
@@ -78,19 +89,17 @@ def _key(name) -> str:
 
 
 def _published(conn, restaurant_id, on_date=None):
-    """The published week a shift on `on_date` belongs to: the newest
-    published row whose week contains that date. Taking simply the newest
+    """The published week a shift on `on_date` belongs to — its live copy
+    (models.live_week_for, the one rule, ARCH-11), its PUBLISHED rows as
+    `schedule_csv`: a manager's unsent edit is not what staff drop or swap
+    (ARCH-1). With no date, the newest live week. Taking simply the newest
     published row meant that once next week went out, nobody could drop or
     swap a shift in the week they were actually working."""
+    import models as _m
     if on_date is None:
-        return conn.execute(
-            "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-            "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
-    iso = on_date.isoformat() if hasattr(on_date, "isoformat") else str(on_date)[:10]
-    return conn.execute(
-        "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-        "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
-        "ORDER BY generated_at DESC, id DESC LIMIT 1", (restaurant_id, iso, iso)).fetchone()
+        weeks = _m.live_weeks(restaurant_id, conn=conn)
+        return weeks[0] if weeks else None
+    return _m.live_week_for(restaurant_id, on_date, conn=conn)
 
 
 def _live_hist(conn, restaurant_id, req):
@@ -100,8 +109,8 @@ def _live_hist(conn, restaurant_id, req):
     live = _published(conn, restaurant_id, req["date"])
     if live:
         return live
-    return conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                        (req["history_id"], restaurant_id)).fetchone()
+    return conn.execute("SELECT id, COALESCE(published_csv, schedule_csv) AS schedule_csv FROM schedule_history "
+                        "WHERE id=? AND restaurant_id=?", (req["history_id"], restaurant_id)).fetchone()
 
 
 def _today(restaurant_id, today=None):
@@ -1153,7 +1162,63 @@ def cover_candidates(restaurant_id, request_id, names, db_path=DB_PATH):
     return out
 
 
-def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep=None):
+def _rest_consent(restaurant_id, rows, idx, name, db_path=None):
+    """Under a consent rest rule, the short turnaround taking rows[idx]
+    would make for `name`, if agreeing to it in writing would make the claim
+    legal: {"kind": "rest_waiver", "date" (the later shift's), "text",
+    "gap_hours", "need_hours", "premium"} — else None."""
+    import schedule_rules as _sr
+    import schedule_engine as _se
+    from datetime import datetime as _dtc, timedelta as _tdc
+    try:
+        dates = sorted({r.get("date") for r in rows if r.get("date")})
+        c = _sr.build_constraints(restaurant_id, dates, [_dtc.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates],
+                                  db_path=db_path or DB_PATH)
+    except Exception:
+        return None
+    if _sr.rest_mode(c.compliance) != "consent_premium" or not _sr.rest_rule_applies(c, name):
+        return None
+    need = float(c.compliance.get("min_rest_hours") or 0)
+    cand = dict(rows[idx], employee=name)
+    s, e = _sr.shift_span(cand, c.tz)
+    if not s:
+        return None
+    mine = [r for i, r in enumerate(rows) if i != idx and c.key(r.get("employee")) == c.key(name)]
+    mine += list(c.base_rows.get(c.key(name)) or [])
+    short = None
+    for r in mine:
+        if r.get("date") == cand.get("date"):
+            continue
+        rs, re_ = _sr.shift_span(r, c.tz)
+        if not rs:
+            continue
+        if rs >= e:
+            gap, later, earlier = (rs - e).total_seconds() / 3600, r, cand
+        elif re_ <= s:
+            gap, later, earlier = (s - re_).total_seconds() / 3600, cand, r
+        else:
+            return None
+        if gap < need - 0.01 and (short is None or gap < short[0]):
+            short = (gap, later, earlier)
+    if not short:
+        return None
+    gap, later, earlier = short
+    w = c.rest_waivers.setdefault(c.key(name), {"standing": False, "dates": set()})
+    w["dates"] = set(w.get("dates") or ()) | {later.get("date")}
+    ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, name, constraints=c)
+    if not ok:
+        return None
+    mult, flat = c.compliance.get("rest_premium_multiplier"), c.compliance.get("rest_premium_flat")
+    premium = (f"${float(flat):,.0f}" if flat else f"{float(mult):g}x pay" if mult else "the rest premium")
+    from time_utils import mdy
+    text = (f"I agree to work {later.get('shift_start')}–{later.get('shift_end')} on {mdy(later.get('date'))} with "
+            f"{gap:.1f} hours' rest after my {earlier.get('shift_start')}–{earlier.get('shift_end')} shift on "
+            f"{mdy(earlier.get('date'))}, less than the {need:g} hours the rest rule gives me, paid at {premium}.")
+    return {"kind": "rest_waiver", "date": later.get("date"), "text": text, "gap_hours": round(gap, 2),
+            "need_hours": need, "premium": premium}
+
+
+def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep=None, consent_rest=None):
     """(hist, rows, idx): raise unless `name` may take this request's shift
     on the live week — the claim's own check, shared by the offer, the open
     board's label and the claim itself. With `keep` (a dict) the week's
@@ -1189,6 +1254,25 @@ def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep
     ok, why = _se.replacement_is_legal(restaurant_id, rows, idx, name, constraints=constraints,
                                        **({"prepared": prepared} if prepared is not None else {}))
     if not ok:
+        # Under a consent rest rule a claim refused only for a short
+        # turnaround asks for the claimant's written consent
+        # (RestConsentNeeded), unless `consent_rest` is True — then it is
+        # recorded (staff_consent, time-stamped) and the claim goes through:
+        # one tap (schedule audit 10/10/26 MARKET-3).
+        if consent_rest is not None:
+            consent = _rest_consent(restaurant_id, rows, idx, name, db_path=db_path)
+            if consent and consent_rest is True:
+                import staff_consent as _consent
+                _consent.record(restaurant_id, name, "rest_waiver", consent["text"], subject_date=consent["date"],
+                                subject={"gap_hours": consent["gap_hours"], "need_hours": consent["need_hours"],
+                                         "request_id": row.get("id")},
+                                channel="app", source_ref=f"request:{row.get('id')}",
+                                db_path=None if db_path == DB_PATH else db_path)
+                ok, why = _se.replacement_is_legal(restaurant_id, rows, idx, name)
+                if ok:
+                    return hist, rows, idx
+            elif consent:
+                raise RestConsentNeeded(consent)
         raise ShiftRequestError(why or f"{name} cannot take that shift")
     return hist, rows, idx
 
@@ -1241,7 +1325,7 @@ def teammates_with_room(restaurant_id, rows, idx, c, exclude=(), prepared=None, 
 
 
 def claim(restaurant_id, request_id, claimant, actor=None, db_path=DB_PATH, today=None, check_role=True, now=None,
-          hold_overtime=True):
+          hold_overtime=True, consent_rest=False):
     """Somebody takes an open shift. Legality is the what-if pass's own
     check (availability, time off, hours, rest, a minor's latest end, the
     role's certification, the person's window), plus the role and a shift
@@ -1265,7 +1349,7 @@ def claim(restaurant_id, request_id, claimant, actor=None, db_path=DB_PATH, toda
     # same-role teammate has room waits on a decider (BUGSLIFE-14).
     return _cover(restaurant_id, row, name, actor=actor, from_status="open", check_role=check_role,
                   db_path=db_path, today=today, now=now, until="end" if (row.get("kind") or "") == "post" else "start",
-                  hold_overtime=hold_overtime)
+                  hold_overtime=hold_overtime, consent_rest=bool(consent_rest))
 
 
 def _cancel_dependents(conn, restaurant_id, moved, except_id):
@@ -1486,7 +1570,7 @@ def _close_offers(conn, request_id, accepted_offer_id=None):
 
 
 def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path, today=None, now=None,
-           until="start", note=None, offer_id=None, hold_overtime=False):
+           until="start", note=None, offer_id=None, hold_overtime=False, consent_rest=None):
     """The shift changes hands to `claimant`, written into the live week as a
     `swap` version in one transaction with the request's status.
 
@@ -1516,7 +1600,8 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
             raise ShiftRequestError("somebody else just took that shift" if from_status == "open"
                                     else "that request was already answered")
         keep = {}
-        hist, rows, idx = _judge(restaurant_id, row, name, check_role, db_path, keep=keep if hold_overtime else None)
+        hist, rows, idx = _judge(restaurant_id, row, name, check_role, db_path, keep=keep if hold_overtime else None,
+                                 consent_rest=consent_rest)
         if hold_overtime and keep.get("constraints") is not None:
             c = keep["constraints"]
             extra = _rules.overtime_added(c, name, rows[idx], rows)
@@ -1563,6 +1648,27 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
     else:
         raise ShiftRequestError("the schedule kept changing while that was checked — try again")
     _refresh_task_sheets(restaurant_id, [row["date"]])
+    # On the predictability-pay record (schedule audit 10/10/26 MARKET-2):
+    # a shift its holder asked to drop, taken by a colleague, is a trade
+    # between employees (exempt). A shift the manager posted (an extra one,
+    # or someone's put on the board) is the employer's change: the claimant's
+    # accepting it is their written, time-stamped consent to the added hours
+    # (staff_consent), which exempts it where that law accepts consent.
+    if (row.get("kind") or "") == "post":
+        try:
+            import staff_consent as _consent
+            _consent.record(restaurant_id, name, "added_hours",
+                            f"I'll take the {row.get('shift_start')}–{row.get('shift_end') or ''} "
+                            f"{row.get('role') or ''} shift on {row['date']}.".replace("  ", " "),
+                            subject_date=row["date"],
+                            subject={"after": {"start": row.get("shift_start"), "end": row.get("shift_end")}},
+                            channel="offer" if offer_id else "app",
+                            source_ref=f"offer:{offer_id}" if offer_id else f"request:{row['id']}",
+                            db_path=None if db_path == DB_PATH else db_path)
+        except Exception as _cx:
+            print(f"[shift requests] consent not recorded rid={restaurant_id}: {_cx!r}")
+    _record_compliance_change(restaurant_id, hist["id"], rows, fresh,
+                              "extra" if (row.get("kind") or "") == "post" else "trade", actor or name, db_path)
     _notify(restaurant_id, "covered", out, db_path=db_path)
     held = (row.get("held_claimant") or "").strip()
     if held and _key(held) != _key(name):
@@ -1572,6 +1678,17 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
     for o in released:
         _notify_offer(restaurant_id, "offer_taken", o, out, db_path)
     return out
+
+
+def _record_compliance_change(restaurant_id, history_id, before_rows, after_rows, kind, actor, db_path):
+    """predictability_pay.record_request_change, never raising into the
+    request that already happened."""
+    try:
+        import predictability_pay
+        predictability_pay.record_request_change(restaurant_id, history_id, before_rows, after_rows, kind,
+                                                 actor=actor, db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        print(f"[shift requests] compliance record skipped rid={restaurant_id}: {e!r}")
 
 
 def _hold_claim(restaurant_id, row, name, extra_hours, room, db_path):
@@ -1905,6 +2022,9 @@ def _execute_swap(restaurant_id, req: dict, actor, from_status, db_path, accepte
     else:
         raise ShiftRequestError("the schedule kept changing while that swap was checked — try again")
     _refresh_task_sheets(restaurant_id, [req["date"], req["target_date"]])
+    # A trade two employees made: on the predictability-pay record as
+    # employee-initiated, exempt everywhere (schedule audit 10/10/26 MARKET-2).
+    _record_compliance_change(restaurant_id, hist["id"], judged, rows, "trade", actor, db_path)
     _notify(restaurant_id, "swapped", out, db_path=db_path)
     for c in cancelled:
         _notify(restaurant_id, "cancelled", c, db_path=db_path)
@@ -2106,7 +2226,12 @@ def offer_shift(restaurant_id, request_id, name, actor=None, note=None, issue_id
     if not login:
         raise NotOnApp(f"{person} isn't on the Cavnar AI app, so they can't answer an offer — call them directly")
     person = login
-    _judge(restaurant_id, row, person, check_role=False, db_path=db_path)
+    try:
+        _judge(restaurant_id, row, person, check_role=False, db_path=db_path, consent_rest=False)
+    except RestConsentNeeded:
+        # Legal with their written consent to the short turnaround: the
+        # offer goes, and accepting it asks for that consent (MARKET-3).
+        pass
     import people as _people
     try:
         channel = _people.reach(restaurant_id, [person], db_path=db_path).get(person) or {}
@@ -2134,7 +2259,7 @@ def offer_shift(restaurant_id, request_id, name, actor=None, note=None, issue_id
     return offer
 
 
-def respond_offer(restaurant_id, offer_id, name, accept, db_path=DB_PATH, now=None):
+def respond_offer(restaurant_id, offer_id, name, accept, db_path=DB_PATH, now=None, consent_rest=False):
     """The named person's answer to an offer. Yes is the claim itself —
     the same legality check, the week written in one transaction; no is
     recorded and the manager told. Either way an offer from a coverage issue
@@ -2168,7 +2293,7 @@ def respond_offer(restaurant_id, offer_id, name, accept, db_path=DB_PATH, now=No
         return {"offer": o, "request": row}
     out = _cover(restaurant_id, row, o["name"], actor=o["name"], from_status="open", check_role=False,
                  db_path=db_path, now=now, until="end" if (row.get("kind") or "") == "post" else "start",
-                 offer_id=o["id"])
+                 offer_id=o["id"], consent_rest=bool(consent_rest))
     o = dict(o, status="accepted")
     _cover_answer(restaurant_id, o, True, db_path)
     return {"offer": o, "request": out}

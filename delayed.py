@@ -387,23 +387,24 @@ def queued_actor(payload) -> dict:
 
 
 def _run_schedule_publish(restaurant_id, payload, db_path):
-    """Publish the queued week — unless it was edited after it was queued.
-    The queue-time checks (unedited, unpublished) are two hours old when
-    this runs; a week the manager changed in the window goes out only when
-    they publish it themselves (DATA-12, SCHED-28). An already-published
-    week is refused by _publish_schedule's own claim."""
-    from client_api import _publish_schedule
+    """Publish the queued week — unless a person changed it after it was
+    queued. The queue-time checks (unedited, unpublished) are two hours old
+    when this runs; a week the manager changed in the window goes out only
+    when they send it themselves (DATA-12, SCHED-28) — and they are told so
+    now, with a Send now of the week as it stands (BUGSLIFE-8: the void used
+    to be silent, and staff never got the week). A Send carries the version
+    the person saw; an older row or the auto-publish, the queue time. An
+    already-published week is refused by the publish's own claim."""
+    import schedule_publish as _sp
     queued_at = _queued_at.get()
-    if payload.get("schedule_id") and queued_at:
-        conn = get_conn(db_path)
-        try:
-            r = conn.execute("SELECT edited_at FROM schedule_history WHERE id=? AND restaurant_id=?",
-                             (payload["schedule_id"], restaurant_id)).fetchone()
-        finally:
-            conn.close()
-        if r and r["edited_at"] and str(r["edited_at"]) >= str(queued_at):
-            return {"ok": False, "error": "The week was changed after it was queued, so it was not sent. "
-                                          "Publish it from the Labor tab when it's ready."}
+    sid = payload.get("schedule_id")
+    if sid and (payload.get("version") is not None or queued_at):
+        if _sp.edited_since(restaurant_id, sid, version=payload.get("version"),
+                            since=None if payload.get("version") is not None else queued_at, db_path=db_path):
+            _tell_owner_send_voided(restaurant_id, payload, db_path)
+            return {"ok": False, "voided": True,
+                    "error": "The week was changed after it was queued, so it was not sent. "
+                             "Publish it from the Labor tab when it's ready."}
     # The gate runs again now, against today's data (NS5 H3). A person's
     # queued publish carries the blocker keys they acknowledged, and only
     # those; an older row carrying acknowledge=True is read the same way it
@@ -413,20 +414,19 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
     # its window ends it goes only if the unattended gate still passes —
     # a soft flag or note that came up in the window holds it like a
     # blocker, and the owner is told.
-    if payload.get("one_tap") and payload.get("schedule_id"):
+    if payload.get("one_tap") and sid:
         import strategy_routes as _sr_1t
         conn = get_conn(db_path)
         try:
             _st = conn.execute("SELECT published_at, superseded_by FROM schedule_history WHERE id=? AND restaurant_id=?",
-                               (payload["schedule_id"], restaurant_id)).fetchone()
+                               (sid, restaurant_id)).fetchone()
         finally:
             conn.close()
-        # Already sent or replaced: _publish_schedule's own answer says so.
+        # Already sent or replaced: the publish's own answer says so.
         if _st and not _st["published_at"] and not _st["superseded_by"] \
-                and not _sr_1t.draft_one_tap_safe(restaurant_id, payload["schedule_id"]):
-            from client_api import publish_review
+                and not _sr_1t.draft_one_tap_safe(restaurant_id, sid):
             try:
-                review = publish_review(restaurant_id, payload["schedule_id"], unattended=True) or {}
+                review = _sp.publish_review(restaurant_id, sid, unattended=True) or {}
             except Exception:
                 review = {}
             held = ([b["text"] for b in review.get("blockers") or []] + list(review.get("soft") or [])) \
@@ -442,45 +442,80 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
         acknowledge = False                    # auto-publish: nothing acknowledged, unattended
     # The reasons given with the keys (TRUST-28), when there are any.
     _why = {"override_reasons": payload["override_reasons"]} if payload.get("override_reasons") else {}
-    out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
-                                     acknowledge=acknowledge, **_why)
+    out, _status = _sp.publish(restaurant_id, sid, queued_actor(payload), acknowledge=acknowledge, **_why)
     if out.get("needs_ack"):
         _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path,
                                   keys=_send_now_keys(payload, out))
         out = dict(out, ok=False, error="The week was not sent: " + "; ".join((out.get("new_blockers")
                                                                              or out.get("blockers") or [])[:3]) + ".")
+    elif out.get("changed") or out.get("stale"):
+        # A save landed while the queued send was being checked: what
+        # would have gone out is not what was checked. Said, with Send now.
+        _tell_owner_send_voided(restaurant_id, payload, db_path)
     return out
 
 
 def _run_schedule_changes_send(restaurant_id, payload, db_path):
     """Tell the people a saved change moved on a week staff already have
-    (client_api.send_schedule_changes) — through the owner's undo window,
-    like the first send (F2-2). A week edited again inside the window is
-    not sent: the people and shifts it would tell are no longer the ones
-    the manager saw when they pressed Send."""
-    from client_api import send_schedule_changes
+    (schedule_publish.send_changes) — through the owner's undo window,
+    like the first send (F2-2). A week a person edited again inside the
+    window is not sent — the people and shifts it would tell are no longer
+    the ones the manager saw when they pressed Send — and the owner is told
+    so, with a Send now (BUGSLIFE-8). A staff cover or swap in the window is
+    not an edit: both people were told already, and the changes still go."""
+    import schedule_publish as _sp
     if payload.get("schedule_id") and payload.get("version") is not None:
-        # By version, not by clock: a save in the same second as the press
-        # is the edit the person was sending, not one made after it.
-        conn = get_conn(db_path)
-        try:
-            r = conn.execute("SELECT MAX(version) AS v FROM schedule_versions WHERE history_id=? AND restaurant_id=?",
-                             (payload["schedule_id"], restaurant_id)).fetchone()
-        finally:
-            conn.close()
-        if r and r["v"] is not None and int(r["v"]) != int(payload["version"]):
-            return {"ok": False, "error": "The week was changed again after it was queued, so the changes were "
-                                          "not sent. Send them from the Labor tab when it's ready."}
+        if _sp.edited_since(restaurant_id, payload["schedule_id"], version=payload["version"], db_path=db_path):
+            _tell_owner_send_voided(restaurant_id, payload, db_path, changes=True)
+            return {"ok": False, "voided": True,
+                    "error": "The week was changed again after it was queued, so the changes were "
+                             "not sent. Send them from the Labor tab when it's ready."}
     ack = payload.get("acknowledge")
     _why = {"override_reasons": payload["override_reasons"]} if payload.get("override_reasons") else {}
-    out, _status = send_schedule_changes(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
-                                         acknowledge=ack if isinstance(ack, list) else [], **_why)
+    out, _status = _sp.send_changes(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
+                                    acknowledge=ack if isinstance(ack, list) else [], **_why)
     if out.get("needs_ack"):
         held = out.get("new_blockers") or out.get("blockers") or []
         _tell_owner_schedule_held(restaurant_id, payload, held, db_path,
                                   title="Your schedule changes were not sent", keys=_send_now_keys(payload, out))
         out = dict(out, ok=False, error="The changes were not sent: " + "; ".join(held[:3]) + ".")
+    elif out.get("changed") or out.get("stale"):
+        _tell_owner_send_voided(restaurant_id, payload, db_path, changes=True)
     return out
+
+
+def _tell_owner_send_voided(restaurant_id, payload, db_path, changes=False):
+    """A queued Send a person's edit voided (BUGSLIFE-8). The owner was
+    told "goes to staff at 11am"; the void used to reach only a Live
+    Activity, so a typo fixed in the undo window meant the week never went
+    out. Told the way a held week is (strategy_jobs._reach), with a Send now
+    of the week as it stands when its gate allows one from the lock screen
+    (_send_now_keys: no hard rule, at most three blockers)."""
+    sid = payload.get("schedule_id")
+    keys = None
+    try:
+        import schedule_publish as _sp
+        review = _sp.publish_review(restaurant_id, sid) if sid else None
+        if review is not None:
+            texts = [b["text"] for b in review.get("blockers") or []]
+            keys = _send_now_keys(payload, {"blocker_items": review.get("blockers") or [], "blockers": texts}) \
+                if texts else []
+    except Exception as e:
+        import ops
+        ops.capture(e, job="schedule_send_voided", context=f"restaurant_id={restaurant_id}")
+        keys = None
+    title = "Your schedule changes were not sent" if changes else "Next week's schedule was not sent"
+    body = ("The week was changed after Send was pressed, so nothing went to staff — what would have gone is not "
+            "what you saw. Look at the week and send it again" + (", or Send now." if keys is not None else "."))
+    data = {"schedule_id": sid, "voided": True}
+    if keys is not None:
+        data["blocker_keys"] = list(keys)
+    try:
+        import strategy_jobs
+        strategy_jobs._reach(restaurant_id, "schedule_publish_held", title, body, data, db_path, subject=title)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="schedule_send_voided", context=f"restaurant_id={restaurant_id}")
 
 
 def _send_now_keys(payload, out):

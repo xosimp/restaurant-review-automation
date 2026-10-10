@@ -943,9 +943,11 @@ def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:
         except (TypeError, ValueError):
             mgr_cutoff = cutoff
         try:
+            import models as _m_live
             weeks = conn.execute(
-                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
-                "AND superseded_by IS NULL AND substr(week_end,1,10) >= ?", (restaurant_id, mgr_cutoff)).fetchall()
+                "SELECT " + _m_live.live_csv_sql("h") + " AS schedule_csv FROM schedule_history h WHERE "
+                "h.restaurant_id=? AND " + _m_live.live_where("h") + " AND substr(h.week_end,1,10) >= ?",
+                (restaurant_id, mgr_cutoff)).fetchall()
         except Exception:
             weeks = []
     finally:
