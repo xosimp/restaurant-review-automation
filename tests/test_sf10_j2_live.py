@@ -113,6 +113,16 @@ def test_a_slow_night_suggests_one_legal_priced_cut_at_the_earliest_safe_half_ho
     assert sum(1 for m in ms if m["kind"] == "cut") == 1
 
 
+def test_a_cut_under_a_predictive_scheduling_law_is_priced_net_of_what_it_owes(db, monkeypatch):
+    rid, r = _live(db, monkeypatch, SLOW)
+    import predictability_pay
+    monkeypatch.setattr(predictability_pay, "cut_premium",
+                        lambda *a, **k: {"amount": 20.0, "hours": 1.75, "law": "Chicago Fair Workweek"})
+    cut = labor_live.moves(r, now_local=SIX)[0]
+    assert cut["premium"] == 20.0 and cut["net"] == 32.5
+    assert "less $20 predictability pay under Chicago Fair Workweek" in cut["text"]
+
+
 def test_a_busy_night_asks_the_one_ending_inside_the_rush_to_stay_and_else_calls_someone_in(db, monkeypatch):
     rows = [(W1[4], "Ana", "Server", "4:00pm", "9:00pm", 5), (W1[4], "Bo", "Server", "5:00pm", "10:00pm", 5),
             (W1[4], "Cy", "Server", "5:00pm", "10:00pm", 5), (W1[4], "Di", "Cook", "4:00pm", "10:30pm", 6.5),

@@ -68,7 +68,9 @@ DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
 # below are the ones with an integration in this repo; SpotOn, Aloha (NCR
 # Voyix), Lightspeed, Oracle Simphony, PAR Brink, Revel, Heartland and an
 # aggregator (Omnivore-style) each need the vendor's partner credentials
-# before a module can be written against their API — see docs/integrations.
+# before a module can be written against their API: daily sales, punches,
+# a read during service (fetch_sales_today / fetch_clock_ins_today) and
+# archive_rows, as the four here do.
 PROVIDER_MODULES = {"toast": "toast", "square": "square", "clover": "clover", "rpower": "rpower"}
 
 # Optional contracts beyond PROVIDER_API / DATA_API:

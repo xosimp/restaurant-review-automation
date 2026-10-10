@@ -216,6 +216,17 @@ def test_a_failed_push_is_told_and_retried_and_a_local_copy_never_writes(db, mon
     assert pos_schedule_push.run_push(pid2, now_local=NOW)["status"] == "held_local" and fake.pushed == []
 
 
+def test_every_stamped_send_queues_the_week_for_the_pos(db, monkeypatch):
+    import schedule_overrides
+    import schedule_publish
+    queued = []
+    monkeypatch.setattr(schedule_overrides, "record_overridden", lambda *a, **k: None)
+    monkeypatch.setattr(shift_requests, "reconcile", lambda *a, **k: 0)
+    monkeypatch.setattr(pos_schedule_push, "after_publish", lambda rid, hid, actor=None: queued.append((rid, hid)))
+    schedule_publish._after_send(5, 77, 3, {"blockers": []}, [], None, {"username": "gm"}, "principal")
+    assert queued == [(5, 77)]
+
+
 def test_a_publish_is_never_held_by_the_push(db, monkeypatch):
     fake = _FakePOS()
     rid, hid, _told = _push_week(db, monkeypatch, fake)
