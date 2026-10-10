@@ -250,7 +250,7 @@ def test_the_redo_prompt_names_the_dates_and_says_the_owners_words_once(db, monk
     assert p.count("THE OWNER'S REQUEST FOR THIS DRAFT —") == 1 and p.count("Saturday is slammed") == 1
     said = p[p.index("THE OWNER'S REQUEST FOR THIS DRAFT —"):]
     said = said[:said.index("Saturday is slammed") + 60]
-    assert "priority 5" in said and "Too few people on" in said and ai_guard.OWNER_RULE_OPEN not in said
+    assert "PRIORITIES 5" in said and "Too few people on" in said and ai_guard.OWNER_RULE_OPEN not in said
     assert "WHY THE OWNER IS REDOING" not in p
     assert prompts[-1]["deadline"] is not None                         # the job's clock reaches the call
 

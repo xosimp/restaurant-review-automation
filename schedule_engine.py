@@ -1574,6 +1574,7 @@ _INPUT_WORDS = {
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
     "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
+    "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
     "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
@@ -2174,12 +2175,39 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # PROMPT-1).
     hours_rule_reads = [dict(r) for r in (getattr(constraints, "hours_rules", None) or [])]
     hours_rule_reads += [{"unchecked": t} for t in (getattr(constraints, "hours_rules_unchecked", None) or [])]
-    extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
-                  + _pairs_block(pairs, roster_pairs)
-                  + learned_blk
-                  + last_nights_blk
-                  + _stsig.soft_block(soft_reqs)
-                  + memory_blk)
+    _contract_now = _sched_out.schedule_contract()
+    _availability = None
+    if _contract_now == "shape":
+        # The shape contract's slim input (scheduler audit 10/10/26 AI-14,
+        # AI-20): how many of each role can work each date and daypart in
+        # place of the ROSTER, the restaurant's usual shifts as a table in
+        # place of the learned prose the solver already reads as signals,
+        # and no pairings — people are code's to choose.
+        try:
+            _availability = _sp.availability_table(
+                shape_availability(constraints, roster_pairs, next_week_dates), next_week_dates) or None
+        except Exception as _sfx:
+            _soft_fail("availability table", _sfx, restaurant_id)
+        _usual = ""
+        try:
+            import shift_templates as _stpl
+            from labor import published_rows_for_baseline as _prb
+            _usual = _stpl.prompt_table(_stpl.templates(_prb(restaurant_id, before=next_week_dates[0])),
+                                        days=week_days)
+        except Exception as _sfx:
+            _soft_fail("usual shifts", _sfx, restaurant_id)
+        extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
+                      + _usual
+                      + last_nights_blk
+                      + _stsig.soft_block(soft_reqs)
+                      + memory_blk)
+    else:
+        extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
+                      + _pairs_block(pairs, roster_pairs)
+                      + learned_blk
+                      + last_nights_blk
+                      + _stsig.soft_block(soft_reqs)
+                      + memory_blk)
     # The last published week's dates and how it went (L-31).
     prior_week = None
     if prior_week_row.get("schedule_csv"):
@@ -2285,7 +2313,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # The output contract, read once for the generation (SCHEDULE_CONTRACT
         # — AI cost audit 10/7/26 #69, #70): every call of it answers on the
         # same one, so their schema and their cached prompt are shared.
-        contract=_sched_out.schedule_contract(),
+        contract=_contract_now,
+        # The shape contract reads this in place of the ROSTER (AI-14).
+        availability_table=_availability,
         instruction=instruction or None,
         # What each call is sent (schedule audit 10/3/26): the dates a redo
         # writes and the kept days it is written against (P-9), the days
@@ -3172,6 +3202,38 @@ def assign_shape_slots(slots, context_rows, constraints, signals=None, weights=N
         r = {k: v for k, v in r.items() if k not in ("_pinned", "_open")}
         (out["assigned"] if (r.get("employee") or "").strip() else out["unassigned"]).append(r)
     out["stats"] = {k: res.get(k) for k in ("status", "proved_optimal", "seconds", "slots", "infeasible", "notes")}
+    return out
+
+
+def shape_availability(c, roster_pairs, dates) -> dict:
+    """{(date, daypart): {role: {"can", "closers", "managers"}}} — how many
+    of each roster role can work each date and daypart (Constraints.can_work
+    and fillable: time off, availability, held notes, a note's caution,
+    dormancy), how many of them close for the role, how many are managers:
+    the shape contract's AVAILABLE BY DAY (scheduler audit 10/10/26 AI-14)."""
+    out = {}
+    if c is None:
+        return out
+    for d in dates or []:
+        if d in (getattr(c, "closed_dates", None) or ()):
+            continue
+        for part in ("morning", "night"):
+            cell = {}
+            for name, role in roster_pairs or []:
+                if not name or not role:
+                    continue
+                ok, _w = c.can_work(name, d, part)
+                if not ok or not c.fillable(name, d, part)[0]:
+                    continue
+                x = cell.setdefault(role, {"can": 0, "closers": 0, "managers": 0})
+                x["can"] += 1
+                key = c.key(name)
+                if key in ((getattr(c, "closers_by_role", None) or {}).get(c.family(role)) or ()):
+                    x["closers"] += 1
+                if key in (getattr(c, "managers", None) or {}):
+                    x["managers"] += 1
+            if cell:
+                out[(d, part)] = cell
     return out
 
 
@@ -9072,7 +9134,7 @@ def _in_frozen_inputs(fn):
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
                       focus=None, gate=True, _fallback=None, instruction=None, _model_result=None, _reruns=0,
-                      _gate_fill=None, _code_redo=None):
+                      _gate_fill=None, _code_redo=None, _base_read=None):
     """week_start picks the week (any date in it); dates + base_history_id
     regenerate only those days of an existing draft, the rest pinned.
     focus names what was weak in those days for the prompt; gate allows one
@@ -9120,8 +9182,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             from models import get_schedule_history_detail as _gshd
             _base = _gshd(int(base_history_id), restaurant_id) or {}
             # The draft exactly as read: the save goes ahead only over this
-            # (PIPE-2 — models.save_schedule_history `base`).
+            # (PIPE-2 — models.save_schedule_history `base`). The model's
+            # turn after the code's redo (AI-28) keeps the draft as first
+            # read, so an edit saved while the code redrafted still counts
+            # as an edit made during the redo.
             _base_csv = _base.get("schedule_csv") or ""
+            if _base_read is not None:
+                _base_csv = _base_read
             _base_rows = _versions.rows_from_csv(_base_csv)
             _pinned = [r for r in _base_rows if r.get("date") not in set(dates)]
             week_start = week_start or _base.get("week_start")
@@ -9169,7 +9236,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     print(f"[schedule] the code's redo drafted nothing ({_crx}) — the model redoes the days")
                     return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=dates,
                                              base_history_id=base_history_id, focus=focus, gate=gate,
-                                             instruction=instruction, _reruns=_reruns, _code_redo=False)
+                                             instruction=instruction, _reruns=_reruns, _code_redo=False,
+                                             _base_read=_base_csv)
             else:
                 result = _build_schedule_result(restaurant_id, **_build_kw)
         _answer = None
@@ -9431,7 +9499,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 print("[schedule] the code's redo changed nothing — the model redoes the days")
                 return _run_schedule_job(job_id, restaurant_id, week_start=week_start, dates=dates,
                                          base_history_id=base_history_id, focus=focus, gate=gate,
-                                         instruction=instruction, _reruns=_reruns, _code_redo=False)
+                                         instruction=instruction, _reruns=_reruns, _code_redo=False,
+                                             _base_read=_base_csv)
             hours_scheduled = _safe_hours_sum(preview_rows)
             _apply_repair_reports(result, _loop)
             hours_added = round(float((_loop.get("hours_added") or {}).get("top_up") or 0.0), 1)

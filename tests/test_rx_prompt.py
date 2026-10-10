@@ -617,7 +617,7 @@ def test_the_prompt_leaves_the_counting_to_code():
         assert "count, check and compare as much as you need" not in static
         assert "For each date you write, count everyone" not in static
         assert "check every closer's end against that date's close" not in static
-        assert "do not spend effort re-counting or re-verifying your rows" in static
+        assert "CODE OWNS THE ARITHMETIC" in static and "never sums for you to work out" in static   # AI-12 (10/10/26)
         assert "code counts every daypart and half hour against SHIFT REQUIREMENTS" in static
         # What it needs while choosing stays: the ranked rules and how a
         # daypart is counted.

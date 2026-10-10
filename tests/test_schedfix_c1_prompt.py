@@ -146,6 +146,9 @@ def test_p23_every_call_of_a_generation_reads_the_same_first_two_blocks(monkeypa
         return {"days": [{"date": d, "shifts": [{"employee": "S0", "role": "Server", "start": "4:00pm",
                                                   "end": "10:00pm"}]} for d in dates], "summary": ["ok"]}
     _model(monkeypatch, answer)
+    # One call at a time: the answer reads the calls' order (a generation's
+    # slices go out together by default since 10/10/26, AI-4).
+    monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: se.CHUNK_ROWS_PER_CALL + 40)
     monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
     roster = [(f"S{i}", "Server") for i in range(4)]
@@ -179,16 +182,16 @@ def test_pr2_every_owner_channel_sits_in_one_block_at_its_rank(monkeypatch):
     # (schedule re-audit 10/4/26 PROMPT-5).
     for head in ("RESTAURANT HOURS & SHIFT RULES (priority 1b for the opening and closing times",
                  "THE OWNER'S STANDING RULES (OWNER_RULE) — priority 2, beside the staffing floors",
-                 "STAFF CONSTRAINTS — priority 1b (hard constraints)",
-                 "ADDITIONAL SCHEDULING NOTES — priority 5",
-                 "THE OWNER'S REQUEST FOR THIS DRAFT — priority 5"):
+                 "STAFF CONSTRAINTS — PRIORITIES 1b.",
+                 "ADDITIONAL SCHEDULING NOTES — PRIORITIES 5",
+                 "THE OWNER'S REQUEST FOR THIS DRAFT — PRIORITIES 5"):
         assert head in block, head
     # PRIORITIES ranks every channel in one line, and the system prompt
     # defers to it rather than ranking OWNER_RULE on its own.
     assert ("Where the owner's words rank: RESTAURANT HOURS & SHIFT RULES 1b for the opening and closing times, 2 "
             "for every staffing rule in them") in static
     assert "the owner's standing rules (OWNER_RULE) 2; ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST" in static
-    assert "it ranks where the request's PRIORITIES put the owner's standing rules" in kw["system"]
+    assert "it ranks where the request's PRIORITIES put it" in kw["system"]
     assert "follow it unless" not in kw["system"]
     # Each of the owner's words is said once.
     prompt = _prompt(kw)
@@ -223,8 +226,10 @@ def test_pr3_the_roster_max_is_the_codes_max_and_no_literal_40_is_left(monkeypat
 
 def test_pr4_minimum_hours_are_ranked_counted_and_carried_across_the_seam():
     static = sp.static_block(True, NOTE_WORDS)
-    assert ("Fill them from the people still under their minimum hours first (MIN in the ROSTER; a full-timer's "
-            "is the full-time line)") in static
+    # AI-12 (10/10/26): code holds minimums, overtime and room; the prompt
+    # states them as bounds, never a fill order for the model to count.
+    assert "bounds, never a fill order to work out" in static
+    assert "Fill them from the people still under their minimum hours first" not in static
     assert "[SOFT] minimum, [HARD] maximum" in sp.ROSTER_HEAD
     prior = [{"date": WEEK[4], "day": "Friday", "employee": "S0", "role": "Server", "shift_start": "5:00pm",
               "shift_end": "11:00pm", "scheduled_hours": "6"}]
@@ -336,8 +341,8 @@ def test_pr7_pr10_the_context_blocks_carry_no_add_or_trim_verbs(monkeypatch):
 
 def test_pr9_starts_follow_the_ramp():
     static = sp.static_block(True, NOTE_WORDS)
-    assert ("Starts follow the half-hour ramp: people of one role start together only when the ramp or a floor "
-            "needs them on at the same time") in static
+    assert ("Starts and ends follow the half-hour numbers — the ramp in, the taper out (code staggers the "
+            "starts)") in static
     assert "Never schedule two employees in the same role at the exact same start time" not in static
 
 
@@ -447,7 +452,7 @@ def test_pr21_cross_trained_costs_nothing_extra_is_gone(monkeypatch):
                                                        "scheduled_hours": 4}])
     prompt = _prompt(kw)
     assert "costs nothing extra" not in prompt and "CROSS-TRAINED" not in prompt and "TRAINED UP" not in prompt
-    assert "Each role is paid its own rate" in prompt
+    assert "each role is paid its own rate" in prompt
 
 
 # ── PR-22: retired rules never reach the prompt ───────────────────────────
@@ -474,7 +479,7 @@ def test_pr23_one_rule_for_people_who_miss_shifts(monkeypatch):
     kw, _ = _call(monkeypatch)
     prompt = _prompt(kw)
     assert prompt.count("pair them with a dependable teammate") == 1
-    assert "Never add a person beyond SHIFT REQUIREMENTS for it" in prompt
+    assert "never a person added for it" in prompt
     for gone in ("a second body", "NO-SHOW BUFFER", "is the fix"):
         assert gone not in prompt, gone
 
@@ -492,7 +497,7 @@ def test_pr24_each_dates_hours_are_said_once_and_the_ceiling_only_removes(monkey
     par = prompt[prompt.index("PAR HOURS CEILING"):]
     par = par[:par.index("\n\n")]
     assert "Per-day targets" not in par and "Each date's day target in SHIFT REQUIREMENTS is its share of it" in par
-    assert "The hours ceiling only ever removes hours; it never adds them." in par
+    assert "it only ever removes hours." in par
     assert len(par) < 900, len(par)
     for d in WEEK:
         t = f"day target {out['daily_target_hours'][d]:g}h"
