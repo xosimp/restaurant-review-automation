@@ -3825,6 +3825,19 @@ def _keyholders(rid) -> bool:
         return False
 
 
+def _do_publish_overrides(u):
+    """The publish warnings this restaurant keeps sending past (schedule
+    audit 10/10/26 TRUST-28): per kind, the weeks it was shown and sent
+    past, the rate, when last and why, whether it is hard (it keeps holding
+    the send however often) and whether it was demoted to a note."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_overrides as _so
+    st = sorted(_so.stats(_rid(u)).values(), key=lambda s: (-(s.get("rate") or 0), -s["overridden"], s["kind"]))
+    return {"ok": True, "kinds": st, "always_overridden": [s for s in st if s["overridden"] >= _so.ALWAYS_MIN_WEEKS
+                                                           and (s.get("rate") or 0) >= _so.ALWAYS_MIN_RATE]}, 200
+
+
 def _do_learned_patterns(u):
     """What the draft has learned from the manager's edits, with the
     owner's say: each one can be dismissed or restored. Each live pattern
@@ -7154,6 +7167,7 @@ _ROUTES = [
      "shift_request_colleague_agreed"),
     ("/labor/shift-requests/<int:request_id>/cancel", ["POST"], _do_shift_request_cancel, "shift_request_cancel"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
+    ("/labor/publish-overrides", ["GET"], _do_publish_overrides, "publish_overrides"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/learned-patterns/adopt", ["POST"], _do_learned_patterns_adopt, "learned_patterns_adopt"),
     ("/labor/schedule-memory", ["GET"], _do_schedule_memory, "schedule_memory"),

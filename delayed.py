@@ -441,7 +441,9 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
     else:
         acknowledge = False                    # auto-publish: nothing acknowledged, unattended
     out, _status = _publish_schedule(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
-                                     acknowledge=acknowledge)
+                                     acknowledge=acknowledge,
+                                     # The reasons given with the keys (TRUST-28).
+                                     override_reasons=payload.get("override_reasons") or None)
     if out.get("needs_ack"):
         _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path,
                                   keys=_send_now_keys(payload, out))
@@ -471,7 +473,8 @@ def _run_schedule_changes_send(restaurant_id, payload, db_path):
                                           "not sent. Send them from the Labor tab when it's ready."}
     ack = payload.get("acknowledge")
     out, _status = send_schedule_changes(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
-                                         acknowledge=ack if isinstance(ack, list) else [])
+                                         acknowledge=ack if isinstance(ack, list) else [],
+                                         override_reasons=payload.get("override_reasons") or None)
     if out.get("needs_ack"):
         held = out.get("new_blockers") or out.get("blockers") or []
         _tell_owner_schedule_held(restaurant_id, payload, held, db_path,

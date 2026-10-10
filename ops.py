@@ -2464,6 +2464,9 @@ _RETENTION_DAYS = {
     # SCALE-33): a cache rewritten whenever its week changes, so a row older
     # than the learners' window is a week they no longer read.
     "schedule_learning_records": int(os.getenv("RETAIN_SCHED_LEARNING_RECORDS_DAYS", "168")),
+    # The publish warnings a send went out past, by key (TRUST-28): the
+    # override rate per kind reads 180 days of them.
+    "schedule_publish_overrides": int(os.getenv("RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2688,6 +2691,7 @@ _RETENTION_COLUMN = {
     "context_sections": "built_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
+    "schedule_publish_overrides": "shown_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2756,6 +2760,7 @@ _RETENTION_FLOOR_DAYS = {
     "schedule_rejections": 168, "schedule_edit_answers": 168, "schedule_observations": 200,
     # The kept week records (SCALE-33): the learners' own 24-week window.
     "schedule_learning_records": 168,
+    "schedule_publish_overrides": 180,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2895,6 +2900,7 @@ _RETENTION_READERS = {
                           ("schedule_learning.prediction_weeks", "schedule_versions.LEARN_DAYS", None)),
     "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
     "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     # The scheduling memory (L-29, L-22, L-34): the owner's redos over its
     # window; each recommendation's week as it ran, for one accepted as far
