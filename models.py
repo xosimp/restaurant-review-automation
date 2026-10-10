@@ -630,6 +630,7 @@ class Restaurant:
     dedicated_shifts_json: Optional[str] = None
     reply_keywords: Optional[str] = None   # reply_keywords: JSON list of search phrases worked into review replies
     reply_programs: Optional[str] = None   # reply_programs: JSON list of memberships pitched in happy guests' replies
+    crew_answers_json: Optional[str] = None  # crew_matrix: {"role|Weekday|part": {"answer": "hold"|"lean", ...}} the Studio's Crew answers
 
     def reply_program_in(self, text) -> dict:
         """The membership program a reply names (reply_programs) — its name
@@ -1236,6 +1237,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "dedicated_shifts_json", "TEXT"),
         ("restaurants", "reply_keywords", "TEXT"),
         ("restaurants", "reply_programs", "TEXT"),
+        ("restaurants", "crew_answers_json", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -4961,7 +4963,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","cut_floor_default",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5726,6 +5728,7 @@ def _restaurant_from_row(row) -> Restaurant:
         dedicated_shifts_json=row["dedicated_shifts_json"] if "dedicated_shifts_json" in row.keys() else None,
         reply_keywords=row["reply_keywords"] if "reply_keywords" in row.keys() else None,
         reply_programs=row["reply_programs"] if "reply_programs" in row.keys() else None,
+        crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,

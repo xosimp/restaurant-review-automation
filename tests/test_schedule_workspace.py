@@ -60,7 +60,7 @@ def test_the_studio_is_a_full_page_application_at_its_own_address():
     stages = re.findall(r'<section class="ss-stage" data-stage="(\w+)"', s)
     # Team & rules and the Staffing review joined as stages (owner, 10/2/26).
     # The Staffing review left the Studio for Labor (owner, 10/5/26).
-    assert stages == ["setup", "build", "summary", "schedule", "publish", "history", "team"]
+    assert stages == ["setup", "build", "summary", "schedule", "publish", "history", "crew", "team"]
     # Read, not imported: importing hosted_dashboard installs its CSRF hooks
     # on the shared blueprints for every later test in the process.
     hd = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()

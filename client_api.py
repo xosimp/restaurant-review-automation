@@ -13678,6 +13678,25 @@ def labor_schedule_history_detail(current_user, history_id):
     return _m("mobile_schedule_history_detail")(history_id, current_user)
 
 
+@client_bp.route("/api/labor/crew-matrix", methods=["GET", "POST"])
+@login_required
+def labor_crew_matrix(current_user):
+    """The Schedule Studio's Crew stage (crew_matrix, owner 10/10/26): each
+    role's usual crew per weekday and shift beside the draft, and the
+    owner's one answer where the draft runs leaner. Reading is Labor's
+    (the /api/labor prefix gate); answering writes a minimum, so it needs
+    the schedule-drafting permission."""
+    import crew_matrix as _cm
+    from permissions import has_permission, SCHEDULE_DRAFT
+    may = bool(current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT))
+    try:
+        payload, status = _cm.api_body(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                       args=request.args, user=current_user, may_answer=may)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @client_bp.route("/api/labor/schedule-history/<int:history_id>", methods=["DELETE"])
 @login_required
 def labor_schedule_history_delete(current_user, history_id):

@@ -11211,6 +11211,38 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-done .go{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
 .ss-pub-check{display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--ink2)}
 .ss-pub-check b.bad{color:var(--hb-bad)}.ss-pub-check b.good{color:var(--hb-good)}
+/* Crew (crew_matrix): a card per role, a 7-day x lunch/dinner grid that
+   scrolls sideways inside its card on a phone. */
+.ss-crew{max-width:1180px;margin:0 auto;padding:40px 24px 90px}
+.ss-crew-lede{font-size:16px;line-height:1.55;color:var(--ink3);max-width:70ch;margin:0 0 18px}
+.ss-crew-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
+.ss-crew-bar .sum{margin-left:auto;font-size:13.5px;color:var(--ink3)}
+.ss-crew-list{display:flex;flex-direction:column;gap:14px}
+.ss-crew-role{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:16px 16px 12px;box-shadow:var(--elev-card);min-width:0}
+.ss-crew-rh{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-bottom:10px}
+.ss-crew-rh b{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink)}
+.ss-crew-rh span{font-size:13px;color:var(--ink3)}
+.ss-crew-scroll{overflow-x:auto}
+.ss-crew-t{border-collapse:separate;border-spacing:4px;width:100%;min-width:720px}
+.ss-crew-t th{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);padding:2px;text-align:center}
+.ss-crew-t th.p{text-align:left;width:60px}
+.ss-crew-t td{background:var(--paper2);border-radius:10px;padding:8px 6px;text-align:center;vertical-align:top;border-top:3px solid transparent;min-width:84px}
+.ss-crew-t td.e{background:transparent}
+.ss-crew-t td.match{border-top-color:var(--green)}.ss-crew-t td.under{border-top-color:var(--amber)}
+.ss-crew-t td.over{border-top-color:var(--ink3)}.ss-crew-t td.below_rule{border-top-color:var(--red)}
+.ss-crew-n{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;color:var(--ink);white-space:nowrap}
+.ss-crew-n i{font-style:normal;color:var(--ink3);font-weight:500;font-size:13px;margin:0 3px}
+.ss-crew-s{font-size:11.5px;color:var(--ink3);line-height:1.35;margin-top:3px}
+.ss-crew-chip{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:1px 7px;margin-top:4px}
+.ss-crew-chip.busy{color:var(--ember);background:var(--hb-tint,color-mix(in srgb,var(--ember) 14%,transparent))}
+.ss-crew-chip.slow{color:var(--ink2);background:color-mix(in srgb,var(--ink3) 18%,transparent)}
+.ss-crew-chip.min{color:var(--green);background:color-mix(in srgb,var(--green) 14%,transparent)}
+.ss-crew-a{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.ss-crew-a .cbtn{width:100%;justify-content:center}
+.ss-crew-done{font-size:11.5px;color:var(--ink2);margin-top:5px}
+.ss-crew-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink3);margin:0 0 14px}
+.ss-crew-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.ss-crew-empty{padding:28px;border-radius:18px;border:1px dashed var(--hb-line);color:var(--ink2);font-size:15px;line-height:1.55}
 /* History */
 .ss-hist-list{display:flex;flex-direction:column;gap:10px;margin-top:22px}
 .ss-hrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:18px;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:16px 20px;box-shadow:var(--elev-card)}
@@ -12249,6 +12281,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <button type="button" role="tab" data-ss-go="publish"><i>4</i>Publish</button>
         <span class="ss-steps-sep" aria-hidden="true"></span>
         <button type="button" role="tab" data-ss-go="history">History</button>
+        <button type="button" role="tab" data-ss-go="crew">Crew</button>
         <button type="button" role="tab" data-ss-go="team">Team</button>
       </nav>
       <div class="ss-top-r">
@@ -12656,6 +12689,20 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="ss-kick">History</div>
         <h1>Every week you've built</h1>
         <div id="ss-hist-list" class="ss-hist-list"><div class="dr-pulse" role="status" aria-label="Loading the weeks you have built"><i></i></div></div>
+      </div>
+    </section>
+
+    {# Crew (crew_matrix, owner 10/10/26): every role's usual crew per weekday
+       and shift beside the week on screen, and one answer where the draft
+       runs leaner - Keep usual (becomes that shift's minimum) or Leaner is
+       fine. Loads when it shows (ssRenderCrew). #}
+    <section class="ss-stage" data-stage="crew" data-nav="labor/crew" aria-label="Crew">
+      <div class="ss-crew">
+        <div class="ss-kick">Crew</div>
+        <h1>Your usual crew, shift by shift</h1>
+        <p class="ss-crew-lede">Each cell is the crew your clock-ins show you usually run, then this draft. Where the draft runs leaner, answer once: keep your usual, and it becomes that shift's minimum, or let Cavnar AI keep the saving.</p>
+        <div class="ss-crew-bar" id="ss-crew-bar" role="group" aria-label="Show"></div>
+        <div id="ss-crew-body"><div class="dr-pulse" role="status" aria-label="Loading your crew"><i></i></div></div>
       </div>
     </section>
 
@@ -26457,7 +26504,7 @@ function swOpenTeam(which) {
 // DESIGN_SYSTEM.md -> Schedule Studio.
 var _ssOpen = false, _ssStage = 'setup', _ssFromDash = false, _ssGenerating = false, _ssReview = null;
 var _swSel = null, _swSelRow = null, _swDrag = null, _swLeftLoaded = false;
-var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'team'];
+var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'crew', 'team'];
 function _ssHost() { var st = document.getElementById('studio'); return st && !st.hidden ? st : null; }
 function _ssHasDraft() {
   var p = document.getElementById('schedule-preview-panel');
@@ -26652,6 +26699,7 @@ function studioGo(stage) {
   else if (stage === 'setup' && window.sfw1LoadFresh) sfw1LoadFresh();
   else if (stage === 'publish') ssRenderPublish();
   else if (stage === 'history') ssLoadHistory();
+  else if (stage === 'crew') ssRenderCrew();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
   else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
@@ -27143,6 +27191,109 @@ function studioPublished(d, text) {
   ssLaunchRefresh();
 }
 // ── History ────────────────────────────────────────────────────────────
+// ── Crew (crew_matrix, owner 10/10/26) ─────────────────────────────────
+// Each role's usual crew per weekday and shift beside the week on screen;
+// where the draft runs leaner the owner answers once (Keep usual becomes
+// that shift's minimum; Leaner is fine keeps the saving). One body with the
+// phone (/api/labor/crew-matrix); nothing here is a model call.
+var _ssCrew = null, _ssCrewShow = 'diff', _ssCrewBusy = false;
+try { _ssCrewShow = window.localStorage.getItem('cavnar_crew_show') || 'diff'; } catch (e) { }
+var SS_CREW_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+function ssRenderCrew() {
+  var body = document.getElementById('ss-crew-body'); if (!body) return;
+  var hid = (typeof _schedHistoryId !== 'undefined' && _schedHistoryId) ? _schedHistoryId : '';
+  fetch('/api/labor/crew-matrix' + (hid ? '?history_id=' + encodeURIComponent(hid) : ''), {credentials: 'same-origin'})
+    .then(apiJson).then(function (d) {
+      if (!d || !d.ok) { body.innerHTML = '<div class="ss-crew-empty">' + _escHtml((d && d.error) || 'Your crew couldn’t be read just now.') + '</div>'; return; }
+      _ssCrew = d; ssCrewDraw();
+    }).catch(function () { body.innerHTML = '<div class="ss-crew-empty">Your crew couldn’t be read just now. Check your connection and open Crew again.</div>'; });
+}
+function ssCrewDraw() {
+  var d = _ssCrew, body = document.getElementById('ss-crew-body'), bar = document.getElementById('ss-crew-bar');
+  if (!d || !body) return;
+  if (bar) {
+    bar.innerHTML = '<button type="button" class="cbtn cbtn-sm ' + (_ssCrewShow === 'diff' ? 'cbtn-primary' : 'cbtn-secondary') + '" data-crew-show="diff">Differences</button>'
+      + '<button type="button" class="cbtn cbtn-sm ' + (_ssCrewShow === 'all' ? 'cbtn-primary' : 'cbtn-secondary') + '" data-crew-show="all">All roles</button>'
+      + '<span class="sum">' + (d.week_start ? 'Week of <span class="hb-num">' + _escHtml(mdy(d.week_start)) + '</span> · ' : 'No week built yet · ')
+      + '<span class="hb-num">' + (+d.open || 0) + '</span> to answer</span>';
+  }
+  if (!d.has_usual) {
+    body.innerHTML = '<div class="ss-crew-empty">Cavnar AI learns each role’s usual crew from your clock-ins. Connect your POS or upload a few weeks of shifts, and every role and shift fills in here.</div>';
+    return;
+  }
+  var roles = (d.roles || []).filter(function (r) {
+    if (_ssCrewShow !== 'diff' || !d.week_start) return true;
+    for (var i = 0; i < r.cells.length; i++) if (r.cells[i].status !== 'match') return true;
+    return false;
+  });
+  var legend = '<div class="ss-crew-legend"><span><i style="background:var(--green)"></i>The draft matches your usual</span>'
+    + '<span><i style="background:var(--amber)"></i>The draft runs leaner</span><span><i style="background:var(--ink3)"></i>The draft runs heavier</span>'
+    + '<span><i style="background:var(--red)"></i>Under a minimum you set</span></div>';
+  // No week built yet: the usual crew alone, nothing to compare or answer.
+  if (!d.week_start) legend = '<div class="ss-crew-legend"><span>Your usual crew per shift. Build a week and each shift shows the draft beside it.</span></div>';
+  if (!roles.length) {
+    body.innerHTML = legend + '<div class="ss-crew-empty">This draft matches your usual crew on every shift.</div>';
+    return;
+  }
+  var h = legend + '<div class="ss-crew-list">', i, j;
+  for (i = 0; i < roles.length; i++) {
+    var r = roles[i], by = {}, parts = [];
+    for (j = 0; j < r.cells.length; j++) by[r.cells[j].day + '|' + r.cells[j].part] = r.cells[j];
+    if (ssCrewHas(by, 'morning')) parts.push('morning');
+    if (ssCrewHas(by, 'night')) parts.push('night');
+    h += '<article class="ss-crew-role"><div class="ss-crew-rh"><b>' + _escHtml(r.role) + '</b><span><span class="hb-num">' + r.usual_week
+      + '</span> shifts usual a week' + (d.week_start ? ' · <span class="hb-num">' + r.draft_week + '</span> in this draft' : '') + '</span></div>'
+      + '<div class="ss-crew-scroll"><table class="ss-crew-t"><thead><tr><th class="p"></th>';
+    for (j = 0; j < 7; j++) h += '<th scope="col">' + SS_CREW_DAYS[j].slice(0, 3) + '</th>';
+    h += '</tr></thead><tbody>';
+    for (var p = 0; p < parts.length; p++) {
+      h += '<tr><th class="p" scope="row">' + (parts[p] === 'morning' ? 'Lunch' : 'Dinner') + '</th>';
+      for (j = 0; j < 7; j++) h += ssCrewCell(r.role, by[SS_CREW_DAYS[j] + '|' + parts[p]]);
+      h += '</tr>';
+    }
+    h += '</tbody></table></div></article>';
+  }
+  body.innerHTML = h + '</div>';
+}
+function ssCrewHas(by, part) {
+  for (var k in by) if (by.hasOwnProperty(k) && k.split('|')[1] === part) return true;
+  return false;
+}
+function ssCrewCell(role, c) {
+  if (!c) return '<td class="e"></td>';
+  var sub = [], chips = '', act = '';
+  if (c.trend && c.trend.was != null) sub.push('was ' + c.trend.was + (c.trend.since ? ' before ' + c.trend.since : ''));
+  if (c.floor) chips += '<span class="ss-crew-chip min">min ' + c.floor + '</span> ';
+  if (c.demand) chips += '<span class="ss-crew-chip ' + c.demand + '">' + c.demand + '</span>';
+  var attrs = ' data-crew-role="' + _escHtml(role) + '" data-crew-day="' + c.day + '" data-crew-part="' + c.part + '"';
+  if (c.answer === 'hold') act = '<div class="ss-crew-done">You kept ' + c.usual + ' · <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-crew-answer="clear"' + attrs + '>Undo</button></div>';
+  else if (c.answer === 'lean') act = '<div class="ss-crew-done">Leaner is fine · <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-crew-answer="clear"' + attrs + '>Undo</button></div>';
+  else if (c.status === 'under') act = '<div class="ss-crew-a"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-crew-answer="hold"' + attrs + '>Keep ' + c.usual + '</button>'
+    + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-crew-answer="lean"' + attrs + '>Leaner is fine</button></div>';
+  var title = c.day + ' ' + (c.part === 'morning' ? 'lunch' : 'dinner') + ': usual ' + c.usual + ', this draft ' + c.draft
+    + (c.sales ? ', shift sales about $' + Math.round(c.sales).toLocaleString('en-US') : '');
+  if (c.status === 'usual') title = c.day + ' ' + (c.part === 'morning' ? 'lunch' : 'dinner') + ': usually ' + c.usual;
+  return '<td class="' + c.status + '" title="' + _escHtml(title) + '"><div class="ss-crew-n">' + c.usual + (c.status === 'usual' ? '' : '<i>→</i>' + c.draft) + '</div>'
+    + (sub.length ? '<div class="ss-crew-s">' + _escHtml(sub.join(' · ')) + '</div>' : '') + (chips ? '<div>' + chips + '</div>' : '') + act + '</td>';
+}
+document.addEventListener('click', function (e) {
+  var t = e.target && e.target.closest ? e.target : null; if (!t) return;
+  var b = t.closest('[data-crew-show]');
+  if (b) { _ssCrewShow = b.getAttribute('data-crew-show'); try { window.localStorage.setItem('cavnar_crew_show', _ssCrewShow); } catch (x) { } ssCrewDraw(); return; }
+  b = t.closest('[data-crew-answer]'); if (!b || _ssCrewBusy) return;
+  _ssCrewBusy = true; b.disabled = true;
+  // window.fetch carries the CSRF header (_csrf_fetch.html).
+  fetch('/api/labor/crew-matrix', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({role: b.getAttribute('data-crew-role'), day: b.getAttribute('data-crew-day'), part: b.getAttribute('data-crew-part'),
+                          answer: b.getAttribute('data-crew-answer')})})
+    .then(apiJson).then(function (d) {
+      _ssCrewBusy = false;
+      if (!d || !d.ok) { b.disabled = false; toast((d && d.error) || 'That answer didn’t save. Try again.', 'error'); return; }
+      _ssCrew = d; ssCrewDraw();
+      var a = b.getAttribute('data-crew-answer');
+      toast(a === 'hold' ? 'Kept: it’s now that shift’s minimum' : (a === 'lean' ? 'Noted: leaner is fine there' : 'Undone'), 'success');
+    }).catch(function () { _ssCrewBusy = false; b.disabled = false; toast('That answer didn’t save. Check your connection.', 'error'); });
+});
 function ssLoadHistory() {
   var el = document.getElementById('ss-hist-list'); if (!el) return;
   fetch('/api/labor/schedule-history', {credentials: 'same-origin'}).then(apiJson).then(function (d) {

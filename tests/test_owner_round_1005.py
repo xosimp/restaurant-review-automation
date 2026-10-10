@@ -36,7 +36,7 @@ def test_the_staffing_review_is_on_labor_under_time_off_and_covers():
 def test_the_studio_has_no_staffing_stage_any_more():
     assert 'data-ss-go="staffing"' not in SRC
     assert 'data-stage="staffing"' not in SRC and 'id="ss-staffing"' not in SRC
-    assert "var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'team'];" in SRC
+    assert "var SS_STAGES = ['setup', 'build', 'summary', 'schedule', 'publish', 'history', 'crew', 'team'];" in SRC
     assert "'staffing'" not in SRC[_at("var SS_STAGES"):_at("var SS_STAGES") + 4000]
 
 

@@ -1771,6 +1771,21 @@ def mobile_reviews_keywords(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 400
 
 
+@mobile_bp.route("/labor/crew-matrix", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_labor_crew_matrix(current_user):
+    """Twin of /api/labor/crew-matrix: the Studio's Crew stage."""
+    import crew_matrix as _cm
+    from permissions import has_permission, SCHEDULE_DRAFT
+    may = bool(current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT))
+    try:
+        payload, status = _cm.api_body(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                       args=request.args, user=current_user, may_answer=may)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @mobile_bp.route("/reviews/programs", methods=["GET", "POST"])
 @mobile_login_required
 def mobile_reviews_programs(current_user):

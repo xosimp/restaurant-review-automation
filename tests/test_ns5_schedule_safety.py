@@ -210,7 +210,7 @@ def test_time_off_approved_after_the_draft_blocks_the_publish(db_path, rid):
     v = _sweep(rid, CLEAN)
     hid = _history(db_path, rid, CLEAN, review=sr.summarize(v))
     assert client_api.publish_blockers(rid, hid) == []
-    row, _err = time_off.request_time_off(rid, "Ana", WEEK[4], WEEK[4], reason="wedding", db_path=db_path)
+    row, _err = time_off.request_time_off(rid, "Ana", WEEK[4], WEEK[4], reason="wedding", db_path=db_path, today=dt.date(2026, 10, 1))
     time_off.decide(rid, row["id"], True, decided_by="owner", db_path=db_path)
     b = client_api.publish_blockers(rid, hid)
     assert any("Ana" in x and "approved time off" in x for x in b), b
@@ -227,7 +227,7 @@ def test_a_delayed_publish_is_held_by_a_blocker_that_appeared_after_it_was_queue
     monkeypatch.setattr(strategy_jobs, "_reach", lambda *a, **k: told.append(a[1]))
     act = delayed.schedule(rid, "schedule_publish", {"schedule_id": hid, "manual": True, "acknowledge": []}, 5,
                            db_path=db_path)
-    row, _err = time_off.request_time_off(rid, "Ana", WEEK[4], WEEK[4], reason="wedding", db_path=db_path)
+    row, _err = time_off.request_time_off(rid, "Ana", WEEK[4], WEEK[4], reason="wedding", db_path=db_path, today=dt.date(2026, 10, 1))
     time_off.decide(rid, row["id"], True, decided_by="owner", db_path=db_path)
     delayed.run_due(db_path=db_path, now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=10))
     assert sent == [] and told[-1] == "schedule_publish_held"
@@ -242,7 +242,7 @@ def test_an_acknowledgement_covers_only_the_blockers_it_was_given_for(db_path, r
     hid = _history(db_path, rid, flagged)
     monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
     keys = [b["key"] for b in client_api.publish_review(rid, hid)["blockers"]]
-    row, _err = time_off.request_time_off(rid, "Mgr", WEEK[4], WEEK[4], reason="x", db_path=db_path)
+    row, _err = time_off.request_time_off(rid, "Mgr", WEEK[4], WEEK[4], reason="x", db_path=db_path, today=dt.date(2026, 10, 1))
     time_off.decide(rid, row["id"], True, decided_by="owner", db_path=db_path)
     out, status = client_api._publish_schedule(rid, hid, delayed.AUTOMATION_ACTOR, acknowledge=keys)
     assert status == 409 and any("Mgr" in b for b in out["new_blockers"])
