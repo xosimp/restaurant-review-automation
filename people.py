@@ -982,6 +982,9 @@ NAME_STORES = (
     {"table": "staff_notices", "cols": ("employee_name",), "no_person_id": True},
     {"table": "staff_certs", "cols": ("employee_name",), "key": "employee_key", "unique": ("employee_key", "cert"),
      "fold": "newest", "no_person_id": True},
+    # An availability cut waiting on a manager or not yet in force
+    # (availability_changes, schedule audit 10/10/26 MARKET-15).
+    {"table": "staff_availability_changes", "cols": ("employee_name",), "no_person_id": True},
 )
 
 # Stores keyed only by a staff login (memberships.id), with no name to
@@ -1469,6 +1472,7 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
                 continue
             groups.setdefault((ext, name), []).append(r)
         latest = {}
+        role_of = {}                     # pid -> the role their rows in this pull work most
         # Oldest spelling first: a POS that renamed someone mid-window has
         # their older punches under the old name, and the newest spelling
         # is the one that should stand.
@@ -1479,7 +1483,11 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
             named = named and _looks_like_name(name, ext)
             payroll = next((str(x.get("employee_payroll_id") or "").strip() for x in grp
                             if str(x.get("employee_payroll_id") or "").strip()), None)
-            pid = _resolve_one(conn, idx, src, ext, payroll, name, named, day, out)
+            roles = [str(x.get("role") or "").strip() for x in grp if str(x.get("role") or "").strip()]
+            role = max(set(roles), key=roles.count) if roles else None
+            pid = _resolve_one(conn, idx, src, ext, payroll, name, named, day, out, role=role, role_of=role_of)
+            if pid is not None and role:
+                role_of.setdefault(pid, role)
             if pid is None:
                 for x in grp:
                     x["person_id"] = None
@@ -1502,7 +1510,21 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
     return out
 
 
-def _resolve_one(conn, idx, src, ext, payroll, name, named, day, out):
+def _same_name_display(idx, name, ext, role=None, other_roles=None) -> str:
+    """The name a second person who shares `name` in the POS is shown as
+    until the owner renames them: their role when it tells them apart from
+    every other person of that name ("Maria L. (Bar)" — schedule audit
+    10/10/26 BUGSGEN-23), else the end of their POS id ("Maria L. #1234").
+    Never a name somebody already has."""
+    others = set(other_roles or ())
+    if role and others and None not in others and role.casefold() not in {str(o).casefold() for o in others}:
+        alt = f"{name} ({role})"
+        if not idx.for_key(_nk(alt)):
+            return alt
+    return f"{name} #{str(ext)[-4:]}"
+
+
+def _resolve_one(conn, idx, src, ext, payroll, name, named, day, out, role=None, role_of=None):
     key = _nk(name)
     if ext:
         pid = idx.by_ext.get((src, ext))
@@ -1541,7 +1563,9 @@ def _resolve_one(conn, idx, src, ext, payroll, name, named, day, out):
         elif cands:
             # One spelling, two people in this POS (two Maria G.s): the new
             # one gets a name of its own the owner can change, and a question.
-            pid = _create_person(conn, idx, f"{name} #{str(ext)[-4:]}", f"pos:{src}", day)
+            pid = _create_person(conn, idx, _same_name_display(idx, name, ext, role,
+                                                               [(role_of or {}).get(c) for c in cands]),
+                                 f"pos:{src}", day)
             out["created"] += 1
             for c in cands:
                 _ask(conn, idx, pid, c, "same_name",

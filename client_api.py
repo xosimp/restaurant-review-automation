@@ -10531,6 +10531,19 @@ def staff_schedule_page(token):
         oc = getattr(_ss_av, "own_conflicts", None)
         if oc is not None:
             saved_conflicts = _ss_av.conflicts_text(oc(share["restaurant_id"], share["employee_name"]))
+    # Days they asked off that wait for a manager or start on a later date
+    # (schedule audit 10/10/26 MARKET-15): ticked as asked, and said.
+    pending_line = ""
+    try:
+        import availability_changes as _avc_pg
+        for ch in _avc_pg.mine(share["restaurant_id"], share["employee_name"]):
+            unavailable = list(unavailable) + [d for d, s in (ch.get("days") or {}).items()
+                                               if s.get("status") == "off" and d not in unavailable]
+            pending_line = ((f"Waiting for your manager: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."
+                             if ch["status"] == "pending" else
+                             f"Approved: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."))
+    except Exception as _pgx:
+        print(f"[schedule link] availability changes unread: {_pgx!r}")
 
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
@@ -10560,6 +10573,7 @@ def staff_schedule_page(token):
         note=saved_note,
         saved=request.args.get("saved") == "1",
         saved_conflicts=saved_conflicts,
+        pending_line=pending_line,
         all_days_blocked=request.args.get("error") == "all_days",
         throttled=request.args.get("error") == "throttled",
         stale=request.args.get("error") == "stale",

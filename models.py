@@ -4461,6 +4461,10 @@ def init_db(db_path: str = DB_PATH):
     # 9/29/26, trust_ledger).
     from automation_trust import init_automation_trust
     init_automation_trust(db_path)
+    # A cut in an employee's availability waiting on a manager, with the date
+    # it takes effect (availability_changes, schedule audit 10/10/26 MARKET-15).
+    from availability_changes import init_availability_changes
+    init_availability_changes(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes

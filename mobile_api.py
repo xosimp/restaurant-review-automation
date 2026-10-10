@@ -5619,6 +5619,24 @@ def mobile_add_team_member(current_user):
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
     who = current_user.get("username") or current_user.get("email")
+    # Somebody already goes by that name (schedule audit 10/10/26
+    # BUGSGEN-23): adding them again silently made a new hire the same person
+    # as a former or current employee — their hours, time off, ratings and
+    # no-shows one record. Said, and only done on purpose (`same_person`).
+    if not data.get("same_person"):
+        clash = _same_name_on_team(rid, data.get("employee_name") or data.get("name") or "")
+        if clash:
+            from time_utils import mdy
+            whom = clash["name"]
+            if clash["active"]:
+                err = (f"{whom} is already on your team" + (f" ({clash['role']})" if clash.get("role") else "")
+                       + ". If this is someone new, add them under a name that tells them apart — like "
+                       f"“{whom} L.” or “{whom} ({(data.get('role') or 'Bar').strip() or 'Bar'})”.")
+            else:
+                err = (f"{whom} worked here" + (f" until {mdy(clash['last_worked'])}" if clash.get("last_worked") else "")
+                       + " and is off the roster. If they're back, turn them back on in Team; if this is someone "
+                       f"new, add them under a name that tells them apart — like “{whom} L.”.")
+            return jsonify(ok=False, same_name=clash, error=err), 409
     try:
         out = add_manual_team_member(
             rid, employee_name=data.get("employee_name") or data.get("name") or "",
@@ -5630,6 +5648,32 @@ def mobile_add_team_member(current_user):
         return jsonify(ok=False, error=str(mte)), 400
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+def _same_name_on_team(rid, name) -> dict:
+    """{name, role, active, last_worked} of the person `name` already means
+    on this restaurant's roster — the roster's own spelling or one people's
+    identity knows (an alias, a name before a rename), deactivated people
+    included — or {} (BUGSGEN-23). Never raises."""
+    n = " ".join(str(name or "").split())
+    if not n:
+        return {}
+    try:
+        import staff_settings as _ss_sn
+        key = _ss_sn.name_key(n)
+        try:
+            import people as _pp_sn
+            meant = (_pp_sn.who_is(rid, [n]) or {}).get(n)
+        except Exception:
+            meant = None
+        keys = {key} | ({_ss_sn.name_key(meant)} if meant else set())
+        for p in _ss_sn.roster(rid, include_inactive=True):
+            if _ss_sn.name_key(p.get("name")) in keys:
+                return {"name": p.get("name"), "role": p.get("role"), "active": p.get("active", True) is not False,
+                        "last_worked": p.get("last_worked") or None}
+    except Exception as e:
+        print(f"[team add] roster unread rid={rid}: {e!r}")
+    return {}
 
 
 @mobile_bp.route("/labor/team/remove", methods=["POST"])

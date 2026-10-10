@@ -3884,6 +3884,48 @@ def _do_request_policy_set(u):
     return {"ok": True, **request_autonomy.status(_rid(u)), "can_edit": True}, 200
 
 
+def _do_availability_changes_list(u):
+    """Staff availability cuts waiting on a manager, approved for a date not
+    yet come, and recently decided (MARKET-15)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see availability changes.")
+    import availability_changes
+    import request_autonomy
+    return {"ok": True, "changes": availability_changes.recent(_rid(u)), "can_decide": _may_decide_requests(u),
+            "approval": request_autonomy.policy_for(_rid(u))["availability_approval"]}, 200
+
+
+def _do_availability_change_decide(u, change_id):
+    """{decision: approve|deny, effective_from?, note?} — a manager's answer
+    to an availability cut (MARKET-15): who can be scheduled changes, so it
+    is SCHEDULE_PUBLISH like every staff request. Audited."""
+    if not _may_decide_requests(u):
+        return _forbidden(_REQUEST_REFUSAL)
+    import availability_changes
+    from client_api import log_account_event
+    b = _body()
+    decision = (b.get("decision") or "").strip().lower()
+    if decision not in ("approve", "deny"):
+        return {"ok": False, "error": "decision must be approve or deny."}, 400
+    try:
+        row = availability_changes.decide(_rid(u), change_id, decision == "approve", decided_by=_who(u),
+                                          effective_from=b.get("effective_from") if isinstance(b.get("effective_from"), str) else None,
+                                          note=b.get("note") if isinstance(b.get("note"), str) else None)
+    except availability_changes.ChangeError as e:
+        return {"ok": False, "error": str(e)}, 400
+    if not row:
+        return {"ok": False, "error": "That change was already answered."}, 404
+    from time_utils import mdy
+    log_account_event(_rid(u), "availability_change_decided", current_user=u,
+                      detail=f"{row['employee_name']} from {mdy(row['effective_from'])}: {row['status']}")
+    out = {"ok": True, "change": row}
+    if row.get("conflicts"):
+        import staff_settings
+        out["warning"] = (f"{row['employee_name']} is still on the published schedule for "
+                          + staff_settings._listed(row["conflicts"][:4]) + " — cover or move those shifts.")
+    return out, 200
+
+
 def _keyholders(rid) -> bool:
     """Whether anybody can satisfy a manager-on-duty rule here."""
     try:
@@ -7225,6 +7267,9 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/reverse", ["POST"], _do_shift_request_reverse, "shift_request_reverse"),
     ("/labor/request-policy", ["GET"], _do_request_policy_get, "request_policy_get"),
     ("/labor/request-policy", ["POST"], _do_request_policy_set, "request_policy_set"),
+    ("/labor/availability-changes", ["GET"], _do_availability_changes_list, "availability_changes_list"),
+    ("/labor/availability-changes/<int:change_id>/decide", ["POST"], _do_availability_change_decide,
+     "availability_change_decide"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/learned-patterns/adopt", ["POST"], _do_learned_patterns_adopt, "learned_patterns_adopt"),

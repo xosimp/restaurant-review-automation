@@ -2143,6 +2143,14 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                                     str(a.get("updated_at") or "")[:10] or None, None))
     except Exception as exc:
         _input_problem(c, "availability", exc)
+    # An availability cut a manager approved for a date still ahead: in force
+    # for this week's dates from it on, never before (schedule audit 10/10/26
+    # MARKET-15, availability_changes.overlay).
+    try:
+        import availability_changes as _avc
+        _avc.overlay(c, restaurant_id, db_path=db_path)
+    except Exception as exc:
+        _input_problem(c, "availability changes", exc)
     try:
         for n in get_staff_notes(restaurant_id, db_path) or []:
             if not (n.get("employee_name") or "").strip():

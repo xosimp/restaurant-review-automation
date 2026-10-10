@@ -2263,6 +2263,14 @@ def run_open_shift_watch(db_path=None):
             "SELECT DISTINCT restaurant_id FROM shift_change_requests WHERE status IN " + _LIVE_SQL).fetchall()})
     finally:
         conn.close()
+    # Approved availability cuts whose date has come go into force here too
+    # (availability_changes.apply_due, MARKET-15).
+    try:
+        import availability_changes as _avc
+        due = set(_avc.restaurants_due(db))
+    except Exception:
+        _avc, due = None, set()
+    ids = sorted(set(ids) | due)
     tally = {"attempted": 0, "failed": 0, "expired": 0, "escalated": 0}
     lock = threading.Lock()
 
@@ -2275,6 +2283,8 @@ def run_open_shift_watch(db_path=None):
             # (ARCH-9): the safety net for every write path.
             reconcile(rid, db_path=db)
             u = escalate_unclaimed(rid, db_path=db)
+            if rid in due and _avc is not None:
+                _avc.apply_due(rid, db_path=db)
         except Exception:
             with lock:
                 tally["failed"] += 1
