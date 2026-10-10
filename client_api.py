@@ -10758,18 +10758,31 @@ def _do_account_hours(rid, data, current_user=None):
     if current_user is not None and not is_principal(current_user):
         return {"ok": False, "error": "Only the account owner can change opening hours and closures."}, 403
 
-    def _clean_times(raw):
+    import schedule_time as _stime_h
+    bad = []
+
+    def _clean_times(raw, which):
+        # Each time in the one spelling every reader parses ("9:00pm" — the
+        # web sends "21:00", the phone "9:00pm"); one no reader can parse is
+        # named back, never stored for the close rules to drop silently
+        # (BUGSGEN-20).
         out = {}
         for day in _ACCOUNT_DAYS:
             v = (raw or {}).get(day)
             if isinstance(v, str) and v.strip():
-                out[day] = v.strip()[:12]
+                norm = _stime_h.normalise_clock(v.strip()[:20])
+                if norm is None:
+                    bad.append(f"{day}'s {which} time \u201c{v.strip()[:20]}\u201d")
+                else:
+                    out[day] = norm
         return _json_h.dumps(out) if out else None
 
-    update_restaurant(rid, {
-        "open_times_json": _clean_times((data or {}).get("open")),
-        "close_times_json": _clean_times((data or {}).get("close")),
-    })
+    opens = _clean_times((data or {}).get("open"), "opening")
+    closes = _clean_times((data or {}).get("close"), "closing")
+    if bad:
+        return {"ok": False, "error": "Nothing was saved: " + "; ".join(bad[:3])
+                + (" isn't a time" if len(bad) == 1 else " aren't times") + " we can read — use a time like 9:00pm."}, 400
+    update_restaurant(rid, {"open_times_json": opens, "close_times_json": closes})
     out = {"ok": True}
     # Closures are the scheduler's closed dates (schedule_rules.save_closures,
     # the list Labor -> Scheduling rules edits too). This box said "used when
@@ -12001,6 +12014,18 @@ def _live_week(restaurant_id, week_start, not_id):
         conn.close()
 
 
+def _in_restaurant_dayparts(fn):
+    """schedule_engine.in_restaurant_dayparts, read at call time."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        import schedule_engine as _se_dp
+        return _se_dp.in_restaurant_dayparts(fn)(*a, **k)
+    return wrapper
+
+
+@_in_restaurant_dayparts
 def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
     """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
     "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the

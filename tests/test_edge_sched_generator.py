@@ -315,7 +315,7 @@ def test_a_one_am_close_leaves_an_eleven_pm_end_alone():
 def test_a_ten_pm_close_still_caps_an_eleven_pm_end():
     row = {"date": "2026-10-09", "shift_start": "5:00pm", "shift_end": "11:00pm", "role": "Server", "scheduled_hours": "6"}
     se._enforce_close_time(row, "Friday", {"Friday": "10:00pm"}, {})
-    assert row["shift_end"] == "10:00pm" and row["scheduled_hours"] == "5.0"
+    assert row["shift_end"] == "10:00pm" and row["scheduled_hours"] == "5"
 
 
 # ── SCHED-38: 24-hour times ──────────────────────────────────────────────

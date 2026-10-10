@@ -959,7 +959,9 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
     deadline_at   TEXT,
     started_at    TEXT,
     request_json  TEXT,
-    progress_json TEXT
+    progress_json TEXT,
+    stop_requested_at TEXT,
+    saved_ref     INTEGER
 )"""
 # Added after the table shipped; init_ops adds them to an older database.
 # deadline_at is the job's own wall-clock limit (UTC, SQLite datetime text),
@@ -971,8 +973,14 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
 # progress_json is how far a pending job has got, in its own terms — a
 # schedule generation's days drafted so far (AI cost audit 10/7/26 #36,
 # set_async_job_progress) — read back on a pending poll.
+# stop_requested_at is the owner's Stop on a job that had already saved
+# something (stop_async_job); the job reads it and says what happened.
+# saved_ref is the first durable thing the job saved (a schedule's history
+# id, written in the same transaction as the draft — models.
+# save_schedule_history): with it set, Stop never says "nothing was saved"
+# (schedule audit 10/10/26 ARCH-2, BUGSLIFE-26).
 _ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"), ("started_at", "TEXT"), ("request_json", "TEXT"),
-                      ("progress_json", "TEXT"))
+                      ("progress_json", "TEXT"), ("stop_requested_at", "TEXT"), ("saved_ref", "INTEGER"))
 
 # Long enough for the slowest generation plus a client that backgrounds the
 # app mid-poll; short enough that abandoned results don't accumulate.
@@ -1258,6 +1266,70 @@ def set_async_job_progress(job_id, progress) -> None:
     # (iOS parity audit 10/7/26 #38). Never raises.
     import live_activities
     live_activities.job_progress(job_id, progress)
+
+
+def stop_async_job(job_id, result) -> str:
+    """The owner's Stop (schedule audit 10/10/26 ARCH-2, BUGSLIFE-26): what
+    it did, as one word.
+
+    "stopped" — the job had saved nothing, so its row is finished now with
+    `result` (the restaurant may start another at once). The job's own save
+    checks the row in the same transaction as its write (models.
+    save_schedule_history `job_id`), so nothing can be saved after this.
+    "stopping" — the job had already saved a draft (`saved_ref`): the row
+    stays pending with `stop_requested_at` set and the job, which knows what
+    it saved, finishes it and says what happened — the route never writes
+    "nothing was saved" over a draft that replaced the owner's.
+    "finished" — it had already finished. One UPDATE each: SQLite orders
+    them against the job's save, so the two can never cross."""
+    import json
+    try:
+        payload = json.dumps(result)
+        conn = _async_conn()
+        try:
+            cur = conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                               "AND status='pending' AND saved_ref IS NULL", (payload, str(job_id)))
+            if cur.rowcount == 1:
+                conn.commit()
+                verdict = "stopped"
+            else:
+                cur = conn.execute("UPDATE async_jobs SET stop_requested_at=datetime('now') WHERE job_id=? "
+                                   "AND status='pending'", (str(job_id),))
+                conn.commit()
+                verdict = "stopping" if cur.rowcount == 1 else "finished"
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"stop_async_job({job_id}) failed: {e}")
+        return "finished"
+    if verdict == "stopped":
+        import live_activities
+        live_activities.job_finished(job_id, "error", result)
+    return verdict
+
+
+def job_stop_state(job_id) -> str:
+    """Where a running job stands against a Stop: "running", "stop_requested"
+    (the owner stopped it after it saved — stop_async_job), "stopped" (its
+    row was finished as stopped) or "gone" (finished any other way — a poll
+    past its deadline, the boot sweep). "running" when the row cannot be
+    read (never stop a job over a bookkeeping failure)."""
+    try:
+        conn = _async_conn()
+        try:
+            row = conn.execute("SELECT status, stop_requested_at, result_json FROM async_jobs WHERE job_id=?",
+                               (str(job_id),)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return "running"
+    if row is None:
+        return "running"
+    if row["status"] == "pending":
+        return "stop_requested" if row["stop_requested_at"] else "running"
+    if row["status"] == "error" and '"stopped": true' in (row["result_json"] or ""):
+        return "stopped"
+    return "gone"
 
 
 def job_still_pending(job_id) -> bool:
@@ -1834,6 +1906,43 @@ def schedule_generation_latency(db_path=None) -> dict:
     return out
 
 
+# Each input a schedule generation can go without, as an SLO (schedule audit
+# 10/10/26 ARCH-25): the share of the last SCHEDULE_INPUT_SAMPLE generations
+# in SCHEDULE_P95_DAYS made without it (the review's inputs_missing, saved
+# with each draft). Past SCHEDULE_INPUT_FAIL_ALERT for any one input — with
+# at least SCHEDULE_P95_MIN generations — the platform check warns once a
+# day: an input that fails that often is a broken read, not bad luck.
+SCHEDULE_INPUT_SAMPLE = 40
+SCHEDULE_INPUT_FAIL_ALERT = 0.10
+
+
+def schedule_input_failures(db_path=None) -> dict:
+    """{"n", "rates": {input: share of generations without it}, "over":
+    [inputs past SCHEDULE_INPUT_FAIL_ALERT], "alert_rate"} over the recent
+    generations; {"n": 0, ...} with none on file."""
+    import json as _json
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute("SELECT review_json FROM schedule_history WHERE total_seconds IS NOT NULL "
+                            "AND generated_at >= datetime('now', ?) ORDER BY id DESC LIMIT ?",
+                            (f"-{int(SCHEDULE_P95_DAYS)} days", int(SCHEDULE_INPUT_SAMPLE))).fetchall()
+    finally:
+        conn.close()
+    counts, n = {}, 0
+    for r in rows:
+        n += 1
+        try:
+            missing = (_json.loads(r[0] or "null") or {}).get("inputs_missing") or []
+        except Exception:
+            missing = []
+        for name in set(str(x) for x in missing if x):
+            counts[name] = counts.get(name, 0) + 1
+    rates = {k: round(v / float(n), 3) for k, v in sorted(counts.items())} if n else {}
+    over = sorted(k for k, v in rates.items() if v > SCHEDULE_INPUT_FAIL_ALERT) if n >= SCHEDULE_P95_MIN else []
+    return {"n": n, "rates": rates, "over": over, "alert_rate": SCHEDULE_INPUT_FAIL_ALERT}
+
+
 def _has_urgent(out, state, write_ok=True) -> bool:
     """Whether check_platform_sla's problems include one that cannot wait a
     day: the scheduler dead or stuck, a job past its SLA, the volume almost
@@ -1875,7 +1984,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "schedule_generation": None, "alerted": False}
+           "schedule_generation": None, "schedule_inputs": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -1957,6 +2066,17 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         f"{gen['p95'] / 60:.1f} minutes (alert past {SCHEDULE_P95_ALERT_SECONDS // 60}), the "
                         f"slowest {gen['max'] / 60:.1f} — the stage timings are on each week "
                         "(schedule_history.stage_seconds_json).")
+    try:
+        out["schedule_inputs"] = schedule_input_failures(db_path)
+    except Exception as e:
+        log.warning(f"schedule input failures unavailable to the platform check: {e}")
+    gin = out["schedule_inputs"] or {}
+    if gin.get("over"):
+        warn_kinds.add("schedule_inputs")
+        problems.append("Schedule generations are being made without inputs they read: "
+                        + ", ".join(f"{k} ({int(round(gin['rates'][k] * 100))}% of the last {gin['n']})"
+                                    for k in gin["over"][:4])
+                        + " — each failure is in the job failures (schedule_inputs).")
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -2618,6 +2738,10 @@ _RETENTION_DAYS = {
     # quarter (the floor), and each row carries a whole compressed request —
     # the second half-year was volume nothing read.
     "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
+    # What each saved week was checked and scored against (schedule_output.
+    # record_check_snapshot, schedule audit 10/10/26 ARCH-35): the other
+    # half of a replay, kept as long as the calls it replays with.
+    "schedule_check_snapshots": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
     # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
     # batch answers within 24 hours and every answer is in ai_usage and
     # ai_calls by then — a month is enough to read what a batch did.
@@ -2681,7 +2805,7 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
-    "schedule_model_calls": "created_at",
+    "schedule_model_calls": "created_at", "schedule_check_snapshots": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
@@ -2804,7 +2928,7 @@ _RETENTION_FLOOR_DAYS = {
     "ai_reads": 365, "ai_claims": 365,
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
-    "schedule_model_calls": 90,
+    "schedule_model_calls": 90, "schedule_check_snapshots": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
     # batch's own record for the console's "what did the last pass do".
     "ai_batch_jobs": 7, "ai_batch_items": 7,
