@@ -1662,10 +1662,14 @@ def as_run_rows(restaurant_id, week_start, week_end, plan_rows, db_path=DB_PATH)
 def _planned_quality(conn, history_id):
     """The quality the published week carried when it was first sent (the
     first `published` version's), else the latest stored for the week."""
-    row = conn.execute("SELECT quality_json FROM schedule_versions WHERE history_id=? AND reason='published' AND "
-                       "quality_json IS NOT NULL ORDER BY version LIMIT 1", (history_id,)).fetchone()
-    if row is None:
-        row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+    from schedule_versions import version_quality
+    row = conn.execute("SELECT quality_json, quality_ref FROM schedule_versions WHERE history_id=? AND "
+                       "reason='published' AND quality_json IS NOT NULL ORDER BY version LIMIT 1",
+                       (history_id,)).fetchone()
+    if row is not None:
+        # The whole evaluation (its detail is stored by reference — SCALE-4).
+        return version_quality(conn, row["quality_json"], row["quality_ref"])
+    row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=?", (history_id,)).fetchone()
     try:
         return json.loads(row["quality_json"] or "null") or {} if row else {}
     except (TypeError, ValueError):
@@ -1859,7 +1863,7 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
         if not acc:
             return 0
         vers = conn.execute(
-            "SELECT v.history_id, v.created_at, v.quality_json, h.week_start, h.week_end FROM schedule_versions v "
+            "SELECT v.history_id, v.created_at, v.quality_json, v.quality_ref, h.week_start, h.week_end FROM schedule_versions v "
             "JOIN schedule_history h ON h.id=v.history_id WHERE h.restaurant_id=? AND h.published_at IS NOT NULL "
             "AND h.week_end < ? AND v.quality_json IS NOT NULL AND v.created_at >= datetime('now', ?) "
             "ORDER BY v.created_at", (restaurant_id, today.isoformat(), f"-{AS_RUN_LOOKBACK_DAYS + 14} days")).fetchall()
@@ -1892,6 +1896,15 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
         if made is None:
             continue
         v, q = made
+        if v["quality_ref"]:
+            # The whole evaluation the recommendation was made on (its
+            # headline only is inline — SCALE-4).
+            from schedule_versions import version_quality
+            _c = get_conn(db_path)
+            try:
+                q = version_quality(_c, v["quality_json"], v["quality_ref"]) or q
+            finally:
+                _c.close()
         hid = v["history_id"]
         if dim == "ratings":
             planned = [s_ for s_ in q.get("shifts") or [] if s_.get("scored")]

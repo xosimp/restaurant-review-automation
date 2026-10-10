@@ -8583,13 +8583,32 @@ def init_schedule_versions(db_path: str = DB_PATH):
     # adopted_by / adopted_at mark an admin's (view-as) save the account
     # holder adopted — the learners then read it as the owner's.
     _sv_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}
-    for _col in ("row_origins_json", "adopted_by", "adopted_at"):
+    for _col in ("row_origins_json", "adopted_by", "adopted_at", "quality_ref"):
         if _col not in _sv_cols:
             try:
                 conn.execute(f"ALTER TABLE schedule_versions ADD COLUMN {_col} TEXT")
             except Exception as e:
                 if "duplicate column" not in str(e).lower():
                     raise
+    # A version's Shift Quality detail (scheduler audit 10/10/26, SCALE-4):
+    # stored once, zlib-compressed and keyed by its content's hash, so the
+    # identical evaluation on consecutive versions is one row; the version
+    # keeps the headline in quality_json and the hash in quality_ref
+    # (schedule_versions.store_quality / version_quality). The evaluation
+    # was 100-440 KB of uncompressed JSON on every version, kept forever —
+    # 86% of the table. A blob no version points at any more is removed by
+    # the nightly prune (ops._gc_quality_blobs).
+    conn.execute("""CREATE TABLE IF NOT EXISTS quality_blobs (
+        hash           TEXT    PRIMARY KEY,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        body           BLOB    NOT NULL,
+        raw_bytes      INTEGER NOT NULL,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_quality_blobs_rid ON quality_blobs(restaurant_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_quality_blobs_created ON quality_blobs(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_qref ON schedule_versions(quality_ref) "
+                 "WHERE quality_ref IS NOT NULL")
     conn.commit()
     conn.close()
 

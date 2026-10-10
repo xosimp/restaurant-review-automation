@@ -267,6 +267,8 @@ Changed or added by the AI cost audit (10/7/26):
 | `ASK_LOOP_MAX_SECONDS` | `"60"` | ask_cavnar.py |
 | `ASK_STREAM_SENTENCES` | `"1"` | ask_cavnar.py — `0` turns off the Ask stream's validated sentence preview (no `sentence` events, no streamed model call; AI cost audit 10/7/26 #68) |
 | `ASK_MAX_CONCURRENT` | `"2"` | client_api.py |
+| `AUTO_PUBLISH_MAX_SECONDS` | `str(15 * 60)` (900) | scheduler.py — the auto-publish pass's wall-clock bound (scheduler audit 10/10/26, ARCH-23) |
+| `AUTO_PUBLISH_WORKERS` | `"2"` | scheduler.py |
 | `BACKUP_EMAIL_MAX_BYTES` | `str(25 * 1024 * 1024` | scheduler.py |
 | `BACKUP_EMAIL_MODE` | `"always"` | scheduler.py |
 | `BACKUP_OFFSITE_MAX_DAYS` | `"35"` | scheduler.py |
@@ -329,6 +331,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
 | `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
+| `STUDIO_CACHE_BUDGET_ROWS` | `"20000"` | schedule_engine.py |
+| `STUDIO_CACHE_PER_RESTAURANT` | `"3"` | schedule_engine.py |
+| `STUDIO_CACHE_SECONDS` | `"900"` | schedule_engine.py |
 | `SWEEP_MAX_SECONDS` | `str(45 * 60` | scheduler.py |
 | `SWEEP_WORKERS` | `"1"` | scheduler.py |
 | `TOKEN_REFRESH_MAX_SECONDS` | `str(10 * 60` | scheduler.py |

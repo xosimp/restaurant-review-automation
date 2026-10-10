@@ -132,11 +132,24 @@ def test_old_intermediate_versions_are_thinned_and_the_rest_kept_whole():
     last = _version(rid, hid, 4, "edited", 100)
     out = ops.prune_ledgers()
     assert out.get("schedule_versions_thinned") == 1
+    # Since 10/10/26 (scheduler audit SCALE-4) a version keeps its headline
+    # inline and its whole evaluation stored once by reference; the versions
+    # kept whole are compacted into that shape the same night, and their
+    # evaluation reads back whole (schedule_versions.version_quality).
+    import schedule_versions
+    assert out.get("schedule_versions_compacted") == 3
     for vid, whole in ((gen, True), (mid, False), (pub, True), (last, True)):
-        q = json.loads(_one("SELECT quality_json FROM schedule_versions WHERE id=?", (vid,))["quality_json"])
+        row = _one("SELECT quality_json, quality_ref FROM schedule_versions WHERE id=?", (vid,))
+        c = models.get_conn()
+        try:
+            q = schedule_versions.version_quality(c, row["quality_json"], row["quality_ref"])
+        finally:
+            c.close()
         assert ("shifts" in q) is whole, vid
         assert q["score"] == 71
-    import schedule_versions
+        assert "shifts" not in json.loads(row["quality_json"])
+    # One stored copy for the three identical evaluations.
+    assert _one("SELECT COUNT(*) AS n FROM quality_blobs WHERE restaurant_id=?", (rid,))["n"] == 1
     listed = schedule_versions.list_versions(rid, hid)
     assert [v["score"] for v in listed] == [71, 71, 71, 71], "the version list keeps its scores"
 
