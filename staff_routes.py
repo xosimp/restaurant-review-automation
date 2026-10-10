@@ -1107,7 +1107,8 @@ def api_colleagues(current_user):
     # owns it — the same reading the portal's own shifts use.
     weeks = staff_schedule._published_weeks(rid, min(today, on))
     me = name.strip().lower()
-    # The CSV and the stations only (SCALE-19), never SELECT * and its JSON.
+    # Each week's PUBLISHED copy (ARCH-1) — the CSV and the stations only
+    # (SCALE-19), never SELECT * and its JSON.
     details = {w["id"]: (get_published_week_csv(w["id"], rid, with_stations=True) or {}) for w in weeks}
     rows_by_week = {wid: rows_from_csv(d.get("schedule_csv") or "") for wid, d in details.items()}
     coworkers, posted = _coworkers_on(weeks, details, rows_by_week, on, me)

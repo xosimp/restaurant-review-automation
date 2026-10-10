@@ -168,7 +168,8 @@ def test_a_publish_check_that_cannot_run_is_never_read_as_clear(db_path, rid, mo
 
     def _boom(*a, **k):
         raise RuntimeError("database is locked")
-    monkeypatch.setattr(client_api, "publish_review", _boom)
+    import schedule_publish
+    monkeypatch.setattr(schedule_publish, "publish_review", _boom)
     with Flask(__name__).test_request_context(f"/?schedule_id={hid}"):
         out, status = strategy_routes._do_publish_check({"restaurant_id": rid, "is_admin": True})
     assert status == 200 and out["blocker_keys"] == ["check_failed"]

@@ -2645,6 +2645,9 @@ _RETENTION_DAYS = {
     "admin_issue_resolution_history": int(os.getenv("RETAIN_RESOLUTION_HISTORY_DAYS", "400")),
     "sms_log":            int(os.getenv("RETAIN_SMS_LOG_DAYS", "90")),
     "push_outbox":        int(os.getenv("RETAIN_PUSH_OUTBOX_DAYS", "30")),
+    # The schedule publish outbox (schedule_publish): who each Send told and
+    # how; the share-status list reads a week's own rows.
+    "schedule_notices":   int(os.getenv("RETAIN_SCHEDULE_NOTICES_DAYS", "180")),
     "webhook_outbox":     int(os.getenv("RETAIN_WEBHOOK_OUTBOX_DAYS", "30")),
     "morning_brief_deliveries": int(os.getenv("RETAIN_BRIEF_DELIVERIES_DAYS", "90")),
     "alert_storm_caps":   int(os.getenv("RETAIN_ALERT_STORM_CAPS_DAYS", "365")),
@@ -2830,6 +2833,7 @@ _RETENTION_COLUMN = {
     "missed_windows": "created_at",
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
+    "schedule_notices": "created_at",
     "places_details_cache": "created_at",
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
@@ -2937,6 +2941,9 @@ _RETENTION_FLOOR_DAYS = {
     # The Places Details cache is read for its own day only (#13).
     "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
+    # A sent week's delivery list (schedule_publish.notice_status) is read
+    # while the week is current — a few weeks, never more than two months.
+    "schedule_notices": 60,
     "morning_brief_deliveries": 30, "alert_storm_caps": 60, "login_history": 60,
     # Account -> Memory offers a year to restore a forgotten fact (M2's archive).
     "ask_memory_archive": 365,

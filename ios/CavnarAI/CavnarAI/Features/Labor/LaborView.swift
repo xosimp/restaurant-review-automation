@@ -518,6 +518,10 @@ struct LaborView: View {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
                                  hoursBudget: viewModel.scheduleResult?.hoursBudget,
+                                 // The rows on screen, when they are saved:
+                                 // a week changed since is refused (BUGSLIFE-11).
+                                 version: (viewModel.rowsUnsaved || viewModel.hasUnsavedFixes
+                                           || viewModel.optimizerUnsaved) ? nil : viewModel.latestVersion,
                                  onSent: { viewModel.unsentChanges = [] },
                                  onVersion: { viewModel.adoptSentVersion($0) })
         }

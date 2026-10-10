@@ -320,7 +320,7 @@ def test_the_publish_notice_states_when_it_really_goes_out(db_path, monkeypatch)
     monkeypatch.setattr(scheduler, "local_due", lambda *a, **k: True)
     # The gate the job reads (publish_review, recomputed at send time —
     # NS5 H3) is not what this test is about.
-    monkeypatch.setattr("client_api.publish_review", lambda *a, **k: {"blockers": [], "soft": []})
+    monkeypatch.setattr("schedule_publish.publish_review", lambda *a, **k: {"blockers": [], "soft": []})
     monkeypatch.setattr(models, "get_all_restaurants", lambda *a, **k: [models.get_restaurant(rid, db_path=db_path)])
     told = []
     monkeypatch.setattr(strategy_jobs, "_reach", lambda rid_, t, title, *a, **k: told.append((t, title)) or 1)

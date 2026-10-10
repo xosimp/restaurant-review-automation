@@ -258,7 +258,10 @@ def test_the_retired_manager_on_duty_switch_says_nothing():
 def test_sibling_collisions_read_only_published_weeks():
     src = open(models.__file__).read()
     body = src[src.index("def sibling_location_shifts"):src.index("def sibling_location_shifts") + 3000]
-    assert "published_at IS NOT NULL" in body
+    # The one rule for a week's live copy (models.live_where: published,
+    # no newer published copy — ARCH-11), and its published rows.
+    assert 'live_where("h")' in body and 'live_csv_sql("h")' in body
+    assert "published_at IS NOT NULL" in models.live_where("h")
 
 
 def test_overtime_is_priced_at_forty_whatever_the_owners_ceiling():

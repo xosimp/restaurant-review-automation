@@ -227,17 +227,17 @@ def _week(week_start):
 
 
 def _published_rows(restaurant_id, week_start, db_path=None):
-    """The rows the owner published for that week (the newest published
-    schedule_history row), or None when the week was never published."""
+    """The rows the owner published for that week — its live copy's
+    published rows (models.live_week_row, the one definition of the week
+    in force, ARCH-11) — or None when the week was never published."""
     import schedule_versions as _sv
+    import models as _m_live
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND week_start=? "
-                         "AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1",
-                         (restaurant_id, week_start)).fetchone()
+        r = _m_live.live_week_row(conn, restaurant_id, str(week_start)[:10])
     finally:
         conn.close()
-    return _sv.rows_from_csv(r["schedule_csv"] or "") if r else None
+    return _sv.rows_from_csv(r["schedule_csv"] or "") if (r and r["published_at"]) else None
 
 
 def item_tags(calls, roster_size, restaurant_id, week_start, extra=(), holidays=None, db_path=None) -> list:

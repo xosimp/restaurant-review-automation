@@ -145,8 +145,10 @@ def test_the_minute_duties_reap_both_outboxes(monkeypatch):
     monkeypatch.setattr(guest_marketing, "run_campaign_sends", lambda *a, **k: {})
     monkeypatch.setattr(push, "reap_push_outbox", lambda *a, **k: reaped.append("push") or {"submitted": 0})
     monkeypatch.setattr(webhooks, "reap_webhook_outbox", lambda *a, **k: reaped.append("webhooks") or {})
+    import schedule_publish
+    monkeypatch.setattr(schedule_publish, "run_schedule_notices", lambda *a, **k: {"ok": 0, "failed": 0})
     out = scheduler._minute_duties()
-    assert reaped == ["push", "webhooks"] and out["attempted"] == 8 and out["failed"] == 0
+    assert reaped == ["push", "webhooks"] and out["attempted"] == 9 and out["failed"] == 0
     # One reaper failing is captured and counted; the other still runs.
     monkeypatch.setattr(push, "reap_push_outbox", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("pool")))
     captured = []

@@ -392,12 +392,16 @@ def value(arms, name, default=None):
     return DEFAULT_FLAGS.get(name) if default is None else default
 
 
-def record(restaurant_id, history_id, arms, quality_score=None, solver_applied=None, db_path=DB_PATH) -> None:
+def record(restaurant_id, history_id, arms, quality_score=None, solver_applied=None, db_path=DB_PATH,
+           conn=None) -> None:
     """The week's arm, stored with the draft's score. A regeneration is a
-    new history row with the same arm."""
+    new history row with the same arm. With `conn`, on the caller's
+    connection inside its transaction (the generation's save, schedule
+    audit 10/10/26 ARCH-29) — the caller commits."""
     if not history_id or not arms:
         return
-    conn = get_conn(db_path)
+    own = conn is None
+    conn = conn or get_conn(db_path)
     try:
         for a in arms:
             conn.execute(
@@ -410,9 +414,11 @@ def record(restaurant_id, history_id, arms, quality_score=None, solver_applied=N
                 (int(history_id), int(restaurant_id), a["experiment"], a["arm"], 1 if a.get("pinned") else 0,
                  a.get("pin_source"), quality_score, None if solver_applied is None else (1 if solver_applied else 0),
                  int(history_id), int(restaurant_id)))
-        conn.commit()
+        if own:
+            conn.commit()
     finally:
-        conn.close()
+        if own:
+            conn.close()
 
 
 def set_pin(restaurant_id, experiment_key, arm, pinned_by=None, db_path=DB_PATH) -> dict:

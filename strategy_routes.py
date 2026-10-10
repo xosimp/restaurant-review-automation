@@ -4842,7 +4842,7 @@ def _auto_publish_offer(rid) -> dict:
     conn = get_conn()
     try:
         latest = conn.execute("SELECT quality_json FROM schedule_history WHERE restaurant_id=? AND quality_json IS NOT NULL "
-                              "ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+                              "AND superseded_by IS NULL ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
     finally:
         conn.close()
     try:
@@ -7122,7 +7122,7 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True) -> bool:
     if not can_publish or not schedule_id:
         return False
     try:
-        from client_api import publish_review
+        from schedule_publish import publish_review
         from labor import employees_in_schedule
         from models import get_conn as _gc
         import people
@@ -7154,7 +7154,7 @@ def _do_publish_check(u):
     With no schedule_id: the open draft (or schedule_id null when none)."""
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the schedule.")
-    from client_api import publish_review
+    from schedule_publish import publish_review, notice_status
     from labor import employees_in_schedule
     from models import get_conn as _gc
     import people
@@ -7229,6 +7229,12 @@ def _do_publish_check(u):
             # 10/4/26 UI-3): the sheet says why instead of offering Send.
             "superseded_by": row["superseded_by"],
             "replaced_reason": __import__("schedule_versions").replaced_error(row),
+            # The version these rows are: a Send that names it goes out
+            # only while the stored rows are still these (BUGSLIFE-11).
+            "version": (__import__("schedule_versions").newest_version(rid, row["id"]) or [{}])[0].get("version"),
+            # Who has been told about the week and how it went (the
+            # publish outbox — BUGSLIFE-9): still sending, failed, unreachable.
+            "delivery": notice_status(rid, row["id"]) if row["published_at"] else None,
             "can_publish": _can_publish}, 200
 
 

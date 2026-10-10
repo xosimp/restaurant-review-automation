@@ -193,8 +193,11 @@ def test_every_send_failing_leaves_no_share_row_and_says_the_send_failed(db, mon
     payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True)
     shares = _one(db, "SELECT COUNT(*) AS n FROM schedule_shares WHERE schedule_id=?", hid)["n"]
     assert shares == 0
-    assert "email address" not in (payload.get("error") or "")
-    assert "fail" in (payload.get("error") or "").lower() or "could not" in (payload.get("error") or "").lower()
+    # Published first, delivered after (ARCH-19): the note says the messages
+    # could not go and are retried — never "no email address on file".
+    note = (payload.get("note") or "").lower()
+    assert "email address" not in note
+    assert "couldn" in note and sorted(f["employee_name"] for f in payload["failed"]) == ["Ana", "Bob"]
 
 
 def test_a_successful_send_stamps_published_at_and_versions_it(db, monkeypatch):
@@ -378,8 +381,10 @@ def test_a_save_without_a_history_id_never_writes_into_another_week(db, save_app
     edited = _rows(_week_csv(W1, people=(("Cy", "11:00am", "3:00pm", 4),)))
     r = _post_save(save_app, _bearer(db, rid), edited)
     stored_w2 = _one(db, "SELECT schedule_csv FROM schedule_history WHERE id=?", w2)["schedule_csv"]
-    assert r.status_code == 400 or stored_w2 == _week_csv(W2)
-    assert stored_w2 == _week_csv(W2)
+    # Rows compared, not bytes: the stored text carries each row's shift id.
+    import schedule_versions as _svr
+    assert r.status_code == 400 or _svr.same_rows(_svr.rows_from_csv(stored_w2), _svr.rows_from_csv(_week_csv(W2)))
+    assert _svr.same_rows(_svr.rows_from_csv(stored_w2), _svr.rows_from_csv(_week_csv(W2)))
 
 
 def test_a_save_whose_version_cannot_be_written_does_not_report_saved(db, save_app, monkeypatch):
@@ -486,8 +491,13 @@ def test_the_delayed_publish_is_voided_when_the_week_was_edited_in_the_window(db
     hid = _save(db, rid, W1, _week_csv(W1[:5]))
     scheduler.run_auto_publish_schedules()
     assert _queued(db, rid)
-    models.update_schedule_history_rows(rid, _week_csv(W1, people=(("Ana", "9:00am", "1:00pm", 4),)),
-                                        history_id=hid, edited_by="half-finished edit")
+    import schedule_versions as _svw
+    conn = models.get_conn()
+    conn.execute("BEGIN IMMEDIATE")
+    _svw.write_on(conn, rid, hid, "edited", _week_csv(W1, people=(("Ana", "9:00am", "1:00pm", 4),)),
+                  saved_by="half-finished edit")
+    conn.commit()
+    conn.close()
     sent = []
     monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
     delayed.run_due(now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=3))

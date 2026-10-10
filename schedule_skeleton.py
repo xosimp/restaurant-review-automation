@@ -207,11 +207,10 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
     try:
         conn = get_conn(db_path)
         try:
+            import models as _m_live
             found = conn.execute(
-                "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
-                "AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE "
-                "nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start "
-                "AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+                "SELECT " + _m_live.live_csv_sql("schedule_history") + " AS schedule_csv FROM schedule_history "
+                "WHERE restaurant_id=? AND " + _m_live.live_where("schedule_history") + " "
                 "AND substr(week_start,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY week_start",
                 (restaurant_id, since, until)).fetchall()
         finally:
