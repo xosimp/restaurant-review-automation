@@ -582,11 +582,17 @@ def test_no_prior_below_the_cohort_floor(db_path):
 def test_a_restaurants_own_figures_are_ratios_with_no_names(db_path, monkeypatch):
     from intelligence import schedule_priors as sp, privacy
     import staffing_model as sm
+    import demand_drivers as ddr
     rid = _rid()
+    _exec("UPDATE restaurants SET latitude=41.88, longitude=-87.63 WHERE id=?", (rid,))
     monkeypatch.setattr(sm, "measure", lambda *a, **k: {"families": {"server": {"parts": {"night": {
         "source": "measured", "own": 11.5, "n": 12}}}}})
+    monkeypatch.setattr(ddr, "weather_effects", lambda *a, **k: {"night": {"snow": {"lift_pct": -30.0, "n": 4}}})
     f = sp.compute_features(rid, today=date.today(), db_path=db_path)
     assert f["sched_prior.std.server.night"] == 11.5
+    # A weather lift is only ever a same-region one.
+    assert sp.region_of(rid, db_path=db_path) == "40n_chicago"
+    assert f["sched_prior.wx.40n_chicago.night.snow"] == 0.7
     privacy.assert_anonymous(f)
 
 

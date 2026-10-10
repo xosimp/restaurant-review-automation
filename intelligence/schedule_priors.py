@@ -12,9 +12,12 @@ own MEASURED figures as ratios — no names, no dollars:
   sched_prior.std.<family>.<part>   work one person carries at the rush
                                     (staffing_model's own median, guests or
                                     tickets per person-hour)
-  sched_prior.wx.<part>.<cond>      a weather bucket's lift as a multiplier
-                                    (demand_drivers.weather_effects: rain,
-                                    snow, cold, hot per daypart; 1.0 = none)
+  sched_prior.wx.<region>.<part>.<cond>  a weather bucket's lift as a
+                                    multiplier (demand_drivers.weather_effects:
+                                    rain, snow, cold, hot per daypart; 1.0 =
+                                    none), keyed by climate region (region_of:
+                                    latitude band and clock zone) so a prior is
+                                    only ever a same-region one
   sched_prior.noshow                the restaurant's own weighted no-show
                                     base rate (staff_settings.attendance_bases)
   sched_prior.event.<kind>          the median measured lift of its events
@@ -67,11 +70,12 @@ def compute_features(restaurant_id: int, today: date = None, db_path: str = DB_P
         print(f"[schedule_priors] standards unavailable for {restaurant_id}: {e}")
     try:
         import demand_drivers as _dd
-        eff = _dd.weather_effects(restaurant_id, db_path=db_path, today=today)
+        region = region_of(restaurant_id, db_path=db_path)
+        eff = _dd.weather_effects(restaurant_id, db_path=db_path, today=today) if region else {}
         for part, conds in (eff or {}).items():
             for c, s in (conds or {}).items():
                 if int(s.get("n") or 0) >= _dd.EFFECT_MIN_N:
-                    out[f"{PREFIX}wx.{part}.{c}"] = round(1.0 + float(s["lift_pct"]) / 100.0, 3)
+                    out[f"{PREFIX}wx.{region}.{part}.{c}"] = round(1.0 + float(s["lift_pct"]) / 100.0, 3)
     except Exception as e:
         print(f"[schedule_priors] weather unavailable for {restaurant_id}: {e}")
     try:
@@ -204,16 +208,39 @@ def standard_prior(restaurant_id, db_path=DB_PATH) -> dict:
     return out
 
 
+def region_of(restaurant_id, db_path=DB_PATH):
+    """The restaurant's climate region for the weather priors — its
+    latitude band (4 degrees) and its clock's zone, "40n_chicago" — or None
+    before its coordinates are known. Coarse on purpose: a region, never a
+    place. Snow in Chicago is not snow in Atlanta (LEARNING-21's regional
+    cohort)."""
+    try:
+        import models as _m
+        r = _m.get_restaurant(restaurant_id) if db_path in (None, DB_PATH) else _m.get_restaurant(restaurant_id, db_path)
+        lat = getattr(r, "latitude", None)
+        if lat is None:
+            return None
+        zone = str(getattr(r, "timezone", None) or "").split("/")[-1].lower()
+        zone = "".join(ch for ch in zone if ch.isalnum()) or "tz"
+        return f"{int(float(lat) // 4) * 4}n_{zone}"
+    except Exception:
+        return None
+
+
 def weather_prior(restaurant_id, db_path=DB_PATH) -> dict:
-    """{part: {condition: lift %}} — the cohort's weather effects
-    (demand_drivers.weather_effects shrinks toward them)."""
+    """{part: {condition: lift %}} — the weather effects of similar
+    restaurants in the same climate region (demand_drivers.weather_effects
+    shrinks toward them)."""
     out = {}
+    region = region_of(restaurant_id, db_path=db_path)
+    if not region:
+        return out
     scope = _scope(restaurant_id, db_path=db_path)
     if not scope[0]:
         return out
     for part in PARTS:
         for c in WEATHER_CONDS:
-            p = prior(restaurant_id, f"{PREFIX}wx.{part}.{c}", db_path=db_path, scope=scope)
+            p = prior(restaurant_id, f"{PREFIX}wx.{region}.{part}.{c}", db_path=db_path, scope=scope)
             if p:
                 out.setdefault(part, {})[c] = round((p["value"] - 1.0) * 100.0, 1)
     return out
