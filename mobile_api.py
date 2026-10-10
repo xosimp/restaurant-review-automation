@@ -3664,19 +3664,33 @@ def mobile_generate_schedule(current_user):
     # is kept with the owner's optional reason (a chip and their words —
     # reason_chip / reason, reason_text / whats_wrong), and a whole week
     # generated over a draft never sent is kept as that draft discarded —
-    # the draft in force read before the job can replace it.
+    # the draft in force read before the job can replace it. Recorded by the
+    # job once its own draft is in force (schedule_engine._settle_rejection,
+    # ARCH-18), never here at the press: a press stopped or failed rejected
+    # nothing. The same draft is what a Stop after the job's save puts back
+    # (ARCH-2).
     _discarded = None
     if not dates:
         try:
             import schedule_versions as _sv_open
-            # The week the job will write (schedule_engine.generation_request:
-            # the named one, else the first that can be published on time).
-            from schedule_engine import generation_request as _gen_req_open
-            _discarded = _sv_open.open_draft_for_week(
-                rid, _gen_req_open(rid, week_start=week_start)["week_start"])
+            # The week this press asked for, resolved once (_req): the job
+            # builds this week, not the one "next week" is when a slot frees
+            # (BUGSGEN-11 — a press at 11:50pm Sunday built the week after).
+            _discarded = _sv_open.open_draft_for_week(rid, _req["week_start"])
         except Exception as _odx:
             _ops.capture(_odx, job="schedule_rejection", context=f"restaurant_id={rid} (open draft)")
-    _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}
+    _chip = body.get("reason_chip") or body.get("reason")
+    _words = body.get("reason_text") or body.get("whats_wrong")
+    _rejection = None
+    if dates and base_history_id:
+        _rejection = {"kind": "redo_days", "history_id": base_history_id, "dates": dates}
+    elif _discarded:
+        _rejection = {"kind": "draft_discarded", "history_id": _discarded}
+    if _rejection:
+        _rejection.update(reason_chip=_chip if isinstance(_chip, str) else None,
+                          reason_text=_words if isinstance(_words, str) else None,
+                          user=dict(current_user))
+    _job_kw = {"week_start": week_start or _req["week_start"], "dates": dates, "base_history_id": base_history_id}
     if instruction:
         _job_kw["instruction"] = instruction
     # On the bounded generation pool, not a thread of its own (schedule audit
@@ -3688,27 +3702,14 @@ def mobile_generate_schedule(current_user):
     # before the job is queued, so a fast job never finishes unwatched.
     _se.watch_generation(job_id, current_user)
     try:
-        _se.submit_generation(job_id, rid, **_job_kw)
+        _se.submit_generation(job_id, rid, prior_draft_id=(base_history_id if dates else _discarded),
+                              rejection=_rejection, **_job_kw)
     except BaseException:
         # Never queued: nothing will finish or announce it, so the watch is
         # dropped and the job closed (re-audit 10/8/26 #14).
         _se.take_generation_watchers(job_id)
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": "The schedule couldn't be started — try again."})
         raise
-    try:
-        import schedule_versions as _sv_rej
-        _chip = body.get("reason_chip") or body.get("reason")
-        _words = body.get("reason_text") or body.get("whats_wrong")
-        _chip = _chip if isinstance(_chip, str) else None
-        _words = _words if isinstance(_words, str) else None
-        if dates and base_history_id:
-            _sv_rej.record_rejection(rid, int(base_history_id), "redo_days", dates=dates, reason_chip=_chip,
-                                     reason_text=_words, user=current_user)
-        elif _discarded:
-            _sv_rej.record_rejection(rid, _discarded, "draft_discarded", reason_chip=_chip, reason_text=_words,
-                                     user=current_user)
-    except Exception as _rjx:
-        _ops.capture(_rjx, job="schedule_rejection", context=f"restaurant_id={rid}")
     # How long the job can run (P-22): the client waits this long, not a
     # guessed 15 minutes; a poll while it is pending says what is left.
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
@@ -3747,12 +3748,18 @@ def mobile_follow_generation(current_user):
 @mobile_login_required
 def mobile_stop_generation(current_user):
     """Stop a running generation (owner, 10/9/26: Generate pressed by
-    accident). Body: job_id. The job is finished as stopped at once — every
-    poll reads "Stopped — nothing was saved.", the restaurant may start
-    another, and the run itself starts no further model call and saves
-    nothing (schedule_engine.ScheduleStopped; a call already in flight
-    finishes and is discarded). Only a pending schedule job of this
-    restaurant; the ONE body, /api/generate-schedule/stop is its twin."""
+    accident). Body: job_id. Only a pending schedule job of this restaurant;
+    the ONE body, /api/generate-schedule/stop is its twin.
+
+    Before the job has saved anything, it is finished as stopped at once —
+    every poll reads "Stopped — nothing was saved.", the restaurant may start
+    another, and the run starts no further model call and saves nothing (its
+    save re-checks the job in the same write — schedule audit 10/10/26
+    BUGSLIFE-26). Once it has saved a draft (during the quality gate), the
+    Stop is a request the job answers itself (ops.stop_async_job, ARCH-2):
+    the draft from before the press comes back, or the one already saved is
+    kept and said — never "nothing was saved" over a draft that replaced the
+    owner's. `stopping` is true while the job finishes that."""
     rid = current_user["restaurant_id"]
     from permissions import has_permission, SCHEDULE_DRAFT
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
@@ -3767,8 +3774,11 @@ def mobile_stop_generation(current_user):
     if job.get("status") != "pending":
         return jsonify(ok=True, stopped=False, status=job.get("status"),
                        error="It had already finished — check the draft or Schedule History."), 200
-    _ops.finish_async_job(job_id, "error", {"ok": False, "stopped": True, "error": _se.STOPPED_MESSAGE})
-    return jsonify(ok=True, stopped=True, job_id=job_id)
+    verdict = _ops.stop_async_job(job_id, {"ok": False, "stopped": True, "error": _se.STOPPED_MESSAGE})
+    if verdict == "finished":
+        return jsonify(ok=True, stopped=False, status="done",
+                       error="It had already finished — check the draft or Schedule History."), 200
+    return jsonify(ok=True, stopped=True, stopping=verdict == "stopping", job_id=job_id)
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")

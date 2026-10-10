@@ -776,17 +776,18 @@ def _trades(c, day, part) -> bool:
     restaurant opening at 3pm or later has no lunch, one closing by 3pm no
     dinner (the schedule's own 3pm split). Unknown hours trade both."""
     try:
-        from schedule_engine import _DAYPART_SPLIT
+        import schedule_time as _stime
         from schedule_rules import parse_minutes
         o = parse_minutes((getattr(c, "open_times", None) or {}).get(day, "") or "")
         cl = parse_minutes((getattr(c, "close_times", None) or {}).get(day, "") or "")
+        split = _stime.daypart_split()           # the restaurant's boundary, 3pm unless set
     except Exception:
         return True
-    if part == "morning" and o is not None and o >= _DAYPART_SPLIT:
+    if part == "morning" and o is not None and o >= split:
         return False
-    # Closing between 10am and 3pm is a lunch-only day (a 1am close is a
-    # late night, never this).
-    if part == "night" and cl is not None and 10 * 60 <= cl <= _DAYPART_SPLIT and (o is None or o < cl):
+    # Closing between 10am and the boundary is a lunch-only day (a 1am close
+    # is a late night, never this).
+    if part == "night" and cl is not None and 10 * 60 <= cl <= split and (o is None or o < cl):
         return False
     return True
 

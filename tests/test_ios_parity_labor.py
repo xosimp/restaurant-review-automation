@@ -247,7 +247,7 @@ def test_the_auto_drafts_push_opens_the_week(db, pushed, monkeypatch):
 
     class _SE:
         @staticmethod
-        def _run_schedule_job(job_id, rid_):
+        def _run_schedule_job(job_id, rid_, **_kw):
             return None
     strategy_jobs._draft_one(r, db, _SE, lambda k: None)
     assert pushed and pushed[0]["data"] == {"schedule_id": hid, "one_tap_safe": True}

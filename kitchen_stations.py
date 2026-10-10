@@ -27,7 +27,6 @@ nothing here reads the database.
 import json
 
 DAYPARTS = ("morning", "night")
-SPLIT = 15 * 60          # the 3pm split schedule_rules.daypart_of uses
 MAX_STATIONS = 20
 MAX_NEEDS = 80
 
@@ -119,25 +118,15 @@ def required(cfg, day, part) -> list:
     return sorted(out, key=lambda s: order.get(s, 99))
 
 
-def _minutes(t):
-    from schedule_rules import parse_minutes
-    return parse_minutes(t)
-
-
 def parts_of(row) -> set:
-    """The dayparts a shift covers: the morning when it starts before 3pm,
-    the night when it ends after 3pm (a 10am–10pm double is both)."""
-    s, e = _minutes(row.get("shift_start", "")), _minutes(row.get("shift_end", ""))
-    if s is None:
-        return set()
-    if e is not None and e <= s:
-        e += 24 * 60                      # past midnight
-    out = set()
-    if s < SPLIT:
-        out.add("morning")
-    if (e if e is not None else s) > SPLIT or s >= SPLIT:
-        out.add("night")
-    return out
+    """The dayparts a cook's shift covers a station for — THE daypart rule
+    (schedule_time.present_dayparts, BUGSGEN-9): each whose core service
+    window it is on the floor for at least an hour. A fourth rule here
+    ("starts before 3pm" / "ends after 3pm") had a 10am-3:15pm cook covering
+    the DINNER grill and a 2:30-10pm cook the LUNCH one, so station gaps
+    read filled and the fill added nobody. Empty when unreadable."""
+    import schedule_time as _stime
+    return {p for p in _stime.present_dayparts(row) if p in DAYPARTS}
 
 
 def assign(cooks, need, cfg) -> tuple:

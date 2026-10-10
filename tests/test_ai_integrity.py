@@ -189,10 +189,13 @@ def test_a_partial_visibility_run_is_shown_but_not_recorded():
 # ══ P1-4 · scheduled_hours comes from the shift times, not the model ═══════
 
 @pytest.mark.parametrize("start,end,stated,expected_hours,expect_correction", [
-    ("11:00am", "7:00pm", "12.0", "8.0", True),    # the drift case
+    ("11:00am", "7:00pm", "12.0", "8", True),      # the drift case
     ("11:00am", "6:00pm", "7", "7", False),        # already right — left alone
-    ("5:00pm", "1:00am", "3.0", "8.0", True),      # crosses midnight
-    ("9:00am", "5:00pm", "", "8.0", False),        # blank — filled, not a correction
+    ("5:00pm", "1:00am", "3.0", "8", True),        # crosses midnight
+    ("9:00am", "5:00pm", "", "8", False),          # blank — filled, not a correction
+    # two decimals, never a tenth's banker's rounding (BUGSGEN-7)
+    ("4:45pm", "11:00pm", "", "6.25", False),
+    ("4:45pm", "11:00pm", "6.2", "6.25", True),
 ])
 def test_scheduled_hours_is_recomputed_from_the_times(start, end, stated, expected_hours, expect_correction):
     from client_api import _reconcile_scheduled_hours
@@ -200,7 +203,7 @@ def test_scheduled_hours_is_recomputed_from_the_times(start, end, stated, expect
     drift = _reconcile_scheduled_hours(row)
     assert row["scheduled_hours"] == expected_hours
     assert ("hours_corrected_from" in row) is expect_correction
-    assert (abs(drift) >= 0.1) is expect_correction
+    assert (abs(drift) >= 0.01) is expect_correction
 
 
 def test_an_unparseable_time_leaves_the_row_alone():

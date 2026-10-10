@@ -545,7 +545,7 @@ def test_the_cap_backstop_sees_and_cuts_past_midnight():
     out, n, dates = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=4)
     assert n == 1 and se._peak_server_overlap(out)[0] == 4
     s0 = next(r for r in out if r["employee"] == "S0")
-    assert s0["shift_end"] == "8:00pm" and s0["scheduled_hours"] == "2.0", "the top-up row absorbs the cut"
+    assert s0["shift_end"] == "8:00pm" and s0["scheduled_hours"] == "2", "the top-up row absorbs the cut"
 
 
 def test_the_optimizer_cap_check_reads_past_midnight_too():
@@ -667,7 +667,11 @@ def test_the_engine_threads_the_redo_days_through_every_early_pass():
     for stage in (se._stage_person, se._stage_manager, se._stage_close_out, se._stage_overtime,
                   se._stage_min_hours, se._stage_role_times):
         assert "editable=x.editable" in inspect.getsource(stage), stage.__name__
-    assert "editable=_editable" in inspect.getsource(se._run_schedule_job).split("RepairContext(", 1)[1]
+    # the passes' editable days: the redo's, less an open day the model left
+    # empty (BUGSGEN-5 — open to the sweep, closed to the passes)
+    job_src = inspect.getsource(se._run_schedule_job)
+    assert "editable=_pass_editable" in job_src.split("RepairContext(", 1)[1]
+    assert "_pass_editable = _editable" in job_src
 
 
 def test_a_pinned_row_is_never_staggered_or_cut_at_the_cap():

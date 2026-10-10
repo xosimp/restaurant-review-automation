@@ -38,7 +38,6 @@ from models import DB_PATH
 
 STANDARD_WEEKS = 8
 STANDARD_MIN_DAYS = 6            # measured shifts of a family and daypart before a standard is stated
-DAYPART_SPLIT_HOUR = 15          # shift_quality.DAYPART_CUTOVER: a ticket opened before 3pm is lunch's
 
 # What each family's work is, counted from pos_tickets: (unit, column, bar
 # tickets only?). A family not here has no standard the archive can measure.
@@ -86,7 +85,10 @@ def _part_of_ticket(opened_at, business_date) -> str:
         hour = opened.hour + 24 * max(0, (opened.date() - date.fromisoformat(str(business_date)[:10])).days)
     except (TypeError, ValueError):
         return ""
-    return "morning" if hour < DAYPART_SPLIT_HOUR else "night"
+    # Against the restaurant's lunch/dinner boundary (schedule_time, ARCH-12):
+    # a ticket opened before it is lunch's.
+    import schedule_time as _stime
+    return "morning" if hour * 60 + opened.minute < _stime.daypart_split() else "night"
 
 
 def _work_by_date(restaurant_id, start, end, db_path=DB_PATH) -> dict:

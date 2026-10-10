@@ -35,6 +35,7 @@ models.init_db); pruned by the retention registry (ops._RETENTION_DAYS).
 """
 import dataclasses
 import json
+import os
 import re
 import zlib
 from datetime import date as _date, datetime as _datetime
@@ -954,6 +955,26 @@ _CALLS_DDL = """CREATE TABLE IF NOT EXISTS schedule_model_calls (
     tier           TEXT
 )"""
 
+# What a generated week was checked and scored against (schedule audit
+# 10/10/26 ARCH-35): the Constraints the repair loop, the sweep and the score
+# used — rebuilt after the model wrote (P-41), so they are not the prompt's
+# — the SHIFT REQUIREMENTS and the quality signals and weights, each
+# compressed, with the version of the rule code that read them. The model
+# calls are kept in schedule_model_calls; this is the other half a replay
+# needs, so a stored week is judged by what judged it, not by live tables
+# that have moved since (check_snapshot, schedule_engine.replay_checks).
+_SNAPSHOT_DDL = """CREATE TABLE IF NOT EXISTS schedule_check_snapshots (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    restaurant_id   INTEGER,
+    history_id      INTEGER REFERENCES schedule_history(id) ON DELETE CASCADE,
+    generation_id   TEXT,
+    rules_version   TEXT,
+    constraints_z   BLOB,
+    requirements_z  BLOB,
+    signals_z       BLOB
+)"""
+
 # What a call wrote (schedule re-audit 10/4/26 PROMPT-3): a whole week, a
 # date or department slice of a fresh generation, an owner's redo of some
 # days, or the quality gate's rewrite of the weakest ones. A small call
@@ -981,6 +1002,9 @@ def init_schedule_output(db_path=None):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_gen ON schedule_model_calls(generation_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_hist ON schedule_model_calls(history_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_model_calls_rid ON schedule_model_calls(restaurant_id, id)")
+        conn.execute(_SNAPSHOT_DDL)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_check_snap_hist ON schedule_check_snapshots(history_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_check_snap_created ON schedule_check_snapshots(created_at)")
         conn.commit()
     finally:
         conn.close()
@@ -1030,6 +1054,79 @@ def decode(obj):
         cls = getattr(importlib.import_module(mod), name)
         return cls(**decode(obj["fields"]))
     return {k: decode(v) for k, v in obj.items()}
+
+
+_RULES_VERSION = None
+
+
+def rules_version() -> str:
+    """The version of the code that checks a week: the deployed commit when
+    Railway names it, else a hash of the rule, time and scoring modules'
+    source — the same code reads the same snapshot the same way."""
+    global _RULES_VERSION
+    if _RULES_VERSION is None:
+        commit = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "").strip()
+        if commit:
+            _RULES_VERSION = "git:" + commit[:12]
+        else:
+            import hashlib
+            import inspect
+            import schedule_rules
+            import schedule_time
+            import shift_quality
+            h = hashlib.sha1()
+            for mod in (schedule_rules, schedule_time, shift_quality):
+                h.update(inspect.getsource(mod).encode("utf-8", "replace"))
+            _RULES_VERSION = "src:" + h.hexdigest()[:12]
+    return _RULES_VERSION
+
+
+def record_check_snapshot(restaurant_id, history_id, generation_id, constraints, requirements=None, signals=None,
+                          weights=None, db_path=None):
+    """Keep what a saved week was checked and scored against (ARCH-35):
+    its post-model Constraints, its SHIFT REQUIREMENTS and the quality
+    signals and weights, compressed, with rules_version(). Returns the row
+    id; raises on a failed write (the caller captures it — the week is
+    saved either way)."""
+    if not history_id or constraints is None:
+        return None
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO schedule_check_snapshots (restaurant_id, history_id, generation_id, rules_version, "
+            "constraints_z, requirements_z, signals_z) VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, int(history_id), generation_id, rules_version(), _z(encode(constraints)),
+             _z(encode(requirements)) if requirements is not None else None,
+             _z(encode({"signals": signals, "weights": weights})) if signals is not None else None))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def check_snapshot(history_id, restaurant_id=None, db_path=None):
+    """{"constraints", "requirements", "signals", "weights", "rules_version",
+    "generation_id", "created_at"} a saved week was checked against, rebuilt
+    as they were (the Constraints a dataclass again), or None when none was
+    kept (a week from before 10/10/26, or past retention)."""
+    conn = get_conn(db_path)
+    try:
+        sql = "SELECT * FROM schedule_check_snapshots WHERE history_id=?"
+        args = [int(history_id)]
+        if restaurant_id is not None:
+            sql += " AND restaurant_id=?"
+            args.append(restaurant_id)
+        row = conn.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    sig = decode(_unz(row["signals_z"])) if row["signals_z"] else {}
+    return {"constraints": decode(_unz(row["constraints_z"])),
+            "requirements": decode(_unz(row["requirements_z"])) if row["requirements_z"] else None,
+            "signals": (sig or {}).get("signals"), "weights": (sig or {}).get("weights"),
+            "rules_version": row["rules_version"], "generation_id": row["generation_id"],
+            "created_at": row["created_at"]}
 
 
 def _hashable(x):

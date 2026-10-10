@@ -457,7 +457,7 @@ _THURSDAY_9AM = datetime(2026, 9, 24, 9, 0)
 def test_auto_draft_skips_opt_outs_external_tools_and_a_week_already_drafted(db_path, monkeypatch):
     import strategy_jobs, ops
     ran = []
-    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid, **k: ran.append(rid))
+    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid, **_kw: ran.append(rid))
     monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "done"})
     monkeypatch.setattr("push.fire_push", lambda *a, **k: None)
@@ -488,7 +488,7 @@ def test_auto_draft_skips_opt_outs_external_tools_and_a_week_already_drafted(db_
 def test_auto_draft_does_not_announce_a_draft_that_failed(db_path, monkeypatch):
     import strategy_jobs, ops
     pushed = []
-    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid, **k: None)
+    monkeypatch.setattr("schedule_engine._run_schedule_job", lambda job_id, rid, **_kw: None)
     monkeypatch.setattr(ops, "start_async_job", lambda *a, **k: None)
     monkeypatch.setattr(ops, "read_async_job", lambda *a, **k: {"status": "error"})
     monkeypatch.setattr("push.fire_push", lambda *a, **k: pushed.append(a))
