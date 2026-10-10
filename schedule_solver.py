@@ -1495,7 +1495,10 @@ class Problem:
             if pat is not None and prof.source != "what you told us about this date":
                 days, parts = pat
                 if (days and _low(u.day) not in days) or (parts and part not in parts):
-                    out["stability"] = out.get("stability", 0.0) + self.dim_cost("stability", 100.0 / n_here, dw)
+                    # the usual-pattern reading, at its own share of the
+                    # weight (shift_quality.STABILITY_PATTERN_SHARE — RM-3)
+                    out["stability"] = out.get("stability", 0.0) + self.dim_cost(
+                        "stability", 100.0 / n_here, dw) * sq.STABILITY_PATTERN_SHARE
             # Reliability: a no-show risk alone in the role or on a busy shift
             # is the scorer's exposure; a lateness risk as the only one of the
             # role opening or closing the day (D-44).
@@ -1713,11 +1716,15 @@ class Problem:
             lead = int(round(sq.LEADER_MISS_SCORE + (100 - sq.LEADER_MISS_SCORE) * min(credits)))
             floor = prof.floor("leadership") if answerable else None
             out["leadership"] = self.dim_cost("leadership", 100 - lead, dw, floor, lead)
-        # Strength (dim_operational_strength, SQ-3/4/5): the rated people's
-        # average in each family against target ÷ crew; unrated people are
-        # unknown, not zero; the weakest role sets it.
+        # Strength (dim_operational_strength — one rating measure since the
+        # scheduler audit 10/10/26 LOGIC-30): each family's rated people
+        # against the owner's target ÷ crew (SQ-3/4/5: unrated unknown, never
+        # zero) and against the level this restaurant's own ratings want for
+        # a shift this busy (SQ-12, the former demand match), the lower of the
+        # two the family's, the weakest family the shift's. Only the target
+        # part is a critical floor.
         if self.rated_any:
-            ratios = []
+            fam_scores, target_scores = {}, {}
             for role, target in (prof.min_strength or {}).items():
                 if not target or sq.job_code_daypart(role) not in (None, part):
                     continue
@@ -1730,34 +1737,29 @@ class Problem:
                 hit = self.crews.get((fam, float(target)))
                 crew = int(hit[0]) if hit and int(hit[0] or 0) > 0 else max(1, int(math.ceil(float(target) / 5 - 1e-9)))
                 bar = max(1.0, min(5.0, float(target) / crew))
-                ratios.append(min(1.0, (sum(rated) / len(rated)) / bar))
-            if ratios:
-                st = int(round(min(ratios) * 100))
-                out["operational_strength"] = self.dim_cost("operational_strength", 100 - st, dw,
-                                                            prof.floor("operational_strength"), st)
-        # Demand match (dim_demand_match, SQ-12): the rated team's average
-        # against this restaurant's own level for a shift this busy.
-        every = list(self.ratings.get("*") or [])
-        if self.rated_any and len(every) >= sq.DEMAND_MIN_RATED:
-            offset = sq.DEMAND_BAR_OFFSET.get(prof.demand or "normal", 0.0)
-            have_s = want_s = 0.0
-            n = 0
-            for fam, ps in by_fam.items():
-                here = [float(x) for x in (self._sc(p, {role_of[p][0]}) for p in ps) if x is not None]
-                if not here:
-                    continue
-                own = sorted((float(v) for v in (self.ratings.get(fam) or [])), reverse=True)
-                pool = own if len(own) >= sq.DEMAND_MIN_RATED else sorted(every, reverse=True)
-                mean = sum(pool) / len(pool)
-                best = (own or pool)[:len(here)]
-                want = max(1.0, min(mean + offset, sum(best) / len(best)))
-                have_s += sum(here)
-                want_s += want * len(here)
-                n += len(here)
-            if n:
-                avg, wanted = have_s / n, want_s / n
-                dm = 100 if avg >= wanted - 1e-9 else max(0, int(round(100 - (wanted - avg) * sq.DEMAND_POINT_STEP)))
-                out["demand_match"] = self.dim_cost("demand_match", 100 - dm, dw)
+                sc_ = int(round(min(1.0, (sum(rated) / len(rated)) / bar) * 100))
+                target_scores[fam] = min(target_scores.get(fam, 100), sc_)
+                fam_scores[fam] = min(fam_scores.get(fam, 100), sc_)
+            every = list(self.ratings.get("*") or [])
+            if len(every) >= sq.DEMAND_MIN_RATED:
+                offset = sq.DEMAND_BAR_OFFSET.get(prof.demand or "normal", 0.0)
+                for fam, ps in by_fam.items():
+                    here = [float(x) for x in (self._sc(p, {role_of[p][0]}) for p in ps) if x is not None]
+                    if not here:
+                        continue
+                    own = sorted((float(v) for v in (self.ratings.get(fam) or [])), reverse=True)
+                    pool = own if len(own) >= sq.DEMAND_MIN_RATED else sorted(every, reverse=True)
+                    mean = sum(pool) / len(pool)
+                    best = (own or pool)[:len(here)]
+                    want = max(1.0, min(mean + offset, sum(best) / len(best)))
+                    avg = sum(here) / len(here)
+                    dm = 100 if avg >= want - 1e-9 else max(0, int(round(100 - (want - avg) * sq.DEMAND_POINT_STEP)))
+                    fam_scores[fam] = min(fam_scores.get(fam, 100), dm)
+            if fam_scores:
+                st = min(fam_scores.values())
+                floor = prof.floor("operational_strength") if target_scores and \
+                    min(target_scores.values()) < (prof.floor("operational_strength") or 0) else None
+                out["operational_strength"] = self.dim_cost("operational_strength", 100 - st, dw, floor, st)
         # Training balance (dim_training_balance, SQ-9): somebody rated 2 or
         # under with a mentor 2 points stronger in the family, else on the
         # floor who works it, else — at a one-person station — the manager.

@@ -2291,6 +2291,11 @@ USUAL_HOURS_CUT = 0.6
 
 
 STABILITY_START_MINUTES = 30
+# With no published week to compare slot by slot, stability falls back to
+# "a weekday and daypart this person usually works" — the weak reading it
+# always was, kept at the weight it always had (2 of the new 18), so only a
+# real comparison with what staff were last told carries a tenth of the week.
+STABILITY_PATTERN_SHARE = 2.0 / 18.0
 
 
 def _slot_stability(ctx: ShiftContext):
@@ -2396,7 +2401,8 @@ def dim_stability(ctx: ShiftContext) -> DimensionResult | None:
         key="stability", label="Schedule stability", score=score,
         weight=DEFAULT_WEIGHTS["stability"],
         facts={"basis": "usual_pattern", "familiar": familiar, "changed": changed, "checked": len(people),
-               "hours_cut": [{"name": n, "usual": u, "week": w} for n, u, w in cut]},
+               "hours_cut": [{"name": n, "usual": u, "week": w} for n, u, w in cut],
+               "weight_share": STABILITY_PATTERN_SHARE},
     )
     if changed:
         res.weaknesses.append(

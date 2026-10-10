@@ -434,6 +434,7 @@ class _Model:
         self._closer()
         self._leaders()
         self._static_and_stability()
+        self._slot_memory()
         self._fairness()
         self._dollars()
         m.minimize(book.objective())
@@ -740,6 +741,72 @@ class _Model:
                 m.add(sum(terms) + fixed + short >= 0)
                 per = prob.weights.get("operational_strength", 0) / 100.0 * dw * (100.0 / bar) / 100.0 / max(1, crew)
                 book.add("strength", short, per * Q / 100.0 * 100, {"shift": key, "role": role})
+            # the level this restaurant's own ratings want for a shift this
+            # busy (the former demand match, folded into strength — LOGIC-30)
+            every = list(prob.ratings.get("*") or [])
+            if len(every) < sq.DEMAND_MIN_RATED:
+                continue
+            offset = sq.DEMAND_BAR_OFFSET.get(prof.demand or "normal", 0.0)
+            fams = {}
+            for u in units:
+                fams.setdefault(prob.family(u.role_at.get(part) or ""), []).append(u)
+            for fam, fus in fams.items():
+                own = sorted((float(v) for v in (prob.ratings.get(fam) or [])), reverse=True)
+                pool = own if len(own) >= sq.DEMAND_MIN_RATED else sorted(every, reverse=True)
+                if not pool:
+                    continue
+                mean = sum(pool) / len(pool)
+                best = (own or pool)[:max(1, len(fus))]
+                want = max(1.0, min(mean + offset, sum(best) / len(best)))
+                terms, fixed = [], 0
+                for u in fus:
+                    if u.fixed:
+                        if u.draft is not None:
+                            sc = prob._sc(u.draft, {u.role_at.get(part)})
+                            if sc is not None:
+                                fixed += int(round((float(sc) - want) * 100))
+                        continue
+                    for p in prob.dom[u.id]:
+                        sc = prob._sc(p, {u.role_at.get(part)})
+                        if sc is not None:
+                            terms.append(int(round((float(sc) - want) * 100)) * self.x[(u.id, p)])
+                if not terms:
+                    continue
+                short = m.new_int_var(0, 500 * len(fus), f"dm{len(book.terms)}")
+                m.add(sum(terms) + fixed + short >= 0)
+                per = prob.weights.get("operational_strength", 0) / 100.0 * dw * sq.DEMAND_POINT_STEP / 100.0 / len(fus)
+                book.add("strength", short, per * Q, {"shift": key, "family": fam, "basis": "demand"})
+
+    def _slot_memory(self):
+        """The scheduling memory about who is on a slot at all (schedule_
+        memory.misses' moved_on and leader_swap): somebody the managers keep
+        putting on a weekday's daypart, one of the people they keep putting
+        on a role's slot — a cost while they are not on it."""
+        prob, m, book = self.prob, self.m, self.book
+        if not prob.k_miss:
+            return
+        for key, g in prob.groups.items():
+            if g.get("kind") != "S" or not g.get("learned"):
+                continue
+            part = g["part"]
+            units = [prob.units[i] for i in prob._all_units(key)]
+            first = [u for u in units if part in u.primary]
+            for mem in g["learned"]:
+                if mem["kind"] == "moved_on":
+                    want = {prob.pidx.get(prob.key(mem.get("person")))} - {None}
+                    fams = None
+                else:
+                    want = {prob.pidx.get(prob.key(n)) for n in (_solver._val(mem).get("names") or [])} - {None}
+                    fams = {prob.family(mem.get("role"))} if mem.get("role") else None
+                if not want:
+                    continue
+                pool = [u for u in first if fams is None or prob.family(u.role_at.get(part) or "") in fams]
+                if any(u.fixed and u.draft in want for u in pool):
+                    continue
+                lits = [self.x[(u.id, p)] for u in pool if not u.fixed for p in prob.dom[u.id] if p in want]
+                miss = m.new_bool_var(f"mem{len(book.terms)}")
+                m.add(sum(lits) + miss >= 1)
+                book.add("memory", miss, mem["confidence"] * prob.k_miss * Q, {"shift": key, "kind": mem["kind"]})
 
     def _static_and_stability(self):
         prob, book = self.prob, self.book
