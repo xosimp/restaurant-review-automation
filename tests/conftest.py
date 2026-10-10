@@ -340,6 +340,9 @@ def _owner_rules_read_by_no_model(monkeypatch):
     scheduler audit 10/10/26 RM-9). In the suite the model reads nothing
     unless a test hands owner_rules its own stub (`call`) or sets this back."""
     monkeypatch.setenv("OWNER_RULES_READ", "0")
+    # Nor does it write the note from the finished week (schedule_narrative);
+    # the generation's own bullets, checked against the final rows, stand.
+    monkeypatch.setenv("SCHEDULE_NOTE_WRITE", "0")
 
 
 @pytest.fixture(autouse=True)

@@ -1573,7 +1573,8 @@ _INPUT_WORDS = {
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
     "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "owner words": "your notes and instruction read as rules",
-    "owner weights": "your lighter and heavier days", "cache read rate": "the AI model's cache price",
+    "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
+    "cache read rate": "the AI model's cache price",
     "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
 
@@ -9890,6 +9891,27 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     owner_rules_unchecked=result["review"].get("owner_rules_unchecked"))
         except Exception as _ux:
             _soft_fail("unmet list", _ux, restaurant_id)
+        # "Cavnar AI's note", written from the FINISHED week and checked
+        # against its rows (scheduler audit 10/10/26 TRUST-15, AI-21): the
+        # model's own bullets described the draft before the repair loop,
+        # the solver and the trim changed it, and were checked against the
+        # prompt only. schedule_narrative writes them from the final rows,
+        # the diff and the unmet list, or keeps the model's own only where
+        # the final week still holds them.
+        try:
+            import schedule_narrative as _snar
+            _note = _snar.write(restaurant_id, preview_rows, changes=result.get("summary") or [],
+                                unmet=(result.get("review") or {}).get("unmet") or [],
+                                chips=(result.get("review") or {}).get("instruction_rules") or [],
+                                model_bullets=list(result.get("narrative") or []),
+                                roster=result.get("roster") or [],
+                                role_floors=getattr(result.get("constraints"), "role_floors", None))
+            result["narrative"] = _note["bullets"]
+            if isinstance(result.get("review"), dict):
+                result["review"]["note"] = {"source": _note["source"], "dropped": _note["dropped"][:6]}
+        except Exception as _nx:
+            _soft_fail("note", _nx, restaurant_id)
+            result["narrative"] = []
         # Everything the draft was made or checked without, in one line at
         # the end of the review (P-17): each was captured as it failed.
         _ifl = _input_failure_line(_inputs_failed())
