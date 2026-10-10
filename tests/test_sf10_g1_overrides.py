@@ -109,7 +109,9 @@ def test_a_warning_the_owner_always_overrides_is_demoted_but_a_rule_never_is(db,
     _gate(monkeypatch, rid, [RULE, OVER])
     for _ in range(5):
         hid = _save(db, rid)
-        out, status = client_api._publish_schedule(rid, hid, actor=OWNER, acknowledge=[RULE["key"], "hours_over"])
+        # A rule is must-fix (TRUST-3): sent past only with a reason of its own.
+        out, status = client_api._publish_schedule(rid, hid, actor=OWNER, acknowledge=[RULE["key"], "hours_over"],
+                                                   override_reasons={RULE["key"]: "Ana asked for the double"})
         assert status == 200 and out["ok"]
     st = so.stats(rid)
     assert st["hours_over"]["overridden"] == 5 and st["hours_over"]["demoted"]
@@ -121,7 +123,8 @@ def test_a_warning_the_owner_always_overrides_is_demoted_but_a_rule_never_is(db,
     assert any(n.get("demoted") and "5 of 5 weeks" in n["text"] for n in review["notes"])
     assert {a["kind"] for a in review["always_overridden"]} == {"hours_over", "rule:min_rest"}
     # The send now needs only the rule acknowledged.
-    out, status = client_api._publish_schedule(rid, hid, actor=OWNER, acknowledge=[RULE["key"]])
+    out, status = client_api._publish_schedule(rid, hid, actor=OWNER, acknowledge=[RULE["key"]],
+                                               override_reasons={RULE["key"]: "Ana asked for the double"})
     assert status == 200 and out["ok"]
     # Never for an unattended send: the automation's gate is unchanged.
     hid = _save(db, rid)

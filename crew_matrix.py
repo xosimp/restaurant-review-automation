@@ -59,7 +59,8 @@ from models import DB_PATH
 
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 PARTS = ("morning", "night")
-PART_WORD = {"morning": "lunch", "night": "dinner"}
+# The one owner word pair (schedule_time.PART_WORDS, TRUST-31), lower case.
+PART_WORD = {k: v.lower() for k, v in __import__("schedule_time").PART_WORDS.items()}
 SALES_WEEKS = 8
 DEMAND_BAND = 0.3          # busy / slow: sales per person 30% off the role's own median
 ANSWERS = ("hold", "lean")

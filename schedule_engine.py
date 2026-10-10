@@ -1767,9 +1767,32 @@ def _no_history_analysis() -> dict:
             "role_rates": {}, "blended_rate": None, "date_range": {}}
 
 
+def locked_rows_of(restaurant_id, week_start, dates=None) -> list:
+    """The shifts the owner locked on the working copy of the week starting
+    `week_start` (models.week_draft — contract #4: a Studio save locks the
+    rows the manager changed; "Keep this shift" locks one), on `dates` when
+    given (a redo: the other days are kept whole anyway)."""
+    import models as _m_lk
+    import schedule_rows as _srows_lk
+    conn = _m_lk.get_conn()
+    try:
+        row = _m_lk.week_draft(conn, restaurant_id, str(week_start)[:10])
+    finally:
+        conn.close()
+    if row is None:
+        return []
+    want = set(dates) if dates else None
+    return [dict(r) for r in _versions.rows_from_csv(row["schedule_csv"] or "")
+            if _srows_lk.is_locked(r) and (want is None or r.get("date") in want)]
+
+
 def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None,
-                           instruction=None, code_redo=False):
+                           instruction=None, code_redo=False, keep_locked=True):
     """Shared logic for both schedule endpoints.
+
+    keep_locked — keep the owner's locked shifts of the week's working copy
+    exactly (TRUST-17; locked_rows_of, schedule_skeleton.with_locked). The
+    Generate button's "Start fresh" passes False.
 
     code_redo — an owner's redo of `dates` drafted in code first (scheduler
     audit 10/10/26 AI-28): the days re-shaped from SHIFT REQUIREMENTS on the
@@ -2280,6 +2303,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('manager_plan', _sfx, restaurant_id)
         manager_plan = _skeleton.failed_plan(constraints, _sfx)
+    # The owner's locked shifts on the dates this run writes (schedule audit
+    # 10/10/26 TRUST-17, contract #4): a full Generate replaced a draft with
+    # saved edits without a word, and no shift could be pinned. Locked rows
+    # of the week's working copy join the plan's fixed rows — merged into
+    # every answer by code, restored after the parse, never moved by a pass.
+    if keep_locked:
+        try:
+            _locked = locked_rows_of(restaurant_id, next_week_dates[0], dates=dates)
+            if _locked:
+                manager_plan = _skeleton.with_locked(manager_plan, _locked)
+        except Exception as _lfx:
+            _soft_fail('locked shifts', _lfx, restaurant_id)
     # Everything learned reaches the model as ONE budgeted block (schedule
     # audit 10/3/26 L-28): the scheduling memory's own facts (the manager's
     # habits, openers, sections, teams, overtime and late closes, the

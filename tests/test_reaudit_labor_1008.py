@@ -46,7 +46,7 @@ def test_publish_check_answers_with_the_unattended_one_tap_verdict(db, monkeypat
     asked = []
     verdict = {"safe": True}
     monkeypatch.setattr(strategy_routes, "draft_one_tap_safe",
-                        lambda r, s, can_publish=True: asked.append((r, s, can_publish)) or verdict["safe"])
+                        lambda r, s, can_publish=True, review=None: asked.append((r, s, can_publish)) or verdict["safe"])
     body = c.get(f"/mobile/api/labor/publish-check?schedule_id={hid}", headers=h).get_json()
     assert body["one_tap_safe"] is True and asked == [(rid, hid, True)]
     verdict["safe"] = False

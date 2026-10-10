@@ -41,6 +41,7 @@ import shift_requests as srq
 import staff_schedule
 import strategy_jobs
 from models import create_restaurant, Restaurant
+from tests.publish_overrides import overrides_for, override_list  # noqa: F401
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 W1 = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]
@@ -176,7 +177,7 @@ def test_publishing_with_no_email_contacts_still_publishes_to_the_portal(db, mon
     rid = _restaurant(db)
     hid = _save(db, rid, W1, _week_csv(W1))
     monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: emails.SendResult(True))
-    payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True)
+    payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True, override_reasons=overrides_for(rid, hid))
     assert status == 200
     assert _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
     assert staff_schedule.shifts_for_employee(rid, "Ana", today=dt.date(2026, 10, 5))["published"] is True
@@ -190,7 +191,7 @@ def test_every_send_failing_leaves_no_share_row_and_says_the_send_failed(db, mon
     def resend_down(**kw):
         raise RuntimeError("Resend 503")
     monkeypatch.setattr(emails, "send_staff_schedule_email", resend_down)
-    payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True)
+    payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True, override_reasons=overrides_for(rid, hid))
     shares = _one(db, "SELECT COUNT(*) AS n FROM schedule_shares WHERE schedule_id=?", hid)["n"]
     assert shares == 0
     # Published first, delivered after (ARCH-19): the note says the messages
@@ -206,7 +207,7 @@ def test_a_successful_send_stamps_published_at_and_versions_it(db, monkeypatch):
     _contacts(db, rid, "Ana", "Bob")
     sent = []
     monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: sent.append(kw["employee_name"]) or emails.SendResult(True))
-    payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True)
+    payload, status = client_api._publish_schedule(rid, hid, actor={"username": "owner"}, acknowledge=True, override_reasons=overrides_for(rid, hid))
     assert status == 200 and payload["ok"] and sorted(sent) == ["Ana", "Bob"]
     assert _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
     assert sv.list_versions(rid, hid)[-1]["reason"] == "published"
@@ -237,7 +238,7 @@ def test_two_concurrent_publishes_email_each_employee_once(db, monkeypatch):
         return out
     monkeypatch.setattr(client_api, "publish_blockers", racing_blockers)
     threads = [threading.Thread(target=client_api._publish_schedule, args=(rid, hid),
-                                kwargs={"actor": {"username": f"m{i}"}, "acknowledge": True}) for i in range(2)]
+                                kwargs={"actor": {"username": f"m{i}"}, "acknowledge": True, "override_reasons": overrides_for(rid, hid)}) for i in range(2)]
     [t.start() for t in threads]
     [t.join(60) for t in threads]
     if barrier.broken:
@@ -252,9 +253,9 @@ def test_publishing_a_second_version_of_a_week_retires_the_first(db, monkeypatch
     _contacts(db, rid, "Ana", "Bob")
     monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: emails.SendResult(True))
     v1 = _save(db, rid, W1, _week_csv(W1))
-    client_api._publish_schedule(rid, v1, actor={"username": "owner"}, acknowledge=True)
+    client_api._publish_schedule(rid, v1, actor={"username": "owner"}, acknowledge=True, override_reasons=overrides_for(rid, v1))
     v2 = _save(db, rid, W1, _week_csv(W1, people=(("Bob", "11:00am", "3:00pm", 4), ("Ana", "5:00pm", "9:00pm", 4))))
-    client_api._publish_schedule(rid, v2, actor={"username": "owner"}, acknowledge=True)
+    client_api._publish_schedule(rid, v2, actor={"username": "owner"}, acknowledge=True, override_reasons=overrides_for(rid, v2))
     live = [r["id"] for r in models.get_conn(db).execute(
         "SELECT id FROM schedule_history WHERE restaurant_id=? AND week_start=? AND published_at IS NOT NULL "
         "AND superseded_by IS NULL", (rid, W1[0])).fetchall()]

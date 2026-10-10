@@ -450,6 +450,20 @@ def hours_view(rows: list, c, ceiling: float = None) -> dict:
             "over": over, "ceiling": ceiling}
 
 
+def labor_grade(pct, target) -> str:
+    """"over" when the labor % as shown (one decimal place) is past the
+    target, "under" when it is at or under it, "no_target" without one
+    (TRUST-7: the one grade web and iOS both colour by)."""
+    try:
+        t = float(target) if target not in (None, "") else None
+        p = round(float(pct), 1)
+    except (TypeError, ValueError):
+        return "no_target"
+    if t is None or t <= 0:
+        return "no_target"
+    return "over" if p > round(t, 1) else "under"
+
+
 def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_target=None,
                labor_budget_dollars=None, week_dates=None, restaurant=None, sees_salaries: bool = None,
                recent: dict = None) -> dict:
@@ -551,7 +565,20 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
     savings = round((r_pct - pct) / 100 * rev, 0) if (r_pct is not None and r_pct > pct) else None
     out = {"basis": basis, "cost": round(cost, 0), "hourly_cost": round(hourly, 0), "pct": pct,
            "target_pct": target_pct, "target_basis": target_basis, "recent_pct": r_pct, "recent_days": r_days,
-           "savings": savings, "text": text}
+           "savings": savings, "text": text,
+           # One grade both clients colour the tile by (schedule audit
+           # 10/10/26 TRUST-7): the target is a ceiling, so any amount over
+           # it — the % as shown, one place — is over; no target is neutral,
+           # never green. The web graded with a 0.5-point grace and called a
+           # week with no target green; iOS red at any amount over.
+           "grade": labor_grade(pct, target_pct),
+           # The basis named on the tile itself (TRUST-30): the owner's
+           # all-in % and a manager's hourly % of the same week never read as
+           # one number that disagrees with itself.
+           "label": "All-in labor" if basis == "all_in" and anyone_salaried else
+                    ("Hourly labor" if basis == "hourly" else "Labor"),
+           "other_basis_note": ("Salaries are left out of this figure; owners see the all-in labor %, salaries "
+                                "included." if basis == "hourly" and not sees_salaries else None)}
     if sal_cost is not None:
         out["salaried_cost"] = round(sal_cost, 0)
     return out

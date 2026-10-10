@@ -22,6 +22,7 @@ import shift_requests as srq
 import staff_schedule
 import staff_settings as ss
 from models import create_restaurant, Restaurant, get_conn
+from tests.publish_overrides import overrides_for, override_list  # noqa: F401
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 # A Monday week always ahead of the real clock: request_drop takes `today`,
@@ -85,7 +86,10 @@ def test_blockers_name_flagged_rows_hard_breaches_and_a_weak_verdict(db_path, ri
                    review={"hard": 1, "lines": ["⚠ Bob — Tuesday 4:00pm: approved time off"]})
     b = client_api.publish_blockers(rid, hid)
     assert "1 shift marked NEEDS REVIEW" in b
-    assert "Bob — Tuesday 4:00pm: approved time off" in b
+    # A saved rule line is read from the live sweep only (schedule audit
+    # 10/10/26 TRUST-5): Bob has no approved time off on file now, so the
+    # line the draft saved is not a blocker — it used to be, until a re-save.
+    assert "Bob — Tuesday 4:00pm: approved time off" not in b
     # The quality verdict is a note, never a blocker (schedule audit 10/3/26
     # SQ-29): it is said, and the send is not held for it.
     assert not any("weak week" in x for x in b) and not any("too little to judge" in x for x in b)
@@ -129,7 +133,12 @@ def test_publish_refuses_blockers_until_acknowledged_then_stamps_published_at(db
     payload, status = client_api._publish_schedule(rid, hid, actor={"id": 1, "username": "will"})
     assert status == 409 and payload["needs_ack"] and payload["blockers"] and sent == []
 
+    # NEEDS REVIEW rows are must-fix (schedule audit 10/10/26 TRUST-3): a bare
+    # acknowledgement no longer sends past them; an override with a reason does.
     payload, status = client_api._publish_schedule(rid, hid, actor={"id": 1, "username": "will"}, acknowledge=True)
+    assert status == 409 and payload["needs_reason"] and sent == []
+    payload, status = client_api._publish_schedule(rid, hid, actor={"id": 1, "username": "will"}, acknowledge=True,
+                                                   override_reasons=overrides_for(rid, hid))
     assert status == 200 and payload["ok"] and payload["acknowledged"]
     assert sorted(sent) == ["Ana", "Bob"]
     conn = get_conn(db_path)

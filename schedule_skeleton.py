@@ -67,6 +67,9 @@ PLAN_NOTE = "Cavnar AI: manager plan"
 # The "_pinned" value on a row a redo keeps as the owner saved it (re-audit
 # 10/4/26 PIPE-1): no pass changes it; it counts as coverage and hours.
 KEPT_SOURCE = "kept"
+# The "_pinned" value on a shift the owner locked (schedule audit 10/10/26
+# TRUST-17): a regenerate keeps it exactly (with_locked).
+LOCKED_SOURCE = "locked"
 HANDOFF_MIN = 30                        # two managers overlap this long at a handover
 SINGLE_SHIFT_MAX_MIN = 10 * 60          # a day this long or shorter is one manager's shift
 MIN_SHIFT_MIN = _rules.MANAGER_MIN_SHIFT_MIN   # no planned manager shift is shorter (4h)
@@ -1121,6 +1124,45 @@ def requirements_note() -> str:
     plan (P-8): its manager-role numbers come from punches."""
     return ("\n  Manager coverage is not decided by this table: the MANAGER COVERAGE rows are fixed and added by "
             "code, and they count toward any manager-role number above.")
+
+
+def with_locked(plan, locked_rows) -> dict:
+    """The plan with the owner's locked shifts joined to its fixed rows
+    (schedule audit 10/10/26 TRUST-17, contract #4): a shift the owner
+    pinned ("Keep this shift", or one they edited and saved) is kept
+    exactly by a regenerate — merged into every call's answer by code
+    (merge_pinned), restored after the parse (restore_pinned), and never
+    removed, re-timed or re-assigned by a pass (the "_pinned" contract,
+    _kept_rows_moved). A planned row of the same person on the same date
+    that overlaps a locked one gives way: the owner's pin wins. Each locked
+    row carries "_pinned": LOCKED_SOURCE and keeps its `locked` mark."""
+    plan = dict(plan or {})
+    locked = [dict(r, _pinned=LOCKED_SOURCE, locked=True) for r in (locked_rows or [])
+              if r.get("date") and (r.get("employee") or "").strip()]
+    if not locked:
+        return plan
+    by = _pin_spans(locked)
+    kept = [r for r in (plan.get("rows") or []) if not _over_a_pin(r, by)]
+    plan["rows"] = kept + locked
+    plan["locked"] = len(locked)
+    return plan
+
+
+def locked_block(pinned_rows, dates=None) -> str:
+    """THE OWNER'S PINNED SHIFTS for the dates a call writes: code adds them
+    to the answer exactly as saved, so the model writes around them and
+    counts them toward SHIFT REQUIREMENTS. '' with none."""
+    want = set(dates) if dates else None
+    rows = [r for r in (pinned_rows or []) if r.get("_pinned") == LOCKED_SOURCE and r.get("date")
+            and (want is None or r["date"] in want)]
+    if not rows:
+        return ""
+    lines = [f"  {_weekday(r['date'])[:3]} {r['date']}: {r['employee']} {r.get('shift_start')}–{r.get('shift_end')} "
+             f"({r.get('role') or 'their role'})"
+             for r in sorted(rows, key=lambda r: (r["date"], (_span(r) or (0, 0))[0], r.get("employee") or ""))]
+    return ("\n\nTHE OWNER'S PINNED SHIFTS — fixed rows the owner kept: code adds them to your answer exactly as "
+            "listed. Do NOT write them, never write another shift for that person on that date that overlaps "
+            "one, and count them toward SHIFT REQUIREMENTS and each person's hours.\n" + "\n".join(lines))
 
 
 def _pins(pinned, dates=None, people=None) -> list:

@@ -12070,11 +12070,14 @@ def _publish_schedule_request(current_user):
     restaurant = get_restaurant(rid)
     delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0) if restaurant else 0
     if delay > 0:
-        # The owner asked for a window before anything reaches staff.
-        review = publish_review(rid, row["id"])
-        acked, unacked = _ack_gate(review, acknowledge)
+        # The owner asked for a window before anything reaches staff. The
+        # gate is read where it lives, at call time (CLAUDE.md, bound
+        # imports): this path ran client_api's bound copy while every other
+        # Send ran schedule_publish's.
+        review = _schedule_publish.publish_review(rid, row["id"])
+        acked, unacked = _schedule_publish._ack_gate(review, acknowledge, reasons)
         if unacked:
-            out, status = _needs_ack(review, unacked, row["id"])
+            out, status = _schedule_publish._needs_ack(review, unacked, row["id"])
             return jsonify(**out), status
         import delayed
         from time_utils import mdy as _mdy_pub

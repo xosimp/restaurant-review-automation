@@ -23,6 +23,7 @@ import models
 import schedule_versions as sv
 import shift_requests as srq
 from models import create_restaurant, Restaurant
+from tests.publish_overrides import overrides_for, override_list  # noqa: F401
 
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 W1 = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]
@@ -100,7 +101,8 @@ def _send(rid, hid):
     the live requests follow the copy staff have when it is sent (schedule
     audit 10/10/26 ARCH-1 with ARCH-9)."""
     import schedule_publish
-    out, status = schedule_publish.send_changes(rid, hid, {"username": "mgr"}, acknowledge=True)
+    out, status = schedule_publish.send_changes(rid, hid, {"username": "mgr"}, acknowledge=True,
+                                                override_reasons=overrides_for(rid, hid))
     assert status == 200 and out["ok"], out
     return out
 

@@ -95,13 +95,32 @@ def init_schedule_overrides(db_path=None):
             actor          TEXT,
             authority      TEXT,
             reason         TEXT,
+            covered_by     TEXT,
             UNIQUE(restaurant_id, history_id, key)
         )""")
+        # Who runs the floor through a manager gap the send went out past
+        # (schedule audit 10/10/26 ARCH-30) — typed, kept with the version.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_publish_overrides)").fetchall()}
+        if "covered_by" not in cols:
+            conn.execute("ALTER TABLE schedule_publish_overrides ADD COLUMN covered_by TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_publish_overrides_kind "
                      "ON schedule_publish_overrides(restaurant_id, kind, shown_at)")
         conn.commit()
     finally:
         conn.close()
+
+
+# The publish gate's DECIDE heads (schedule audit 10/10/26 TRUST-3): the
+# hourly budget, the notice rule, a late change, a week Shift Quality could
+# not score, a line of the draft's own, a flag held for automation. Every
+# other blocker is MUST_FIX (schedule_publish.MUST_FIX).
+DECIDE_HEADS = ("hours_over", "notice_short", "late_change", "quality_unchecked", "saved", "soft")
+
+
+def tier_of_key(key) -> str:
+    """"decide" for a DECIDE head, else "must_fix" — a blocker's tier
+    read from its key when it was built without one."""
+    return "decide" if str(key or "").split(":", 1)[0] in DECIDE_HEADS else "must_fix"
 
 
 def kind_of(key) -> str:
@@ -155,7 +174,9 @@ def record_overridden(restaurant_id, history_id, version, blockers, acked_keys, 
                       authority=None, db_path=None) -> int:
     """Keep the keys a send went out past, with the published version, who
     sent it, their authority and any reason (`reasons` {key: text}). The
-    blockers are recorded as shown too. Never raises into the publish."""
+    blockers are recorded as shown too. A reason may be {reason, covered_by}
+    — a manager gap's override names who runs the floor (ARCH-30), kept in
+    `covered_by`. Never raises into the publish."""
     acked = {str(k) for k in (acked_keys or [])}
     if not acked or not history_id:
         return 0
@@ -166,11 +187,15 @@ def record_overridden(restaurant_id, history_id, version, blockers, acked_keys, 
         conn = get_conn(db_path)
         try:
             for k in acked:
+                o = reasons.get(k)
+                why = (o.get("reason") if isinstance(o, dict) else o) or ""
+                cover = (o.get("covered_by") if isinstance(o, dict) else None) or ""
                 conn.execute("UPDATE schedule_publish_overrides SET overridden_at=COALESCE(overridden_at, "
                              "datetime('now')), version=COALESCE(?, version), actor=?, authority=?, "
-                             "reason=COALESCE(?, reason) WHERE restaurant_id=? AND history_id=? AND key=?",
-                             (version, who[:120] or None, authority, (str(reasons.get(k) or "").strip()[:300] or None),
-                              restaurant_id, int(history_id), k[:300]))
+                             "reason=COALESCE(?, reason), covered_by=COALESCE(?, covered_by) "
+                             "WHERE restaurant_id=? AND history_id=? AND key=?",
+                             (version, who[:120] or None, authority, str(why).strip()[:300] or None,
+                              str(cover).strip()[:120] or None, restaurant_id, int(history_id), k[:300]))
             conn.commit()
         finally:
             conn.close()
@@ -248,7 +273,10 @@ def annotate(restaurant_id, review, unattended=False, db_path=None) -> dict:
             soft.append(text)
             continue
         blockers.append(b)
-    blockers.sort(key=lambda b: (((st.get(b["kind"]) or {}).get("rate") or 0.0), not b["hard"]))
+    # The must-fix tier first (TRUST-3), then the ones owners always send past
+    # last, then the gate's own severity rank — never the date.
+    blockers.sort(key=lambda b: ((b.get("tier") or tier_of_key(b.get("key"))) != "must_fix",
+                                 ((st.get(b["kind"]) or {}).get("rate") or 0.0), not b["hard"], b.get("rank") or 0))
     always = sorted((dict(s) for s in st.values()
                      if s["overridden"] >= ALWAYS_MIN_WEEKS and (s["rate"] or 0) >= ALWAYS_MIN_RATE),
                     key=lambda s: (-(s["rate"] or 0), -s["overridden"], s["kind"]))
@@ -266,10 +294,14 @@ def _capture(e, what, restaurant_id):
 
 
 def reasons_from(payload) -> dict:
-    """{key: reason} from a request's `overrides: [{key, reason}]` (the
-    pre-publish screen's contract)."""
+    """{key: reason} from a request's `overrides: [{key, reason, covered_by?}]`
+    (the pre-publish screen's contract, prepublish). An override naming who
+    runs the floor through a manager gap (ARCH-30) is {key: {reason,
+    covered_by}}."""
     out = {}
     for o in (payload or []) if isinstance(payload, (list, tuple)) else []:
         if isinstance(o, dict) and o.get("key"):
-            out[str(o["key"])[:300]] = str(o.get("reason") or "").strip()[:300]
+            reason = str(o.get("reason") or "").strip()[:300]
+            cover = " ".join(str(o.get("covered_by") or "").split())[:120]
+            out[str(o["key"])[:300]] = {"reason": reason, "covered_by": cover} if cover else reason
     return out
