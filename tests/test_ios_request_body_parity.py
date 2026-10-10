@@ -1826,6 +1826,16 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # schedule audit 10/10/26 BUGSGEN-23: a name somebody already goes by is
+    # a 409 same_name the owner answers with a name that tells them apart
+    # (or by turning a former employee back on in Team); `same_person` is the
+    # deliberate "it is them" for a caller that asks it.
+    ("/mobile/api/labor/team/add", "same_person"): _WEB_TOO + " (the 409 same_name answer says what to do instead)",
+    # MARKET-15: Waiting on you answers an availability cut for the date it
+    # was filed with; moving the date or adding a note is the web's Studio.
+    ("/mobile/api/labor/availability-changes/<int:change_id>/decide", "effective_from"):
+        _WEB_TOO + " (the filed date stands unless a manager moves it)",
+    ("/mobile/api/labor/availability-changes/<int:change_id>/decide", "note"): _WEB_TOO,
     # optional, and the web leaves it out too
     ("/mobile/api/account/alert-settings", "alert_max_per_day"): _WEB_TOO + " (the web stopped sending it; kept as stored)",
     ("/mobile/api/account/alert-settings", "expected_version"): _WEB_TOO + " (models' optional row_version check)",

@@ -3871,6 +3871,20 @@ def mobile_schedule_history_detail(history_id, current_user):
     # 10/4/26 UI-6): the pin is the plan's mark in the stored notes.
     import schedule_skeleton as _skel_pins
     preview_rows = _skel_pins.mark_pins(preview_rows)
+    # A week staff have: a row whose holder a manager let off it — an
+    # approved drop nobody claimed, approved time off over it — carries
+    # `release` ({kind, status, request_id, holder}), so the Studio shows the
+    # slot open instead of counting them on the floor (schedule audit
+    # 10/10/26 BUGSLIFE-12; shift_requests.release_marks, the one reading).
+    if detail.get("published_at"):
+        try:
+            import shift_requests as _sr_rel
+            for _i, _hit in _sr_rel.release_marks(current_user["restaurant_id"], preview_rows).items():
+                preview_rows[_i]["release"] = {"kind": _hit.get("kind"), "status": _hit.get("status"),
+                                               "request_id": _hit.get("request_id"),
+                                               "holder": preview_rows[_i].get("employee")}
+        except Exception as _rx:
+            print(f"[schedule history] releases unread for {history_id}: {_rx!r}")
 
     # A stored week reopened puts its verdict back on screen (web reload,
     # iOS Labor): its recommendations are shown by this response.
@@ -5614,6 +5628,24 @@ def mobile_add_team_member(current_user):
     data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
     who = current_user.get("username") or current_user.get("email")
+    # Somebody already goes by that name (schedule audit 10/10/26
+    # BUGSGEN-23): adding them again silently made a new hire the same person
+    # as a former or current employee — their hours, time off, ratings and
+    # no-shows one record. Said, and only done on purpose (`same_person`).
+    if not data.get("same_person"):
+        clash = _same_name_on_team(rid, data.get("employee_name") or data.get("name") or "")
+        if clash:
+            from time_utils import mdy
+            whom = clash["name"]
+            if clash["active"]:
+                err = (f"{whom} is already on your team" + (f" ({clash['role']})" if clash.get("role") else "")
+                       + ". If this is someone new, add them under a name that tells them apart — like "
+                       f"“{whom} L.” or “{whom} ({(data.get('role') or 'Bar').strip() or 'Bar'})”.")
+            else:
+                err = (f"{whom} worked here" + (f" until {mdy(clash['last_worked'])}" if clash.get("last_worked") else "")
+                       + " and is off the roster. If they're back, turn them back on in Team; if this is someone "
+                       f"new, add them under a name that tells them apart — like “{whom} L.”.")
+            return jsonify(ok=False, same_name=clash, error=err), 409
     try:
         out = add_manual_team_member(
             rid, employee_name=data.get("employee_name") or data.get("name") or "",
@@ -5625,6 +5657,32 @@ def mobile_add_team_member(current_user):
         return jsonify(ok=False, error=str(mte)), 400
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+def _same_name_on_team(rid, name) -> dict:
+    """{name, role, active, last_worked} of the person `name` already means
+    on this restaurant's roster — the roster's own spelling or one people's
+    identity knows (an alias, a name before a rename), deactivated people
+    included — or {} (BUGSGEN-23). Never raises."""
+    n = " ".join(str(name or "").split())
+    if not n:
+        return {}
+    try:
+        import staff_settings as _ss_sn
+        key = _ss_sn.name_key(n)
+        try:
+            import people as _pp_sn
+            meant = (_pp_sn.who_is(rid, [n]) or {}).get(n)
+        except Exception:
+            meant = None
+        keys = {key} | ({_ss_sn.name_key(meant)} if meant else set())
+        for p in _ss_sn.roster(rid, include_inactive=True):
+            if _ss_sn.name_key(p.get("name")) in keys:
+                return {"name": p.get("name"), "role": p.get("role"), "active": p.get("active", True) is not False,
+                        "last_worked": p.get("last_worked") or None}
+    except Exception as e:
+        print(f"[team add] roster unread rid={rid}: {e!r}")
+    return {}
 
 
 @mobile_bp.route("/labor/team/remove", methods=["POST"])
@@ -8408,6 +8466,25 @@ def mobile_score_schedule(current_user):
     if not rows:
         return jsonify(ok=False, error="no readable rows"), 400
 
+    # "Keep my edits" after a conflict (schedule audit 10/10/26 ARCH-8,
+    # BUGSLIFE-16): the client sends the version its rows came from and
+    # `keep_mine`; the manager's changes are re-applied shift by shift onto
+    # the newest week (schedule_versions.merge_rows) — never their whole
+    # screen over it. A shift a staff cover or swap moved since is never
+    # overwritten silently: refused naming it, unless `override_staff`,
+    # which then closes that request and tells both people after the save.
+    _merge_info = None
+    if data.get("save") and data.get("keep_mine"):
+        _km = _keep_mine_merge(current_user["restaurant_id"], data, rows)
+        if _km.get("response") is not None:
+            return _km["response"]
+        if _km.get("rows") is not None:
+            # The client's own rows (raw_rows) still carry its pins and
+            # Cavnar AI's origin marks for the rows that are its.
+            rows = _km["rows"]
+            data = dict(data, version=_km["version"])
+            _merge_info = {k: _km[k] for k in ("applied", "conflicts", "staff_overridden")}
+
     try:
         targets = {str(k): float(v) for k, v in (data.get("daily_target_hours") or {}).items()}
     except (TypeError, ValueError, AttributeError):
@@ -8525,6 +8602,13 @@ def mobile_score_schedule(current_user):
                 _pc.close()
             rows = _skel_save.carry_pins(_skel_save.mark_pins(rows, sent=[r for r in raw_rows if isinstance(r, dict)]),
                                          _stored_rows)
+            # Each name as the person it means now: a screen opened before a
+            # rename saves the person's new spelling, never the old one back
+            # over the live week (schedule audit 10/10/26 ARCH-7).
+            try:
+                rows = _sv.canonical_rows(rid, [rows])[0]
+            except Exception as _cx_n:
+                print(f"[schedule] names not canonicalised rid={rid}: {_cx_n!r}")
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
             # The week, its version row and its review are one write: the
@@ -8605,6 +8689,17 @@ def mobile_score_schedule(current_user):
                 _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
             except Exception:
                 pass
+            # The requests the save moved or closed (write_on → follow_week,
+            # ARCH-9) are told now that it has committed.
+            try:
+                import shift_requests as _srq_fl
+                _srq_fl.flush_notices(rid)
+                # Kept over a staff cover or swap on purpose (override_staff):
+                # that request is closed and both people are told (BUGSLIFE-16).
+                if _merge_info and _merge_info.get("staff_overridden"):
+                    _srq_fl.overwritten_by_manager(rid, _merge_info["staff_overridden"], actor=who)
+            except Exception as _flx:
+                print(f"[schedule] request notices not sent rid={rid}: {_flx!r}")
             # What the save teaches, now it is stored (schedule audit
             # 10/3/26): Cavnar AI's kept changes credit that move's trust and
             # are never the manager's habit (L-5); a change to a week staff
@@ -8680,9 +8775,65 @@ def mobile_score_schedule(current_user):
                        # date, employee, role, daypart}] — answered at
                        # POST labor/schedule/edit-why.
                        why_questions=locals().get("_why") or [],
+                       # "Keep my edits" merged onto the newer week (ARCH-8):
+                       # what was applied and the week as saved, which the
+                       # client puts on screen in place of its own copy.
+                       merge=_merge_info if saved else None,
+                       merged_rows=(rows if (saved and _merge_info) else None),
                        capability_version=capability_version(rid)), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+def _keep_mine_merge(rid, data, rows) -> dict:
+    """The manager's edit (`rows`, made from version `data["version"]`)
+    merged onto the week as it is now (ARCH-8): {} when there is nothing to
+    merge (the week has not moved, or the request names no week/version);
+    {"response": (json, 409)} when a shift a staff request moved since is in
+    the way and `override_staff` was not sent; else {rows, version (the one
+    merged onto), applied, conflicts, staff_overridden}."""
+    import schedule_versions as _sv
+    try:
+        hid = int(data.get("history_id") or 0)
+        base = int(data.get("version"))
+    except (TypeError, ValueError):
+        return {}
+    if not hid:
+        return {}
+    conn = get_conn()
+    try:
+        own = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (hid, rid)).fetchone()
+        if own is None or not _sv.rows_changed_since(conn, hid, base):
+            return {}
+        latest = _sv.latest_version(conn, hid)
+        was = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE history_id=? AND version=?",
+                           (hid, base)).fetchone()
+        staff = _sv.staff_slots_since(conn, hid, base)
+    finally:
+        conn.close()
+    if was is None:
+        return {}
+    base_rows, mine, theirs = _sv.canonical_rows(rid, [_sv.rows_from_csv(was["schedule_csv"]), rows,
+                                                       _sv.rows_from_csv(own["schedule_csv"])])
+    res = _sv.merge_rows(base_rows, mine, theirs)
+    hits = []
+    for c in res["conflicts"]:
+        b = c["base"]
+        slot = (b.get("date"), b.get("shift_start"), " ".join(str(b.get("role") or "").split()).casefold())
+        if slot in staff:
+            t = c.get("theirs") or {}
+            hits.append({"date": b.get("date"), "shift_start": b.get("shift_start"), "role": b.get("role"),
+                         "was": b.get("employee"), "now": t.get("employee"), "by": staff[slot]})
+    if hits and not data.get("override_staff"):
+        from time_utils import mdy
+        said = "; ".join(f"{h['now'] or 'somebody'} took {h['was']}'s {mdy(h['date'])} {h['shift_start']}" for h in hits[:3])
+        return {"response": (jsonify(
+            ok=False, conflict=True, staff_conflict=True, latest_version=latest, staff_conflicts=hits,
+            error=(f"Staff changed shifts you also edited: {said}. Your other edits can be kept; keeping yours on "
+                   "those shifts undoes what they agreed, and both people are told.")), 409)}
+    return {"rows": res["rows"], "version": latest, "applied": res["applied"],
+            "conflicts": len(res["conflicts"]), "staff_overridden": hits}
 
 
 _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",

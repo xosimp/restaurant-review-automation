@@ -2722,6 +2722,9 @@ _RETENTION_DAYS = {
     "staff_thread_messages": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
     "staff_running_late":    int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
     "shift_offers":          int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    # An employee's availability cut and its answer (availability_changes,
+    # 10/10/26 MARKET-15): what they asked and when it took effect.
+    "staff_availability_changes": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
     "staff_shift_pulse":     int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_briefs":          int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_calendar_links":  int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
@@ -2800,6 +2803,7 @@ _RETENTION_COLUMN = {
     "ask_topics": "created_at", "ask_feedback": "created_at",
     "staff_announcement_recipients": "created_at", "staff_announcements": "created_at",
     "staff_thread_messages": "created_at", "staff_running_late": "business_date", "shift_offers": "created_at",
+    "staff_availability_changes": "created_at",
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
@@ -2911,6 +2915,10 @@ _RETENTION_FLOOR_DAYS = {
     # lookup (a miss re-translates).
     "staff_announcement_recipients": 90, "staff_announcements": 90, "staff_thread_messages": 90,
     "staff_running_late": 30, "shift_offers": 30, "staff_shift_pulse": 90, "staff_briefs": 30,
+    # An availability change is read while pending or approved and not yet
+    # in force (the first week nobody has built, a few weeks ahead) and 30
+    # days after.
+    "staff_availability_changes": 90,
     # Floor sections: the scheduling memory learns each server's usual
     # section from 24 weeks of them (schedule audit 10/3/26 L-22).
     "staff_calendar_links": 30, "shift_sections": 168, "staff_translations": 7,

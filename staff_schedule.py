@@ -155,6 +155,14 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
     import inspect as _inspect
     _section_kw = ({"restaurant_id": restaurant_id}
                    if "restaurant_id" in _inspect.signature(employee_shifts_from_csv).parameters else {})
+    # Every spelling of this person (people's identity): a week written
+    # before a rename still shows them their shifts (BUGSLIFE-4).
+    if "spellings" in _inspect.signature(employee_shifts_from_csv).parameters:
+        try:
+            import people as _people
+            _section_kw["spellings"] = sorted(_people.spellings(restaurant_id, [employee_name]).get(employee_name) or ())
+        except Exception as _px:
+            print(f"[staff_schedule] spellings unread rid={restaurant_id}: {_px!r}")
     mine, week_of = [], None
     for w in weeks:
         # The CSV and the stations only (scheduler audit 10/10/26, SCALE-19):

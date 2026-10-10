@@ -216,8 +216,12 @@ def test_staff_can_submit_the_days_they_cannot_work(client, db_path):
 
     rows = models.get_staff_availability(rid, db_path=db_path)
     row = next(r for r in rows if r["employee_name"] == "Sofia R.")
-    import json
-    assert json.loads(row["unavailable_days"]) == ["Tuesday", "Sunday"]
+    # Days off are less availability: they wait for a manager and start on
+    # a date (schedule audit 10/10/26 MARKET-15); the note is saved at once.
+    import availability_changes
+    change = availability_changes.mine(rid, "Sofia R.", db_path=db_path)[0]
+    assert change["status"] == "pending"
+    assert {d for d, s in change["days"].items() if s["status"] == "off"} == {"Tuesday", "Sunday"}
     assert row["notes"] == "Class on Tuesdays"
 
 
@@ -249,9 +253,9 @@ def test_only_real_day_names_are_accepted(client, db_path):
     sid = _schedule(db_path, rid)
     token = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
     _submit_availability(client, token, ["Tuesday", "Funday", "'; DROP TABLE staff_availability;--"])
-    import json
-    row = models.get_staff_availability(rid, db_path=db_path)[0]
-    assert json.loads(row["unavailable_days"]) == ["Tuesday"]
+    import availability_changes
+    change = availability_changes.mine(rid, "Sofia R.", db_path=db_path)[0]
+    assert set(change["days"]) == {"Tuesday"}
 
 
 def test_availability_submission_needs_a_valid_token(client, db_path):

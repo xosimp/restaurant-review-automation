@@ -588,6 +588,10 @@ def test_staff_can_enter_their_own_availability(db_path, monkeypatch):
     import staff_routes, auth
     monkeypatch.setattr(auth, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
     rid = _rid(db_path, module_labor=1)
+    # No approval asked and nothing built: a cut is in force today
+    # (schedule audit 10/10/26 MARKET-15 — approval is its own test).
+    import request_autonomy
+    request_autonomy.save_policy(rid, {"availability_approval": False}, db_path=db_path)
     app = Flask(__name__)
     app.register_blueprint(staff_routes.staff_bp, url_prefix="/staff")
     monkeypatch.setattr(staff_routes, "staff_login_required", lambda f: f, raising=False)

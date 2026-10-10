@@ -112,13 +112,22 @@ def _open(rid, name, date, start, today=TODAY):
 def _racing_legality(monkeypatch):
     barrier = threading.Barrier(2)
     real = se.replacement_is_legal
+    calls = []
+    lock = threading.Lock()
 
     def slow_legal(*a, **k):
         out = real(*a, **k)
-        try:
-            barrier.wait(timeout=30)
-        except threading.BrokenBarrierError:
-            pass
+        # Only the two first checks meet at the barrier: a claim that finds
+        # the week moved under it is judged again (compare-and-swap, schedule
+        # audit 10/10/26 ARCH-5), and that second look runs alone.
+        with lock:
+            calls.append(1)
+            first = len(calls) <= 2
+        if first:
+            try:
+                barrier.wait(timeout=30)
+            except threading.BrokenBarrierError:
+                pass
         return out
     monkeypatch.setattr(se, "replacement_is_legal", slow_legal)
     return barrier

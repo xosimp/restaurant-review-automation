@@ -120,6 +120,7 @@
     {# Shifts already published that this availability rules out — the
        same sentence the app shows after its save (conflicts_text). #}
     {% if saved and saved_conflicts %}<div class="conflicts" role="status">{{ saved_conflicts }}</div>{% endif %}
+    {% if pending_line %}<div class="conflicts" role="status">{{ pending_line }}</div>{% endif %}
   </form>
 
   <footer>
