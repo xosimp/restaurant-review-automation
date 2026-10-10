@@ -1197,6 +1197,45 @@ def _read_schedule_history(restaurant_id, limit=8):
     }
 
 
+def _propose_resolve(restaurant_id, dates=None, out=None, add=None):
+    """What re-solving chosen days of the current schedule would change, in
+    seconds and with no model call (scheduler audit 10/10/26 MARKET-13):
+    "Maria is out, re-solve Friday", "add a server Friday". The week is the
+    unsent draft covering those dates, else the week in force. Nothing is
+    saved — the Studio's Re-solve applies it."""
+    import schedule_engine as _se
+    import schedule_versions as _sv
+    from models import get_conn
+    want = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]})
+    if not want:
+        return {"error": "Which days? Give the dates to re-solve."}
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv, published_at FROM schedule_history WHERE restaurant_id=? "
+            "AND week_start<=? AND week_end>=? AND superseded_by IS NULL "
+            "ORDER BY (published_at IS NULL) DESC, id DESC LIMIT 1",
+            (restaurant_id, want[0], want[-1])).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"error": "There is no schedule for those dates yet."}
+    rows = _sv.rows_from_csv(row["schedule_csv"] or "")
+    outs = [{"employee": str(n)} for n in (out or []) if str(n).strip()][:10]
+    adds = [a for a in (add or []) if isinstance(a, dict)][:10]
+    got = _se.resolve_days(restaurant_id, rows, want, out=outs, add=adds, history_id=row["id"])
+    return {"schedule_id": row["id"], "week_start": row["week_start"], "published": bool(row["published_at"]),
+            "ok": bool(got.get("ok")), "seconds": got.get("seconds"),
+            "changes": [{k: c.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "from", "to", "why")}
+                        for c in (got.get("changes") or [])][:30],
+            "left_open": [{k: e.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "text")}
+                          for e in (got.get("unfilled") or [])][:10],
+            "rules_in_the_way": [c.get("text") for c in (got.get("conflicts") or [])][:6],
+            "late_change_warning": got.get("late_change_warning"),
+            "saved": False,
+            "note": "Nothing is changed yet: the owner applies it from the schedule's Re-solve in the Studio."}
+
+
 def _read_schedule_rules(restaurant_id):
     """The scheduling rules set in Cavnar for this restaurant — what the
     code checks — so a labor-law question is answered with the rule in
@@ -2590,6 +2629,63 @@ def _read_time_off(restaurant_id):
             "note": "Answer one with decide_time_off or decide_shift_request — the owner confirms."}
 
 
+def _find_cover(restaurant_id, employee=None, date=None, role=None, closing=False, shift_start=None, shift_end=None):
+    """Who can take a shift right now, ranked and legal (scheduler audit
+    10/10/26 MARKET-31, the voice manager's first question: "Maria's out
+    tonight, who can close bar?"). `employee` is the person out (their shift
+    on the published week names the role and hours), else `role` and the
+    hours. Every name passed the open-shift claim's own legality check
+    (labor_replacements.for_gap); `closing` keeps only the role's chosen
+    closers. offer_cover asks the one the owner picks."""
+    import labor_replacements
+    import intraday
+    import schedule_rules
+    from datetime import date as _date
+    from time_utils import mdy
+    try:
+        import demand
+        today = demand.local_today(restaurant_id)
+    except Exception:
+        today = _date.today()
+    try:
+        day = _date.fromisoformat(str(date)[:10]) if date and str(date).lower() not in ("today", "tonight") else today
+    except ValueError:
+        return {"error": "Give the date as YYYY-MM-DD, or leave it out for today."}
+    rows = intraday.published_rows(restaurant_id, day) or []
+    working = {(r.get("employee") or "").strip() for r in rows}
+    shift = None
+    if employee:
+        key = " ".join(str(employee).split()).casefold()
+        mine = [r for r in rows if " ".join(str(r.get("employee") or "").split()).casefold() == key]
+        if not mine:
+            return {"error": f"{employee} has no shift on the published schedule for {mdy(day.isoformat())}."}
+        shift = mine[0]
+        role = role or shift.get("role")
+    if not role:
+        return {"error": "Which role — or who is out?"}
+    shift = shift or {"date": day.isoformat(), "role": role, "shift_start": shift_start or "", "shift_end": shift_end or ""}
+    fits = labor_replacements.for_gap(restaurant_id, role, day.strftime("%A"), exclude=working, limit=8,
+                                      on_date=day.isoformat(), shift=shift if shift.get("shift_start") else None)
+    if closing:
+        from shift_quality import role_family
+        try:
+            from models import get_restaurant
+            fams = schedule_rules.role_families(get_restaurant(restaurant_id)) or {}
+            closers = (schedule_rules.chosen_closers(restaurant_id) or {}).get(role_family(role, fams))
+        except Exception:
+            closers = None
+        if closers:
+            fits = [f for f in fits if " ".join(f["name"].split()).casefold() in {" ".join(c.split()).casefold() for c in closers}]
+    people = [{"name": f["name"], "rating": f.get("score"), "covers_taken": f.get("covers_taken"),
+               "no_show_rate": f.get("no_show_rate")} for f in fits[:5]]
+    return {"date": mdy(day.isoformat()), "date_iso": day.isoformat(), "role": role,
+            "shift_start": shift.get("shift_start"), "shift_end": shift.get("shift_end"),
+            "out": employee, "candidates": people,
+            "note": ("Each one can legally take it (availability, time off, hours, rest, minors, the overtime line). "
+                     "offer_cover sends the offer to the one the owner picks — it goes in their app.")
+            if people else "Nobody free in that role can legally take it."}
+
+
 TOOLS = [
     {
         # First in the list on purpose: it is the one the model should reach
@@ -2953,6 +3049,18 @@ TOOLS = [
             "description": "Past schedules with hours vs budget.",
             "input_schema": {"type": "object", "properties": {
                 "limit": {"type": "integer"}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _propose_resolve,
+        "module": "module_labor",
+        "spec": {
+            "name": "propose_resolve",
+            "description": "Re-solve days with people out or shifts added (date, role, shift_start, shift_end); saves nothing.",
+            "input_schema": {"type": "object", "properties": {
+                "dates": {"type": "array"}, "out": {"type": "array"}, "add": {"type": "array"}},
+                "required": ["dates"]},
         },
     },
     {
@@ -3694,6 +3802,42 @@ TOOLS = [
             "input_schema": {"type": "object", "required": ["request_id", "decision"], "properties": {
                 "request_id": {"type": "integer", "description": "From read_time_off."},
                 "decision": {"type": "string", "enum": ["approve", "deny"]}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _find_cover,
+        "module": "module_labor",
+        "spec": {
+            "name": "find_cover",
+            "description": (
+                "Who can take a shift now, ranked and legal: give the person who is out (or the role and hours), "
+                "the date (default today) and closing=true for 'who can close'. For 'X is out, who can cover'."),
+            "input_schema": {"type": "object", "additionalProperties": False, "properties": {
+                "employee": {"type": "string", "description": "The person who is out."},
+                "date": {"type": "string", "description": "YYYY-MM-DD; default today."},
+                "role": {"type": "string"},
+                "closing": {"type": "boolean"},
+                "shift_start": {"type": "string"}, "shift_end": {"type": "string"}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/open-shifts", "mobile": "/mobile/api/labor/open-shifts", "method": "POST"},
+        "summary": "Offer {offer_to} the {date} {shift_start} shift",
+        "module": "module_labor",
+        "spec": {
+            "name": "offer_cover",
+            "description": (
+                "Propose offering one shift to one person from find_cover: the shift of the person who is out "
+                "(employee) or an extra one (shift_end + role). It goes to their app; their yes is the claim."),
+            "input_schema": {"type": "object", "required": ["date", "shift_start", "offer_to"],
+                             "additionalProperties": False, "properties": {
+                "date": {"type": "string", "description": "YYYY-MM-DD (find_cover's date_iso)."},
+                "shift_start": {"type": "string"}, "shift_end": {"type": "string"},
+                "employee": {"type": "string", "description": "Whose shift it is, when somebody is out."},
+                "role": {"type": "string"}, "offer_to": {"type": "string"}}},
         },
     },
     {

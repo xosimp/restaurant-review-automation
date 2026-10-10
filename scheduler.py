@@ -5758,6 +5758,14 @@ def scheduler_loop():
                 import schedule_scorecard as _sscard
                 _ops.run_job("schedule_scorecard", _sscard.run_scorecard)
 
+            # 7am daily, after event_sync (5am) and the memory (6am) - the
+            # Studio's Bench: on-call slots settled, published weeks'
+            # commitments recorded, and the priced change proposed when an
+            # event moved on a published week (scheduler audit 10/10/26
+            # MARKET-26, -27, -28). Tells the deciders of a new proposal.
+            if _due(now, 7) and _ops.claim_period("schedule_bench", str(today)):
+                import studio_bench as _sbench
+                _ops.run_job("schedule_bench", _sbench.run_bench_nightly)
             # Monday 8am — what one more of a role on a meal is worth here and
             # each person's measured effect (scheduler audit 10/10/26 RM-20,
             # LEARNING-26): read by the next drafts' requirements and the

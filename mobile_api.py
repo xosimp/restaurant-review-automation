@@ -1786,6 +1786,21 @@ def mobile_labor_crew_matrix(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 400
 
 
+@mobile_bp.route("/labor/bench", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_labor_bench(current_user):
+    """Twin of /api/labor/bench: the Studio's Bench stage (studio_bench)."""
+    import studio_bench as _sb
+    from permissions import has_permission, SCHEDULE_DRAFT
+    may = bool(current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT))
+    try:
+        payload, status = _sb.api_body(current_user["restaurant_id"], request.method, request.get_json(silent=True) or {},
+                                       args=request.args, user=current_user, may_write=may)
+        return jsonify(**payload), status
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 400
+
+
 @mobile_bp.route("/reviews/programs", methods=["GET", "POST"])
 @mobile_login_required
 def mobile_reviews_programs(current_user):
@@ -9047,6 +9062,50 @@ def mobile_schedule_replacements(current_user):
                        employee=target.get("employee"), role=target.get("role")), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), replacements=[]), 500
+
+
+@mobile_bp.route("/labor/schedule/resolve", methods=["POST"])
+@mobile_login_required
+def mobile_schedule_resolve(current_user):
+    """Re-solve chosen days of the week on screen in seconds, no model call
+    (scheduler audit 10/10/26 MARKET-13): "Maria is out, re-solve Friday",
+    "add a server Friday", "redo Saturday". Body {rows, dates: [iso], out:
+    [{employee, dates?}], add: [{date, role, shift_start, shift_end}],
+    history_id?}. {ok, rows (the whole week), changes: [{index, date, day,
+    role, shift_start, shift_end, from, to, why}], unfilled, conflicts,
+    late_change_warning?, seconds, status}. Nothing is saved — the client
+    shows the rows as unsaved edits. Web twin: /api/labor/schedule/resolve."""
+    from permissions import has_permission, SCHEDULE_DRAFT
+    import schedule_engine as _se
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
+        return jsonify(ok=False, error="You don't have permission to change the schedule."), 403
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    raw_rows, dates = data.get("rows"), data.get("dates")
+    if not isinstance(raw_rows, list) or not isinstance(dates, list) or not dates:
+        return jsonify(ok=False, error="rows and the dates to re-solve are required"), 400
+    if len(raw_rows) > 2000 or len(dates) > 14:
+        return jsonify(ok=False, error="that is more than a week can hold"), 400
+    rows = []
+    for r in raw_rows:
+        if not isinstance(r, dict):
+            continue
+        x = {c: str(r.get(c) or "")[:200] for c in _SCHEDULE_COLS}
+        for extra in ("shift_id", "person_id"):
+            if r.get(extra):
+                x[extra] = str(r[extra])[:64]
+        if r.get("locked") in (True, 1, "1", "true"):
+            x["locked"] = True                      # an owner's pin is kept exactly (contract #4)
+        rows.append(x)
+    import re as _re_rs
+    dates = sorted({str(d)[:10] for d in dates if _re_rs.match(r"^\d{4}-\d{2}-\d{2}$", str(d)[:10])})
+    out = [o for o in (data.get("out") or []) if isinstance(o, dict)][:20]
+    add = [a for a in (data.get("add") or []) if isinstance(a, dict)][:20]
+    try:
+        got = _se.resolve_days(rid, rows, dates, out=out, add=add, history_id=data.get("history_id"))
+        return jsonify(got), (200 if got.get("ok") else 422)
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
 
 
 @mobile_bp.route("/labor/schedule/sections")
