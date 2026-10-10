@@ -160,6 +160,8 @@
  "labor_budget_dollars": 4500.0,
  "labor_standards": {},
  "labor_target": 30.0,
+ "labor_target_label": "Cavnar AI's starting target",
+ "labor_target_source": "default",
  "labor_view": {
   "basis": "all_in",
   "cost": 5558.0,
@@ -337,13 +339,13 @@
   "evaluations": 42,
   "improvement": 5,
   "ran": true,
-  "seconds": 0.0,
+  "seconds": 0.3,
   "solver": {
    "after_score": 44,
    "applied": true,
    "before_score": 39,
    "components": 1,
-   "components_proved": 1,
+   "components_proved": 0,
    "dollars_after": 5630.0,
    "dollars_before": 5630.0,
    "infeasible": [
@@ -439,15 +441,15 @@
     }
    ],
    "kept": "solver",
-   "nodes": 791867,
+   "nodes": 45504,
    "notes": [
     "7 shifts kept with people who have a written note the solver cannot read."
    ],
    "people": 8,
-   "proved_optimal": true,
-   "seconds": 11.19,
+   "proved_optimal": false,
+   "seconds": 0.76,
    "slots": 15,
-   "status": "optimal"
+   "status": "time_limit"
   },
   "stopped": "no improving move",
   "unresolved": [
@@ -555,6 +557,7 @@
   }
  ],
  "partial": false,
+ "pattern_conflicts": [],
  "pending_time_off": {
   "bo": [
    "2026-10-29"
@@ -1416,13 +1419,13 @@
    "evaluations": 42,
    "improvement": 5,
    "ran": true,
-   "seconds": 0.0,
+   "seconds": 0.3,
    "solver": {
     "after_score": 44,
     "applied": true,
     "before_score": 39,
     "components": 1,
-    "components_proved": 1,
+    "components_proved": 0,
     "dollars_after": 5630.0,
     "dollars_before": 5630.0,
     "infeasible": [
@@ -1518,15 +1521,15 @@
      }
     ],
     "kept": "solver",
-    "nodes": 791867,
+    "nodes": 45504,
     "notes": [
      "7 shifts kept with people who have a written note the solver cannot read."
     ],
     "people": 8,
-    "proved_optimal": true,
-    "seconds": 11.19,
+    "proved_optimal": false,
+    "seconds": 0.76,
     "slots": 15,
-    "status": "optimal"
+    "status": "time_limit"
    },
    "stopped": "no improving move",
    "unresolved": [
@@ -4492,19 +4495,19 @@
   "refused": [],
   "restored_best": false,
   "seconds": {
-   "budget": 0.092,
+   "budget": 0.097,
    "close_out": 0.0,
    "floors": 0.0,
-   "manager": 0.007,
-   "min_hours": 0.004,
-   "optimizer": 0.145,
-   "overtime": 0.041,
+   "manager": 0.009,
+   "min_hours": 0.006,
+   "optimizer": 0.191,
+   "overtime": 0.049,
    "pad_overruns": 0.0,
-   "person": 0.033,
-   "replace": 0.02,
+   "person": 0.039,
+   "replace": 0.021,
    "role_times": 0.0,
    "section_cap": 0.0,
-   "solver": 11.195,
+   "solver": 0.761,
    "stagger": 0.0,
    "stations": 0.0,
    "top_up": 0.0
@@ -5824,6 +5827,7 @@
    "stop_reason": "end_turn"
   }
  ],
+ "soft_requirements": [],
  "splh_objective": {
   "available": false,
   "reason": "No daily sales and hours on file yet, so there is no sales-per-labor-hour target."
@@ -5834,32 +5838,32 @@
  },
  "stage_failures": [],
  "stage_seconds": {
-  "inputs": 0.132,
+  "inputs": 0.14,
   "model": 0.0,
   "parse": 0.001,
-  "repair": 11.55,
-  "repair.budget": 0.092,
+  "repair": 1.179,
+  "repair.budget": 0.097,
   "repair.close_out": 0.0,
   "repair.floors": 0.0,
-  "repair.manager": 0.007,
-  "repair.min_hours": 0.004,
-  "repair.optimizer": 0.145,
-  "repair.overtime": 0.041,
+  "repair.manager": 0.009,
+  "repair.min_hours": 0.006,
+  "repair.optimizer": 0.191,
+  "repair.overtime": 0.049,
   "repair.pad_overruns": 0.0,
-  "repair.person": 0.033,
-  "repair.replace": 0.02,
+  "repair.person": 0.039,
+  "repair.replace": 0.021,
   "repair.role_times": 0.0,
   "repair.section_cap": 0.0,
-  "repair.solver": 11.195,
+  "repair.solver": 0.761,
   "repair.stagger": 0.0,
   "repair.stations": 0.0,
   "repair.top_up": 0.0,
-  "rules": 0.043,
+  "rules": 0.042,
   "save": 0.001,
-  "score": 0.034,
+  "score": 0.044,
   "signals": 0.003,
-  "sweep": 0.001,
-  "total": 11.769
+  "sweep": 0.002,
+  "total": 1.416
  },
  "staggered": [],
  "standby_days": [],

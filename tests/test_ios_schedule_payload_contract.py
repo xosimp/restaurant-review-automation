@@ -174,6 +174,10 @@ def _harness(monkeypatch, db):
     # The finished poll is the subject; the gate's rewrite of weak days is
     # another model call this harness does not answer.
     monkeypatch.setattr(se, "_quality_gate", lambda result: None)
+    # The solver's search runs, on a short clock: its answer's shape is the
+    # same at one second as at twelve.
+    import schedule_solver
+    monkeypatch.setattr(schedule_solver, "DEFAULT_SECONDS", 1.0)
     return rid
 
 
@@ -369,6 +373,31 @@ def test_every_field_the_phone_reads_and_the_server_sends_is_in_the_fixture(db, 
     assert fixtures["pending"]["status"] == "pending" and fixtures["pending"]["progress"]["days_drafted"] == 3
     assert isinstance(fixtures["pending"]["seconds_left"], int)
     assert fixtures["detail"]["preview_rows"]
+
+
+# Keys GeneratedSchedule declares that a finished generation's poll does not
+# carry, each with where it comes from instead. Anything else the phone
+# declares, the server must send — soft_requirements, pattern_conflicts and
+# labor_target_label/source were read by both clients and never sent (found
+# by this audit, 10/10/26).
+NOT_ON_A_FINISHED_POLL = {
+    "error": "a failed job's answer",
+    "seconds_left": "a pending poll", "progress": "a pending poll",
+    "published_at": "history detail", "published_by": "history detail", "republished_at": "history detail",
+    "superseded_by": "history detail", "replaced_reason": "history detail", "what_if_json": "history detail",
+    "detail_thinned_at": "history detail", "economics": "history detail",
+    "likely_edits_note": "optional block line; the phone reads each likely edit's own backtest",
+    "standby_note": "optional block line; the phone reads the standby days' assumption and base rate",
+}
+
+
+def test_every_field_the_phone_declares_is_sent_or_accounted_for(db, monkeypatch):
+    live = capture(monkeypatch, db)
+    declared = _swift_keys("GeneratedSchedule")
+    missing = declared - set(live["done"]) - set(NOT_ON_A_FINISHED_POLL)
+    assert missing == set(), f"the phone reads {sorted(missing)}; the finished poll never sends them"
+    assert {"seconds_left", "progress"} <= set(live["pending"])
+    assert set(NOT_ON_A_FINISHED_POLL) <= declared, "an entry no longer declared: take it out"
 
 
 def test_the_ios_contract_test_decodes_every_captured_fixture():

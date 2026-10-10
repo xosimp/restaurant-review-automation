@@ -798,13 +798,13 @@
    "evaluations": 42,
    "improvement": 5,
    "ran": true,
-   "seconds": 0.0,
+   "seconds": 0.3,
    "solver": {
     "after_score": 44,
     "applied": true,
     "before_score": 39,
     "components": 1,
-    "components_proved": 1,
+    "components_proved": 0,
     "dollars_after": 5630.0,
     "dollars_before": 5630.0,
     "infeasible": [
@@ -900,15 +900,15 @@
      }
     ],
     "kept": "solver",
-    "nodes": 791867,
+    "nodes": 45504,
     "notes": [
      "7 shifts kept with people who have a written note the solver cannot read."
     ],
     "people": 8,
-    "proved_optimal": true,
-    "seconds": 11.19,
+    "proved_optimal": false,
+    "seconds": 0.76,
     "slots": 15,
-    "status": "optimal"
+    "status": "time_limit"
    },
    "stopped": "no improving move",
    "unresolved": [
@@ -4598,13 +4598,13 @@
   "unwritten_dates": []
  },
  "schedule_csv": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n2026-10-26,Monday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-26,Monday,Ana,Server,11:00am,4:00pm,5,\n2026-10-26,Monday,Cara,Server,4:00pm,10:00pm,6,\n2026-10-26,Monday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-26,Monday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-26,Monday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-27,Tuesday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-27,Tuesday,Bo,Server,11:00am,4:00pm,5,Cavnar AI: solver put Bo here (was Ana)\n2026-10-27,Tuesday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-27,Tuesday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-27,Tuesday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-27,Tuesday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-28,Wednesday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-28,Wednesday,Bo,Server,11:00am,4:00pm,5,Cavnar AI: solver put Bo here (was Ana)\n2026-10-28,Wednesday,Cara,Server,4:00pm,10:00pm,6,\n2026-10-28,Wednesday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-28,Wednesday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-28,Wednesday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-29,Thursday,Max,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 50h in the payroll week — over 40h\n2026-10-29,Thursday,Cara,Server,11:00am,4:00pm,5,Cavnar AI: solver put Cara here (was Ana)\n2026-10-29,Thursday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-29,Thursday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-29,Thursday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-29,Thursday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-30,Friday,Kim,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 42.5h in the payroll week — over 40h\n2026-10-30,Friday,Cara,Server,11:00am,4:00pm,5,Cavnar AI: solver put Cara here (was Ana)\n2026-10-30,Friday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-30,Friday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-30,Friday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-30,Friday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-10-31,Saturday,Kim,General Manager,10:00am,2:30am,17.5,(includes the extra hour when the clocks go back) — NEEDS REVIEW: 42.5h in the payroll week — over 40h\n2026-10-31,Saturday,Cara,Server,11:00am,4:00pm,5,Cavnar AI: solver put Cara here (was Ana)\n2026-10-31,Saturday,Ana,Server,4:00pm,10:00pm,6,Cavnar AI: solver put Ana here (was Cara)\n2026-10-31,Saturday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-31,Saturday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: 42h in the payroll week — over 40h\n2026-10-31,Saturday,Ed,Bartender,5:00pm,2:00am,10.0,(includes the extra hour when the clocks go back) — NEEDS REVIEW: 46h in the payroll week — over 40h\n2026-11-01,Sunday,Kim,General Manager,10:00am,10:30pm,12.5,NEEDS REVIEW: 42.5h in the payroll week — over 40h\n2026-11-01,Sunday,Ana,Server,11:00am,4:00pm,5,\n2026-11-01,Sunday,Bo,Server,6:00pm,10:00pm,4,Cavnar AI: solver put Bo here (was Cara)\n2026-11-01,Sunday,Cy,Line Cook,10:00am,4:00pm,6,NEEDS REVIEW: too many days in a row\n2026-11-01,Sunday,Di,Line Cook,4:00pm,10:00pm,6,NEEDS REVIEW: too many days in a row\n2026-11-01,Sunday,Ed,Bartender,5:00pm,11:00pm,6,NEEDS REVIEW: too many days in a row",
- "stage_seconds_json": "{\"parse\": 0.001, \"rules\": 0.043, \"signals\": 0.003, \"repair\": 11.55, \"repair.person\": 0.033, \"repair.replace\": 0.02, \"repair.manager\": 0.007, \"repair.floors\": 0.0, \"repair.stations\": 0.0, \"repair.close_out\": 0.0, \"repair.overtime\": 0.041, \"repair.min_hours\": 0.004, \"repair.pad_overruns\": 0.0, \"repair.section_cap\": 0.0, \"repair.budget\": 0.092, \"repair.top_up\": 0.0, \"repair.stagger\": 0.0, \"repair.solver\": 11.195, \"repair.optimizer\": 0.145, \"repair.role_times\": 0.0, \"sweep\": 0.001, \"score\": 0.034, \"model\": 0.0, \"inputs\": 0.132, \"save\": 0.001, \"total\": 11.769}",
+ "stage_seconds_json": "{\"parse\": 0.001, \"rules\": 0.042, \"signals\": 0.003, \"repair\": 1.179, \"repair.person\": 0.039, \"repair.replace\": 0.021, \"repair.manager\": 0.009, \"repair.floors\": 0.0, \"repair.stations\": 0.0, \"repair.close_out\": 0.0, \"repair.overtime\": 0.049, \"repair.min_hours\": 0.006, \"repair.pad_overruns\": 0.0, \"repair.section_cap\": 0.0, \"repair.budget\": 0.097, \"repair.top_up\": 0.0, \"repair.stagger\": 0.0, \"repair.solver\": 0.761, \"repair.optimizer\": 0.191, \"repair.role_times\": 0.0, \"sweep\": 0.002, \"score\": 0.044, \"model\": 0.0, \"inputs\": 0.14, \"save\": 0.001, \"total\": 1.416}",
  "summary": [
   "42 shifts, 298h across 8 people. Busiest day Saturday.",
   "First published week on file — no prior week to compare against."
  ],
  "superseded_by": null,
- "total_seconds": 11.769,
+ "total_seconds": 1.416,
  "version": 1,
  "weather_forecast": null,
  "week_end": "2026-11-01",
