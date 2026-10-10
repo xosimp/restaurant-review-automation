@@ -1415,6 +1415,39 @@ def flush_notices(restaurant_id, db_path=DB_PATH) -> int:
     return sent
 
 
+def overwritten_by_manager(restaurant_id, slots, actor=None, db_path=DB_PATH) -> int:
+    """A manager kept their own edit on shifts a staff cover or swap had moved
+    ("Keep my edits" with override_staff, BUGSLIFE-16): each covered request
+    on those shifts is closed — shift_release no longer reads the holder as
+    covered — and both people are told the manager changed it. `slots`
+    [{date, shift_start, was, now}]. Returns requests closed. Never raises."""
+    n = 0
+    try:
+        conn = get_conn(db_path)
+        try:
+            for s in slots or []:
+                rows = conn.execute(
+                    "SELECT * FROM shift_change_requests WHERE restaurant_id=? AND status='covered' AND "
+                    "((date=? AND shift_start=?) OR (kind='swap' AND target_date=? AND target_start=?))",
+                    (restaurant_id, s.get("date"), s.get("shift_start"), s.get("date"), s.get("shift_start"))).fetchall()
+                for r in rows:
+                    cur = conn.execute(
+                        "UPDATE shift_change_requests SET status='cancelled', decided_at=datetime('now'), "
+                        "decision_note=?, notice_pending='cancelled' WHERE id=? AND status='covered'",
+                        (f"{(actor or 'Your manager')[:60]} changed that shift after it changed hands — "
+                         "check the schedule for who is on it now.", r["id"]))
+                    n += cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[shift_requests] overwritten requests not closed rid={restaurant_id}: {e!r}")
+        return n
+    if n:
+        flush_notices(restaurant_id, db_path=db_path)
+    return n
+
+
 def _close_offers(conn, request_id, accepted_offer_id=None):
     """When the shift is taken, the accepted offer is marked and the other
     people it was offered to are released. Returns the released offers."""
@@ -2633,6 +2666,10 @@ def _notify_event(restaurant_id, event, req, db_path):
             lines = [f"Your request about {when} was closed: {req.get('decision_note') or 'that shift changed.'} "
                      "Check your schedule in the app."]
             _email_staff(restaurant_id, [who], "Your shift request no longer applies", lines, db_path)
+            if (req.get("replacement_name") or "").strip() and (req.get("kind") or "drop") != "swap":
+                # The person who had picked it up (BUGSLIFE-16).
+                _email_staff(restaurant_id, [req.get("replacement_name")], f"Your pickup of {when} changed",
+                             [f"{req.get('decision_note') or 'Your manager changed that shift.'}"], db_path)
             if (req.get("kind") or "") == "swap" and req.get("target_name"):
                 _email_staff(restaurant_id, [req.get("target_name")], "A swap request no longer applies",
                              [f"{who}'s swap for your {_when(req, 'target_')} was closed: a shift in it changed."],

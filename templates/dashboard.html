@@ -23687,6 +23687,12 @@ function rescoreSchedule(btn, after) {
   // since are a 409.
   if (_schedHistoryId) body.history_id = _schedHistoryId;
   if (_schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
+  /* Keep my edits: the server re-applies these edits shift by shift onto
+     the newer week (schedule audit 10/10/26 ARCH-8) - never this screen
+     over a staff cover or swap. */
+  var keepMine = window._schedKeepMine || null;
+  window._schedKeepMine = null;
+  if (keepMine) { body.keep_mine = true; if (keepMine.override) body.override_staff = true; }
   // Rows Cavnar AI took out (apply-fixes / Improve's cavnar_removed): kept
   // as its changes, never taught as the manager's habit (schedule audit
   // 10/3/26 L-5, H1-2). Its own rows carry origin / origin_sig already.
@@ -23709,6 +23715,8 @@ function rescoreSchedule(btn, after) {
       if (d.history_id) _schedHistoryId = d.history_id;
       _setQualityState(d.saved ? 'saved' : 'unsaved');
       if (d.saved) {
+        /* Merged onto the newer week: what was saved is the screen now. */
+        if (d.merged_rows && d.merged_rows.length) _schedRows = d.merged_rows;
         _schedSetDirty(false);
         _schedSnapshot();
         _schedHideConflict();
@@ -24416,18 +24424,28 @@ function _schedShowConflict(d) {
   var h = '<b>' + _escHtml(d.saved_by || 'Somebody') + ' changed this week after you opened it.</b> Your edits are still here; nothing was overwritten.', i;
   var lines = d.lines || [];
   if (lines.length) { h += '<div style="margin-top:6px">What they changed:'; for (i = 0; i < lines.length; i++) h += '<div class="ln">' + num(lines[i]) + '</div>'; h += '</div>'; }
+  /* A staff cover or swap on a shift you also changed (BUGSLIFE-16): named,
+     and kept only on purpose - both people are then told. */
+  var sc = d.staff_conflicts || [];
+  if (sc.length) {
+    h += '<div style="margin-top:6px">Staff changed shifts you also edited:';
+    for (i = 0; i < sc.length; i++) h += '<div class="ln">' + _escHtml(sc[i].now || 'Somebody') + ' took ' + _escHtml(sc[i].was || '') + '’s ' + _escHtml(_schedDayOf(sc[i].date).slice(0, 3)) + ' <span class="hb-num">' + mdy(sc[i].date) + '</span> ' + _escHtml(sc[i].shift_start || '') + '</div>';
+    h += '</div>';
+  }
   h += '<div class="sr-actions">'
-    + (window._schedConflictAt !== null ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="schedKeepMine(this)">Keep my edits</button> ' : '')
+    + (window._schedConflictAt !== null ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="schedKeepMine(this' + (sc.length ? ', true' : '') + ')">' + (sc.length ? 'Keep mine on those too' : 'Keep my edits') + '</button> ' : '')
     + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="reloadScheduleFromHistory(this, true)">Reload theirs</button></div>'
-    + '<div class="ln" style="margin-top:6px">Keep my edits saves what is on your screen over their change. Reload theirs drops your edits.</div>';
+    + '<div class="ln" style="margin-top:6px">' + (sc.length ? 'Keeping yours on those shifts undoes what staff agreed, and both people are told. Reload theirs drops your edits.' : 'Keep my edits puts your changes on top of theirs, shift by shift: anything you both changed is yours. Reload theirs drops your edits.') + '</div>';
   c.innerHTML = h; c.style.display = 'block';
 }
 
-// "Keep my edits": the owner saw what the other save changed and chose
-// theirs to go — saved against the version the refusal named.
-function schedKeepMine(btn) {
+// "Keep my edits": the owner saw what the other save changed. The server
+// re-applies these edits onto the newer week shift by shift, against the
+// version this screen came from (ARCH-8); `override` keeps them over a
+// staff cover or swap it named (BUGSLIFE-16).
+function schedKeepMine(btn, override) {
   if (window._schedConflictAt === null || window._schedConflictAt === undefined) return;
-  _schedVersion = window._schedConflictAt;
+  window._schedKeepMine = {override: !!override};
   rescoreSchedule(btn);
 }
 

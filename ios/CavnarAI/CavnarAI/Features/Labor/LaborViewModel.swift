@@ -1315,11 +1315,16 @@ struct SaveConflict: Decodable, Equatable {
     let savedBy: String?
     let lines: [String]?
     let error: String?
+    /// "Keep my edits" met a shift a staff cover or swap moved since
+    /// (schedule audit 10/10/26 BUGSLIFE-16): `error` names them, and
+    /// keeping yours there is a second, deliberate tap.
+    var staffConflict: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case conflict, lines, error
         case latestVersion = "latest_version"
         case savedBy = "saved_by"
+        case staffConflict = "staff_conflict"
     }
 }
 
@@ -2482,12 +2487,20 @@ final class LaborViewModel {
         var cavnarChanges: [CavnarRemovedRow]? = nil
         /// Ask the rescore to look for a better arrangement (D2, P-36).
         var whatIf: Bool? = nil
+        /// "Keep my edits" after a conflict: merged shift by shift onto the
+        /// newer week against `version`, the one these rows came from
+        /// (schedule audit 10/10/26 ARCH-8); `overrideStaff` keeps them over
+        /// a staff cover or swap the server named (BUGSLIFE-16).
+        var keepMine: Bool? = nil
+        var overrideStaff: Bool? = nil
         enum CodingKeys: String, CodingKey {
             case rows, save, version
             case dailyTargetHours = "daily_target_hours"
             case historyId = "history_id"
             case cavnarChanges = "cavnar_changes"
             case whatIf = "what_if"
+            case keepMine = "keep_mine"
+            case overrideStaff = "override_staff"
         }
     }
 
@@ -2517,6 +2530,9 @@ final class LaborViewModel {
         var whyQuestions: HomeLenientList<EditWhyQuestion>? = nil
         /// The version a save just wrote — the next save names it (UI-1, UI-4).
         var version: Int? = nil
+        /// "Keep my edits" merged onto the newer week: the week as saved,
+        /// which replaces the copy on screen (ARCH-8).
+        var mergedRows: [ScheduleRow]? = nil
         enum CodingKeys: String, CodingKey {
             case ok, quality, error, saved, violations, review, version
             case whatIf = "what_if"
@@ -2525,6 +2541,7 @@ final class LaborViewModel {
             case unsentChanges = "unsent_changes"
             case lateChangeWarning = "late_change_warning"
             case whyQuestions = "why_questions"
+            case mergedRows = "merged_rows"
         }
     }
 
@@ -2773,15 +2790,23 @@ final class LaborViewModel {
         cacheSchedule(current)
     }
 
-    /// Keep the edits on screen: the owner saw what the other save changed
-    /// and chose theirs to go. Saved against the version the refusal named,
-    /// so it lands as the newest; nothing on screen is thrown away (UI-1).
+    /// Keep the edits on screen: the owner saw what the other save changed.
+    /// The server re-applies these edits shift by shift onto the newer week,
+    /// against the version these rows came from — never the whole screen
+    /// over it (schedule audit 10/10/26 ARCH-8). A shift a staff cover or
+    /// swap moved since comes back as a second conflict naming it; keeping
+    /// yours there too (`staffConflict`) undoes what staff agreed, and both
+    /// people are told (BUGSLIFE-16).
     func keepMineAfterConflict() async {
-        guard let conflict = saveConflict, let v = conflict.latestVersion else { return }
-        latestVersion = v
+        guard let conflict = saveConflict, conflict.latestVersion != nil else { return }
+        keepMinePending = conflict.staffConflict == true ? .overStaff : .merge
         saveConflict = nil
         await rescoreQuality()
     }
+
+    /// The next save merges onto the newer week ("Keep my edits").
+    enum KeepMine { case merge, overStaff }
+    var keepMinePending: KeepMine?
 
     // MARK: - Cost of an edit
 
@@ -3965,13 +3990,20 @@ final class LaborViewModel {
         // stale rows overwrite somebody else's newer edit (UI-1). None known
         // (an older cached week) is refused by the server as a conflict,
         // which offers keep or reload — never a silent overwrite.
+        let keep = save ? keepMinePending : nil
+        if save { keepMinePending = nil }
         do {
+            var body = ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
+                                 historyId: result.historyId,
+                                 version: save ? latestVersion : nil,
+                                 cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil)
+            if let keep {
+                body.keepMine = true
+                if keep == .overStaff { body.overrideStaff = true }
+            }
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                body: ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
-                                historyId: result.historyId,
-                                version: save ? latestVersion : nil,
-                                cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil),
+                body: body,
                 hapticOnError: false, retryTransient: true)
             guard response.ok, let quality = response.quality else {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
@@ -3985,6 +4017,11 @@ final class LaborViewModel {
             // and the next rescore (already queued by that edit) owns it.
             guard var current = scheduleResult else { return }
             let sameRows = (current.previewRows ?? []).map(\.signature) == rows.map(\.signature)
+            // Merged onto the newer week ("Keep my edits", ARCH-8): what was
+            // saved — and what the verdict below judged — goes on screen.
+            if sameRows, response.saved ?? false, let merged = response.mergedRows, !merged.isEmpty {
+                current.previewRows = merged
+            }
             if sameRows {
                 scoreDelta = Self.delta(from: current.quality?.score, to: quality.score)
                 current.quality = quality

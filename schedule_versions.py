@@ -288,6 +288,129 @@ def rename_map_since(conn, history_id, base_version) -> dict:
     return out
 
 
+# ── per-shift merge of two edits of one week (schedule audit 10/10/26 ARCH-8) ──
+#
+# "Keep my edits" used to save the manager's whole screen over a newer
+# version — a staff cover or swap included, which both people had already
+# been told about. Now each side's change is read as operations on shifts
+# (add, remove, retime, reassign) against the version both started from, the
+# manager's are re-applied onto the newest week, and only a shift BOTH sides
+# changed is a conflict.
+
+def shift_key(r) -> tuple:
+    """One shift's identity across versions of a week: its `shift_id` when
+    the rows carry one (schedule audit 10/10/26 contract #3, D1), else the
+    date, start and the person's folded name — the key every reader here
+    has used."""
+    sid = (r or {}).get("shift_id")
+    if sid:
+        return ("id", str(sid))
+    return (r.get("date", ""), r.get("shift_start", ""), _fold(r.get("employee")))
+
+
+def _row_sig(r) -> tuple:
+    return tuple(str((r or {}).get(c, "") or "").strip() for c in COLS)
+
+
+def _match(base, other) -> tuple:
+    """({base index: other index or None}, [other indexes no base row became])
+    — each base row's counterpart: the same key, else (one unclaimed row)
+    the same person and date (a retime) or the same date, start and role (a
+    reassign); None when the row is gone."""
+    okeys = {}
+    for j, r in enumerate(other):
+        okeys.setdefault(shift_key(r), []).append(j)
+    out, used = {}, set()
+    for i, b in enumerate(base):
+        js = [j for j in okeys.get(shift_key(b), []) if j not in used]
+        if js:
+            out[i] = js[0]
+            used.add(js[0])
+    rest = [j for j in range(len(other)) if j not in used]
+    for i, b in enumerate(base):
+        if i in out:
+            continue
+        cand = next((j for j in rest if other[j].get("date") == b.get("date")
+                     and _fold(other[j].get("employee")) == _fold(b.get("employee"))), None)
+        if cand is None:
+            cand = next((j for j in rest if other[j].get("date") == b.get("date")
+                         and other[j].get("shift_start") == b.get("shift_start")
+                         and _fold(other[j].get("role")) == _fold(b.get("role"))), None)
+        if cand is not None:
+            rest.remove(cand)
+        out[i] = cand
+    return out, rest
+
+
+def merge_rows(base: list, mine: list, theirs: list) -> dict:
+    """{rows, applied, conflicts}: `mine` (an edit of `base`) re-applied onto
+    `theirs` (a newer version of `base`), shift by shift. A base shift only
+    one side changed takes that side's change; one both changed the same way
+    is that; one both changed differently is a conflict — {base, mine,
+    theirs} rows (None for removed) — resolved here as mine (the caller
+    decides whether it may be: a staff swap's shift never silently). A row
+    mine added is added unless theirs already has that exact row."""
+    m_map, m_added = _match(base, mine)
+    t_map, t_added = _match(base, theirs)
+    rows = [dict(r) for r in theirs]
+    drop, applied, conflicts = set(), 0, []
+    for i, b in enumerate(base):
+        mj, tj = m_map.get(i), t_map.get(i)
+        m_row = mine[mj] if mj is not None else None
+        t_row = theirs[tj] if tj is not None else None
+        m_changed = m_row is None or _row_sig(m_row) != _row_sig(b)
+        if not m_changed:
+            continue
+        t_changed = t_row is None or _row_sig(t_row) != _row_sig(b)
+        if t_changed:
+            same = (m_row is None and t_row is None) or (
+                m_row is not None and t_row is not None and _row_sig(m_row) == _row_sig(t_row))
+            if same:
+                continue
+            conflicts.append({"base": b, "mine": m_row, "theirs": t_row})
+        if tj is None:
+            if m_row is not None:
+                rows.append(dict(m_row))
+                applied += 1
+            continue
+        if m_row is None:
+            drop.add(tj)
+        else:
+            rows[tj] = dict(m_row)
+        applied += 1
+    have = {_row_sig(r) for r in rows}
+    for j in m_added:
+        r = mine[j]
+        if _row_sig(r) in have:
+            continue
+        rows.append(dict(r))
+        have.add(_row_sig(r))
+        applied += 1
+    merged = [r for k, r in enumerate(rows) if k not in drop]
+    return {"rows": merged, "applied": applied, "conflicts": conflicts}
+
+
+def staff_slots_since(conn, history_id, base_version) -> dict:
+    """{(date, start, role folded): saved_by} for every shift a staff request
+    moved (a `swap` version: a cover, a claim, a swap) after `base_version`
+    — what "Keep my edits" may not overwrite without saying so (BUGSLIFE-16)."""
+    try:
+        vs = conn.execute("SELECT version, reason, schedule_csv, saved_by FROM schedule_versions WHERE history_id=? "
+                          "AND version>=? ORDER BY version", (history_id, int(base_version or 0))).fetchall()
+    except (TypeError, ValueError):
+        return {}
+    out, prev = {}, None
+    for v in vs:
+        if prev is not None and v["reason"] == "swap":
+            d = diff(rows_from_csv(prev["schedule_csv"]), rows_from_csv(v["schedule_csv"]))
+            for m in d["moved"]:
+                out[(m.get("date"), m.get("shift_start"), _fold(m.get("role")))] = v["saved_by"]
+            for r in d["added"] + d["removed"]:
+                out[(r.get("date"), r.get("shift_start"), _fold(r.get("role")))] = v["saved_by"]
+        prev = v
+    return out
+
+
 def replaced_error(row):
     """The sentence a save or a Send of a replaced copy of a week is refused
     with; None when the copy is the one in force. `row` carries
