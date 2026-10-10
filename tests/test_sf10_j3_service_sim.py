@@ -115,6 +115,21 @@ def test_the_studio_what_if_replays_the_last_same_weekdays_in_plain_words():
     assert sim.marginal_minutes(rid, "kitchen", 18, 2, today=TODAY) > 0
 
 
+def test_g2s_measured_effect_sits_beside_the_model_never_blended(monkeypatch):
+    rid = create_restaurant(Restaurant(name="Sim Co", owner_email="s@x.test", module_labor=1))
+    _seed(rid)
+    import staffing_elasticity
+    monkeypatch.setattr(staffing_elasticity, "stored", lambda *a, **k: {
+        ("line_cook", "night"): {"outcomes": {"kitchen": {"est": -3.0, "lo": -5.0, "hi": -1.0, "n": 6,
+                                                          "method": "pooled"}}}})
+    w = sim.what_if(rid, "Saturday", {"line_cook": -1}, today=TODAY)
+    k = w["stages"]["kitchen"]
+    assert k["measured"]["implied"] == 3.0 and k["measured"]["per_person"] == -3.0
+    # The model's own figure stays the model's: never replaced by the measured one.
+    assert k["moved"] == sim.what_if(rid, "Saturday", {"line_cook": -1}, today=TODAY)["stages"]["kitchen"]["moved"]
+    assert "your own short dinners measured about 3 minutes longer" in w["sentence"]
+
+
 def test_no_ticket_archive_has_no_twin_and_says_why():
     rid = create_restaurant(Restaurant(name="Toast Co", owner_email="t@x.test", module_labor=1))
     w = sim.what_if(rid, "Saturday", {"server": -1}, today=TODAY)

@@ -53,10 +53,13 @@ honest answer. `skill` is the fit's error against the plain mean.
                 with a sentence that states only what was measured
                 (studio_bench.api_body 'what_if').
 
-Integration (G2's staffing_elasticity, built in parallel): the marginal
-minutes one more person saves are this twin's derivative —
-`marginal_minutes()` is the shared read; until G2's module lands the twin
-is self-contained.
+Integration (G2's staffing_elasticity): G2 MEASURES what one more person
+did on the restaurant's own meals (uncovered no-shows as natural
+experiments, fixed effects); this twin MODELS it. `what_if` lays G2's
+measured kitchen and turn effect for dinner beside the model's
+(`stages[...]["measured"]`, and a clause in the sentence) — side by side,
+never blended. `marginal_minutes()` is the twin's derivative for any reader
+that wants the model's view.
 
 Reads only; nothing calls a model. RPOWER today (the only ticket archive);
 another POS says why there is no twin (MARKET-9).
@@ -535,6 +538,25 @@ def what_if(restaurant_id, weekday, change: dict, today=None, db_path=None) -> d
                          "moved": avg("moved"), "moved_lo": avg("moved_lo"), "moved_hi": avg("moved_hi"),
                          "turns_pct": avg("turns_pct"), "stranded": sum(g.get("stranded") or 0 for g in got),
                          "change": got[0]["change"], "fit_skill": got[0]["fit_skill"]}
+    # The measured check beside the model (G2's staffing_elasticity: what one
+    # more of the family on a dinner did to the kitchen's fire-to-bump
+    # minutes and the table turn, from the restaurant's own short nights and
+    # meals, with its interval) — the twin's answer and the measured one side
+    # by side, never blended.
+    try:
+        import staffing_elasticity as _sel
+        import models as _m
+        measured = _sel.stored(restaurant_id, db_path=db_path or _m.DB_PATH) or {}
+    except Exception:
+        measured = {}
+    for stage, outcome in (("kitchen", "kitchen"), ("floor", "turn")):
+        e = (((measured.get((STAGES[stage], "night")) or {}).get("outcomes")) or {}).get(outcome)
+        st_ = stages.get(stage) or {}
+        if e and e.get("est") is not None and st_.get("available") and st_.get("change"):
+            st_["measured"] = {"per_person": e["est"], "lo": e.get("lo"), "hi": e.get("hi"), "n": e.get("n"),
+                               "method": e.get("method"), "implied": round(st_["change"] * e["est"], 1),
+                               "basis": "dinners at this restaurant that ran one short against the rest "
+                                        "(staffing_elasticity), per person"}
     comps = [r["comps"] for r in runs if r.get("comps")]
     stars = [r["review_risk"] for r in runs if (r.get("review_risk") or {}).get("stars") is not None]
     out = {"ok": True, "available": any(s.get("available") for s in stages.values()), "weekday": wd,
@@ -570,6 +592,10 @@ def _sentence(w) -> str:
         else:
             bits.append(f"With {crew}, {w['weekday']}'s {what} would have run about {abs(s['moved']):g} minutes "
                         f"{'longer' if s['moved'] > 0 else 'shorter'}{rng}")
+        m = s.get("measured") or {}
+        if m.get("implied") is not None:
+            bits.append(f"your own short dinners measured about {abs(m['implied']):g} minutes "
+                        f"{'longer' if m['implied'] > 0 else 'shorter'}")
         if s.get("stranded"):
             bits.append(f"{s['stranded']} ticket{'s' if s['stranded'] != 1 else ''} would have had nobody to take "
                         f"{'them' if s['stranded'] != 1 else 'it'}")

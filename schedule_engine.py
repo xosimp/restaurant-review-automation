@@ -1643,6 +1643,9 @@ _INPUT_WORDS = {
     "last published week": "how last week's published schedule went",
     "role shifts": "the roles each person has worked", "roster facts": "each person's limits and availability",
     "date_demand": "each day's demand", "splh": "sales per labor hour", "outcomes": "how past weeks went",
+    "staffing model": "the labor standards each role is sized by", "half-hour curve": "the sales curve by the half hour",
+    "staffing elasticity": "what one more person of a role is worth here",
+    "floor suggestions": "the floors the work never needed",
     "person rates": "each person's pay rate",
     "ledger": "who has carried the weekends and closes", "stated_preferences": "staff preferences",
     "learned_preferences": "what staff drop and pick up", "could_hold": "who could hold a station",
@@ -2219,6 +2222,12 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail('labor_standards', _sfx, restaurant_id)
         standards_for_week = {}
+    # The driver-based requirement (scheduler audit 10/10/26 RM-17): each
+    # role family's work at the half hour ÷ the labor standard at the rush
+    # (staffing_model), and the sales curve measured at the half hour from
+    # the ticket archive — carried with the standards into the requirements.
+    standards_for_week = dict(standards_for_week or {})
+    standards_for_week.update(_requirement_model(restaurant_id, shifts))
     memory_blk, owner_rules_text = "", ""
     try:
         import memory_context as _mc
@@ -5367,6 +5376,16 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
     none. [] when they cannot be built."""
     import schedule_requirements as _req
     c = constraints if constraints is not None else result.get("constraints")
+    # The table the model was given and the score judges (labor's
+    # `requirements`: every input — each meal's demand, the hold, the asks,
+    # the late crew, the labor standards — through the one function). The
+    # passes rebuilt it without the date's demand, so on a +40% night the
+    # top-up filled to a typical night's crew while the score marked it
+    # short (scheduler audit 10/10/26 LOGIC-9). A date closed since is out.
+    stored = result.get("requirements")
+    if isinstance(stored, list) and stored:
+        shut = set(getattr(c, "closed_dates", None) or ()) | set(result.get("closed_dates") or ())
+        return [r for r in stored if r.get("date") not in shut]
     try:
         return _req.shift_requirements(
             list(result.get("week_dates") or []),
@@ -5386,6 +5405,10 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
             cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None,
             # The Crew answers bound into the baseline, named as reasons.
             crew_answers=result.get("crew_answers") or None,
+            date_demand=result.get("date_demand") or None,
+            splh_hold=((result.get("splh_objective") or {}).get("hold") or None),
+            late_headcount=result.get("late_headcount") or None,
+            concurrent=result.get("concurrent") or None,
             # The hours and ceilings the owner's hours notes state (PROMPT-1).
             **_limit_kwargs(c))
     except Exception as exc:
@@ -6515,6 +6538,63 @@ def _merge_holiday_lift(restaurant_id, dates, signals_by_date: dict) -> dict:
     return holiday
 
 
+def _requirement_model(restaurant_id, shifts=None) -> dict:
+    """{"model": staffing_model.measure(...), "half_curve": schedule_economics
+    .measured_half_hours(...)} — the work-driven requirement's inputs, read
+    once per read scope; {} pieces on any failure (the usual crew then
+    stands, history the fallback — RM-17)."""
+    import models as _m_rm
+    store = _m_rm.read_scope_store()
+    key = ("requirement_model", int(restaurant_id))
+    if store is not None and key in store:
+        return store[key]
+    # Eight weeks of tickets and punches change once a night: a Studio edit's
+    # live rescore reuses the last read for REQUIREMENT_MODEL_TTL seconds
+    # (per process, per database file — a cache, safe to keep per worker).
+    import time as _time_rm
+    ckey = (str(_m_rm.DB_PATH), int(restaurant_id))
+    hit = _REQUIREMENT_MODEL_CACHE.get(ckey)
+    if hit and _time_rm.monotonic() - hit[0] < REQUIREMENT_MODEL_TTL:
+        if store is not None:
+            store[key] = hit[1]
+        return hit[1]
+    out = {}
+    try:
+        import staffing_model as _smod
+        model = _smod.measure(restaurant_id, shifts=shifts)
+        if model:
+            out["model"] = model
+    except Exception as _mx:
+        _soft_fail("staffing model", _mx, restaurant_id)
+    try:
+        import schedule_economics as _econ_rm
+        hc = _econ_rm.measured_half_hours(restaurant_id)
+        if hc:
+            out["half_curve"] = hc
+    except Exception as _hx:
+        _soft_fail("half-hour curve", _hx, restaurant_id)
+    try:
+        # What one more of a role on a meal measured here, where its
+        # interval cleared zero (staffing_elasticity, RM-20) — the weekly
+        # job's stored estimate, read, never computed on this path.
+        import staffing_elasticity as _sel
+        mv = _sel.moves(restaurant_id)
+        if mv:
+            out["elasticity"] = mv
+    except Exception as _ex:
+        _soft_fail("staffing elasticity", _ex, restaurant_id)
+    if store is not None:
+        store[key] = out
+    if len(_REQUIREMENT_MODEL_CACHE) > 512:
+        _REQUIREMENT_MODEL_CACHE.clear()
+    _REQUIREMENT_MODEL_CACHE[ckey] = (_time_rm.monotonic(), out)
+    return out
+
+
+REQUIREMENT_MODEL_TTL = 15 * 60
+_REQUIREMENT_MODEL_CACHE = {}
+
+
 def _merge_date_demand(restaurant_id, dates, signals_by_date: dict, weather=None, closed=()) -> tuple:
     """(holiday, date_demand): the holiday lift folded into the dated
     signals (_merge_holiday_lift), then each date's ONE demand number
@@ -6681,11 +6761,14 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
                 _std_live = _ls_live.for_requirements(restaurant_id, dates, patterns.get("typical_headcount") or {},
                                                       out.get("date_demand") or {}, restaurant=restaurant,
                                                       needs_only=True)
+                _rm_live = _requirement_model(restaurant_id, _cached_shifts(restaurant_id))
                 out["requirements"] = _live_requirements(
                     dates, patterns, c, profiles, demand_by_day, out.get("demand_by_date") or {},
                     out.get("role_minimums") or {}, out.get("date_demand") or {},
                     (out.get("splh_objective") or {}).get("hold") or {}, leader_rules,
-                    bool(scores) or bool(out.get("leader_flags")), (_std_live or {}).get("needs") or {})
+                    bool(scores) or bool(out.get("leader_flags")), (_std_live or {}).get("needs") or {},
+                    staffing_model=_rm_live.get("model"), half_curve=_rm_live.get("half_curve"),
+                    elasticity=_rm_live.get("elasticity"))
                 import schedule_requirements as _req_live
                 out["requirements_by_date"] = _req_live.requirements_map(out["requirements"])
             except Exception as _rqx:
@@ -6697,7 +6780,8 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
 
 
 def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_date, role_minimums,
-                       date_demand, splh_hold, leader_rules, leadership_known, standard_needs=None) -> list:
+                       date_demand, splh_hold, leader_rules, leadership_known, standard_needs=None,
+                       staffing_model=None, half_curve=None, elasticity=None) -> list:
     """SHIFT REQUIREMENTS for a stored week, every role, from the inputs a
     live rescore holds — the draft's own inputs, through the one function
     (schedule_requirements.shift_requirements)."""
@@ -6712,7 +6796,8 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
         standard_needs=standard_needs or None, crew_answers=(patterns or {}).get("crew_answers") or None,
-        **_limit_kwargs(c))
+        staffing_model=staffing_model or None, concurrent=(patterns or {}).get("concurrent") or None,
+        half_curve=half_curve or None, elasticity=elasticity or None, **_limit_kwargs(c))
 
 
 def learned_worse_levers(restaurant_id) -> dict:
@@ -7119,6 +7204,16 @@ def _quality_signals(restaurant_id, result, **extra):
         # 10/3/26 P-19); "late" keys carry the late segment (D-32).
         "requirements_by_date": _requirements_signal(result.get("requirements_by_date")),
         "requirement_reasons": _reasons_signal(result.get("requirements")),
+        # Each shift's half-hour need from those same rows (people on at
+        # once, each role on its own lead or lag — LOGIC-11), and the usual
+        # people on at once the scorer rebuilds a curve from without them.
+        "half_hours_by_date": _half_hours_signal(result.get("requirements")),
+        "concurrent": result.get("concurrent") or {},
+        # {(role family, daypart): {"per_hour", "lo", "hi"}} — one more
+        # person's measured net value an hour (staffing_elasticity, MARKET-23):
+        # the trim reads it, and it is the price a solver objective puts on
+        # an hour there (contract for the CP-SAT solver).
+        "staffing_value": _staffing_value(restaurant_id),
     }
     c = result.get("constraints")
     if c is not None:
@@ -7411,6 +7506,16 @@ def _requirements_signal(raw) -> dict:
         if len(key) == 2 and isinstance(v, dict):
             out[key] = dict(v)
     return out
+
+
+def _half_hours_signal(rows) -> dict:
+    """{(date, daypart): {minute: {role: people}}} from the requirements rows
+    (schedule_requirements.half_hours_map); {} on any failure."""
+    try:
+        import schedule_requirements as _req
+        return _req.half_hours_map(rows or [])
+    except Exception:
+        return {}
 
 
 def _reasons_signal(rows) -> dict:
@@ -9170,8 +9275,20 @@ def _stage_budget(rows, x):
         # In dollars, the loop's own measure (LOGIC-13): the trim stops where
         # the judge says the week fits.
         cost_fn=x.cost if x.cost([]) is not None else None, budget_value=x.budget_dollars or None,
-        pricing=x.pricing() if x.budget_dollars > 0 else None)
+        pricing=x.pricing() if x.budget_dollars > 0 else None,
+        # Hours go where their measured return is highest (MARKET-23).
+        staffing_value=_staffing_value(x.rid))
     return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
+
+
+def _staffing_value(restaurant_id) -> dict:
+    """staffing_elasticity.marginal_values (the weekly job's stored figure),
+    {} on any failure."""
+    try:
+        import staffing_elasticity as _sel
+        return _sel.marginal_values(restaurant_id) or {}
+    except Exception:
+        return {}
 
 
 def _stage_top_up(rows, x):
@@ -10657,10 +10774,31 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 result["overtime_forecast"] = _ot
                 for _o in _ot[:3]:
                     result["review"]["lines"].append(_o["text"])
-                _sb = _sl.standby_days(restaurant_id, result.get("week_dates") or [], rows=preview_rows)
+                # Expected attendance against each shift's requirement (RM-18):
+                # a busy shift likely to come up short asks for a standby.
+                _busy_sb = set()
+                try:
+                    import schedule_requirements as _req_sb
+                    _busy_sb = _req_sb.busy_shifts(result.get("week_dates") or [],
+                                                   result.get("shift_profiles") or None,
+                                                   result.get("demand_by_day") or {},
+                                                   result.get("demand_by_date") or {})
+                except Exception as _bx:
+                    print(f"[schedule] busy shifts unread for the standby: {_bx}")
+                _sb = _sl.standby_days(restaurant_id, result.get("week_dates") or [], rows=preview_rows,
+                                       requirements=result.get("shift_requirements") or result.get("requirements"),
+                                       busy=_busy_sb)
                 result["standby_days"] = _sb
                 for _d in _sb:
                     _who = (_d.get("standby") or {})
+                    _sh = _d.get("standby_shift")
+                    if _sh:
+                        result["review"]["lines"].append(
+                            f"A standby is needed on {_sh['text']}."
+                            + (f" {_who['employee']} ({_who['role'] or 'same role'}) is off and could be on call"
+                               if _who.get("employee") else " Nobody in the role is free to be on call")
+                            + " — or add one more if the budget has room.")
+                        continue
                     result["review"]["lines"].append(
                         f"Worth a standby on {_d['day']} {_mdy(_d['date'])}: about a "
                         f"{int(round(_d['chance_of_a_no_show'] * 100))}% chance somebody scheduled doesn't show, "
@@ -10670,6 +10808,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except Exception as _slx:
                 # Said, not printed (schedule audit 10/3/26 P-17).
                 _soft_fail("overtime forecast", _slx, restaurant_id)
+            # A floor the work never needed (MARKET-33): the nightly report's
+            # earned hours at the restaurant's own standard stayed under the
+            # owner's floor on each of the last same weekdays — the evidence,
+            # said; the floor stays the owner's to change.
+            try:
+                import staffing_model as _smf
+                _fs = _smf.floor_suggestions(restaurant_id)
+                result["floor_suggestions"] = _fs
+                for _f in _fs[:2]:
+                    result["review"]["lines"].append(_f["text"])
+            except Exception as _fsx:
+                _soft_fail("floor suggestions", _fsx, restaurant_id)
             # Rows the manager has repeatedly edited away and the draft put
             # back anyway: said before they have to do it again.
             # Then every other row the manager's own edit history says they

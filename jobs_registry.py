@@ -186,6 +186,17 @@ JOBS = {
         description="Settle last night's on-call slots, record how firm each published shift is, and propose the "
                     "priced change when an event moved on a published week (bounded, resumable)",
         target=("studio_bench", "run_bench_nightly"), max_minutes=20, retry=True),
+    "staffing_learning": dict(
+        # Scheduler audit 10/10/26 RM-20, LEARNING-6, LEARNING-26: what one
+        # more of a role on a meal is worth (no-show natural experiments and
+        # within-restaurant fixed effects, with intervals) and each person's
+        # measured effect (partial pooling) — read by the requirements and
+        # the owner's ratings screen, never computed on a request.
+        cadence="Mon 8am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="Staffing learning",
+        description="Estimate what one more person of each role is worth on each meal and each person's measured "
+                    "productivity, from tickets, punches and attendance (bounded, resumable)",
+        target=("staffing_elasticity", "run_elasticity"), max_minutes=15, retry=True),
     "schedule_memory": dict(
         # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
         # sources, after people_nightly.
