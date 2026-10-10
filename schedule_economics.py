@@ -766,7 +766,6 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
 
 CURVE_WEEKS = 8
 CURVE_MIN_DAYS = 3               # same-weekday measured days before a curve or a split is stated
-MORNING_SPLIT_HOUR = 15          # shift_quality.DAYPART_CUTOVER: sales before 3pm are lunch's
 LATE_START_HOUR = 22             # shift_quality.LATE_WINDOW_START: from 10pm is the late segment (D-32)
 
 
@@ -919,7 +918,11 @@ def measured_sales_curve(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PAT
             "hours": {h: round(sorted(s.get(h, 0.0) for _n, s in entries)[n // 2], 4) for h in hours},
             "days": n,
             "sources": {k: sum(1 for nm, _s in entries if nm == k) for k in ("tickets", "intraday", "dsr")},
-            "morning_share": round(_median([sum(v for h, v in s.items() if h < MORNING_SPLIT_HOUR)
+            # Sales before the restaurant's lunch/dinner boundary (3pm unless
+            # set — schedule_time.daypart_split) are lunch's; a 1am hour is
+            # the night's tail, never lunch (ARCH-12, BUGSGEN-19).
+            "morning_share": round(_median([sum(v for h, v in s.items()
+                                                if _stime.business_hour(int(h)) * 60 < _stime.daypart_split())
                                             for _n, s in entries]), 4),
             "late_share": round(_median([sum(v for h, v in s.items() if h >= LATE_START_HOUR)
                                          for _n, s in entries]), 4),
