@@ -55,6 +55,7 @@ NOT_APPLICABLE_SITES = {
     # generation that already passed the gate, each bullet checked against them).
     ("owner_rules.py", "_model_call"): "the owner's own sentences read into typed rules, against the roster's names",
     ("schedule_narrative.py", "write"): "a note on the finished week, from that week's rows, checked against them",
+    ("schedule_critic.py", "review"): "a critic of a week code already built inside a gated generation, from that week's rows; code validates every edit",
 }
 
 

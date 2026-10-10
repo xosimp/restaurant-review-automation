@@ -3767,23 +3767,20 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "edit_shift",
+            # Kept short (tests/test_ask_cost_1007.py's schema ceiling): which
+            # fields each op takes is said once here, not per property; dates
+            # and times follow TOOL CONVENTIONS in ask_cavnar._SYSTEM_STATIC.
             "description": (
-                "Propose ONE shift change on the schedule: add a shift, move one to another day, retime one, "
-                "remove one, or give one to someone else. Call read_schedule first so names, dates and start "
-                "times are the week's own; it is checked against every scheduling rule before the card shows."),
+                "Propose ONE shift change: add (with shift_end, role), move (new_date), retime (new_start, "
+                "new_end), remove, or reassign (to_employee). employee + shift_start name the shift. read_schedule "
+                "first so names, dates and starts are the week's own; every rule is checked before the card."),
             "input_schema": {"type": "object", "required": ["op", "date"], "additionalProperties": False,
                              "properties": {
                 "op": {"type": "string", "enum": ["add", "move", "retime", "remove", "reassign"]},
-                "date": {"type": "string", "description": "The shift's date, YYYY-MM-DD."},
-                "employee": {"type": "string", "description": "Who holds it (or who is added)."},
-                "shift_start": {"type": "string", "description": "Its start, e.g. 5:00pm — names which shift; "
-                                                                 "required for add."},
-                "shift_end": {"type": "string", "description": "add only."},
-                "role": {"type": "string", "description": "add only."},
-                "new_date": {"type": "string", "description": "move only, YYYY-MM-DD."},
-                "new_start": {"type": "string"},
-                "new_end": {"type": "string"},
-                "to_employee": {"type": "string", "description": "reassign only."}}},
+                "date": {"type": "string"}, "employee": {"type": "string"},
+                "shift_start": {"type": "string"}, "shift_end": {"type": "string"}, "role": {"type": "string"},
+                "new_date": {"type": "string"}, "new_start": {"type": "string"}, "new_end": {"type": "string"},
+                "to_employee": {"type": "string"}}},
         },
     },
     # Answering the team (Friction audit #18): the same decide routes the
@@ -3811,14 +3808,11 @@ TOOLS = [
         "spec": {
             "name": "find_cover",
             "description": (
-                "Who can take a shift now, ranked and legal: give the person who is out (or the role and hours), "
-                "the date (default today) and closing=true for 'who can close'. For 'X is out, who can cover'."),
+                "'X is out, who can cover': who can legally take the shift, ranked. Give the person out "
+                "(employee) or role and hours; date defaults to today; closing=true for 'who can close'."),
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {
-                "employee": {"type": "string", "description": "The person who is out."},
-                "date": {"type": "string", "description": "YYYY-MM-DD; default today."},
-                "role": {"type": "string"},
-                "closing": {"type": "boolean"},
-                "shift_start": {"type": "string"}, "shift_end": {"type": "string"}}},
+                "employee": {"type": "string"}, "date": {"type": "string"}, "role": {"type": "string"},
+                "closing": {"type": "boolean"}, "shift_start": {"type": "string"}, "shift_end": {"type": "string"}}},
         },
     },
     {
@@ -3830,14 +3824,12 @@ TOOLS = [
         "spec": {
             "name": "offer_cover",
             "description": (
-                "Propose offering one shift to one person from find_cover: the shift of the person who is out "
-                "(employee) or an extra one (shift_end + role). It goes to their app; their yes is the claim."),
+                "Propose offering one shift to one person from find_cover (date = its date_iso): the shift of "
+                "the person out (employee) or an extra one (shift_end, role). Their yes in the app is the claim."),
             "input_schema": {"type": "object", "required": ["date", "shift_start", "offer_to"],
                              "additionalProperties": False, "properties": {
-                "date": {"type": "string", "description": "YYYY-MM-DD (find_cover's date_iso)."},
-                "shift_start": {"type": "string"}, "shift_end": {"type": "string"},
-                "employee": {"type": "string", "description": "Whose shift it is, when somebody is out."},
-                "role": {"type": "string"}, "offer_to": {"type": "string"}}},
+                "date": {"type": "string"}, "shift_start": {"type": "string"}, "shift_end": {"type": "string"},
+                "employee": {"type": "string"}, "role": {"type": "string"}, "offer_to": {"type": "string"}}},
         },
     },
     {
@@ -4082,7 +4074,7 @@ def tool_specs(restaurant=None):
     """The `tools` array passed to the API.
 
     Filtered to the modules this restaurant actually has. The full set is
-    ~25,700 characters of JSON (~6,400 tokens) on every single call — paid
+    ~27,900 characters of JSON (~7,000 tokens) on every single call — paid
     even for "what time do we open?" — and offering a tool for a module they
     don't own invites the model to call it and then explain an empty result.
     Tools with no module tag (reviews of the account itself, settings,

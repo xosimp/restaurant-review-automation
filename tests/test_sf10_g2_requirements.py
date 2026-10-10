@@ -183,7 +183,8 @@ def test_an_events_lift_per_role_is_its_own_record_shrunk_toward_the_night(monke
     import demand_drivers as ddr
     import event_memory as em
     nights = ["2026-09-04", "2026-09-11", "2026-09-18", "2026-09-25"]
-    monkeypatch.setattr(em, "measured_effect", lambda *a, **k: {"dates": nights, "median_lift_pct": 22})
+    monkeypatch.setattr(em, "measured_effect", lambda *a, **k: {"dates": nights, "median_lift_pct": 22,
+                                                               "applies": True})
     rows = []
     for d in nights:
         day = date.fromisoformat(d)

@@ -194,10 +194,15 @@ def test_every_default_model_is_sent_a_thinking_config_it_accepts(purpose, monke
     ai_utils.create_with_retry(client, model=model, max_tokens=10)
     # Haiku 5.5 (scheduler audit 10/10/26 AI-27: the schedule's small calls)
     # takes thinking disabled at its default effort, as Haiku 4.5 does.
-    assert model in (ai_utils.HAIKU, ai_utils.HAIKU_55, ai_utils.SONNET, ai_utils.OPUS, ai_utils.OPUS_55)
+    # Sonnet 5.5 (scheduler audit 10/10/26 AI-8: the schedule critic) refuses
+    # {"type": "disabled"} with a 400; its lowest setting is "between_tools".
+    assert model in (ai_utils.HAIKU, ai_utils.HAIKU_55, ai_utils.SONNET, ai_utils.SONNET_55, ai_utils.OPUS,
+                     ai_utils.OPUS_55)
     if model == ai_utils.OPUS_55:
         assert "thinking" not in client.calls[0]
         assert client.calls[0]["output_config"]["effort"] == ai_utils.ALWAYS_THINKING_DEFAULT_EFFORT
+    elif model == ai_utils.SONNET_55:
+        assert client.calls[0]["thinking"] == {"type": "between_tools"}
     else:
         assert client.calls[0]["thinking"] == {"type": "disabled"}
 

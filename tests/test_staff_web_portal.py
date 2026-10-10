@@ -481,8 +481,17 @@ def test_the_portal_follows_the_house_rules():
     assert '{% include "_csrf_fetch.html" %}' in page
     assert 'class="dr-pulse"' in page and "'Loading…'" not in page and ">Loading…<" not in page
     assert "function mdy(x)" in page and "toISOString().slice(0, 10)" not in page
-    assert "Cavnar AI" in page and not re.search(r"Cavnar(?! AI)\b", page.replace("cavnar", ""))
-    css = re.sub(r":root\{[^}]*\}|/\*.*?\*/|\{#.*?#\}", "", page.split("</style>")[0], flags=re.S)
+    # A header name (X-Cavnar-Display, the house X-Cavnar-* convention) is an
+    # identifier, not text anyone reads: the brand rule (tests/test_brand_name)
+    # skips a word joined by a dash, and so does this.
+    assert "Cavnar AI" in page and not re.search(r"(?<![\w-])Cavnar(?![\w-])(?! AI)", page.replace("cavnar", ""))
+    # The installed portal's browser chrome (MARKET-18, the PWA) takes a
+    # literal colour - a meta tag reads no CSS variable - so it is the one
+    # hex outside :root, held to the --paper token (as the 2FA page's is).
+    theme = re.search(r'<meta name="theme-color" content="(#[0-9a-fA-F]{6})">', page)
+    assert theme and "--paper:" + theme.group(1) + ";" in page
+    head = page.split("</style>")[0].replace(theme.group(0), "")
+    css = re.sub(r":root\{[^}]*\}|/\*.*?\*/|\{#.*?#\}", "", head, flags=re.S)
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", css), "colours come from the tokens"
     # Outward actions go through the confirm sheet, never one tap from a list.
     for act in ("'ask-yes'", "'ask-no'", "'offer-yes'", "'offer-no'", "claim:", "'to-withdraw'", "'to-cancel'",
