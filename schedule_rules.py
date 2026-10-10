@@ -93,7 +93,10 @@ NO_SHOW = NO_SHOW | frozenset({"outside_window", "missing_cert", "note_unavailab
 HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours", "long_run",
                             "minor_early", "minor_week_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
-                            "no_manager", "role_not_held", "role_window"})
+                            "no_manager", "role_not_held", "role_window",
+                            # the owner's own words, confirmed (owner_rules — scheduler
+                            # audit 10/10/26 RM-9): a person kept off, on, or closing
+                            "owner_word_off", "owner_word_on", "owner_word_close"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   # Past the restaurant's weekly ceiling with no maximum of
                   # their own: overtime, a priced policy limit, never a
@@ -104,7 +107,9 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
                   "rest_premium",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
-                  "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max"})
+                  "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max",
+                  # the same words read from the notes, not yet confirmed
+                  "owner_ask_on", "owner_ask_close"})
 # Soft flags about the roster, not the week, that still hold every publish:
 # with nobody counted as a floor manager the highest rule is unmet on every
 # shift and no draft can mend it, so the week waits until the owner names
@@ -164,6 +169,14 @@ LABELS = {
     # A shift running past close by more than its role may stay (re-audit
     # 10/4/26 PIPE-10): the cap the job's parser holds every model row to.
     "past_close": "runs past the time after close you allow the role",
+    # The owner's words as typed rules (owner_rules, scheduler audit 10/10/26
+    # RM-9): confirmed — the draft's instruction, or a note the owner made a
+    # rule — and read from the notes, not yet confirmed.
+    "owner_word_off": "on when your own words keep them off",
+    "owner_word_on": "not on when your own words put them on",
+    "owner_word_close": "not closing or opening when your own words say they do",
+    "owner_ask_on": "not on when your notes ask for them",
+    "owner_ask_close": "not closing or opening when your notes ask for it",
 }
 
 
@@ -1405,6 +1418,19 @@ class Constraints:
     daypart_split: int = None
     hours_rules: list = field(default_factory=list)
     hours_rules_unchecked: list = field(default_factory=list)
+    # The owner's words as typed rules (owner_rules — scheduler audit
+    # 10/10/26 RM-9, AI-9, AI-19, contract #5): a person who must be on
+    # ([{"key", "name", "dates", "daypart", "role", "quote", "hard"}]), who
+    # closes or opens their role ([{... "kind": "close"|"open"}]), a day
+    # lighter or heavier ([{"dates", "daypart", "role", "value", "quote"}]),
+    # and every typed rule applied, with its words (for the review). A rule
+    # of another kind lands in the fields above (floors, caps, times, pairs,
+    # blocked dates, note cautions). "hard" is a rule the owner stands
+    # behind (confirmed, or their own instruction for this draft).
+    owner_person_on: list = field(default_factory=list)
+    owner_person_close: list = field(default_factory=list)
+    owner_weights: list = field(default_factory=list)
+    typed_rules: list = field(default_factory=list)
 
     # ── lookups ────────────────────────────────────────────────────────
     def key(self, name) -> str:
@@ -4392,8 +4418,10 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
             kind = next((k for k, lab in LABELS.items() if lab == why), None)
             if kind is None:
                 # A held scheduling note names itself ("your note: no
-                # Tuesdays", person_note_holds) — never "approved time off".
+                # Tuesdays", person_note_holds) — never "approved time off";
+                # so does the owner's own rule ("your rule: …", owner_rules).
                 kind = ("note_unavailable" if str(why).startswith("your note:") else
+                        "owner_word_off" if str(why).startswith("your rule:") else
                         "elsewhere" if "another location" in why or "scheduled at" in why else "approved_time_off")
             out.append(_v(kind, i, r, why))
         slot = (c.sweep_key(name), r.get("date"), r.get("shift_start"))
@@ -4522,6 +4550,14 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
     # (apply_role_times); a row off it is worth a look, never a blocker.
     if getattr(c, "role_times", None) and not person_only:
         out.extend(_role_time_violations(rows, c))
+
+    # The owner's own words about one person on a day — on, closing,
+    # opening (owner_rules, scheduler audit 10/10/26 RM-9, AI-9): hard when
+    # the owner stands behind the rule, at the coverage rank, so no pass
+    # below it may undo one; soft while it is a reading of their notes.
+    if (getattr(c, "owner_person_on", None) or getattr(c, "owner_person_close", None)) and not person_only:
+        import owner_rules as _owr
+        out.extend(_owr.violations(rows, c, only_dates=({r.get("date") for r in rows or []} if day_only else None)))
 
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
@@ -5935,16 +5971,20 @@ TIER_TABLE = (
      "everything below; 1a and 2a may go past them only for a shift nobody can cover inside them."),
     (TIER_OVERTIME, "overtime", "Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the "
      "same role has room: overtime is a cost the owner does not want, only for a shift nobody else in the role "
-     "can legally work."),
-    (TIER_MIN_HOURS, "min_hours", "Fill shifts from the people still under their minimum hours first (MIN in "
-     "the ROSTER; a full-timer's is the full-time line), then from those with the most room before their "
-     "overtime line."),
+     "can legally work. Code holds it after you write — a bound, never a sum to work out."),
+    # Bounds, never a fill order (scheduler audit 10/10/26 AI-12): the
+    # min-hours and overtime stages hold them; the model was told to fill
+    # "from the people still under their minimum hours first", a running
+    # total across the week that code keeps and re-does anyway.
+    (TIER_MIN_HOURS, "min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
+     "full-time line) and their room before the overtime line are held by code after you write — bounds, never "
+     "a fill order to work out."),
     (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS, the people each role needs on each shift, with the "
      "floors the hard minimum inside them — met even when that costs more than the hours budget (4): the "
      "owner is told the overrun."),
     (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling) — the code holds the week to its dollars "
-     "at each person's own rate, overtime at its premium. Trim toward it only in ways that keep 1-3 intact; it "
-     "never adds hours."),
+     "at each person's own rate, overtime at its premium: code trims to it after you write, never through 1-3; "
+     "it never adds hours."),
     (TIER_QUALITY, "quality", "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S "
      "REQUEST FOR THIS DRAFT first, then leadership (every shift that needs somebody to run it has one and every "
      "SHIFT LEADER REQUIREMENT is met — by WHO works the shifts 3 calls for, never by hours past the budget), "
@@ -5988,6 +6028,14 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1): the
                # owner's staffing rules, ranked with the floors
                "role_window": TIER_COVERAGE, "over_role_max": TIER_COVERAGE,
+               # The owner's own words (owner_rules, scheduler audit 10/10/26
+               # RM-9, AI-9): confirmed, ranked with the owner's staffing
+               # rules, so no pass below them — the overtime rebalance, the
+               # minimum hours, the trim, the solver, the optimizer — may
+               # undo one; a proposal from the notes ranks with quality.
+               "owner_word_off": TIER_COVERAGE, "owner_word_on": TIER_COVERAGE,
+               "owner_word_close": TIER_COVERAGE,
+               "owner_ask_on": TIER_QUALITY, "owner_ask_close": TIER_QUALITY,
                # More servers on at once than there are sections — the
                # owner's own "most on at once", ranked with over_role_max:
                # with no tier no stage's judge saw a pass push a night past

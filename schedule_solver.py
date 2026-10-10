@@ -337,8 +337,14 @@ class Problem:
             self.fams_of.append({x for x in f if x})
         self.flexible = [len(f) > 1 for f in self.fams_of]
         self.cross_on = bool(cross or held)
+        # A person with a written note the code cannot read is kept as the
+        # draft had them — unless every open part of their note is read as
+        # rules (held, confirmed, or typed — owner_rules, scheduler audit
+        # 10/10/26 AI-10): those rules are in the Constraints the domains are
+        # built from, so the solver may choose them like anyone else.
+        read = {self.key(n) for n in (s.get("notes_read") or ())}
         self.constrained = {self.key(n) for n, note in (s.get("constraints") or {}).items()
-                            if n and str(note or "").strip()}
+                            if n and str(note or "").strip()} - read
         pend = pending if pending is not None else (getattr(self.c, "pending_off", None) or {})
         self.pending = {self.key(k): set(v or ()) for k, v in (pend or {}).items()}
         scores = s.get("scores") or {}

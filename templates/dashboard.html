@@ -22460,11 +22460,30 @@ function _schedHandleResult(data) {
     }
     bullEl.innerHTML = bHtml || '<div style="padding:2px 0;color:var(--ink3)">Nothing to compare yet \u2014 this is the first week.</div>';
   }
+  // Cavnar AI's note: its bullets as a list, each written from the FINISHED
+  // week and checked against its rows (schedule_narrative \u2014 scheduler audit
+  // 10/10/26 TRUST-15, AI-21; the array used to be escaped whole and read
+  // as one comma-joined run-on). Then the draft's own instruction as the
+  // rules code held it, each held or not (owner_rules chips \u2014 RM-9).
+  var narList = [].concat(data.narrative || []), chipList = data.instruction_rules || [];
   if (narEl) {
-    if (data.narrative) { narEl.innerHTML = '<div class="sr-k">Cavnar AI\u2019s note</div>' + _escHtml(data.narrative); narEl.style.display = 'block'; }
-    else { narEl.style.display = 'none'; narEl.innerHTML = ''; }
+    var nHtml = '';
+    if (narList.length) {
+      nHtml += '<div class="sr-k">Cavnar AI\u2019s note</div>';
+      for (var nb = 0; nb < narList.length; nb++) nHtml += '<div style="padding:2px 0">&#x2022; ' + num(String(narList[nb])) + '</div>';
+    }
+    if (chipList.length) {
+      nHtml += '<div class="sr-k" style="margin-top:8px">Your request, as rules</div><div style="display:flex;flex-wrap:wrap;gap:8px">';
+      for (var cb = 0; cb < chipList.length; cb++) {
+        var ch = chipList[cb] || {};
+        nHtml += '<span class="hb-chip ' + (ch.held ? 'good' : 'bad') + '" title="' + _escAttr('\u201c' + (ch.quote || '') + '\u201d' + (ch.why ? ' \u2014 ' + ch.why : '')) + '">'
+          + '<span class="dot"><i></i><b></b></span><span class="l">' + num(String(ch.words || '')) + (ch.held ? '' : ' \u2014 ' + _escHtml(ch.why || 'not held')) + '</span></span>';
+      }
+      nHtml += '</div>';
+    }
+    narEl.innerHTML = nHtml; narEl.style.display = nHtml ? 'block' : 'none';
   }
-  if (sumEl) sumEl.style.display = (bullEl && (data.summary || []).length) || data.narrative ? 'block' : 'none';
+  if (sumEl) sumEl.style.display = (bullEl && (data.summary || []).length) || narList.length || chipList.length ? 'block' : 'none';
 
   // Schedule table — drawn from _schedRows so a manager's edit can redraw
   // it without regenerating anything. The rows must be in hand before the
@@ -26863,10 +26882,30 @@ function _snrForm(i, rule, d) {
     + '<span class="ac-status" data-snr-status="' + i + '"></span></div>';
   return o;
 }
+// The typed rules Cavnar AI read from a sentence the plain reader could not
+// hold (owner_rules, scheduler audit 10/10/26 RM-9): each in its words, to
+// make a rule every week or for the picked week. Until then the draft holds
+// it softly.
+function _snrTyped(i, x, d) {
+  var t = x.typed || [], o = '', j;
+  if (!t.length) return '';
+  o += '<div class="snr-s"><b>Cavnar AI reads it as:</b> until you make it a rule, the draft keeps to it where it can.</div>';
+  for (j = 0; j < t.length; j++) {
+    o += '<div class="snr-act"><span class="snr-s">' + _numText(t[j].words) + '</span>'
+      + (d.can_edit ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-snr-typed="' + i + ':' + j + '" data-scope="every">Make it a rule · every week</button>'
+        + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-typed="' + i + ':' + j + '" data-scope="week">Week of <span class="hb-num">' + _escHtml(mdy(d.week_of)) + '</span> only</button>' : '')
+      + '</div>';
+  }
+  return o + '<span class="ac-status" data-snr-tstatus="' + i + '"></span>';
+}
 function snrHtml(d) {
   var ss = d.sentences || [], rules = d.rules || [], used = {}, h = '', i, x, ro = !d.can_edit;
   if (!ss.length && !rules.length) return '<div class="sw-note">Write a note above and Cavnar AI shows here how it reads each one — a minimum it can hold, like “keep two cooks on Friday lunch”, becomes a rule the draft is checked against.</div>';
   h += '<div class="snr-h">How Cavnar AI reads your notes</div>';
+  if (d.unread && !ro) {
+    h += '<div class="snr-act"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-read="1">Read my notes with Cavnar AI</button>'
+      + '<span class="snr-s"><span class="hb-num">' + _escHtml(String(d.unread)) + '</span> not read as rules yet — Cavnar AI also reads them when it drafts</span></div>';
+  }
   for (i = 0; i < ss.length; i++) {
     x = ss[i];
     var q = '<div class="snr-q">“' + _escHtml(x.text) + '”</div>';
@@ -26877,6 +26916,8 @@ function snrHtml(d) {
     } else if (x.kind === 'rule') {
       h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
         + (ro ? '' : _snrForm(i, x.rule, d)) + '</div>';
+    } else if (x.typed && x.typed.length) {
+      h += '<div class="snr-row offer">' + q + _snrTyped(i, x, d) + '</div>';
     } else if (x.kind === 'unchecked') {
       h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not checked.</b> ' + _escHtml(x.why || '') + ' The draft aims for it; check the draft against it yourself.</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-open="' + i + '">Make a minimum from it</button></div><div data-snr-slot="' + i + '"></div>') + '</div>';
@@ -26905,8 +26946,34 @@ function snrHtml(d) {
   return h;
 }
 document.addEventListener('click', function (ev) {
-  var t = ev.target && ev.target.closest ? ev.target.closest('[data-snr-day],[data-snr-add],[data-snr-remove],[data-snr-open]') : null;
+  var t = ev.target && ev.target.closest ? ev.target.closest('[data-snr-day],[data-snr-add],[data-snr-remove],[data-snr-open],[data-snr-typed],[data-snr-read]') : null;
   if (!t || !_snr) return;
+  if (t.hasAttribute('data-snr-read')) {
+    // The owner's press: the sentences no model has read are read now
+    // (owner_rules, RM-9) — proposals, nothing held until confirmed.
+    t.disabled = true;
+    fetch('/api/labor/note-rules/read', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(apiJson).then(function (d) {
+        if (d && d.ok) { ssLoadNoteRules(true); return; }
+        t.disabled = false; toast((d && d.error) || 'Your notes could not be read just now', 'error');
+      }).catch(function () { t.disabled = false; toast('Your notes could not be read just now', 'error'); });
+    return;
+  }
+  if (t.hasAttribute('data-snr-typed')) {
+    var ij = String(t.getAttribute('data-snr-typed')).split(':'), sx = (_snr.sentences || [])[+ij[0]];
+    var tr = sx && sx.typed ? sx.typed[+ij[1]] : null, ts = document.querySelector('[data-snr-tstatus="' + ij[0] + '"]');
+    if (!tr) return;
+    t.disabled = true;
+    if (ts) { ts.textContent = 'Saving…'; ts.className = 'ac-status'; }
+    fetch('/api/labor/note-rules/typed', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rule: tr.rule, source_text: sx.text, scope: t.getAttribute('data-scope'), week_start: _snr.week_of || ''})})
+      .then(apiJson).then(function (d) {
+        if (d && d.ok) { toast('Rule made — every draft is held to it'); ssLoadNoteRules(true); return; }
+        t.disabled = false;
+        if (ts) { ts.textContent = (d && d.error) || 'Could not save'; ts.className = 'ac-status err'; }
+      }).catch(function () { t.disabled = false; if (ts) { ts.textContent = 'Could not save'; ts.className = 'ac-status err'; } });
+    return;
+  }
   if (t.hasAttribute('data-snr-day')) {
     var on = !t.classList.contains('on'); t.classList.toggle('on', on); t.setAttribute('aria-pressed', on ? 'true' : 'false'); return;
   }

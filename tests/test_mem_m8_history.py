@@ -253,9 +253,11 @@ def test_the_verdict_is_stored_once_a_week(db):
     rid = _rid(db, "Stored Grill")
     _week(db, rid, _ws(0), "solver", 8)
     out = sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 5))
-    assert out["written"] == 1 and {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
+    # One row per experiment and week (the readout once named every experiment
+    # after its last metric, so the rows collapsed into one).
+    assert out["written"] == len(sx.EXPERIMENTS) and {"attempted", "ok", "failed", "skipped", "hit_bound"} <= set(out)
     assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 7))["written"] == 0     # the same ISO week
-    assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 12))["written"] == 1
+    assert sx.record_verdicts(db_path=db, today=dt.date(2026, 10, 12))["written"] == len(sx.EXPERIMENTS)
     rows = sx.verdicts(EXP["key"], db_path=db)
     assert [r["week"] for r in rows] == ["2026-W42", "2026-W41"] and rows[0]["method"] == sx.VERDICT_METHOD
     # One restaurant can never reach a verdict: paused, said (P-21).

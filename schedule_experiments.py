@@ -136,9 +136,31 @@ EXPERIMENTS = (
      "until_powered": "memory_on",
      "arms": ({"key": "memory_off", "label": "Learned memory off", "weight": 1, "flags": {"learned": False}},
               {"key": "memory_on", "label": "Learned memory on", "weight": 3, "flags": {"learned": True}})},
+    # Where the draft comes from (scheduler audit 10/10/26 AI-1, AI-8,
+    # AI-11; cross-workstream contract #7 — schedule_fallback): the model's
+    # week, the last published week carried forward and repaired, or the
+    # week shaped in code and solved. Judged like any arm, on acceptance and
+    # outcomes. "code_shaped" weighs 0 — reachable by a pin or the env
+    # switch (SCHEDULE_DRAFT_SOURCE), never by the hash — until workstream
+    # F's solver-first draft lands and the eval (schedule_eval) shows it
+    # does not lose on the stored weeks (RM-21). Every week takes the
+    # model's draft until the experiment can conclude (until_powered). The
+    # arm keys are this experiment's own: SCHEDULE_EXPERIMENT_PIN="solver"
+    # (assign_v1's arm) must never pin a week's DRAFT to code.
+    {"key": "draft_v1",
+     "active": True,
+     "started": "2026-10-10",
+     "question": "Does a draft built without the model (carried forward, or shaped in code) do as well as the model's?",
+     "control": "model_draft",
+     "until_powered": "model_draft",
+     "arms": ({"key": "model_draft", "label": "The model's draft", "weight": 1, "flags": {"draft_source": "model"}},
+              {"key": "carried", "label": "Last published week, carried forward", "weight": 1,
+               "flags": {"draft_source": "carry_forward"}},
+              {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 0,
+               "flags": {"draft_source": "solver"}})},
 )
 # What a week gets from a flag no active experiment sets.
-DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True}
+DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model"}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
 
@@ -359,6 +381,15 @@ def flag(arms, name, default=None) -> bool:
         if name in (a.get("flags") or {}):
             return bool(a["flags"][name])
     return bool(DEFAULT_FLAGS.get(name) if default is None else default)
+
+
+def value(arms, name, default=None):
+    """A flag's own value (draft_source names a source, not a yes/no); the
+    default when no arm sets it."""
+    for a in arms or []:
+        if name in (a.get("flags") or {}):
+            return a["flags"][name]
+    return DEFAULT_FLAGS.get(name) if default is None else default
 
 
 def record(restaurant_id, history_id, arms, quality_score=None, solver_applied=None, db_path=DB_PATH) -> None:
@@ -866,9 +897,11 @@ def readout(db_path=DB_PATH) -> dict:
                 "issues": [(rid, o["issues"]) for rid, o in outs],
                 "labor_pct": [(rid, o["labor_pct"]) for rid, o in outs],
                 "drr": [(r["restaurant_id"], rework[r["history_id"]]) for r in reworked]}
-            for key in ("labor_vs_target", "unmanaged_minutes", "uncovered_no_shows"):
-                series[a["key"]][key] = [(r["restaurant_id"], scored[r["history_id"]][key]) for r in pub
-                                         if (scored.get(r["history_id"]) or {}).get(key) is not None]
+            # `metric`, never `key`: the experiment's own key is read after
+            # this loop (it named every experiment "uncovered_no_shows").
+            for metric in ("labor_vs_target", "unmanaged_minutes", "uncovered_no_shows"):
+                series[a["key"]][metric] = [(r["restaurant_id"], scored[r["history_id"]][metric]) for r in pub
+                                            if (scored.get(r["history_id"]) or {}).get(metric) is not None]
             arms.append({
                 "arm": a["key"], "label": a.get("label") or a["key"], "flags": dict(a.get("flags") or {}),
                 "generated": len(live), "pinned": sum(1 for r in mine if r["arm"] == a["key"] and r["pinned"]),

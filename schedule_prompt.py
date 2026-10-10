@@ -179,9 +179,10 @@ LAYOUT = (
     "Every date in this request reads as a weekday and an ISO date (\"Fri 2026-10-09\"), so you know the day; in "
     "your answer a date is the ISO date alone, without its weekday, as OUTPUT says.\n"
     "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below. "
-    "After you answer, code counts every daypart and half hour against SHIFT REQUIREMENTS, re-checks every closer, "
-    "everyone's hours and every rule, and repairs what falls short, so do not spend effort re-counting or "
-    "re-verifying your rows: choose once, well, and write them.")
+    + "CODE OWNS THE ARITHMETIC: after you answer, code counts every daypart and half hour against SHIFT "
+    "REQUIREMENTS, re-checks every closer and every rule, and holds every person's hours, minimum, overtime line, "
+    "rest and days in a row and the week's hours ceiling — repairing what falls short. Those figures are bounds on "
+    "your choices, never sums for you to work out: choose once, well, and write the rows.")
 
 RULE_MARKS = (
     "HOW RULES ARE MARKED\n"
@@ -198,50 +199,57 @@ def _coverage_text() -> str:
     late_start = _clock(_sq.LATE_WINDOW_START)
     late_after = _clock(_sq.LATE_CLOSE_AFTER)
     (lo_m, hi_m), (lo_n, hi_n) = _sq.CORE_WINDOWS["morning"], _sq.CORE_WINDOWS["night"]
+    # What the shape needs to mean the same as code (scheduler audit 10/10/26
+    # AI-13): the presence rule, the ramp, a late night, the night's date
+    # and the close. How the floors and the half hours are held is code's —
+    # the floors stage, the top-up and the stagger recount it — so it is one
+    # clause, not a lesson in counting.
     return (
-        "HOW COVERAGE IS COUNTED\n"
-        "- Coverage is counted by who is on the floor. " + _req.presence_rule() + "\n"
-        "- A role's number on a shift counts everyone present for that daypart by that rule, not only the shifts "
-        "that start in it: a shift that counts at dinner this way is already one of dinner's people — it counts "
-        "toward the number, it does not add to it — and a shift that falls short of the dinner window does not "
-        "count at dinner at all. Lunch and dinner are separate numbers, never one day's total to split.\n"
-        "- The owner's staffing floors are held half hour by half hour through each daypart's core service window "
-        f"(lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}, inside the day's open hours), "
-        "not only at the peak; where SHIFT REQUIREMENTS give half-hour numbers, every half hour of the daypart is "
-        "judged against them too.\n"
-        "- \"by the half hour\" in SHIFT REQUIREMENTS is how many of a role a shift needs on at once as its sales "
-        "climb and fall, read from the restaurant's own hourly sales: \"Server 2 from 11:00am, 4 from 12:00pm\" means "
-        "two on from eleven and four from noon. Starts and ends follow it — the ramp in and the taper out — and the "
-        "shift's number is its whole crew across the daypart.\n"
+        "HOW COVERAGE IS COUNTED (code counts it after you write; this is what the numbers mean)\n"
+        "- Coverage is who is on the floor. " + _req.presence_rule() + " Lunch and dinner are separate numbers; a "
+        "shift that counts at dinner is one of dinner's people, never an extra one.\n"
+        "- \"by the half hour\" in SHIFT REQUIREMENTS is how many of a role are on at once as sales climb and fall "
+        "(\"Server 2 from 11:00am, 4 from 12:00pm\": two from eleven, four from noon); the floors hold through each "
+        f"daypart's core window (lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}).\n"
         f"- A \"late night\" line is the people on from {late_start} to close on a night that closes after "
         f"{late_after}; they count in the night's number too.\n"
-        "- A shift that starts after midnight belongs to the night before: write it on that night's date (a "
-        "12:30am-4:00am porter after Friday's close is dated Friday).\n"
-        "- A date's close time is the latest any shift that date may end, except a role the rules say stays after "
-        "close. Use the close of that exact date: a busier day changes the headcount, never the close.")
+        "- A shift that starts after midnight belongs to the night before: write it on that night's date.\n"
+        "- A date's close is the latest any shift that date may end, except a role the rules say stays after close.")
 
 
+# Each default says what shapes the judgement; a rule code already holds is
+# one clause naming that it is held (scheduler audit 10/10/26 AI-13): the
+# stagger stage spreads starts along the ramp, the replace stage and the
+# solver's domains keep everyone to CAN WORK, the overtime and minimum-hours
+# stages and the budget trim hold the hours.
 DEFAULTS = (
     "HOW TO WRITE SHIFTS — defaults. They apply only where this restaurant's own data (SHIFT REQUIREMENTS, its "
     "RESTAURANT HOURS & SHIFT RULES, its ROSTER and history) says nothing, and they rank last (PRIORITIES 5).\n"
-    "- Starts follow the half-hour ramp: people of one role start together only when the ramp or a floor needs "
-    "them on at the same time; otherwise they stagger in as the numbers climb.\n"
-    "- The taper: where a shift has half-hour numbers, people leave as the numbers fall. Where it has none, keep "
-    "one or two servers on through close for stragglers and closing side-work — never fewer than a floor for that "
-    "time — and end the rest once that night's sales fall; a busier night takes more servers earlier, never more "
-    "kept until close.\n"
-    "- Shift length: most servers work a lunch/day shift or a dinner/night shift; one or two a day may work "
-    "straight through, opening to close. This is about length, never headcount: each daypart keeps its full number.\n"
+    "- Starts and ends follow the half-hour numbers — the ramp in, the taper out (code staggers the starts). Where "
+    "a shift has none, keep one or two servers on through close for stragglers and side-work, never fewer than a "
+    "floor, and end the rest once the night's sales fall.\n"
+    "- Shift length: most servers work a lunch/day or a dinner/night shift; one or two a day may work straight "
+    "through. This is about length, never headcount: each daypart keeps its full number.\n"
     "- Somebody the ROSTER shows missing shifts or arriving late: pair them with a dependable teammate of their "
-    "role on the same shift, and never make them the only one of their role who opens or closes a day. Never add a "
-    "person beyond SHIFT REQUIREMENTS for it — Cavnar AI recommends any standby to the owner itself.\n"
-    "- Roles: schedule a person only in a role their CAN WORK lists. Each role is paid its own rate (the role rates "
-    "in the context), so moving somebody to another role is a cost choice like any other.\n"
-    "- Hours: SHIFT REQUIREMENTS give each shift its people and each date its hours target — the one hours figure "
-    "to plan a date by; the weekly ceiling only ever removes hours. Every other hours figure in this request (sales "
-    "per labor hour, past weeks, peers) is context, never a target.\n"
+    "role, never the only one who opens or closes a day, never a person added for it.\n"
+    "- Roles: code keeps each person to the roles their CAN WORK lists; each role is paid its own rate.\n"
+    "- Hours: each date's hours target in SHIFT REQUIREMENTS is the one hours figure to plan a date by; every other "
+    "hours figure here (sales per labor hour, past weeks, peers) is context, never a target.\n"
     "- With no RESTAURANT HOURS & SHIFT RULES, base start and end times on this restaurant's own history: prep "
     "starts before the doors open and closers stay until service ends.")
+
+# The same defaults for the shape contract (AI-14): the model writes slots,
+# never names — nothing in them is about a person.
+SHAPE_DEFAULTS = (
+    "HOW TO WRITE SLOTS — defaults. They apply only where this restaurant's own data (SHIFT REQUIREMENTS, its "
+    "RESTAURANT HOURS & SHIFT RULES, its usual shifts) says nothing, and they rank last (PRIORITIES 5).\n"
+    "- Starts and ends follow the half-hour numbers — the ramp in, the taper out (code staggers the starts). Where "
+    "a shift has none, keep one or two servers on through close and end the rest once the night's sales fall.\n"
+    "- Slot length: most server slots are a lunch/day or a dinner/night shift; one or two a day may run straight "
+    "through. Each daypart keeps its full number.\n"
+    "- Never more slots of a role at once than AVAILABLE BY DAY says can work it.\n"
+    "- Hours: each date's hours target in SHIFT REQUIREMENTS is the one hours figure to plan a date by.\n"
+    "- With no RESTAURANT HOURS & SHIFT RULES, base slot times on THIS RESTAURANT'S USUAL SHIFTS.")
 
 
 def _notes_rule(structured: bool, note_words: str) -> str:
@@ -281,14 +289,14 @@ def _output_text(structured: bool, enums: bool = True, contract: str = "schema")
         # The shape alone (#69): code chooses who works each slot
         # (schedule_engine.assign_shape_slots, the solver).
         spec = ("OUTPUT — JSON only, matching the schema you were given. You write the SHAPE of each day, never "
-                "names: who works each slot is chosen afterwards in code, from the ROSTER, against every rule — "
+                "names: who works each slot is chosen afterwards in code, from the roster, against every rule — "
                 "availability, hours, rest, overtime, the roles each person can work, the manager and closer rules. "
                 "`days` has one entry per date of THIS REQUEST that you staff: its `date` — the ISO date alone, "
                 "without its weekday — and its `slots`, each written with one-letter keys: `r` the role, `s` the "
                 "start and `t` the end " + times + " (an end at or before the start runs past midnight), `c` how many "
                 "people work exactly that role and those times (a whole number, 1 or more), and `n` the note when "
-                "one applies. Size each day from SHIFT REQUIREMENTS and the ROSTER: never more slots of a role at "
-                "once than the people who can work that role and are available that day. `summary` is at most three "
+                "one applies. Size each day from SHIFT REQUIREMENTS and AVAILABLE BY DAY: never more slots of a role "
+                "at once than the people who can work that role that day. `summary` is at most three "
                 "bullets: the week's biggest decisions and why. Do not use it to report what the week misses — it "
                 "is checked in code and shown to the owner. Write the JSON object and nothing else.")
     elif structured:
@@ -422,6 +430,20 @@ _WHERE_WORDS_RANK = (
 PRIORITIES = _priorities()
 
 
+# The shape contract's PRIORITIES (scheduler audit 10/10/26 AI-14): the
+# model writes slots, so 1a is about the slots around MANAGER COVERAGE and
+# 1b about how many people can work, never about a named person.
+SHAPE_PRIORITIES = (PRIORITIES
+                    .replace("Where MANAGER COVERAGE plans the managers' shifts, code adds those rows to your answer: "
+                             "do not write them, and write no other shift for those managers on those dates;",
+                             "Where MANAGER COVERAGE plans the managers' shifts, code adds those rows to your answer: "
+                             "write no slot for them — the other slots sit inside each day's manager window;")
+)
+SHAPE_PRIORITIES = re.sub(r"and each person's own limits in the ROSTER and the rules — .*? — and each date's",
+                          "and how many people AVAILABLE BY DAY says can work each role (code holds each person's "
+                          "own limits when it fills the slots) — and each date's", SHAPE_PRIORITIES, count=1)
+
+
 _STATIC = {}
 
 
@@ -442,11 +464,12 @@ def static_block(structured: bool = True, note_words: str = "", enums: bool = Tr
     contract = contract if (structured and contract in ("compact", "shape")) else "schema"
     key = (bool(structured), note_words, enums, contract)
     if key not in _STATIC:
-        layout = LAYOUT if contract != "shape" else LAYOUT.replace(LAYOUT_JUDGEMENT, SHAPE_JUDGEMENT)
+        shape = contract == "shape"
+        layout = LAYOUT if not shape else LAYOUT.replace(LAYOUT_JUDGEMENT, SHAPE_JUDGEMENT)
         _STATIC[key] = "\n\n".join([
-            layout, RULE_MARKS, _coverage_text(), DEFAULTS,
+            layout, RULE_MARKS, _coverage_text(), SHAPE_DEFAULTS if shape else DEFAULTS,
             "NOTES AND TIMES\n" + _notes_rule(structured, note_words) + "\n" + _times_rule(structured, enums),
-            _output_text(structured, enums, contract), _example_text(), PRIORITIES])
+            _output_text(structured, enums, contract), _example_text(), SHAPE_PRIORITIES if shape else PRIORITIES])
     return _STATIC[key]
 
 
@@ -455,7 +478,40 @@ def static_block(structured: bool = True, note_words: str = "", enums: bool = Tr
 LAYOUT_JUDGEMENT = "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below."
 SHAPE_JUDGEMENT = ("Your part is the judgement of the shape: which shifts each day has, in which role, from when to "
                    "when and how many people on each — choosing within the rules below. Code chooses who works each "
-                   "shift, from the ROSTER, against the same rules.")
+                   "slot, from the roster, against the same rules.")
+
+
+# ── the shape contract's slim input (scheduler audit 10/10/26 AI-14) ────────
+
+def availability_table(counts, dates) -> str:
+    """AVAILABLE BY DAY — what a slot-writing model needs in place of the
+    ROSTER's 250 eleven-column person lines: per date and daypart, how many
+    of each role can work it, how many of those may close it, and how many
+    managers. `counts` is {(date, daypart): {role: {"can", "closers",
+    "managers"}}} (schedule_engine.shape_availability, from the Constraints)."""
+    if not counts:
+        return ""
+    lines = []
+    for d in sorted(dates or []):
+        for part, word in (("morning", "lunch"), ("night", "dinner")):
+            roles = counts.get((d, part)) or {}
+            if not roles:
+                continue
+            bits = []
+            for role in sorted(roles, key=str.lower):
+                x = roles[role] or {}
+                extra = []
+                if x.get("closers"):
+                    extra.append(f"{x['closers']} may close")
+                if x.get("managers"):
+                    extra.append(f"{x['managers']} managers")
+                bits.append(f"{role} {int(x.get('can') or 0)}" + (f" ({', '.join(extra)})" if extra else ""))
+            lines.append(f"  {day_date(d)} {word}: " + "; ".join(bits))
+    if not lines:
+        return ""
+    return ("\n\nAVAILABLE BY DAY — how many of each role on the roster can work each date and daypart (time off, "
+            "availability, notes and every person's limits already taken out). Never more slots of a role at once "
+            "than this; code picks the people:\n" + "\n".join(lines))
 
 
 # ── the ROSTER table (one line per person, PR-33) ────────────────────────────

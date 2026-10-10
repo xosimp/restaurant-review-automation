@@ -185,13 +185,17 @@ def test_every_workflow_whose_first_rung_is_cheaper_than_its_old_model_is_canari
     the owner's own decision (Sonnet 5.5 first on the stored-week eval)."""
     import ai_utils
     import ai_workflows as wf
-    rank = {ai_utils.HAIKU: 1, ai_utils.SONNET: 2}
+    # By model CLASS (scheduler audit 10/10/26 AI-27): T1 moved from Haiku
+    # 4.5 to Haiku 5.5 — a newer Haiku, canaried as a tier (AI_TIER_CANARY,
+    # tests/test_sf10_e_haiku55.py) — so a Haiku call site on T1 is not a
+    # cheaper class of model than it ran on; a Sonnet one is.
+    rank = {ai_utils.HAIKU: 1, ai_utils.HAIKU_55: 1, ai_utils.SONNET: 2}
     exempt = {"labor_schedule"}
     for name, p in wf.POLICIES.items():
         if name in exempt or not p.purpose or p.ladder[0] not in ("T1", "T2"):
             continue
         before = ai_utils.MODELS[p.purpose][1]
-        first = {"T1": ai_utils.HAIKU, "T2": ai_utils.SONNET}[p.ladder[0]]
+        first = {"T1": ai_utils.HAIKU_55, "T2": ai_utils.SONNET}[p.ladder[0]]
         cheaper = before in rank and rank[first] < rank[before]
         assert p.canary == cheaper, name
     assert {n for n, p in wf.POLICIES.items() if p.canary} == {

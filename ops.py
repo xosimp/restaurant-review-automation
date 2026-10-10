@@ -2755,6 +2755,11 @@ _RETENTION_DAYS = {
     # quarter (the floor), and each row carries a whole compressed request —
     # the second half-year was volume nothing read.
     "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
+    # One row a schedule generation (schedule_metrics — scheduler audit
+    # 10/10/26 AI-2, AI-23, RM-1): its cost, the model rows' survival, the
+    # stage attribution and the post-model context. A year, so cost per
+    # accepted week reads across seasons; the eval copies what it freezes.
+    "schedule_generation_metrics": int(os.getenv("RETAIN_SCHEDULE_METRICS_DAYS", "365")),
     # What each saved week was checked and scored against (schedule_output.
     # record_check_snapshot, schedule audit 10/10/26 ARCH-35): the other
     # half of a replay, kept as long as the calls it replays with.
@@ -2843,7 +2848,8 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
-    "schedule_model_calls": "created_at", "schedule_check_snapshots": "created_at",
+    "schedule_model_calls": "created_at", "schedule_generation_metrics": "created_at",
+    "schedule_check_snapshots": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
@@ -2976,6 +2982,8 @@ _RETENTION_FLOOR_DAYS = {
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
     "schedule_model_calls": 90, "schedule_check_snapshots": 90,
+    # schedule_metrics.summary reads 90 days of generations.
+    "schedule_generation_metrics": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
     # batch's own record for the console's "what did the last pass do".
     "ai_batch_jobs": 7, "ai_batch_items": 7,
@@ -3119,6 +3127,7 @@ _RETENTION_READERS = {
     # last 60 days of calls.
     "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),
                              ("schedule_output.call_costs", 60, None)),
+    "schedule_generation_metrics": (("schedule_metrics.summary", 90, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so

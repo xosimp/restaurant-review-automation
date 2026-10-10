@@ -192,7 +192,9 @@ def test_every_default_model_is_sent_a_thinking_config_it_accepts(purpose, monke
     model = ai_utils.model_for(purpose)
     client = _Client()
     ai_utils.create_with_retry(client, model=model, max_tokens=10)
-    assert model in (ai_utils.HAIKU, ai_utils.SONNET, ai_utils.OPUS, ai_utils.OPUS_55)
+    # Haiku 5.5 (scheduler audit 10/10/26 AI-27: the schedule's small calls)
+    # takes thinking disabled at its default effort, as Haiku 4.5 does.
+    assert model in (ai_utils.HAIKU, ai_utils.HAIKU_55, ai_utils.SONNET, ai_utils.OPUS, ai_utils.OPUS_55)
     if model == ai_utils.OPUS_55:
         assert "thinking" not in client.calls[0]
         assert client.calls[0]["output_config"]["effort"] == ai_utils.ALWAYS_THINKING_DEFAULT_EFFORT
