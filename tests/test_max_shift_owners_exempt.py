@@ -63,6 +63,7 @@ def test_owners_and_managers_keep_their_own_turnaround_and_overlaps_still_count(
     """Andrew Marola closes Saturday and opens Sunday by choice (owner,
     10/6/26: "exempt andrew from the rest rule too")."""
     c = _c()
+    c.compliance["min_rest_hours"] = 10                     # an owner's rest rule (no default since 10/10/26)
     c.managers["andrew marola"] = "Manager"
     assert not sr.rest_rule_applies(c, "Andrew Marola") and sr.rest_rule_applies(c, "Jose Quintana Morales")
     kinds = lambda rows: [v["kind"] for v in sr.violations(rows, c, person_only=True)]  # noqa: E731

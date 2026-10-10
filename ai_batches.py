@@ -112,8 +112,10 @@ log = logging.getLogger("ai_batches")
 # recipes), the weekly digest's narrative written before the send (#61,
 # reporter) and the quiet-night post drafts (#62, strategy_jobs). An explicit
 # AI_BATCHES_WORKFLOWS replaces this list, so it must name every one to keep it.
+# The schedule auto-draft (labor_schedule — scheduler audit 10/10/26 RM-10,
+# schedule_batch) joined them: nobody waits on it either.
 DEFAULT_WORKFLOWS = ("dsr_narrative,shadow_arms,review_diagnosis,food_cost_diagnosis,competitor_insight,"
-                     "recipe_draft,weekly_digest,quiet_night_post")
+                     "recipe_draft,weekly_digest,quiet_night_post,labor_schedule")
 # The batches endpoints carry a whole request set up and a JSONL file back.
 API_TIMEOUT_SECONDS = 60.0
 # The collector's bounds per pass (CLAUDE.md: bounded; the jobs table is the

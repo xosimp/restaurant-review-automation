@@ -41,6 +41,15 @@ ALLOWLIST = {
     ("ai_reviewer.py", "review_text"):
         "a reviewer's score and flags (JSON schema, score clamped 0-1, at most 3 flags): never shown as owner "
         "prose; a flag is handed to the next attempt as notes and the next draft is validated as usual",
+    # Scheduler audit 10/10/26 (workstream E): the owner's words read into
+    # typed rules — never prose an owner reads — and the note written from
+    # the finished week, whose bullets go through the schedule_note surface.
+    ("owner_rules.py", "_model_call"):
+        "typed rules JSON (owner_rules.rules_schema): owner_rules.validate keeps a rule only when its person is on "
+        "the roster, its role one the restaurant uses, its dates in the week and its count or weight in range",
+    ("schedule_narrative.py", "write"):
+        "the note's bullets: labor._drop_note_bullets runs the engine (surface schedule_note), then "
+        "schedule_narrative.final_rows_problem drops any bullet the final week does not hold",
     ("labor.py", "generate_optimized_schedule"):
         "schedule rows (the generation's JSON schema: roster, roles, dates and times as enums, a row's note "
         "one of schedule_output.NOTE_VALUES — the CSV fallback's notes mapped to it): schedule_rules.violations "

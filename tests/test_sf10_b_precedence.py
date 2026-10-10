@@ -94,11 +94,15 @@ def test_a_rule_the_jurisdiction_makes_law_outranks_the_manager_rule():
 
 def test_the_illinois_pack_marks_its_law_and_a_weaker_owner_value_is_not():
     import compliance_packs
+    # Illinois law is the One Day Rest in Seven Act (and meal periods); the
+    # 10-hour rest is Chicago's Fair Workweek ordinance, for covered
+    # employers only (J1, lead 10/10/26) — never Illinois law.
     merged = compliance_packs.apply(dict(sr.DEFAULTS), "IL")
-    assert set(merged["_pack"]["law"]) == {"min_rest_hours", "max_consecutive_days"}
-    weaker = compliance_packs.apply(dict(sr.DEFAULTS, min_rest_hours=8), "IL", owner_set={"min_rest_hours": 8})
-    assert "min_rest_hours" not in weaker["_pack"]["law"]
-    assert compliance_packs.apply(dict(sr.DEFAULTS), "CA")["_pack"]["law"] == []
+    assert set(merged["_pack"]["law"]) == {"max_consecutive_days"} and merged["min_rest_hours"] is None
+    weaker = compliance_packs.apply(dict(sr.DEFAULTS, max_consecutive_days=7), "IL",
+                                    owner_set={"max_consecutive_days": 7})
+    assert "max_consecutive_days" not in weaker["_pack"]["law"]
+    assert "min_rest_hours" not in compliance_packs.apply(dict(sr.DEFAULTS), "CA")["_pack"]["law"]
 
 
 def test_the_tiers_rank_policy_below_manager_and_coverage():

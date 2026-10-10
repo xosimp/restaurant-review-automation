@@ -2755,6 +2755,11 @@ _RETENTION_DAYS = {
     # quarter (the floor), and each row carries a whole compressed request —
     # the second half-year was volume nothing read.
     "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
+    # One row a schedule generation (schedule_metrics — scheduler audit
+    # 10/10/26 AI-2, AI-23, RM-1): its cost, the model rows' survival, the
+    # stage attribution and the post-model context. A year, so cost per
+    # accepted week reads across seasons; the eval copies what it freezes.
+    "schedule_generation_metrics": int(os.getenv("RETAIN_SCHEDULE_METRICS_DAYS", "365")),
     # What each saved week was checked and scored against (schedule_output.
     # record_check_snapshot, schedule audit 10/10/26 ARCH-35): the other
     # half of a replay, kept as long as the calls it replays with.
@@ -2785,7 +2790,28 @@ _RETENTION_DAYS = {
     # scope, rewritten on every new version — a row not rebuilt in a month
     # is a scope nobody reads any more (a login that left, a changed role).
     "context_sections":   int(os.getenv("RETAIN_CONTEXT_SECTIONS_DAYS", "30")),
+    # The compliance records (schedule audit 10/10/26 RM-15, MARKET-4):
+    # staff's written consents, the predictability-pay and rest-premium
+    # ledger, good-faith estimates, the written answers to change requests
+    # and the access-to-hours offers — three years, what Chicago, New York
+    # City, Seattle, San Francisco, Oregon, Evanston, Berkeley and
+    # Emeryville require scheduling records be kept (compliance_packs
+    # records_years). The floor is the same: never shorter.
+    "staff_consents":        int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "compliance_pay_ledger": int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "good_faith_estimates":  int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "fww_requests":          int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    "fww_access_offers":     int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
 }
+
+# Three years: how long a restaurant a predictive-scheduling law covers keeps
+# its scheduling records (compliance_packs records_years). The staff
+# communications, offers and attendance below are kept two years for
+# everyone; a restaurant under such a law keeps them three (`_records_held`,
+# MARKET-4) — a chain on Cavnar AI used to lose them a year early.
+RECORDS_HOLD_DAYS = 1095
+_RETENTION_HOLD_TABLES = frozenset({"attendance_events", "shift_offers", "staff_announcements",
+                                    "staff_announcement_recipients", "staff_thread_messages", "staff_running_late"})
 
 # Each table's own timestamp column — they do not agree on a name.
 _RETENTION_COLUMN = {
@@ -2822,13 +2848,16 @@ _RETENTION_COLUMN = {
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
-    "schedule_model_calls": "created_at", "schedule_check_snapshots": "created_at",
+    "schedule_model_calls": "created_at", "schedule_generation_metrics": "created_at",
+    "schedule_check_snapshots": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
     "context_sections": "built_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
+    "staff_consents": "created_at", "compliance_pay_ledger": "created_at", "good_faith_estimates": "created_at",
+    "fww_requests": "created_at", "fww_access_offers": "created_at",
     "schedule_publish_overrides": "shown_at",
     "schedule_calibration_runs": "run_at",
 }
@@ -2953,6 +2982,8 @@ _RETENTION_FLOOR_DAYS = {
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
     "schedule_model_calls": 90, "schedule_check_snapshots": 90,
+    # schedule_metrics.summary reads 90 days of generations.
+    "schedule_generation_metrics": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
     # batch's own record for the console's "what did the last pass do".
     "ai_batch_jobs": 7, "ai_batch_items": 7,
@@ -2966,6 +2997,9 @@ _RETENTION_FLOOR_DAYS = {
     # A Live Activity lasts a night at most (a service) — a few days covers
     # the longest one; a live session re-registers its tokens on every open.
     "live_activity_runs": 7, "live_activity_tokens": 31,
+    # The compliance records: three years, never less (RM-15, MARKET-4).
+    "staff_consents": 1095, "compliance_pay_ledger": 1095, "good_faith_estimates": 1095,
+    "fww_requests": 1095, "fww_access_offers": 1095,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -3093,6 +3127,7 @@ _RETENTION_READERS = {
     # last 60 days of calls.
     "schedule_model_calls": (("schedule_output.measured_tokens_per_row", 60, None),
                              ("schedule_output.call_costs", 60, None)),
+    "schedule_generation_metrics": (("schedule_metrics.summary", 90, None),),
 }
 # Readers that reach past their table's window today, each with the reason
 # it is left for now — found by the mapped sweep (9/29/26) and listed so
@@ -3440,6 +3475,30 @@ def _thin_drafts(conn, deadline):
     return out
 
 
+def _records_held(conn) -> list:
+    """The restaurants a predictive-scheduling law covers today, whose
+    scheduling records are kept three years (compliance_packs
+    records_hold_days ≥ RECORDS_HOLD_DAYS). Read once per pass; a failure
+    holds nobody back from the usual windows (logged)."""
+    try:
+        from types import SimpleNamespace
+        import compliance_packs
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(restaurants)")}
+        want = [c for c in ("id", "jurisdiction", "compliance_profile_json", "aivis_city_json", "mailing_address")
+                if c in cols]
+        if "compliance_profile_json" not in want:
+            return []
+        out = []
+        for row in conn.execute(f"SELECT {', '.join(want)} FROM restaurants WHERE compliance_profile_json IS NOT NULL"):
+            r = SimpleNamespace(**{k: row[k] for k in want})
+            if compliance_packs.records_hold_days(r) >= RECORDS_HOLD_DAYS:
+                out.append(int(row["id"]))
+        return out
+    except Exception as e:
+        log.error(f"records hold not read: {e}")
+        return []
+
+
 def _compact_version_quality(conn, deadline) -> int:
     """Versions written before 10/10/26 that still hold their whole
     evaluation inline (SCALE-4): the whole moved to quality_blobs under its
@@ -3485,7 +3544,7 @@ def _gc_quality_blobs(conn, deadline) -> int:
         (), deadline)
 
 
-def _prune_schedules(conn, deadline, refused=None):
+def _prune_schedules(conn, deadline, refused=None, held=None):
     """Old schedule states, never a published week (#72): intermediate saves
     of weeks past SCHEDULE_VERSIONS_KEEP_DAYS (each week keeps its newest
     version, every published one and its generated draft — the diff the
@@ -3493,7 +3552,9 @@ def _prune_schedules(conn, deadline, refused=None):
     never published or shared, past SUPERSEDED_DRAFTS_KEEP_DAYS. First, the
     detail of superseded drafts and old intermediate versions is thinned
     (_thin_drafts). A window under its floor is refused (appended to
-    `refused`). Returns {table: rows}."""
+    `refused`). `held`: restaurants under a predictive-scheduling law, whose
+    intermediate versions (a cover, a swap, an edit sent to staff) are kept
+    RECORDS_HOLD_DAYS (MARKET-4). Returns {table: rows}."""
     out = {}
     try:
         out.update(_thin_drafts(conn, deadline))
@@ -3509,12 +3570,15 @@ def _prune_schedules(conn, deadline, refused=None):
             refused.append(st)
     versions_days = retention_days("schedule_versions")
     if versions_days:
-        n = _chunked_delete(
-            conn, "schedule_versions",
-            "created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
-            "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
-            "               WHERE v2.history_id = schedule_versions.history_id)",
-            (f"-{versions_days} days",), deadline)
+        where = ("created_at < datetime('now', ?) AND reason NOT IN ('published', 'generated') "
+                 "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 "
+                 "               WHERE v2.history_id = schedule_versions.history_id)")
+        args = [f"-{versions_days} days"]
+        if held and versions_days < RECORDS_HOLD_DAYS:
+            where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "
+                      "AND created_at >= datetime('now', ?))")
+            args += list(held) + [f"-{RECORDS_HOLD_DAYS} days"]
+        n = _chunked_delete(conn, "schedule_versions", where, tuple(args), deadline)
         if n:
             out["schedule_versions"] = n
     drafts_days = retention_days("superseded_drafts")
@@ -3636,6 +3700,7 @@ def prune_ledgers(db_path=None):
     # newsletter results — never pruned, so what the raw rows said
     # outlives them.
     rolled = _run_rollups(db_path)
+    held = _records_held(conn)
 
     try:
         for table in list(_RETENTION_DAYS):
@@ -3660,8 +3725,14 @@ def prune_ledgers(db_path=None):
                 # A table may keep some rows for good whatever their age
                 # (_RETENTION_ONLY: rec_events keeps every answer).
                 only = _RETENTION_ONLY.get(table)
-                n = _chunked_delete(conn, table, f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""),
-                                    (f"-{days} days",), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
+                where, args = f"{col} < datetime('now', ?)" + (f" AND {only}" if only else ""), [f"-{days} days"]
+                # A restaurant a predictive-scheduling law covers keeps these
+                # three years (MARKET-4).
+                if table in _RETENTION_HOLD_TABLES and held and days < RECORDS_HOLD_DAYS:
+                    where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "
+                              f"AND {col} >= datetime('now', ?))")
+                    args += list(held) + [f"-{RECORDS_HOLD_DAYS} days"]
+                n = _chunked_delete(conn, table, where, tuple(args), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
                 if n:
                     deleted[table] = n
                 if n >= RETENTION_PASS_MAX_ROWS:
@@ -3692,7 +3763,7 @@ def prune_ledgers(db_path=None):
                 pass
             log.debug(f"prune_ledgers skipped inventory_history: {e}")
         try:
-            deleted.update(_prune_schedules(conn, deadline, refused=refused))
+            deleted.update(_prune_schedules(conn, deadline, refused=refused, held=held))
         except Exception as e:
             try:
                 conn.rollback()
