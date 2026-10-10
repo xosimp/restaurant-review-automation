@@ -5916,26 +5916,12 @@ def schedule_status(current_user, job_id):
     """Poll for schedule generation result. Scoped to the caller's own
     restaurant — this used to be unauthenticated on the reasoning that the
     job id is an unguessable UUID, which is true but left the result readable
-    by anyone who saw the id in a log or a shared screen."""
-    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
-    if not job:
-        return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
-    if job["status"] == "pending":
-        # How long the job can still run, when it set its deadline (schedule
-        # audit 10/3/26 P-22), and the days drafted so far (AI cost audit
-        # 10/7/26 #36: {days_total, days_drafted, dates_drafted}) — the
-        # mobile twin says the same.
-        return jsonify({"ok": True, "status": "pending", "seconds_left": job.get("seconds_left"),
-                        "progress": job.get("progress")})
-    try:
-        result = dict(job["result"])
-        result["status"] = job["status"]
-        if job["status"] == "done":
-            present_schedule_result(current_user["restaurant_id"], result, current_user.get("id"))
-            attach_labor_view(current_user["restaurant_id"], result)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
+    by anyone who saw the id in a log or a shared screen.
+
+    Web twin — the one body is mobile_api.mobile_schedule_status (schedule
+    audit 10/10/26 ARCH-32): this copy handed the raw exception text (paths,
+    SQL) to the browser where the phone's said _safe_err."""
+    return _m("mobile_schedule_status")(job_id, current_user)
 
 
 def _schedule_in_force(restaurant_id, history_id=None):
@@ -5950,8 +5936,7 @@ def _schedule_in_force(restaurant_id, history_id=None):
             row = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
                                (int(history_id), restaurant_id)).fetchone()
             return row["id"] if row else None
-        row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? AND superseded_by IS NULL "
-                           "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        row = _models_mod.newest_draft(conn, restaurant_id)
         return row["id"] if row else None
     finally:
         conn.close()
@@ -5990,10 +5975,12 @@ def download_schedule(current_user):
         # Rewritten through the export writer: names and notes come from
         # uploads and the model, and a cell starting "=" would run as a
         # formula in the owner's spreadsheet (fix round #156).
-        import csv as _csv_dl
+        # The eight columns an owner reads, never the shift ids the stored
+        # copy carries (schedule_rows.export_rows, ARCH-6).
+        import schedule_rows as _srows_dl
         from models import safe_csv_writer
         _buf = io.StringIO()
-        safe_csv_writer(_buf).writerows(_csv_dl.reader(io.StringIO(csv_clean)))
+        safe_csv_writer(_buf).writerows(_srows_dl.export_rows(csv_clean))
         csv_clean = _buf.getvalue()
         name = (restaurant.name if restaurant else "Restaurant").replace(" ", "_")
         return send_file(
@@ -10675,16 +10662,11 @@ def log_account_event(restaurant_id, event_type, current_user=None, detail=None,
     actor becomes "will (Cavnar AI, viewing as …)" (models.log_event reads
     flask.g.view_as), with acting_admin / acting_admin_id beside it.
     `extra`: structured keys stored beside the detail (a memory change's
-    kind and audience — models.get_account_activity reads them)."""
-    try:
-        from models import log_event
-        data = dict(extra or {})
-        data["detail"] = detail
-        if current_user:
-            data["actor"] = current_user.get("username")
-        log_event(restaurant_id, event_type, data)
-    except Exception:
-        pass
+    kind and audience — models.get_account_activity reads them). The one
+    writer is models.log_account_event (the publish service and the engine
+    call it there)."""
+    _models_mod.log_account_event(restaurant_id, event_type, current_user=current_user, detail=detail,
+                                  extra=extra)
 
 
 def _auto_approve_trust_safe(rid):
@@ -11935,720 +11917,21 @@ def set_staff_contact_api(current_user):
     return _m("mobile_set_staff_contact")(current_user)
 
 
-def publish_blockers(restaurant_id, schedule_id=None, unattended=False):
-    """Why this schedule should not go to staff unread: rows the engine
-    flagged (hard rule breaches, names it could not vouch for), and a week
-    the quality engine judged weak or could not judge. Empty means clear.
-    The texts of publish_review's blockers — see there."""
-    return [b["text"] for b in publish_review(restaurant_id, schedule_id, unattended=unattended)["blockers"]]
-
-
-def _local_today(restaurant_id):
-    try:
-        from time_utils import restaurant_now_by_id
-        return restaurant_now_by_id(restaurant_id, naive=True).date()
-    except Exception:
-        from datetime import date as _d
-        return _d.today()
-
-
-# What each source the rules could not read means for the week, in the
-# owner's words (schedule_rules._input_problem — schedule audit 10/3/26 P-1):
-# one wording, schedule_rules.INPUT_PROBLEM_WORDS, shared with the
-# generation's review.
-def _input_problem_text(p) -> str:
-    """One blocker line for a setting or source the rules could not read
-    (Constraints.input_problems) — schedule_rules.input_problem_text, the
-    line the generation's review names it with."""
-    import schedule_rules as _sr_ipt
-    return _sr_ipt.input_problem_text(p)
-
-
-def _notice_text(short, week_start) -> str:
-    """The notice-rule blocker. A week already under way said "starts in -2
-    days" (schedule audit 10/3/26 E-22): it says when it started."""
-    from time_utils import mdy as _mdy_n
-    given = int(short["days_given"])
-    when = (f"starts in {given} day{'s' if given != 1 else ''}" if given > 0 else "starts today" if given == 0
-            else f"started {-given} day{'s' if given != -1 else ''} ago")
-    return (f"Less notice than your {short['notice_days']}-day schedule notice rule: the week of "
-            f"{_mdy_n(week_start)} {when}")
-
-
-def _live_week(restaurant_id, week_start, not_id):
-    """The published copy of `week_start` staff have now (not superseded),
-    other than row `not_id`, or None."""
-    conn = get_conn()
-    try:
-        return conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND week_start=? "
-                            "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL ORDER BY id DESC "
-                            "LIMIT 1", (restaurant_id, week_start, not_id)).fetchone()
-    finally:
-        conn.close()
-
-
-def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
-    """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
-    "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the
-    publish gate, computed against the data as it stands NOW.
-
-    It read the review saved when the draft was generated, so time off
-    approved afterwards never reached it: a week with a fresh hard breach
-    went to staff by a manual, delayed or automatic publish alike (NS5 H3).
-    The rule sweep is re-run here on every call, over the saved review's
-    lines (a line from either is a blocker), and the notice rule is checked
-    against today's date (NS5 H2 notice_short).
-
-    Blockers are what must be read before the week goes out: hard rule
-    breaches, a setting or source the rules could not read (P-1), the rule
-    check or the quality engine failing to run (P-16), the notice rule, a
-    change inside the notice window to a week staff already have (E-22),
-    and hourly hours past the hourly budget (E-7). The quality verdict —
-    a weak week, low confidence, shifts below the bar — is a note, never a
-    blocker (SQ-29): the scorer's structural caps put one on nearly every
-    week, which taught owners to acknowledge without reading. Notes ride in
-    `notes` (with keys) and `soft`.
-
-    `unattended` is automation (auto-publish, its delayed run): the soft
-    flags schedule_rules.HOLD_UNATTENDED names stop it too, and every other
-    soft flag is returned in `soft` for the owner's notice (NS5 M7). Each
-    blocker carries a stable `key` so an acknowledgement given for one set
-    does not carry to a blocker that appeared later."""
-    from models import _ensure_history_columns
-    conn = get_conn()
-    try:
-        _ensure_history_columns(conn)
-        cols = ("SELECT id, week_start, week_end, schedule_csv, review_json, quality_json, hours_scheduled, "
-                "hours_hourly, hours_salaried, hours_budget, published_at FROM schedule_history ")
-        if schedule_id:
-            row = conn.execute(cols + "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
-        else:
-            row = conn.execute(cols + "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
-    finally:
-        conn.close()
-    if not row:
-        return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": None}
-    out, soft, notes, seen = [], [], [], set()
-
-    def add(key, text):
-        if text and text not in seen:
-            seen.add(text)
-            out.append({"key": key, "text": text})
-
-    def note(key, text):
-        # Acknowledge-able, never holding a publish (SQ-29).
-        if text and text not in seen:
-            seen.add(text)
-            notes.append({"key": key, "text": text})
-            soft.append(text)
-
-    flagged = sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line)
-    if flagged:
-        add("needs_review", f"{flagged} shift{'s' if flagged != 1 else ''} marked NEEDS REVIEW")
-    try:
-        review = json.loads(row["review_json"] or "null") or {}
-    except Exception:
-        review = {}
-    # The generation's own lead lines are read whole (re-audit 10/4/26
-    # PIPE-7): with three budget lines and a caveat ahead of it, the
-    # unwritten-day line sat at the edge of the first six.
-    _lead = [x for x in (review.get("lead_lines") or []) if isinstance(x, str)]
-    for line in _lead + [x for x in (review.get("lines") or [])[:6] if isinstance(x, str)]:
-        if line.startswith("⚠") and "over the ceiling" not in line:   # the hours check below says it once
-            t = line.lstrip("⚠ ").strip()
-            add("saved:" + t, t)
-    # A repair stage of a hard rule or the manager rule that did not run on
-    # this draft (schedule audit 10/3/26 P-3, P-17): its breaches were never
-    # repaired, so the week is read before it goes out — wherever its line
-    # sits in the review.
-    for f in review.get("stage_failures") or []:
-        if f.get("blocks_publish"):
-            add(f"stage:{f.get('stage')}", (str(f.get("line") or "").lstrip("⚠ ").strip()
-                                            or f"A repair step ({f.get('stage')}) didn't run on this draft"))
-    # The sweep against today's data: time off approved, a person
-    # deactivated, a floor or a minor's age band set since the draft.
-    import schedule_rules as _sr
-    from schedule_versions import rows_from_csv
-    rows = rows_from_csv(row["schedule_csv"] or "")
-    c = None
-    try:
-        from datetime import datetime as _dt, timedelta as _td
-        ws = _dt.strptime(str(row["week_start"])[:10], "%Y-%m-%d")
-        we = _dt.strptime(str(row["week_end"] or row["week_start"])[:10], "%Y-%m-%d")
-        dates = [(ws + _td(days=i)).strftime("%Y-%m-%d") for i in range(max(0, min(13, (we - ws).days)) + 1)]
-        days = [_dt.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates]
-        c = _sr.build_constraints(restaurant_id, dates, days, restaurant=get_restaurant(restaurant_id))
-        # A setting or source the rules could not read checked this week
-        # without it — a person's managers, minors, hours limits or
-        # certificates silently gone (P-1). Named, never passed over.
-        for p in (getattr(c, "input_problems", None) or []):
-            add(f"input:{p.get('source')}:{(p.get('name') or '').strip().lower()}", _input_problem_text(p))
-        viols = _sr.violations(rows, c)
-        hard = [v for v in viols if v["hard"] and v["kind"] != "over_max_hours"] + \
-               [v for v in viols if v["kind"] == "over_max_hours"][:1]
-        for v in sorted(hard, key=lambda x: (x.get("date") or "", x.get("employee") or "")):
-            # A breach about a day is named on the day, never charged to
-            # whoever's row it is pinned to (schedule_rules.breach_text, E-13).
-            if v.get("day_level"):
-                add(f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}",
-                    _sr.breach_text(v))
-                continue
-            where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
-            add(f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}",
-                f"{v['employee']} — {where}: {v['detail']}")
-        for v in viols:
-            if v["hard"]:
-                continue
-            if v["kind"] in _sr.ROSTER_BLOCKERS:
-                # Nobody counted as a floor manager: the highest rule is
-                # unmet on every shift, so the week waits for the owner to
-                # name who runs the floor (schedule re-audit 10/4/26 RULES-13).
-                add(f"roster:{v['kind']}", v["detail"][:1].upper() + v["detail"][1:])
-                continue
-            where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
-            text = f"{v['employee']} — {where}: {v['detail']}"
-            if unattended and v["kind"] in _sr.HOLD_UNATTENDED:
-                add(f"soft:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}", text)
-            elif text not in soft:
-                soft.append(text)
-        now = today or _local_today(restaurant_id)
-        import schedule_versions as _sv_pb
-        live = None if row["published_at"] else _live_week(restaurant_id, row["week_start"], row["id"])
-        if live is not None:
-            # A regenerated draft of a week staff already have: what moves
-            # is the shifts that differ, and inside the notice window that
-            # is the predictability-pay warning — not "the week starts in
-            # -2 days" from the notice rule (E-22).
-            changed = _sv_pb.shift_changes(rows_from_csv(live["schedule_csv"] or ""), rows)["dates"]
-            warn = _sr.late_change_warning(c.compliance, changed, now)
-            if warn:
-                add("late_change:" + ",".join(changed), "This replaces the week staff already have. " + warn)
-        elif not row["published_at"]:
-            short = _sr.notice_shortfall(c.compliance, row["week_start"], now)
-            if short:
-                add("notice_short", _notice_text(short, row["week_start"]))
-        else:
-            # Saved changes to a week staff have, about to be sent.
-            pending = _sv_pb.unsent_changes(restaurant_id, row["id"]) or {}
-            warn = _sr.late_change_warning(c.compliance, pending.get("dates") or [], now)
-            if warn:
-                add("late_change:" + ",".join(pending.get("dates") or []), warn)
-    except Exception as e:
-        import ops as _ops_pb
-        _ops_pb.capture(e, job="publish_blockers_sweep", context=f"restaurant_id={restaurant_id}")
-        add("sweep_failed", "The rule check could not run against today's data")
-    # The labor budget is a ceiling. Generation trims back to it when the
-    # owner's trim_to_budget is on (the default; every removal reported, never
-    # below a floor); a week still over it — the trim off, floors that need
-    # more, or hours added since — is not trimmed here: it is named, so the
-    # owner sends it knowing, or takes hours out first (this comment used to
-    # say no week was ever trimmed; schedule audit 10/3/26 P-45). It is an
-    # HOURLY budget, so the week's hourly hours are held against it, as they
-    # stand now: salaried people's hours are never spent from it, and counting
-    # them put a spurious "over the ceiling" of about the salaried hours on
-    # every week (E-7, P-6).
-    hours = None
-    try:
-        hours = (_sr.hours_split(rows, c) if c is not None else
-                 {"hourly": float(row["hours_hourly"]) if row["hours_hourly"] is not None else
-                  float(row["hours_scheduled"] or 0),
-                  "salaried": float(row["hours_salaried"] or 0), "total": float(row["hours_scheduled"] or 0)})
-        hb = float(row["hours_budget"] or 0)
-    except (TypeError, ValueError, KeyError, IndexError):
-        hb = 0.0
-    if hours and hb > 0 and hours["hourly"] > hb * 1.02:
-        hs = hours["hourly"]
-        add("hours_over", f"{hs:,.0f}h of hourly shifts against a {hb:,.0f}h hourly budget — {hs - hb:,.0f}h over "
-                          "the ceiling" + (f" (the {hours['salaried']:,.0f}h salaried aren't counted against it)"
-                                           if hours.get("salaried") else ""))
-    try:
-        quality = json.loads(row["quality_json"] or "null") or {}
-    except Exception:
-        quality = {}
-    if "checked" in quality and not quality.get("checked"):
-        # The quality engine failed on this week: said, with the cause, so
-        # a week nobody could score never goes out as if it had passed
-        # (P-16).
-        cause = str(quality.get("error") or quality.get("reason") or "").strip()
-        add("quality_unchecked", "Shift Quality couldn't check this week" + (f" ({cause[:160]})" if cause else "")
-            + " — read it yourself before it goes to staff")
-    elif quality.get("checked"):
-        if quality.get("band") == "weak":
-            note("quality_weak", f"Shift Quality {quality.get('score')}/100 — a weak week")
-        if (quality.get("confidence") or {}).get("level") == "low":
-            note("quality_low", "The quality engine had too little to judge this week on")
-        below = quality.get("below_profile") or []
-        if below:
-            note("below_profile",
-                 f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
-    return {"blockers": out, "soft": soft, "notes": notes, "hours": hours, "schedule_id": row["id"]}
-
-
-def _drop_share(token, schedule_id):
-    """Remove a share link made for a send that did not go out, so the
-    status list never shows someone as sent who was not. By the token's
-    hash — the only form the row keeps (SEC-09)."""
-    import models as _models_share
-    _models_share.drop_schedule_share(token, schedule_id)
-
-
-def _send_week_to_staff(rid, restaurant, schedule_id, csv_text, names, week_label, contacts=None,
-                        updated=False):
-    """Each person on the channel they signed up with (Friction audit #17):
-    the app when their phone has it, a text when they ticked "text me when
-    my schedule is posted", email as the fallback. Everyone gets their own
-    share link; the portal has the week either way. Returns (sent,
-    unreachable, failed).
-
-    Only a delivery that happened counts as sent: deliver() never raises —
-    a missing key, a suppressed address, the flood guard and a Resend
-    failure all come back as SendResult(ok=False) — and only an exception
-    used to count as a failure, so a send that reached nobody was reported
-    "sent" and the week published (F2-1). A share row made for a send that
-    did not go out is removed, so the status list never shows that person
-    as sent. deliver() records the real outcome in email_log itself.
-
-    `updated`: the week changed after it went out (send_schedule_changes)."""
-    from models import create_schedule_share
-    from labor import employee_shifts_from_csv
-    import people as _people
-    if contacts is None:
-        from models import get_staff_contacts
-        contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-    base_url = config.base_url()
-    try:
-        reachable = _people.reach(rid, names, purpose="schedule")
-    except Exception as _re:
-        _ops.capture(_re, job="schedule_publish_reach", context=f"restaurant_id={rid}")
-        reachable = {n: {"push_user_id": None, "sms": None,
-                         "email": ((contacts.get(n.lower()) or {}).get("email") or "").strip() or None}
-                     for n in names}
-    posted = "changed" if updated else "is posted"
-    sent, unreachable, failed = [], [], []
-    for name in names:
-        ch = reachable.get(name) or {}
-        email = (ch.get("email") or "").strip()
-        if not (ch.get("push_user_id") or ch.get("sms") or email):
-            unreachable.append({"employee_name": name,
-                                "reason": "no app, text consent or email address on file"})
-            continue
-        shifts = employee_shifts_from_csv(csv_text, name)
-        count = f"{len(shifts)} shift{'' if len(shifts) == 1 else 's'}"
-        # people.deliver is the one rule (employee audit C4/M8): the app, then
-        # a text, then email — a push counted only once Apple took it (the
-        # rest of the chain runs by itself when no device did), a text held
-        # from 10pm to 8am unless the week has a shift before then. Each
-        # channel's share row is written only for a send that happened.
-        box = {}
-
-        def _sms_text(phone, name=name, count=count, box=box):
-            box["sms_token"] = create_schedule_share(rid, schedule_id, name, sent_to=phone)
-            return (f"{restaurant.name}: your schedule for the week of {week_label} "
-                    f"{'was updated' if updated else 'is posted'} ({count}). {base_url}/s/{box['sms_token']} "
-                    f"Reply STOP to stop these texts.")
-
-        def _sms_undo(box=box):
-            if box.get("sms_token"):
-                _drop_share(box.pop("sms_token"), schedule_id)
-
-        def _email_send(name=name, email=email, shifts=shifts, box=box):
-            token = create_schedule_share(rid, schedule_id, name, sent_to=email)
-            try:
-                from emails import send_staff_schedule_email
-                res = send_staff_schedule_email(
-                    to_email=email, employee_name=name, restaurant_name=restaurant.name,
-                    week_label=f"{week_label} (updated)" if updated else week_label,
-                    link=f"{base_url}/s/{token}", shifts=shifts,
-                    reply_to=restaurant.owner_email or None, restaurant_id=rid)
-            except Exception as e:
-                res, box["email_error"] = None, str(e)
-            if not getattr(res, "ok", False):
-                box.setdefault("email_error", getattr(res, "error", None) or "The email was not sent.")
-                _drop_share(token, schedule_id)
-                return False
-            return True
-
-        def _outcome(channel, name=name):
-            # The app's share row only once the push reached a phone (COM-12).
-            if channel == "push":
-                try:
-                    create_schedule_share(rid, schedule_id, name, sent_to="app")
-                except Exception as e:
-                    print(f"[publish] app share not recorded for {name}: {e}")
-
-        first = min((s.get("date") for s in shifts if s.get("date")), default=None)
-        how = _people.deliver(
-            rid, name, ch, alert_type="staff_schedule", title="Your schedule",
-            body=f"The week of {week_label} {posted}: {count}.",
-            data={"kind": "schedule", "event": "schedule_changed" if updated else "schedule_posted",
-                  "tab": "today", "schedule_id": schedule_id},
-            purpose="schedule", sms_text=_sms_text, sms_undo=_sms_undo,
-            sms_meta=lambda box=box: {"share": [schedule_id, box.get("sms_token")]},
-            email_send=_email_send, shift_date=first, on_outcome=_outcome)
-        if how == "push":
-            # Queued to their phone; "delivery: pending" until Apple answers
-            # (the app's share row appears then, or a text/email goes instead).
-            sent.append({"employee_name": name, "sent_to": "app", "channel": "push", "delivery": "pending",
-                         "shifts": len(shifts)})
-        elif how in ("sms", "sms_held"):
-            sent.append({"employee_name": name, "sent_to": ch["sms"], "channel": "sms",
-                         **({"delivery": "held_until_morning"} if how == "sms_held" else {}), "shifts": len(shifts)})
-        elif how == "email":
-            sent.append({"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)})
-        elif email:
-            failed.append({"employee_name": name, "error": box.get("email_error") or "The email was not sent."})
-        else:
-            unreachable.append({"employee_name": name,
-                                "reason": "no app, text consent or email address on file"})
-    return sent, unreachable, failed
-
-
-def _publish_schedule(restaurant_id, schedule_id=None, actor=None, acknowledge=False):
-    """Shared by the route, the mobile twin and delayed.py (auto-publish).
-    Returns (payload, http_status). `actor` is the user dict acting, or
-    delayed.AUTOMATION_ACTOR.
-
-    A schedule with blockers (publish_blockers) is refused with
-    needs_ack=True until the caller says acknowledge — a human reading the
-    list, never automation. Publishing stamps published_at, which is what
-    the staff portal and the payroll-week hours check read."""
-    actor = actor or {}
-    from models import get_staff_contacts, get_schedule_share_status
-    from labor import employees_in_schedule
-
-    rid = restaurant_id
-    restaurant = get_restaurant(rid)
-    if not restaurant:
-        return {"ok": False, "error": "Restaurant not found"}, 404
-
-    conn = get_conn()
-    try:
-        if schedule_id:
-            row = conn.execute(
-                "SELECT id, week_start, week_end, schedule_csv, superseded_by, published_at FROM schedule_history "
-                "WHERE id=? AND restaurant_id=?",
-                (int(schedule_id), rid)).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT id, week_start, week_end, schedule_csv, superseded_by, published_at FROM schedule_history "
-                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "Which schedule?"}, 400
-    finally:
-        conn.close()
-
-    if not row or not (row["schedule_csv"] or "").strip():
-        return {"ok": False, "error": "Generate a schedule first — there's nothing to send yet."}, 400
-    # A copy of the week a newer one replaced is never sent — by a person,
-    # a stale phone, or the delayed run of a Send queued before the newer
-    # draft (schedule re-audit 10/4/26 UI-3): sent, it left staff with no
-    # live week (models._live_week_row skips a superseded copy).
-    import schedule_versions as _sv_rp
-    _replaced = _sv_rp.replaced_error(row)
-    if _replaced:
-        return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"],
-                "schedule_id": row["id"], "error": _replaced}, 409
-
-    # `acknowledge` is True (a person read the list just now) or the list
-    # of blocker keys a person acknowledged when they queued it (a delayed
-    # publish): a blocker that appeared since is not covered (NS5 H3).
-    unattended = acknowledge is False and bool(actor.get("role") == "automation")
-    review = publish_review(rid, row["id"], unattended=unattended)
-    blockers = [b["text"] for b in review["blockers"]]
-    _acked, unacked = _ack_gate(review, acknowledge)
-    if unacked:
-        # Each blocker with its key, so the client acknowledges exactly the
-        # list it showed (F2-9).
-        return _needs_ack(review, unacked, row["id"])
-
-    schedule_id = row["id"]
-    # What staff read in the push, the text and the email subject: M/D/YY,
-    # never the ISO the row stores (F2-15).
-    from time_utils import mdy_range as _mdy_range
-    week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
-
-    # Claim the week before anything goes out. Nothing stopped a second
-    # publish (a double tap, a second device, the 11am auto-publish after a
-    # 10am manual one) from emailing every member of staff again (SCHED-29,
-    # DATA-12). A claim older than 10 minutes belongs to a publish that died.
-    from models import _ensure_history_columns
-    conn = get_conn()
-    try:
-        _ensure_history_columns(conn)
-        got = conn.execute(
-            "UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=? AND restaurant_id=? "
-            "AND published_at IS NULL AND superseded_by IS NULL "
-            "AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))",
-            (schedule_id, rid)).rowcount
-        conn.commit()
-        state = conn.execute("SELECT published_at, superseded_by FROM schedule_history WHERE id=?",
-                             (schedule_id,)).fetchone()
-        _v_now = _sv_rp.latest_version(conn, schedule_id)
-    finally:
-        conn.close()
-    if not got:
-        if state and state["published_at"]:
-            return dict(ok=True, already_published=True, schedule_id=schedule_id, week_label=week_label,
-                        sent=[], unreachable=[], failed=[], version=_v_now or None,
-                        status=get_schedule_share_status(rid, schedule_id),
-                        error=None), 200
-        if state and state["superseded_by"]:
-            # Replaced between the read above and the claim (UI-3).
-            return {"ok": False, "replaced": True, "superseded_by": state["superseded_by"],
-                    "schedule_id": schedule_id, "error": _sv_rp.replaced_error(state)}, 409
-        return {"ok": False, "in_progress": True, "schedule_id": schedule_id,
-                "error": "This week is being sent to staff right now."}, 409
-
-    contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
-
-    # The owner is acting. Measure what it does to labor % over the next
-    # window, whether or not they ever pressed Track (outcomes.observe).
-    try:
-        import outcomes as _oc
-        _oc.observe(rid, "schedule_published", detail=f"week of {row['week_start']}",
-                    user_id=actor.get("id"))
-    except Exception as _oe:
-        import ops as _ops_o
-        _ops_o.capture(_oe, job="observe_schedule", context=f"restaurant_id={rid}")
-    # The queue's "this week is built but not sent" is now carried out
-    # (rec_ledger implemented, ROI #27) — only if it was ever shown.
-    try:
-        import rec_ledger as _rl_pub
-        _rl_pub.implemented(rid, _rl_pub.rec_key("schedule_unsent", row["id"]), "schedule_review",
-                            user_id=actor.get("id"), source_ref=f"published:{row['id']}",
-                            meta={"module": "schedule"})
-    except Exception as _rle:
-        print(f"[publish] implementation not recorded for {rid}: {_rle}")
-
-    sent, unreachable, failed = _send_week_to_staff(
-        rid, restaurant, schedule_id, row["schedule_csv"], employees_in_schedule(row["schedule_csv"]),
-        week_label, contacts=contacts)
-    actor_name = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
-    if failed and not sent:
-        # Every email that was tried failed (Resend down): nothing is
-        # published, and the claim is released for a retry.
-        conn = get_conn()
-        try:
-            conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=?", (schedule_id,))
-            conn.commit()
-        finally:
-            conn.close()
-        return dict(ok=False, schedule_id=schedule_id, week_label=week_label, sent=[], unreachable=unreachable,
-                    failed=failed, acknowledged=bool(blockers),
-                    status=get_schedule_share_status(rid, schedule_id),
-                    error="The emails could not be sent, so nothing was published. Try again in a few minutes."), 200
-
-    # Published — to the staff portal always, and by email to everyone with
-    # an address. A restaurant whose staff use only the portal used to never
-    # publish at all, because the stamp waited on a successful email (SCHED-9).
-    log_account_event(rid, "schedule_published", actor,
-                      detail=(f"{len(sent)} to staff" if sent else "to the staff portal")
-                      + (" — acknowledged blockers" if blockers else ""))
-    try:
-        conn = get_conn()
-        try:
-            conn.execute("UPDATE schedule_history SET published_at=datetime('now'), published_by=?, publishing_at=NULL "
-                         "WHERE id=? AND restaurant_id=?", (actor_name, schedule_id, rid))
-            # One live version of a week: an older published copy is retired,
-            # or both fed outcomes, fairness, hours and claims (SCHED-10).
-            conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
-                         "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL",
-                         (schedule_id, rid, row["week_start"], schedule_id))
-            conn.commit()
-        finally:
-            conn.close()
-        import schedule_versions as _sv
-        _pub_auth = _sv.authority_of(actor)
-        # The version the Send wrote goes back to the client, which keeps
-        # it with its rows: the next save names it (UI-4). It changed no
-        # row, so a client that never learns it is not refused either.
-        _pub_version = _sv.append(rid, schedule_id, "published", row["schedule_csv"], saved_by=actor_name,
-                                  saved_authority=_pub_auth, return_version=True)
-    except Exception as _px:
-        _ops.capture(_px, job="schedule_publish_stamp", context=f"restaurant_id={rid} schedule_id={schedule_id}")
-    # What the week's first publish says, into the observation log: every
-    # change from the original draft by origin (the manager's, Cavnar AI's
-    # kept ones, an admin's), and whether a person sent it (schedule audit
-    # 10/3/26 L-4, L-5, L-7). Never blocks the publish.
-    try:
-        import schedule_versions as _sv_obs
-        _sv_obs.observe_publish(rid, schedule_id, authority=locals().get("_pub_auth"), editor=actor_name)
-    except Exception as _obx:
-        _ops.capture(_obx, job="schedule_publish_observe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
-    # What the restaurant did with the generated week, on the labor_schedule
-    # run that wrote it: the share of its shifts that went out untouched
-    # (re-audit 10/7/26 #4). Never blocks the publish.
-    try:
-        import schedule_versions as _sv_out
-        _sv_out.record_week_outcome(rid, schedule_id, actor=actor, published=True)
-    except Exception as _wox:
-        print(f"[publish] schedule outcome not filed for {rid}: {_wox}")
-    # The reviews' and the nightly reports' "+1" asks this week carries,
-    # recorded as implemented under it — the loop from a complaint to the
-    # person added and what the complaints did next (re-audit CROSSMODULE-10).
-    try:
-        import staffing_signals as _stsig_pub
-        _stsig_pub.record_published(rid, schedule_id, row["schedule_csv"],
-                                    user_id=actor.get("id") if isinstance(actor, dict) else None)
-    except Exception as _spx:
-        print(f"[publish] staffing asks not recorded for {rid}: {_spx}")
-    # The week's sales projection the schedule was built against, frozen
-    # now so it can be scored when the week closes (forecast_log kind
-    # revenue_week, insert-once; CA2 #6). Never blocks the publish.
-    try:
-        import demand as _demand
-        _demand.freeze_week_projection(rid, row["week_start"])
-    except Exception as _fx:
-        print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
-    note = None
-    if not sent:
-        note = ("Published to the staff portal. Nobody has the app, agreed to texts, or has an email "
-                "address on file, so nothing went out." if not failed else None)
-    return dict(ok=True, schedule_id=schedule_id, week_label=week_label,
-                sent=sent, unreachable=unreachable, failed=failed,
-                acknowledged=bool(blockers), portal_only=not sent, note=note,
-                version=locals().get("_pub_version"),
-                status=get_schedule_share_status(rid, schedule_id),
-                error=None), 200
+# The publish state machine — the gate, the claim, the stamp and the outbox —
+# is schedule_publish (L2, no Flask): routes and jobs call it there (schedule
+# audit 10/10/26 ARCH-15). The names it had here are re-exported, so callers
+# and tests that import them from client_api keep working.
+from schedule_publish import (  # noqa: E402,F401
+    publish_blockers, publish_review, _local_today, _input_problem_text, _notice_text, _live_week,
+    _drop_share, _send_week_to_staff, _publish_schedule, send_schedule_changes, _ack_gate, _needs_ack,
+)
+import schedule_publish as _schedule_publish  # noqa: E402
 
 
 @client_bp.route("/api/labor/publish-schedule", methods=["POST"])
 @login_required
 def publish_schedule_api(current_user):
     return _publish_schedule_request(current_user)
-
-
-def _ack_gate(review, acknowledge):
-    """(acked_keys, unacked_blockers) for one publish_review. `acknowledge`
-    is a list of blocker keys (what the person was shown) or a bool (an
-    older client's "yes to whatever the gate finds now")."""
-    items = review["blockers"]
-    if isinstance(acknowledge, (list, tuple, set)):
-        keys = {str(k) for k in acknowledge}
-        return [b["key"] for b in items if b["key"] in keys], [b for b in items if b["key"] not in keys]
-    if acknowledge:
-        return [b["key"] for b in items], []
-    return [], list(items)
-
-
-def _needs_ack(review, unacked, schedule_id):
-    return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
-            # The keys, parallel to `blockers` (and as {key, text} items):
-            # the client sends back `acknowledge: [the keys it showed]` (F2-9).
-            "blocker_keys": [b["key"] for b in review["blockers"]],
-            "blocker_items": review["blockers"], "new_blockers": [b["text"] for b in unacked],
-            # Worth a look, never holding the send (the quality verdict,
-            # SQ-29): shown beside the blockers, nothing to acknowledge.
-            "notes": review.get("notes") or [],
-            "schedule_id": schedule_id,
-            "error": "This week has things to look at before it goes to staff."}, 409
-
-
-def send_schedule_changes(restaurant_id, schedule_id, actor=None, acknowledge=False):
-    """Tell the people whose shifts changed on a week staff already have —
-    the explicit second step after a save (F2-2). Returns (payload, status).
-
-    A save used to email them itself: under SCHEDULE_DRAFT alone (a member
-    who may not send), past the rule gate and the owner's undo window, and
-    again on every save because each send re-stamped the diff base. Now a
-    save only records the edit; this runs the publish gate, reaches each
-    changed person on their own channel (people.reach), and appends a
-    `published` version so the next diff starts from what they were told.
-    The caller checks SCHEDULE_PUBLISH and the undo window
-    (_publish_schedule_request)."""
-    import schedule_versions as _sv
-    from models import get_schedule_share_status, _ensure_history_columns
-    from time_utils import mdy_range as _mdy_range
-    actor = actor or {}
-    rid = restaurant_id
-    restaurant = get_restaurant(rid)
-    if not restaurant:
-        return {"ok": False, "error": "Restaurant not found"}, 404
-    conn = get_conn()
-    try:
-        row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_at, superseded_by "
-                           "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
-    finally:
-        conn.close()
-    if not row:
-        return {"ok": False, "error": "That week is gone — reload the schedule."}, 404
-    # Changes to a copy a newer one replaced reach nobody's live week (UI-3).
-    if _sv.replaced_error(row):
-        return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"], "schedule_id": row["id"],
-                "error": _sv.replaced_error(row)}, 409
-    if not row["published_at"]:
-        return {"ok": False, "error": "This week hasn't been sent to staff yet — send the whole week."}, 400
-    week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
-    pending = _sv.unsent_changes(rid, row["id"]) or {"people": [], "dates": []}
-    if not pending["people"]:
-        _vn = _sv.newest_version(rid, row["id"])
-        return dict(ok=True, already_published=True, schedule_id=row["id"], week_label=week_label,
-                    sent=[], unreachable=[], failed=[], unsent_changes=[],
-                    version=_vn[0]["version"] if _vn else None,
-                    status=get_schedule_share_status(rid, row["id"]), error=None), 200
-    review = publish_review(rid, row["id"])
-    _acked, unacked = _ack_gate(review, acknowledge)
-    if unacked:
-        return _needs_ack(review, unacked, row["id"])
-    # One sender at a time: a double tap must not tell the same people twice.
-    conn = get_conn()
-    try:
-        _ensure_history_columns(conn)
-        got = conn.execute(
-            "UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=? AND restaurant_id=? "
-            "AND superseded_by IS NULL "
-            "AND (publishing_at IS NULL OR publishing_at < datetime('now','-10 minutes'))", (row["id"], rid)).rowcount
-        conn.commit()
-    finally:
-        conn.close()
-    if not got:
-        return {"ok": False, "in_progress": True, "schedule_id": row["id"],
-                "error": "This week is being sent to staff right now."}, 409
-    try:
-        # Re-read under the claim: what is sent is what is stored now.
-        pending = _sv.unsent_changes(rid, row["id"]) or {"people": [], "dates": []}
-        conn = get_conn()
-        try:
-            csv_now = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (row["id"],)).fetchone()["schedule_csv"]
-        finally:
-            conn.close()
-        sent, unreachable, failed = _send_week_to_staff(rid, restaurant, row["id"], csv_now, pending["people"],
-                                                        week_label, updated=True)
-        if failed and not sent:
-            return dict(ok=False, schedule_id=row["id"], week_label=week_label, sent=[], unreachable=unreachable,
-                        failed=failed, unsent_changes=pending["people"],
-                        status=get_schedule_share_status(rid, row["id"]),
-                        error="The changes could not be sent. Try again in a few minutes."), 200
-        who = (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
-        _changes_version = _sv.append(rid, row["id"], "published", csv_now, saved_by=who,
-                                      saved_authority=_sv.authority_of(actor), return_version=True)
-        conn = get_conn()
-        try:
-            conn.execute("UPDATE schedule_history SET republished_at=datetime('now') WHERE id=? AND restaurant_id=?",
-                         (row["id"], rid))
-            conn.commit()
-        finally:
-            conn.close()
-    finally:
-        conn = get_conn()
-        try:
-            conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=?", (row["id"],))
-            conn.commit()
-        finally:
-            conn.close()
-    log_account_event(rid, "schedule_changes_sent", actor,
-                      detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
-                             f"{len(sent)} of {len(pending['people'])} told"
-                             + (" — acknowledged blockers" if review["blockers"] else ""))
-    note = None
-    if not sent:
-        note = ("Saved to the staff portal. Nobody whose shifts changed has the app, agreed to texts, or has "
-                "an email address on file, so nothing went out.")
-    return dict(ok=True, changes_sent=True, schedule_id=row["id"], week_label=week_label,
-                sent=sent, unreachable=unreachable, failed=failed, unsent_changes=[],
-                acknowledged=bool(review["blockers"]), portal_only=not sent, note=note,
-                version=locals().get("_changes_version"),
-                status=get_schedule_share_status(rid, row["id"]), error=None), 200
 
 
 def _publish_schedule_request(current_user):
@@ -12666,7 +11949,15 @@ def _publish_schedule_request(current_user):
 
     A week staff already have, saved since with changes, is "sent" by
     telling the people those changes moved (send_schedule_changes) — the
-    same permission, gate and undo window as the first send (F2-2)."""
+    same permission, gate and undo window as the first send (F2-2).
+
+    `version` is the version of the rows the sender reviewed: a Send of a
+    week somebody changed since is refused with their changes (409,
+    `stale`), never sent unseen (BUGSLIFE-11); a queued Send carries it, so
+    an edit in the undo window voids it (delayed). `resend` ("missing" —
+    the people who have not got it; "all" — everyone) sends a week staff
+    already have again, unchanged (BUGSLIFE-9: the phone's "Send again to
+    everyone" used to be answered already_published, and nothing went)."""
     from permissions import has_permission, SCHEDULE_PUBLISH
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)):
         return jsonify(ok=False, error="Your login can draft a schedule but not send it to staff."), 403
@@ -12695,6 +11986,12 @@ def _publish_schedule_request(current_user):
     one_tap = data.get("one_tap") is True
     if one_tap:
         acknowledge = []
+    try:
+        version = int(data["version"]) if data.get("version") not in (None, "") else None
+    except (TypeError, ValueError):
+        version = None
+    resend = data.get("resend")
+    resend = "all" if resend is True else (resend if resend in _schedule_publish.RESEND_SCOPES else None)
     conn = get_conn()
     try:
         row = conn.execute("SELECT id, week_start, published_at, superseded_by FROM schedule_history "
@@ -12719,6 +12016,9 @@ def _publish_schedule_request(current_user):
             return jsonify(ok=False, one_tap_refused=True, schedule_id=row["id"],
                            error="This week has something to read before it goes to staff — open it to "
                                  "review and send."), 409
+    if resend and row["published_at"] and not one_tap:
+        out, status = _schedule_publish.resend(rid, row["id"], current_user, scope=resend)
+        return jsonify(**out), status
     changes = None
     if row["published_at"]:
         import schedule_versions as _sv
@@ -12726,6 +12026,12 @@ def _publish_schedule_request(current_user):
         if not changes:
             out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
             return jsonify(**out), status
+    if version is not None:
+        # The rows the sender reviewed are not the rows stored now: their
+        # Send is refused with what changed, before any window is queued.
+        _stale = _schedule_publish.stale_payload(rid, row["id"], version)
+        if _stale:
+            return jsonify(**_stale), 409
     restaurant = get_restaurant(rid)
     delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0) if restaurant else 0
     if delay > 0:
@@ -12746,20 +12052,22 @@ def _publish_schedule_request(current_user):
         from permissions import answer_authority as _aa_q
         _by = {"authority": _aa_q(current_user),
                "queued_by": (current_user.get("username") or current_user.get("email") or "")[:120]}
+        # The version the person saw: a person's edit in the window voids
+        # the send, and the owner is told (delayed.py, BUGSLIFE-8).
+        import schedule_versions as _sv_q
+        newest = _sv_q.newest_version(rid, row["id"])
+        _seen = version if version is not None else (newest[0]["version"] if newest else None)
         if changes:
-            import schedule_versions as _sv_q
-            newest = _sv_q.newest_version(rid, row["id"])
             act = delayed.schedule(rid, "schedule_changes_send",
                                    {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
-                                    # The version the person saw: an edit in the
-                                    # window voids the send (delayed.py).
-                                    "version": newest[0]["version"] if newest else None, **_by},
+                                    "version": _seen, **_by},
                                    delay, actor=current_user,
                                    label=f"Sending the changes to the week of {_mdy_pub(row['week_start'])} "
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
             act = delayed.schedule(rid, "schedule_publish",
                                    {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                    "version": _seen,
                                     # The window's end runs the unattended
                                     # gate again for a one-tap send (#1).
                                     **({"one_tap": True} if one_tap else {}), **_by},
@@ -12768,9 +12076,11 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
     if changes:
-        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge)
+        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge,
+                                            **({"version": version} if version is not None else {}))
     else:
-        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
+        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge,
+                                        **({"version": version} if version is not None else {}))
     return jsonify(**out), status
 
 

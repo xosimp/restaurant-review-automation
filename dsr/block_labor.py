@@ -281,13 +281,12 @@ def _quality(ctx):
     """The published week's Shift Quality for this date, or None."""
     conn = store.get_conn(ctx.db_path)
     try:
+        import models as _m_live
         row = conn.execute(
             "SELECT id, quality_json FROM schedule_history h WHERE h.restaurant_id=? "
-            "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL "
-            "AND h.week_start <= ? AND h.week_end >= ? "
-            "AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id "
-            "AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) "
-            "ORDER BY h.id DESC LIMIT 1", (ctx.restaurant_id, ctx.day, ctx.day)).fetchone()
+            "AND h.week_start <= ? AND h.week_end >= ? AND " + _m_live.live_where("h") + " "
+            "ORDER BY COALESCE(h.republished_at, h.published_at) DESC, h.id DESC LIMIT 1",
+            (ctx.restaurant_id, ctx.day, ctx.day)).fetchone()
     except Exception as e:
         log.warning("dsr labor: schedule history unreadable rid=%s: %s", ctx.restaurant_id, e)
         row = None

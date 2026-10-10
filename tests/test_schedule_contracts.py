@@ -534,7 +534,8 @@ def test_the_clock_writes_the_days_drafted_once_per_new_day_and_a_pending_poll_r
 
 
 def test_both_status_routes_and_both_clients_carry_the_days_drafted():
-    assert '"progress": job.get("progress")' in _src("client_api.py")
+    # The web poll is the phone's body (schedule audit 10/10/26 ARCH-32).
+    assert '_m("mobile_schedule_status")' in _src("client_api.py")
     assert "progress=job.get(\"progress\")" in _src("mobile_api.py")
     html = _src("templates/dashboard.html")
     assert "_schedProgress = pollData.progress || null;" in html

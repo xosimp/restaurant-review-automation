@@ -1588,6 +1588,23 @@ def person_id_for(restaurant_id, name, db_path=None, create=True, source="manual
     return next(iter(cands)) if len(cands) == 1 else None
 
 
+def person_ids(restaurant_id, names, db_path=None) -> dict:
+    """{name as given: the people.id of the one live person it means (their
+    own spelling or an alias, exactly), or None} — one read for a week's
+    names; nobody is created and nothing is guessed. Schedule rows carry it
+    beside the name (schedule audit 10/10/26 SCALE-31)."""
+    conn = _conn(db_path)
+    try:
+        idx = _Index(conn, restaurant_id)
+    finally:
+        conn.close()
+    out = {}
+    for n in names or []:
+        cands = idx.for_key(_nk(n))
+        out[n] = next(iter(cands)) if len(cands) == 1 else None
+    return out
+
+
 def canonical_names(restaurant_id, names, db_path=None) -> dict:
     """{name as given: the display name of the one live person it means},
     for a spelling a store or an old schedule still carries (a person

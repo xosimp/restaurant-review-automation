@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 from models import get_conn, DB_PATH
+from models import live_where as _models_live_where, live_csv_sql as _models_live_csv
 
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -3656,10 +3657,12 @@ def _pending_in_window(restaurant_id, start, end, db_path):
 # week is 7 days, so it never reaches further than this).
 TAIL_DAYS = 7
 
-_LIVE_PUBLISHED = ("published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM "
-                   "schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND "
-                   "nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND "
-                   "nw.id > schedule_history.id)")
+# The live copy of each week, and its PUBLISHED rows — the one definition
+# (models.live_where / live_csv_sql, schedule audit 10/10/26 ARCH-11): the
+# tail and the sibling sites read what staff were sent, never an unsent
+# edit.
+_LIVE_PUBLISHED = _models_live_where("schedule_history")
+_LIVE_CSV = _models_live_csv("schedule_history")
 
 
 def _published_tail(c: Constraints, restaurant_id, db_path):
@@ -3701,8 +3704,9 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     conn = get_conn(db_path)
     try:
         published = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
-            + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
+            "SELECT id, week_start, week_end, " + _LIVE_CSV + " AS schedule_csv FROM schedule_history WHERE "
+            "restaurant_id=? AND " + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? "
+            "ORDER BY id DESC",
             (restaurant_id, lo, hi)).fetchall()
         drafts = conn.execute(
             "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
@@ -3877,9 +3881,9 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
             if not meta:
                 continue
             rows = []
-            for w in conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
-                                  + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? "
-                                  "ORDER BY id DESC", (sid, lo, hi)).fetchall():
+            for w in conn.execute("SELECT " + _LIVE_CSV + " AS schedule_csv FROM schedule_history WHERE "
+                                  "restaurant_id=? AND " + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND "
+                                  "substr(week_start,1,10) <= ? ORDER BY id DESC", (sid, lo, hi)).fetchall():
                 rows += [r for r in rows_from_csv(w["schedule_csv"]) if lo <= (r.get("date") or "") <= hi]
             if rows:
                 out.append((sid, meta["label"], rows))

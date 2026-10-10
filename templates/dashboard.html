@@ -23681,6 +23681,11 @@ function rescoreSchedule(btn, after) {
   _setQualityState('saving');
   var done = btn ? cbtnBusy(btn, 'Saving\u2026') : function () {};
   var body = {rows: _schedRows, daily_target_hours: _schedTargets, save: true};
+  /* What this save carries, to tell afterwards whether the week on screen
+     moved while it was in flight (schedule audit 10/10/26 BUGSLIFE-17): an
+     edit made during the save is not saved, so the page stays unsaved and
+     Save & send does not send the stored week without it. */
+  var postedSig = _schedSaveSig(_schedRows);
   // Saving appends an "edited" version to the row the preview came from,
   // rather than minting a second history entry for the same week. The
   // version these rows came from goes with it: rows somebody else changed
@@ -23707,8 +23712,17 @@ function rescoreSchedule(btn, after) {
       renderShiftQuality(d.quality, d.what_if, prevScore);
       _schedCsvCache = '';
       if (d.history_id) _schedHistoryId = d.history_id;
-      _setQualityState(d.saved ? 'saved' : 'unsaved');
-      if (d.saved) {
+      var movedSince = !!d.saved && _schedSaveSig(_schedRows) !== postedSig;
+      _setQualityState(d.saved && !movedSince ? 'saved' : 'unsaved');
+      if (d.saved && movedSince) {
+        /* The rows this save sent are stored; the edit made after it left
+           is still only on this page. Its version is the base of the next
+           save. Nothing is sent: Save & send runs on a second press. */
+        if (d.version !== undefined && d.version !== null) _schedVersion = d.version;
+        _schedSetDirty(true);
+        _schedHideConflict();
+        toast('Saved — your newest change came in while saving and isn’t saved yet. Save again to keep it.', 'warning');
+      } else if (d.saved) {
         _schedSetDirty(false);
         _schedSnapshot();
         _schedHideConflict();
@@ -23735,7 +23749,7 @@ function rescoreSchedule(btn, after) {
       _schedRenderTable();
       // Save & send: the send runs only once the week it sends is stored.
       // A plain Save re-reads what Send would do for the saved week.
-      if (d.saved && typeof after === 'function') after();
+      if (d.saved && !movedSince && typeof after === 'function') after();
       else if (d.saved && window.psRefresh) psRefresh();
     } else if (d && d.conflict) {
       _schedShowConflict(d);
@@ -24206,6 +24220,9 @@ function publishScheduleNow(ack){
   var keys = window._psAckKeys && window._psAckKeys.hid === _schedHistoryId ? window._psAckKeys.keys : null;
   var body = {acknowledge: ack ? (keys && keys.length ? keys.slice() : true) : false};
   if (_schedHistoryId) body.schedule_id = _schedHistoryId;
+  /* The version of the rows on screen: a week somebody changed since is
+     refused with their changes, never sent unseen (BUGSLIFE-11). */
+  if (!_schedDirty && _schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
   var status = 0;
   fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
     .then(function(r){ status = r.status; return r.json().catch(function(){ return {ok:false, error:'Server error (HTTP ' + status + ') — please try again'}; }); })
@@ -24263,6 +24280,9 @@ function publishScheduleNow(ack){
       }
       // A newer copy of this week replaced this one: it cannot be sent (UI-3).
       if (d.replaced) _schedSetReplaced({by: d.superseded_by || null, text: d.error});
+      /* Somebody changed the week after this page loaded it: their change
+         is shown, nothing went out (BUGSLIFE-11). */
+      if (d.stale && window._schedShowConflict) _schedShowConflict(d);
       result.style.color = 'var(--hb-bad)';
       // 403: this login can draft the week but not send it. The server's
       // sentence says exactly that; show it rather than "Nothing sent".
@@ -24535,6 +24555,18 @@ function _recEvent(key, event, kind) {
   if (kind) body.kind = kind;
   fetch('/api/recs/event', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
     .catch(function () {});
+}
+
+/* Everything a save stores about the rows on screen, as one comparable
+   value: the eight columns, each shift's id and its lock. */
+function _schedSaveSig(rows) {
+  var out = [], i, r;
+  for (i = 0; i < (rows || []).length; i++) {
+    r = rows[i] || {};
+    out.push([r.date, r.day, r.employee, r.role, r.shift_start, r.shift_end, r.scheduled_hours, r.notes,
+              r.shift_id, r.locked ? 1 : 0].join('|'));
+  }
+  return out.join('~');
 }
 
 function _schedSnapshot() {
@@ -38893,7 +38925,14 @@ window.cavPalette = cavPalette;
   function psReach() {
     var el = $id('ps-reach'), c = window._psCheck; if (!el) return;
     if (!c || !c.reach) { el.innerHTML = ''; return; }
-    if (c.published_at) { var un = c.unsent_changes || []; el.innerHTML = 'Sent to staff <span class="hb-num">' + e(window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.'); return; }
+    if (c.published_at) {
+      var un = c.unsent_changes || [], dl = c.delivery || {}, miss = (dl.failed || 0) + (dl.unreachable || 0);
+      el.innerHTML = 'Sent to staff <span class="hb-num">' + e(window.mdyAt ? mdyAt(c.published_at) : md(c.published_at)) + '</span> · ' + (un.length ? ('<span class="hb-num">' + un.length + '</span> ' + (un.length === 1 ? 'person hasn’t' : 'people haven’t') + ' been told about saved changes — Send tells them.') : 'a change you save is sent when you press Send, to whoever it moves.')
+        + (dl.sending ? ' · <span class="hb-num">' + dl.sending + '</span> still sending' : '')
+        + (miss ? ' · <span class="hb-num">' + miss + '</span> didn’t get it <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="psResend(\'missing\', this)">Send to them</button>' : '')
+        + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="psResend(\'all\', this)">Send again to everyone</button>';
+      return;
+    }
     var r = c.reach, bits = [];
     if (r.by_app) bits.push('<span class="hb-num">' + r.by_app + '</span> in the app');
     if (r.by_text) bits.push('<span class="hb-num">' + r.by_text + '</span> by text');
@@ -38904,6 +38943,24 @@ window.cavPalette = cavPalette;
       + (lost ? ' · <span class="hb-num">' + lost + '</span> only in the staff portal' : '')
       + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="togglePublishSchedule()">' + (lost ? 'Fix contacts' : 'Contacts') + '</button>';
   }
+  /* Send a week staff already have again (BUGSLIFE-9): "missing" - the
+     people whose message failed or who were unreachable then - or "all",
+     after a confirm, since everyone hears about it a second time. */
+  window.psResend = function (scope, btn) {
+    if (!_schedHistoryId) return;
+    if (scope === 'all' && !window.confirm('Send this week to everyone on it again? Everyone hears about their shifts a second time, even if nothing changed.')) return;
+    var done = btn ? cbtnBusy(btn, 'Sending…') : function () {};
+    postJ('/api/labor/publish-schedule', {schedule_id: _schedHistoryId, resend: scope}, function (d) {
+      done();
+      if (d.ok) {
+        var n = (d.sent || []).length, f = (d.failed || []).length, w = (d.sending || []).length;
+        toast(d.nothing_to_send ? (d.note || 'Everyone on this week has it.') : ('Sent again to ' + n + (w ? ' · ' + w + ' still sending' : '') + (f ? ' · ' + f + ' failed' : '')), f ? 'warning' : 'success');
+        if (window.psRefresh) psRefresh();
+      } else {
+        toast(d.error || 'Nothing sent', 'error');
+      }
+    });
+  };
   window.psIsSent = function () {
     if (!_schedHistoryId || _schedDirty) return false;
     var c = window._psCheck, mine = c && c.schedule_id != null ? +c.schedule_id === +_schedHistoryId : true;

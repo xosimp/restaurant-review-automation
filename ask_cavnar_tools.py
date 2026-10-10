@@ -194,11 +194,12 @@ def _read_schedule(restaurant_id):
     try:
         from models import _ensure_history_columns
         _ensure_history_columns(conn)
-        row = conn.execute(
-            "SELECT id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, hours_budget, "
-            "schedule_csv, quality_json, edited_at FROM schedule_history "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
-            (restaurant_id,)).fetchone()
+        # The week in force (models.newest_draft, ARCH-11) — never a
+        # discarded rewrite or a replaced draft.
+        from models import newest_draft as _newest_draft
+        row = _newest_draft(conn, restaurant_id,
+                            columns="id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, "
+                                    "hours_budget, schedule_csv, quality_json, edited_at")
     finally:
         conn.close()
     if not row:
@@ -4908,7 +4909,7 @@ def proposal_details(name, args, restaurant_id, bulk_preview=None) -> dict:
             # confirm (the card never carries an acknowledgement), so say why
             # before the tap and where to send it knowingly (NS5 C1/H3).
             try:
-                from client_api import publish_blockers
+                from schedule_publish import publish_blockers
                 blockers = publish_blockers(restaurant_id, row["id"])
             except Exception:
                 blockers = []

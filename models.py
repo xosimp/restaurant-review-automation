@@ -1312,6 +1312,13 @@ def ensure_columns(db_path: str = DB_PATH):
         # (schedule audit 10/3/26 P-24; the platform check reads the p95).
         ("schedule_history", "stage_seconds_json", "TEXT"),
         ("schedule_history", "total_seconds", "REAL"),
+        # The PUBLISHED copy of a week, apart from the working copy
+        # (schedule_csv) the Studio edits: what staff were sent, plus the
+        # swaps and covers they were told about. Every staff and
+        # operational reader reads it; a save never touches it (schedule
+        # audit 10/10/26 ARCH-1, BUGSLIFE-3). Backfilled at boot
+        # (backfill_published_copies).
+        ("schedule_history", "published_csv", "TEXT"),
         # email_log.status existed from the start but nothing could write it:
         # log_email() had no status parameter, so a failed send was recorded
         # as 'sent' like every other row.
@@ -4437,6 +4444,11 @@ def init_db(db_path: str = DB_PATH):
     # audit 10/3/26 PR-31).
     from schedule_output import init_schedule_output
     init_schedule_output(db_path)
+    # The publish outbox: one row per person a Send, a changes send or a
+    # resend tells, delivered and retried apart from the stamp (schedule
+    # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).
+    from schedule_publish import init_schedule_notices
+    init_schedule_notices(db_path)
     # One identity and event trail for every recommendation (rec_ledger).
     from rec_ledger import init_rec_ledger
     init_rec_ledger(db_path)
@@ -4624,6 +4636,14 @@ def init_db(db_path: str = DB_PATH):
         backfill_history_hours(db_path=db_path)
     except Exception as e:
         print(f"[schedule history] hours backfill skipped: {e}")
+    # Each published week's published copy, apart from its working copy
+    # (schedule audit 10/10/26 ARCH-1): what each person was last told,
+    # after the column list above has added published_csv.
+    try:
+        import schedule_versions as _sv_boot
+        _sv_boot.backfill_published_copies(db_path=db_path)
+    except Exception as e:
+        print(f"[schedule history] published-copy backfill skipped: {e}")
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).
@@ -9795,8 +9815,9 @@ def sibling_location_shifts(restaurant_id: int, dates: list,
             if not meta:
                 continue
             for row in conn.execute(
-                    "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-                    "AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ?", (sid, lo, hi)).fetchall():
+                    "SELECT " + live_csv_sql("h") + " AS schedule_csv FROM schedule_history h WHERE h.restaurant_id=? "
+                    "AND " + live_where("h") + " "
+                    "AND substr(h.week_end,1,10) >= ? AND substr(h.week_start,1,10) <= ?", (sid, lo, hi)).fetchall():
                 from schedule_versions import rows_from_csv
                 for r in rows_from_csv(row["schedule_csv"] or ""):
                     if r.get("date") in wanted and (r.get("employee") or "").strip():
@@ -11221,7 +11242,8 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            what_if: dict = None, db_path: str = DB_PATH,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
-                           economics: dict = None, stage_seconds: dict = None, base: tuple = None) -> int:
+                           economics: dict = None, stage_seconds: dict = None, base: tuple = None,
+                           in_transaction=None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -11241,8 +11263,21 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     without its blockers. `base` = (history_id, schedule_csv) is the draft a
     redo was built from, as it read it: when that draft has changed or gone
     since, nothing is written and DraftChanged is raised (PIPE-2).
+
+    Every row keeps the shift id it had in the week's current copy (the
+    redo's base, else the week's working copy, else its live copy — matched
+    by schedule_rows.carry_ids) and a new row gets a new one (ARCH-6). A
+    copy a Send holds right now (a fresh publishing_at) is never superseded:
+    the generation landing mid-Send used to supersede the very copy being
+    stamped, and staff were told "posted" about a week no reader could find
+    (BUGSLIFE-2). `in_transaction(conn, new_id)` runs inside the same write
+    before it commits — the generation writes its `generated` version, its
+    experiment arm and its model-call links there, so the week never exists
+    without its draft baseline (ARCH-29, BUGSLIFE-25); whatever it raises
+    rolls the whole save back.
     """
     import json as _json_sh
+    import schedule_rows as _srows
     if hours_hourly is None or hours_salaried is None:
         try:
             split = history_hours(restaurant_id, schedule_csv, db_path=db_path)
@@ -11267,11 +11302,22 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         q = quality or {}
         conn.execute("BEGIN IMMEDIATE")
         try:
+            prior_text = None
             if base is not None:
                 now = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
                                    (int(base[0]), restaurant_id)).fetchone()
                 if now is None or (now["schedule_csv"] or "") != (base[1] or ""):
                     raise DraftChanged(int(base[0]), None if now is None else (now["schedule_csv"] or ""))
+                prior_text = now["schedule_csv"] or ""
+            elif week_start:
+                cur_copy = week_draft(conn, restaurant_id, week_start)
+                if cur_copy is not None:
+                    prior_text = cur_copy["schedule_csv"] or ""
+                else:
+                    live = live_week_row(conn, restaurant_id, week_start)
+                    prior_text = (live["schedule_csv"] or "") if live else None
+            schedule_csv = _srows.to_csv(_srows.carry_ids(_srows.parse(schedule_csv),
+                                                          _srows.parse(prior_text) if prior_text else []))
             cur = conn.execute("""
                 INSERT INTO schedule_history
                     (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
@@ -11292,8 +11338,10 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
             # this one, so the history reads as one draft per week, not five.
             if week_start:
                 conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
-                             "AND id<>? AND published_at IS NULL AND superseded_by IS NULL",
-                             (new_id, restaurant_id, week_start, new_id))
+                             "AND id<>? AND published_at IS NULL AND superseded_by IS NULL AND NOT "
+                             + publish_claim_fresh_sql(), (new_id, restaurant_id, week_start, new_id))
+            if in_transaction is not None:
+                in_transaction(conn, new_id)
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -11326,7 +11374,7 @@ def _ensure_history_columns(conn):
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
                        ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL"),
-                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL")):
+                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL"), ("published_csv", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -11336,41 +11384,6 @@ def _ensure_history_columns(conn):
                     raise
     if db_file and db_file != ":memory:":
         _HISTORY_COLUMNS_OK.add(db_file)
-
-
-def update_schedule_history_rows(restaurant_id: int, schedule_csv: str,
-                                 quality: dict = None, history_id: int = None,
-                                 edited_by: str = None, db_path: str = DB_PATH) -> int:
-    """Write a manager's edited schedule back over the stored one.
-
-    Without this the whole override feature was decorative: the edit lived
-    in the page, the score moved, and publishing read the CSV saved at
-    generation time — so staff received the week the manager had just
-    fixed, unfixed. Returns the history row id, or 0 when there is nothing
-    to write to.
-    """
-    import json as _json_sh
-    conn = get_conn(db_path)
-    try:
-        _ensure_history_columns(conn)
-        if history_id:
-            row = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
-                               (history_id, restaurant_id)).fetchone()
-        else:
-            row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? "
-                               "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
-        if not row:
-            return 0
-        conn.execute("""UPDATE schedule_history
-                        SET schedule_csv=?, quality_json=COALESCE(?, quality_json),
-                            edited_at=datetime('now'), edited_by=?
-                        WHERE id=? AND restaurant_id=?""",
-                     (schedule_csv, _json_sh.dumps(quality) if quality else None,
-                      (edited_by or "").strip()[:120] or None, row["id"], restaurant_id))
-        conn.commit()
-        return row["id"]
-    finally:
-        conn.close()
 
 
 _HISTORY_BAND_LEAD = {"excellent": "Excellent week", "good": "Solid week",
@@ -11523,7 +11536,11 @@ def get_published_week_csv(history_id: int, restaurant_id: int, with_stations: b
     slice of review_json those paths read. Scoped to restaurant_id like the
     full reader: None for a missing id or another tenant's."""
     import json as _json_pw
-    cols = "id, week_start, week_end, schedule_csv, published_at, edited_at" + (", review_json" if with_stations else "")
+    # The PUBLISHED copy (ARCH-1): a manager's unsent edit to a sent week
+    # never reaches staff before Send. A week that never went out reads as
+    # its working copy (the callers only ever ask for live weeks).
+    cols = ("id, week_start, week_end, COALESCE(published_csv, schedule_csv) AS schedule_csv, published_at, "
+            "edited_at" + (", review_json" if with_stations else ""))
     conn = get_conn(db_path)
     try:
         row = conn.execute(f"SELECT {cols} FROM schedule_history WHERE id=? AND restaurant_id=?",
@@ -12225,6 +12242,22 @@ def _with_acting_admin(event_data):
     data["acting_admin_id"] = ctx.get("acting_admin_id")
     data["actor"] = f"{admin} (Cavnar AI, viewing as {ctx.get('as_username') or 'the owner'})"
     return data
+
+
+def log_account_event(restaurant_id, event_type, current_user=None, detail=None, extra=None):
+    """Account activity log (Account -> Security -> Account activity): the
+    one writer client_api.log_account_event, the publish service and the
+    schedule engine share — a job or a service no longer imports the route
+    module for it (schedule audit 10/10/26 ARCH-15). `extra`: structured
+    keys stored beside the detail. Never raises."""
+    try:
+        data = dict(extra or {})
+        data["detail"] = detail
+        if current_user:
+            data["actor"] = current_user.get("username")
+        log_event(restaurant_id, event_type, data)
+    except Exception:
+        pass
 
 
 def log_event(restaurant_id: int, event_type: str, event_data: dict = None,
@@ -15759,7 +15792,7 @@ def schedule_publish_trust(restaurant_id: int, db_path: str = DB_PATH) -> int:
         rows = conn.execute(
             "SELECT h.id, h.edited_at, h.week_start, h.week_end, h.published_at FROM schedule_history h "
             "WHERE h.restaurant_id=? "
-            "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) "
+            "AND " + live_where("h") + " "
             "ORDER BY h.id DESC LIMIT 10", (restaurant_id,)).fetchall()
         n = 0
         for r in rows:
@@ -16272,26 +16305,174 @@ def drop_schedule_share(token: str, schedule_id: int, db_path: str = DB_PATH):
         conn.close()
 
 
-def _live_week_row(conn, restaurant_id, week_start):
-    """The version of this week staff are on now: the published copy nothing
-    superseded, the newest (re)publish first; else, for a week sent before
-    the publish stamp existed, the newest copy that was shared. None when no
-    copy of the week is live."""
+# ── the week in force: ONE definition (schedule audit 10/10/26 ARCH-11) ───
+#
+# A week has two copies on its schedule_history row (ARCH-1, BUGSLIFE-3):
+#   schedule_csv   — the WORKING copy: the Studio's draft, every save lands
+#                    here, and on a week staff already have it carries the
+#                    unsent changes until Send;
+#   published_csv  — the PUBLISHED copy: exactly what staff were sent (a
+#                    Send, a changes send) plus the swaps and covers they
+#                    were told about. Every staff and operational reader
+#                    reads only this: the portal, the /s/ link, the app,
+#                    drops, swaps and claims, time-off conflicts, the
+#                    no-show and coverage checks, task sheets, reminders,
+#                    attendance and the learners' "the week that ran".
+# Nine readers used to answer "which row is the week" nine ways (newest id,
+# newest not superseded, by live_at, NOT EXISTS a newer published id, ...).
+# There is one answer for each question now:
+#   the LIVE copy of a week  — its newest published copy (by when it last
+#       went out, then id): live_where() in SQL, live_week_row / live_weeks
+#       / live_week_for / live_week_rows in Python. A published copy is
+#       replaced only by a newer published one: a generation's supersede of
+#       a copy mid-Send (BUGSLIFE-2) can no longer hide the week staff have;
+#   the WORKING copy of a week — its newest row nothing superseded:
+#       week_draft / newest_draft (schedule_versions.draft_rows reads its
+#       rows). Nobody writes "ORDER BY id DESC LIMIT 1" on schedule_history.
+
+def live_csv_sql(alias="h") -> str:
+    """SQL for a row's published copy (the working copy for a row published
+    before published_csv existed and not yet backfilled)."""
+    return f"COALESCE({alias}.published_csv, {alias}.schedule_csv)"
+
+
+def live_where(alias="h") -> str:
+    """SQL condition: the row is its week's live copy — published, with no
+    newer published copy of the same week. `alias` is the table's name or
+    alias in the caller's query ("schedule_history" when unaliased)."""
+    a = alias
+    return (f"{a}.published_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schedule_history lw "
+            f"WHERE lw.restaurant_id={a}.restaurant_id AND lw.week_start={a}.week_start "
+            f"AND lw.published_at IS NOT NULL AND lw.id<>{a}.id "
+            f"AND (COALESCE(lw.republished_at, lw.published_at), lw.id) > "
+            f"(COALESCE({a}.republished_at, {a}.published_at), {a}.id))")
+
+
+def live_week_row(conn, restaurant_id, week_start):
+    """The copy of this week staff are on now: {id, week_start, week_end,
+    schedule_csv (the PUBLISHED copy), live_at, published_at} — its newest
+    published copy; else, for a week sent before the publish stamp existed,
+    the newest copy that was shared. None when no copy of the week is
+    live."""
     row = conn.execute(
-        "SELECT id, week_start, week_end, schedule_csv, COALESCE(republished_at, published_at) AS live_at "
-        "FROM schedule_history WHERE restaurant_id=? AND week_start=? AND published_at IS NOT NULL "
-        "AND superseded_by IS NULL ORDER BY COALESCE(republished_at, published_at) DESC, id DESC LIMIT 1",
+        f"SELECT h.id, h.week_start, h.week_end, {live_csv_sql('h')} AS schedule_csv, "
+        "COALESCE(h.republished_at, h.published_at) AS live_at, h.published_at FROM schedule_history h "
+        "WHERE h.restaurant_id=? AND h.week_start=? AND h.published_at IS NOT NULL "
+        "ORDER BY COALESCE(h.republished_at, h.published_at) DESC, h.id DESC LIMIT 1",
         (restaurant_id, week_start)).fetchone()
     if row:
         return row
-    if conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start=? "
-                    "AND published_at IS NOT NULL LIMIT 1", (restaurant_id, week_start)).fetchone():
-        return None
     return conn.execute(
-        "SELECT h.id, h.week_start, h.week_end, h.schedule_csv, NULL AS live_at FROM schedule_history h "
-        "WHERE h.restaurant_id=? AND h.week_start=? AND h.superseded_by IS NULL "
+        "SELECT h.id, h.week_start, h.week_end, h.schedule_csv, NULL AS live_at, NULL AS published_at "
+        "FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? AND h.superseded_by IS NULL "
         "AND EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id) ORDER BY h.id DESC LIMIT 1",
         (restaurant_id, week_start)).fetchone()
+
+
+# The name staff_schedule, staff_insights and the share link have read it by.
+_live_week_row = live_week_row
+
+
+def live_weeks(restaurant_id, lo=None, hi=None, conn=None, db_path: str = DB_PATH, limit: int = 60) -> list:
+    """Every week's live copy whose dates reach into [lo, hi] (ISO dates;
+    either open), as dicts {id, week_start, week_end, schedule_csv (the
+    published copy), live_at, published_at}, the newest live copy first —
+    so a day two copies cover belongs to the newer."""
+    own = conn is None
+    conn = conn or get_conn(db_path)
+    try:
+        q = ("SELECT week_start FROM schedule_history h WHERE h.restaurant_id=? AND (h.published_at IS NOT NULL "
+             "OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id))")
+        args = [restaurant_id]
+        if lo:
+            q += " AND substr(COALESCE(h.week_end, h.week_start),1,10) >= ?"
+            args.append(str(lo)[:10])
+        if hi:
+            q += " AND substr(h.week_start,1,10) <= ?"
+            args.append(str(hi)[:10])
+        q += " GROUP BY week_start ORDER BY MAX(h.id) DESC LIMIT ?"
+        args.append(int(limit))
+        try:
+            weeks = [r["week_start"] for r in conn.execute(q, args).fetchall()]
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e).lower():
+                return []
+            raise
+        out = []
+        for ws in weeks:
+            row = live_week_row(conn, restaurant_id, ws)
+            if row:
+                out.append(dict(row))
+    finally:
+        if own:
+            conn.close()
+    out.sort(key=lambda r: (str(r.get("live_at") or ""), r["id"]), reverse=True)
+    return out
+
+
+def live_week_for(restaurant_id, on_date, conn=None, db_path: str = DB_PATH):
+    """The live copy (as live_weeks shapes it) of the week covering
+    `on_date`, or None."""
+    iso = on_date.isoformat() if hasattr(on_date, "isoformat") else str(on_date or "")[:10]
+    if not iso:
+        return None
+    for w in live_weeks(restaurant_id, lo=iso, hi=iso, conn=conn, db_path=db_path):
+        ws, we = str(w.get("week_start") or "")[:10], str(w.get("week_end") or w.get("week_start") or "")[:10]
+        if ws <= iso <= we:
+            return w
+    return None
+
+
+def live_week_rows(restaurant_id, on_date, db_path: str = DB_PATH) -> list:
+    """The rows (schedule_rows shape, every day of it) of the week in force
+    for staff on `on_date` — its published copy — or [] when no published
+    week covers the date. The one read for "the week in force" (contract
+    #3)."""
+    w = live_week_for(restaurant_id, on_date, db_path=db_path)
+    if not w:
+        return []
+    import schedule_rows
+    return schedule_rows.parse(w.get("schedule_csv") or "")
+
+
+def week_draft(conn, restaurant_id, week_start):
+    """The working copy of one week: its newest row nothing superseded
+    (the draft, or the live row itself carrying unsent changes). None when
+    the week has none."""
+    return conn.execute(
+        "SELECT * FROM schedule_history WHERE restaurant_id=? AND week_start=? AND superseded_by IS NULL "
+        "ORDER BY id DESC LIMIT 1", (restaurant_id, week_start)).fetchone()
+
+
+def newest_draft(conn, restaurant_id, columns: str = "id"):
+    """The working copy of the newest week the restaurant has (its newest
+    row nothing superseded) — what a screen that names no week opens. A
+    rewrite the quality gate discarded, or a draft a newer one replaced, is
+    never it (P-42)."""
+    return conn.execute(f"SELECT {columns} FROM schedule_history WHERE restaurant_id=? AND superseded_by IS NULL "
+                        "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+
+
+def week_ever_sent(conn, restaurant_id, week_start) -> bool:
+    """Whether any copy of this week ever went to staff (published, or
+    shared before the stamp existed)."""
+    return conn.execute(
+        "SELECT 1 FROM schedule_history p WHERE p.restaurant_id=? AND p.week_start=? AND (p.published_at IS NOT NULL "
+        "OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=p.id)) LIMIT 1",
+        (restaurant_id, week_start)).fetchone() is not None
+
+
+def publish_claim_fresh_sql(alias="") -> str:
+    """SQL condition: a Send holds this row right now (its claim is younger
+    than the claim's lease). A generation or the quality gate's restore
+    never supersedes such a row (BUGSLIFE-2)."""
+    a = f"{alias}." if alias else ""
+    return f"({a}publishing_at IS NOT NULL AND {a}publishing_at >= datetime('now','-{PUBLISH_CLAIM_MINUTES} minutes'))"
+
+
+# How long a Send's claim on a week holds before it belongs to a Send that
+# died (SCHED-29).
+PUBLISH_CLAIM_MINUTES = 10
 
 
 def _share_holder_inactive(conn, restaurant_id, employee_name) -> bool:
@@ -16335,8 +16516,8 @@ def get_schedule_share(token: str, db_path: str = DB_PATH) -> dict:
         row = conn.execute("""
             SELECT s.id, s.restaurant_id, s.schedule_id, s.employee_name, s.viewed_at, s.view_count,
                    s.expires_at, s.sent_at,
-                   h.week_start, h.week_end, h.schedule_csv, h.published_at, h.superseded_by,
-                   r.name AS restaurant_name
+                   h.week_start, h.week_end, COALESCE(h.published_csv, h.schedule_csv) AS schedule_csv,
+                   h.published_at, h.superseded_by, r.name AS restaurant_name
             FROM schedule_shares s
             JOIN schedule_history h ON h.id = s.schedule_id
             JOIN restaurants r ON r.id = s.restaurant_id

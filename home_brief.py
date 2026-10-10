@@ -1246,7 +1246,9 @@ def _build(current_user, present=True, reads=None):
     _labor_tgt = _labor_tgt_for["phrase"]
     labor_hist = get_labor_history(rid, limit=8) if labor_live else []
     client_data = _one_dict(conn, "SELECT updated_at, shifts_source, inventory_source FROM client_data WHERE restaurant_id=?", (rid,)) or {}
-    last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_hourly, hours_budget FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,))
+    # The week in force (newest copy nothing superseded — models.newest_draft's
+    # rule, ARCH-11), never a discarded rewrite.
+    last_schedule = _one_dict(conn, "SELECT generated_at, week_start, week_end, hours_scheduled, hours_hourly, hours_budget FROM schedule_history WHERE restaurant_id=? AND superseded_by IS NULL ORDER BY id DESC LIMIT 1", (rid,))
 
     # ── food cost ───────────────────────────────────────────────────────────
     inv, inv_live = {}, False

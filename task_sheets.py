@@ -530,8 +530,9 @@ def _recent_schedule_roles(restaurant_id):
     import csv, io
     conn = get_conn()
     try:
-        row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND schedule_csv IS NOT NULL "
-                           "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        # The week in force (models.newest_draft, ARCH-11), never a
+        # discarded rewrite.
+        row = _models_mod.newest_draft(conn, restaurant_id, columns="schedule_csv")
     finally:
         conn.close()
     roles = set()
@@ -587,25 +588,28 @@ def published_day_shifts(restaurant_id, day, owner=None) -> tuple:
 
 def _schedule_sig(restaurant_id, day, db_path=DB_PATH):
     """(signature, owner id) of the live published week for `day`, without
-    reading its CSV: the week's id, its newest version (every cover, swap and
-    edit appends one — schedule_versions.write_on), and its edit and publish
-    stamps. "none" when no published week covers the day."""
+    reading its CSV: the week's id, the newest version that changed what
+    staff have (a cover or swap, a Send — schedule_versions.write_on), and
+    its publish stamps. A manager's unsent edit changes the working copy
+    only, so it re-issues no sheet (ARCH-1). "none" when no published week
+    covers the day."""
     owner = _published_owner(restaurant_id, day)
     if owner is None:
         return "none", None
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT edited_at, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+        row = conn.execute("SELECT published_at, republished_at FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (owner, restaurant_id)).fetchone()
         try:
-            ver = conn.execute("SELECT MAX(version) FROM schedule_versions WHERE history_id=?", (owner,)).fetchone()[0]
+            ver = conn.execute("SELECT MAX(version) FROM schedule_versions WHERE history_id=? "
+                               "AND reason IN ('swap', 'published')", (owner,)).fetchone()[0]
         except Exception:
             ver = None
     finally:
         conn.close()
     if not row:
         return "none", None
-    return f"{owner}:{ver or 0}:{row['edited_at'] or ''}:{row['published_at'] or ''}", owner
+    return f"{owner}:{ver or 0}:{row['republished_at'] or ''}:{row['published_at'] or ''}", owner
 
 
 def _pick(sheet, shifts):

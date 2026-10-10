@@ -58,7 +58,8 @@ def _match(name, names):
 
 def _draft_counts(restaurant_id, history_id=None, db_path=DB_PATH):
     """({(role, day, part): heads}, week_start, history_id) for the week asked
-    for, else the newest one built."""
+    for, else the week in force (models.newest_draft — never a quality-gate
+    rewrite that was discarded and superseded, ARCH-11)."""
     from models import get_conn
     import schedule_rules as sr
     conn = get_conn(db_path)
@@ -67,8 +68,8 @@ def _draft_counts(restaurant_id, history_id=None, db_path=DB_PATH):
             row = conn.execute("SELECT id, week_start, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
                                (int(history_id), restaurant_id)).fetchone()
         else:
-            row = conn.execute("SELECT id, week_start, schedule_csv FROM schedule_history WHERE restaurant_id=? "
-                               "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+            import models as _m_live
+            row = _m_live.newest_draft(conn, restaurant_id, columns="id, week_start, schedule_csv")
     finally:
         conn.close()
     counts = {}

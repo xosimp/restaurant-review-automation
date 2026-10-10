@@ -1115,19 +1115,24 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
         conn.close()
 
 
-def link_calls(restaurant_id, history_id, generation_id, db_path=None) -> int:
+def link_calls(restaurant_id, history_id, generation_id, db_path=None, conn=None) -> int:
     """Key every call of `generation_id` to the schedule_history row its
-    draft was saved as. Returns how many were linked."""
+    draft was saved as. Returns how many were linked. With `conn`, on the
+    caller's connection inside its transaction (the generation's save,
+    schedule audit 10/10/26 ARCH-29) — the caller commits."""
     if not (history_id and generation_id):
         return 0
-    conn = get_conn(db_path)
+    own = conn is None
+    conn = conn or get_conn(db_path)
     try:
         n = conn.execute("UPDATE schedule_model_calls SET history_id=? WHERE restaurant_id=? AND generation_id=? "
                          "AND history_id IS NULL", (history_id, restaurant_id, generation_id)).rowcount
-        conn.commit()
+        if own:
+            conn.commit()
         return n or 0
     finally:
-        conn.close()
+        if own:
+            conn.close()
 
 
 def load_calls(generation_id=None, history_id=None, db_path=None) -> list:

@@ -33,15 +33,16 @@ def get_conn(db_path=None):
 
 log = logging.getLogger(__name__)
 
-COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
+import schedule_rows as _srows
+
+COLS = _srows.COLS
 
 
 def rows_from_csv(text) -> list:
-    out = []
-    for r in csv.DictReader(io.StringIO(text or "")):
-        if (r.get("employee") or "").strip():
-            out.append({c: (r.get(c) or "").strip() for c in COLS})
-    return out
+    """A stored week's rows — schedule_rows.parse, the one reader: the eight
+    columns, then shift_id, person_id and locked ("" when the text predates
+    them)."""
+    return _srows.parse(text)
 
 
 def _key(r):
@@ -216,6 +217,17 @@ def latest_version(conn, history_id) -> int:
 def _rows_sig(csv_text) -> list:
     """A week's rows as one comparable value: every column, order-free."""
     return sorted(tuple(r.get(c, "") for c in COLS) for r in rows_from_csv(csv_text))
+
+
+def same_rows(a_rows, b_rows, explicit_locks=None) -> bool:
+    """Whether two weeks are the same rows — every column, order-free —
+    and, when a save names locks ({shift_id: bool}), the same locks as
+    `a_rows` holds. A save that is the week already writes nothing."""
+    if sorted(tuple(r.get(c, "") for c in COLS) for r in a_rows or []) != \
+            sorted(tuple(r.get(c, "") for c in COLS) for r in b_rows or []):
+        return False
+    held = {str(r.get("shift_id") or "").lower(): _srows.is_locked(r) for r in a_rows or []}
+    return all(held.get(str(sid).lower(), False) == bool(v) for sid, v in (explicit_locks or {}).items())
 
 
 def rows_changed_since(conn, history_id, base_version):
@@ -621,54 +633,222 @@ class StaleVersion(Exception):
         self.latest = latest
 
 
+# The reason a staff request's executor (shift_requests: a cover, a claim, a
+# swap) writes with: a change to the PUBLISHED copy staff were told about,
+# carried into the working copy shift by shift.
+LIVE_REASON = "swap"
+
+
+def _db_of(conn):
+    """The database file a connection is on (None for the default), so a
+    helper reading another table reads the same database."""
+    try:
+        path = conn.execute("PRAGMA database_list").fetchone()[2]
+    except Exception:
+        return None
+    return None if not path or path == DB_PATH else path
+
+
+def stamp_people(restaurant_id, rows, db_path=None) -> list:
+    """Each row with `person_id`: the people.id of the one live person its
+    name means here (an alias or an old spelling included), "" when the
+    name means nobody or two people (SCALE-31). The name stays the row's
+    label; the id is what a rename or a merge cannot break. In place; a
+    failed lookup changes nothing."""
+    names = sorted({" ".join(str(r.get("employee") or "").split()) for r in rows or []} - {""})
+    if not names:
+        return rows
+    try:
+        import people as _people
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        ids = _people.person_ids(restaurant_id, names, **kw) or {}
+    except Exception as e:
+        log.info("person ids unavailable for restaurant %s: %s", restaurant_id, e)
+        return rows
+    for r in rows:
+        pid = ids.get(" ".join(str(r.get("employee") or "").split()))
+        r["person_id"] = str(pid) if pid else ""
+    return rows
+
+
+def prepare_rows(restaurant_id, rows, prior_rows, db_path=None, known_ids=None) -> list:
+    """Rows as they are stored: each with the shift id it keeps against the
+    week's prior rows (schedule_rows.carry_ids) and its person id."""
+    out = _srows.carry_ids(rows, prior_rows, known_ids=known_ids)
+    return stamp_people(restaurant_id, out, db_path=db_path)
+
+
+def apply_locks(rows, stored_rows, step=None, explicit=None) -> list:
+    """`locked` on each row of a person's save (contract #4): the client's
+    own answer for a row when it sent one (`explicit`: {shift_id: bool}, a
+    lock toggled on screen); else the row's lock as stored (by shift id);
+    and a row the manager changed in this save (step_origins' changes of
+    origin "manager") locks — an owner's edit is kept exactly by every
+    later pass, the solver and a regenerate. Cavnar AI's own changes
+    (apply fixes, Improve, the overtime move) do not lock. In place."""
+    stored = {str(r.get("shift_id") or "").lower(): _srows.is_locked(r) for r in stored_rows or []
+              if _srows.valid_id(r.get("shift_id"))}
+    edited = set()
+    for ch in (step or {}).get("changes") or []:
+        if ch.get("origin") == "manager" and ch.get("after") is not None:
+            edited.add(_key(ch["after"]))
+    explicit = explicit or {}
+    for r in rows or []:
+        sid = str(r.get("shift_id") or "").lower()
+        if sid in explicit and explicit[sid] is not None:
+            r["locked"] = "1" if explicit[sid] else ""
+        elif _key(r) in edited:
+            r["locked"] = "1"
+        else:
+            r["locked"] = "1" if stored.get(sid) else ""
+    return rows
+
+
 def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=None, quality=None,
              expected_version=None, saved_authority=None, row_origins=None) -> int:
-    """Overwrite the stored week AND append its version row, on the caller's
-    connection, inside the caller's write transaction (open it with BEGIN
-    IMMEDIATE and commit after). The two used to be separate commits, so a
-    lost version append left a week the conflict check could not see, and
-    two saves checked against one version both landed (SCHED-19, SCHED-5).
+    """Write one change to a stored week AND append its version row, on the
+    caller's connection, inside the caller's write transaction (open it
+    with BEGIN IMMEDIATE and commit after). The two used to be separate
+    commits, so a lost version append left a week the conflict check could
+    not see, and two saves checked against one version both landed
+    (SCHED-19, SCHED-5).
+
+    What it writes depends on whose change it is (ARCH-1, BUGSLIFE-3):
+
+    * a Studio save, apply fixes, a redo — any reason but LIVE_REASON —
+      writes the WORKING copy (schedule_csv) only. On a week staff already
+      have, the published copy is untouched: the edit reaches nobody until
+      Send (its gate, SCHEDULE_PUBLISH, the notice warning and the undo
+      window), and comes back as `unsent_changes` until then. It used to
+      overwrite the one column every staff reader read, so an unsent edit
+      was live on the portal the moment it was saved.
+    * LIVE_REASON ("swap": a cover, claim or swap the requests flow decided
+      and told both people about) is a change to the PUBLISHED copy:
+      `schedule_csv` is the new published week, written to published_csv,
+      and the change is carried into the working copy shift by shift
+      (schedule_rows.merge_live_change) — a manager's unsent edit to the
+      same shift keeps the manager's value. On a week never published it is
+      an ordinary write.
+
+    Every row keeps its shift id (schedule_rows.carry_ids against the copy
+    it replaces) and carries its person id (ARCH-6, SCALE-31).
 
     expected_version: the version the edit was made against; a newer one
     whose rows differ raises StaleVersion and nothing is written (a newer
     version that changed no row, like a Send's, is not a conflict —
-    rows_changed_since, UI-4). hours_scheduled follows the
-    rows, so a budget blocker judged at generation time cannot outlive the
-    edit that fixed it (SCHED-17) — and so does its split by pay,
-    hours_hourly / hours_salaried (schedule audit 10/3/26 E-7, P-6).
+    rows_changed_since, UI-4). hours_scheduled follows the working copy,
+    so a budget blocker judged at generation time cannot outlive the edit
+    that fixed it (SCHED-17) — and so does its split by pay, hours_hourly /
+    hours_salaried (schedule audit 10/3/26 E-7, P-6).
     Returns the new version number."""
     if expected_version is not None:
         changed = rows_changed_since(conn, history_id, expected_version)
         if changed:
             raise StaleVersion(changed)
-    hours = round(sum(_hours(r) for r in rows_from_csv(schedule_csv)), 1)
+    old = conn.execute("SELECT schedule_csv, published_csv, published_at FROM schedule_history "
+                       "WHERE id=? AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
+    if old is None:
+        raise LookupError("that schedule is gone")
+    db = _db_of(conn)
+    old_draft = rows_from_csv(old["schedule_csv"])
+    published = bool(old["published_at"])
+    live_write = reason == LIVE_REASON and published
+    sections_before = sections_after = None
+    old_live, materialize = None, False
+    if published:
+        # The published copy as it stands — for a week published before the
+        # two copies were kept apart (not yet backfilled), what each person
+        # was last told, frozen now so this write cannot reach staff.
+        old_live, materialize = _live_rows_of(conn, history_id, restaurant_id, old)
+        # One set of shift ids across both copies (a copy written before
+        # ids takes them by key); an id either copy already has stays.
+        old_live = _srows.carry_ids(old_live, old_draft, known_ids=[r.get("shift_id") for r in old_live])
+        old_draft = _srows.carry_ids(old_draft, old_live, known_ids=[r.get("shift_id") for r in old_draft])
+    if live_write:
+        new_live = prepare_rows(restaurant_id, rows_from_csv(schedule_csv), old_live, db_path=db)
+        new_draft = prepare_rows(restaurant_id, _srows.merge_live_change(old_draft, old_live, new_live),
+                                 old_draft, db_path=db)
+        live_text = _srows.to_csv(new_live)
+        sections_before, sections_after = old_live, new_live
+    else:
+        new_draft = prepare_rows(restaurant_id, rows_from_csv(schedule_csv), old_draft, db_path=db)
+        live_text = _srows.to_csv(old_live) if materialize else None
+        if not published:
+            # A week staff don't have: its sections follow the working copy.
+            sections_before, sections_after = old_draft, new_draft
+    draft_text = _srows.to_csv(new_draft)
+    hours = round(sum(_hours(r) for r in new_draft), 1)
     try:
-        split = _models_mod.history_hours(restaurant_id, schedule_csv)
+        split = _models_mod.history_hours(restaurant_id, draft_text)
     except Exception as e:
         # Unknown, never a guess: a reader falls back to the all-in figure.
         print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
         split = {"hourly": None, "salaried": None}
-    old = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                       (history_id, restaurant_id)).fetchone()
     cur = conn.execute(
         "UPDATE schedule_history SET schedule_csv=?, quality_json=COALESCE(?, quality_json), hours_scheduled=?, "
-        "hours_hourly=?, hours_salaried=?, edited_at=datetime('now'), edited_by=? WHERE id=? AND restaurant_id=?",
-        (schedule_csv, json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
-         (saved_by or "").strip()[:120] or None, history_id, restaurant_id))
+        "hours_hourly=?, hours_salaried=?, edited_at=datetime('now'), edited_by=?, "
+        "published_csv=CASE WHEN ? IS NULL THEN published_csv ELSE ? END WHERE id=? AND restaurant_id=?",
+        (draft_text, json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
+         (saved_by or "").strip()[:120] or None, live_text, live_text, history_id, restaurant_id))
     if cur.rowcount != 1:
         raise LookupError("that schedule is gone")
-    _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, schedule_csv, quality, saved_by,
+    _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, draft_text, quality, saved_by,
                                        saved_authority, row_origins=row_origins)
-    # A shift that changed hands in this rewrite keeps its floor section —
-    # the Studio's swap saves here, as do covers and swaps (employee audit
-    # B8 gap). Inside the caller's transaction.
-    try:
-        _models_mod.carry_shift_sections(conn, restaurant_id, rows_from_csv(old[0] if old else ""),
-                                         rows_from_csv(schedule_csv))
-    except sqlite3.OperationalError as e:
-        if "no such table" not in str(e).lower():
-            raise
+    # A shift that changed hands keeps its floor section — on the copy
+    # staff read: a cover or swap on the published week, any save of a week
+    # never sent. A Studio swap on a sent week moves the section when Send
+    # publishes it (schedule_publish). Inside the caller's transaction.
+    if sections_before is not None:
+        try:
+            _models_mod.carry_shift_sections(conn, restaurant_id, sections_before, sections_after)
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e).lower():
+                raise
     return version
+
+
+def _live_rows_of(conn, history_id, restaurant_id, row) -> tuple:
+    """(rows of a published week's published copy, whether it had to be
+    rebuilt): published_csv, or — for a week published before it was kept —
+    what each person was last told, from the version history."""
+    if row["published_csv"] is not None:
+        return rows_from_csv(row["published_csv"]), False
+    versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
+                            "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall()
+    return told_rows_from_versions(versions, rows_from_csv(row["schedule_csv"])), True
+
+
+def draft_rows(history_id, restaurant_id=None, db_path=DB_PATH) -> list:
+    """The Studio's rows of one week — its WORKING copy (schedule_csv): the
+    draft, or a sent week with the manager's unsent changes (contract #3)."""
+    conn = get_conn(db_path)
+    try:
+        if restaurant_id is None:
+            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (history_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    return rows_from_csv(row["schedule_csv"] if row else "")
+
+
+def published_rows(history_id, restaurant_id=None, db_path=DB_PATH):
+    """The rows staff were sent for one week (its published copy), or None
+    when the week was never published."""
+    conn = get_conn(db_path)
+    try:
+        q = "SELECT published_at, COALESCE(published_csv, schedule_csv) AS live FROM schedule_history WHERE id=?"
+        args = [history_id]
+        if restaurant_id is not None:
+            q += " AND restaurant_id=?"
+            args.append(restaurant_id)
+        row = conn.execute(q, args).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["published_at"]:
+        return None
+    return rows_from_csv(row["live"])
 
 
 def list_versions(restaurant_id, history_id, db_path=DB_PATH) -> list:
@@ -734,30 +914,45 @@ def unsent_changes(restaurant_id, history_id, csv_text=None, db_path=DB_PATH):
     """Who has shifts on this PUBLISHED week that differ from what they were
     last told, or None when the week was never published.
 
-    {"people": [names], "dates": [iso dates whose shifts changed]}.
+    {"people": [names, the people taken off the week included], "dates":
+    [iso dates whose shifts changed]}.
 
-    What a person was last told is the last `published` version (the week
-    went out, or its changes did) — or, for the two people in a cover or a
-    swap after it, that `swap` version: shift_requests told both of them
-    itself. Diffing only against `published` re-sent a cover to both people
-    on the manager's next edit (F2-2). `csv_text` is the week as it stands
-    (default: the stored week)."""
+    What each person was last told is the week's published copy
+    (published_csv): what went out, plus the covers and swaps the requests
+    flow told the two people about (write_on, LIVE_REASON). `csv_text` is
+    the week as it stands (default: the working copy). A copy published
+    before published_csv existed, not yet backfilled, is read from the
+    version history (told_rows_from_versions)."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT published_at, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                           (history_id, restaurant_id)).fetchone()
+        row = conn.execute("SELECT published_at, schedule_csv, published_csv FROM schedule_history WHERE id=? "
+                           "AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
         if not row or not row["published_at"]:
             return None
-        versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
-                                "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall()
+        versions = None
+        if row["published_csv"] is None:
+            versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
+                                    "AND restaurant_id=? ORDER BY version", (history_id, restaurant_id)).fetchall()
     finally:
         conn.close()
     now_rows = rows_from_csv(row["schedule_csv"] if csv_text is None else csv_text)
+    if versions is None:
+        told = rows_from_csv(row["published_csv"])
+    else:
+        told = told_rows_from_versions(versions, rows_from_csv(row["schedule_csv"]))
+    pc = _srows.people_changed(told, now_rows)
+    return {"people": pc["changed"], "dates": pc["dates"]}
+
+
+def told_rows_from_versions(versions, fallback_rows) -> list:
+    """What each person on a week was last told, rebuilt from its version
+    history: the last `published` version, with each person in a later
+    `swap` (a cover or swap the requests flow told them about) as that
+    version had them. A week published before versions were kept has
+    nothing on file to say otherwise: `fallback_rows` (the week as stored)."""
     last_pub = max((i for i, v in enumerate(versions) if v["reason"] == "published"), default=None)
     if last_pub is None:
-        # A week published before versions were kept: nothing on file says
-        # what anyone was told, so nobody is claimed to be behind.
-        return {"people": [], "dates": []}
+        return list(fallback_rows or [])
     base = rows_from_csv(versions[last_pub]["schedule_csv"])
     personal, prev = {}, base
     for v in versions[last_pub + 1:]:
@@ -771,18 +966,64 @@ def unsent_changes(restaurant_id, history_id, csv_text=None, db_path=DB_PATH):
                 if k:
                     personal[k] = cur
         prev = cur
-    names = {}
-    for r in base + now_rows + [r for rows in personal.values() for r in rows]:
-        n = " ".join((r.get("employee") or "").split())
-        if n:
-            names.setdefault(n.casefold(), n)
-    people, dates = [], set()
-    for k, n in sorted(names.items()):
-        was, now = _person_shifts(personal.get(k, base), k), _person_shifts(now_rows, k)
-        if was != now:
-            people.append(n)
-            dates |= {s[0] for s in set(was) ^ set(now) if s[0]}
-    return {"people": people, "dates": sorted(dates)}
+
+    def _k(r):
+        return " ".join(str(r.get("employee") or "").split()).casefold()
+    told = [r for r in base if _k(r) not in personal]
+    for k, rows in personal.items():
+        told += [r for r in rows if _k(r) == k]
+    return told
+
+
+def backfill_published_copies(db_path=DB_PATH, max_seconds: float = 10.0) -> int:
+    """At boot: the published copy (published_csv) of every week published
+    before it was kept apart (schedule audit 10/10/26 ARCH-1) — what each
+    person was last told, rebuilt from the week's versions
+    (told_rows_from_versions). A manager's change saved but never sent
+    stays the working copy's, listed as unsent until Send; it no longer
+    shows on the portal before then. Idempotent and bounded; whatever it
+    did not reach, the next boot does (every reader falls back to the
+    working copy meanwhile)."""
+    import time as _time_bp
+    conn = get_conn(db_path)
+    try:
+        try:
+            todo = [r["id"] for r in conn.execute(
+                "SELECT id FROM schedule_history WHERE published_at IS NOT NULL AND published_csv IS NULL "
+                "ORDER BY id DESC").fetchall()]
+        except sqlite3.OperationalError:
+            return 0
+    finally:
+        conn.close()
+    stop = _time_bp.monotonic() + float(max_seconds)
+    done = 0
+    for hid in todo:
+        if _time_bp.monotonic() > stop:
+            break
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND published_csv IS NULL",
+                               (hid,)).fetchone()
+            if row is None:
+                continue
+            versions = conn.execute("SELECT version, reason, schedule_csv FROM schedule_versions WHERE history_id=? "
+                                    "ORDER BY version", (hid,)).fetchall()
+            draft = rows_from_csv(row["schedule_csv"])
+            told = told_rows_from_versions(versions, draft)
+            # One set of shift ids across both copies, so a cover or swap
+            # meets the same shift in each (the working copy's text is
+            # rewritten only to carry them; its rows are unchanged).
+            draft_ids = _srows.carry_ids(draft, [], known_ids=[r.get("shift_id") for r in draft])
+            told_ids = _srows.carry_ids(told, draft_ids, known_ids=[r.get("shift_id") for r in told])
+            conn.execute("UPDATE schedule_history SET published_csv=?, schedule_csv=? WHERE id=? "
+                         "AND published_csv IS NULL", (_srows.to_csv(told_ids), _srows.to_csv(draft_ids), hid))
+            conn.commit()
+            done += 1
+        except Exception as e:
+            log.warning("published copy not backfilled for week %s: %s", hid, e)
+        finally:
+            conn.close()
+    return done
 
 
 def draft_vs_published(restaurant_id, history_id, db_path=DB_PATH) -> dict:
@@ -2722,9 +2963,11 @@ def open_draft_for_week(restaurant_id, week_monday, db_path=DB_PATH):
     """The id of the week's draft in force that was never sent, or None."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? AND week_start=? AND published_at IS "
-                           "NULL AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
-                           (restaurant_id, str(week_monday)[:10])).fetchone()
+        # The week's working copy (models.week_draft, ARCH-11), when it
+        # was never sent.
+        row = _models_mod.week_draft(conn, restaurant_id, str(week_monday)[:10])
+        if row is not None and row["published_at"]:
+            row = None
     finally:
         conn.close()
     return row["id"] if row else None

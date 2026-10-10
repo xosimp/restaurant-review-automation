@@ -167,7 +167,10 @@ def test_a_save_over_a_draft_that_changed_refuses_inside_its_one_write(db):
     with pytest.raises(models.DraftChanged) as e:
         models.save_schedule_history(rid, WEEK[0], WEEK[-1], 6.0, 0, 30, base_csv, [], db_path=db,
                                      base=(base, base_csv + "\n"))
-    assert e.value.current_csv == base_csv
+    # The draft as stored now — its rows (the stored text carries each
+    # row's shift id, ARCH-6).
+    import schedule_versions as _svr
+    assert _svr.same_rows(_svr.rows_from_csv(e.value.current_csv), _svr.rows_from_csv(base_csv))
     assert _history(db, rid) == [(base, None)]
 
 

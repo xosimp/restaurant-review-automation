@@ -1958,9 +1958,11 @@ def _week_rows(restaurant_id, week_dates, db_path=DB_PATH) -> list:
         return []
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND week_start=? "
-                           "ORDER BY (published_at IS NOT NULL) DESC, id DESC LIMIT 1",
-                           (restaurant_id, sorted(week_dates)[0])).fetchone()
+        # The week staff have (its live copy's published rows), else the
+        # week's working copy — the one rule (models, ARCH-11).
+        import models as _m_live
+        row = _m_live.live_week_row(conn, restaurant_id, sorted(week_dates)[0]) or \
+            _m_live.week_draft(conn, restaurant_id, sorted(week_dates)[0])
     finally:
         conn.close()
     return rows_from_csv(row["schedule_csv"]) if row else []

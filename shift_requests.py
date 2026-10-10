@@ -78,19 +78,17 @@ def _key(name) -> str:
 
 
 def _published(conn, restaurant_id, on_date=None):
-    """The published week a shift on `on_date` belongs to: the newest
-    published row whose week contains that date. Taking simply the newest
+    """The published week a shift on `on_date` belongs to — its live copy
+    (models.live_week_for, the one rule, ARCH-11), its PUBLISHED rows as
+    `schedule_csv`: a manager's unsent edit is not what staff drop or swap
+    (ARCH-1). With no date, the newest live week. Taking simply the newest
     published row meant that once next week went out, nobody could drop or
     swap a shift in the week they were actually working."""
+    import models as _m
     if on_date is None:
-        return conn.execute(
-            "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-            "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
-    iso = on_date.isoformat() if hasattr(on_date, "isoformat") else str(on_date)[:10]
-    return conn.execute(
-        "SELECT id, schedule_csv, week_start, week_end FROM schedule_history WHERE restaurant_id=? "
-        "AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
-        "ORDER BY generated_at DESC, id DESC LIMIT 1", (restaurant_id, iso, iso)).fetchone()
+        weeks = _m.live_weeks(restaurant_id, conn=conn)
+        return weeks[0] if weeks else None
+    return _m.live_week_for(restaurant_id, on_date, conn=conn)
 
 
 def _live_hist(conn, restaurant_id, req):
@@ -100,8 +98,8 @@ def _live_hist(conn, restaurant_id, req):
     live = _published(conn, restaurant_id, req["date"])
     if live:
         return live
-    return conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                        (req["history_id"], restaurant_id)).fetchone()
+    return conn.execute("SELECT id, COALESCE(published_csv, schedule_csv) AS schedule_csv FROM schedule_history "
+                        "WHERE id=? AND restaurant_id=?", (req["history_id"], restaurant_id)).fetchone()
 
 
 def _today(restaurant_id, today=None):

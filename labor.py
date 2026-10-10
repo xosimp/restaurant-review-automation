@@ -3698,7 +3698,7 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
     failure (the baseline then reads the punches alone)."""
     try:
         import canonical_facts as _cf
-        from models import get_schedule_history_detail
+        from models import get_published_week_csv
         from schedule_versions import rows_from_csv
         if before is None:
             from time_utils import restaurant_now_by_id
@@ -3709,7 +3709,8 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
         for w in _cf.published_weeks(restaurant_id, since):
             if w["week_start"] >= b.isoformat():
                 continue
-            detail = get_schedule_history_detail(w["history_id"], restaurant_id) or {}
+            # The week as staff had it (its published copy, ARCH-1).
+            detail = get_published_week_csv(w["history_id"], restaurant_id) or {}
             rows.extend(rows_from_csv(detail.get("schedule_csv") or ""))
         return rows
     except Exception as e:

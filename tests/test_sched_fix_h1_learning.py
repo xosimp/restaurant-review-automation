@@ -415,7 +415,8 @@ def test_a_queued_send_runs_with_the_senders_authority_and_auto_publish_as_syste
     models.update_restaurant(rid, {"send_delay_minutes": 30})
     mon = _monday(-1)
     hid = _week(rid, mon, _crew(mon, EVERYONE), _crew(mon, EVERYONE), published=False)
-    monkeypatch.setattr(client_api, "publish_review", lambda *a, **k: {"blockers": []})
+    import schedule_publish
+    monkeypatch.setattr(schedule_publish, "publish_review", lambda *a, **k: {"blockers": []})
     owner = {"id": 1, "username": "erik", "role": "owner", "restaurant_id": rid}
     with Flask(__name__).test_request_context("/api/labor/publish-schedule", method="POST",
                                               json={"schedule_id": hid}):
@@ -424,8 +425,9 @@ def test_a_queued_send_runs_with_the_senders_authority_and_auto_publish_as_syste
     payload = json.loads(_sql("SELECT payload_json FROM delayed_actions WHERE restaurant_id=?", rid).fetchone()[0])
     assert payload["manual"] and payload["authority"] == "principal" and payload["queued_by"] == "erik"
     ran = []
-    monkeypatch.setattr(client_api, "_publish_schedule",
-                        lambda r, sid, actor, acknowledge=None: ran.append(sv.authority_of(actor)) or ({"ok": True}, 200))
+    # The delayed run calls the publish service (ARCH-15).
+    monkeypatch.setattr(schedule_publish, "publish",
+                        lambda r, sid, actor, acknowledge=None, **k: ran.append(sv.authority_of(actor)) or ({"ok": True}, 200))
     delayed._run_schedule_publish(rid, payload, None)
     delayed._run_schedule_publish(rid, {"schedule_id": hid, "automatic": True}, None)
     assert ran == ["principal", "system"]
@@ -449,8 +451,8 @@ def test_the_first_publish_observes_every_change_by_origin(observed):
     assert ("edit_headcount", "manager") in kinds and ("week_published", "manager") in kinds
     assert all(kw["phase"] == "pre_publish" for _k, kw in observed)
     import inspect
-    import client_api
-    assert "observe_publish(rid, schedule_id" in inspect.getsource(client_api._publish_schedule)
+    import schedule_publish
+    assert "observe_publish(rid, schedule_id" in inspect.getsource(schedule_publish._after_publish)
 
 
 def test_a_week_the_automatic_publish_sent_is_nobodys_acceptance_or_evidence():
@@ -1081,7 +1083,8 @@ def test_the_publish_check_carries_likely_to_change(monkeypatch):
     rid = _rid()
     mon = _monday(-1)
     hid = _hist(rid, mon, _crew(mon, EVERYONE))
-    monkeypatch.setattr(client_api, "publish_review", lambda *a, **k: {"blockers": []})
+    import schedule_publish
+    monkeypatch.setattr(schedule_publish, "publish_review", lambda *a, **k: {"blockers": []})
     monkeypatch.setattr(sl, "likely_to_change", lambda r, rows, **k: {"ready": True, "rows": [{"employee": "Zed"}]})
     monkeypatch.setattr(people, "reach", lambda *a, **k: [])
     monkeypatch.setattr(people, "reach_summary", lambda *a, **k: {})

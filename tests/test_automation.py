@@ -274,7 +274,9 @@ def test_the_shared_publish_body_names_the_automation_as_actor(db_path, monkeypa
     import emails
     monkeypatch.setattr(emails, "send_staff_schedule_email", lambda **kw: emails.SendResult(True))
     logged = []
-    monkeypatch.setattr(client_api, "log_account_event", lambda r, t, u=None, detail=None, **k: logged.append((t, (u or {}).get("username"))))
+    # The publish service logs through models.log_account_event (ARCH-15).
+    monkeypatch.setattr(models, "log_account_event", lambda r, t, current_user=None, detail=None, **k:
+                        logged.append((t, (current_user or {}).get("username"))))
     monkeypatch.setattr(client_api, "get_restaurant", lambda r, **k: models.get_restaurant(r, db_path=db_path))
     monkeypatch.setattr(client_api, "get_conn", lambda *a, **k: models.get_conn(db_path))
     out, status = client_api._publish_schedule(rid, sid, delayed.AUTOMATION_ACTOR)
