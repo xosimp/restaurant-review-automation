@@ -543,6 +543,12 @@ struct ScheduleRowBadges: View {
                 if let section {
                     ScheduleRowTag(text: section, tone: .cavnarInk2, symbol: "square.grid.2x2")
                 }
+                // Locked (contract #4): every pass and a regenerate keep it
+                // exactly. The edit sheet unlocks it.
+                if row.locked == true && !row.isManagerPlan {
+                    ScheduleRowTag(text: "Locked", tone: .cavnarInk2, symbol: "lock.fill")
+                        .accessibilityLabel("Locked: a new draft keeps this shift as it is")
+                }
             }
             if showingWhy, let why = row.pinReason {
                 HomeMixedText.make(why, size: CavnarType.caption, color: .cavnarInk3)
@@ -833,6 +839,24 @@ struct ScheduleReviewExtras: View {
                             }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                             .disabled(viewModel.isAdopting)
+                        }
+                    }
+                    // The full-time line as a minimum, in one tap (LOGIC-29):
+                    // the same switch as the rules screen's.
+                    if item.kind == "full_time_unconfirmed" {
+                        if let note = viewModel.fullTimeNote {
+                            CavnarMixedText(note, role: .secondary, color: .cavnarInk2)
+                        } else {
+                            Button {
+                                Task { await viewModel.confirmFullTimeLine() }
+                            } label: {
+                                Group {
+                                    if viewModel.isConfirmingFullTime { CavnarShimmerText(text: "Saving") }
+                                    else { Text(item.actionLabel ?? "Make it the full-time minimum") }
+                                }
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                            .disabled(viewModel.isConfirmingFullTime)
                         }
                     }
                     if item.kind == "close_times_missing" {

@@ -23,6 +23,9 @@ struct ScheduleReviewPanel: View {
     @State private var showingDeclineWhy = false
     /// "Ask X" emails a teammate: asked first (re-audit 10/8/26 M10).
     @State private var confirmingStandby: StandbyDay?
+    /// The closing stay being written into the schedule, and what it said.
+    @State private var stayBusy: String?
+    @State private var stayNote: [String: String] = [:]
 
     private var review: ScheduleReview? { result.review }
 
@@ -41,6 +44,9 @@ struct ScheduleReviewPanel: View {
                 }
             }
             actions
+            // The closing managers the verdict assumes stay (TRUST-21):
+            // each with the one tap that schedules the stay, so staff see it.
+            if let stays = review?.assumedStays?.items, !stays.isEmpty { staysBlock(stays) }
             if hasMore(rest: rest) {
                 CavnarMoreDisclosure(hiddenCount: max(rest.count, 1),
                                      total: issues.count > Self.topCount ? issues.count : nil) {
@@ -324,6 +330,38 @@ struct ScheduleReviewPanel: View {
     }
 
     private var standbyDays: [StandbyDay] { (result.standbyDays ?? []).filter { $0.standby != nil } }
+
+    private func staysBlock(_ stays: [AssumedStay]) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("Closing stays")
+            ForEach(stays) { stay in
+                VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+                    CavnarMixedText(stay.text, role: .secondary, color: .cavnarInk)
+                    if let action = stay.action, viewModel.weekReadOnlyReason == nil {
+                        Button {
+                            Haptic.light()
+                            stayBusy = stay.id
+                            Task {
+                                let refusal = await viewModel.applyReviewAction(action)
+                                stayNote[stay.id] = refusal
+                                stayBusy = nil
+                            }
+                        } label: {
+                            Group {
+                                if stayBusy == stay.id { CavnarShimmerText(text: "Saving\u{2026}") } else { Text(action.label) }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .disabled(stayBusy != nil)
+                    }
+                    if let note = stayNote[stay.id] {
+                        CavnarMixedText(note, role: .secondary, color: .cavnarRedText)
+                    }
+                }
+            }
+        }
+    }
 
     /// The days likely to lose somebody, each naming who could be on call.
     private var standbyBlock: some View {

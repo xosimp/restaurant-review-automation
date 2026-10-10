@@ -19,6 +19,10 @@ struct GenerationTypical: Codable, Equatable {
 }
 
 enum GenerationCopy {
+    /// The server's own words for a run stopped before it saved anything
+    /// (schedule_engine.STOPPED_MESSAGE) — said when a poll brings none.
+    static let stoppedLine = "Stopped \u{2014} nothing was saved."
+
     /// The step clock's stretch: the steps are a 75-second sketch, and a
     /// week now takes minutes — stretched to the measured typical draft, or
     /// three times when nothing is measured (the web's scheduleTiming).
