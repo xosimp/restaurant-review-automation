@@ -36921,6 +36921,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(acc.mean_unchanged_share!==null&&acc.mean_unchanged_share!==undefined)line+=(line?' ':'')+'On average '+Math.round(acc.mean_unchanged_share*100)+'% kept'+(acc.mean_changes!==null&&acc.mean_changes!==undefined?', '+acc.mean_changes+' changes a week':'')+'.';
       if(line)h+='<div class="ac-note" style="margin-top:8px">'+num(line)+'</div>';
     }
+    /* The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4): per
+       published week, the edits each draft needed per 100 shifts and what
+       the week did as it ran. A figure the week has no measurement of is
+       left out, never shown as 0. */
+    var sc=d.learning_scorecard||{},scw=sc.weeks||[];
+    h+='<div class="lb2-sub">How the drafts are doing<small>edits each draft needed, and what each week did as it ran</small></div>';
+    if(!sc.available||!scw.length)h+='<div class="hb-empty">Appears the Monday after a published week ends — the edits the draft needed, labor against the hourly target, overtime, minutes with no manager and no-shows nobody covered.</div>';
+    else{
+      var sh='',si,sj;
+      for(si=0;si<scw.length&&si<4;si++){var sw=scw[si];
+        sh+='<div class="int-say"><b>Week of '+esc(sw.week||'')+'</b>'+(sw.status==='open'?' <small>(still settling)</small>':'')+'</div>';
+        for(sj=0;sj<(sw.lines||[]).length;sj++)sh+='<div class="ac-note" style="margin:2px 0 0 10px">'+num(sw.lines[sj])+'</div>';}
+      h+='<div class="int-cal">'+sh+(sc.trend_sentence?'<div class="ac-note" style="margin-top:8px">'+num(sc.trend_sentence)+'</div>':'')+'</div>';
+    }
     /* The edit predictor: ready or why not, and how it did on past drafts. */
     var ep=d.edit_prediction||{};
     h+='<div class="lb2-sub">Predicting your edits<small>from the drafts you have already finished</small></div>';

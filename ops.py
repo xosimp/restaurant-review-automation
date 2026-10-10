@@ -2467,6 +2467,10 @@ _RETENTION_DAYS = {
     # The publish warnings a send went out past, by key (TRUST-28): the
     # override rate per kind reads 180 days of them.
     "schedule_publish_overrides": int(os.getenv("RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS", "400")),
+    # What made each draft (RM-4, AI-29): its commit, arms, row origins and
+    # the learning ablation's two drafts — read until the week's scorecard
+    # row is frozen; the frozen row keeps what was measured from it.
+    "schedule_generation_tags": int(os.getenv("RETAIN_SCHED_GENERATION_TAGS_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2761,6 +2765,7 @@ _RETENTION_FLOOR_DAYS = {
     # The kept week records (SCALE-33): the learners' own 24-week window.
     "schedule_learning_records": 168,
     "schedule_publish_overrides": 180,
+    "schedule_generation_tags": 120,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2901,6 +2906,7 @@ _RETENTION_READERS = {
     "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
+    "schedule_generation_tags": (("schedule_scorecard.compute_week", "schedule_scorecard.TAGS_READ_DAYS", None),),
     "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     # The scheduling memory (L-29, L-22, L-34): the owner's redos over its
     # window; each recommendation's week as it ran, for one accepted as far

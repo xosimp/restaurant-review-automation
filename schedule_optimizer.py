@@ -1687,10 +1687,17 @@ def overtime_created(before_rows, after_rows, c, headroom: dict = None) -> list:
     return out
 
 
+# The moves that change WHO works a shift (schedule audit 10/10/26
+# LOGIC-27): the experiment's "model assignment" arm turns them off with the
+# solver, so its weeks are the model's assignment, not partly the
+# optimizer's.
+REASSIGN_KINDS = ("replace", "swap", "trade")
+
+
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
              constraints=None, target: int = DEFAULT_TARGET, max_seconds: float = DEFAULT_SECONDS,
              max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None,
-             max_server_overlap: int = None, only_dates=None, what_if: bool = True) -> dict:
+             max_server_overlap: int = None, only_dates=None, what_if: bool = True, reassign: bool = True) -> dict:
     """Improve the week's Shift Quality with legal moves, and say what moved.
 
     Returns {rows, changes: [{kind, reason, gain, score_after, dollars}],
@@ -1698,7 +1705,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     labor: {before, after} | None}. `rows` is a new list; the input is not
     modified. A week that is already at `target`, or that has nothing
     configured to score, comes back unchanged with the reason. `what_if`
-    False keeps to the weak dimensions' own moves.
+    False keeps to the weak dimensions' own moves. `reassign` False leaves
+    out every move that changes who works a shift (REASSIGN_KINDS: replace,
+    swap, trade — LOGIC-27); adds, stretches, retimes, trims and a hard
+    rule's own repair still run.
     """
     t0 = _time.monotonic()
     inputs = inputs or {}
@@ -1871,7 +1881,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 problems = _learned_problems(current) + _problems(current)[:8]
                 for problem in problems:
                     for mv in _moves_for(problem, state):
-                        if mv[0] in seen or mv[0] in tabu:
+                        if mv[0] in seen or mv[0] in tabu or (not reassign and mv[0][0] in REASSIGN_KINDS):
                             continue
                         seen.add(mv[0])
                         candidates.append(mv)
@@ -1879,7 +1889,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                         break
                 candidates = candidates[:MOVES_PER_ROUND]
             else:
-                candidates = [mv for mv in _what_if_moves(state, current) if mv[0] not in tabu]
+                candidates = [mv for mv in _what_if_moves(state, current) if mv[0] not in tabu
+                              and (reassign or mv[0][0] not in REASSIGN_KINDS)]
             if not candidates:
                 continue
             ranked = []

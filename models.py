@@ -4437,6 +4437,8 @@ def init_db(db_path: str = DB_PATH):
     # (schedule_scorecard, RM-4).
     from schedule_overrides import init_schedule_overrides
     init_schedule_overrides(db_path)
+    from schedule_scorecard import init_schedule_scorecard
+    init_schedule_scorecard(db_path)
     # Every schedule call's full input and answer, for replaying real weeks
     # against another model, effort or prompt (schedule_output, schedule
     # audit 10/3/26 PR-31).

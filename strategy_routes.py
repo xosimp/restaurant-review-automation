@@ -3838,6 +3838,19 @@ def _do_publish_overrides(u):
                                                            and (s.get("rate") or 0) >= _so.ALWAYS_MIN_RATE]}, 200
 
 
+def _do_learning_scorecard(u):
+    """The Schedule Learning Scorecard for this restaurant (schedule audit
+    10/10/26 RM-4): per published week, the draft's rework rate with its
+    interval and what the week did as it ran — labor against the hourly
+    target, overtime, minutes with no manager, the shortfall, uncovered
+    no-shows, the forecast against a plain average — and whether the drafts
+    are needing fewer edits (a slope with its interval)."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can see this.")
+    import schedule_scorecard as _ssc
+    return _ssc.owner_view(_rid(u)), 200
+
+
 def _do_learned_patterns(u):
     """What the draft has learned from the manager's edits, with the
     owner's say: each one can be dismissed or restored. Each live pattern
@@ -4719,6 +4732,10 @@ def _do_schedule_intel(u):
             # outcomes (suggested weights, never applied), and no-show rates
             # by weekday.
             "draft_acceptance": _safe(lambda: _sv.acceptance(rid), {"available": False}),
+            # The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4):
+            # the rework each draft needed and what each week did as it ran.
+            "learning_scorecard": _safe(lambda: __import__("schedule_scorecard").owner_view(rid),
+                                        {"ok": True, "available": False, "weeks": []}),
             "weight_calibration": _present_calibration(u, _safe(lambda: _sl.calibrate_weights(rid), {"ready": False})),
             # Schedule learning (#42, #46, #48, #43): how well the edit
             # predictor would have done on past drafts, the multi-week
@@ -7168,6 +7185,7 @@ _ROUTES = [
     ("/labor/shift-requests/<int:request_id>/cancel", ["POST"], _do_shift_request_cancel, "shift_request_cancel"),
     ("/labor/learned-patterns", ["GET"], _do_learned_patterns, "learned_patterns"),
     ("/labor/publish-overrides", ["GET"], _do_publish_overrides, "publish_overrides"),
+    ("/labor/learning-scorecard", ["GET"], _do_learning_scorecard, "learning_scorecard"),
     ("/labor/learned-patterns", ["POST"], _do_learned_pattern_set, "learned_pattern_set"),
     ("/labor/learned-patterns/adopt", ["POST"], _do_learned_patterns_adopt, "learned_patterns_adopt"),
     ("/labor/schedule-memory", ["GET"], _do_schedule_memory, "schedule_memory"),

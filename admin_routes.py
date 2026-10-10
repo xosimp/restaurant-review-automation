@@ -3771,6 +3771,15 @@ def admin_api_schedule_experiments(current_user):
     return jsonify(**admin_ops.schedule_experiments())
 
 
+@admin_bp.route("/admin/api/schedule-learning-scorecard")
+@admin_required
+def admin_api_schedule_learning_scorecard(current_user):
+    """The Schedule Learning Scorecard across restaurants (internal only,
+    read-only; schedule audit 10/10/26 RM-4)."""
+    import admin_ops
+    return jsonify(**admin_ops.schedule_learning_scorecard())
+
+
 @admin_bp.route("/admin/api/schedule-generations")
 @admin_required
 def admin_api_schedule_generations(current_user):

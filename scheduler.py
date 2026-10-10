@@ -5635,6 +5635,14 @@ def scheduler_loop():
                 from strategy_jobs import run_schedule_memory
                 _ops.run_job("schedule_memory", run_schedule_memory)
 
+            # Monday 7am, after the outcomes (4am) and the memory (6am) have
+            # read the week — the Schedule Learning Scorecard: one row per
+            # published week, frozen 14 days after it ended (schedule audit
+            # 10/10/26 RM-4). Sends nothing.
+            if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("schedule_scorecard", str(today)):
+                import schedule_scorecard as _sscard
+                _ops.run_job("schedule_scorecard", _sscard.run_scorecard)
+
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the
             # Wednesday run served only the Thursday draft). No provider is
