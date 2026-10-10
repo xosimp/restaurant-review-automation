@@ -105,6 +105,10 @@ def init_schedule_overrides(db_path=None):
             conn.execute("ALTER TABLE schedule_publish_overrides ADD COLUMN covered_by TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_publish_overrides_kind "
                      "ON schedule_publish_overrides(restaurant_id, kind, shown_at)")
+        # The retention sweep deletes by shown_at alone (ops._RETENTION_DAYS),
+        # which the (restaurant_id, kind, shown_at) index cannot serve.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_publish_overrides_shown "
+                     "ON schedule_publish_overrides(shown_at)")
         conn.commit()
     finally:
         conn.close()

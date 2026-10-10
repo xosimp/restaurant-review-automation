@@ -176,6 +176,17 @@ JOBS = {
                     "the hourly target, overtime, unmanaged minutes, shortfall, uncovered no-shows, forecast "
                     "error, row origins and the learning ablation (bounded, resumable)",
         target=("schedule_scorecard", "run_scorecard"), max_minutes=20, retry=True),
+    "staffing_learning": dict(
+        # Scheduler audit 10/10/26 RM-20, LEARNING-6, LEARNING-26: what one
+        # more of a role on a meal is worth (no-show natural experiments and
+        # within-restaurant fixed effects, with intervals) and each person's
+        # measured effect (partial pooling) — read by the requirements and
+        # the owner's ratings screen, never computed on a request.
+        cadence="Mon 8am CT", sla_minutes=_W, sends=False, runnable=True,
+        label="Staffing learning",
+        description="Estimate what one more person of each role is worth on each meal and each person's measured "
+                    "productivity, from tickets, punches and attendance (bounded, resumable)",
+        target=("staffing_elasticity", "run_elasticity"), max_minutes=15, retry=True),
     "schedule_memory": dict(
         # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
         # sources, after people_nightly.
@@ -543,6 +554,23 @@ JOBS = {
         description="Push each employee ~1 hour before a published shift and ~15 minutes before a critical "
                     "task line is due (claimed once per person), and send the staff texts held overnight",
         target=("staff_reminders", "run_job"), max_minutes=10),
+
+    # ── the schedule on the floor (schedule audit 10/10/26 MARKET-7/8/24) ──
+    "pos_schedule_push": dict(
+        # Writes to a POS, never to a person: held on a local copy inside
+        # (pos_schedule_push.run_push checks scheduler.scheduling_allowed).
+        cadence="every 10 minutes", sla_minutes=60, sends=False, runnable=True,
+        label="POS schedule push",
+        description="Write each published week whose owner turned the POS push on to the POS time clock (preview "
+                    "first, per-shift status, retries a POS-side failure; bounded, the queue is the cursor)",
+        target=("pos_schedule_push", "run_queue"), max_minutes=5),
+    "live_labor": dict(
+        cadence="every 15 minutes while open", sla_minutes=60, sends=True, runnable=True,
+        label="Live labor",
+        description="Labor to date and the day's projected labor % against sales, and the one legal, priced cut, "
+                    "extension or call-in offered to the managers (or, earned, sent to the person) — bounded, "
+                    "resumable",
+        target=("labor_live", "run_live_labor"), max_minutes=5),
 
     # ── every tick ──────────────────────────────────────────────────────
     "morning_brief": dict(

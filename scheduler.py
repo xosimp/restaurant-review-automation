@@ -5398,6 +5398,18 @@ def scheduler_loop():
                 from staff_reminders import run_job as _run_staff_reminders
                 _ops.run_job("staff_reminders", _run_staff_reminders)
 
+            # Every 10 minutes — published weeks to the POS time clock where
+            # the owner turned the push on (pos_schedule_push; the queue is
+            # the cursor, a POS-side failure retried). Every 15 — live labor
+            # to date and the one legal, priced move (labor_live; each
+            # restaurant claimed per quarter hour inside).
+            if _ops.claim_period("pos_schedule_push", f"{today}-{now.hour}-{now.minute // 10}"):
+                from pos_schedule_push import run_queue as _run_pos_push
+                _ops.run_job("pos_schedule_push", _run_pos_push)
+            if _ops.claim_period("live_labor", f"{today}-{now.hour}-{now.minute // 15}"):
+                from labor_live import run_live_labor as _run_live_labor
+                _ops.run_job("live_labor", _run_live_labor)
+
             # During service — the only part of the product that can see a
             # day while it is happening (Toast and RPOWER both post during
             # service). Capture is hourly per restaurant, the pulse
@@ -5745,6 +5757,14 @@ def scheduler_loop():
             if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("schedule_scorecard", str(today)):
                 import schedule_scorecard as _sscard
                 _ops.run_job("schedule_scorecard", _sscard.run_scorecard)
+
+            # Monday 8am — what one more of a role on a meal is worth here and
+            # each person's measured effect (scheduler audit 10/10/26 RM-20,
+            # LEARNING-26): read by the next drafts' requirements and the
+            # owner's ratings screen. Bounded, resumable. Sends nothing.
+            if _due(now, 8) and now.weekday() == 0 and _ops.claim_period("staffing_learning", str(today)):
+                import staffing_elasticity as _sel_job
+                _ops.run_job("staffing_learning", _sel_job.run_elasticity)
 
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the

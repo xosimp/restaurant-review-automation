@@ -98,6 +98,8 @@ _K = {
               # Drops and swaps that approve themselves; availability cuts
               # waiting on a manager (request_autonomy, 10/10/26).
               "staff_request_policy_json",
+              # The POS schedule push and live labor moves (J2, 10/10/26).
+              "floor_settings_json",
               "section_count", "foh_sections_json", "sched_notes",
               # Role families, the roles with chosen closers, the salaried
               # weekly cap (schedule audit 10/3/26 F1).
@@ -145,7 +147,8 @@ RESTAURANT_UNTRACKED = frozenset({
     "contract_signed_at", "converted_at",
     # Caches and fetched public facts (the own-rating history is its own
     # store): refreshed by jobs, never chosen.
-    "competitor_intel", "competitor_updated_at", "weather_cache_json", "weather_cached_at", "geocode_failed_at",
+    "competitor_intel", "competitor_updated_at", "weather_cache_json", "weather_cached_at", "weather_hourly_json",
+    "geocode_failed_at",
     "aivis_city_json",
     "latitude", "longitude", "gbp_rating", "gbp_rating_updated_at", "gbp_review_count", "google_types",
     "google_price_level",
@@ -574,7 +577,7 @@ FIELD_LABELS = {
     "auto_publish_schedule": "Auto-publish schedules", "auto_approve_5star": "Auto-approve 5-star replies",
     "auto_approve_4star": "Auto-approve 4-star replies", "auto_draft_schedule": "Auto-draft schedules",
     "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
-    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers", "staff_request_policy_json": "Staff request approvals",
+    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers", "staff_request_policy_json": "Staff request approvals", "floor_settings_json": "Schedule on the floor (POS push, live labor)",
     "dsr_budget_mode": "Budget by day or week",
     "data_retention_months": "Review retention (months)", "timezone": "Time zone",
     "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",

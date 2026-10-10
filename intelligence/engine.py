@@ -1391,7 +1391,7 @@ def payload_for(user, metric=None, module=None, db_path=DB_PATH) -> dict:
         return {"ok": False, "error": "Unknown metric."}
     # A staffing ratio (people per $1k) never leaves the server — the
     # borrowed headcount is what a screen sees (staffing.payload; R1-14).
-    if metric and str(metric).startswith("staff_per_1k."):
+    if metric and str(metric).startswith(reg.SERVER_ONLY_PREFIXES):
         return {"ok": False, "error": "Unknown metric."}
     # A module alias (food, food_cost) is checked as the permission key it
     # names (inventory): the raw alias is no MODULE_VIEW_PERMISSIONS key, so
