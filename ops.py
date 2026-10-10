@@ -2636,6 +2636,9 @@ _RETENTION_DAYS = {
     # the learning ablation's two drafts — read until the week's scorecard
     # row is frozen; the frozen row keeps what was measured from it.
     "schedule_generation_tags": int(os.getenv("RETAIN_SCHED_GENERATION_TAGS_DAYS", "400")),
+    # Each staff offer answer's client and minutes to answer (staff_pwa,
+    # scheduler audit 10/10/26 MARKET-18): the admin's read is 90 days.
+    "offer_response_platforms": int(os.getenv("RETAIN_OFFER_PLATFORMS_DAYS", "400")),
     # The Shift Quality weights' weekly shadow runs and promotions (LEARNING-9):
     # the newest promotion is what the owner can undo, and an undo holds for
     # eight weeks.
@@ -2786,6 +2789,17 @@ _RETENTION_DAYS = {
     # An employee's availability cut and its answer (availability_changes,
     # 10/10/26 MARKET-15): what they asked and when it took effect.
     "staff_availability_changes": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    # A shift at another location offered to someone who travels (cross_site,
+    # 10/10/26 MARKET-16): kept like the offers here.
+    "cross_site_offers": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    # The schedule on the floor (J2, 10/10/26): each push of a week to the POS
+    # clock and its shifts' statuses; the live labor moves and their answers
+    # (autopilot earns on 60 days of them); the kept live read (a cache of
+    # today's — a miss reads again).
+    "pos_schedule_pushes": int(os.getenv("RETAIN_POS_PUSH_DAYS", "400")),
+    "pos_schedule_push_shifts": int(os.getenv("RETAIN_POS_PUSH_DAYS", "400")),
+    "live_labor_moves": int(os.getenv("RETAIN_LIVE_LABOR_DAYS", "400")),
+    "live_labor_reads": int(os.getenv("RETAIN_LIVE_LABOR_READS_DAYS", "30")),
     "staff_shift_pulse":     int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_briefs":          int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_calendar_links":  int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
@@ -2899,7 +2913,9 @@ _RETENTION_COLUMN = {
     "ask_topics": "created_at", "ask_feedback": "created_at",
     "staff_announcement_recipients": "created_at", "staff_announcements": "created_at",
     "staff_thread_messages": "created_at", "staff_running_late": "business_date", "shift_offers": "created_at",
-    "staff_availability_changes": "created_at",
+    "staff_availability_changes": "created_at", "cross_site_offers": "created_at",
+    "pos_schedule_pushes": "created_at", "pos_schedule_push_shifts": "created_at",
+    "live_labor_moves": "business_date", "live_labor_reads": "business_date",
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
@@ -2916,6 +2932,7 @@ _RETENTION_COLUMN = {
     "fww_requests": "created_at", "fww_access_offers": "created_at",
     "schedule_publish_overrides": "shown_at",
     "schedule_calibration_runs": "run_at",
+    "offer_response_platforms": "answered_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2987,6 +3004,7 @@ _RETENTION_FLOOR_DAYS = {
     "schedule_publish_overrides": 180,
     "schedule_generation_tags": 120,
     "schedule_calibration_runs": 90,
+    "offer_response_platforms": 90,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -3029,6 +3047,11 @@ _RETENTION_FLOOR_DAYS = {
     # in force (the first week nobody has built, a few weeks ahead) and 30
     # days after.
     "staff_availability_changes": 90,
+    # Offers at another location read while live; the POS pushes read per
+    # week (the newest); live moves' autopilot trust reads EARN_WINDOW_DAYS
+    # (60) of them; the live read is today's.
+    "cross_site_offers": 30, "pos_schedule_pushes": 30, "pos_schedule_push_shifts": 30,
+    "live_labor_moves": 120, "live_labor_reads": 7,
     # Floor sections: the scheduling memory learns each server's usual
     # section from 24 weeks of them (schedule audit 10/3/26 L-22).
     "staff_calendar_links": 30, "shift_sections": 168, "staff_translations": 7,
@@ -3142,6 +3165,7 @@ _RETENTION_READERS = {
     "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
     "schedule_generation_tags": (("schedule_scorecard.compute_week", "schedule_scorecard.TAGS_READ_DAYS", None),),
+    "offer_response_platforms": (("staff_pwa.response_times", "staff_pwa.RESPONSE_DAYS", None),),
     "schedule_calibration_runs": (("schedule_calibration._quiet", "schedule_calibration.REVERT_QUIET_DAYS", None),),
     "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     # The scheduling memory (L-29, L-22, L-34): the owner's redos over its

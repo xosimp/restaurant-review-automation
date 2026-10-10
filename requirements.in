@@ -40,3 +40,9 @@ webauthn==3.0.1
 # DATABASE_URL names a Postgres database, and scripts/pg_copy.py's. Imported
 # only then — SQLite stays the default and never loads it.
 psycopg[binary]==3.2.3
+# Schedule solver (scheduler audit 10/10/26 LOGIC-24, RM-8, RM-11): Google
+# OR-Tools CP-SAT for the shift-shape covering model (schedule_shapes.py)
+# and the who-works-each-shift assignment (schedule_cpsat.py). Wheels for
+# CPython 3.12 on macOS arm64 and manylinux x86_64; pulls numpy, pandas,
+# protobuf, absl-py and immutabledict (~60 MB installed).
+ortools==9.15.6755

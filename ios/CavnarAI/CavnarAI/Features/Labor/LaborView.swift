@@ -62,6 +62,14 @@ struct LaborView: View {
     @State private var editingSectionNames = false
     /// What the schedule has learned, and measured ratings (H2-1, H2-3).
     @State private var showingMemory = false
+    /// The Crew stage (TRUST-12): the draft against the usual crew.
+    @State private var showingCrew = false
+    @State private var confirmingStop = false
+    /// On the floor (J2): the live read, its moves, and the switches.
+    @State private var floorStore = FloorStore()
+    @State private var showingFloorSettings = false
+    @State private var showingBench = false
+    @State private var crewStore = CrewMatrixStore()
     @State private var showingMeasuredRatings = false
     /// A person a review line named (an unmatched name's suggestion).
     @State private var reviewPerson: PersonSheetTarget?
@@ -122,6 +130,10 @@ struct LaborView: View {
                                 // background/border) — see heroCard's own
                                 // comment.
                                 heroCard(stats)
+                                // During service: labor to date, the
+                                // projected all-in %, and tonight's moves
+                                // with their one tap (J2 — On the floor).
+                                OnTheFloorCard(store: floorStore) { showingFloorSettings = true }
                                 // Groups, not thirteen equal rows (density
                                 // #28; iOS readability round 10/8/26):
                                 // NEEDS YOU — every request staff are waiting
@@ -523,7 +535,16 @@ struct LaborView: View {
                                  version: (viewModel.rowsUnsaved || viewModel.hasUnsavedFixes
                                            || viewModel.optimizerUnsaved) ? nil : viewModel.latestVersion,
                                  onSent: { viewModel.unsentChanges = [] },
-                                 onVersion: { viewModel.adoptSentVersion($0) })
+                                 onVersion: { viewModel.adoptSentVersion($0) },
+                                 // A fix on the pre-publish review edits the
+                                 // week on screen, saved like a hand edit
+                                 // (TRUST-27); Send then names the new version.
+                                 rowActionRunner: { await viewModel.applyReviewAction($0) },
+                                 versionProvider: {
+                                     (viewModel.rowsUnsaved || viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved)
+                                         ? nil : viewModel.latestVersion
+                                 },
+                                 hasUnsavedEdits: viewModel.hasLocalEdits)
         }
         .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
             PublishScheduleSheet(scheduleId: draft.id)
@@ -587,6 +608,28 @@ struct LaborView: View {
             EditWhySheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showingMemory) { ScheduleMemoryScreen() }
+        .sheet(isPresented: $showingBench) { BenchScreen(historyId: viewModel.scheduleResult?.historyId) }
+        .sheet(isPresented: $showingFloorSettings, onDismiss: { Task { await floorStore.load() } }) {
+            FloorSettingsSheet(store: floorStore)
+        }
+        // The live read refreshes with the screen (the server keeps a
+        // 15-minute read and reads afresh past it).
+        .task { await floorStore.load() }
+        .sheet(isPresented: $showingCrew, onDismiss: {
+            Task { await crewStore.load(historyId: viewModel.scheduleResult?.historyId) }
+        }) {
+            CrewMatrixScreen(historyId: viewModel.scheduleResult?.historyId,
+                             rows: viewModel.scheduleResult?.previewRows,
+                             addRow: { row in
+                                 await viewModel.applyReviewAction(
+                                     PublishReview.Action(label: "Add 1 this week", action: "add_shift", payload: row))
+                             },
+                             canAnswer: viewModel.weekReadOnlyReason == nil)
+        }
+        // The crew line follows the week on screen and every save of it.
+        .task(id: "\(viewModel.scheduleResult?.historyId ?? 0)|\(viewModel.savedTick)") {
+            if let id = viewModel.scheduleResult?.historyId { await crewStore.load(historyId: id) }
+        }
         .sheet(isPresented: $showingMeasuredRatings) { MeasuredRatingsScreen() }
         .sheet(item: $reviewPerson) { target in PersonSheet(target: target) }
         .sheet(item: $inboxTarget) { target in TeamInboxView(initialThreadId: target.threadId) }
@@ -777,9 +820,37 @@ struct LaborView: View {
                                             role: .caption, color: .cavnarInk2)
                         }
                     }
+                    // Stop (ARCH-2): Generate pressed by accident. The run
+                    // stops; a draft it replaced comes back and is read again.
+                    if viewModel.runningJobId != nil && !viewModel.joinedRunningGeneration {
+                        Button {
+                            confirmingStop = true
+                        } label: {
+                            Group {
+                                if viewModel.isStoppingGeneration {
+                                    CavnarShimmerText(text: "Stopping\u{2026}")
+                                } else {
+                                    Text("Stop")
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .disabled(viewModel.isStoppingGeneration)
+                        .confirmationDialog("Stop building this week?", isPresented: $confirmingStop,
+                                            titleVisibility: .visible) {
+                            Button("Stop it", role: .destructive) { Task { await viewModel.stopGeneration() } }
+                            Button("Keep going", role: .cancel) {}
+                        } message: {
+                            Text("Nothing it has done so far is kept. A draft it was replacing comes back.")
+                        }
+                    }
                 }
                 .padding(.top, CavnarSpace.xs)
                 .transition(.opacity)
+            }
+            if !viewModel.isGeneratingSchedule, let note = viewModel.stopNote {
+                ScheduleNotice(text: note, tone: .cavnarInk2, symbol: "stop.circle")
             }
 
             // Cavnar AI's read, as one line with a chevron, inside this SAME
@@ -1017,7 +1088,8 @@ struct LaborView: View {
     /// Waiting on you card no longer repeats a kicker of its own).
     private var needsYouCount: Int {
         LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.pendingRequests,
-                                draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
+                                draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil,
+                                followUps: viewModel.timeOffFollowUps.count)
             + (teamModel.needsYou ? 1 : 0)
     }
 
@@ -1307,6 +1379,16 @@ struct LaborView: View {
                                         onOpenPerson: { reviewPerson = PersonSheetTarget(key: nil, name: $0) },
                                         onOpenHours: openHours)
                         .id(Self.reviewID)
+                }
+                // Against the usual crew (TRUST-12): the count, one tap to
+                // the shifts and their answers.
+                if result.historyId != nil, let line = crewStore.matrix?.headline {
+                    crewRow(line)
+                }
+                // The Bench (J3): who could cover, on call for no-shows,
+                // events that changed, people to keep (owner only).
+                if result.historyId != nil {
+                    benchRow
                 }
                 // THE WEEK.
                 if let rows = result.previewRows, !rows.isEmpty {
@@ -1969,6 +2051,63 @@ struct LaborView: View {
         viewModel.availabilityExpanded = true
         setupFocusAvailability = true
         showingSetup = true
+    }
+
+    /// "Crew · 2 shifts leaner than usual · 1 to answer ›" — opens the
+    /// Crew screen (TRUST-12).
+    private func crewRow(_ line: String) -> some View {
+        Button {
+            Haptic.light()
+            showingCrew = true
+        } label: {
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                Image(systemName: "person.3")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Crew").cavnarText(.label)
+                    CavnarMixedText(line, role: .secondary)
+                }
+                Spacer(minLength: CavnarSpace.xs)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard()
+    }
+
+    /// "Bench · who covers, on call, people to keep ›".
+    private var benchRow: some View {
+        Button {
+            Haptic.light()
+            showingBench = true
+        } label: {
+            HStack(alignment: .center, spacing: CavnarSpace.s) {
+                Image(systemName: "person.badge.shield.checkmark")
+                    .font(.cavnar(.body))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bench").cavnarText(.label)
+                    Text("Who covers a gap, on call for no-shows, people to keep").cavnarText(.secondary)
+                }
+                Spacer(minLength: CavnarSpace.xs)
+                Image(systemName: "chevron.right")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .cavnarCard()
     }
 
     /// Account → Profile, where the hours and closed dates are set.

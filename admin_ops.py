@@ -5316,6 +5316,32 @@ def schedule_learning_scorecard(db_path=None):
         return {"ok": False, "error": "The scorecard tables are not on this database yet."}
 
 
+def schedule_outcome_benchmark(db_path=None):
+    """The outcome benchmark (scheduler audit 10/10/26 MARKET-21, RM-22):
+    Cavnar AI's drafted weeks against weeks the manager built, per restaurant
+    with a Welch interval and across restaurants with a cluster interval —
+    the cross-restaurant figure published only above the privacy floor.
+    Internal only - read-only."""
+    import outcome_benchmark as _ob
+    try:
+        return _ob.platform_view(db_path=db_path)
+    except Exception as e:
+        log.warning("outcome benchmark unavailable: %s", e)
+        return {"ok": False, "error": "The benchmark could not be read."}
+
+
+def staff_platforms(db_path=None):
+    """How fast staff answer offers, per client (scheduler audit 10/10/26
+    MARKET-18): the iPhone app, the installed portal, a phone browser.
+    Internal only - read-only."""
+    import staff_pwa as _pwa
+    try:
+        return _pwa.response_times(db_path=db_path)
+    except Exception as e:
+        log.warning("staff platforms unavailable: %s", e)
+        return {"ok": False, "error": "The offer answers could not be read."}
+
+
 def schedule_generations(limit=20, db_path=None):
     """The recent schedule generations as engineering reads them (schedule
     audit 10/3/26 B1-3): per week its total and per-stage seconds

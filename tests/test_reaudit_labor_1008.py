@@ -355,4 +355,14 @@ def test_a_stopped_run_starts_no_further_model_call(monkeypatch):
     assert se.GenerationClock(job_id=None).stopped() is False
     src = open(se.__file__).read()
     loop = src[src.index("        # Stopped by the owner (10/9/26)"):]
-    assert loop.index("raise ScheduleStopped(STOPPED_MESSAGE)") < loop.index("generate_optimized_schedule(")
+    # The calls go out through _dispatch_calls (scheduler audit 10/10/26
+    # AI-4: a batch's independent calls in parallel); every planned call of
+    # the batch is checked against the stop before any is dispatched.
+    assert loop.index("raise ScheduleStopped(STOPPED_MESSAGE)") < loop.index("_dispatch_calls(ready")
+    # The model calls made outside the loop are checked too (integration
+    # round 10/10/26): the owner's words read into typed rules at the start,
+    # and the finished week's note at the end.
+    build = src[src.index("def _build_schedule_result("):]
+    assert build.index("_raise_if_stopped(current_clock())") < build.index("_owr.prepare(")
+    job = src[src.index("def _run_schedule_job("):]
+    assert job.index("_raise_if_stopped(clock, owner_only=True)") < job.index("_snar.write(")

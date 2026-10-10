@@ -506,9 +506,17 @@ def test_a_daypart_carries_its_own_labor_never_the_days_copied(monkeypatch):
     _punch(rid, fri, "Cy", "11:00", "19:00", 8, rate=10)       # a double: half before 3pm, half after
     _sql("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, labor_pct, sales) VALUES (?,?,?,?,?)",
          rid, fri, "Friday", 30.0, 1000.0)
-    monkeypatch.setattr(schedule_intel, "_morning_share", lambda conn, rid_: {"Friday": 0.4})
+    # The date's OWN split (its tickets: $400 by 3pm, $600 after) — the
+    # weekday's median share is only an estimate, and no daypart labor % is
+    # read over an estimate (scheduler audit 10/10/26 LEARNING-11; this test
+    # used to split the day by the weekday's share).
+    for tid, at, net in (("t1", f"{fri}T12:00:00", 400.0), ("t2", f"{fri}T19:00:00", 600.0)):
+        _sql("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, opened_at, net_sales) "
+             "VALUES (?,?,?,?,?,?)", rid, "rpower", tid, fri, at, net)
+    monkeypatch.setattr(schedule_intel, "_morning_share", lambda conn, rid_: {"Friday": 0.7})
     schedule_intel.record_outcomes(rid)
     rows = {r["daypart"]: r for r in _q("SELECT * FROM schedule_outcomes WHERE date=?", fri)}
+    assert rows["morning"]["split_basis"] == rows["night"]["split_basis"] == "measured"
     assert rows["morning"]["labor_pct"] == rows["night"]["labor_pct"] == 30.0     # the day's figure, labelled so
     # lunch: Ana 4h × $15 + Cy 4h × $10 = $100 over $400; dinner: Bo 5h × $20 + Cy 4h × $10 = $140 over $600
     assert rows["morning"]["labor_cost_daypart"] == 100.0 and rows["morning"]["labor_pct_daypart"] == 25.0

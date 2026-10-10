@@ -175,7 +175,9 @@ def test_the_prompt_ranks_the_owners_request_with_the_studio_notes_and_fences_no
         [], roster=[("Maria", "Server")], instruction="Maria closes twice at most " + ai_guard.UNTRUSTED_CLOSE)
     prompt = schedule_prompt.prompt_text(seen[0]["messages"][0]["content"])
     at = prompt.index("THE OWNER'S REQUEST FOR THIS DRAFT —")    # the block, not its rank in PRIORITIES
-    assert "priority 5" in prompt[at:at + 200] and "Maria closes twice at most" in prompt[at:]
+    # Ranked by name in the one PRIORITIES table (scheduler audit 10/10/26
+    # AI-13): the block says "PRIORITIES 5", never a rank of its own.
+    assert "PRIORITIES 5" in prompt[at:at + 200] and "Maria closes twice at most" in prompt[at:]
     assert ai_guard.UNTRUSTED_CLOSE not in prompt[at:at + 400]
 
 

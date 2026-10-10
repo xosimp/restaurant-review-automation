@@ -564,6 +564,19 @@ def arm_rows(item, arm, call_model=None) -> tuple:
             return se_.code_arm_rows(arm["name"], item), 0.0, round(time.time() - t0, 1), None
         except Exception as e:
             return [], 0.0, round(time.time() - t0, 1), f"{type(e).__name__}: {e}"[:300]
+    if arm["name"] == se_.CRITIC_ARM:
+        # The solver's week reviewed by the model, each edit validated by
+        # code (schedule_critic — AI-8); `call_model` replaces the model.
+        import schedule_critic as _scr
+        try:
+            rows = se_.code_arm_rows("solver", item)
+            ctx = item.get("context") or {}
+            got = _scr.review(item.get("restaurant_id"), rows, ctx.get("constraints"),
+                              last_week_rows=(item.get("base") or {}).get("rows"),
+                              call=(lambda req: call_model(req)) if call_model is not None else None)
+            return got["rows"], 0.0, round(time.time() - t0, 1), got.get("error")
+        except Exception as e:
+            return [], 0.0, round(time.time() - t0, 1), f"{type(e).__name__}: {e}"[:300]
     results = production_result(calls) if arm["name"] == PRODUCTION else \
         [replay_call(call, arm, call_model or default_call_model) for call in calls]
     rows = _merge_rows(calls, results)
@@ -695,7 +708,7 @@ def main(argv=None):
     ap.add_argument("--set", metavar="VERSION", help="run the arms on the frozen set VERSION instead of stored weeks")
     ap.add_argument("--tags", help="only the set's items carrying all these tags (comma-separated)")
     ap.add_argument("--runs", type=int, help="runs per arm per week (default schedule_eval.RUNS_PER_ARM, 3)")
-    ap.add_argument("--code-arms", default="carry_forward,solver",
+    ap.add_argument("--code-arms", default="carry_forward,solver,solver_v0",
                     help="no-model arms to run on the set (schedule_eval.CODE_ARMS)")
     ap.add_argument("--store", action="store_true", help="keep each run in schedule_eval_runs")
     ap.add_argument("--verdict", help="A,B: record A against B per roster-size band (the router reads T4,T3)")

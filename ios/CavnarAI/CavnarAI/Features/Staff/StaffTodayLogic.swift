@@ -424,7 +424,7 @@ extension StaffTodayPlan {
     static func dayHasDetail(_ day: StaffWeekDay) -> Bool {
         day.legs.contains { leg in
             (leg.station?.isEmpty == false) || (leg.section?.isEmpty == false) || leg.hoursLabel != nil
-                || leg.breakLine != nil || leg.noteLine != nil || leg.request != nil
+                || leg.breakLine != nil || leg.noteLine != nil || leg.request != nil || leg.commitment != nil
         }
     }
 

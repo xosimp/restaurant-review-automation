@@ -599,15 +599,32 @@ struct ReviewSetupItem: Codable, Hashable {
     var text: String?
     var canAdopt = false
     var days: [String] = []
+    /// The item's one tap, in words ("Make 32h the full-time minimum" -
+    /// schedule audit 10/10/26 LOGIC-29). Nil when it has none.
+    var actionLabel: String? = nil
 
     init(from decoder: Decoder) throws {
         guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
         kind = c.sfText(.kind); text = c.sfText(.text); canAdopt = c.sfBool(.canAdopt) ?? false
         days = c.sfWords(.days)
+        actionLabel = (try? c.nestedContainer(keyedBy: ActionKeys.self, forKey: .action))?.sfText(.label)
     }
     enum CodingKeys: String, CodingKey {
-        case kind, text, days
+        case kind, text, days, action
         case canAdopt = "can_adopt"
+    }
+    enum ActionKeys: String, CodingKey { case label }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(text, forKey: .text)
+        try c.encode(canAdopt, forKey: .canAdopt)
+        try c.encode(days, forKey: .days)
+        if let actionLabel {
+            var a = c.nestedContainer(keyedBy: ActionKeys.self, forKey: .action)
+            try a.encode(actionLabel, forKey: .label)
+        }
     }
 }
 

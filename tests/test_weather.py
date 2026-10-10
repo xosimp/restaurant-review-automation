@@ -166,9 +166,13 @@ def test_forecast_fetches_and_matches_week_dates(db_path, monkeypatch):
 
     assert len(rows) == 2  # 2026-07-15 has no matching period -> omitted, not guessed
     # Every row carries its age (CA3 F15): as_of, age_hours, stale.
-    assert {k: v for k, v in rows[0].items() if k not in ("as_of", "age_hours", "stale")} == {
+    # The night period rides beside the day's (scheduler audit 10/10/26
+    # LEARNING-21: lunch reads the day period, dinner the night period).
+    night_keys = ("night_precip_pct", "low_f", "night_short_forecast")
+    assert {k: v for k, v in rows[0].items() if k not in ("as_of", "age_hours", "stale") + night_keys} == {
         "date": "2026-07-13", "day_name": "Monday", "high_f": 89,
         "short_forecast": "Sunny", "precip_pct": 5}
+    assert all(k in rows[0] for k in night_keys)
     assert rows[0]["as_of"] and rows[0]["stale"] is False and rows[0]["age_hours"] < 1
     assert rows[1]["short_forecast"] == "Rain Showers"
     assert rows[1]["precip_pct"] == 80

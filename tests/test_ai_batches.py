@@ -149,10 +149,11 @@ def test_the_kill_switch_and_the_workflow_list(batches, monkeypatch):
     # design 10/7/26, phase 6): replays nobody waits on, at half price. AI
     # cost audit 10/7/26 #58-#62 added the two morning diagnoses, the weekly
     # competitor read, the Tuesday recipe drafts, the digest's narrative and
-    # the quiet-night post.
+    # the quiet-night post; the scheduler audit 10/10/26 (RM-10,
+    # schedule_batch) the schedule auto-draft nobody waits on.
     assert ai_batches.workflows() == {"dsr_narrative", "shadow_arms", "review_diagnosis", "food_cost_diagnosis",
                                       "competitor_insight", "recipe_draft", "weekly_digest",
-                                      "quiet_night_post"}, "the default batch workflows"
+                                      "quiet_night_post", "labor_schedule"}, "the default batch workflows"
 
 
 def test_a_bad_custom_id_or_callback_is_refused_at_submit(batches, db):

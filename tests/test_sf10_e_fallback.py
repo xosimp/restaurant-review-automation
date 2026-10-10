@@ -56,7 +56,8 @@ def test_the_draft_source_is_the_env_then_the_arm_then_the_model(monkeypatch):
 def test_draft_v1_is_an_experiment_that_keeps_the_model_until_it_can_conclude(db_path, monkeypatch):
     exp = sx.experiment("draft_v1")
     assert exp and exp["active"] and exp["until_powered"] == "model_draft" and exp["control"] == "model_draft"
-    assert {a["key"] for a in exp["arms"]} == {"model_draft", "carried", "code_shaped"}
+    # F (AI-8) added the deterministic+critic arm, off the hash like code_shaped
+    assert {a["key"] for a in exp["arms"]} == {"model_draft", "carried", "code_shaped", "code_critic"}
     # the code shape stays off the hash until F's solver-first draft and the eval say so
     assert next(a for a in exp["arms"] if a["key"] == "code_shaped")["weight"] == 0
     monkeypatch.setattr(sx, "_power_or_pin", lambda db: {"powered": False})

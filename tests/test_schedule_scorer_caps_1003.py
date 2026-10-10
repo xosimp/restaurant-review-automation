@@ -303,7 +303,9 @@ def test_an_unwritten_daypart_says_so_on_its_cap_and_below_the_bar():
     assert line["no_shift_written"] is True and line["reason"].startswith("No shift written")
 
 
-# ── SQ-12: demand match against the restaurant's own ratings ───────────────
+# ── SQ-12: demand against the restaurant's own ratings — folded into
+# operational strength (scheduler audit 10/10/26 LOGIC-30: one rating
+# measure; these tests now read it there) ─────────────────────────────────
 
 PEAK = [sq.ShiftProfile(key="busy", label="Busy night", demand="peak", source="restaurant")]
 BAR_ROSTER = {"A": "Bartender", "B": "Bartender", "C": "Bartender", "D": "Bartender"}
@@ -312,7 +314,8 @@ BAR_ROSTER = {"A": "Bartender", "B": "Bartender", "C": "Bartender", "D": "Barten
 def _peak_match(scores):
     out = sq.score_rows([row(SAT, "A", "Bartender"), row(SAT, "B", "Bartender")], profiles=PEAK,
                         scores=scores, roster_roles=BAR_ROSTER)
-    return dim(shift_of(out, SAT), "demand_match")
+    assert dim(shift_of(out, SAT), "demand_match") is None          # merged (LOGIC-30)
+    return dim(shift_of(out, SAT), "operational_strength")
 
 
 def test_an_average_team_can_score_full_marks_on_a_busy_night_when_it_is_the_team_there_is():
@@ -522,7 +525,7 @@ def test_every_below_the_bar_line_carries_its_reason():
                              roster_roles={"S1": "Server", "S2": "Server", "S3": "Server"},
                              typical_headcount={("Saturday", "night"): {"Server": 2}})
     line = next(b for b in uncapped["below_profile"] if b["date"] == SAT)
-    assert line["held_by"] is None and line["reason"].startswith("Team averages 3.0"), line
+    assert line["held_by"] is None and line["reason"].startswith("Server team averages 3.0"), line
 
 
 def test_every_counting_dimension_is_shown():

@@ -24,6 +24,12 @@ struct ScheduleRulesSheet: View {
     @State private var patioRoles: [String] = []
     @State private var crossTraining: [String: String] = [:]
     @State private var trimToBudget = true
+    // Schedule audit 10/10/26: whether the full-time line is a minimum the
+    // draft must meet or only a target it aims at (LOGIC-29), and where
+    // lunch ends for a shift covering neither service (ARCH-12) — "" is
+    // the 3:00pm default.
+    @State private var fullTimeMinConfirmed = false
+    @State private var boundary = ""
     @State private var cutFloor = 2
     @State private var reservationProvider: String = ""
     @State private var reservationKey: String = ""
@@ -37,6 +43,12 @@ struct ScheduleRulesSheet: View {
     @State private var showingClosers = false
     @State private var showingKitchen = false
     @State private var showingSectionNames = false
+    /// The POS schedule push (preview first), suggestions during service
+    /// and autopilot (J2) — FloorSettingsSheet.
+    @State private var showingFloor = false
+    /// The labor laws that hold the restaurant (J1's engine, RM-15).
+    @State private var showingLaws = false
+    @State private var floorStore = FloorStore()
     @State private var standingFor: StandingPerson?
     /// What "Suggest from history" filled in, said until the next save.
     @State private var floorNote: String?
@@ -95,6 +107,7 @@ struct ScheduleRulesSheet: View {
                     } else {
                         jurisdictionSection
                         rulesSection
+                        daypartSection
                         managerSection
                         // Who counts as the manager on the floor, and the
                         // managers whose days are nowhere on file (F1-1).
@@ -138,6 +151,10 @@ struct ScheduleRulesSheet: View {
                         roleListSection("Patio", detail: "Roles the weather read can thin or thicken.",
                                         selection: $patioRoles)
                         budgetSection
+                        AccountSection(kicker: "On the floor") {
+                            AccountNavRow(label: "Suggestions, autopilot and the POS",
+                                          value: "Preview first", showsDivider: false) { showingFloor = true }
+                        }
                         reservationSection
                     }
 
@@ -209,6 +226,8 @@ struct ScheduleRulesSheet: View {
             KitchenStationsSheet(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
                 .presentationDetents([.large])
         }
+        .sheet(isPresented: $showingFloor) { FloorSettingsSheet(store: floorStore) }
+        .sheet(isPresented: $showingLaws) { ComplianceScreen() }
         .sheet(isPresented: $showingSectionNames) {
             FloorSectionsSheet()
                 .presentationDetents([.medium, .large])
@@ -254,6 +273,9 @@ struct ScheduleRulesSheet: View {
                 Text("Save to apply this pack and read its notes.")
                     .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
+            }
+            AccountSection(kicker: "Labor laws") {
+                AccountNavRow(label: "Which laws apply, pay owed, estimates", showsDivider: false) { showingLaws = true }
             }
         }
     }
@@ -565,8 +587,52 @@ struct ScheduleRulesSheet: View {
         AccountSection(kicker: "Rules") {
             ForEach(Array(Self.fields.enumerated()), id: \.element.key) { index, field in
                 ruleRow(field.key, label: field.label, hint: field.hint,
-                        showsDivider: index < Self.fields.count - 1)
+                        showsDivider: true)
             }
+            fullTimeRow
+        }
+    }
+
+    /// The full-time line's switch: a minimum the draft must give anyone
+    /// marked full-time, or only what their week aims at (B, LOGIC-29).
+    private var fullTimeRow: some View {
+        AccountSwitchRow(label: "Full-time line is a minimum",
+                         detail: "On: anyone full-time with no minimum of their own gets at least the full-time hours. Off: their week only aims at it.",
+                         isOn: $fullTimeMinConfirmed, disabled: !viewModel.canEditRules, showsDivider: false)
+    }
+
+    // MARK: Lunch and dinner
+
+    /// Where lunch ends and dinner starts (restaurants.daypart_boundary,
+    /// ARCH-12) — the web's "Lunch ends at": 12:00pm to 6:00pm on the half
+    /// hour, 3:00pm the default and stored as blank.
+    nonisolated static let boundaryChoices: [(String, String)] = {
+        var out: [(String, String)] = [("", "3:00pm (default)")]
+        var m = 12 * 60
+        while m <= 18 * 60 {
+            if m != 15 * 60 {
+                let h = m / 60, mm = m % 60
+                let label = "\(h % 12 == 0 ? 12 : h % 12):\(mm < 10 ? "0" : "")\(mm)\(h < 12 ? "am" : "pm")"
+                out.append((label, label))
+            }
+            m += 30
+        }
+        return out
+    }()
+
+    private var daypartSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AccountSection(kicker: "Lunch and dinner") {
+                AccountKVRow(label: "Lunch ends at", showsDivider: false) {
+                    selectMenu(current: Self.boundaryChoices.first { $0.0 == boundary }?.1 ?? boundary,
+                               options: Self.boundaryChoices) { boundary = $0 }
+                        .disabled(!viewModel.canEditRules)
+                }
+            }
+            Text("A shift that covers neither lunch nor dinner service counts as lunch if it starts before this, dinner from it.")
+                .font(.cavnar(.caption))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -899,6 +965,12 @@ struct ScheduleRulesSheet: View {
         else if case .number(let n) = viewModel.rules["manager_on_duty"] ?? .null { managerOnDuty = n != 0 }
         if case .bool(let b) = viewModel.rules["keyholder_until_close"] ?? .null { keyholderUntilClose = b }
         else if case .number(let n) = viewModel.rules["keyholder_until_close"] ?? .null { keyholderUntilClose = n != 0 }
+        switch viewModel.rules["full_time_min_confirmed"] ?? .null {
+        case .bool(let b): fullTimeMinConfirmed = b
+        case .number(let n): fullTimeMinConfirmed = n != 0
+        default: fullTimeMinConfirmed = false
+        }
+        boundary = viewModel.daypartBoundary ?? ""
         arrivals = viewModel.roleArrivals.mapValues(String.init)
         requirements = viewModel.roleRequirements
         fohRoles = viewModel.fohRoles
@@ -928,6 +1000,7 @@ struct ScheduleRulesSheet: View {
         var rules = parsedRules()
         rules["manager_on_duty"] = .bool(false)
         rules["keyholder_until_close"] = .bool(keyholderUntilClose)
+        rules["full_time_min_confirmed"] = .bool(fullTimeMinConfirmed)
         var arrivalMinutes: [String: Int?] = [:]
         for (role, text) in arrivals {
             if let n = Int(text.trimmingCharacters(in: .whitespaces)) { arrivalMinutes[role] = min(120, abs(n)) }
@@ -955,6 +1028,7 @@ struct ScheduleRulesSheet: View {
         }
         p.roleCloseMins = minutes
         let capText = salariedCap.trimmingCharacters(in: .whitespaces)
+        p.daypartBoundary = .some(boundary.isEmpty ? nil : boundary)
         p.salariedCap = .some(capText.isEmpty ? nil
                               : (NumberFormatter.cavnarDecimal.number(from: capText)?.doubleValue ?? Double(capText)))
         return p
@@ -990,6 +1064,7 @@ struct ScheduleRulesSheet: View {
         if now.trimToBudget != base.trimToBudget { p.trimToBudget = now.trimToBudget }
         if now.cutFloorDefault != base.cutFloorDefault { p.cutFloorDefault = now.cutFloorDefault }
         if (now.salariedCap ?? nil) != (base.salariedCap ?? nil) { p.salariedCap = now.salariedCap }
+        if (now.daypartBoundary ?? nil) != (base.daypartBoundary ?? nil) { p.daypartBoundary = now.daypartBoundary }
         // Already only when the owner changed the feed or typed a key.
         p.reservationProvider = now.reservationProvider
         p.reservationApiKey = now.reservationApiKey

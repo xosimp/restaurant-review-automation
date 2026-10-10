@@ -589,6 +589,14 @@ struct StaffLegBlock: View {
             if let line = leg.breakLine {
                 CavnarMixedText(line, role: .secondary)
             }
+            // How firm the shift is, as published (MARKET-27).
+            if let pill = leg.commitmentPill {
+                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                    TonePill(text: pill.word, tone: pill.tone)
+                    if let meaning = pill.meaning { CavnarMixedText(meaning, role: .secondary) }
+                }
+                .accessibilityElement(children: .combine)
+            }
             if let note = leg.noteLine {
                 CavnarMixedText("Note: \(note)", role: .secondary)
             }

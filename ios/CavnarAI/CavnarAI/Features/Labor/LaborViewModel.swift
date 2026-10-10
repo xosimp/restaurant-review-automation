@@ -714,7 +714,9 @@ struct ScheduleQuality: Codable, Equatable {
     let checked: Bool
     let score: Int?
     let band: String?
-    let shifts: [QualityShift]?
+    /// var: a re-score's delta answer rebuilds it from the readings that
+    /// changed (SCALE-29, `LaborViewModel.mergeQuality`).
+    var shifts: [QualityShift]?
     let dimensions: [QualityDimension]?
     let belowProfile: [QualityBelowProfile]?
     let strengths: [String]?
@@ -1541,6 +1543,10 @@ struct ScheduleRow: Codable, Identifiable {
     var shiftId: String? = nil
     var personId: String? = nil
     var locked: Bool? = nil
+    /// The owner's own pin or unpin of this row in this save (`lock`
+    /// true/false — contract #4): only ever sent, never read. The echoed
+    /// `locked` is not an instruction; this is (mobile_api's save).
+    var lock: Bool? = nil
 
     var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
     var isManagerPlan: Bool { pinned == "manager_plan" }
@@ -1559,7 +1565,7 @@ struct ScheduleRow: Codable, Identifiable {
         case originSig = "origin_sig"
         case shiftId = "shift_id"
         case personId = "person_id"
-        case locked
+        case locked, lock
     }
 }
 
@@ -1594,7 +1600,10 @@ extension ScheduleRow {
         originSig = c.sfText(.originSig)
         shiftId = c.sfText(.shiftId)
         personId = c.sfText(.personId)
+        // A stored week's rows say "1" / "" (schedule_rows.is_locked); a
+        // fresh generation's say true / false. Either reads.
         locked = c.sfBool(.locked)
+            ?? c.sfText(.locked).map { ["1", "true", "yes", "y", "on"].contains($0.lowercased()) }
     }
 
     /// Everything that makes two rows the same shift, for telling whether
@@ -1682,6 +1691,10 @@ struct ScheduleReview: Codable, Equatable {
     var minHours: MinHoursReport? = nil
     var unwrittenDates: HomeLenientList<UnwrittenDate>? = nil
     var unstaffableDates: HomeLenientList<UnstaffableDate>? = nil
+    /// The closing managers the owner's verdict assumes stay until the last
+    /// person leaves, each with the one tap that writes the stay into the
+    /// schedule (schedule audit 10/10/26 TRUST-21, `assumed_stays`).
+    var assumedStays: HomeLenientList<AssumedStay>? = nil
 
     var hardCount: Int { hard ?? 0 }
     var softCount: Int { soft ?? 0 }
@@ -1702,6 +1715,67 @@ struct ScheduleReview: Codable, Equatable {
         case minHours = "min_hours"
         case unwrittenDates = "unwritten_dates"
         case unstaffableDates = "unstaffable_dates"
+        case assumedStays = "assumed_stays"
+    }
+}
+
+/// schedule_rules.assumed_stays: "Fri 10/9/26 close: Max is assumed to stay
+/// until 11:45pm, 45 min past the scheduled end of 11:00pm ..." and its one
+/// tap, "Schedule Max to 11:45pm" (action `extend_shift`).
+struct AssumedStay: Codable, Hashable, Identifiable {
+    var date: String
+    var employee: String
+    var text: String
+    var until: String?
+    var minutes: Int?
+    var shiftStart: String?
+    var scheduledEnd: String?
+    var label: String?
+
+    var id: String { "\(date)|\(employee)|\(shiftStart ?? "")" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, employee, text, until, minutes, action
+        case shiftStart = "shift_start"
+        case scheduledEnd = "scheduled_end"
+    }
+    enum ActionKeys: String, CodingKey { case label }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let d = c.sfText(.date), let e = c.sfText(.employee), let t = c.sfText(.text) else {
+            throw DecodingError.dataCorruptedError(forKey: .date, in: c, debugDescription: "A stay names nobody")
+        }
+        date = d; employee = e; text = t
+        until = c.sfText(.until)
+        minutes = c.sfInt(.minutes)
+        shiftStart = c.sfText(.shiftStart)
+        scheduledEnd = c.sfText(.scheduledEnd)
+        label = (try? c.nestedContainer(keyedBy: ActionKeys.self, forKey: .action))?.sfText(.label)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(date, forKey: .date)
+        try c.encode(employee, forKey: .employee)
+        try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(until, forKey: .until)
+        try c.encodeIfPresent(minutes, forKey: .minutes)
+        try c.encodeIfPresent(shiftStart, forKey: .shiftStart)
+        try c.encodeIfPresent(scheduledEnd, forKey: .scheduledEnd)
+        if let label {
+            var a = c.nestedContainer(keyedBy: ActionKeys.self, forKey: .action)
+            try a.encode(label, forKey: .label)
+        }
+    }
+
+    /// The one tap as a review action: the shift ends at `until`.
+    var action: PublishReview.Action? {
+        guard let until else { return nil }
+        var p: [String: LooseValue] = ["employee": .string(employee), "date": .string(date), "new_end": .string(until)]
+        if let shiftStart { p["shift_start"] = .string(shiftStart) }
+        return PublishReview.Action(label: label ?? "Schedule \(employee.split(separator: " ").first.map(String.init) ?? employee) to \(until)",
+                                    action: "extend_shift", payload: p)
     }
 }
 
@@ -1921,6 +1995,11 @@ struct GeneratedSchedule: Codable {
     /// tiles' savings projection is worked on (iOS parity #47). Lenient.
     var projectedRevenue: LenientDouble? = nil
     var economics: ScheduleEconomicsLite? = nil
+    /// A run the owner stopped (schedule audit 10/10/26 ARCH-2): `stopped`,
+    /// and — when the Stop put back the draft in force before the press —
+    /// that draft's id, which the phone reads again (`restored_history_id`).
+    var stopped: Bool? = nil
+    var restoredHistoryId: Int? = nil
     /// The keys this payload sent that the decoder could not read and set
     /// to nil (schedule audit 10/10/26 TRUST-1): one odd field costs that
     /// field, never the whole week. Not encoded; the contract test asserts
@@ -1932,7 +2011,8 @@ struct GeneratedSchedule: Codable {
 
     enum CodingKeys: String, CodingKey {
         case projectedRevenue = "projected_revenue"
-        case economics
+        case economics, stopped
+        case restoredHistoryId = "restored_history_id"
         case detailThinnedAt = "detail_thinned_at"
         case softRequirements = "soft_requirements"
         case patternConflicts = "pattern_conflicts"
@@ -2159,6 +2239,8 @@ extension GeneratedSchedule {
         requirements = field(HomeLenientList<RequirementRow>.self, .requirements)
         projectedRevenue = field(LenientDouble.self, .projectedRevenue)
         economics = field(ScheduleEconomicsLite.self, .economics)
+        stopped = field(Bool.self, .stopped)
+        restoredHistoryId = field(Int.self, .restoredHistoryId)
         undecodedKeys = dropped
     }
 }
@@ -2499,7 +2581,25 @@ final class LaborViewModel {
         }
     }
 
-    private struct TimeOffListResponse: Decodable { let ok: Bool; let requests: [TimeOffRequest] }
+    private struct TimeOffListResponse: Decodable {
+        let ok: Bool
+        let requests: [TimeOffRequest]
+        var followUps: [TimeOffFollowUp] = []
+        enum CodingKeys: String, CodingKey {
+            case ok, requests
+            case followUps = "follow_ups"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            requests = try c.decode([TimeOffRequest].self, forKey: .requests)
+            followUps = c.setupList(TimeOffFollowUp.self, .followUps)
+        }
+    }
+
+    /// Approved time off over a published shift, until it is handled
+    /// (BUGSLIFE-5) — Waiting on you's "Post it open" rows.
+    var timeOffFollowUps: [TimeOffFollowUp] = []
     private struct TimeOffDecideBody: Encodable { let decision: String }
     private struct TimeOffDecideResponse: Decodable {
         let ok: Bool
@@ -2513,6 +2613,7 @@ final class LaborViewModel {
         do {
             let r: TimeOffListResponse = try await client.send("/mobile/api/labor/time-off", hapticOnError: false)
             timeOff = r.requests
+            timeOffFollowUps = r.followUps
             if timeOffPending > 0 { timeOffExpanded = true }
         } catch {
             // Silent, like availability: a secondary section.
@@ -2627,8 +2728,15 @@ final class LaborViewModel {
         /// same save from the first one instead of saving again
         /// (schedule audit 10/10/26 BUGSLIFE-22). Nil on a re-score.
         var idempotencyKey: String? = nil
+        /// Ask for only the shift readings that changed since the answer the
+        /// phone holds (scheduler audit 10/10/26 SCALE-29): the quality
+        /// object is 130-440 KB and an edit moves two or three readings.
+        /// `qualityEtag` names the held answer; the server sends the whole
+        /// object whenever it no longer has it. Added after the save's key.
+        var delta: Bool? = nil
+        var qualityEtag: String? = nil
         enum CodingKeys: String, CodingKey {
-            case rows, save, version
+            case rows, save, version, delta
             case dailyTargetHours = "daily_target_hours"
             case historyId = "history_id"
             case cavnarChanges = "cavnar_changes"
@@ -2636,7 +2744,56 @@ final class LaborViewModel {
             case keepMine = "keep_mine"
             case overrideStaff = "override_staff"
             case idempotencyKey = "idempotency_key"
+            case qualityEtag = "quality_etag"
         }
+    }
+
+    /// The re-score's delta answer: `{base, head, order, changed}` -
+    /// `head` the quality object without its shifts, `order` every reading's
+    /// key in order (date|daypart, #n on a repeat), `changed` the readings
+    /// that moved since `base`.
+    struct QualityDelta: Decodable {
+        let base: String?
+        let head: ScheduleQuality
+        let order: [String]
+        let changed: [String: QualityShift]
+    }
+
+    /// Read leniently: a delta the phone cannot read is no delta (the whole
+    /// object is asked for again), never a failed save.
+    struct LenientQualityDelta: Decodable {
+        let value: QualityDelta?
+        init(from decoder: Decoder) throws { value = try? QualityDelta(from: decoder) }
+    }
+
+    /// The key of each reading, in order - the server's _shift_key_list
+    /// and the web's _sqShiftKeys: "date|daypart", "#n" on a repeat.
+    nonisolated static func qualityShiftKeys(_ shifts: [QualityShift]) -> [String] {
+        var seen: [String: Int] = [:]
+        return shifts.map { s in
+            let k = "\(s.date)|\(s.daypart)"
+            let n = seen[k, default: 0]
+            seen[k] = n + 1
+            return n == 0 ? k : "\(k)#\(n)"
+        }
+    }
+
+    /// The whole answer from the one held and a delta on it: the head, and
+    /// each reading in `order` from `changed` or, unchanged, from the held
+    /// answer. Nil when a reading is neither (the whole object is then
+    /// asked for again rather than a reading guessed).
+    nonisolated static func mergeQuality(held: ScheduleQuality, delta: QualityDelta) -> ScheduleQuality? {
+        let prev = held.shifts ?? []
+        var had: [String: QualityShift] = [:]
+        for (k, s) in zip(qualityShiftKeys(prev), prev) { had[k] = s }
+        var shifts: [QualityShift] = []
+        for k in delta.order {
+            guard let s = delta.changed[k] ?? had[k] else { return nil }
+            shifts.append(s)
+        }
+        var out = delta.head
+        out.shifts = shifts
+        return out
     }
 
     /// The 409 a save answers while the same save (same key) is still
@@ -2673,6 +2830,42 @@ final class LaborViewModel {
         guard error.status == 409, let body = error.body,
               let busy = try? JSONDecoder().decode(SaveInProgress.self, from: body) else { return false }
         return busy.inProgress == true
+    }
+
+    /// The last whole quality answer the server sent and its etag - what a
+    /// re-score names so only the changed readings come back (SCALE-29).
+    @ObservationIgnored private var heldQuality: (etag: String, quality: ScheduleQuality)?
+
+    /// The body asking for a delta on the held answer, when there is one.
+    private func askingForDelta(_ body: ScoreBody) -> ScoreBody {
+        guard let held = heldQuality else { return body }
+        var b = body
+        b.delta = true
+        b.qualityEtag = held.etag
+        return b
+    }
+
+    /// The answer's quality, whole: as sent, or rebuilt from a delta on the
+    /// held answer. The held answer moves to it; nil (and nothing held) when
+    /// a delta does not fit what is held.
+    private func takeQuality(_ r: ScoreResponse) -> ScheduleQuality? {
+        var q = r.quality
+        if q == nil, let d = r.qualityDelta?.value, let held = heldQuality, d.base == held.etag {
+            q = Self.mergeQuality(held: held.quality, delta: d)
+        }
+        if let q, let etag = r.qualityEtag { heldQuality = (etag, q) } else { heldQuality = nil }
+        return q
+    }
+
+    /// The quality of `rows` asked for whole - when a delta answer did not
+    /// fit the held one. Never saves.
+    private func wholeQuality(rows: [ScheduleRow], result: GeneratedSchedule) async -> ScheduleQuality? {
+        let body = ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: false,
+                             historyId: result.historyId, version: nil)
+        guard let r: ScoreResponse = try? await client.send("/mobile/api/labor/schedule/score", method: .post,
+                                                             body: body, hapticOnError: false,
+                                                             retryTransient: true) else { return nil }
+        return r.ok ? takeQuality(r) : nil
     }
 
     /// The re-score / save request. Retried once on a transient failure
@@ -2721,8 +2914,14 @@ final class LaborViewModel {
         /// "Keep my edits" merged onto the newer week: the week as saved,
         /// which replaces the copy on screen (ARCH-8).
         var mergedRows: [ScheduleRow]? = nil
+        /// The delta answer (SCALE-29) and the answer's etag - what the next
+        /// re-score names as the answer it holds.
+        var qualityDelta: LenientQualityDelta? = nil
+        var qualityEtag: String? = nil
         enum CodingKeys: String, CodingKey {
             case ok, quality, error, saved, violations, review, version
+            case qualityDelta = "quality_delta"
+            case qualityEtag = "quality_etag"
             case whatIf = "what_if"
             case pendingTimeOff = "pending_time_off"
             case changedSinceSent = "changed_since_sent"
@@ -3711,15 +3910,18 @@ final class LaborViewModel {
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                // The week's own hour targets and its id (schedule re-audit
-                // 10/4/26 UI-5): sent with neither, the server scored these
-                // rows with no labor-efficiency dimension, so a re-score
-                // after a rating or a what-if read points the save path
-                // never gives.
-                body: ScoreBody(rows: rows, dailyTargetHours: scheduleResult?.dailyTargetHours?.hours ?? [:], save: false,
-                                historyId: scheduleResult?.historyId, version: nil),
+                // The week's own hour targets and its id (UI-5) — sent with
+                // neither, the server scored no labor-efficiency dimension.
+                // Only the changed readings come back (SCALE-29).
+                body: askingForDelta(ScoreBody(rows: rows, dailyTargetHours: scheduleResult?.dailyTargetHours?.hours ?? [:],
+                                               save: false, historyId: scheduleResult?.historyId, version: nil)),
                 hapticOnError: false, retryTransient: true)
-            guard response.ok, let quality = response.quality else { return nil }
+            guard response.ok else { return nil }
+            var answered = takeQuality(response)
+            if answered == nil, response.qualityDelta != nil, let result = scheduleResult {
+                answered = await wholeQuality(rows: rows, result: result)
+            }
+            guard let quality = answered else { return nil }
             return LiveScore(quality: quality, hardRules: response.review?.hardCount ?? 0)
         } catch {
             return nil
@@ -3965,6 +4167,7 @@ final class LaborViewModel {
         guard var result = scheduleResult, var rows = result.previewRows,
               let index = rows.firstIndex(where: { $0.id == rowId }) else { return }
         rows[index].employee = name
+        rows[index].locked = true
         // The old person's breach is not the new person's: the mark comes
         // off now and the save's rule check puts back any that still hold
         // (UI-7), as the web's swap does.
@@ -4041,6 +4244,9 @@ final class LaborViewModel {
         rows[index].scheduledHours = hours
         rows[index].needsReview = false
         rows[index].reviewReason = nil
+        // The server locks a row the manager changed (schedule_versions.
+        // apply_locks): said on screen at once, not after a reload.
+        rows[index].locked = true
         overriddenRows.remove(rowId)
         overriddenRows.insert(rows[index].id)
         result.previewRows = rows
@@ -4063,10 +4269,13 @@ final class LaborViewModel {
               let index = rows.firstIndex(where: { $0.id == rowId }) else { return "That shift is no longer on the week." }
         guard let hours = Self.shiftHours(start, end) else { return "Times read like 4:00pm." }
         let was = rows[index]
+        // The same shift on another day: it keeps its id, its person and its
+        // lock (contract #3/#4), and an owner's move keeps it as moved.
         let moved = ScheduleRow(date: date, day: Self.weekdayName(date), employee: was.employee, role: was.role,
                                 shiftStart: start, shiftEnd: end, scheduledHours: hours,
                                 notes: Self.movedNote(was.notes, employee: was.employee, from: was.date),
-                                needsReview: false, reviewReason: nil, rowId: was.rowId)
+                                needsReview: false, reviewReason: nil, rowId: was.rowId,
+                                shiftId: was.shiftId, personId: was.personId, locked: true, lock: was.lock)
         if rows.contains(where: { $0.id == moved.id && $0.id != rowId }) {
             return "\(was.employee ?? "That person") already has a shift starting at \(start) that day."
         }
@@ -4097,6 +4306,25 @@ final class LaborViewModel {
         await refreshEditCost()
     }
 
+    /// Lock a shift so every later pass, the solver and a regenerate keep it
+    /// exactly — or unlock it (contract #4, TRUST-17). Sent as the row's
+    /// `lock` with the same re-score and save as any edit. Nil when saved.
+    @discardableResult
+    func setShiftLocked(rowId: String, locked: Bool) async -> String? {
+        if let why = weekReadOnlyReason { return why }
+        guard var result = scheduleResult, var rows = result.previewRows,
+              let index = rows.firstIndex(where: { $0.id == rowId }) else { return "That shift is no longer on the week." }
+        rows[index].lock = locked
+        rows[index].locked = locked
+        result.previewRows = rows
+        scheduleResult = result
+        rowsUnsaved = true
+        Haptic.light()
+        await rescoreQuality()
+        if case .failed(let why) = overrideState { return why }
+        return nil
+    }
+
     /// Put a new shift on the week. Refused (with the reason) when that
     /// person already has a shift starting then that day.
     @discardableResult
@@ -4108,7 +4336,7 @@ final class LaborViewModel {
         guard !name.isEmpty else { return "Pick who works it." }
         let row = ScheduleRow(date: date, day: Self.weekdayName(date), employee: name,
                               role: (role ?? "").isEmpty ? nil : role, shiftStart: start, shiftEnd: end,
-                              scheduledHours: hours, notes: nil)
+                              scheduledHours: hours, notes: nil, locked: true)
         if rows.contains(where: { $0.id == row.id }) { return "\(name) already has that shift." }
         rows.append(row)
         overriddenRows.insert(row.id)
@@ -4191,9 +4419,22 @@ final class LaborViewModel {
         }
         // A save carries its key, so a retry of it lands once (BUGSLIFE-22).
         if save { body.idempotencyKey = Self.saveKey(body) }
+        // Only the readings that changed come back (SCALE-29) - asked after
+        // the key, so a retry of the same save is the same key.
+        body = askingForDelta(body)
         do {
             let response: ScoreResponse = try await sendScore(body)
-            guard response.ok, let quality = response.quality else {
+            guard response.ok else {
+                overrideState = .failed(response.error ?? "Couldn't save that change.")
+                return
+            }
+            var answered = takeQuality(response)
+            if answered == nil, response.qualityDelta != nil {
+                // A delta on an answer this phone no longer holds: the
+                // whole verdict, asked once more (the save itself stands).
+                answered = await wholeQuality(rows: rows, result: result)
+            }
+            guard let quality = answered else {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
                 return
             }
@@ -4829,10 +5070,100 @@ final class LaborViewModel {
     /// out. And leaving the screen is not a lost connection: the sleep's
     /// cancellation ends polling quietly, with the job remembered for the
     /// next visit (CLIENT-27).
+    // MARK: The full-time line (LOGIC-29)
+
+    var isConfirmingFullTime = false
+    var fullTimeNote: String?
+
+    private struct FullTimeBody: Encodable {
+        let rules: [String: Bool]
+    }
+
+    /// The setup line's one tap: the full-time hours become a minimum the
+    /// draft must give anyone full-time with none of their own - the rules
+    /// screen's "Full-time line is a minimum", saved now.
+    func confirmFullTimeLine() async {
+        guard !isConfirmingFullTime else { return }
+        isConfirmingFullTime = true
+        defer { isConfirmingFullTime = false }
+        do {
+            let r: APIClient.OKResponse = try await client.send(
+                "/mobile/api/labor/rules", method: .post,
+                body: FullTimeBody(rules: ["full_time_min_confirmed": true]),
+                hapticOnError: false, retryTransient: false)
+            if r.ok {
+                Haptic.success()
+                fullTimeNote = "Saved \u{00B7} the next draft holds it as a minimum."
+            } else {
+                fullTimeNote = r.error ?? "Couldn\u{2019}t save that."
+            }
+        } catch let error as APIClient.APIError {
+            fullTimeNote = error.message
+        } catch {
+            fullTimeNote = "Couldn\u{2019}t save that."
+        }
+    }
+
+    // MARK: Stop (ARCH-2: Generate pressed by accident)
+
+    /// The job this screen is polling — what Stop names.
+    var runningJobId: String?
+    var isStoppingGeneration = false
+    /// What the Stop came to ("Stopped — nothing was saved.", "Stopped —
+    /// your draft from before is back."), said once on the Labor screen.
+    var stopNote: String?
+
+    private struct StopBody: Encodable {
+        let jobId: String
+        enum CodingKeys: String, CodingKey { case jobId = "job_id" }
+    }
+
+    private struct StopResponse: Decodable {
+        let ok: Bool
+        let stopped: Bool?
+        let stopping: Bool?
+        let error: String?
+    }
+
+    /// Stop the run this screen is watching. The poll then reads how it
+    /// ended — and reloads a draft the Stop put back.
+    func stopGeneration() async {
+        guard let jobId = runningJobId, !isStoppingGeneration else { return }
+        isStoppingGeneration = true
+        defer { isStoppingGeneration = false }
+        do {
+            let r: StopResponse = try await client.send(
+                "/mobile/api/labor/generate-schedule/stop", method: .post, body: StopBody(jobId: jobId),
+                hapticOnError: false, retryTransient: false)
+            if r.stopped == true {
+                Haptic.medium()
+                stopNote = r.stopping == true ? "Stopping \u{2014} putting your draft back\u{2026}" : nil
+            } else if let e = r.error {
+                stopNote = e
+            }
+        } catch let error as APIClient.APIError {
+            stopNote = error.message
+        } catch {
+            stopNote = "Couldn\u{2019}t stop it just now."
+        }
+    }
+
+    /// The week a Stop left in force, read again from the server (it was
+    /// superseded and is back, or a draft the run saved was kept).
+    func reloadAfterStop(_ historyId: Int) async {
+        if scheduleResult?.historyId == historyId {
+            if !hasLocalEdits { await revalidateWeek() }
+        } else {
+            await openWeek(historyId)
+        }
+    }
+
     private func pollSchedule(jobId: String, firstCheckWithoutWaiting: Bool = true, waitSeconds: Int? = nil) async {
         // The generation this screen is watching land: its drafted push is
         // not bannered while the owner is here (ScheduleDraftWatch).
         ScheduleDraftWatch.shared.pollingJobId = jobId
+        runningJobId = jobId
+        stopNote = nil
         defer { ScheduleDraftWatch.shared.pollEnded(jobId) }
         var transientFailures = 0
         var deadline = Date().addingTimeInterval(waitSeconds.map { TimeInterval($0) + 30 } ?? Self.defaultPollSeconds)
@@ -4876,6 +5207,20 @@ final class LaborViewModel {
                         return
                     }
                     continue
+                }
+                runningJobId = nil
+                if !result.ok, result.stopped == true {
+                    // Stopped (ARCH-2): the week on screen is never replaced
+                    // by an empty answer. When the Stop put back the draft in
+                    // force before the press — or kept one the run already
+                    // saved — that week is read again, so the screen holds
+                    // what is in force now, its version and flags included.
+                    finish(error: nil)
+                    stopNote = result.error ?? GenerationCopy.stoppedLine
+                    if let back = result.restoredHistoryId ?? result.historyId {
+                        await reloadAfterStop(back)
+                    }
+                    return
                 }
                 scheduleResult = result
                 // The job's own error, verbatim: it names the cause —

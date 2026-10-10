@@ -16,6 +16,12 @@
 <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+{# Installable on any phone (staff_pwa, scheduler audit 10/10/26 MARKET-18):
+   the manifest and the service worker at /staff/, which caches only the
+   shell, never this page or a /staff/api/ answer. #}
+<link rel="manifest" href="/staff/manifest.webmanifest">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="apple-touch-icon" href="/static/pwa/icon-192.png">
 <style>
   /* DESIGN_SYSTEM.md section 1, the iOS dark values (a phone in a dim dining
      room): paper #0c0c0c, cards #121212, hairlines #262626. Nothing below
@@ -374,9 +380,11 @@
     var b = $('session-ended');
     if (b.hidden) { b.hidden = false; window.scrollTo(0, 0); }
   }
+  var INSTALLED = !!((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone);
   function api(path, opts){
     opts = opts || {};
     var init = {method: opts.method || 'GET', credentials: 'same-origin', headers: opts.headers || {}};
+    init.headers['X-Cavnar-Display'] = INSTALLED ? 'standalone' : 'browser';
     if (opts.json !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opts.json);
@@ -398,6 +406,18 @@
     });
   }
   function postJson(path, body){ return api(path, {method: 'POST', json: body || {}}); }
+  /* The installed portal (MARKET-18): the service worker for the shell,
+     and Web Push once the server has keys for it. */
+  function pushSupported(){ return ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window); }
+  function b64uToBytes(s){
+    var pad = '===='.slice(0, (4 - s.length % 4) % 4), raw = window.atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  if ('serviceWorker' in navigator) {
+    try { navigator.serviceWorker.register('/staff/sw.js', {scope: '/staff/'}); } catch (e) { /* the portal works without it */ }
+  }
   function errText(d, fallback){ return (d && d.error) || fallback || 'That didn’t go through.'; }
 
   /* ── the bottom sheet (forms and confirms) ─────────────────────────── */
@@ -540,6 +560,14 @@
     if (l['break']) out += '<div class="meta">Break <span class="num">' + esc(l['break']) + '</span></div>';
     if (l.notes) out += '<div class="meta">Note: ' + esc(l.notes) + '</div>';
     if (l.request) out += '<div style="margin-top:6px">' + legRequestPill(l.request) + '</div>';
+    /* How firm the shift is, as published (commitment_ladder, MARKET-27):
+       firm, likely or tentative, and what that means for the person. */
+    if (l.commitment) {
+      var cls = {firm: 'good', likely: '', tentative: 'warn'}[l.commitment] || '';
+      var word = {firm: 'Firm', likely: 'Likely', tentative: 'Tentative'}[l.commitment] || '';
+      out += '<div class="meta" style="margin-top:6px"><span class="pill ' + cls + '">' + esc(word) + '</span> '
+        + esc(String(l.commitment_text || '').replace(/^[A-Za-z]+ — /, '')) + '</div>';
+    }
     return out;
   }
   function legActions(date, l){
@@ -896,6 +924,7 @@
       renderRequests();
     });
     api('/staff/api/time-off').then(function(d){ S.timeoff = d; renderRequests(); });
+    api('/staff/api/standby').then(function(d){ S.standby = d; renderRequests(); });
   };
   function isLive(st){ return st === 'pending' || st === 'approved' || st === 'open'; }
   var TO_CHIP = {approved: ['Approved', 'good'], denied: ['Not approved', 'bad'], withdrawn: ['Withdrawn', ''], cancelled: ['Called off', '']};
@@ -936,6 +965,7 @@
       if (open.length) html += '<div class="strong" style="margin:14px 0 8px;color:var(--ink2)">Open shifts</div>';
       for (i = 0; i < open.length; i++) html += openRow(open[i]);
     }
+    html += standbyRows();
     html += '<div class="sechead">Your requests</div>';
     if (b === undefined || t === undefined) html += pulse('Loading your requests');
     else {
@@ -954,6 +984,32 @@
     el.innerHTML = html;
   }
   function rowErr(key){ return S.rowErr[key] ? '<div class="errline">' + esc(S.rowErr[key]) + '</div>' : ''; }
+  /* On call (standby_insurance, MARKET-26): the exact terms, an explicit
+     tick to agree, and the yes is kept with the time and those words. */
+  function standbyRows(){
+    var d = S.standby, html = '';
+    if (!d || !d.ok) return '';
+    var slots = (d.slots || []).filter(function(x){ return x.status === 'offered' || x.status === 'accepted'; });
+    if (!slots.length) return '';
+    html += '<div class="sechead">On call</div>';
+    for (var i = 0; i < slots.length; i++) {
+      var x = slots[i], key = 'sb' + x.id;
+      html += '<div class="card rail"><div class="row"><div class="strong num">' + shiftLabel(x.date, x.shift_start, x.shift_end) + ' · ' + esc(x.role) + '</div>' +
+        '<span class="pill ' + (x.status === 'accepted' ? 'good' : 'warn') + '">' + (x.status === 'accepted' ? 'You’re on call' : 'Asked') + '</span></div>';
+      if (x.status === 'offered') {
+        html += '<p class="note ink2">' + esc(x.terms || '') + '</p>' +
+          '<label class="switch"><input type="checkbox" id="sb-agree-' + x.id + '"><span>I agree to these terms</span></label>' +
+          '<div class="acts two"><button type="button" class="cbtn cbtn-secondary" data-act="sb-no" data-id="' + x.id + '">Not this time</button>' +
+          '<button type="button" class="cbtn cbtn-primary" data-act="sb-yes" data-id="' + x.id + '">I’ll be on call</button></div>';
+      } else {
+        html += '<p class="note">If someone can’t make it, you’re called first — the offer comes here and as a notice.' +
+          (x.consent_at ? ' You agreed ' + esc(mdy(String(x.consent_at).slice(0, 10))) + '.' : '') + '</p>' +
+          '<div class="acts"><button type="button" class="cbtn cbtn-text tall" data-act="sb-no" data-id="' + x.id + '">I can’t be on call after all</button></div>';
+      }
+      html += rowErr(key) + '</div>';
+    }
+    return html;
+  }
   function askRow(a){
     var key = 'ask' + a.id;
     return '<div class="card rail"><div class="strong">' + esc(a.employee_name) + ' asked to swap</div>' +
@@ -1330,8 +1386,12 @@
     if (!S.stats || !S.stats.ok) api('/staff/api/stats').then(function(d){ S.stats = d; renderMe(); });
     api('/staff/api/preferences').then(function(d){ S.prefs = d; renderMe(); });
     api('/staff/api/language').then(function(d){ S.lang = d; renderMe(); });
+    /* Shifts at the group's other locations (schedule audit 10/10/26
+       MARKET-16): only for someone who says yes here. */
+    api('/staff/api/travel').then(function(d){ S.travel = d; renderMe(); });
     S.agree = undefined;
     api('/staff/api/compliance').then(function(d){ S.agree = d; renderMe(); });
+    api('/staff/api/push/key').then(function(d){ S.pushKey = d; renderMe(); });
   };
   /* Agreements (schedule audit 10/10/26 RM-15): what your manager asked you
      to agree to in writing, a standing agreement to short turnarounds where
@@ -1401,7 +1461,24 @@
         '<span><b>Schedule texts</b><br><span class="note" style="display:block;margin:2px 0 0">' + esc(p.schedule_texts_consent || '') + '</span></span></label>' +
         '<div class="errline" id="texts-err" role="status" aria-live="polite"></div>';
     } else html += '<p class="note" style="margin:0">Shift and task reminders come as notices in the Cavnar AI iPhone app. Here, your inbox and requests show what’s new each time you open it.</p>';
+    html += pushCard();
     html += '</div>';
+    var tr = S.travel;
+    if (tr && tr.ok && tr.group) {
+      html += '<div class="sechead">Other locations</div><div class="card">' +
+        '<label class="switch"><input type="checkbox" id="travel-on"' + (tr.travels ? ' checked' : '') + '>' +
+        '<span><b>Pick up shifts at our other locations</b><br><span class="note" style="display:block;margin:2px 0 0">A manager there can offer you a shift; it is checked against your hours here and your availability.' +
+        (tr.consent_text ? ' Turning this on means: “' + esc(tr.consent_text) + '”' : '') +
+        (tr.travels && tr.consent_at ? ' You agreed ' + esc(mdy(String(tr.consent_at).slice(0, 10))) + '.' : '') + '</span></span></label>' +
+        '<div class="errline" id="travel-err" role="status" aria-live="polite"></div>';
+      for (var ti = 0; ti < (tr.offers || []).length; ti++) {
+        var to = tr.offers[ti];
+        html += '<div class="row" style="margin-top:10px"><div><b>' + esc(to.place || 'Another location') + '</b><br><span class="note">' + esc(shiftLabel(to.date, to.shift_start, to.shift_end)) + (to.role ? ' · ' + esc(to.role) : '') + '</span></div>' +
+          '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="travel-yes" data-id="' + esc(to.id) + '">Take it</button>' +
+          '<button type="button" class="cbtn cbtn-secondary" data-act="travel-no" data-id="' + esc(to.id) + '">Decline</button></div></div>';
+      }
+      html += '</div>';
+    }
     html += '<div class="sechead">Language</div><div class="card">';
     var l = S.lang;
     if (l === undefined) html += pulse('Loading languages');
@@ -1424,6 +1501,19 @@
       '<div class="acts"><button type="button" class="cbtn cbtn-danger cbtn-block" data-act="delete-account">Delete my account</button></div></div>';
     html += '<div class="acts"><a class="cbtn cbtn-danger cbtn-ghost cbtn-block tall" href="/staff/logout">Sign out</a></div>';
     el.innerHTML = html;
+  }
+
+  /* Notices in this browser (web_push, MARKET-18): offered only when the
+     server has keys for it and this browser can show them. On a phone,
+     add the portal to the home screen first. */
+  function pushCard(){
+    var k = S.pushKey;
+    if (!k || !k.ok || !k.enabled || !pushSupported()) return '';
+    if (Notification.permission === 'denied') return '<p class="note">Notices are blocked for this site in your browser settings.</p>';
+    return '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="push-on">' +
+      (S.pushOn ? 'Notices are on in this browser' : 'Get notices in this browser') + '</button></div>' +
+      (INSTALLED ? '' : '<p class="note">On a phone, add Cavnar AI to your home screen (your browser’s menu → Add to Home screen) for notices like an app.</p>') +
+      '<div class="errline" id="push-err" role="status" aria-live="polite"></div>';
   }
 
   /* Your attendance (the app's StaffAttendanceSection): my own checked
@@ -1698,12 +1788,52 @@
         act('ask' + a.id, '/staff/api/shift-requests/' + a.id + '/respond', {accept: false}, 'Declined — ' + a.employee_name + ' is told');
       });
     },
+    'sb-yes': function(el){
+      var id = el.getAttribute('data-id'), box = $('sb-agree-' + id);
+      if (!box || !box.checked) { S.rowErr['sb' + id] = 'Tick that you agree to the terms first.'; renderRequests(); return; }
+      act('sb' + id, '/staff/api/standby/' + id + '/respond', {accept: true, agree: true}, 'You’re on call — you’ll be called first if someone can’t make it');
+    },
+    'sb-no': function(el){
+      var id = el.getAttribute('data-id');
+      act('sb' + id, '/staff/api/standby/' + id + '/respond', {accept: false}, 'Your manager is told');
+    },
+    'push-on': function(btn){
+      var k = S.pushKey;
+      if (!k || !k.enabled || !pushSupported()) return;
+      busyBtn(btn, 'Turning on');
+      Notification.requestPermission().then(function(perm){
+        if (perm !== 'granted') { unbusyBtn(btn); $('push-err').textContent = 'Notices weren’t allowed in this browser.'; return null; }
+        return navigator.serviceWorker.ready.then(function(reg){
+          return reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: b64uToBytes(k.public_key)});
+        }).then(function(sub){
+          return postJson('/staff/api/push/subscribe', {subscription: sub.toJSON()});
+        }).then(function(d){
+          unbusyBtn(btn);
+          if (!d || !d.ok) { $('push-err').textContent = errText(d || {}); return; }
+          S.pushOn = true; toast('Notices are on in this browser'); renderMe();
+        });
+      }).catch(function(){ unbusyBtn(btn); $('push-err').textContent = 'This browser couldn’t turn notices on.'; });
+    },
     'offer-yes': function(el){
       var o = findIn(S.board.offers, el.getAttribute('data-id'));
       if (!o) return;
       askConfirm('Take ' + shiftLabel(o.date, o.shift_start, o.shift_end) + '?', 'It goes on your schedule' + (o.role ? ' as ' + o.role : '') + ', and your manager hears you said yes.' +
         (o.pickup_overtime_note ? ' ' + o.pickup_overtime_note : ''), 'Take it', function(){
         act('offer' + o.id, '/staff/api/offers/' + o.id + '/respond', {accept: true}, 'It’s on your schedule');
+      });
+    },
+    'travel-yes': function(el){
+      var o = findIn((S.travel || {}).offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Take this shift at ' + (o.place || 'another location') + '?', shiftLabel(o.date, o.shift_start, o.shift_end) + (o.role ? ' as ' + o.role : '') + '. Their manager hears you said yes.', 'Take it', function(){
+        act('travel' + o.id, '/staff/api/travel/offers/' + o.id + '/respond', {accept: true}, 'It’s on their schedule', function(){ LOADERS.me(); });
+      });
+    },
+    'travel-no': function(el){
+      var o = findIn((S.travel || {}).offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Decline this shift?', 'Their manager is told you can’t take it.', 'Decline', function(){
+        act('travel' + o.id, '/staff/api/travel/offers/' + o.id + '/respond', {accept: false}, 'Declined', function(){ LOADERS.me(); });
       });
     },
     'offer-no': function(el){
@@ -2013,6 +2143,15 @@
         if (!d.ok) { t.checked = !on; $('texts-err').textContent = errText(d); return; }
         S.prefs.schedule_texts = d.schedule_texts;
         toast(d.schedule_texts ? 'Schedule texts on' : 'Schedule texts off');
+      });
+    }
+    if (t.id === 'travel-on') {
+      var yes = t.checked;
+      postJson('/staff/api/travel', {travels: yes}).then(function(d){
+        if (!d.ok) { t.checked = !yes; $('travel-err').textContent = errText(d); return; }
+        S.travel.travels = d.travels;
+        S.travel.consent_at = d.consent_at || null;
+        toast(d.travels ? 'Other locations can offer you shifts' : 'Only here from now on');
       });
     }
     if (t.id === 'lang') {

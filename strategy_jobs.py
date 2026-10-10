@@ -2423,7 +2423,12 @@ def _clock(hour, minute=0) -> str:
     return f"{h12}{':%02d' % minute if minute else ''}{suffix}"
 
 
-# When a slow night suggests letting someone go, the time it suggests.
+# When a slow night suggests letting someone go, the time it suggests when the
+# restaurant has neither hours nor a measured sales curve to derive its own
+# from — otherwise the cut is the restaurant's own (labor_live.cut_minute:
+# the first half hour after tonight's peak that runs under half its sales,
+# at least an hour before the close; schedule audit 10/10/26 MARKET-8, which
+# found one 8pm for a 9pm close and a 2am bar alike).
 PULSE_CUT_HOUR = 20
 PULSE_MOVE_MIN_BEHIND_PCT = 15
 PULSE_MOVE_MIN_HOURS = 1.0
@@ -2451,7 +2456,7 @@ def _pulse_suppressed(restaurant, day, db_path=DB_PATH):
     return None
 
 
-def _cut_is_legal(restaurant, day, rows, who, cut_label, db_path=DB_PATH):
+def _cut_is_legal(restaurant, day, rows, who, cut_label, db_path=DB_PATH, cut_m=None):
     """Whether sending `who` home at the cut leaves the day inside every
     rule it was inside before: the day is re-checked with the cut applied
     (schedule_rules.violations), and any violation the cut adds — keyholder
@@ -2480,7 +2485,7 @@ def _cut_is_legal(restaurant, day, rows, who, cut_label, db_path=DB_PATH):
         if (r.get("employee") or "") == who["employee"] and r.get("shift_start") == who["shift_start"]:
             r["shift_end"] = cut_label
             s_m = _sr.parse_minutes(r.get("shift_start", "")) or 0
-            r["scheduled_hours"] = f"{max(0.0, (PULSE_CUT_HOUR * 60 - s_m) / 60.0):.1f}"
+            r["scheduled_hours"] = f"{max(0.0, ((cut_m if cut_m is not None else PULSE_CUT_HOUR * 60) - s_m) / 60.0):.1f}"
         after_rows.append(r)
     new = _sweep(after_rows) - before
     # Judged by kind: a day-level rule (keyholder until close, stays after
@@ -2497,7 +2502,9 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
 
     Only when today is at least PULSE_MOVE_MIN_BEHIND_PCT behind, not a
     holiday or a day with reservations or an event on the book, and only
-    in a role with more people on at PULSE_CUT_HOUR than its dinner cut
+    in a role with more people on at the restaurant's own cut time
+    (labor_live.cut_minute — its curve and close; PULSE_CUT_HOUR only when
+    it has neither) than its dinner cut
     floor (schedule_rules.cut_floor: the owner's night floor for the role,
     else Will's admin role minimum, else the restaurant's "never cut below"
     cut_floor_default, 2 unless the owner changed it — never one person
@@ -2540,7 +2547,9 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
     rows = intraday.published_rows(restaurant.id, local.date(), db_path=db_path)
     if not rows:
         return None
-    cut = PULSE_CUT_HOUR * 60
+    import labor_live as _ll
+    cut, _cut_basis = _ll.cut_minute(restaurant, local.date(), now_local=local)
+    cut_label = _ll._clock(_ll._at(local.date(), cut))
     weekday = local.strftime("%A")
     on_by_role = {}
     for x in rows:
@@ -2570,7 +2579,7 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
         for who in sorted(people, key=lambda x: (x["_start"], x["_end"]), reverse=True):
             if round((who["_end"] - cut) / 60.0, 1) < PULSE_MOVE_MIN_HOURS:
                 continue
-            if _cut_is_legal(restaurant, local.date(), rows, who, _clock(PULSE_CUT_HOUR), db_path):
+            if _cut_is_legal(restaurant, local.date(), rows, who, cut_label, db_path, cut_m=cut):
                 pick = (role, people, floor, who)
                 break
         if pick:
@@ -2619,13 +2628,13 @@ def staffing_move(restaurant, local, pulse, db_path=DB_PATH):
                   + (" in wages, before any predictability pay a same-day change may owe under your notice rule"
                      " — check with counsel" if pay_caveat else ""))
     from shift_quality import role_words as _rw
-    text = (f"{len(people)} {_rw(role, len(people))} on at {_clock(PULSE_CUT_HOUR)} "
+    text = (f"{len(people)} {_rw(role, len(people))} on at {cut_label} "
             f"against a floor of {floor}: letting {who['employee']} (on till {end_label}) go at "
-            f"{_clock(PULSE_CUT_HOUR)} {saving}.")
+            f"{cut_label} {saving}.")
     import staff_settings as _ss
     if _guard.get("caution"):
         text = f"{text} {_guard['caution']}"
-    return {"text": text, "employee": who["employee"], "role": role, "cut_at": _clock(PULSE_CUT_HOUR),
+    return {"text": text, "employee": who["employee"], "role": role, "cut_at": cut_label, "cut_basis": _cut_basis,
             "hours": hours, "dollars": dollars, "on": len(people), "floor": floor, "pay_caveat": pay_caveat,
             "predictability_pay": round(owed, 2) if premium.get("law") else None,
             "key": f"pulse_cut:{local.date().isoformat()}:{_ss.name_key(who['employee'])}"}
@@ -2788,6 +2797,7 @@ def _raise_coverage(r, bday, due, gaps, local, db_path=DB_PATH) -> int:
                 meta["scheduled_in_role"] = in_role
                 return True
             issues.update_coverage(r.id, iss["id"], _merge, renotify=True, db_path=db_path)
+            _dispatch_standby(r, bday, people, iss["id"], db_path)
             continue
         seq = 1
         if iss is not None:
@@ -2803,7 +2813,23 @@ def _raise_coverage(r, bday, due, gaps, local, db_path=DB_PATH) -> int:
                                             db_path=db_path)
         if token:
             opened += 1
+        if _issue and _issue.get("id"):
+            _dispatch_standby(r, bday, people, _issue["id"], db_path)
     return opened
+
+
+def _dispatch_standby(r, bday, people, issue_id, db_path=DB_PATH):
+    """Call-out insurance (standby_insurance, scheduler audit 10/10/26
+    MARKET-26): the person who agreed to be on call tonight for the missing
+    person's role is offered the shift the moment the issue names the gap —
+    the manager is not left phoning round. Never raises."""
+    try:
+        import standby_insurance
+        standby_insurance.dispatch_for(r.id, bday, people, issue_id,
+                                       db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id} standby dispatch")
 
 
 def _coverage_constraints(r, day, due, db_path=DB_PATH):

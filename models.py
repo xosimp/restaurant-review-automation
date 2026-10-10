@@ -411,6 +411,10 @@ class Restaurant:
     longitude: Optional[float]           = None
     weather_cache_json: Optional[str]    = None   # cached NWS forecast periods
     weather_cached_at: Optional[str]     = None
+    # The NWS HOURLY forecast, fetched with the periods above and aged by the
+    # same weather_cached_at: each meal's own weather (scheduler audit
+    # 10/10/26 LEARNING-21 — demand_drivers.forecast_parts).
+    weather_hourly_json: Optional[str]   = None
     # When a geocode last resolved to nothing usable. A place_id that returns
     # no geometry is permanent until someone corrects it, and without this the
     # retry re-billed Google on every call — 570 requests for one restaurant
@@ -638,6 +642,10 @@ class Restaurant:
     # request_autonomy (schedule audit 10/10/26 MARKET-14/15): {"auto_approve": bool, "kinds": ["drop","swap"],
     # "notice_hours": n, "max_quality_drop": n, "availability_approval": bool}. None = the defaults (off; approval on).
     staff_request_policy_json: Optional[str] = None
+    # The schedule on the floor (schedule audit 10/10/26 MARKET-7/8/24, J2): {"pos_push": bool — write the
+    # published week to the POS time clock (pos_schedule_push), "autopilot": bool — live labor moves may act on
+    # their own once earned (labor_live), "live_moves": bool}. None = every switch off.
+    floor_settings_json: Optional[str] = None
 
     def reply_program_in(self, text) -> dict:
         """The membership program a reply names (reply_programs) — its name
@@ -1275,6 +1283,9 @@ def ensure_columns(db_path: str = DB_PATH):
         # staff availability cut waits on a manager (request_autonomy,
         # schedule audit 10/10/26 MARKET-14/15).
         ("restaurants", "staff_request_policy_json", "TEXT"),
+        # The schedule on the floor: the POS schedule push, live labor moves
+        # and their autopilot (pos_schedule_push, labor_live; J2 10/10/26).
+        ("restaurants", "floor_settings_json", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -1418,6 +1429,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "longitude", "REAL"),
         ("restaurants", "weather_cache_json", "TEXT"),
         ("restaurants", "weather_cached_at", "TEXT"),
+        ("restaurants", "weather_hourly_json", "TEXT"),
         ("restaurants", "geocode_failed_at", "TEXT"),
         # Morning brief (audit #18): on by default — it is the owner's own
         # phone, and a brief that has to be discovered in settings is a brief
@@ -4509,6 +4521,32 @@ def init_db(db_path: str = DB_PATH):
     init_schedule_overrides(db_path)
     from schedule_scorecard import init_schedule_scorecard
     init_schedule_scorecard(db_path)
+    # Call-out insurance: consented, paid on-call slots and the owner's
+    # standby policy (standby_insurance, scheduler audit 10/10/26 MARKET-26).
+    from standby_insurance import init_standby
+    init_standby(db_path)
+    # How firm each published shift is (commitment_ladder, MARKET-27).
+    from commitment_ladder import init_commitments
+    init_commitments(db_path)
+    # Events that changed after a week was published (event_reactive, MARKET-28).
+    from event_reactive import init_event_reactive
+    init_event_reactive(db_path)
+    # The owner's protect switch for people at risk of leaving (retention_risk, MARKET-29).
+    from retention_risk import init_retention
+    init_retention(db_path)
+    # The organization's certified bench: site switches, consents, asks (org_bench, MARKET-30).
+    from org_bench import init_org_bench
+    init_org_bench(db_path)
+    # The installable staff portal: Web Push subscriptions and offer answers by platform (staff_pwa, MARKET-18).
+    from staff_pwa import init_staff_pwa
+    init_staff_pwa(db_path)
+    # What one more of a role on a meal is worth here, and each person's
+    # measured effect (scheduler audit 10/10/26 RM-20, LEARNING-26): the
+    # weekly staffing_learning job's estimates.
+    from staffing_elasticity import init_staffing_elasticity
+    init_staffing_elasticity(db_path)
+    from staff_productivity import init_staff_productivity
+    init_staff_productivity(db_path)
     # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
     from schedule_calibration import init_schedule_calibration
     init_schedule_calibration(db_path)
@@ -4568,6 +4606,17 @@ def init_db(db_path: str = DB_PATH):
     # it takes effect (availability_changes, schedule audit 10/10/26 MARKET-15).
     from availability_changes import init_availability_changes
     init_availability_changes(db_path)
+    # The published week written to the POS time clock, per push and per
+    # shift (pos_schedule_push, schedule audit 10/10/26 MARKET-7), and the
+    # live labor moves offered during service (labor_live, MARKET-8/24).
+    from pos_schedule_push import init_pos_schedule_push
+    init_pos_schedule_push(db_path)
+    from labor_live import init_labor_live
+    init_labor_live(db_path)
+    # Who travels to the group's other locations and the shifts offered to
+    # them there (cross_site, MARKET-16).
+    from cross_site import init_cross_site
+    init_cross_site(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
@@ -5095,7 +5144,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json","floor_settings_json",
         "jurisdiction","compliance_profile_json","school_calendar_json","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5126,7 +5175,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
-        "latitude","longitude","weather_cache_json","weather_cached_at",
+        "latitude","longitude","weather_cache_json","weather_cached_at","weather_hourly_json",
         "geocode_failed_at", "aivis_city_json",
         "alert_hold_during_service", "preshift_nudge_hour",
         "morning_brief_enabled", "morning_brief_hour", "briefing_level", "paused_until",
@@ -5966,6 +6015,7 @@ def _restaurant_from_row(row) -> Restaurant:
         reply_programs=row["reply_programs"] if "reply_programs" in row.keys() else None,
         crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
         staff_request_policy_json=row["staff_request_policy_json"] if "staff_request_policy_json" in row.keys() else None,
+        floor_settings_json=row["floor_settings_json"] if "floor_settings_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         compliance_profile_json=row["compliance_profile_json"] if "compliance_profile_json" in row.keys() else None,
@@ -6104,6 +6154,7 @@ def _restaurant_from_row(row) -> Restaurant:
         longitude=row["longitude"]                     if "longitude" in row.keys() else None,
         weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
         weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
+        weather_hourly_json=row["weather_hourly_json"] if "weather_hourly_json" in row.keys() else None,
         geocode_failed_at=row["geocode_failed_at"]     if "geocode_failed_at" in row.keys() else None,
         aivis_city_json=row["aivis_city_json"]         if "aivis_city_json" in row.keys() else None,
         preshift_nudge_hour=(row["preshift_nudge_hour"] if "preshift_nudge_hour" in row.keys()

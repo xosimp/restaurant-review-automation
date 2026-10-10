@@ -1377,6 +1377,10 @@ MODELS = {
     # written from the FINISHED week (schedule_narrative — TRUST-15, AI-21).
     "schedule_rules":      ("SCHEDULE_RULES_MODEL",   HAIKU_55),
     "schedule_note":       ("SCHEDULE_NOTE_MODEL",    HAIKU_55),
+    # The critic of a week code built (schedule_critic — the deterministic+
+    # critic arm, scheduler audit 10/10/26 AI-8): a few judged edits, each
+    # validated by code. Off unless the arm or SCHEDULE_DRAFT_CRITIC says.
+    "schedule_critic":     ("SCHEDULE_CRITIC_MODEL",  SONNET_55),
 }
 
 

@@ -84,8 +84,65 @@ PROVIDERS = {
 }
 
 
+# ── the adapter contract (schedule audit 10/10/26 MARKET-12) ────────────────
+#
+# A reservation system plugs in with ONE register_provider call: a code, the
+# label the owner sees, and fetch(restaurant, start, end) returning
+# [{"date": "YYYY-MM-DD", "covers": int}] — booked covers per night in the
+# range, cancelled and no-show bookings already out — or raising
+# NotConfigured with the sentence the settings screen shows. Everything after
+# fetch is shared: rows are checked here (clean_rows — a bad row fails the
+# sync, never stored as a guess), written as demand signals under the
+# provider's code (the forecast and the live labor read — labor_live's
+# covers_booked — read them like a pasted export), and the weekly sync runs
+# the day before each restaurant's draft. SevenRooms, OpenTable, Resy and Tock
+# each need Cavnar AI admitted to their partner programme first; until then
+# the owner's exported report imports as it is.
+
+def register_provider(code, label, fetch):
+    """Add (or replace) a reservation system by its code."""
+    code = str(code or "").strip().lower()
+    if not code or not callable(fetch):
+        raise ValueError("a provider needs a code and a fetch function")
+    PROVIDERS[code] = {"label": str(label or code), "fetch": fetch}
+
+
+class BadFeed(RuntimeError):
+    pass
+
+
+def clean_rows(rows, start, end) -> list:
+    """The provider's rows held to the contract: each a date inside
+    [start, end] and a whole number of covers >= 0, one per date (summed).
+    BadFeed on anything else — a feed that says something unreadable
+    stores nothing."""
+    out = {}
+    for x in rows or []:
+        try:
+            d = date.fromisoformat(str((x or {}).get("date"))[:10])
+            n = int((x or {}).get("covers"))
+        except (TypeError, ValueError):
+            raise BadFeed(f"unreadable row {x!r}")
+        if n < 0 or not (start <= d <= end):
+            raise BadFeed(f"row outside the contract {x!r}")
+        out[d.isoformat()] = out.get(d.isoformat(), 0) + n
+    return [{"date": k, "covers": v} for k, v in sorted(out.items())]
+
+
 def available() -> list:
-    return [{"code": k, "label": v["label"], "live": False} for k, v in PROVIDERS.items()]
+    """Every reservation system this build knows and whether its feed is
+    live (its fetch answers rather than raising NotConfigured)."""
+    out = []
+    for k, v in PROVIDERS.items():
+        try:
+            v["fetch"](None, date.today(), date.today())
+            live = True
+        except NotConfigured:
+            live = False
+        except Exception:
+            live = True                  # configured; this call just had no restaurant
+        out.append({"code": k, "label": v["label"], "live": live})
+    return out
 
 
 def status(restaurant) -> dict:
@@ -124,7 +181,7 @@ def sync(restaurant_id, days: int = 21, db_path=None) -> dict:
         return {"written": 0, "skipped": 0, "error": "no provider", "not_configured": True}
     start, end = date.today(), date.today() + timedelta(days=days)
     try:
-        rows = p["fetch"](r, start, end)     # [{date, covers}]
+        rows = clean_rows(p["fetch"](r, start, end), start, end)     # [{date, covers}]
     except NotConfigured as e:
         return {"written": 0, "skipped": 0, "error": str(e), "not_configured": True}
     except Exception as e:

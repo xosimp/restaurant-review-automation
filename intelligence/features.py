@@ -595,6 +595,16 @@ def compute(restaurant_id: int, today: date = None, db_path: str = DB_PATH) -> d
         f.update(compute_ratios(restaurant_id, today=today, db_path=db_path))
     except Exception as e:
         print(f"[intelligence] staffing ratios unavailable for {restaurant_id}: {e}")
+    # The scheduler's own measured figures as ratios (schedule_priors,
+    # LEARNING-27): labor standards at the rush, weather lifts, the no-show
+    # base rate, event lifts — banded per peer partition and read back only
+    # as the prior a new restaurant's estimates start from. Not in
+    # FEATURE_KEYS either.
+    try:
+        from .schedule_priors import compute_features as _sched_priors
+        f.update(_sched_priors(restaurant_id, today=today, db_path=db_path))
+    except Exception as e:
+        print(f"[intelligence] scheduling priors unavailable for {restaurant_id}: {e}")
     return f
 
 

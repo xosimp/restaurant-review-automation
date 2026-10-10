@@ -1300,6 +1300,13 @@ def api_offer_respond(offer_id, current_user):
         return jsonify(ok=False, needs_consent=e.consent, error=str(e)), 409
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
+    # Which client answered and how long after the offer (staff_pwa,
+    # scheduler audit 10/10/26 MARKET-18): the iPhone app, the installed
+    # portal or a phone browser. Never fails the answer.
+    import staff_pwa
+    staff_pwa.record_offer_answer(rid, offer_id, staff_pwa.platform_of(
+        request.headers, bool(not request.cookies.get("staff_session")
+                              and request.headers.get("Authorization", "").startswith("Bearer "))), body["accept"])
     from models import log_event
     try:
         log_event(rid, "shift_offer_answered", {"employee": name, "offer_id": offer_id, "accepted": body["accept"]})
@@ -1308,6 +1315,61 @@ def api_offer_respond(offer_id, current_user):
     o = out["offer"]
     return jsonify(ok=True, offer={"id": o["id"], "status": o["status"]},
                    request=shift_requests._for_teammate(out["request"]) if out.get("request") else None)
+
+
+@staff_bp.route("/api/travel")
+@staff_login_required
+def api_travel_get(current_user):
+    """Whether this person picks up shifts at the group's other locations,
+    and the ones offered to them there (cross_site, schedule audit 10/10/26
+    MARKET-16)."""
+    rid, name = _staff_context(current_user)
+    import cross_site
+    import schedule_rules
+    # The exact words the switch means and, when on, when they agreed
+    # (org_bench: the certified bench's consent, scheduler audit 10/10/26
+    # MARKET-30).
+    import org_bench
+    return jsonify(ok=True, travels=cross_site.travels(rid, name),
+                   group=bool(schedule_rules.org_sibling_ids(rid)), offers=cross_site.offers_for(rid, name),
+                   **org_bench.for_staff(current_user["id"], rid, name))
+
+
+@staff_bp.route("/api/travel", methods=["POST"])
+@staff_login_required
+def api_travel_set(current_user):
+    """{travels: bool} — this person's own yes to being offered shifts at
+    the group's other locations; nobody is offered one otherwise."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("travels"), bool) or not name:
+        return jsonify(ok=False, error="travels must be true or false."), 400
+    # The switch and the person's consent to the words beside it, in one
+    # step (org_bench.record_travel: cross_site.set_travel plus the written,
+    # time-stamped consent; off revokes it).
+    import org_bench
+    try:
+        extra = org_bench.record_travel(current_user["id"], rid, name, body["travels"])
+    except org_bench.BenchError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, travels=body["travels"], **extra)
+
+
+@staff_bp.route("/api/travel/offers/<int:offer_id>/respond", methods=["POST"])
+@staff_login_required
+def api_travel_offer_respond(offer_id, current_user):
+    """{accept: bool} — this person's answer to a shift at another location:
+    yes is judged there again and written into that location's week."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("accept"), bool):
+        return jsonify(ok=False, error="accept must be true or false."), 400
+    import cross_site
+    try:
+        out = cross_site.respond(rid, name, offer_id, body["accept"])
+    except cross_site.CrossSiteError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, **out)
 
 
 @staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])
@@ -1699,3 +1761,6 @@ import staff_comms_routes  # noqa: E402,F401
 # at the bottom, so whoever registers staff_bp — the app or a test — gets them
 # before the blueprint is registered (Flask refuses a route added after).
 import staff_account_routes  # noqa: E402,F401
+# The installable portal (manifest, service worker, Web Push), on-call offers
+# and the organization's bench (scheduler audit 10/10/26 MARKET-18, -26, -30).
+import staff_pwa_routes  # noqa: E402,F401

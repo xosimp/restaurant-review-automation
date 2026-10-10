@@ -287,13 +287,63 @@ final class AskVoiceInput {
 /// The composer's mic: a 38pt circle (44pt hit area) beside Send. Quiet
 /// paper when idle; solid ember with a stop square while listening, so the
 /// live state is unmistakable and one more tap ends it.
+/// Push to talk (schedule audit 10/10/26 MARKET-31): hold the mic, say the
+/// question, let go — it is sent, and the answer is read back aloud. A tap
+/// still types into the field for the owner to read and send. Any write the
+/// answer proposes (offer_cover's "Offer Ana the 5pm shift") waits on its
+/// confirm card's tap, spoken or not.
+@MainActor
+final class AskReadBack {
+    static let shared = AskReadBack()
+    private let synth = AVSpeechSynthesizer()
+
+    /// The answer as plain words: links to their text, markdown marks out,
+    /// at most about 600 characters, ended at a word.
+    nonisolated static func plain(_ text: String, proposals: Int) -> String? {
+        var s = text.replacingOccurrences(of: #"\[([^\]]+)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"[*_#>|`]"#, with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        if s.count > 600 {
+            var cut = String(s.prefix(600))
+            if let space = cut.lastIndex(of: " ") { cut = String(cut[..<space]) }
+            s = cut + "."
+        }
+        if proposals > 0 { s += " Tap the card to send it." }
+        return s
+    }
+
+    func speak(_ text: String, proposals: Int) {
+        guard let words = Self.plain(text, proposals: proposals) else { return }
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        synth.stopSpeaking(at: .immediate)
+        let u = AVSpeechUtterance(string: words)
+        u.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        synth.speak(u)
+    }
+
+    func stop() { synth.stopSpeaking(at: .immediate) }
+}
+
 struct AskMicButton: View {
     var voice: AskVoiceInput
     var disabled: Bool
     var action: () -> Void
+    /// Hold to talk: the press began (start listening) and ended (stop and
+    /// send). Nil keeps the tap alone.
+    var onHoldStart: (() -> Void)? = nil
+    var onHoldEnd: (() -> Void)? = nil
+    @State private var holding = false
 
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            // The release of a hold is not a tap.
+            if holding { return }
+            action()
+        }) {
             Image(systemName: voice.isListening ? "stop.fill" : "mic")
                 .font(.system(size: voice.isListening ? 13 : 16, weight: .bold))
                 .foregroundStyle(voice.isListening ? .white : Color.cavnarInk2)
@@ -306,11 +356,27 @@ struct AskMicButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.35)
+                .onEnded { _ in
+                    guard onHoldStart != nil, !disabled, !voice.isActive else { return }
+                    holding = true
+                    Haptic.medium()
+                    onHoldStart?()
+                }
+                .sequenced(before: DragGesture(minimumDistance: 0))
+                .onEnded { _ in
+                    guard holding else { return }
+                    onHoldEnd?()
+                    // The Button's own action fires on this same release.
+                    Task { @MainActor in holding = false }
+                })
         .disabled(disabled || voice.phase == .starting)
         .opacity(disabled ? 0.45 : 1)
         .animation(.easeOut(duration: 0.15), value: voice.isListening)
         .accessibilityLabel(voice.isListening ? "Stop listening" : "Ask by voice")
-        .accessibilityHint(voice.isListening ? "" : "Say your question. It appears in the field for you to send.")
+        .accessibilityHint(voice.isListening ? ""
+                           : "Tap: your question appears in the field for you to send. Hold: say it, let go to send, and hear the answer.")
     }
 }
 
