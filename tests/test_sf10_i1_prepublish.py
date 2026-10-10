@@ -255,3 +255,243 @@ def test_the_held_flags_are_marked_on_a_person_s_run(db):
     assert [b["key"] for b in unattended["blockers"] if b["key"].startswith("soft:")] == \
         [x["key"] for x in attended["held_unattended"]]
     assert not strategy_routes.draft_one_tap_safe(rid, hid, review=attended)
+
+
+# ── TRUST-19: a range from the measured forecast error, with the record ─────
+
+def _forecast_weeks(rid, errors):
+    conn = models.get_conn()
+    for i, e in enumerate(errors):
+        end = (__import__("datetime").date(2026, 1, 4) + __import__("datetime").timedelta(days=7 * i)).isoformat()
+        conn.execute("INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, actual, error_pct, "
+                     "signed_error_pct, scored_at) VALUES (?,?,?,?,?,?,?,datetime('now'))",
+                     (rid, "revenue_week", end, 10000.0, 10000.0 * (1 - e / 100.0), e, -e))
+    conn.commit()
+    conn.close()
+
+
+def test_the_forecast_record_says_how_often_it_landed_and_no_range_below_the_floor(db):
+    rid = _rid(db)
+    assert prepublish.forecast_record(rid) is None
+    _forecast_weeks(rid, [2, 3, 4, 5, 6, 7, 8, 9, 20, 30])
+    rec = prepublish.forecast_record(rid)
+    # The newest forecast_log.ACCURACY_WINDOW weeks: 4..9, 20, 30.
+    assert rec["weeks"] == 8 and rec["within_pct"] == 20 and rec["weeks_within"] == 7
+    assert rec["mean_error_pct"] == 11.1
+
+
+def test_labor_is_a_range_with_its_track_record(db, monkeypatch):
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    _forecast_weeks(rid, [5, 5, 5, 5, 10])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,",
+                          "2026-10-12,Monday,Ana,Server,4:00pm,10:00pm,6,"])
+    conn = models.get_conn()
+    conn.execute("UPDATE schedule_history SET economics_json=? WHERE id=?",
+                 (json.dumps({"projected_revenue": 2000, "labor_budget_dollars": 400, "blended_rate": 20}), hid))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(prepublish, "_labor_target", lambda r: 30)
+    lp = prepublish.review(rid, hid)["numbers"]["labor_pct"]
+    assert lp["value"] is not None and lp["low"] < lp["value"] < lp["high"]
+    assert "within 5% on 4 of the last 5 weeks" in lp["track_record"]
+    assert lp["grade"] in ("over", "under") and lp["label"]
+
+
+def test_overtime_is_a_dash_when_the_week_was_not_priced(db, monkeypatch):
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,"])
+    monkeypatch.setattr(prepublish, "price_rows", lambda *a, **k: ({}, {"total": 100}))
+    ot = prepublish.review(rid, hid)["numbers"]
+    assert ot["overtime_hours"] is None and ot["overtime"]["priced"] is False
+    assert ot["overtime"]["text"] == "Not priced for this week"
+
+
+# ── TRUST-29: graded against the restaurant's own weeks ────────────────────
+
+def test_the_quality_score_is_graded_against_the_restaurants_own_weeks(db):
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager")])
+    line = ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,"]
+    for i, s in enumerate((60, 62, 64, 66, 68, 70)):
+        # Six earlier weeks in force (a second draft of one week supersedes it).
+        h = models.save_schedule_history(rid, f"2026-09-0{i + 1}", f"2026-09-0{i + 1}", 1, 0, 30,
+                                         HEADER + "\n" + line[0], [], db_path=db)
+        conn = models.get_conn()
+        conn.execute("UPDATE schedule_history SET quality_score=? WHERE id=?", (s, h))
+        conn.commit()
+        conn.close()
+    q = {"checked": True, "score": 69, "band": "fair",
+         "below_profile": [{"date": "2026-10-13", "day": "Tuesday", "daypart": "night", "score": 40,
+                            "reason": "Coverage is holding this shift at 40."}]}
+    hid = _week(db, rid, line, quality=q)
+    got = prepublish.review(rid, hid)["quality"]
+    assert got["grade"] == "good" and got["percentile"] == 83 and got["weeks_compared"] == 6
+    assert got["lead"].startswith("Capped by Tue 10/13/26 dinner")
+    q["score"] = 59
+    hid = _week(db, rid, line, quality=q)
+    assert prepublish.review(rid, hid)["quality"]["grade"] == "weak"
+
+
+def test_a_week_with_too_few_scored_weeks_is_ungraded(db):
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,"],
+                quality={"checked": True, "score": 75, "band": "good"})
+    q = prepublish.review(rid, hid)["quality"]
+    assert q["grade"] == "ungraded" and "graded once 5 of your weeks" in q["text"]
+
+
+# ── TRUST-13: a reason per person left off ─────────────────────────────────
+
+def test_who_is_left_off_says_why_first(db):
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server"), ("Rosa", "Server"), ("Kim", "Cook")])
+    conn = models.get_conn()
+    conn.execute("INSERT INTO staff_time_off (restaurant_id, employee_name, start_date, end_date, status) "
+                 "VALUES (?,?,?,?,?)", (rid, "Rosa", "2026-10-12", "2026-10-18", "approved"))
+    conn.commit()
+    conn.close()
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,",
+                          "2026-10-12,Monday,Ana,Server,4:00pm,10:00pm,6,"])
+    left = {p["name"]: p for p in prepublish.review(rid, hid)["why"]["left_off"]}
+    assert left["Rosa"]["cause"] == "time_off" and left["Rosa"]["reason"].startswith("time off 10/12/26")
+    assert left["Kim"]["cause"] == "role_full" and "Cook" in left["Kim"]["reason"]
+
+
+# ── TRUST-22: counts are decisions; reminders fold ─────────────────────────
+
+def test_the_soft_rules_fold_to_one_line_per_kind():
+    viols = [{"kind": "meal_break", "hard": False, "employee": f"P{i}", "date": "2026-10-12", "day": "Monday",
+              "shift_start": "10:00am", "detail": "x", "label": "y"} for i in range(11)]
+    viols += [{"kind": "daily_ot", "hard": False, "employee": "Bob", "date": "2026-10-13", "day": "Tuesday",
+               "shift_start": "9:00am", "detail": "11.5h in a day", "label": "daily overtime"}]
+    fyi = prepublish._fyi({"notes": []}, viols)
+    meal = [f for f in fyi if f["kind"] == "meal_break"]
+    assert len(meal) == 1 and meal[0]["count"] == 11 and meal[0]["text"].startswith("11 shifts")
+    assert fyi[-1]["kind"] == "meal_break"          # a reminder ranks last
+
+
+# ── TRUST-4: the rows on screen ───────────────────────────────────────────
+
+def test_the_rows_on_screen_are_checked_without_saving(db, monkeypatch):
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,",
+                          "2026-10-12,Monday,Ana,Server,4:00pm,10:00pm,6,"])
+    c, h, _ = _client(db, rid, monkeypatch)
+    screen = [{"date": "2026-10-12", "day": "Monday", "employee": "Ana", "role": "Server",
+               "shift_start": "4:00pm", "shift_end": "10:00pm", "scheduled_hours": "6", "notes": ""}]
+    body = c.post("/mobile/api/labor/publish-review", headers=h, json={"schedule_id": hid, "rows": screen}).get_json()
+    assert body["rows_source"] == "screen" and body["verdict"]["tone"] == "red"
+    assert any(m["kind"] == "rule:no_manager" for m in body["must_fix"])
+    assert "unsaved edits included" in body["verdict"]["subline"]
+    saved = c.get(f"/mobile/api/labor/publish-review?schedule_id={hid}", headers=h).get_json()
+    assert not any(m["kind"] == "rule:no_manager" for m in saved["must_fix"])
+    bad = c.post("/mobile/api/labor/publish-review", headers=h,
+                 json={"schedule_id": hid, "rows": [{"date": "Monday"}]})
+    assert bad.status_code == 400
+
+
+# ── TRUST-26: fragile, with its one-tap ───────────────────────────────────
+
+def test_the_closing_stay_the_verdict_assumes_is_fragile_with_its_one_tap(db, monkeypatch):
+    import schedule_rules as sr
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:00pm,12,"])
+    monkeypatch.setattr(sr, "assumed_stays", lambda rows, c, tz=None: [{
+        "date": "2026-10-12", "employee": "Erik", "until": "10:45pm", "text": "Mon 10/12/26 close: Erik is assumed "
+        "to stay until 10:45pm", "action": {"label": "Schedule Erik to 10:45pm", "action": "extend_shift",
+                                            "payload": {"date": "2026-10-12", "employee": "Erik",
+                                                        "shift_start": "10:00am", "shift_end": "10:45pm"}}}])
+    stay = [f for f in prepublish.review(rid, hid)["fragile"] if f["kind"] == "assumed_stay"]
+    assert stay and stay[0]["action"]["action"] == "edit_rows"
+    ch = stay[0]["action"]["payload"]["change"][0]
+    assert ch["set"] == {"shift_end": "10:45pm"} and ch["match"]["employee"] == "Erik"
+
+
+# ── TRUST-18, 20: how sure, from measured parts only ───────────────────────
+
+def test_no_confidence_is_stated_before_anything_was_measured(db):
+    out = prepublish._sure(_rid(db), {}, None, {})
+    assert out["confidence"]["pct"] is None and out["kept_share"] is None
+
+
+def test_the_confidence_averages_the_measured_parts_and_names_each(db, monkeypatch):
+    import schedule_versions as sv
+    rid = _rid(db)
+    monkeypatch.setattr(sv, "acceptance", lambda r, weeks=8: {
+        "weeks": [{"unchanged_share": 0.9}, {"unchanged_share": 0.92}, {"unchanged_share": 0.88}],
+        "mean_unchanged_share": 0.9, "trend": {"direction": "rising", "older": 0.88, "newer": 0.92, "delta": 0.04}})
+    monkeypatch.setattr(prepublish, "forecast_record", lambda r: {"weeks": 10, "within_pct": 8, "weeks_within": 8,
+                                                                  "mean_error_pct": 6.0, "last": None})
+    out = prepublish._sure(rid, {"score": 80, "confidence": {"score": 96}}, None, {})
+    assert out["kept_share"] == 0.9 and out["kept_trend"]["direction"] == "rising"
+    assert out["confidence"]["pct"] == round((90 + 94 + 96) / 3)
+    assert len(out["confidence"]["basis"]) == 3
+    assert out["lines"][0].startswith("Your last 3 drafts went out with 90% of shifts unchanged (88% → 92%, rising)")
+
+
+# ── TRUST-16: the stages the job reached ───────────────────────────────────
+
+def test_the_generation_reports_only_the_stages_it_reached():
+    import schedule_engine as se
+    clock = se.GenerationClock(job_id=None)
+    assert clock.progress()["stage"] is None and not any(s["done"] for s in clock.progress()["stages"])
+    clock.reach("rules")
+    clock.reach("inputs")                    # never backwards
+    p = clock.progress()
+    assert p["stage"] == "rules"
+    assert [s["key"] for s in p["stages"] if s["done"]] == ["inputs", "draft"]
+    assert [s["key"] for s in p["stages"] if s["current"]] == ["rules"]
+
+
+# ── TRUST-25: a reopened draft keeps its aids ──────────────────────────────
+
+def test_a_reopened_draft_carries_its_aids_again(db, monkeypatch):
+    import schedule_engine as se
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Erik,Manager,10:00am,10:30pm,12.5,"])
+    monkeypatch.setattr(se, "generation_aids", lambda r, rows, dates, constraints=None, roster_roles=None: {
+        "overtime_forecast": [{"employee": "Ana"}], "standby_days": [{"date": "2026-10-12"}],
+        "likely_edits": [{"employee": "Erik"}]})
+    c, h, _ = _client(db, rid, monkeypatch)
+    d = c.get(f"/mobile/api/labor/schedule-history/{hid}", headers=h).get_json()
+    assert d["standby_days"] == [{"date": "2026-10-12"}] and d["likely_edits"] and d["overtime_forecast"]
+
+
+def test_the_aids_are_the_generations_own_functions(db, monkeypatch):
+    import schedule_engine as se
+    import schedule_learning as sl
+    rid = _rid(db)
+    monkeypatch.setattr(sl, "overtime_forecast", lambda rows, constraints=None, roster_roles=None: [{"text": "ot"}])
+    monkeypatch.setattr(sl, "price_overtime_moves", lambda f, *a, **k: f)
+    monkeypatch.setattr(sl, "standby_days", lambda r, dates, rows=None: [{"date": dates[0]}])
+    monkeypatch.setattr(se, "likely_edits", lambda r, rows: [{"text": "likely"}])
+    got = se.generation_aids(rid, [], ["2026-10-12"])
+    assert got == {"overtime_forecast": [{"text": "ot"}], "standby_days": [{"date": "2026-10-12"}],
+                   "likely_edits": [{"text": "likely"}]}
+
+
+# ── TRUST-14: what Cavnar AI weighed names the runner-up ───────────────────
+
+def test_the_why_names_the_runner_up_and_never_dresses_up_a_coin_flip():
+    class C:
+        def max_hours(self, n):
+            return 40.0
+    rows = [{"date": "2026-10-16", "employee": "Ana", "role": "Server", "shift_start": "4:00pm",
+             "shift_end": "11:00pm", "scheduled_hours": "7"}] + \
+        [{"date": d, "employee": "Ben", "role": "Server", "shift_start": "9:00am", "shift_end": "9:00pm",
+          "scheduled_hours": "12"} for d in ("2026-10-13", "2026-10-14", "2026-10-15")]
+    usual = {"Ana": {"days": ["Friday"]}, "Ben": {"days": ["Monday"]}}
+    got = prepublish.weigh_one(1, rows, 0, C(), {"Ana": 4, "Ben": 3}, usual, runner="Ben")
+    assert got["runner_up"] == "Ben" and got["text"].startswith("Ana over Ben:")
+    assert "rated 4/5 against Ben's 3/5" in got["text"] and "usually works Fridays" in got["text"]
+    assert "33h of room left against Ben's 4h" in got["text"]
+    even = prepublish.weigh_one(1, rows[:1] + [], 0, C(), {}, {}, runner="Cy")
+    assert "nothing on file" in even["text"] and "could legally have taken it too" in even["text"]
+    alone = prepublish.weigh_one(1, rows, 0, C(), {}, {}, runner=None)
+    assert alone["runner_up"] is None and "nobody else" in alone["text"]

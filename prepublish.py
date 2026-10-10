@@ -602,9 +602,10 @@ def forecast_record(rid) -> dict:
             continue
     if len(errs) < FORECAST_MIN_WEEKS:
         return None
+    import math
     srt = sorted(errs)
-    band = srt[min(len(srt) - 1, int(round(FORECAST_BAND * len(srt) + 0.4999)) - 1)]
-    band = max(1.0, round(band))
+    # The miss FORECAST_BAND of the scored weeks came in at or under.
+    band = max(1.0, math.ceil(srt[max(0, math.ceil(FORECAST_BAND * len(srt)) - 1)]))
     last = rows[0] if rows else None
     return {"weeks": len(errs), "within_pct": int(band), "weeks_within": sum(1 for e in errs if e <= band),
             "mean_error_pct": round(sum(errs) / len(errs), 1),
