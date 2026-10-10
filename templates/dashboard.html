@@ -11238,7 +11238,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-chip.slow{color:var(--ink2);background:color-mix(in srgb,var(--ink3) 18%,transparent)}
 .ss-crew-chip.min{color:var(--green);background:color-mix(in srgb,var(--green) 14%,transparent)}
 .ss-crew-a{display:flex;flex-direction:column;gap:4px;margin-top:6px}
-.ss-crew-a .cbtn{width:100%;justify-content:center}
+.ss-crew-a .cbtn{width:100%;justify-content:center;white-space:normal;height:auto;min-height:30px;line-height:1.25;padding-top:5px;padding-bottom:5px}
 .ss-crew-done{font-size:11.5px;color:var(--ink2);margin-top:5px}
 .ss-crew-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink3);margin:0 0 14px}
 .ss-crew-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
@@ -27298,7 +27298,7 @@ function ssCrewCell(role, c) {
   var addBtn = (c.can_add && !_ssCrewAdded[ck]) ? '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-crew-answer="add"' + attrs
     + ' title="' + _escHtml('One more ' + role + ' this ' + c.day + ' only: Cavnar AI picks somebody who can legally work it') + '">Add 1 this week</button>' : '';
   var leanBtn = '<button type="button" class="cbtn cbtn-text cbtn-sm" data-crew-answer="lean"' + attrs
-    + ' title="' + _escHtml('Run ' + c.draft + ' on ' + c.day + ' ' + meal + 's: the draft is built to it until its review') + '">Leaner is fine on ' + d3 + 's</button>';
+    + ' title="' + _escHtml('Run ' + c.draft + ' on ' + c.day + ' ' + meal + 's: the draft is built to it until its review') + '">Leaner is fine on ' + d3 + '</button>';
   if (c.answer === 'hold' && c.answer_state === 'review') act = '<div class="ss-crew-done">You kept ' + kept + ' since ' + _escHtml(c.since || '') + ' · time to review</div><div class="ss-crew-a">'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-crew-answer="hold"' + attrs + '>Still keep ' + (c.usual || kept) + '</button>' + undo + '</div>';
   else if (c.answer === 'hold') act = '<div class="ss-crew-done">Kept ' + kept + ' every ' + d3 + (c.review ? ' · review ' + _escHtml(c.review) : '') + ' · ' + undo + '</div>';

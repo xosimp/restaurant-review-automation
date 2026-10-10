@@ -5221,8 +5221,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                 f"rate):\n" + "\n".join(rate_lines)
                                 + f"\n  Blended rate: ${hourly_rate:.2f}/hr (weighted average)")
 
-    # Section count — caps how many servers can work simultaneously; the
-    # requirements are already held under it (staffing_curve.cap_requirement).
+    # Section count — caps how many servers can work simultaneously; every
+    # half-hour need is already held under it (staffing_curve.cap_requirement),
+    # never a shift's whole crew, which is different people across the
+    # daypart (schedule audit 10/10/26 LOGIC-7).
     _section_block = ""
     if section_count:
         _cap_who = "servers"
@@ -5232,7 +5234,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _cap_who = "front-of-house staff (" + ", ".join(_cap_roles) + ", counted together)"
         _section_block = (f"\n\nDINING SECTIONS {_sr_p.rule_tag('over_section_cap')}: {section_count} sections. At most "
                           f"{section_count} {_cap_who} on the floor at once (one per section) — extra people have "
-                          f"nothing to serve. SHIFT REQUIREMENTS are already held to this cap.")
+                          f"nothing to serve. Each half hour in SHIFT REQUIREMENTS is already held to this cap; a "
+                          f"shift's whole crew may be more people than sections — stagger their starts and ends so "
+                          f"no more than {section_count} are on at once.")
 
     # The owner's estimates of the revenue split and of off-premise sales:
     # context the requirements already reflect, never a lever (schedule
