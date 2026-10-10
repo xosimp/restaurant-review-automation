@@ -705,11 +705,11 @@ class _Ctx:
             from schedule_versions import rows_from_csv, canonical_rows
             conn = get_conn(self.db)
             try:
+                import models as _m_live
                 hist = conn.execute(
-                    "SELECT id, week_start, schedule_csv FROM schedule_history h WHERE restaurant_id=? AND "
-                    "published_at IS NOT NULL AND superseded_by IS NULL AND week_end >= ? AND week_start < ? AND NOT "
-                    "EXISTS (SELECT 1 FROM schedule_history n WHERE n.restaurant_id=h.restaurant_id AND "
-                    "n.week_start=h.week_start AND n.published_at IS NOT NULL AND n.id > h.id) ORDER BY week_start",
+                    "SELECT id, week_start, " + _m_live.live_csv_sql("h") + " AS schedule_csv FROM schedule_history h "
+                    "WHERE restaurant_id=? AND week_end >= ? AND week_start < ? AND " + _m_live.live_where("h")
+                    + " ORDER BY week_start",
                     (self.rid, self.since, self.today.isoformat())).fetchall()
             finally:
                 conn.close()

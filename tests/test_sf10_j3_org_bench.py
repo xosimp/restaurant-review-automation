@@ -1,10 +1,13 @@
 """Schedule fix round 10/10/26, workstream J3 — MARKET-30: the certified
-bench across one organization's locations — two keys (the site's owner and
-the person's written consent), never across an unrelated employer."""
+bench across one organization's locations. One opt-in (J2's travel switch)
+that records written, time-stamped consent to the exact words; each site's
+owner decides whether its people's record is shared; never across an
+unrelated employer."""
 import datetime as dt
 
 import pytest
 
+import cross_site
 import models
 import org_bench as ob
 import shift_facts
@@ -17,11 +20,7 @@ def _db(db_path, monkeypatch):
     real = models.get_conn
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
     monkeypatch.setattr(models, "DB_PATH", db_path)
-    told = []
-    import people
-    monkeypatch.setattr(people, "tell", lambda *a, **k: told.append(a) or "push")
-    monkeypatch.setattr(people, "tell_deciders", lambda *a, **k: told.append(a))
-    yield told
+    yield
 
 
 FRI = (dt.date.today() + dt.timedelta(days=7)).isoformat()
@@ -46,42 +45,54 @@ def _org(monkeypatch):
     return a, b, other
 
 
-def test_joining_needs_the_sites_switch_a_sibling_and_written_consent(monkeypatch):
+def test_the_travel_switch_is_the_one_opt_in_and_records_consent_to_the_words(monkeypatch):
     a, b, other = _org(monkeypatch)
+    out = ob.record_travel(11, a, "Maria", True)
+    assert cross_site.travels(a, "Maria") and ob.opted_in(a, "maria")
+    assert out["consent_at"] and "Grill Group's other locations" in out["consent_text"]
+    m = ob.membership(11, a)
+    assert m["consent_version"] == ob.CONSENT_VERSION and m["consent_text"] == out["consent_text"]
+    off = ob.record_travel(11, a, "Maria", False)
+    assert not cross_site.travels(a, "Maria") and off["consent_at"] is None and ob.membership(11, a)["revoked_at"]
     with pytest.raises(ob.BenchError):
-        ob.join(11, a, "Maria", agree=True)                     # the site hasn't turned it on
-    ob.set_site(a, True, by="owner")
-    with pytest.raises(ob.BenchError):
-        ob.join(11, a, "Maria")                                 # no agreement ticked
-    m = ob.join(11, a, "Maria", agree=True)
-    assert m["consent_at"] and "Grill Group's other locations" in m["consent_text"] and m["consent_version"] == 1
-    assert ob.opted_in(a, "maria")
-    ob.set_site(other, True)
-    with pytest.raises(ob.BenchError):
-        ob.join(12, other, "Lone", agree=True)                  # no sibling to share with
+        ob.record_travel(12, other, "Lone", True)              # no other location to share with
 
 
-def test_a_gap_sees_only_consented_qualified_people_from_enabled_siblings(monkeypatch, _db):
+def test_a_record_is_shared_only_with_both_keys_and_never_outside_the_organization(monkeypatch):
     a, b, other = _org(monkeypatch)
-    ob.set_site(a, True)
-    ob.join(11, a, "Maria", agree=True)
-    ob.join(12, a, "Pat", agree=True)
+    ob.record_travel(11, a, "Maria", True)
+    cross_site.set_travel(a, "Pat", True)                       # opted in to shifts, never agreed to share
     got = ob.candidates(b, FRI, "Bartender", "5:00pm", "11:00pm")
-    assert got["available"] is False                            # the asking site hasn't turned it on
-    ob.set_site(b, True)
+    maria = next(c for c in got["candidates"] if c["name"] == "Maria")
+    assert maria["shared"] is False and maria["certifications"] is None and "isn't shared" in maria["why"]
+    ob.set_site(a, True, by="owner")                            # North shares its people's record
     got = ob.candidates(b, FRI, "Bartender", "5:00pm", "11:00pm")
-    names = [c["name"] for c in got["candidates"]]
-    assert names == ["Maria"], "Pat holds no bar role; the role's certification is Maria's"
-    assert got["candidates"][0]["home"] == "Grill North" and "alcohol" in got["candidates"][0]["certifications"]
-    # An unrelated restaurant never sees them.
+    assert [c["name"] for c in got["candidates"]] == ["Maria"], "Pat holds no bar role"
+    maria = got["candidates"][0]
+    assert maria["shared"] and maria["certifications"] == ["alcohol"] and maria["home"] == "Grill North"
+    assert "open shift" in got["note"]
     assert ob.candidates(other, FRI, "Bartender", "5:00pm", "11:00pm")["candidates"] == []
-    req = ob.ask(b, got["candidates"][0]["member_id"], FRI, "Bartender", "5:00pm", "11:00pm", by="gm")
-    assert req["status"] == "asked" and req["via"] == "push" and _db[-1][0] == a, "told through their home site"
-    mine = ob.for_staff(11, a)
-    assert mine["on_bench"] and mine["asks"][0]["place"] == "Grill South"
-    done = ob.respond(req["id"], 11, a, True)
-    assert done["status"] == "accepted" and _db[-1][0] == b
-    # Leaving takes them off at once.
-    assert ob.leave(11, a)
-    assert ob.candidates(b, FRI, "Bartender", "5:00pm", "11:00pm")["candidates"] == []
-    assert ob.owner_view(b)["external"].startswith("Covering from restaurants outside your organization")
+    view = ob.owner_view(a)
+    assert {m["name"] for m in view["members"]} == {"Maria", "Pat"}
+    assert next(m for m in view["members"] if m["name"] == "Pat")["consent_at"] is None
+    assert view["external"].startswith("Covering from restaurants outside your organization")
+
+
+def test_the_staff_travel_route_records_the_consent(monkeypatch, db_path):
+    a, b, other = _org(monkeypatch)
+    import staff_routes
+    from flask import Flask
+    app = Flask(__name__)
+    app.secret_key = "t"
+    app.register_blueprint(staff_routes.staff_bp)
+    import auth
+    user = {"id": 11, "restaurant_id": a, "employee_name": "Maria", "role": "employee"}
+    monkeypatch.setattr(staff_routes, "_staff_context", lambda cu: (a, "Maria"))
+    fn = app.view_functions["staff.api_travel_set"]
+    with app.test_request_context("/staff/api/travel", method="POST", json={"travels": True}):
+        resp = fn.__wrapped__(current_user=user) if hasattr(fn, "__wrapped__") else None
+    if resp is None:
+        pytest.skip("the login wrapper is not unwrappable here")
+    body = resp.get_json()
+    assert body["ok"] and body["travels"] and body["consent_at"]
+    assert ob.membership(11, a)["consent_text"].startswith("I agree that managers at Grill Group")

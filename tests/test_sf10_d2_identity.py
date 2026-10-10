@@ -94,6 +94,17 @@ def _write(db_path, rid, hid, text, reason="edited"):
         conn.close()
 
 
+def _send(rid, hid):
+    """Send a sent week's saved changes (schedule_publish.send_changes): a
+    manager's save of a week staff have changes the working copy only, and
+    the live requests follow the copy staff have when it is sent (schedule
+    audit 10/10/26 ARCH-1 with ARCH-9)."""
+    import schedule_publish
+    out, status = schedule_publish.send_changes(rid, hid, {"username": "mgr"}, acknowledge=True)
+    assert status == 200 and out["ok"], out
+    return out
+
+
 # ── BUGSLIFE-12 ─────────────────────────────────────────────────────────────
 
 def test_an_approved_drop_leaves_the_slot_unheld_for_every_reader(db, monkeypatch):
@@ -132,10 +143,12 @@ def test_a_retime_carries_the_pending_request_and_tells_the_requester(db):
     hid = _publish(db, rid, [(W1[2], "Ana", "Server", "5:00pm", "11:00pm", 6)])
     req = srq.request_drop(rid, "Ana", W1[2], "5:00pm", today=TODAY)
     _write(db, rid, hid, _csv(db, hid).replace("5:00pm,11:00pm", "6:00pm,11:00pm"))
+    # Saved, not sent: Ana still has 5pm, and so does her request.
+    assert srq._get_row(rid, req["id"], db)["shift_start"] == "5:00pm"
+    _send(rid, hid)
     row = srq._get_row(rid, req["id"], db)
-    assert row["status"] == "pending" and row["shift_start"] == "6:00pm" and row["notice_pending"] == "moved"
-    assert srq.flush_notices(rid, db_path=db) == 1
-    assert srq._get_row(rid, req["id"], db)["notice_pending"] is None
+    assert row["status"] == "pending" and row["shift_start"] == "6:00pm"
+    assert row["notice_pending"] is None                     # told once, as the Send committed
     assert srq.flush_notices(rid, db_path=db) == 0, "told once"
     # The manager can still decide it: it is about the shift as it is.
     assert srq.decide(rid, req["id"], True, decided_by="mgr", today=TODAY)["status"] == "open"
@@ -148,6 +161,8 @@ def test_a_reassign_closes_the_request_in_the_same_write(db):
                      decided_by="mgr", today=TODAY)
     assert req["status"] == "open"
     _write(db, rid, hid, _csv(db, hid).replace(",Ana,", ",Ben,"))
+    assert srq._get_row(rid, req["id"], db)["status"] == "open"          # saved, not sent
+    _send(rid, hid)
     row = srq._get_row(rid, req["id"], db)
     assert row["status"] == "cancelled" and "Ben" in row["decision_note"]
     assert srq.open_shifts(rid) == []
@@ -160,6 +175,8 @@ def test_a_removed_shift_closes_its_request(db):
     req = srq.request_drop(rid, "Ana", W1[2], "5:00pm", today=TODAY)
     text = "\n".join(l for l in _csv(db, hid).split("\n") if ",Ana," not in l)
     _write(db, rid, hid, text)
+    assert srq._get_row(rid, req["id"], db)["status"] == "pending"       # saved, not sent
+    _send(rid, hid)
     assert srq._get_row(rid, req["id"], db)["status"] == "cancelled"
 
 

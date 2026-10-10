@@ -19,7 +19,9 @@ capabilities the 10/10/26 scheduler audit invented (MARKET-17, -21, -22,
 
 POST {action}: standby_offer, standby_withdraw, standby_policy,
 event_approve, event_dismiss, retention_protect (owner only), bench_site
-(owner only), bench_ask. Writes need the schedule-drafting permission.
+(owner only). Writes need the schedule-drafting permission. A shift is
+offered to somebody at another location from the open shift itself
+(cross_site), never from here.
 """
 import logging
 from datetime import date, timedelta
@@ -147,11 +149,6 @@ def post_action(restaurant_id, data, user=None) -> tuple:
                 return {"ok": False, "error": "Only the owner can turn the bench on or off."}, 403
             import org_bench
             return {"ok": True, **org_bench.set_site(restaurant_id, bool(d.get("enabled")), by=by)}, 200
-        if action == "bench_ask":
-            import org_bench
-            return {"ok": True, "request": org_bench.ask(restaurant_id, _int(d.get("member_id"), 0), d.get("date"),
-                                                         d.get("role"), d.get("shift_start"), d.get("shift_end"),
-                                                         by=by)}, 200
     except ValueError as e:          # every module's refusal is a ValueError subclass
         return {"ok": False, "error": str(e)}, 400
     return {"ok": False, "error": "unknown action"}, 400

@@ -194,11 +194,12 @@ def _read_schedule(restaurant_id):
     try:
         from models import _ensure_history_columns
         _ensure_history_columns(conn)
-        row = conn.execute(
-            "SELECT id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, hours_budget, "
-            "schedule_csv, quality_json, edited_at FROM schedule_history "
-            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
-            (restaurant_id,)).fetchone()
+        # The week in force (models.newest_draft, ARCH-11) — never a
+        # discarded rewrite or a replaced draft.
+        from models import newest_draft as _newest_draft
+        row = _newest_draft(conn, restaurant_id,
+                            columns="id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, "
+                                    "hours_budget, schedule_csv, quality_json, edited_at")
     finally:
         conn.close()
     if not row:
@@ -1208,19 +1209,38 @@ def _read_schedule_rules(restaurant_id):
     pack = comp.pop("_pack", None) or {}
     minors = []
     try:
+        import compliance_packs as _cp
+        state = _cp.state_of(r) if r else ""
+    except Exception:
+        state = getattr(r, "jurisdiction", None)
+    try:
         for name, st in _ss.get_all(restaurant_id).items():
             if st.get("is_minor") or st.get("minor_age_band"):
                 band = st.get("minor_age_band")
                 minors.append({"name": name, "age_band": band or "not set",
-                               "limits": {k: v for k, v in _sr.minor_rules(band, getattr(r, "jurisdiction", None)).items()
-                                          if k != "source"} or {"latest_end": comp.get("minor_latest_end"),
-                                                                "max_daily_hours": comp.get("minor_max_daily_hours")}})
+                               "limits": {k: v for k, v in _sr.minor_rules(band, state).items()
+                                          if k not in ("source", "sources")} or {
+                                   "latest_end": comp.get("minor_latest_end"),
+                                   "max_daily_hours": comp.get("minor_max_daily_hours")}})
     except Exception:
         pass
+    # Which jurisdictions hold the restaurant and why (compliance_packs,
+    # schedule audit 10/10/26 RM-15): an ordinance named as not covering it
+    # is never quoted as a rule in force.
+    coverage = None
+    try:
+        import compliance_packs as _cp2
+        ev = _cp2.evaluate(r) if r else None
+        if ev:
+            coverage = [{"jurisdiction": j["label"], "law": j.get("law"), "status": j["status"], "why": j["why"]}
+                        for j in ev["jurisdictions"]]
+    except Exception:
+        coverage = None
     return {
         "rules_in_force": {k: v for k, v in comp.items() if v not in (None, "")},
         "jurisdiction_pack": ({"label": pack.get("label"), "starting_values": pack.get("applied"),
-                               "notes": pack.get("notes")} if pack else None),
+                               "sources": pack.get("sources"), "notes": pack.get("notes")} if pack else None),
+        "jurisdictions": coverage,
         # The floors as a draft is held to them this week: the owner's rules
         # card, raised by their staffing rules and confirmed note rules.
         "role_floors": _sr.effective_role_floors(r) if r else {},
@@ -1229,8 +1249,9 @@ def _read_schedule_rules(restaurant_id):
         # (schedule_rules.cut_floor). Not a staffing requirement.
         "never_cut_below": _sr.cut_floor_default(r),
         "minors": minors,
-        "note": ("These are the values set in Cavnar AI, which the schedule is checked against. They are starting "
-                 "values, not legal advice: say them as 'the rule set in Cavnar AI', never as what the law requires, "
+        "note": ("These are the values set in Cavnar AI, which the schedule is checked against. Values a "
+                 "jurisdiction set come from public sources checked on the date shown, and are not legal advice: "
+                 "say them as 'the rule set in Cavnar AI' with where it came from, never as what the law requires, "
                  "and tell the owner to check with counsel for their exact situation."),
     }
 
@@ -3681,6 +3702,39 @@ TOOLS = [
                 "instruction": {"type": "string"}}},
         },
     },
+    # One shift, not the whole pipeline (schedule audit 10/10/26 MARKET-20):
+    # "move Maria to close Friday", "add a second cook Saturday 5-10". The
+    # card is built from the stored week (shift_edits.card): the edit judged
+    # by the one legality engine, priced, with what a change to a week staff
+    # have may owe — and the version it was judged on, so Confirm saves it
+    # through the Studio's save steps or refuses when the week moved.
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/labor/shift-edit", "mobile": "/mobile/api/labor/shift-edit", "method": "POST"},
+        "summary": "Change one shift",
+        "module": "module_labor",
+        "spec": {
+            "name": "edit_shift",
+            "description": (
+                "Propose ONE shift change on the schedule: add a shift, move one to another day, retime one, "
+                "remove one, or give one to someone else. Call read_schedule first so names, dates and start "
+                "times are the week's own; it is checked against every scheduling rule before the card shows."),
+            "input_schema": {"type": "object", "required": ["op", "date"], "additionalProperties": False,
+                             "properties": {
+                "op": {"type": "string", "enum": ["add", "move", "retime", "remove", "reassign"]},
+                "date": {"type": "string", "description": "The shift's date, YYYY-MM-DD."},
+                "employee": {"type": "string", "description": "Who holds it (or who is added)."},
+                "shift_start": {"type": "string", "description": "Its start, e.g. 5:00pm — names which shift; "
+                                                                 "required for add."},
+                "shift_end": {"type": "string", "description": "add only."},
+                "role": {"type": "string", "description": "add only."},
+                "new_date": {"type": "string", "description": "move only, YYYY-MM-DD."},
+                "new_start": {"type": "string"},
+                "new_end": {"type": "string"},
+                "to_employee": {"type": "string", "description": "reassign only."}}},
+        },
+    },
     # Answering the team (Friction audit #18): the same decide routes the
     # Labor tab's Approve / Deny buttons post. Proposed, never performed —
     # an answer changes who can be scheduled and the employee is told.
@@ -4156,6 +4210,13 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
             return None
         return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
                 "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
+    if name == "edit_shift":
+        import shift_edits
+        body, summary_text, _why = shift_edits.card(restaurant_id, args)
+        if body is None:
+            return None
+        return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
+                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
     if name == "send_supplier_order":
         args = {k: v for k, v in args.items() if k not in ("draft_hash", "resend")}
         if restaurant_id is not None:
@@ -4334,6 +4395,10 @@ _FIELD_LABELS = {
     "week_start": "Week of",
     "dates": "Days to rewrite",
     "history_id": "Draft #",
+    # edit_shift (MARKET-20)
+    "op": "Change", "employee": "Whose shift", "shift_start": "Starting", "shift_end": "Ending",
+    "new_date": "Moved to", "new_start": "New start", "new_end": "New end", "to_employee": "Given to",
+    "version": "Judged on version",
     "instruction": "What you asked for",
     "time_windows": "Hours they can work",
     "daypart_availability": "Shifts they can work",
@@ -4681,6 +4746,9 @@ def proposal_refusal(name, tool_input, restaurant_id=None, owner_words=""):
         return _constraint_card(name, args, restaurant_id)[2]
     if name == "generate_schedule":
         return _schedule_card(args, restaurant_id)[2]
+    if name == "edit_shift":
+        import shift_edits
+        return shift_edits.card(restaurant_id, args)[2]
     domains = None
     for k, v in args.items():
         if not isinstance(v, str) or k in ("image_url", "email", "supplier_email"):
@@ -5001,7 +5069,7 @@ def proposal_details(name, args, restaurant_id, bulk_preview=None) -> dict:
             # confirm (the card never carries an acknowledgement), so say why
             # before the tap and where to send it knowingly (NS5 C1/H3).
             try:
-                from client_api import publish_blockers
+                from schedule_publish import publish_blockers
                 blockers = publish_blockers(restaurant_id, row["id"])
             except Exception:
                 blockers = []

@@ -87,7 +87,8 @@ _K = {
                       "digest_day", "dsr_notify", "dsr_deadline_hour", "dsr_budget_mode", "preshift_nudge_hour", "push_sound",
                       "login_notify", "issue_texts", "staff_signin_notify", "marketing_emails_opt_out"),
     "rules": ("compliance_json", "cut_floor_default", "daypart_split", "daypart_boundary", "delivery_pct", "foh_roles_json",
-              "patio_roles_json", "jurisdiction", "quality_weights_json", "quality_tuning_json", "role_arrival_json",
+              "patio_roles_json", "jurisdiction", "compliance_profile_json", "school_calendar_json",
+              "quality_weights_json", "quality_tuning_json", "role_arrival_json",
               "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
               "role_minimums_json", "role_requirements_json", "kitchen_stations_json", "role_strength_json", "shift_leader_rules_json",
               # Standing positions (schedule_dedicated: EJ's bar-tables bartender).
@@ -97,6 +98,8 @@ _K = {
               # Drops and swaps that approve themselves; availability cuts
               # waiting on a manager (request_autonomy, 10/10/26).
               "staff_request_policy_json",
+              # The POS schedule push and live labor moves (J2, 10/10/26).
+              "floor_settings_json",
               "section_count", "foh_sections_json", "sched_notes",
               # Role families, the roles with chosen closers, the salaried
               # weekly cap (schedule audit 10/3/26 F1).
@@ -573,7 +576,7 @@ FIELD_LABELS = {
     "auto_publish_schedule": "Auto-publish schedules", "auto_approve_5star": "Auto-approve 5-star replies",
     "auto_approve_4star": "Auto-approve 4-star replies", "auto_draft_schedule": "Auto-draft schedules",
     "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
-    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers", "staff_request_policy_json": "Staff request approvals",
+    "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers", "staff_request_policy_json": "Staff request approvals", "floor_settings_json": "Schedule on the floor (POS push, live labor)",
     "dsr_budget_mode": "Budget by day or week",
     "data_retention_months": "Review retention (months)", "timezone": "Time zone",
     "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",

@@ -201,10 +201,14 @@ def ladder(restaurant_id, rows, forecasts=None, db_path=None) -> dict:
 
 
 def _published(restaurant_id, history_id, db_path=None):
+    """The row's PUBLISHED copy (models.live_csv_sql: what staff were sent,
+    never the working draft with unsent changes — contract #3)."""
+    import models
     conn = get_conn(db_path)
     try:
-        return conn.execute("SELECT id, week_start, week_end, schedule_csv, published_at FROM schedule_history WHERE "
-                            "id=? AND restaurant_id=? AND published_at IS NOT NULL", (int(history_id), restaurant_id)).fetchone()
+        return conn.execute(f"SELECT h.id, h.week_start, h.week_end, {models.live_csv_sql('h')} AS schedule_csv, "
+                            "h.published_at FROM schedule_history h WHERE h.id=? AND h.restaurant_id=? AND "
+                            "h.published_at IS NOT NULL", (int(history_id), restaurant_id)).fetchone()
     finally:
         conn.close()
 
@@ -264,13 +268,14 @@ def ensure_live(restaurant_id, today=None, db_path=None) -> dict:
     """ensure() for every live published week from today on (the nightly
     pass and the staff read)."""
     today = today or date.today()
+    import models
     conn = get_conn(db_path)
     try:
+        # Each week's live copy (models.live_where — the one definition of
+        # the week in force, ARCH-11).
         ids = [r["id"] for r in conn.execute(
-            "SELECT h.id FROM schedule_history h WHERE h.restaurant_id=? AND h.published_at IS NOT NULL AND "
-            "h.superseded_by IS NULL AND h.week_end>=? AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE "
-            "nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND "
-            "nw.id>h.id)", (restaurant_id, today.isoformat())).fetchall()]
+            f"SELECT h.id FROM schedule_history h WHERE h.restaurant_id=? AND h.week_end>=? AND {models.live_where('h')}",
+            (restaurant_id, today.isoformat())).fetchall()]
     finally:
         conn.close()
     tot = {"weeks": len(ids), "committed": 0, "changed": 0}

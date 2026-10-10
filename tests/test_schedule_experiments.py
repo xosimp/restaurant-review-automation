@@ -29,6 +29,14 @@ HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 EXP = sx.EXPERIMENTS[0]
 
 
+@pytest.fixture(autouse=True)
+def _assign_v1_alone(monkeypatch):
+    """These tests are about the framework through assign_v1. draft_v1
+    (scheduler audit 10/10/26, contract #7 — where the draft comes from) has
+    its own tests (tests/test_sf10_e_fallback.py)."""
+    monkeypatch.setattr(sx, "EXPERIMENTS", tuple(e for e in sx.EXPERIMENTS if e["key"] == EXP["key"]))
+
+
 @pytest.fixture
 def db(db_path, monkeypatch):
     real = models.get_conn

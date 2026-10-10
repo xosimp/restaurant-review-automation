@@ -20,6 +20,7 @@ from flask import Flask
 
 import auth
 import client_api
+import schedule_publish
 import emails
 import labor
 import mobile_api
@@ -134,16 +135,24 @@ def mail(monkeypatch):
 
 # ── F2-1: a send that failed is not "sent" ──────────────────────────────────
 
-def test_a_failed_send_result_is_not_reported_sent_and_nothing_publishes(db, mail):
+def test_a_failed_send_result_is_not_reported_sent_and_is_retried_from_the_outbox(db, mail):
+    """F2-1 still holds — a send that failed is never "sent" and leaves no
+    share row. The week is published first now (schedule audit 10/10/26
+    ARCH-19, BUGSLIFE-10: stamp, then deliver), so the failed people stay
+    failed in the outbox with a retry time, never recorded as told."""
     rid = _restaurant(db)
     hid = _save(db, rid, _csv())
     _contacts(db, rid, "Ana", "Bob")
     mail["fail"] = {"ana@x.com", "bob@x.com"}
     out, status = client_api._publish_schedule(rid, hid, actor={"username": "o"}, acknowledge=True)
-    assert out["ok"] is False and out["sent"] == []
+    assert out["ok"] is True and out["sent"] == []
     assert sorted(f["employee_name"] for f in out["failed"]) == ["Ana", "Bob"]
-    assert not _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
+    assert "couldn" in (out.get("note") or "").lower()
+    assert _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
     assert _one(db, "SELECT COUNT(*) AS n FROM schedule_shares WHERE schedule_id=?", hid)["n"] == 0
+    left = models.get_conn(db).execute("SELECT status, next_attempt_at FROM schedule_notices WHERE history_id=?",
+                                       (hid,)).fetchall()
+    assert [r["status"] for r in left] == ["failed", "failed"] and all(r["next_attempt_at"] for r in left)
 
 
 def test_a_partial_send_drops_the_failed_persons_share_row(db, mail):
@@ -189,7 +198,7 @@ def test_an_acknowledgement_by_keys_does_not_cover_a_blocker_that_appeared_since
     _contacts(db, rid, "Ana")
     shown = [{"key": "hours_over", "text": "10h over"}]
     now = shown + [{"key": "rule:x", "text": "Ana — Monday: a new breach"}]
-    monkeypatch.setattr(client_api, "publish_review", lambda *a, **k: {"blockers": now, "soft": [], "schedule_id": hid})
+    monkeypatch.setattr(schedule_publish, "publish_review", lambda *a, **k: {"blockers": now, "soft": [], "schedule_id": hid})
     r = _app(db).test_client().post("/mobile/api/labor/publish-schedule",
                                     json={"schedule_id": hid, "acknowledge": ["hours_over"]}, headers=_bearer(db, rid))
     body = r.get_json()
@@ -207,7 +216,7 @@ def test_publish_check_returns_each_blocker_with_its_key(db, monkeypatch):
     import strategy_routes
     rid = _restaurant(db)
     hid = _save(db, rid, _csv())
-    monkeypatch.setattr(client_api, "publish_review",
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda *a, **k: {"blockers": [{"key": "hours_over", "text": "10h over"}], "soft": [],
                                          "schedule_id": hid})
     app = Flask(__name__)
@@ -274,7 +283,7 @@ def test_sending_changes_runs_the_publish_gate(db, mail, monkeypatch):
     app, owner = _app(db), _bearer(db, rid)
     v = sv.list_versions(rid, hid)[-1]["version"]
     _post_save(app, owner, _edited_rows(), history_id=hid, version=v)
-    monkeypatch.setattr(client_api, "publish_review",
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda *a, **k: {"blockers": [{"key": "rule:x", "text": "Ana — Monday: under 18 past 11pm"}],
                                          "soft": [], "schedule_id": hid})
     r = app.test_client().post("/mobile/api/labor/publish-schedule", json={"schedule_id": hid}, headers=owner)

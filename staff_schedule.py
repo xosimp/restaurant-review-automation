@@ -47,34 +47,11 @@ def _published_weeks(restaurant_id: int, today):
     published before the stamp existed) has a share row. Reading only the
     single newest one meant that the moment next week was published, the
     rest of this week vanished from the portal and everybody read "off"
-    from Friday to Sunday."""
+    from Friday to Sunday. Each week's live copy is the one rule
+    (models.live_weeks — schedule audit 10/10/26 ARCH-11), newest live copy
+    first, so it owns a date two copies cover (_owner_of)."""
     import models as _m
-    conn = _m.get_conn()
-    try:
-        _m._ensure_history_columns(conn)
-        # Each week's live copy by the one rule (models._live_week_row, which
-        # the /s/ link and staff_insights read too): the published copy
-        # nothing superseded, newest (re)publish first, else — a week sent
-        # before the stamp — its newest shared copy. A superseded copy that
-        # still has share rows (every publish writes them) is not live, and
-        # a re-published older copy is (LG-34): the old query judged by id.
-        weeks = conn.execute(
-            "SELECT week_start, MAX(week_end) AS week_end, MAX(id) AS newest FROM schedule_history h "
-            "WHERE h.restaurant_id=? AND (h.published_at IS NOT NULL OR EXISTS "
-            "(SELECT 1 FROM schedule_shares s WHERE s.schedule_id=h.id)) "
-            "GROUP BY week_start ORDER BY newest DESC LIMIT 60", (restaurant_id,)).fetchall()
-        live = []
-        for w in weeks:
-            we = _parse_day(w["week_end"])
-            if we and we < today:
-                continue
-            row = _m._live_week_row(conn, restaurant_id, w["week_start"])
-            if row:
-                live.append(row)
-    finally:
-        conn.close()
-    # Newest live copy first, so it owns a date two copies cover (_owner_of).
-    live.sort(key=lambda r: (str(r["live_at"] or ""), r["id"]), reverse=True)
+    live = _m.live_weeks(restaurant_id, lo=today.isoformat())
     return [{"id": r["id"], "start": _parse_day(r["week_start"]), "end": _parse_day(r["week_end"])}
             for r in live if not (_parse_day(r["week_end"]) and _parse_day(r["week_end"]) < today)]
 
@@ -86,6 +63,28 @@ def _owner_of(weeks, d):
         if (w["start"] is None or w["start"] <= d) and (w["end"] is None or d <= w["end"]):
             return w["id"]
     return None
+
+
+def _placed_breaks(schedule_csv, employee_name, break_rules) -> dict:
+    """{(date, shift_start): [break]} for this person's shifts in one
+    week's CSV, placed across the whole day's team (breaks.plan_week), or {}
+    when no break rule holds."""
+    if not break_rules or not (break_rules.get("meals") or break_rules.get("rest")):
+        return {}
+    try:
+        import breaks as _breaks
+        from schedule_versions import rows_from_csv
+        rows = rows_from_csv(schedule_csv or "")
+        plan = _breaks.plan_week(rows, break_rules)
+    except Exception:
+        return {}
+    who = " ".join(str(employee_name or "").lower().split())
+    out = {}
+    for i, bl in plan.items():
+        r = rows[i]
+        if " ".join(str(r.get("employee") or "").lower().split()) == who:
+            out[((r.get("date") or "").strip(), (r.get("shift_start") or "").strip())] = bl
+    return out
 
 
 def _leg(s, live_requests, now):
@@ -144,11 +143,21 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 "published": False, "week_hours": 0, "_week_ids": []}
 
     meal_after = None
+    break_rules = None
     try:
         import schedule_rules as _sr
-        meal_after = _sr.compliance(restaurant_id).get("meal_break_after_hours")
+        _comp = _sr.compliance(restaurant_id)
+        meal_after = _comp.get("meal_break_after_hours")
+        # The breaks the law places inside the shift (breaks.plan_day — the
+        # same placement the coverage score takes the person off the floor
+        # for), staggered across the day's team; the plain midway window
+        # stays the fallback (schedule audit 10/10/26 MARKET-6).
+        import breaks as _breaks
+        import compliance_packs as _cp
+        from models import get_restaurant as _gr_b
+        break_rules = _breaks.rules_for(_comp, _cp.values_in_force(_gr_b(restaurant_id)))
     except Exception:
-        meal_after = None
+        meal_after = meal_after if meal_after else None
 
     # Each shift's dining-room section, where labor can say (the sections
     # fix, employee audit B8): passed only when that reader takes it.
@@ -165,6 +174,9 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
             print(f"[staff_schedule] spellings unread rid={restaurant_id}: {_px!r}")
     mine, week_of = [], None
     for w in weeks:
+        # The PUBLISHED copy — what staff were sent and the covers they
+        # were told about; a manager's unsent edit never reaches the portal
+        # before Send (schedule audit 10/10/26 ARCH-1, BUGSLIFE-3).
         # The CSV and the stations only (scheduler audit 10/10/26, SCALE-19):
         # every staff request read each live week with SELECT * and four
         # JSON parses (the 130-440 KB quality among them) to use two fields.
@@ -180,6 +192,7 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 parts = [p for p in (a.get("morning"), a.get("night")) if p]
                 if parts:
                     stations[(a.get("date"), a.get("shift_start"))] = " then ".join(dict.fromkeys(parts))
+        placed = _placed_breaks(detail.get("schedule_csv") or "", employee_name, break_rules)
         for s in employee_shifts_from_csv(detail.get("schedule_csv") or "", employee_name,
                                           meal_break_after_hours=meal_after, **_section_kw):
             d = _parse_day(s.get("date"))
@@ -188,6 +201,12 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 st = stations.get((d.isoformat(), s.get("start")))
                 if st:
                     s["station"] = st
+                pb = placed.get((s.get("date"), s.get("start")))
+                if pb is not None:
+                    meal = next((b for b in pb if b["kind"] == "meal" and b.get("placed")), None)
+                    s["break"] = meal["label"] if meal else ""
+                    s["breaks"] = [{"kind": b["kind"], "label": b["label"], "minutes": b["minutes"],
+                                    "paid": b["paid"]} for b in pb if b.get("placed")]
                 mine.append(s)
         if week_of is None and w["start"] and w["start"] <= today and (w["end"] is None or today <= w["end"]):
             week_of = detail.get("week_start")

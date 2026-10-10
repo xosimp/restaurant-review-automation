@@ -66,7 +66,7 @@ def test_par_block_is_a_ceiling_not_a_quota(monkeypatch):
     assert "PAR HOURS CEILING" in prompt
     assert "This is a ceiling, not a quota" in prompt
     assert "Coming in under it is a good outcome" in prompt
-    assert "it never adds them" in prompt
+    assert "it never adds hours" in prompt
     # The spend-to-budget instructions must be gone. Each of these told the
     # model to raise payroll toward the target.
     for banned in ("close most of",
@@ -129,8 +129,8 @@ def test_the_hours_figures_forbid_padding_to_reach_them(monkeypatch):
     # One hours anchor (schedule audit 10/3/26 PR-24): the ceiling in the
     # PAR block, the day's target on its SHIFT REQUIREMENTS rows — the old
     # "Weekly hours must not EXCEED" bullet restated it a third time.
-    assert "the weekly ceiling only ever removes hours" in prompt
-    assert "Every other hours figure in this request (sales per labor hour, past weeks, peers) is context" in prompt
+    assert "it only ever removes hours" in prompt
+    assert "every other hours figure here (sales per labor hour, past weeks, peers) is context" in prompt
     assert "must not EXCEED" not in prompt and "Per-day targets" not in prompt
     assert "more than ~15% under this target" not in prompt
     # Nowhere in the prompt may headcount be justified by an hours gap.

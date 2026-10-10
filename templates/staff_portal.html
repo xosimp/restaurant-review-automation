@@ -925,7 +925,6 @@
     });
     api('/staff/api/time-off').then(function(d){ S.timeoff = d; renderRequests(); });
     api('/staff/api/standby').then(function(d){ S.standby = d; renderRequests(); });
-    api('/staff/api/bench').then(function(d){ S.bench = d; renderRequests(); });
   };
   function isLive(st){ return st === 'pending' || st === 'approved' || st === 'open'; }
   var TO_CHIP = {approved: ['Approved', 'good'], denied: ['Not approved', 'bad'], withdrawn: ['Withdrawn', ''], cancelled: ['Called off', '']};
@@ -966,7 +965,7 @@
       if (open.length) html += '<div class="strong" style="margin:14px 0 8px;color:var(--ink2)">Open shifts</div>';
       for (i = 0; i < open.length; i++) html += openRow(open[i]);
     }
-    html += standbyRows() + benchAskRows();
+    html += standbyRows();
     html += '<div class="sechead">Your requests</div>';
     if (b === undefined || t === undefined) html += pulse('Loading your requests');
     else {
@@ -1008,23 +1007,6 @@
           '<div class="acts"><button type="button" class="cbtn cbtn-text tall" data-act="sb-no" data-id="' + x.id + '">I can’t be on call after all</button></div>';
       }
       html += rowErr(key) + '</div>';
-    }
-    return html;
-  }
-  /* Your organization's other locations asking (org_bench, MARKET-30). */
-  function benchAskRows(){
-    var d = S.bench, html = '';
-    if (!d || !d.ok) return '';
-    var asks = (d.asks || []).filter(function(a){ return a.status === 'asked'; });
-    if (!asks.length) return '';
-    html += '<div class="sechead">Other locations</div>';
-    for (var i = 0; i < asks.length; i++) {
-      var a = asks[i];
-      html += '<div class="card rail"><div class="strong">' + esc(a.place) + ' is short a ' + esc(a.role) + '</div>' +
-        '<div class="meta num">' + shiftLabel(a.date, a.shift_start, a.shift_end) + '</div>' +
-        '<p class="note">Say yes and their manager adds you to their team and offers you the shift.</p>' +
-        '<div class="acts two"><button type="button" class="cbtn cbtn-secondary" data-act="bench-no" data-id="' + a.id + '">Can’t</button>' +
-        '<button type="button" class="cbtn cbtn-primary" data-act="bench-yes" data-id="' + a.id + '">I can</button></div>' + rowErr('bq' + a.id) + '</div>';
     }
     return html;
   }
@@ -1088,6 +1070,17 @@
   function act(key, path, body, posted, after){
     S.rowErr[key] = null;
     return postJson(path, body).then(function(d){
+      /* A shift that is legal only with your written agreement to a short
+         turnaround (your restaurant's rest rule allows it with a premium):
+         asked in the same tap, sent again with your agreement. */
+      if (!d.ok && d.needs_consent && !body.consent_rest) {
+        var again = {}, k;
+        for (k in body) { if (body.hasOwnProperty(k)) again[k] = body[k]; }
+        again.consent_rest = true;
+        askConfirm('Agree to a short turnaround?', d.needs_consent.text + ' You can withdraw a standing agreement in Me any time.',
+          'I agree — take it', function(){ act(key, path, again, posted, after); });
+        return d;
+      }
       if (d.ok) {
         closeSheet();
         toast(posted);
@@ -1393,9 +1386,56 @@
     if (!S.stats || !S.stats.ok) api('/staff/api/stats').then(function(d){ S.stats = d; renderMe(); });
     api('/staff/api/preferences').then(function(d){ S.prefs = d; renderMe(); });
     api('/staff/api/language').then(function(d){ S.lang = d; renderMe(); });
+    /* Shifts at the group's other locations (schedule audit 10/10/26
+       MARKET-16): only for someone who says yes here. */
+    api('/staff/api/travel').then(function(d){ S.travel = d; renderMe(); });
+    S.agree = undefined;
+    api('/staff/api/compliance').then(function(d){ S.agree = d; renderMe(); });
     api('/staff/api/push/key').then(function(d){ S.pushKey = d; renderMe(); });
-    api('/staff/api/bench').then(function(d){ S.bench = d; renderMe(); });
   };
+  /* Agreements (schedule audit 10/10/26 RM-15): what your manager asked you
+     to agree to in writing, a standing agreement to short turnarounds where
+     the rest rule allows one, your schedule estimate to sign for, and your
+     requests to change it with their written answers. Each answer is
+     stamped with the time you gave it. */
+  function agreementsCard(){
+    var a = S.agree, html = '', i;
+    if (a === undefined || !a || !a.ok) return '';
+    var c = a.consents || {}, pend = c.pending || [], est = a.estimate, reqs = a.requests || [];
+    if (!pend.length && !a.rest && !est && !reqs.length) return '';
+    html += '<div class="sechead">Agreements</div><div class="card">';
+    for (i = 0; i < pend.length; i++) {
+      html += '<p class="note ink2" style="margin:0 0 6px">' + esc(pend[i].text) + '</p>' +
+        '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="consent-yes" data-id="' + pend[i].id + '">I agree</button>' +
+        '<button type="button" class="cbtn cbtn-secondary" data-act="consent-no" data-id="' + pend[i].id + '">No</button></div>';
+    }
+    if (a.rest) {
+      var st = c.standing_rest;
+      html += '<p class="note" style="margin:' + (pend.length ? '14px' : '0') + ' 0 6px">' + esc(a.rest.text) + '</p>';
+      html += st ? '<p class="note ink2" style="margin:0 0 6px">You agreed on ' + esc(mdy((st.answered_at || '').slice(0, 10))) +
+        ' to be scheduled with a short turnaround, each time paid the premium.</p><div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="rest-revoke" data-id="' + st.id + '">Withdraw my agreement</button></div>'
+        : '<div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="rest-standing">Agree to short turnarounds</button></div>';
+    }
+    if (est) {
+      html += '<p class="note ink2" style="margin:14px 0 6px">' + esc(est.text) + '</p>';
+      html += est.acknowledged_at ? '<p class="note" style="margin:0">You signed for it on ' + esc(mdy(est.acknowledged_at.slice(0, 10))) + '.</p>'
+        : '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="est-ack" data-id="' + est.id + '">I’ve read my estimate</button></div>';
+      html += '<div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="est-change">Ask for a change</button></div>';
+    }
+    for (i = 0; i < reqs.length && i < 5; i++) {
+      var r = reqs[i];
+      html += '<div class="kv"><span class="strong">' + esc(r.body) + '</span><span class="muted">' +
+        esc(r.status === 'open' ? ('waiting' + (r.due_at ? ' — answer due ' + mdy(r.due_at.slice(0, 10)) : '')) : r.status) + '</span></div>' +
+        (r.answer ? '<p class="note" style="margin:0 0 8px">' + esc(r.answer) + '</p>' : '');
+    }
+    return html + '<div class="errline" id="agree-err" role="status" aria-live="polite"></div></div>';
+  }
+  function agreePost(path, body, posted){
+    return postJson(path, body).then(function(d){
+      if (!d.ok) { var e = $('agree-err'); if (e) e.textContent = errText(d); return d; }
+      closeSheet(); toast(posted); LOADERS.me(); return d;
+    });
+  }
   var ME_OPEN = {};
   function disclosure(id, label, value, body){
     var open = !!ME_OPEN[id];
@@ -1411,6 +1451,7 @@
     html += '<div class="card">' + disclosure('avail', 'My availability', '', availBody) + '<div style="height:10px"></div>' +
       disclosure('prefs', 'What I’d like', '', prefsBody) + '</div>';
     html += attendanceCard();
+    html += agreementsCard();
     html += '<div class="sechead">Notices</div><div class="card">';
     var p = S.prefs;
     if (p === undefined) html += pulse('Loading your notices');
@@ -1422,7 +1463,22 @@
     } else html += '<p class="note" style="margin:0">Shift and task reminders come as notices in the Cavnar AI iPhone app. Here, your inbox and requests show what’s new each time you open it.</p>';
     html += pushCard();
     html += '</div>';
-    html += benchCard();
+    var tr = S.travel;
+    if (tr && tr.ok && tr.group) {
+      html += '<div class="sechead">Other locations</div><div class="card">' +
+        '<label class="switch"><input type="checkbox" id="travel-on"' + (tr.travels ? ' checked' : '') + '>' +
+        '<span><b>Pick up shifts at our other locations</b><br><span class="note" style="display:block;margin:2px 0 0">A manager there can offer you a shift; it is checked against your hours here and your availability.' +
+        (tr.consent_text ? ' Turning this on means: “' + esc(tr.consent_text) + '”' : '') +
+        (tr.travels && tr.consent_at ? ' You agreed ' + esc(mdy(String(tr.consent_at).slice(0, 10))) + '.' : '') + '</span></span></label>' +
+        '<div class="errline" id="travel-err" role="status" aria-live="polite"></div>';
+      for (var ti = 0; ti < (tr.offers || []).length; ti++) {
+        var to = tr.offers[ti];
+        html += '<div class="row" style="margin-top:10px"><div><b>' + esc(to.place || 'Another location') + '</b><br><span class="note">' + esc(shiftLabel(to.date, to.shift_start, to.shift_end)) + (to.role ? ' · ' + esc(to.role) : '') + '</span></div>' +
+          '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="travel-yes" data-id="' + esc(to.id) + '">Take it</button>' +
+          '<button type="button" class="cbtn cbtn-secondary" data-act="travel-no" data-id="' + esc(to.id) + '">Decline</button></div></div>';
+      }
+      html += '</div>';
+    }
     html += '<div class="sechead">Language</div><div class="card">';
     var l = S.lang;
     if (l === undefined) html += pulse('Loading languages');
@@ -1458,23 +1514,6 @@
       (S.pushOn ? 'Notices are on in this browser' : 'Get notices in this browser') + '</button></div>' +
       (INSTALLED ? '' : '<p class="note">On a phone, add Cavnar AI to your home screen (your browser’s menu → Add to Home screen) for notices like an app.</p>') +
       '<div class="errline" id="push-err" role="status" aria-live="polite"></div>';
-  }
-  /* Your organization's bench (org_bench, MARKET-30): your choice, in the
-     exact words, and you can leave any time. */
-  function benchCard(){
-    var d = S.bench;
-    if (!d || !d.ok || !d.site_enabled) return '';
-    var html = '<div class="sechead">Other locations</div><div class="card">';
-    if (d.on_bench) {
-      html += '<p class="note" style="margin:0">You’re on the bench: managers at your other locations can see your roles, certifications and attendance and ask you to pick up shifts.' +
-        (d.consent_at ? ' You joined ' + esc(mdy(String(d.consent_at).slice(0, 10))) + '.' : '') + '</p>' +
-        '<div class="acts"><button type="button" class="cbtn cbtn-text tall" data-act="bench-leave">Leave the bench</button></div>';
-    } else {
-      html += '<p class="note" style="margin:0 0 8px">Pick up shifts at your organization’s other locations.</p><p class="note ink2">' + esc(d.consent_text || '') + '</p>' +
-        '<label class="switch"><input type="checkbox" id="bench-agree"><span>I agree</span></label>' +
-        '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="bench-join">Join the bench</button></div>';
-    }
-    return html + '<div class="errline" id="bench-err" role="status" aria-live="polite"></div></div>';
   }
 
   /* Your attendance (the app's StaffAttendanceSection): my own checked
@@ -1665,6 +1704,30 @@
     'reload-tasks': function(){ LOADERS.tasks(); },
     'reload-inbox': function(){ LOADERS.inbox(); },
     'reload-me': function(){ LOADERS.me(); },
+    /* Agreements: each answer goes to the server stamped with its time. */
+    'consent-yes': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/consents/' + id + '/answer', {agree: true}, 'Agreed'); },
+    'consent-no': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/consents/' + id + '/answer', {agree: false}, 'Your manager is told'); },
+    'rest-standing': function(){
+      askConfirm('Agree to short turnarounds?', (S.agree && S.agree.rest ? S.agree.rest.text : '') +
+        ' You can withdraw this any time.', 'I agree', function(){ agreePost('/staff/api/consents/rest-standing', {agree: true}, 'Agreed'); });
+    },
+    'rest-revoke': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/consents/' + id + '/revoke', {}, 'Withdrawn'); },
+    'est-ack': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/estimate/' + id + '/acknowledge', {}, 'Signed'); },
+    'est-change': function(){
+      openSheet('Ask for a change', '<label class="lbl" for="est-why" style="margin-top:0">What would you like changed?</label>' +
+        '<textarea class="fld" id="est-why" maxlength="1000"></textarea><div class="errline" id="est-err" role="status" aria-live="polite"></div>' +
+        '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="est-send">Send to your manager</button></div>');
+    },
+    'est-send': function(btn){
+      var why = ($('est-why').value || '').replace(/^\s+|\s+$/g, '');
+      if (!why) { $('est-err').textContent = 'Say what you’d like changed.'; return; }
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/estimate/request-change', {body: why}).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('est-err').textContent = errText(d); return; }
+        closeSheet(); toast('Sent — your manager answers in writing'); LOADERS.me();
+      });
+    },
     message: function(el){
       var ctx = null, sd = el.getAttribute('data-shift-date'), rid = el.getAttribute('data-request-id');
       if (sd) ctx = {shift_date: sd, label: el.getAttribute('data-label') || mdy(sd)};
@@ -1734,32 +1797,6 @@
       var id = el.getAttribute('data-id');
       act('sb' + id, '/staff/api/standby/' + id + '/respond', {accept: false}, 'Your manager is told');
     },
-    'bench-yes': function(el){
-      var id = el.getAttribute('data-id');
-      act('bq' + id, '/staff/api/bench/' + id + '/respond', {accept: true}, 'Their manager is told you can');
-    },
-    'bench-no': function(el){
-      var id = el.getAttribute('data-id');
-      act('bq' + id, '/staff/api/bench/' + id + '/respond', {accept: false}, 'Their manager is told');
-    },
-    'bench-join': function(btn){
-      var box = $('bench-agree');
-      if (!box || !box.checked) { $('bench-err').textContent = 'Tick that you agree first.'; return; }
-      busyBtn(btn, 'Joining');
-      postJson('/staff/api/bench/join', {agree: true}).then(function(d){
-        unbusyBtn(btn);
-        if (!d.ok) { $('bench-err').textContent = errText(d); return; }
-        S.bench = d; toast('You’re on the bench'); renderMe();
-      });
-    },
-    'bench-leave': function(btn){
-      busyBtn(btn, 'Leaving');
-      postJson('/staff/api/bench/leave', {}).then(function(d){
-        unbusyBtn(btn);
-        if (!d.ok) { $('bench-err').textContent = errText(d); return; }
-        S.bench = d; toast('You left the bench'); renderMe();
-      });
-    },
     'push-on': function(btn){
       var k = S.pushKey;
       if (!k || !k.enabled || !pushSupported()) return;
@@ -1783,6 +1820,20 @@
       askConfirm('Take ' + shiftLabel(o.date, o.shift_start, o.shift_end) + '?', 'It goes on your schedule' + (o.role ? ' as ' + o.role : '') + ', and your manager hears you said yes.' +
         (o.pickup_overtime_note ? ' ' + o.pickup_overtime_note : ''), 'Take it', function(){
         act('offer' + o.id, '/staff/api/offers/' + o.id + '/respond', {accept: true}, 'It’s on your schedule');
+      });
+    },
+    'travel-yes': function(el){
+      var o = findIn((S.travel || {}).offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Take this shift at ' + (o.place || 'another location') + '?', shiftLabel(o.date, o.shift_start, o.shift_end) + (o.role ? ' as ' + o.role : '') + '. Their manager hears you said yes.', 'Take it', function(){
+        act('travel' + o.id, '/staff/api/travel/offers/' + o.id + '/respond', {accept: true}, 'It’s on their schedule', function(){ LOADERS.me(); });
+      });
+    },
+    'travel-no': function(el){
+      var o = findIn((S.travel || {}).offers, el.getAttribute('data-id'));
+      if (!o) return;
+      askConfirm('Decline this shift?', 'Their manager is told you can’t take it.', 'Decline', function(){
+        act('travel' + o.id, '/staff/api/travel/offers/' + o.id + '/respond', {accept: false}, 'Declined', function(){ LOADERS.me(); });
       });
     },
     'offer-no': function(el){
@@ -2092,6 +2143,15 @@
         if (!d.ok) { t.checked = !on; $('texts-err').textContent = errText(d); return; }
         S.prefs.schedule_texts = d.schedule_texts;
         toast(d.schedule_texts ? 'Schedule texts on' : 'Schedule texts off');
+      });
+    }
+    if (t.id === 'travel-on') {
+      var yes = t.checked;
+      postJson('/staff/api/travel', {travels: yes}).then(function(d){
+        if (!d.ok) { t.checked = !yes; $('travel-err').textContent = errText(d); return; }
+        S.travel.travels = d.travels;
+        S.travel.consent_at = d.consent_at || null;
+        toast(d.travels ? 'Other locations can offer you shifts' : 'Only here from now on');
       });
     }
     if (t.id === 'lang') {

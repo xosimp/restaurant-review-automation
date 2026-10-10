@@ -361,8 +361,9 @@ def test_an_unlooked_at_automatic_publish_is_nobodys_answer(db):
 def test_the_publish_and_the_save_file_the_weeks_outcome():
     import client_api
     import mobile_api
+    import schedule_publish
     assert "record_week_outcome(rid, schedule_id, actor=actor, published=True)" in \
-        inspect.getsource(client_api._publish_schedule)
+        inspect.getsource(schedule_publish._after_publish)
     assert "record_week_outcome(rid, saved, actor=current_user)" in inspect.getsource(mobile_api.mobile_score_schedule)
 
 

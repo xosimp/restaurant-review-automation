@@ -1,6 +1,8 @@
-"""staff_pwa_routes.py — the installable portal, on-call offers and the
-organization's bench, on the staff blueprint (scheduler audit 10/10/26
-MARKET-18, MARKET-26, MARKET-30).
+"""staff_pwa_routes.py — the installable portal and on-call offers, on the
+staff blueprint (scheduler audit 10/10/26 MARKET-18, MARKET-26). The
+organization's bench has no route of its own: its one opt-in is the travel
+switch (/staff/api/travel, cross_site), which records the bench consent
+(org_bench.record_travel).
 
 Registered on staff_routes.staff_bp (imported at the end of staff_routes,
 like staff_me_routes). Every authenticated route takes the restaurant, the
@@ -13,10 +15,6 @@ login and the name from the session — never from the URL or a body.
   POST /staff/api/push/unsubscribe         {endpoint}
   GET  /staff/api/standby                  my on-call offers and slots
   POST /staff/api/standby/<id>/respond     {accept, agree}
-  GET  /staff/api/bench                    my bench status, its words, asks
-  POST /staff/api/bench/join               {agree}
-  POST /staff/api/bench/leave
-  POST /staff/api/bench/<id>/respond       {accept}
 """
 import json
 
@@ -120,50 +118,3 @@ def api_standby_respond(slot_id, current_user):
     except standby_insurance.StandbyError as e:
         return jsonify(ok=False, error=str(e)), 400
     return jsonify(ok=True, slot={k: slot.get(k) for k in ("id", "status", "consent_at")})
-
-
-# ── the organization's bench (MARKET-30) ───────────────────────────────────
-
-@staff_bp.route("/api/bench")
-@staff_login_required
-def api_bench(current_user):
-    rid, _name = _ctx(current_user)
-    import org_bench
-    return jsonify(ok=True, **org_bench.for_staff(current_user["id"], rid))
-
-
-@staff_bp.route("/api/bench/join", methods=["POST"])
-@staff_login_required
-def api_bench_join(current_user):
-    rid, name = _ctx(current_user)
-    body = request.get_json(silent=True) or {}
-    import org_bench
-    try:
-        org_bench.join(current_user["id"], rid, name, agree=body.get("agree") is True)
-    except org_bench.BenchError as e:
-        return jsonify(ok=False, error=str(e)), 400
-    return jsonify(ok=True, **org_bench.for_staff(current_user["id"], rid))
-
-
-@staff_bp.route("/api/bench/leave", methods=["POST"])
-@staff_login_required
-def api_bench_leave(current_user):
-    rid, _name = _ctx(current_user)
-    import org_bench
-    org_bench.leave(current_user["id"], rid)
-    return jsonify(ok=True, **org_bench.for_staff(current_user["id"], rid))
-
-
-@staff_bp.route("/api/bench/<int:request_id>/respond", methods=["POST"])
-@staff_login_required
-def api_bench_respond(request_id, current_user):
-    rid, _name = _ctx(current_user)
-    body = request.get_json(silent=True) or {}
-    if not isinstance(body.get("accept"), bool):
-        return jsonify(ok=False, error="accept must be true or false."), 400
-    import org_bench
-    try:
-        req = org_bench.respond(request_id, current_user["id"], rid, body["accept"])
-    except org_bench.BenchError as e:
-        return jsonify(ok=False, error=str(e)), 400
-    return jsonify(ok=True, request={k: req.get(k) for k in ("id", "status")})

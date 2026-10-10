@@ -150,13 +150,15 @@ def _effect_pct(restaurant_id, day, db_path=None):
 
 
 def _live_weeks(restaurant_id, today, db_path=None) -> list:
+    """The live published copies (models.live_where / live_csv_sql — what
+    staff have, never a draft's unsent changes) from today to
+    MAX_DAYS_AHEAD."""
+    import models
     conn = get_conn(db_path)
     try:
         return [dict(r) for r in conn.execute(
-            "SELECT h.id, h.week_start, h.week_end, h.schedule_csv FROM schedule_history h WHERE h.restaurant_id=? AND "
-            "h.published_at IS NOT NULL AND h.superseded_by IS NULL AND h.week_end>=? AND h.week_start<=? AND NOT "
-            "EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND "
-            "nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id>h.id)",
+            f"SELECT h.id, h.week_start, h.week_end, {models.live_csv_sql('h')} AS schedule_csv FROM schedule_history h "
+            f"WHERE h.restaurant_id=? AND h.week_end>=? AND h.week_start<=? AND {models.live_where('h')}",
             (restaurant_id, today.isoformat(), (today + timedelta(days=MAX_DAYS_AHEAD)).isoformat())).fetchall()]
     finally:
         conn.close()

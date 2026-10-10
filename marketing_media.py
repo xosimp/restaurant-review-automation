@@ -24,7 +24,17 @@ import io
 import logging
 import secrets
 
-from models import get_conn, DB_PATH
+import models as _models_mod
+from models import DB_PATH
+
+
+def get_conn(db_path=None):
+    """models.get_conn, resolved at call time — CLAUDE.md's bound-import
+    hazard. `from models import get_conn` bound the function object at
+    import, so a test's monkeypatch of models.get_conn made while this module
+    was first imported stayed bound here for the whole process, and a later
+    test's library check (token_belongs_to) read an earlier test's database."""
+    return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
 log = logging.getLogger(__name__)
 

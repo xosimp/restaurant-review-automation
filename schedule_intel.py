@@ -31,6 +31,7 @@ from datetime import date, datetime, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from models import live_where as _live_where, live_csv_sql as _live_csv
 from canonical_facts import FINAL_SQL
 
 
@@ -154,7 +155,8 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
     read = []
     try:
         weeks = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv, labor_target FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+            "SELECT id, week_start, week_end, " + _live_csv("schedule_history") + " AS schedule_csv, labor_target "
+            "FROM schedule_history WHERE restaurant_id=? AND " + _live_where("schedule_history") + " "
             "AND week_end < ? ORDER BY id DESC LIMIT ?", (restaurant_id, today.isoformat(), OUTCOME_WEEKS)).fetchall()
         if only_changed:
             settling = (today - timedelta(days=WEEK_SETTLE_DAYS)).isoformat()
@@ -923,9 +925,8 @@ ROTATION_SHOW = 3                # names per queue shown and prompted
 
 def _published_weeks(conn, restaurant_id, weeks, today):
     return conn.execute(
-        "SELECT week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
-        "AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=schedule_history.restaurant_id "
-        "AND nw.week_start=schedule_history.week_start AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
+        "SELECT week_start, week_end, " + _live_csv("schedule_history") + " AS schedule_csv FROM schedule_history "
+        "WHERE restaurant_id=? AND " + _live_where("schedule_history") + " "
         "AND week_start >= ? ORDER BY week_start DESC LIMIT ?",
         (restaurant_id, (today - timedelta(weeks=weeks)).isoformat(), weeks)).fetchall()
 
@@ -2013,10 +2014,8 @@ def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_R
     marks = {}
     try:
         hist = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history h WHERE restaurant_id=? AND "
-            "published_at IS NOT NULL AND superseded_by IS NULL AND week_end < ? AND NOT EXISTS (SELECT 1 FROM "
-            "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
-            "n.published_at IS NOT NULL AND n.id > h.id) ORDER BY week_start DESC LIMIT ?",
+            "SELECT id, week_start, week_end, " + _live_csv("h") + " AS schedule_csv FROM schedule_history h "
+            "WHERE restaurant_id=? AND week_end < ? AND " + _live_where("h") + " ORDER BY week_start DESC LIMIT ?",
             (restaurant_id, today.isoformat(), int(weeks))).fetchall()
         if only_changed:
             kept = []

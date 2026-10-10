@@ -854,6 +854,116 @@ def api_time_off_request(current_user):
     return jsonify(ok=True, request=row)
 
 
+# ── written consent, the good-faith estimate, change requests (RM-15) ──────
+#
+# What a predictive-scheduling law asks the person themselves to put in
+# writing, read and answered here by the portal and the staff app alike:
+# consents a manager asked for (a changed shift), a standing agreement to
+# short turnarounds where the rest rule allows one with a premium, their
+# good-faith schedule estimate to acknowledge, and a request to change it,
+# answered in writing (schedule audit 10/10/26 MARKET-2/3/4).
+
+@staff_bp.route("/api/compliance")
+@staff_login_required
+def api_compliance(current_user):
+    rid, name = _staff_context(current_user)
+    if not name:
+        return jsonify(ok=False, error="No employee name on this session."), 400
+    import staff_consent
+    import fair_workweek
+    import schedule_rules as _sr
+    comp = _sr.compliance(rid)
+    mode = _sr.rest_mode(comp)
+    rest = None
+    if mode == "consent_premium":
+        rest = {"hours": comp.get("min_rest_hours"), "multiplier": comp.get("rest_premium_multiplier"),
+                "flat": comp.get("rest_premium_flat"),
+                "text": (f"Your restaurant's rest rule gives you {float(comp['min_rest_hours']):g} hours between "
+                         f"shifts. You may agree in writing to a shorter turnaround, paid at "
+                         + (f"${float(comp['rest_premium_flat']):,.0f} extra" if comp.get("rest_premium_flat")
+                            else f"{float(comp.get('rest_premium_multiplier') or 1):g}x") + ".")}
+    est = fair_workweek.current_estimate(rid, name)
+    return jsonify(ok=True, consents=staff_consent.for_person(rid, name), rest=rest,
+                   estimate=est, requests=fair_workweek.requests(rid, employee_name=name))
+
+
+@staff_bp.route("/api/consents/<int:consent_id>/answer", methods=["POST"])
+@staff_login_required
+def api_consent_answer(consent_id, current_user):
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("agree"), bool):
+        return jsonify(ok=False, error="agree must be true or false."), 400
+    import staff_consent
+    try:
+        row = staff_consent.answer(rid, consent_id, name, body["agree"],
+                                   channel="app" if request.headers.get("Authorization") else "portal")
+    except staff_consent.ConsentError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, consent=row)
+
+
+@staff_bp.route("/api/consents/rest-standing", methods=["POST"])
+@staff_login_required
+def api_consent_rest_standing(current_user):
+    """{agree: true} — a standing written agreement to short turnarounds
+    (each one still paid its premium), revocable any time. Only where the
+    rest rule allows it with consent."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if body.get("agree") is not True:
+        return jsonify(ok=False, error="Send agree: true to agree."), 400
+    import schedule_rules as _sr
+    import staff_consent
+    comp = _sr.compliance(rid)
+    if _sr.rest_mode(comp) != "consent_premium":
+        return jsonify(ok=False, error="Your restaurant's rest rule doesn't take an agreement."), 400
+    have = staff_consent.for_person(rid, name).get("standing_rest")
+    if have:
+        return jsonify(ok=True, consent=have)
+    text = (f"I agree to be scheduled with less than {float(comp['min_rest_hours']):g} hours between shifts, each time "
+            "paid the rest premium, until I withdraw this agreement.")
+    row = staff_consent.record(rid, name, "rest_waiver_standing", text,
+                               channel="app" if request.headers.get("Authorization") else "portal")
+    return jsonify(ok=True, consent=row)
+
+
+@staff_bp.route("/api/consents/<int:consent_id>/revoke", methods=["POST"])
+@staff_login_required
+def api_consent_revoke(consent_id, current_user):
+    rid, name = _staff_context(current_user)
+    import staff_consent
+    try:
+        return jsonify(ok=True, consent=staff_consent.revoke(rid, consent_id, name))
+    except staff_consent.ConsentError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+
+@staff_bp.route("/api/estimate/<int:estimate_id>/acknowledge", methods=["POST"])
+@staff_login_required
+def api_estimate_acknowledge(estimate_id, current_user):
+    rid, name = _staff_context(current_user)
+    import fair_workweek
+    try:
+        return jsonify(ok=True, estimate=fair_workweek.acknowledge_estimate(rid, estimate_id, name))
+    except fair_workweek.FairWorkweekError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+
+@staff_bp.route("/api/estimate/request-change", methods=["POST"])
+@staff_login_required
+def api_estimate_request_change(current_user):
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    import fair_workweek
+    try:
+        row = fair_workweek.request_change(rid, name, body.get("body"),
+                                           kind=body.get("kind") or "estimate_change")
+    except fair_workweek.FairWorkweekError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, request=row)
+
+
 @staff_bp.route("/api/time-off/<int:request_id>/withdraw", methods=["POST"])
 @staff_login_required
 def api_time_off_withdraw(request_id, current_user):
@@ -997,7 +1107,8 @@ def api_colleagues(current_user):
     # owns it — the same reading the portal's own shifts use.
     weeks = staff_schedule._published_weeks(rid, min(today, on))
     me = name.strip().lower()
-    # The CSV and the stations only (SCALE-19), never SELECT * and its JSON.
+    # Each week's PUBLISHED copy (ARCH-1) — the CSV and the stations only
+    # (SCALE-19), never SELECT * and its JSON.
     details = {w["id"]: (get_published_week_csv(w["id"], rid, with_stations=True) or {}) for w in weeks}
     rows_by_week = {wid: rows_from_csv(d.get("schedule_csv") or "") for wid, d in details.items()}
     coworkers, posted = _coworkers_on(weeks, details, rows_by_week, on, me)
@@ -1180,7 +1291,13 @@ def api_offer_respond(offer_id, current_user):
         return jsonify(ok=False, error="accept must be true or false."), 400
     import shift_requests
     try:
-        out = shift_requests.respond_offer(rid, offer_id, name, body["accept"])
+        out = shift_requests.respond_offer(rid, offer_id, name, body["accept"],
+                                           consent_rest=body.get("consent_rest") is True)
+    except shift_requests.RestConsentNeeded as e:
+        # Legal with their written consent to a short turnaround (a
+        # jurisdiction's rest rule with a premium): ask in the same tap —
+        # the client sends the answer again with consent_rest: true.
+        return jsonify(ok=False, needs_consent=e.consent, error=str(e)), 409
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
     # Which client answered and how long after the offer (staff_pwa,
@@ -1200,6 +1317,61 @@ def api_offer_respond(offer_id, current_user):
                    request=shift_requests._for_teammate(out["request"]) if out.get("request") else None)
 
 
+@staff_bp.route("/api/travel")
+@staff_login_required
+def api_travel_get(current_user):
+    """Whether this person picks up shifts at the group's other locations,
+    and the ones offered to them there (cross_site, schedule audit 10/10/26
+    MARKET-16)."""
+    rid, name = _staff_context(current_user)
+    import cross_site
+    import schedule_rules
+    # The exact words the switch means and, when on, when they agreed
+    # (org_bench: the certified bench's consent, scheduler audit 10/10/26
+    # MARKET-30).
+    import org_bench
+    return jsonify(ok=True, travels=cross_site.travels(rid, name),
+                   group=bool(schedule_rules.org_sibling_ids(rid)), offers=cross_site.offers_for(rid, name),
+                   **org_bench.for_staff(current_user["id"], rid, name))
+
+
+@staff_bp.route("/api/travel", methods=["POST"])
+@staff_login_required
+def api_travel_set(current_user):
+    """{travels: bool} — this person's own yes to being offered shifts at
+    the group's other locations; nobody is offered one otherwise."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("travels"), bool) or not name:
+        return jsonify(ok=False, error="travels must be true or false."), 400
+    # The switch and the person's consent to the words beside it, in one
+    # step (org_bench.record_travel: cross_site.set_travel plus the written,
+    # time-stamped consent; off revokes it).
+    import org_bench
+    try:
+        extra = org_bench.record_travel(current_user["id"], rid, name, body["travels"])
+    except org_bench.BenchError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, travels=body["travels"], **extra)
+
+
+@staff_bp.route("/api/travel/offers/<int:offer_id>/respond", methods=["POST"])
+@staff_login_required
+def api_travel_offer_respond(offer_id, current_user):
+    """{accept: bool} — this person's answer to a shift at another location:
+    yes is judged there again and written into that location's week."""
+    rid, name = _staff_context(current_user)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("accept"), bool):
+        return jsonify(ok=False, error="accept must be true or false."), 400
+    import cross_site
+    try:
+        out = cross_site.respond(rid, name, offer_id, body["accept"])
+    except cross_site.CrossSiteError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, **out)
+
+
 @staff_bp.route("/api/open-shifts/<int:request_id>/claim", methods=["POST"])
 @staff_login_required
 def api_open_shift_claim(request_id, current_user):
@@ -1210,8 +1382,14 @@ def api_open_shift_claim(request_id, current_user):
     if not name:
         return jsonify(ok=False, error="No employee name on this session."), 400
     import shift_requests
+    body = request.get_json(silent=True) or {}
     try:
-        row = shift_requests.claim(rid, request_id, name, actor=name)
+        row = shift_requests.claim(rid, request_id, name, actor=name, consent_rest=body.get("consent_rest") is True)
+    except shift_requests.RestConsentNeeded as e:
+        # One tap: the claim of a clopen asks for the written consent the
+        # rest rule allows it with, and is sent again with consent_rest: true
+        # (schedule audit 10/10/26 MARKET-3).
+        return jsonify(ok=False, needs_consent=e.consent, error=str(e)), 409
     except shift_requests.ShiftRequestError as e:
         return jsonify(ok=False, error=str(e)), 400
     from models import log_event

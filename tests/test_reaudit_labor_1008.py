@@ -17,6 +17,7 @@ from datetime import datetime
 import pytest
 
 import client_api
+import schedule_publish
 import delayed
 import models
 import ops
@@ -73,7 +74,7 @@ def test_the_real_gate_holds_one_tap_on_a_note_the_check_shows(db, monkeypatch):
     c, h, _ = _client(db, rid, monkeypatch)
     import people
     monkeypatch.setattr(people, "reach", lambda r, names, **k: {n: {"email": "a@x.test"} for n in names})
-    monkeypatch.setattr(client_api, "publish_review",
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda r, s, **k: {"blockers": [], "soft": ["A weak week"], "hours": None,
                                            "notes": [{"key": "quality", "text": "A weak week"}]})
     body = c.get(f"/mobile/api/labor/publish-check?schedule_id={hid}", headers=h).get_json()
@@ -83,10 +84,12 @@ def test_the_real_gate_holds_one_tap_on_a_note_the_check_shows(db, monkeypatch):
 @pytest.fixture
 def publishes(monkeypatch):
     got = []
-    monkeypatch.setattr(client_api, "_publish_schedule",
-                        lambda rid, sid, actor=None, acknowledge=False: got.append(
-                            {"rid": rid, "sid": sid, "acknowledge": acknowledge})
-                        or ({"ok": True, "schedule_id": sid, "sent": [], "unreachable": [], "failed": []}, 200))
+    stub = (lambda rid, sid, actor=None, acknowledge=False, **k: got.append(
+        {"rid": rid, "sid": sid, "acknowledge": acknowledge})
+        or ({"ok": True, "schedule_id": sid, "sent": [], "unreachable": [], "failed": []}, 200))
+    # The route calls client_api's name; the delayed run the service's (ARCH-15).
+    monkeypatch.setattr(client_api, "_publish_schedule", stub)
+    monkeypatch.setattr(schedule_publish, "publish", stub)
     return got
 
 
@@ -142,7 +145,7 @@ def test_a_queued_one_tap_send_runs_the_unattended_gate_when_its_window_ends(db,
     assert body["queued"] is True and queued[0]["one_tap"] is True and queued[0]["acknowledge"] == []
     # When the window ends a soft flag has come up: held, the owner told.
     monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: False)
-    monkeypatch.setattr(client_api, "publish_review",
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda r, s, **k: {"blockers": [], "soft": ["Ana owes a meal break"], "notes": []})
     told = []
     monkeypatch.setattr(delayed, "_tell_owner_schedule_held",
@@ -346,4 +349,14 @@ def test_a_stopped_run_starts_no_further_model_call(monkeypatch):
     assert se.GenerationClock(job_id=None).stopped() is False
     src = open(se.__file__).read()
     loop = src[src.index("        # Stopped by the owner (10/9/26)"):]
-    assert loop.index("raise ScheduleStopped(STOPPED_MESSAGE)") < loop.index("generate_optimized_schedule(")
+    # The calls go out through _dispatch_calls (scheduler audit 10/10/26
+    # AI-4: a batch's independent calls in parallel); every planned call of
+    # the batch is checked against the stop before any is dispatched.
+    assert loop.index("raise ScheduleStopped(STOPPED_MESSAGE)") < loop.index("_dispatch_calls(ready")
+    # The model calls made outside the loop are checked too (integration
+    # round 10/10/26): the owner's words read into typed rules at the start,
+    # and the finished week's note at the end.
+    build = src[src.index("def _build_schedule_result("):]
+    assert build.index("_raise_if_stopped(current_clock())") < build.index("_owr.prepare(")
+    job = src[src.index("def _run_schedule_job("):]
+    assert job.index("_raise_if_stopped(clock, owner_only=True)") < job.index("_snar.write(")
