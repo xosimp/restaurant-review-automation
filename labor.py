@@ -4855,9 +4855,17 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if staffing_patterns:
         _patterns = {k: (dict(v) if isinstance(v, dict) else v) for k, v in staffing_patterns.items()}
     else:
-        _patterns = historical_patterns(shifts)
+        _patterns = historical_patterns(shifts, close_times=close_times or None, open_times=open_times or None)
         if restaurant_id:
             _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
+            # The owner's Crew answers bind here too, as staffing_baseline
+            # binds them (LOGIC-6): no path builds a requirement without them.
+            try:
+                import crew_matrix as _cm_bind
+                from models import get_restaurant as _gr_bind
+                _cm_bind.bind_answers(_gr_bind(restaurant_id), _patterns)
+            except Exception as _cbx:
+                print(f"[labor] crew answers not bound for {restaurant_id}: {_cbx}")
     _typical = _patterns.get("typical_headcount") or {}
     # A shift whose start time could not be read belongs to neither
     # daypart. Reported separately rather than folded into one of them, so
