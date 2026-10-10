@@ -370,7 +370,10 @@ struct PublishNumbersCard: View {
             }
             if let savings = numbers.savings, let v = savings.value, v > 0 {
                 HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                    CavnarMixedText("Estimated savings \(Self.money(v))", role: .secondary, color: .cavnarInk)
+                    // A projection, never a figure called savings (owner
+                    // copy rule; the iOS scorecard's own words).
+                    CavnarMixedText("Under your recent labor by about \(Self.money(v))", role: .secondary,
+                                    color: .cavnarInk)
                     ScheduleRowTag(text: "Projection")
                 }
                 if let basis = savings.basis { CavnarMixedText(basis, role: .caption) }

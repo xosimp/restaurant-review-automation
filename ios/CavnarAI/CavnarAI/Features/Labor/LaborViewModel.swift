@@ -1600,7 +1600,10 @@ extension ScheduleRow {
         originSig = c.sfText(.originSig)
         shiftId = c.sfText(.shiftId)
         personId = c.sfText(.personId)
+        // A stored week's rows say "1" / "" (schedule_rows.is_locked); a
+        // fresh generation's say true / false. Either reads.
         locked = c.sfBool(.locked)
+            ?? c.sfText(.locked).map { ["1", "true", "yes", "y", "on"].contains($0.lowercased()) }
     }
 
     /// Everything that makes two rows the same shift, for telling whether
@@ -2578,7 +2581,25 @@ final class LaborViewModel {
         }
     }
 
-    private struct TimeOffListResponse: Decodable { let ok: Bool; let requests: [TimeOffRequest] }
+    private struct TimeOffListResponse: Decodable {
+        let ok: Bool
+        let requests: [TimeOffRequest]
+        var followUps: [TimeOffFollowUp] = []
+        enum CodingKeys: String, CodingKey {
+            case ok, requests
+            case followUps = "follow_ups"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = try c.decode(Bool.self, forKey: .ok)
+            requests = try c.decode([TimeOffRequest].self, forKey: .requests)
+            followUps = c.setupList(TimeOffFollowUp.self, .followUps)
+        }
+    }
+
+    /// Approved time off over a published shift, until it is handled
+    /// (BUGSLIFE-5) — Waiting on you's "Post it open" rows.
+    var timeOffFollowUps: [TimeOffFollowUp] = []
     private struct TimeOffDecideBody: Encodable { let decision: String }
     private struct TimeOffDecideResponse: Decodable {
         let ok: Bool
@@ -2592,6 +2613,7 @@ final class LaborViewModel {
         do {
             let r: TimeOffListResponse = try await client.send("/mobile/api/labor/time-off", hapticOnError: false)
             timeOff = r.requests
+            timeOffFollowUps = r.followUps
             if timeOffPending > 0 { timeOffExpanded = true }
         } catch {
             // Silent, like availability: a secondary section.
@@ -3888,13 +3910,10 @@ final class LaborViewModel {
         do {
             let response: ScoreResponse = try await client.send(
                 "/mobile/api/labor/schedule/score", method: .post,
-                // The week's own hour targets and its id (schedule re-audit
-                // 10/4/26 UI-5): sent with neither, the server scored these
-                // rows with no labor-efficiency dimension, so a re-score
-                // after a rating or a what-if read points the save path
-                // never gives. Only the changed readings back (SCALE-29).
-                body: askingForDelta(ScoreBody(rows: rows,
-                                               dailyTargetHours: scheduleResult?.dailyTargetHours?.hours ?? [:],
+                // The week's own hour targets and its id (UI-5) — sent with
+                // neither, the server scored no labor-efficiency dimension.
+                // Only the changed readings come back (SCALE-29).
+                body: askingForDelta(ScoreBody(rows: rows, dailyTargetHours: scheduleResult?.dailyTargetHours?.hours ?? [:],
                                                save: false, historyId: scheduleResult?.historyId, version: nil)),
                 hapticOnError: false, retryTransient: true)
             guard response.ok else { return nil }

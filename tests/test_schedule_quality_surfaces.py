@@ -95,7 +95,8 @@ def test_web_shows_the_points_an_edit_moved_the_score():
 def test_ios_shows_the_points_an_edit_moved_the_score():
     model = _swift("LaborViewModel.swift")
     i = model.index("private func performRescore(save: Bool) async")
-    assert "scoreDelta = Self.delta(" in model[i:i + 3000]
+    # The function grew the quality delta's merge (SCALE-29, 10/10/26).
+    assert "scoreDelta = Self.delta(" in model[i:i + 4500]
     assert "ScoreDeltaChip(delta:" in _swift("ShiftQualityPanel.swift")
 
 

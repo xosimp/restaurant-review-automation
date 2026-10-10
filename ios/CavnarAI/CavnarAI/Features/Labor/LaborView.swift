@@ -1086,7 +1086,8 @@ struct LaborView: View {
     /// Waiting on you card no longer repeats a kicker of its own).
     private var needsYouCount: Int {
         LaborWaitingOnYou.count(timeOff: viewModel.timeOff, shifts: setupViewModel.pendingRequests,
-                                draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil)
+                                draft: viewModel.draftCheck != nil, redo: viewModel.redoOffer != nil,
+                                followUps: viewModel.timeOffFollowUps.count)
             + (teamModel.needsYou ? 1 : 0)
     }
 

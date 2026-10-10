@@ -382,6 +382,9 @@ def test_every_field_the_phone_reads_and_the_server_sends_is_in_the_fixture(db, 
 # by this audit, 10/10/26).
 NOT_ON_A_FINISHED_POLL = {
     "error": "a failed job's answer",
+    # A run the owner stopped (schedule audit 10/10/26 ARCH-2): the job's
+    # error answer, never a finished poll's.
+    "stopped": "a stopped job's answer", "restored_history_id": "a stopped job's answer",
     "seconds_left": "a pending poll", "progress": "a pending poll",
     "published_at": "history detail", "published_by": "history detail", "republished_at": "history detail",
     "superseded_by": "history detail", "replaced_reason": "history detail", "what_if_json": "history detail",
