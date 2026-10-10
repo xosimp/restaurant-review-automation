@@ -112,17 +112,22 @@ def date_part_sales(restaurant_id, start, end, db_path=DB_PATH) -> dict:
     date's own split, from the first source that holds it (tickets, then
     intraday captures, then the nightly report's hourly split)."""
     try:
-        import schedule_economics as _econ
         conn = get_conn(db_path)
         try:
-            sources = (("tickets", _econ._ticket_days(conn, restaurant_id, _iso(start), _iso(end))),
-                       ("intraday", _econ._intraday_days(conn, restaurant_id, _iso(start), _iso(end))),
-                       ("dsr", _econ._dsr_days(conn, restaurant_id, _iso(start), _iso(end))))
+            return date_part_sales_conn(conn, restaurant_id, start, end)
         finally:
             conn.close()
     except Exception as e:
         print(f"[demand_drivers] daypart sales unreadable for {restaurant_id}: {e}")
         return {}
+
+
+def date_part_sales_conn(conn, restaurant_id, start, end) -> dict:
+    """date_part_sales on an open connection (a caller mid-transaction)."""
+    import schedule_economics as _econ
+    sources = (("tickets", _econ._ticket_days(conn, restaurant_id, _iso(start), _iso(end))),
+               ("intraday", _econ._intraday_days(conn, restaurant_id, _iso(start), _iso(end))),
+               ("dsr", _econ._dsr_days(conn, restaurant_id, _iso(start), _iso(end))))
     out = {}
     for name, by_date in sources:
         for d, hours in (by_date or {}).items():

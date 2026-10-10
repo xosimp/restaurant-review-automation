@@ -123,8 +123,11 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
     (shift_facts — a shift is the daypart its clock-in falls in, as a
     planned one is; the salaried don't clock in, so their planned shifts
     count as worked), the shifts missed, late, left early and run past their
-    end; sales (labor_daily_history's FINAL day, split by this restaurant's
-    MEASURED morning share — _morning_share), the DAY's labor % (`labor_pct`
+    end; sales (labor_daily_history's FINAL day, split by the date's OWN
+    sales — its tickets, intraday captures or nightly report hours,
+    demand_drivers.date_part_sales, split_basis 'measured' — else by the
+    weekday's median share, split_basis 'estimated', which no learner
+    reads: scheduler audit 10/10/26 LEARNING-11), the DAY's labor % (`labor_pct`
     — labor_daily_history's, the same on both rows: a day-level figure) and
     the DAYPART's (`labor_pct_daypart`, L-13: the punched hours priced at
     each punch's rate, split at the 3pm line the sales split at, over that
@@ -207,6 +210,21 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
                 e["people"].add(r["employee"])
             placed = _place_reviews(conn, restaurant_id, by, _tz)
             worked = actuals.week(w["week_start"], w["week_end"], rows)
+            # Each date split by its OWN sales — its tickets, else its
+            # intraday captures, else its nightly report's hours (scheduler
+            # audit 10/10/26 LEARNING-11): a brunch-event Sunday was booked
+            # 70% to dinner because Sundays usually are, and every daypart
+            # learner read that average as measured. The weekday's median
+            # share is the fallback, labelled "estimated" — never "measured",
+            # so no learner reads it.
+            try:
+                import demand_drivers as _ddr
+                _end = (datetime.strptime(str(w["week_end"])[:10], "%Y-%m-%d").date()
+                        + timedelta(days=1)).isoformat()
+                own_split = _ddr.date_part_sales_conn(conn, restaurant_id, w["week_start"], _end)
+            except Exception as _osx:
+                print(f"[outcomes] own daypart split unreadable for {restaurant_id}: {_osx}")
+                own_split = {}
             for (d, part), e in by.items():
                 day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? "
                                    f"AND date=? AND {FINAL_SQL}", (restaurant_id, d)).fetchone()
@@ -216,15 +234,23 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
                         wd = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
                     except ValueError:
                         wd = day["day_of_week"]
+                    mine = own_split.get(d) or {}
+                    tot = float(mine.get("morning") or 0) + float(mine.get("night") or 0)
                     s = share.get(wd)
-                    if s is None:
+                    if tot > 0:
+                        split_basis = "measured"
+                        own_s = float(mine.get("morning") or 0) / tot
+                        sales = round(float(day["sales"]) * (own_s if part == "morning" else 1 - own_s), 0)
+                    elif s is None:
                         split_basis = "unmeasured"
                     else:
-                        split_basis = "measured"
+                        split_basis = "estimated"
                         sales = round(float(day["sales"]) * (s if part == "morning" else 1 - s), 0)
                 a = worked.get((d, part)) or {}
                 labor_part = None
-                if sales and a.get("labor_cost") is not None:
+                # Only over the date's own split: an estimated one is no
+                # daypart labor % (LEARNING-11).
+                if sales and a.get("labor_cost") is not None and split_basis == "measured":
                     labor_part = round(a["labor_cost"] / float(sales) * 100.0, 1)
                 issues = issue_at.get((d, part), 0)
                 # Each review on the shift it was about (_place_reviews): the
