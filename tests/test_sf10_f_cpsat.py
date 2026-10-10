@@ -287,3 +287,43 @@ def test_improve_falls_back_to_the_backtracking_solver_without_cp_sat(monkeypatc
     monkeypatch.setattr(cs, "available", lambda: False)
     res = cs.improve(rows, {"roster_roles": roles}, signals=_sig(names, roles), constraints=c, max_seconds=2)
     assert res["stats"]["engine"] == "backtracking"
+
+
+# ── the quality gate solved exactly before any model call (LOGIC-26) ──────
+
+def _gate_week(lee_free):
+    names = ["Kim", "Lee", "Ana"]
+    roles = {n: "Server" for n in names}
+    c = cons(names, roles, role_floors={"Server": {"night": 2}},
+             open_times={sq._day_name(d): "11:00am" for d in WEEK},
+             close_times={sq._day_name(d): "10:00pm" for d in WEEK})
+    c.hours_limits["kim"] = (None, 30.0)
+    if not lee_free:
+        c.unavailable_days["lee"] = {"Tuesday"}
+    d = "2026-10-20"
+    rows = [row(x, "Kim", "Server", "9:00am", "3:00pm") for x in WEEK[:5]] + \
+        [row(d, "Ana", "Server", "4:00pm", "10:00pm")]
+    return names, roles, c, rows, d
+
+
+def test_the_gate_names_the_rules_in_the_way_when_no_legal_fix_exists():
+    import schedule_engine as se
+    names, roles, c, rows, d = _gate_week(lee_free=False)
+    assert any(v["kind"] == "coverage_floor" and v["date"] == d for v in sr.violations(rows, c))
+    got = cs.gate_exact(rows, c, [d], signals=_sig(names, roles))
+    assert not got["fixes"] and got["probed"] == 1
+    kinds = sorted(r["kind"] for r in got["conflicts"][0]["relax_one_of"])
+    assert kinds == ["availability", "floor", "max_hours"]
+    gate = {"dates": [d], "kinds": ["rules"]}
+    assert se._gate_settled_by_solver(gate, got)                    # no model rewrite is paid for
+    assert not se._gate_settled_by_solver(dict(gate, kinds=["rules", "coverage"]), got)
+
+
+def test_the_gate_takes_the_exact_fix_when_one_exists():
+    import schedule_engine as se
+    names, roles, c, rows, d = _gate_week(lee_free=True)
+    got = cs.gate_exact(rows, c, [d], signals=_sig(names, roles))
+    assert [r["employee"] for r in got["fixes"]] == ["Lee"] and not got["conflicts"]
+    assert not se._gate_settled_by_solver({"dates": [d], "kinds": ["rules"]}, got)
+    fixed = rows + got["fixes"]
+    assert not any(v["kind"] == "coverage_floor" and v["date"] == d for v in sr.violations(fixed, c))

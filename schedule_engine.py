@@ -8534,7 +8534,7 @@ def _gate_local(quality: dict, dates) -> float:
 EXPECTED_SCHEDULE_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
 
-def _gate_fill_answer(answer, restaurant_id, history_id, dates):
+def _gate_fill_answer(answer, restaurant_id, history_id, dates, extra_rows=None):
     """The model's answer (`answer`, copied as it came back) with the gate's
     dates written as the saved draft `history_id` now has them — what the
     gate's fill in code re-runs through the repair loop as a redo of those
@@ -8554,6 +8554,11 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates):
     body = [ln for ln in lines[1:] if ln.strip() and ln.split(",", 1)[0].strip().strip('"') in want]
     if not body:
         return None
+    # The shifts the exact solve of the gate's days found (LOGIC-26), with
+    # the person it chose — the loop then judges them like any row.
+    for r in extra_rows or []:
+        if r.get("date") in want and (r.get("employee") or "").strip():
+            body.append(_rows_to_csv_text([r]).split("\n", 1)[-1].strip())
     out = copy.deepcopy(answer)
     out["schedule_csv"] = (lines[0] or EXPECTED_SCHEDULE_HEADER) + "\n" + "\n".join(body)
     # The gate's dates as the draft has them, typed (ARCH-10): never the
@@ -8591,9 +8596,12 @@ def _record_gate_path(restaurant_id, path, dates) -> None:
     try:
         import ai_utils as _ai_gate
         _ai_gate.record_quality_event(
-            "labor_schedule", "gate_filled_in_code" if path == "code" else "gate_model_rewrite",
+            "labor_schedule", {"code": "gate_filled_in_code", "solver": "gate_explained_by_solver"}.get(
+                path, "gate_model_rewrite"),
             restaurant_id=restaurant_id, action="labor_schedule", n=len(dates or []) or 1,
-            detail=("quality gate settled in code: " if path == "code" else "quality gate sent to the model: ")
+            detail=({"code": "quality gate settled in code: ",
+                     "solver": "quality gate explained by the exact solve (no legal fix): "}.get(
+                         path, "quality gate sent to the model: "))
             + ", ".join(sorted(dates or [])))
     except Exception as e:
         print(f"[schedule] gate path not recorded: {e!r}")
@@ -8603,6 +8611,39 @@ def _record_gate_path(restaurant_id, path, dates) -> None:
 # model (parse, repair, score, save): it is expected to take as long as the
 # first pass's did, and never less than this (re-audit 10/7/26 #3).
 GATE_FILL_MIN_SECONDS = 30
+
+
+def _gate_exact(result, gate, restaurant_id):
+    """schedule_cpsat.gate_exact over the finished week for the gate's days
+    (LOGIC-26), or None when the CP-SAT engine is off or it failed."""
+    if assign_engine() != "cpsat":
+        return None
+    c = result.get("constraints")
+    rows = result.get("rows") or []
+    if c is None or not rows:
+        return None
+    try:
+        import schedule_cpsat as _cps_g
+        sig = {"roster": list(result.get("roster") or []), "roster_roles": dict(result.get("roster_roles") or {})}
+        try:
+            sig["overtime"] = _overtime_inputs(restaurant_id, c)
+        except Exception as e:
+            _soft_fail("overtime inputs", e, restaurant_id)
+        return _cps_g.gate_exact(rows, c, gate.get("dates") or [], signals=sig, viols=result.get("rule_violations"))
+    except Exception as e:
+        _soft_fail("solver-first draft", e, restaurant_id)
+        return None
+
+
+def _gate_settled_by_solver(gate, exact) -> bool:
+    """Whether the exact solve settles the gate with no model call: every
+    trigger is a hard rule (a stretch with no manager, a rule broken), each
+    was probed, none could be filled, and the conflicting rules are named."""
+    if not exact or exact.get("fixes") or exact.get("unprobed") or not exact.get("conflicts"):
+        return False
+    kinds = set(gate.get("kinds") or [])
+    return bool(kinds) and kinds <= {"manager", "rules"}
+
 
 
 def _gate_fill_seconds(result) -> float:
@@ -11491,6 +11532,27 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 _ops.finish_async_job(job_id, "done", _json_ready(_fb))
                 return
         _gate = _quality_gate(result) if gate else None
+        # The gate's days solved exactly before any model call (scheduler
+        # audit 10/10/26 LOGIC-26): a breach an added shift could answer is
+        # offered to the solver; where no legal arrangement exists, the
+        # smallest set of rules in the way is said and no rewrite is paid
+        # for — sampling the model again cannot change a conflict.
+        _exact = _gate_exact(result, _gate, restaurant_id) if (_gate and _history_id) else None
+        if _exact is not None:
+            _gate = dict(_gate, exact={k: _exact.get(k) for k in ("conflicts", "probed", "unprobed")},
+                         exact_fixes=list(_exact.get("fixes") or []))
+            if _gate_settled_by_solver(_gate, _exact):
+                print(f"[schedule] quality gate: {_gate['dates']} explained by the solver — no rewrite")
+                _record_gate_path(restaurant_id, "solver", _gate["dates"])
+                _run_gate(_gate, "explained")
+                _payload["gate"] = {"ran": True, "kept": "explained", "path": "solver",
+                                    "dates": list(_gate["dates"]), "conflicts": list(_exact["conflicts"])[:12],
+                                    "reason": "No legal arrangement of your team fixes "
+                                              + _dates_label(_gate["dates"])
+                                              + " with every rule as it stands — relax one of the rules named "
+                                                "and it can be filled."}
+                _ops.finish_async_job(job_id, "done", _json_ready(_payload))
+                return
         if _gate and clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS:
             # Not enough of the job's time left to rewrite the weak days and
             # check the rewrite (P-22): the draft stands as it is.
@@ -11506,8 +11568,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                 # usually changed nothing, and ate the minutes the escalated
                 # rewrite then found missing (GATE_MIN_MODEL_SECONDS).
                 _no_fill = _gate_fill_skip(result, clock)
+                if _no_fill == "converged" and _gate.get("exact_fixes"):
+                    # the exact solve found shifts the loop did not: the fill
+                    # takes them in before any rewrite (LOGIC-26)
+                    _no_fill = None
                 _fill_answer = None if _no_fill else \
-                    _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"])
+                    _gate_fill_answer(_gate_answer, restaurant_id, _history_id, _gate["dates"],
+                                      extra_rows=_gate.get("exact_fixes"))
                 if _no_fill:
                     print(f"[schedule] quality gate: no fill in code ({_no_fill}) — straight to the rewrite")
                     _gate = dict(_gate, fill={"tried": False, "skipped": _no_fill})

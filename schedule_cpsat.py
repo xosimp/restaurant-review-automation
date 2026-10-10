@@ -1461,6 +1461,97 @@ def _conflict_for_manager(prob, d, spans):
                     + "; ".join(r["text"] for r in relax[:6]) + ". Relax one of them."}
 
 
+# ── the quality gate, exactly (LOGIC-26) ────────────────────────────────────
+
+def _probe_row(c, v, rows):
+    """The shift that would put hard breach `v` right — a manager over the
+    unmanaged stretch, one more of the role over the floor's core window —
+    as a slot for the solver, or None for a breach no added shift answers."""
+    d = v.get("date")
+    if not d:
+        return None
+    day = sq._day_name(d)
+    kind = v.get("kind")
+    if kind == "no_manager":
+        gs, ge = v.get("gap_start"), v.get("gap_end")
+        if gs is None or ge is None or not (c.managers or c.acting_managers):
+            return None
+        roles = [r for r in (c.managers or {}).values() if r]
+        role = max(set(roles), key=roles.count) if roles else "Manager"
+        a, b = int(gs), int(ge)
+        if b - a < 60:
+            a = max(0, b - 60)
+        return {"date": d, "day": day, "employee": "", "role": role, "shift_start": _rules._fmt_minutes(a % 1440),
+                "shift_end": _rules._fmt_minutes(b % 1440), "scheduled_hours": "", "notes": "", "_floor": True,
+                "_probe": "manager"}
+    if kind == "coverage_floor":
+        part = v.get("daypart") or "night"
+        role = v.get("role") or v.get("floor_role") or ""
+        if not role:
+            return None
+        o, cl = _rules.open_hours(c, day)
+        win = sq.floor_window(part, o, cl)
+        if not win:
+            return None
+        return {"date": d, "day": day, "employee": "", "role": role, "shift_start": _rules._fmt_minutes(win[0] % 1440),
+                "shift_end": _rules._fmt_minutes(win[1] % 1440), "scheduled_hours": "", "notes": "", "_floor": True,
+                "_probe": "floor"}
+    return None
+
+
+def gate_exact(rows, constraints, dates, signals=None, weights=None, viols=None, max_seconds=8.0) -> dict:
+    """The quality gate's days solved exactly before any model call
+    (scheduler audit 10/10/26 LOGIC-26): for each hard breach on `dates` an
+    added shift could answer (a stretch with no manager, a floor short),
+    the shift is offered to the solver over the week as it stands. Filled:
+    it is a fix ({"fixes": [rows]}) the gate's code fill takes in. Not
+    filled: no legal arrangement of these people exists, and the smallest
+    set of the owner's rules in the way is said ({"conflicts": [...]}) —
+    a sampled rewrite by the model cannot change that, so none is paid
+    for. {"fixes", "conflicts", "probed", "unprobed"} — `unprobed` the
+    breaches no added shift answers (left to the fill and the rewrite)."""
+    out = {"fixes": [], "conflicts": [], "probed": 0, "unprobed": 0}
+    if not available() or constraints is None or not dates:
+        return out
+    want = set(dates)
+    viols = _rules.violations(rows, constraints) if viols is None else viols
+    probes, seen = [], set()
+    for v in viols:
+        if not v.get("hard") or v.get("date") not in want:
+            continue
+        key = (v.get("kind"), v.get("date"), v.get("daypart") or v.get("gap_start"), v.get("floor_role") or v.get("role"))
+        if key in seen:
+            continue
+        seen.add(key)
+        p = _probe_row(constraints, v, rows)
+        if p is None:
+            out["unprobed"] += 1
+            continue
+        p["scheduled_hours"] = _stime_hours(p, constraints)
+        probes.append(p)
+    if not probes:
+        return out
+    out["probed"] = len(probes)
+    kept = [dict(r, _pinned=True) for r in rows]
+    got = assign(kept + probes, constraints, signals=signals, weights=weights, only_dates=sorted(want),
+                 max_seconds=max_seconds, mode="draft", reasons=False, explain=True)
+    if got["status"] not in ("optimal", "time_limit"):
+        return out
+    for r in got["rows"][len(kept):]:
+        if (r.get("employee") or "").strip():
+            out["fixes"].append({k: v for k, v in r.items() if k not in ("_open", "_pinned", "_floor", "_probe")})
+    out["conflicts"] = list(got.get("conflicts") or [])
+    if got.get("unfilled") and not out["conflicts"]:
+        out["conflicts"] = [{"date": e["date"], "day": e["day"], "what": f"{e['day']} {e['role']}",
+                             "relax_one_of": [], "text": e["text"]} for e in got["unfilled"]]
+    return out
+
+
+def _stime_hours(row, c):
+    import schedule_time as _st
+    return _st.row_hours_text(row, getattr(c, "tz", None))
+
+
 # ── the repair loop's stage (replaces schedule_solver.improve when it can) ──
 
 def improve(rows, inputs=None, signals=None, weights=None, constraints=None, only_dates=None,
