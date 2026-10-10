@@ -704,9 +704,15 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
             from time_utils import restaurant_now
             day = restaurant_now(restaurant, naive=True).date()
         day = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
-        mon = day - _td(days=day.weekday())
-        c = Constraints(restaurant_id=restaurant.id, week_dates=[(mon + _td(days=i)).isoformat() for i in range(7)],
-                        week_days=list(DAYS))
+        # The restaurant's own week (restaurants.week_start_day, ARCH-24): a
+        # Monday-anchored week straddled two of Simple EJ's Wednesday weeks,
+        # so a one-week note rule never held for either.
+        wsd = int(getattr(restaurant, "week_start_day", 0) or 0) % 7
+        first = day - _td(days=(day.weekday() - wsd) % 7)
+        dates = [first + _td(days=i) for i in range(7)]
+        c = Constraints(restaurant_id=restaurant.id, week_dates=[d_.isoformat() for d_ in dates],
+                        week_days=[d_.strftime("%A") for d_ in dates])
+        c.week_start_day = wsd
         c.role_floors = json.loads(json.dumps(base))
         c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
         try:
@@ -1947,6 +1953,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         c.role_buffers = get_role_close_buffers(restaurant_id, db_path) or {}
     except Exception as exc:
         _input_problem(c, "open and close times", exc)
+    _unreadable_hours(c)
 
     # roster + per-person settings. One person at a time: a single try
     # around the whole loop meant one malformed setting (a time window that
@@ -2579,10 +2586,30 @@ INPUT_PROBLEM_WORDS = {
 }
 
 
+def _unreadable_hours(c: "Constraints") -> None:
+    """An opening or closing time on file that no reader can parse ("9",
+    "nine-ish") is named as an input problem — the close cap, nobody at
+    close, the closer rule and the manager window all silently dropped that
+    day (BUGSGEN-20). The writers normalise every time they save
+    (schedule_time.normalise_clock); this catches what was stored before."""
+    for which, times in (("opening", c.open_times), ("closing", c.close_times)):
+        for day, value in sorted((times or {}).items()):
+            if str(value or "").strip() and parse_minutes(value) is None:
+                c.input_problems.append({"source": "open and close times", "hours": {
+                    "day": str(day), "which": which, "value": str(value)[:20]},
+                    "error": f"unreadable {which} time for {day}"})
+
+
 def input_problem_text(p) -> str:
     """One line for a setting or source the rules could not read
     (Constraints.input_problems): a person's settings name the person and
-    where to fix them."""
+    where to fix them; an unreadable opening or closing time names the day
+    and the value."""
+    h = p.get("hours")
+    if isinstance(h, dict) and h.get("day"):
+        return (f"{h['day']}'s {h.get('which') or 'closing'} time \u201c{h.get('value')}\u201d isn't a time Cavnar AI "
+                f"can read, so the close rules weren't checked on {h['day']}s — set it on Account \u2192 Hours "
+                "(like 9:00pm)")
     if p.get("name"):
         return (f"Settings for {p['name']} couldn't be read — fix them in Team; this week wasn't checked against "
                 "their rules")

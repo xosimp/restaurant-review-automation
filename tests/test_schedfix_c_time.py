@@ -220,3 +220,57 @@ def test_certificates_and_crew_sales_read_the_restaurants_date(rid, monkeypatch)
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: _Conn())
     crew_matrix._shift_sales(rid)
     assert calls and calls[0][1] == (date(2026, 10, 9) - timedelta(days=7 * crew_matrix.SALES_WEEKS)).isoformat()
+
+
+# ── BUGSGEN-20: hours are written in the one spelling, an unreadable one said ─
+
+def test_an_unreadable_stored_time_is_named_and_holds_the_publish():
+    c = _c(close_times={"Friday": "9", "Saturday": "2:00am"}, open_times={"Friday": "noon"})
+    sr._unreadable_hours(c)
+    assert [p["hours"] for p in c.input_problems] == [{"day": "Friday", "which": "closing", "value": "9"}]
+    text = sr.input_problem_text(c.input_problems[0])
+    assert "Friday's closing time “9” isn't a time Cavnar AI can read" in text
+    # build_constraints reads them every time
+    assert "_unreadable_hours(c)" in inspect.getsource(sr.build_constraints)
+
+
+def test_the_admin_close_times_box_stores_the_one_spelling():
+    import admin_routes
+    got = admin_routes._settings_close_times({"close_times_json": '{"friday": "21:30", "Saturday": "2am"}'},
+                                             "close_times_json")
+    assert got == '{"Friday": "9:30pm", "Saturday": "2:00am"}'
+    with pytest.raises(admin_routes._SettingsError):
+        admin_routes._settings_close_times({"close_times_json": '{"Friday": "9"}'}, "close_times_json")
+
+
+def test_the_web_hours_grid_reads_a_twelve_hour_time():
+    import os
+    import re
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    page = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates",
+                             "dashboard.html"), encoding="utf-8").read()
+    fn = re.search(r"function cavTimeValue\(v\) \{.*?\n\}", page, re.S).group(0)
+    js = fn + ("\nconsole.log(JSON.stringify(['9:00pm','21:00','9:00am','12:00am','noon','9:30 p.m.','21:00:00','9','',"
+               "'24:00','13pm'].map(cavTimeValue)));")
+    out = subprocess.run(["node", "-"], input=js, capture_output=True, text=True, timeout=30).stdout.strip()
+    assert out == '["21:00","21:00","09:00","00:00","12:00","21:30","21:00","","","00:00",""]'
+
+
+# ── ARCH-24: the floors' week is the restaurant's own week ──────────────────
+
+def test_effective_floors_build_the_restaurants_own_week(monkeypatch):
+    import schedule_note_rules
+    import staff_settings
+    seen = {}
+    monkeypatch.setattr(schedule_note_rules, "apply_note_rules",
+                        lambda c, rid, db_path=None: seen.setdefault("dates", list(c.week_dates)))
+    monkeypatch.setattr(sr, "apply_owner_rules", lambda *a, **k: None)
+    monkeypatch.setattr(staff_settings, "roster", lambda *a, **k: [])
+
+    class _R:
+        id, role_floors_json, open_times_json, week_start_day = 1, None, None, 2       # Wednesday to Tuesday
+    sr.effective_role_floors(_R(), day=date(2026, 10, 12))                             # a Monday
+    assert seen["dates"][0] == "2026-10-07" and seen["dates"][-1] == "2026-10-13"

@@ -810,12 +810,17 @@ def _display(e, field="names") -> str:
     return max(d.items(), key=lambda kv: kv[1])[0] if d else ""
 
 
-def _week_of(iso) -> str:
+def _week_of(iso, start_day=0) -> str:
+    """The first date of the schedule week holding `iso` — the restaurant's
+    own week (restaurants.week_start_day, 0 = Monday; ARCH-24): a Wednesday-
+    to-Tuesday week read as two Monday weeks counted one published week of
+    evidence twice, and a redo's week_start (a Wednesday) never matched a
+    Monday key."""
     try:
         d = date.fromisoformat(str(iso)[:10])
     except ValueError:
         return ""
-    return (d - timedelta(days=d.weekday())).isoformat()
+    return (d - timedelta(days=(d.weekday() - int(start_day or 0) % 7) % 7)).isoformat()
 
 
 def _confidence(e, kind, ctx, habit=True) -> float:
@@ -1118,7 +1123,7 @@ def _learn_edges(ctx, kind) -> list:
             e = ev.setdefault((ctx.fam(role), _weekday(d), k), dict(_evidence(kind), ends=[]))
             hit = k in edge
             _note(e, d, w, hit, hand=hit and by_hand(k), person=name, role=role,
-                  start=m if hit else None, week=_week_of(d))
+                  start=m if hit else None, week=_week_of(d, ctx.week_start_day))
             if hit and end is not None:
                 e["ends"].append(_end_adj(m, end))
             if not hit and k in missed:
@@ -1228,7 +1233,7 @@ def _learn_sections(ctx) -> list:
         for sec in {s for _d, s, _n in entries}:
             e = _evidence("section")
             for d, s, name in entries:
-                _note(e, d, recency_weight(ctx.age(d), hl), s == sec, hand=True, person=name, week=_week_of(d))
+                _note(e, d, recency_weight(ctx.age(d), hl), s == sec, hand=True, person=name, week=_week_of(d, ctx.week_start_day))
             if not e["hits"]:
                 continue
             name = _display(e)
@@ -1418,7 +1423,7 @@ def _learn_overruns(ctx) -> list:
                 e = ev.setdefault((fam, _weekday(d), part), dict(_evidence("end_overrun"), over=[], ends=[]))
                 e["ends"].append(base)
                 hit = over >= STAYED_LATE_MINUTES
-                _note(e, d, recency_weight(ctx.age(d), hl), hit, role=(r.get("role") or "").strip(), week=_week_of(d))
+                _note(e, d, recency_weight(ctx.age(d), hl), hit, role=(r.get("role") or "").strip(), week=_week_of(d, ctx.week_start_day))
                 if hit:
                     e["over"].append(over)
                     observe(ctx.rid, "stayed_late", date=d, daypart=part, role=r.get("role"), person=r.get("employee"),
@@ -1630,7 +1635,7 @@ def _learn_pairs(ctx) -> list:
             groups += list(combinations(keys, 3))
         for g in groups:
             e = ev.setdefault(g, _evidence("pair"))
-            _note(e, d, w, good, week=_week_of(d))
+            _note(e, d, w, good, week=_week_of(d, ctx.week_start_day))
     stats = {}
     for g, e in ev.items():
         if e["opps"] < PAIR_MIN_SHARED:
@@ -1708,7 +1713,7 @@ def _learn_redos(ctx) -> list:
             continue
         chip = " ".join(str((o.get("value") or {}).get("reason") or "").split())[:40]
         by.setdefault((wd, chip.casefold()), {"chip": chip, "weeks": set()})["weeks"].add(
-            str(o.get("week_start") or _week_of(o.get("date")))[:10])
+            str(o.get("week_start") or _week_of(o.get("date"), ctx.week_start_day))[:10])
     out = []
     for (wd, ck), v in by.items():
         e = _evidence("redo_reason")

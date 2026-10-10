@@ -1263,9 +1263,13 @@ def _settings_close_times(data, key):
         if not name:
             raise _SettingsError(f"{_label(key)}: “{day}” isn't a day name. Use Sunday to Saturday.")
         text = str(value or "").strip()
-        if not _re.match(r"^\d{1,2}(:\d{2})?\s*([ap]\.?m\.?)?$", text, _re.I):
+        # Stored in the one spelling every reader parses (schedule_time,
+        # BUGSGEN-20); a bare "9" (morning or night?) is refused, not guessed.
+        import schedule_time as _stime_s
+        norm = _stime_s.normalise_clock(text) if len(text) <= 20 else None
+        if norm is None:
             raise _SettingsError(f"{_label(key)}: “{text}” for {name} isn't a time like 9:00pm or 21:00.")
-        out[name] = text
+        out[name] = norm
     return _json.dumps(out) if out else None
 
 
