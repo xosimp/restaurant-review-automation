@@ -1387,7 +1387,29 @@ def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_id
     _record reads it, oldest first. Unedited weeks are in: they are the
     evidence that the draft was kept (L-6). `history_ids` reads those weeks
     instead of a window; `include_unlooked` keeps the weeks nobody looked at
-    (flagged looked_at False)."""
+    (flagged looked_at False).
+
+    Replayed once per read_scope (scheduler audit 10/10/26, LEARNING-23): a
+    generation replayed 24 weeks of saved versions four to six times — the
+    patterns for the draft, the likely edits, the learned headcount on every
+    baseline, the edit predictor — and the nightly memory once per learner.
+    Inside a generation, the Studio's inputs build or one restaurant of a
+    nightly sweep, the first answer is kept and later callers get a copy."""
+    import copy as _copy_lw
+    key = ("learning_weeks", int(restaurant_id), int(weeks),
+           tuple(sorted(int(h) for h in history_ids if h)) if history_ids is not None else None,
+           bool(include_unlooked), str(today) if today else None, db_path)
+    store = _models_mod.read_scope_store()
+    if store is None:
+        return _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today)
+    if key in store:
+        return _copy_lw.deepcopy(store[key])
+    out = _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today)
+    store[key] = _copy_lw.deepcopy(out)
+    return out
+
+
+def _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today) -> list:
     data = _WeekData(restaurant_id, db_path=db_path, lookback_days=int(weeks) * 7, history_ids=history_ids)
     ids = list(history_ids) if history_ids is not None else data.finals()
     out = []

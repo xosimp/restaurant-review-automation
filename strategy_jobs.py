@@ -1638,7 +1638,7 @@ def run_labor_reminders(db_path=DB_PATH):
 
 
 def run_schedule_outcomes(db_path=DB_PATH):
-    """Monday: record what each published week actually did, by daypart
+    """Daily: record what each published week actually did, by daypart
     (schedule_intel.record_outcomes — the punches beside the plan, L-12),
     score each ended week as it ran beside its planned score
     (record_as_run_quality, L-29), and read every recommendation the manager
@@ -1646,9 +1646,20 @@ def run_schedule_outcomes(db_path=DB_PATH):
     (measure_recommendations_as_run, L-34) as well as the watched nights'
     issue share (measure_accepted_recommendations), for every Labor
     restaurant. A failing step is captured and counts the restaurant as
-    failed; the steps after it still run."""
+    failed; the steps after it still run.
+
+    Daily and incremental (scheduler audit 10/10/26, SCALE-15/16,
+    LEARNING-22): it ran on Mondays only, on one worker, re-reading twelve
+    weeks of outcomes and re-scoring the last four weeks as run every time —
+    about 1,000 small or 15 large restaurants a pass, the rest a week behind.
+    Now each week is read when its numbers are in and again only when they
+    change (`only_changed` — schedule_intel.week_fingerprint), on
+    OUTCOMES_WORKERS workers, every restaurant inside one read_scope (its
+    restaurant row, client_data and shift history read once for every week
+    it scores) with its observations written in one transaction."""
     import schedule_intel
     import scheduler as _sched
+    import models as _models_oc
     # Bounded and resumable (SCHED-27): a wall-clock bound and a cursor, so a
     # pass that runs out of time is picked up where it stopped instead of
     # starving the same tail every Monday. The prefix cursor and the bound
@@ -1659,10 +1670,16 @@ def run_schedule_outcomes(db_path=DB_PATH):
     lock = threading.Lock()
 
     def _one(rid):
+        with _models_oc.read_scope():
+            _one_scoped(rid)
+
+    def _one_scoped(rid):
         with lock:
             tally["attempted"] += 1
         try:
-            written["n"] += schedule_intel.record_outcomes(rid, db_path=db_path).get("written", 0)
+            got = schedule_intel.record_outcomes(rid, db_path=db_path, only_changed=True).get("written", 0)
+            with lock:
+                written["n"] += got
         except Exception:
             with lock:
                 tally["failed"] += 1
@@ -1671,7 +1688,8 @@ def run_schedule_outcomes(db_path=DB_PATH):
         # The ended weeks as they ran, then each carried-out recommendation
         # read against them (rec_ledger outcome), now that the nights are
         # recorded — each on its own, a failure captured and counted.
-        for step, fn in (("as_run_quality", schedule_intel.record_as_run_quality),
+        for step, fn in (("as_run_quality", lambda r, db_path: schedule_intel.record_as_run_quality(
+                             r, db_path=db_path, only_changed=True)),
                          ("as_run_recommendations", schedule_intel.measure_recommendations_as_run),
                          ("accepted_recommendations", schedule_intel.measure_accepted_recommendations)):
             try:
@@ -1685,13 +1703,17 @@ def run_schedule_outcomes(db_path=DB_PATH):
                 tally["failed"] += 1
 
     _done, ran_out = _sched.resumable_sweep(OUTCOMES_CURSOR_KEY, sorted(by_id), _one, OUTCOMES_MAX_SECONDS,
-                                            workers=1, job="schedule_outcomes")
+                                            workers=OUTCOMES_WORKERS, job="schedule_outcomes")
     return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
                    hit_bound=ran_out, rows=written["n"])
 
 
 OUTCOMES_CURSOR_KEY = "schedule_outcomes_cursor"
 OUTCOMES_MAX_SECONDS = 20 * 60
+# Restaurants read at once (SCALE-15): each is a run of reads and one write
+# transaction per step, so two share the single SQLite writer without
+# waiting on each other for long.
+OUTCOMES_WORKERS = 2
 
 
 def run_schedule_memory(db_path=DB_PATH):
@@ -1711,6 +1733,13 @@ def run_schedule_memory(db_path=DB_PATH):
     lock = threading.Lock()
 
     def _one(rid):
+        # One read of the restaurant, its client_data and its shift history
+        # for everything the consolidate reads (SCALE-6, LEARNING-22).
+        import models as _models_mem
+        with _models_mem.read_scope():
+            _one_scoped(rid)
+
+    def _one_scoped(rid):
         with lock:
             tally["attempted"] += 1
         try:
@@ -1727,7 +1756,7 @@ def run_schedule_memory(db_path=DB_PATH):
             tally["memories"] += int(s.get("created") or 0) + int(s.get("updated") or 0)
 
     _done, ran_out = _sched.resumable_sweep(MEMORY_CURSOR_KEY, sorted(by_id), _one, MEMORY_MAX_SECONDS,
-                                            workers=1, job="schedule_memory")
+                                            workers=MEMORY_WORKERS, job="schedule_memory")
     if ran_out:
         import ops
         ops.capture(RuntimeError(f"schedule_memory stopped at its {MEMORY_MAX_SECONDS}s bound; the rest lead "
@@ -1738,6 +1767,7 @@ def run_schedule_memory(db_path=DB_PATH):
 
 MEMORY_CURSOR_KEY = "schedule_memory_cursor"
 MEMORY_MAX_SECONDS = 20 * 60
+MEMORY_WORKERS = 2
 
 
 def run_people_nightly(db_path=DB_PATH, today=None):

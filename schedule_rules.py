@@ -1959,6 +1959,12 @@ def role_for_daypart(name, daypart, roles, families=None):
     return mine[0] if len(mine) == 1 else None
 
 
+def _in_read_scope(fn):
+    import models as _m_rs
+    return _m_rs.in_read_scope(fn)
+
+
+@_in_read_scope
 def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_path=DB_PATH) -> Constraints:
     """Everything the pipeline needs to know about who can work when,
     gathered once. Every source is optional; a missing one costs a rule,

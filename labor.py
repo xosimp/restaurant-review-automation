@@ -318,6 +318,20 @@ def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False,
     "$12,630/mo" gap into their Home and weekly email as their own figures.
     """
     if client_data is _UNREAD:
+        import models as _m_scope
+        store = _m_scope.read_scope_store()
+        if store is not None:
+            # One parse per read_scope (a generation, an inputs build, one
+            # restaurant of a sweep — scheduler audit 10/10/26, SCALE-6): an
+            # inputs build parsed the whole history about 25 times. Shared
+            # like the request's _cached_shifts: read-only by convention.
+            key = ("shifts", int(restaurant_id))
+            if key not in store:
+                cd = _m_scope.get_client_data(restaurant_id)
+                store[key] = load_shifts(csv_string=cd["shifts_csv"]) if cd and cd.get("shifts_csv") else []
+            if store[key]:
+                return store[key]
+            return load_shifts() if allow_sample else []
         from models import get_client_data
         client_data = get_client_data(restaurant_id)
     data = client_data

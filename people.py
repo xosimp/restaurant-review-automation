@@ -2099,6 +2099,10 @@ def _write_shifts_csv(conn, rid, rows):
     w.writeheader()
     w.writerows(rows)
     conn.execute("UPDATE client_data SET shifts_csv=? WHERE restaurant_id=?", (buf.getvalue(), rid))
+    # A read memo (models.read_scope, the request's shift cache) must not
+    # hand back the history this just rewrote.
+    import models as _models_inv
+    _models_inv._invalidate_shift_reads(rid)
 
 
 def _rename_in(conn, idx, pid, new_name, source="rename", actor_user_id=None):

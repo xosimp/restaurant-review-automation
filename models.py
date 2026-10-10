@@ -5541,6 +5541,82 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     return deleted
 
 
+import contextvars as _ctxvars_rs
+import contextlib as _ctxlib_rs
+
+# One unit of work's read memo outside a Flask request (scheduler audit
+# 10/10/26, SCALE-6 / SCALE-7): a generation, the Studio's inputs build, one
+# restaurant of the outcomes or memory sweep. The request memo below only
+# worked inside a request, so the generation pool, every scheduler job and the
+# as-run scoring re-read the restaurant row ~20 times, the client_data row (the
+# whole shift-history blob) ~12 times and re-parsed the shift history ~25
+# times per inputs build — 29 s for a 250-person restaurant with three years
+# of history, 1.5-3.5 s of it even inside a request.
+_READ_SCOPE = _ctxvars_rs.ContextVar("cavnar_read_scope", default=None)
+
+
+class _ReadScope(dict):
+    """A read_scope's store; `restaurant_rows` says whether get_restaurant
+    is memoised in it."""
+    __slots__ = ("restaurant_rows",)
+
+
+@_ctxlib_rs.contextmanager
+def read_scope(restaurant_rows=True):
+    """Memoise reads for the length of the block: get_restaurant (unless
+    `restaurant_rows` is False), get_client_data, the parsed shift history
+    (_cached_shifts and labor.load_shifts_for_restaurant) and the reads a
+    caller stores through scope_read. A nested block shares the outer one's
+    store (and its rule). Scoped to ONE unit of work — never a whole job
+    loop, which must see a restaurant's row change under it (the reason the
+    request memo is request-only). A write through update_restaurant /
+    save_client_data drops what it changed. A generation's scope keeps the
+    restaurant row live (restaurant_rows=False): it runs for minutes, and
+    the rules it re-reads after the model call must see a setting the owner
+    changed meanwhile (P-41)."""
+    store = _READ_SCOPE.get()
+    if store is not None:
+        yield store
+        return
+    store = _ReadScope()
+    store.restaurant_rows = bool(restaurant_rows)
+    token = _READ_SCOPE.set(store)
+    try:
+        yield store
+    finally:
+        _READ_SCOPE.reset(token)
+
+
+def read_scope_store():
+    """The active read_scope's store, or None."""
+    return _READ_SCOPE.get()
+
+
+def in_read_scope(fn):
+    """Run `fn` inside a read_scope (sharing an open one): an inputs build —
+    build_constraints, quality_inputs_from_db, _quality_signals — reads the
+    restaurant, its client_data row and its shift history once, wherever it
+    is called from (SCALE-6)."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with read_scope():
+            return fn(*a, **k)
+    return run
+
+
+def scope_read(key, fn):
+    """fn() once per read_scope for `key`; outside one simply fn(). A read
+    that raises is not stored."""
+    store = _READ_SCOPE.get()
+    if store is None:
+        return fn()
+    if key not in store:
+        store[key] = fn()
+    return store[key]
+
+
 def _request_cache():
     """This request's read memo, or None when there is no request.
 
@@ -5558,7 +5634,9 @@ def _request_cache():
     try:
         from flask import g, has_app_context
         if not has_app_context():
-            return None
+            # Outside a request, the unit of work's read_scope (SCALE-6),
+            # when one is open — else uncached, as before.
+            return _restaurant_scope()
         cache = getattr(g, "_cavnar_read_cache", None)
         if cache is None:
             cache = {}
@@ -5566,7 +5644,34 @@ def _request_cache():
         return cache
     except Exception:
         # No Flask, or a context torn down mid-call. Uncached is always correct.
-        return None
+        return _restaurant_scope()
+
+
+def _restaurant_scope():
+    store = _READ_SCOPE.get()
+    return store if store is not None and getattr(store, "restaurant_rows", True) else None
+
+
+def _invalidate_shift_reads(restaurant_id) -> None:
+    """Drop the memoised client_data row and parsed shift history of one
+    restaurant (a write to client_data), in the request and the read_scope."""
+    try:
+        rid = int(restaurant_id)
+    except (TypeError, ValueError):
+        return
+    store = _READ_SCOPE.get()
+    if store is not None:
+        for key in [k for k in store if isinstance(k, tuple) and len(k) > 1
+                    and k[0] in ("client_data", "shifts") and k[1] == rid]:
+            store.pop(key, None)
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            cache = getattr(g, "_shift_cache", None)
+            if cache is not None:
+                cache.pop(rid, None)
+    except Exception:
+        pass
 
 
 def _invalidate_request_cache(restaurant_id=None):
@@ -5580,14 +5685,13 @@ def _invalidate_request_cache(restaurant_id=None):
         _ai_memo.invalidate_budget_memo(int(restaurant_id) if restaurant_id is not None else None)
     except Exception:
         pass
-    cache = _request_cache()
-    if cache is None:
-        return
-    if restaurant_id is None:
-        cache.clear()
-        return
-    for key in [k for k in cache if k[0] == "restaurant" and k[1] == int(restaurant_id)]:
-        cache.pop(key, None)
+    for cache in {id(c): c for c in (_request_cache(), _READ_SCOPE.get()) if c is not None}.values():
+        if restaurant_id is None:
+            cache.clear()
+            continue
+        for key in [k for k in cache if isinstance(k, tuple) and len(k) > 1 and k[0] == "restaurant"
+                    and k[1] == int(restaurant_id)]:
+            cache.pop(key, None)
 
 
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:
@@ -9562,6 +9666,8 @@ def _cached_shifts(restaurant_id: int) -> list:
     try:
         from flask import g, has_request_context
         if not has_request_context():
+            # A generation, a job's restaurant, an inputs build: its
+            # read_scope's one parse (SCALE-6), else a plain load.
             return load_shifts_for_restaurant(restaurant_id) or []
         cache = getattr(g, "_shift_cache", None)
         if cache is None:
@@ -10376,6 +10482,7 @@ def save_client_data(restaurant_id: int, data_type: str,
         """, (restaurant_id, csv_content, source))
     conn.commit()
     conn.close()
+    _invalidate_shift_reads(restaurant_id)
 
     # A shifts upload is a rolling window; remember each name's first date
     # and most shifts ever counted so tenure survives the window rolling on.
@@ -10401,14 +10508,28 @@ def save_client_data(restaurant_id: int, data_type: str,
 
 def get_client_data(restaurant_id: int,
                     db_path: str = DB_PATH) -> Optional[dict]:
-    """Get client's CSV data. Returns None if not set."""
+    """Get client's CSV data. Returns None if not set.
+
+    Read once per read_scope (SCALE-7): the row carries the whole shift
+    history, and one inputs build read it a dozen times. Each caller gets
+    its own dict (the values are shared, and strings). Never memoised in a
+    request: several routes write client_data with their own SQL."""
+    store = _READ_SCOPE.get()
+    key = ("client_data", int(restaurant_id), db_path) if store is not None else None
+    if key is not None and key in store:
+        hit = store[key]
+        return dict(hit) if hit is not None else None
     conn = get_conn(db_path)
     row = conn.execute(
         "SELECT * FROM client_data WHERE restaurant_id=?",
         (restaurant_id,)
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    out = dict(row) if row else None
+    if key is not None:
+        store[key] = out
+        return dict(out) if out is not None else None
+    return out
 
 
 def reset_user_password(user_id: int, new_password: str,

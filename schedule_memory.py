@@ -413,6 +413,67 @@ def _norm(value, allowed, default):
     return v if v in allowed else default
 
 
+_OBSERVE_SQL = (
+    "INSERT INTO schedule_observations (restaurant_id, kind, history_id, week_start, date, daypart, role, "
+    "person, person_id, value_json, origin, phase, authority, editor, source, fact_key) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, fact_key) DO UPDATE SET "
+    "value_json=excluded.value_json, history_id=COALESCE(excluded.history_id, history_id), "
+    "week_start=COALESCE(excluded.week_start, week_start), role=COALESCE(excluded.role, role), "
+    "person=COALESCE(excluded.person, person), origin=excluded.origin, phase=excluded.phase, "
+    "authority=excluded.authority, source=COALESCE(excluded.source, source), "
+    "updated_at=datetime('now')")
+
+import contextlib as _contextlib_obs
+import contextvars as _contextvars_obs
+
+# Observations held for one transaction (observe_batch — scheduler audit
+# 10/10/26, SCALE-26): {restaurant_id, db_path, rows}.
+_OBS_BATCH = _contextvars_obs.ContextVar("schedule_observe_batch", default=None)
+
+
+@_contextlib_obs.contextmanager
+def observe_batch(restaurant_id, db_path=None):
+    """Every observe() of `restaurant_id` inside the block is written in ONE
+    transaction when it ends (executemany) instead of a connection, an
+    upsert and a commit per fact: the outcomes job wrote about 116 single-row
+    commits per restaurant, each taking the write lock (SCALE-26). Never
+    raises into the caller's work: a batch that cannot be written is
+    captured, as one observe() would be. A nested block joins the outer one;
+    an observe of another restaurant or database inside it writes at once."""
+    outer = _OBS_BATCH.get()
+    if outer is not None:
+        yield outer
+        return
+    batch = {"restaurant_id": restaurant_id, "db_path": db_path, "rows": []}
+    token = _OBS_BATCH.set(batch)
+    try:
+        yield batch
+    finally:
+        _OBS_BATCH.reset(token)
+        _flush_observations(batch)
+
+
+def _flush_observations(batch) -> int:
+    rows = batch.get("rows") or []
+    if not rows:
+        return 0
+    try:
+        conn = get_conn(batch.get("db_path"))
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.executemany(_OBSERVE_SQL, rows)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    except Exception as e:
+        _capture(e, f"observe batch of {len(rows)}", batch.get("restaurant_id"))
+        return 0
+    return len(rows)
+
+
 def observe(restaurant_id, kind, *, week_start=None, date=None, daypart=None, role=None, person=None,
             value=None, origin="manager", phase="pre_publish", authority="principal", editor=None,
             source=None, history_id=None, db_path=None, fact_key=None, person_id=None):
@@ -422,7 +483,8 @@ def observe(restaurant_id, kind, *, week_start=None, date=None, daypart=None, ro
     An event (an edit, a redo, a publish) is appended; a MEASURED fact passes
     `fact_key` — the same fact recorded again (the outcomes job re-reads the
     last weeks, the nightly join the last seven nights) replaces its value
-    instead of adding a row. Returns the row id."""
+    instead of adding a row. Returns the row id — None inside an
+    observe_batch, whose rows are written together when it ends."""
     try:
         k = str(kind or "").strip()[:40]
         if not restaurant_id or not k:
@@ -437,17 +499,13 @@ def observe(restaurant_id, kind, *, week_start=None, date=None, daypart=None, ro
                   _norm(authority, AUTHORITIES, "principal"),
                   (str(editor)[:120] or None) if editor else None, (str(source)[:60] or None) if source else None,
                   (str(fact_key)[:300] or None) if fact_key else None)
+        batch = _OBS_BATCH.get()
+        if batch is not None and batch["restaurant_id"] == restaurant_id and (batch["db_path"] or None) == (db_path or None):
+            batch["rows"].append(values)
+            return None
         conn = get_conn(db_path)
         try:
-            cur = conn.execute(
-                "INSERT INTO schedule_observations (restaurant_id, kind, history_id, week_start, date, daypart, role, "
-                "person, person_id, value_json, origin, phase, authority, editor, source, fact_key) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, fact_key) DO UPDATE SET "
-                "value_json=excluded.value_json, history_id=COALESCE(excluded.history_id, history_id), "
-                "week_start=COALESCE(excluded.week_start, week_start), role=COALESCE(excluded.role, role), "
-                "person=COALESCE(excluded.person, person), origin=excluded.origin, phase=excluded.phase, "
-                "authority=excluded.authority, source=COALESCE(excluded.source, source), "
-                "updated_at=datetime('now')", values)
+            cur = conn.execute(_OBSERVE_SQL, values)
             conn.commit()
             return cur.lastrowid
         finally:

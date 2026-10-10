@@ -703,8 +703,14 @@ def frozen_inputs():
         return
     store = {"reads": {}, "failed": []}
     token = _FROZEN.set(store)
+    # And one read of the client_data row and one parse of the shift history
+    # for the whole generation (models.read_scope — scheduler audit 10/10/26,
+    # SCALE-6): every stage re-parsed it, ~25 times per inputs build. The
+    # restaurant row stays live (restaurant_rows=False, P-41).
+    import models as _m_frozen
     try:
-        yield store
+        with _m_frozen.read_scope(restaurant_rows=False):
+            yield store
     finally:
         _FROZEN.reset(token)
 
@@ -5411,6 +5417,12 @@ def _merge_date_demand(restaurant_id, dates, signals_by_date: dict, weather=None
     return holiday, dd
 
 
+def _in_read_scope(fn):
+    import models as _m_rs
+    return _m_rs.in_read_scope(fn)
+
+
+@_in_read_scope
 def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=None):
     """Rebuild the engine's inputs for a schedule nobody just generated.
 
@@ -5923,6 +5935,7 @@ def _overtime_inputs(restaurant_id, c, rules=None) -> dict:
             "rates": rates, "default_rate": default, "rules": rules or {}}
 
 
+@_in_read_scope
 def _quality_signals(restaurant_id, result, **extra):
     """Every signal the Shift Quality Engine reads, gathered in one place.
 
@@ -6494,12 +6507,16 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     hit = _studio_cache.get(key)
     if hit is not None and not fresh and now - hit["built"] < STUDIO_CACHE_SECONDS:
         return hit
-    inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
-    c = inputs.get("constraints")
-    if c is not None and inputs.get("roster"):
-        c.active = {c.key(n) for n in inputs["roster"] if c.key(n)}
-        c.roster_names = list(inputs["roster"])
-    signals, weights = _quality_signals(restaurant_id, inputs)
+    import models as _m_studio
+    # One read of everything the build reads, shared by the inputs and the
+    # signals (SCALE-6/SCALE-8).
+    with _m_studio.read_scope():
+        inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
+        c = inputs.get("constraints")
+        if c is not None and inputs.get("roster"):
+            c.active = {c.key(n) for n in inputs["roster"] if c.key(n)}
+            c.roster_names = list(inputs["roster"])
+        signals, weights = _quality_signals(restaurant_id, inputs)
     import threading as _threading
     # One editor's drag at a time per week: the kept scorer re-points its
     # kept shifts at each call's week, so two at once would read each

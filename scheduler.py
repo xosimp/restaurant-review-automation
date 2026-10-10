@@ -5686,8 +5686,11 @@ def scheduler_loop():
                 from strategy_jobs import run_quality_calibration
                 _ops.run_job("quality_calibration", run_quality_calibration)
 
-            # Monday 4am — what each published week actually did, by daypart.
-            if _due(now, 4) and now.weekday() == 0 and _ops.claim_period("schedule_outcomes", str(today)):
+            # 4am daily — what each published week actually did, by daypart,
+            # each ended week read when its numbers are in and again only
+            # when they change (scheduler audit 10/10/26, SCALE-15: Mondays
+            # only, the tail a week behind).
+            if _due(now, 4) and _ops.claim_period("schedule_outcomes", str(today)):
                 from strategy_jobs import run_schedule_outcomes
                 _ops.run_job("schedule_outcomes", run_schedule_outcomes)
 
