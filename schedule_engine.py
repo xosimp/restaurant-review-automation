@@ -6719,6 +6719,24 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     return entry
 
 
+def in_restaurant_dayparts(fn):
+    """Run `fn(restaurant_id, ...)` inside that restaurant's own lunch/dinner
+    boundary (restaurants.daypart_boundary — schedule_time.daypart_scope,
+    ARCH-12): the score and the publish gate read the dayparts the
+    generation did."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(restaurant_id, *a, **k):
+        split = _restaurant_split(restaurant_id)
+        if split is None or split == _stime.daypart_split():
+            return fn(restaurant_id, *a, **k)
+        with _stime.daypart_scope(split):
+            return fn(restaurant_id, *a, **k)
+    return wrapper
+
+
+@in_restaurant_dayparts
 def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=None, frozen=None, **extra):
     """Score the finished schedule, then see whether a better one existed.
 

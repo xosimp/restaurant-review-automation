@@ -1153,6 +1153,10 @@ class Constraints:
     # read, which the review names.
     role_windows: dict = field(default_factory=dict)
     role_caps: dict = field(default_factory=dict)
+    # The restaurant's own lunch/dinner boundary in minutes (restaurants.
+    # daypart_boundary — schedule_time, ARCH-12), or None for 3:00pm: every
+    # sweep of this week reads its dayparts inside it (violations).
+    daypart_split: int = None
     hours_rules: list = field(default_factory=list)
     hours_rules_unchecked: list = field(default_factory=list)
 
@@ -1950,6 +1954,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _input_problem(c, "compliance rules", exc)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
+    c.daypart_split = _stime.restaurant_split(restaurant)
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
@@ -3890,6 +3895,19 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
 
 def violations(rows: list, c: Constraints, person_only: bool = False, day_only: bool = False,
                context=()) -> list:
+    """The rule sweep (_violations), read inside the restaurant's own
+    lunch/dinner boundary (Constraints.daypart_split — schedule_time.
+    daypart_scope, ARCH-12) wherever it runs: the generation, a Studio save,
+    the publish gate, a swap."""
+    split = getattr(c, "daypart_split", None)
+    if split is not None and split != _stime.daypart_split():
+        with _stime.daypart_scope(split):
+            return _violations(rows, c, person_only=person_only, day_only=day_only, context=context)
+    return _violations(rows, c, person_only=person_only, day_only=day_only, context=context)
+
+
+def _violations(rows: list, c: Constraints, person_only: bool = False, day_only: bool = False,
+                context=()) -> list:
     """Every rule the finished week breaks, one entry per breach, each
     naming the person, the date, the rule and whether it is hard (the row
     cannot stand) or soft (worth a look). `person_only` keeps to the rules

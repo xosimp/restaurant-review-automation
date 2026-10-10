@@ -386,6 +386,10 @@ class Restaurant:
     section_count: Optional[int]         = None
     foh_sections_json: Optional[str]     = None   # ["Patio","Bar","Section 3"] — names for shift_sections (V12)
     daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
+    # Where lunch ends and dinner starts for a shift that covers neither
+    # core service window ("4:00pm"; NULL = 3:00pm) — schedule_time's
+    # daypart boundary (schedule audit 10/10/26 ARCH-12).
+    daypart_boundary: Optional[str]      = None
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
     # Minimum combined Operational Score per role on a shift, e.g.
@@ -1357,6 +1361,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_close_buffer_json", "TEXT"),
         ("restaurants", "section_count", "INTEGER"),
         ("restaurants", "daypart_split", "TEXT"),
+        ("restaurants", "daypart_boundary", "TEXT"),
         ("restaurants", "delivery_pct", "INTEGER"),
         ("restaurants", "role_minimums_json", "TEXT"),
         # Operational Score — see staff_capabilities and shift_strength().
@@ -4993,7 +4998,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
-        "section_count","foh_sections_json","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
+        "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at", "aivis_city_json",
         "alert_hold_during_service", "preshift_nudge_hour",
@@ -5853,6 +5858,7 @@ def _restaurant_from_row(row) -> Restaurant:
         section_count=row["section_count"]           if "section_count" in row.keys() else None,
         foh_sections_json=row["foh_sections_json"]   if "foh_sections_json" in row.keys() else None,
         daypart_split=row["daypart_split"]            if "daypart_split" in row.keys() else None,
+        daypart_boundary=row["daypart_boundary"]      if "daypart_boundary" in row.keys() else None,
         delivery_pct=row["delivery_pct"]              if "delivery_pct" in row.keys() else None,
         role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
         role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,

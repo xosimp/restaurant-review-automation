@@ -276,6 +276,44 @@ def test_the_no_show_watch_places_a_baker_and_a_porter_as_the_rules_do():
     assert "_stime.start_of(" in src and "start.hour < BUSINESS_DAY_START_HOUR" not in src
 
 
+# ── ARCH-12: the restaurant's own lunch/dinner boundary ─────────────────────
+
+def test_the_restaurants_boundary_is_stored_read_and_in_force(rid, db_path):
+    import admin_routes
+    import schedule_engine as se
+    assert admin_routes._settings_daypart_boundary({"daypart_boundary": "16:00"}, "daypart_boundary") == "4:00pm"
+    assert admin_routes._settings_daypart_boundary({"daypart_boundary": ""}, "daypart_boundary") is None
+    with pytest.raises(admin_routes._SettingsError):
+        admin_routes._settings_daypart_boundary({"daypart_boundary": "9:00am"}, "daypart_boundary")
+    models.update_restaurant(rid, {"daypart_boundary": "4:00pm"}, db_path=db_path)
+    r = models.get_restaurant(rid, db_path)
+    assert r.daypart_boundary == "4:00pm" and st.restaurant_split(r) == 16 * 60
+    # the generation reads it for every daypart question it asks
+    with se.generation_scope("bnd-job", restaurant_id=rid):
+        assert st.daypart_split() == 16 * 60
+        assert sq.daypart_of("3:30pm") == "morning"
+    assert st.daypart_split() == st.DAYPART_SPLIT
+    # and so does every sweep of the week, wherever it runs
+    c = sr.build_constraints(rid, HALLOWEEN_WEEK, list(sr.DAYS), r, db_path=db_path)
+    assert c.daypart_split == 16 * 60
+    seen = []
+    real = sr._violations
+
+    def spy(rows, c_, **k):
+        seen.append(st.daypart_split())
+        return real(rows, c_, **k)
+    import schedule_rules
+    old, schedule_rules._violations = schedule_rules._violations, spy
+    try:
+        sr.violations([], c)
+    finally:
+        schedule_rules._violations = old
+    assert seen == [16 * 60]
+    import client_api
+    assert client_api.publish_review.__wrapped__ is not None
+    assert se._score_schedule_quality.__wrapped__ is not None
+
+
 # ── ARCH-24: the floors' week is the restaurant's own week ──────────────────
 
 def test_effective_floors_build_the_restaurants_own_week(monkeypatch):

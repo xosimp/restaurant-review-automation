@@ -12000,6 +12000,18 @@ def _live_week(restaurant_id, week_start, not_id):
         conn.close()
 
 
+def _in_restaurant_dayparts(fn):
+    """schedule_engine.in_restaurant_dayparts, read at call time."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        import schedule_engine as _se_dp
+        return _se_dp.in_restaurant_dayparts(fn)(*a, **k)
+    return wrapper
+
+
+@_in_restaurant_dayparts
 def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
     """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
     "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the

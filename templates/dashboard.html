@@ -26861,10 +26861,24 @@ function ssLoadAdvanced() {
     var h = '<div class="rul-sw" style="border-top:0"><label class="ac-switch"><input type="checkbox" id="ssa-trim"' + (d.trim_to_budget ? ' checked' : '') + (ro ? ' disabled' : '') + '><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the PAR hours, Cavnar AI removes the lowest-value shifts until it fits. Off leaves the overage on the draft for you to see.</small></div></div>'
       + '<div class="rul-sw"><div class="t"><label for="ssa-cut">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="ssa-cut" min="1" max="' + cutMax + '" step="1" value="' + _escAttr(String(cutN)) + '"' + (ro ? ' disabled' : '') + '>people<small>For any role without its own floor: no trim or send-home suggestion leaves fewer than this on.</small></div></div>'
       + '<div class="rul-sw"><div class="t"><label for="ssa-sections">Dining sections</label><input type="number" class="ac-input ac-num n" id="ssa-sections" min="1" max="30" step="1" placeholder="—" value="' + (d.section_count ? _escAttr(String(d.section_count)) : '') + '"' + (ro ? ' disabled' : '') + '><small>The most front-of-house people the draft puts on the floor at once. Blank is no cap.</small></div></div>'
+      + '<div class="rul-sw"><div class="t"><label for="ssa-boundary">Lunch ends at</label><select class="ac-select" id="ssa-boundary"' + (ro ? ' disabled' : '') + '>' + _ssaBoundaryOptions(d.daypart_boundary) + '</select><small>A shift that covers neither lunch nor dinner service counts as lunch if it starts before this, dinner from it.</small></div></div>'
       + '<span class="ac-status" id="ssa-status"></span>'
       + (ro ? '<div class="sw-note">Only the account owner can change these.</div>' : '');
     el.innerHTML = h;
   }).catch(function () { el.innerHTML = '<div class="sw-note">These settings could not load.</div>'; });
+}
+// Where lunch ends and dinner starts (restaurants.daypart_boundary,
+// schedule_time - ARCH-12): 12:00pm to 6:00pm on the half hour; the first
+// option is the default, 3:00pm, stored as blank.
+function _ssaBoundaryOptions(value) {
+  var cur = cavTimeValue(value || ''), h = '<option value="">3:00pm (default)</option>', m, hh, mm, v;
+  for (m = 12 * 60; m <= 18 * 60; m += 30) {
+    if (m === 15 * 60) continue;
+    hh = Math.floor(m / 60); mm = m % 60;
+    v = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+    h += '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + cavTimeLabel(v) + '</option>';
+  }
+  return h;
 }
 // One save at a time per field, the latest value last, and the Labor rules
 // card mirrored with what the server stored — so neither screen can carry
@@ -26875,6 +26889,7 @@ function _ssaSend(id) {
   var body = {}, field, mirror;
   if (id === 'ssa-trim') { body.trim_to_budget = !!t.checked; field = 'trim_to_budget'; mirror = 'rul-trim'; }
   else if (id === 'ssa-cut') { if (t.value === '') return; body.cut_floor_default = +t.value; field = 'cut_floor_default'; mirror = 'rul-cut-floor'; }
+  else if (id === 'ssa-boundary') { body.daypart_boundary = t.value || null; field = 'daypart_boundary'; mirror = ''; }
   else { body.section_count = t.value === '' ? null : +t.value; field = 'section_count'; mirror = 'rul-sections'; }
   _ssaBusy[id] = true; _ssaPending[id] = false;
   var st = document.getElementById('ssa-status'); if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
@@ -26890,7 +26905,7 @@ function _ssaSend(id) {
     }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } done(); });
 }
 document.addEventListener('change', function (ev) {
-  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections')) return;
+  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections' && t.id !== 'ssa-boundary')) return;
   _ssaSend(t.id);
 });
 // The Forecast tab: the picked week before anything is drafted — each
