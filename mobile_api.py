@@ -3705,6 +3705,10 @@ def mobile_generate_schedule(current_user):
     _job_kw = {"week_start": week_start or _req["week_start"], "dates": dates, "base_history_id": base_history_id}
     if instruction:
         _job_kw["instruction"] = instruction
+    # The owner's locked shifts are kept by default (schedule audit 10/10/26
+    # TRUST-17); "Start fresh" sends keep_locked: false.
+    if body.get("keep_locked") is False:
+        _job_kw["keep_locked"] = False
     # On the bounded generation pool, not a thread of its own (schedule audit
     # 10/3/26 P-39); the owner who pressed Generate stays the actor on every
     # model call the job makes (submit_generation takes the attribution here,
@@ -3908,8 +3912,9 @@ def mobile_schedule_history_detail(history_id, current_user):
     # What the draft was written against, and its rows priced as they stand
     # now (edits and all), so a reopened week states its labor % and
     # overtime the way a fresh one does (Schedule Studio, 9/26/26).
+    _econ_keep = {}
     economics, projected_cost = _schedule_economics(current_user["restaurant_id"], history_id, preview_rows,
-                                                    detail.get("week_start"))
+                                                    detail.get("week_start"), keep=_econ_keep)
     # The week's labor % on one stated basis (schedule re-audit 10/4/26
     # SQ-4): all-in for the owner, hourly for anyone else, with the recent %
     # and any savings on the same basis.
@@ -3923,8 +3928,20 @@ def mobile_schedule_history_detail(history_id, current_user):
                                          week_dates=_week_dates_of(detail.get("week_start")))
     except Exception as e:
         print(f"[schedule history] labor view failed for {history_id}: {e!r}")
+    # The aids a fresh draft carries — overtime moves, standby, likely edits
+    # — worked out again on the rows as they stand (schedule audit 10/10/26
+    # TRUST-25): a reopened draft used to lose them all.
+    aids = {"overtime_forecast": [], "standby_days": [], "likely_edits": []}
+    if not detail.get("published_at") and not detail.get("replaced_reason"):
+        try:
+            import schedule_engine as _se_aids
+            aids = _se_aids.generation_aids(current_user["restaurant_id"], preview_rows,
+                                            _week_dates_of(detail.get("week_start")),
+                                            constraints=_econ_keep.get("constraints"))
+        except Exception as e:
+            print(f"[schedule history] aids unavailable for {history_id}: {e!r}")
     return jsonify(ok=True, **detail, preview_rows=preview_rows, economics=economics,
-                   projected_cost=projected_cost, labor_view=labor_view)
+                   projected_cost=projected_cost, labor_view=labor_view, **aids)
 
 
 def _week_dates_of(week_start) -> list:
@@ -3937,7 +3954,7 @@ def _week_dates_of(week_start) -> list:
     return [(start + _td(days=i)).isoformat() for i in range(7)]
 
 
-def _schedule_economics(rid, history_id, rows, week_start):
+def _schedule_economics(rid, history_id, rows, week_start, keep=None):
     """({projected_revenue, projected_revenue_source, labor_budget_dollars,
     daily_target_hours, demand_data_through} or {}, priced cost or None).
     Pricing is the generation's own: role rates, overtime from the 40h line
@@ -3977,6 +3994,8 @@ def _schedule_economics(rid, history_id, rows, week_start):
             cons.compliance = _rules.compliance(r) or {}
             cons.salaried = {" ".join(str(x["name"]).lower().split())
                              for x in __import__("models").salaried_staff(r)}
+        if keep is not None:
+            keep["constraints"] = cons
         blended = (econ or {}).get("blended_rate") or None
         pricing = _econ.week_pricing(rid, cons, blended_rate=blended)
         if not pricing.get("blended_rate"):
@@ -9012,7 +9031,19 @@ def mobile_schedule_replacements(current_user):
                         "score": scores.get(name),
                         "date": target.get("date"), "day": target.get("day")})
         out.sort(key=lambda m: (-(m["score"] or 0), m["name"]))
-        return jsonify(ok=True, replacements=out,
+        # "What Cavnar AI weighed" (schedule audit 10/10/26 TRUST-14): the
+        # person on the shift against the strongest legal alternative just
+        # ranked — rating, room in their week, their usual days — said as a
+        # contrast, never a description written after the fact.
+        weighed = None
+        try:
+            import prepublish as _pp_w
+            from models import get_prior_shift_pattern as _gpsp
+            weighed = _pp_w.weigh_one(rid, rows, index, c, scores, _gpsp(rid) or {},
+                                      runner=(out[0]["name"] if out else None))
+        except Exception as _wx:
+            print(f"[replacements] weighed line unavailable rid={rid}: {_wx!r}")
+        return jsonify(ok=True, replacements=out, weighed=weighed,
                        employee=target.get("employee"), role=target.get("role")), 200
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), replacements=[]), 500

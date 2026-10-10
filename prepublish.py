@@ -1037,11 +1037,16 @@ def weighed_assignments(rid, rows, c, scores, quality, limit=3) -> list:
     return out
 
 
-def weigh_one(rid, rows, index, c, scores, usual, prepared=None) -> dict:
+_SEARCH = object()
+
+
+def weigh_one(rid, rows, index, c, scores, usual, prepared=None, runner=_SEARCH) -> dict:
     """{employee, runner_up, text} — rows[index]'s person against the best
     legal alternative (the replacements ranking), contrasted on rating, room
     in their week and whether they usually work that weekday. None when
-    nobody else could legally take it ("the only legal choice")."""
+    nobody else could legally take it ("the only legal choice"). `runner`
+    — the best legal alternative when the caller already ranked them (the
+    replacements picker, which checked every one); None means nobody."""
     import schedule_engine as _se
     import staff_settings as _ss
     r = rows[index]
@@ -1049,24 +1054,25 @@ def weigh_one(rid, rows, index, c, scores, usual, prepared=None) -> dict:
     if not name:
         return None
     role_low = (r.get("role") or "").strip().lower()
-    pool = []
-    for e in _ss.roster(rid):
-        n = (e.get("name") or "").strip()
-        if not n or _low(n) == _low(name):
-            continue
-        known = set(_ss.roles_for(rid, n)) | {(x.get("role") or "").strip().lower() for x in rows
-                                              if _low(x.get("employee")) == _low(n)}
-        known.discard("")
-        if role_low and known and role_low not in known:
-            continue
-        pool.append(n)
-    pool.sort(key=lambda n: (-(scores.get(n) or 0), n))
-    runner = None
-    for n in pool[:REPLACEMENT_CHECKS]:
-        ok, _w = _se.replacement_is_legal(rid, rows, index, n, constraints=c, prepared=prepared)
-        if ok:
-            runner = n
-            break
+    if runner is _SEARCH:
+        pool = []
+        for e in _ss.roster(rid):
+            n = (e.get("name") or "").strip()
+            if not n or _low(n) == _low(name):
+                continue
+            known = set(_ss.roles_for(rid, n)) | {(x.get("role") or "").strip().lower() for x in rows
+                                                  if _low(x.get("employee")) == _low(n)}
+            known.discard("")
+            if role_low and known and role_low not in known:
+                continue
+            pool.append(n)
+        pool.sort(key=lambda n: (-(scores.get(n) or 0), n))
+        runner = None
+        for n in pool[:REPLACEMENT_CHECKS]:
+            ok, _w = _se.replacement_is_legal(rid, rows, index, n, constraints=c, prepared=prepared)
+            if ok:
+                runner = n
+                break
     wd = _weekday(r.get("date"))
 
     def facts(n):
