@@ -164,3 +164,50 @@ def api_body(restaurant_id, method, data=None, args=None, user=None, may_write=F
             return {"ok": False, "error": "Only someone who builds the schedule can do this."}, 403
         return post_action(restaurant_id, data, user=user)
     return get_part(restaurant_id, str((args or {}).get("part") or "strength"), args or {}, user=user)
+
+
+# ── the nightly pass ───────────────────────────────────────────────────────
+
+RUN_MAX_SECONDS = 15 * 60
+CURSOR_KEY = "schedule_bench_cursor"
+
+
+def bench_nightly_one(restaurant_id, today=None, notify=True, db_path=None) -> dict:
+    """One restaurant's nightly pass: yesterday's on-call slots settled
+    (standby_insurance.settle), every live published week's commitments
+    recorded and changes marked (commitment_ladder.ensure_live), and events
+    that changed on a published week proposed (event_reactive.scan - the
+    deciders told when `notify`)."""
+    import commitment_ladder
+    import event_reactive
+    import standby_insurance
+    out = {"settled": standby_insurance.settle(restaurant_id, today=today, db_path=db_path)}
+    out["commitments"] = commitment_ladder.ensure_live(restaurant_id, today=today, db_path=db_path)
+    out["events"] = event_reactive.scan(restaurant_id, today=today, db_path=db_path, notify=notify)
+    return out
+
+
+def run_bench_nightly(db_path=None, today=None) -> dict:
+    """The 7am job (jobs_registry 'schedule_bench'): bench_nightly_one for
+    every Labor restaurant, bounded by RUN_MAX_SECONDS and resumable from
+    CURSOR_KEY (scheduler.resumable_sweep). The standard counts. Sends only
+    where the scheduler may (scheduler.scheduling_allowed)."""
+    import models
+    import scheduler as _sched
+    ids = sorted(r.id for r in (models.get_all_restaurants(db_path) if db_path else models.get_all_restaurants())
+                 if getattr(r, "module_labor", 0))
+    notify = _sched.scheduling_allowed()
+    tally = {"attempted": 0, "failed": 0, "proposals": 0}
+
+    def _one(rid):
+        tally["attempted"] += 1
+        try:
+            got = bench_nightly_one(rid, today=today, notify=notify, db_path=db_path)
+            tally["proposals"] += got["events"]["proposals"]
+        except Exception as e:
+            tally["failed"] += 1
+            import ops
+            ops.capture(e, job="schedule_bench", context=f"restaurant_id={rid}", restaurant_id=rid)
+    _done, ran_out = _sched.resumable_sweep(CURSOR_KEY, ids, _one, RUN_MAX_SECONDS, workers=1, job="schedule_bench")
+    return {"attempted": tally["attempted"], "ok": tally["attempted"] - tally["failed"], "failed": tally["failed"],
+            "skipped": 0, "hit_bound": bool(ran_out), "proposals": tally["proposals"]}

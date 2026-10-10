@@ -176,6 +176,16 @@ JOBS = {
                     "the hourly target, overtime, unmanaged minutes, shortfall, uncovered no-shows, forecast "
                     "error, row origins and the learning ablation (bounded, resumable)",
         target=("schedule_scorecard", "run_scorecard"), max_minutes=20, retry=True),
+    "schedule_bench": dict(
+        # Scheduler audit 10/10/26 MARKET-26, -27, -28: after event_sync (5am)
+        # and the memory (6am) - on-call slots settled, published weeks'
+        # commitments recorded, events that changed on a published week
+        # proposed to the deciders (studio_bench.run_bench_nightly).
+        cadence="7am CT daily", sla_minutes=_D, sends=True, runnable=True,
+        label="Schedule bench",
+        description="Settle last night's on-call slots, record how firm each published shift is, and propose the "
+                    "priced change when an event moved on a published week (bounded, resumable)",
+        target=("studio_bench", "run_bench_nightly"), max_minutes=20, retry=True),
     "schedule_memory": dict(
         # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
         # sources, after people_nightly.

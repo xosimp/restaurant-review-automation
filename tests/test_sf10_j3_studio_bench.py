@@ -78,3 +78,24 @@ def test_the_bench_stage_is_wired_in_the_studio():
     for part in sb.PARTS:
         assert "['" + part + "'," in block
     assert not re.search(r"=>|`|\bconst\s|\blet\s", block)
+
+
+def test_the_nightly_pass_returns_the_standard_counts_and_records_commitments(monkeypatch):
+    import datetime as dt
+    import demand
+    import scheduler
+    import commitment_ladder
+    rid = create_restaurant(Restaurant(name="Night Co", owner_email="n@x.test", module_labor=1))
+    monkeypatch.setattr(demand, "forecast_day", lambda *a, **k: {"available": False})
+    day = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+    csv = ("date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+           + day + ",Friday,Ana,Server,5:00pm,10:00pm,5,\n")
+    conn = models.get_conn()
+    conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, published_at) VALUES "
+                 "(?,?,?,?,datetime('now'))", (rid, day, day, csv))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(scheduler, "resumable_sweep", lambda key, ids, fn, *a, **k: ([fn(i) for i in ids], False))
+    out = sb.run_bench_nightly()
+    assert set(out) >= {"attempted", "ok", "failed", "skipped", "hit_bound"} and out["failed"] == 0
+    assert commitment_ladder.levels_for(rid, day, day)[(day, "ana", "5:00pm")]["level"] == "likely"
