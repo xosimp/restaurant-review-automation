@@ -5686,6 +5686,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _parse = None
     _shape_rows = []
     summary_bullets = []
+    # The answer's rows as typed rows, end to end (scheduler audit 10/10/26
+    # ARCH-10): parse_answer reads the JSON into rows, and the engine keeps
+    # them as rows — they used to be flattened to CSV here, "(left out) …"
+    # pseudo-lines appended in band, and split again by the job's free-text
+    # CSV repairer, whose "day dropped" and "day/employee swapped" heuristics
+    # cannot occur under a schema. `_typed_rows` stays None on the CSV
+    # contract, the one answer that is still text.
+    _typed_rows = None
+    _left_out = []
     if structured:
         # Never read as CSV: an answer that is not the schema's JSON is
         # salvaged to its complete rows or yields none (PR-28) — garbage
@@ -5695,11 +5704,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # for the engine to assign (schedule_engine.assign_shape_slots), and
         # never into the CSV as nameless lines.
         _shape_rows = [r for r in _parse["rows"] if r.get("_slot")]
-        _data_rows = _sched_out.csv_lines([r for r in _parse["rows"] if not r.get("_slot")])
+        _typed_rows = [dict(r) for r in _parse["rows"] if not r.get("_slot")]
+        _data_rows = _sched_out.csv_lines(_typed_rows)
         # A row the parse leaves out (a shift that starts and ends at the
-        # same time) is handed on as an unreadable line: the job counts it
-        # and names it to the owner, as it does a malformed CSV line.
-        _data_rows += ["(left out) " + str(d).replace(",", ";") for d in _parse["dropped"]]
+        # same time) is handed on beside the rows, never in band: the job
+        # counts it and names it to the owner, as it does a malformed line.
+        _left_out = [str(d) for d in _parse["dropped"]]
         summary_bullets = [_re_sched.sub(r'\*+', '', b).strip() for b in _parse["summary"]]
         summary_bullets = [b for b in summary_bullets if b]
         if not _parse["parsed"] and not _truncated:
@@ -5769,7 +5779,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _pin_people = {str(n).strip().lower() for n, _r in employees if n} if roster else None
         _pins_here = [p for p in _pins if p["date"] in set(_gen_dates)
                       and (_pin_people is None or str(p.get("employee") or "").strip().lower() in _pin_people)]
-        _data_rows, _pin_dropped = _skel.merge_pinned_lines(_data_rows, _pins_here)
+        if _typed_rows is not None:
+            _typed_rows, _pin_dropped = _skel.merge_pinned(_typed_rows, _pins_here)
+            _data_rows = _sched_out.csv_lines(_typed_rows)
+        else:
+            _data_rows, _pin_dropped = _skel.merge_pinned_lines(_data_rows, _pins_here)
         if _pin_dropped:
             import ai_utils as _ai_pin
             _ai_pin.record_quality_event(
@@ -5835,6 +5849,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
 
     return {
         "schedule_csv": csv_clean,
+        # The same rows typed (ARCH-10): what the engine reads on a
+        # structured contract; None on the CSV contract (schedule_csv is
+        # then the answer). `dropped_rows`: the rows the parse left out,
+        # named, never in band.
+        "rows": [dict(r) for r in _typed_rows] if _typed_rows is not None else None,
+        "dropped_rows": list(_left_out),
         "summary": summary_bullets[:3],
         # The model's own three bullets, kept apart from the deterministic
         # "what changed" the engine writes from the diff.

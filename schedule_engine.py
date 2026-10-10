@@ -1572,7 +1572,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "cache read rate": "the AI model's cache price",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "cache read rate": "the AI model's cache price",
     "schedule_memory patterns": "Cavnar AI's scheduling memory", "starting_headcount": "the usual crew from past weeks",
 }
 
@@ -2769,7 +2769,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
             part = _assign_part_slots(part, t, rules_c, kept + written_rows, kwargs, roster_pairs, clock)
         merged = merged or part
         tdates = set(t["dates"])
-        lines = _answer_lines(part.get("schedule_csv", ""))
+        lines = _part_lines(part)
         if not whole:
             lines = [x for x in lines if x[0] in tdates]
         else:
@@ -2809,7 +2809,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
         parts_kept.append((part, set(done)))
         keep = [x for x in lines if (x[0] in done) or (not x[0] and not cut)]
         written.extend(keep)
-        written_rows.extend(_line_row(x[2]) for x in keep if x[3])
+        written_rows.extend(_tuple_row(x) for x in keep if x[3])
         left = [d for d in t["dates"] if d not in done]
         rows_kept = sum(1 for x in keep if x[3] and not x[4])
         entry.update({"rows_by_date": _rows_by_date("x\n" + "\n".join(x[2] for x in lines)),
@@ -2866,6 +2866,13 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     merged = dict(merged)
     merged["schedule_csv"] = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + \
         "\n".join(x[2] for x in kept_lines if x[2].strip())
+    # The week's rows typed, end to end (ARCH-10), when every part kept
+    # answered on a structured contract; None when any part was the CSV
+    # contract's text — the job then reads schedule_csv, the one answer that
+    # is still text. What the parses left out rides beside them.
+    merged["rows"] = ([_tuple_row(x) for x in kept_lines if x[2].strip()]
+                      if all(len(x) > 5 and x[5] is not None for x in kept_lines) else None)
+    merged["dropped_rows"] = [d for p, _done in parts_kept for d in (p.get("dropped_rows") or [])]
     if len(notes_by_part) == 1 and calls == 1:
         merged["narrative"] = notes_by_part[0][2][:3]
     else:
@@ -2971,7 +2978,7 @@ def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock)
     part = dict(part)
     slots = [dict(r) for r in part.get("shape_rows") or []]
     rid = kwargs.get("restaurant_id")
-    own = [_line_row(x[2]) for x in _answer_lines(part.get("schedule_csv", "")) if x[3]]
+    own = [_tuple_row(x) for x in _part_lines(part) if x[3]]
     people = t.get("people")
     roles = {n: r for n, r in (people if people is not None else roster_pairs or [])}
     try:
@@ -2989,6 +2996,8 @@ def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock)
     if got["assigned"]:
         part["schedule_csv"] = (part.get("schedule_csv") or "").rstrip("\n") + "\n" + \
             "\n".join(_sched_out.csv_lines(got["assigned"]))
+        if part.get("rows") is not None:
+            part["rows"] = list(part["rows"]) + [dict(r) for r in got["assigned"]]
     if got["unassigned"]:
         _quality_note("shape_unstaffed", rid, len(got["unassigned"]),
                       f"{len(got['unassigned'])} shape slot(s) nobody could legally work left out")
@@ -3492,6 +3501,37 @@ def _line_row(line: str) -> dict:
     cols += [""] * (8 - len(cols))
     return {"date": cols[0], "day": cols[1], "employee": cols[2], "role": cols[3],
             "shift_start": cols[4], "shift_end": cols[5], "scheduled_hours": cols[6]}
+
+
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _part_lines(part) -> list:
+    """[(date, employee key, line, valid, plan, row)] for each row of one
+    call's answer, in the order written (scheduler audit 10/10/26 ARCH-10):
+    its typed rows when the call answered on a structured contract — `row`
+    the row itself, never re-read from text — else its CSV lines (the CSV
+    contract), `row` None. `valid` and `plan` mean what _answer_lines says."""
+    import schedule_skeleton as _skeleton
+    rows = part.get("rows") if isinstance(part, dict) else None
+    if rows is None:
+        return [x + (None,) for x in _answer_lines((part or {}).get("schedule_csv", ""))]
+    out = []
+    for r in rows:
+        r = dict(r)
+        d = str(r.get("date") or "").strip()[:10]
+        d = d if _ISO_DAY.match(d) else ""
+        emp = " ".join(str(r.get("employee") or "").lower().split())
+        valid = bool(d) and bool(emp) and _rules.parse_minutes(str(r.get("shift_start") or "")) is not None \
+            and _rules.parse_minutes(str(r.get("shift_end") or "")) is not None
+        plan = r.get("_pinned") == _skeleton.PLAN_SOURCE or _skeleton.is_plan_note(r.get("notes"))
+        out.append((d, emp, _sched_out.csv_lines([r])[0], valid, plan, r))
+    return out
+
+
+def _tuple_row(x) -> dict:
+    """The row a _part_lines entry carries (its typed row, else its line read)."""
+    return dict(x[5]) if len(x) > 5 and x[5] is not None else _line_row(x[2])
 
 
 def _complete_dates(valid_lines, cut: bool) -> list:
@@ -7345,6 +7385,10 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates):
         return None
     out = copy.deepcopy(answer)
     out["schedule_csv"] = (lines[0] or EXPECTED_SCHEDULE_HEADER) + "\n" + "\n".join(body)
+    # The gate's dates as the draft has them, typed (ARCH-10): never the
+    # model's first answer's rows, which the copy would otherwise carry.
+    out["rows"] = [r for r in _versions.rows_from_csv(out["schedule_csv"]) if r.get("date") in want]
+    out["dropped_rows"] = []
     out["unwritten_dates"] = []
     out["generation_seconds"] = 0.0
     out["generation_id"] = None
@@ -8464,6 +8508,106 @@ def _unfixed_from(viols, rows, editable, why) -> list:
     return out
 
 
+_ANSWER_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
+
+
+def _weekday_of_iso(d):
+    import datetime as _dtw
+    try:
+        return _dtw.datetime.strptime(str(d or ""), "%Y-%m-%d").strftime("%A")
+    except (ValueError, TypeError):
+        return None
+
+
+def _typed_answer_rows(rows):
+    """(row, weekday, text) for each typed row of a structured answer
+    (scheduler audit 10/10/26 ARCH-10): the row's eight columns, a NEEDS
+    REVIEW mark taken off (the final sweep writes today's — PIPE-6), its
+    times in the one 12-hour form (SCHED-38) and its weekday read from its
+    date — nothing guessed: a schema answer cannot drop or swap a column. A
+    row with no name is skipped; one whose date is unreadable is marked for
+    review, never trusted."""
+    for r in rows or []:
+        row = {c: str(r.get(c) if r.get(c) is not None else "").strip() for c in _ANSWER_COLS}
+        if "NEEDS REVIEW" in row["notes"]:
+            row["notes"] = _rules.strip_review_mark(row["notes"])
+        _normalise_row_times(row)
+        if not row["employee"]:
+            continue
+        real = _weekday_of_iso(row["date"])
+        if real:
+            row["day"] = real
+        else:
+            row["needs_review"] = True
+        yield row, real, ",".join(row[c] for c in _ANSWER_COLS)
+
+
+def _legacy_answer_rows(csv_lines):
+    """(row, weekday, line) for each data line of a CSV-contract answer —
+    the one answer still text (labor's last fallback, when the API refuses
+    the schema twice) — or (None, None, line) for a line too short to be a
+    shift. This is the free-text repairer the structured contract no longer
+    passes through (ARCH-10): candidate for future cleanup after additional
+    verification, once "csv" is no longer a contract (the API refusing both
+    schema shapes is what keeps it alive today)."""
+    for _line in (csv_lines or [])[1:]:  # skip header
+        _line = _line.strip()
+        if not _line:
+            continue
+        _parts = _line.split(",", 7)  # max 7 splits — notes gets remainder
+        if len(_parts) < 6:
+            yield None, None, _line
+            continue
+        # Strip outer quotes Sonnet sometimes adds around field values
+        _row = {_ANSWER_COLS[i]: _parts[i].strip().strip('"').strip() for i in range(min(len(_parts), 8))}
+        # A NEEDS REVIEW mark is the final sweep's to write, with
+        # today's reason (PIPE-6) — never carried in.
+        if "NEEDS REVIEW" in (_row.get("notes") or ""):
+            _row["notes"] = _rules.strip_review_mark(_row.get("notes"))
+        # Times in 24-hour form ("17:00") are the same times; every
+        # check after this reads "5:00pm", and a 24-hour row used to
+        # skip the close cap and the hours reconciliation (SCHED-38).
+        _normalise_row_times(_row)
+        # Keep rows that have a non-empty employee name — skips header repeats and prose
+        if not _row.get("employee", "").strip() or _row.get("employee", "").lower() == "employee":
+            continue
+        # The model occasionally mis-wrote one row per generation (out of
+        # 60-100+) on the CSV contract — always a non-routine addition (a
+        # food runner, a "misfill check," an extra staff member). `date` was
+        # correct in every malformed row observed, so `day` is re-derived
+        # from it instead of trusting the model's own day text, and the
+        # specific failure shapes seen in captured live output are repaired.
+        _real_day = _weekday_of_iso(_row.get("date", ""))
+        if not _real_day:
+            # date itself didn't parse — can't verify or repair anything in
+            # this row, so it is flagged rather than passed through unmarked.
+            _row["needs_review"] = True
+        elif _row.get("day") != _real_day:
+            if _row.get("employee") == _real_day:
+                # Clean two-column swap: "...,Jamie L.,Friday,Server,..."
+                # instead of "...,Friday,Jamie L.,Server,...".
+                _row["day"], _row["employee"] = _real_day, _row["day"]
+            elif _TIME_FIELD_RE.match(_row.get("role", "")):
+                # The model drops the `day` field for one row, which shifts
+                # every field after `date` one position left; the tell is a
+                # clock time where the role belongs. Every field after
+                # `date` un-shifts one position right.
+                _old_day, _old_employee, _old_role = _row.get("day", ""), _row.get("employee", ""), _row.get("role", "")
+                _old_start, _old_end, _old_hours = _row.get("shift_start", ""), _row.get("shift_end", ""), _row.get("scheduled_hours", "")
+                _row["day"] = _real_day
+                _row["employee"] = _old_day
+                _row["role"] = _old_employee
+                _row["shift_start"] = _old_role
+                _row["shift_end"] = _old_start
+                _row["scheduled_hours"] = _old_end
+                _row["notes"] = _old_hours
+            else:
+                _row["day"] = _real_day
+                if not _row_fields_look_sane(_row):
+                    _row["needs_review"] = True
+        yield _row, _real_day, _line
+
+
 def _in_frozen_inputs(fn):
     """Run a generation inside its read-once store (frozen_inputs, P-36)."""
     import functools
@@ -8583,6 +8727,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             keep = set(dates) - _unwritten
             lines = [ln for ln in result["schedule_csv"].split("\n")[1:] if ln.split(",", 1)[0].strip() in keep]
             result["schedule_csv"] = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(lines)
+            if result.get("rows") is not None:
+                result["rows"] = [r for r in result["rows"] if str(r.get("date") or "")[:10] in keep]
             # The days kept are the owner's rows, never model text (re-audit
             # 10/4/26 PIPE-1): they were written back into the answer and
             # parsed with it, so the close cap re-timed a planned manager
@@ -8642,78 +8788,28 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # error and nobody was told how much was missing. Counted now, and
             # surfaced below.
             _dropped_rows = []
-            for _line in _csv_lines[1:]:  # skip header
-                _line = _line.strip()
-                if not _line:
-                    continue
-                _parts = _line.split(",", 7)  # max 7 splits — notes gets remainder
-                if len(_parts) < 6:
+            # The answer's rows (scheduler audit 10/10/26 ARCH-10): typed, as
+            # the structured contract's parse wrote them — only their times
+            # normalised and their weekday read from their date — or, on the
+            # CSV contract alone, its text through the legacy line repairer
+            # (_legacy_answer_rows: a day dropped or swapped, which cannot
+            # occur under a schema). What the parse left out is named beside
+            # the rows, never carried in band.
+            _typed_in = result.get("rows")
+            if _typed_in is not None:
+                if _plan_dates:
+                    _typed_in = [r for r in _typed_in
+                                 if not (str(r.get("date") or "")[:10] in _plan_dates
+                                         and (r.get("_pinned") == _skeleton.PLAN_SOURCE
+                                              or _skeleton.is_plan_note(r.get("notes"))))]
+                _dropped_rows = [str(d)[:120] for d in (result.get("dropped_rows") or [])]
+                _answer_rows = _typed_answer_rows(_typed_in)
+            else:
+                _answer_rows = _legacy_answer_rows(_csv_lines)
+            for _row, _real_day, _line in _answer_rows:
+                if _row is None:
                     _dropped_rows.append(_line[:120])
                     continue
-                # Strip outer quotes Sonnet sometimes adds around field values
-                _row = {_COLS[i]: _parts[i].strip().strip('"').strip() for i in range(min(len(_parts), 8))}
-                # A NEEDS REVIEW mark is the final sweep's to write, with
-                # today's reason (PIPE-6) — never carried in.
-                if "NEEDS REVIEW" in (_row.get("notes") or ""):
-                    _row["notes"] = _rules.strip_review_mark(_row.get("notes"))
-                # Times in 24-hour form ("17:00") are the same times; every
-                # check after this reads "5:00pm", and a 24-hour row used to
-                # skip the close cap and the hours reconciliation (SCHED-38).
-                _normalise_row_times(_row)
-                # Keep rows that have a non-empty employee name — skips header repeats and prose
-                if not _row.get("employee", "").strip() or _row.get("employee", "").lower() == "employee":
-                    continue
-
-                # The model occasionally mis-writes one row per generation
-                # (out of 60-100+) — always a non-routine addition (a food
-                # runner, a "misfill check," an extra staff member) that
-                # doesn't follow the same repeating pattern as the rest of
-                # the week. `date` was correct in every malformed row
-                # observed, so re-derive `day` from it instead of trusting
-                # the model's own day text, and detect+repair the specific
-                # failure shapes actually seen in captured live output
-                # rather than guessing.
-                try:
-                    _real_day = _dt_sched.datetime.strptime(_row.get("date", ""), "%Y-%m-%d").strftime("%A")
-                except (ValueError, TypeError):
-                    _real_day = None
-                if not _real_day:
-                    # date itself didn't parse — can't verify or repair
-                    # anything in this row, so flag it rather than let a
-                    # possibly-bogus day value pass through unmarked.
-                    _row["needs_review"] = True
-                elif _row.get("day") != _real_day:
-                    if _row.get("employee") == _real_day:
-                        # Clean two-column swap: "...,Jamie L.,Friday,
-                        # Server,..." instead of "...,Friday,Jamie L.,
-                        # Server,...". Swap back for a full recovery.
-                        _row["day"], _row["employee"] = _real_day, _row["day"]
-                    elif _TIME_FIELD_RE.match(_row.get("role", "")):
-                        # The far more common failure, confirmed against
-                        # live captured output: the model drops the `day`
-                        # field entirely for this one row (never reorders
-                        # it — just omits it), which shifts every field
-                        # after `date` one position left. The tell is that
-                        # "role" ends up holding a clock time
-                        # ("...,Farah A.,Prep Cook,8:00am,3:00pm,7,morning
-                        # prep,,"), which a real role name never does —
-                        # every field after `date` un-shifts one position
-                        # right, recovering a fully sensible row instead of
-                        # just flagging it.
-                        _old_day, _old_employee, _old_role = _row.get("day", ""), _row.get("employee", ""), _row.get("role", "")
-                        _old_start, _old_end, _old_hours = _row.get("shift_start", ""), _row.get("shift_end", ""), _row.get("scheduled_hours", "")
-                        _row["day"] = _real_day
-                        _row["employee"] = _old_day
-                        _row["role"] = _old_employee
-                        _row["shift_start"] = _old_role
-                        _row["shift_end"] = _old_start
-                        _row["scheduled_hours"] = _old_end
-                        _row["notes"] = _old_hours
-                    else:
-                        _row["day"] = _real_day
-                        if not _row_fields_look_sane(_row):
-                            _row["needs_review"] = True
-
                 # A row with no shift times, or a weekday where the role
                 # belongs, is not a shift: the model once wrote
                 # "2026-09-16,Wednesday,Bartender,Wednesday,,,," and the
