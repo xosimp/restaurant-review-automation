@@ -1004,7 +1004,7 @@ def act(restaurant_id, move_id, user=None, how="manager", now_local=None, db_pat
             except Exception as e:
                 sent = {"ok": False, "error": str(e)}
         _decide(move_id, "acted", how, who, db_path=db_path)
-        _record(restaurant_id, m, "accepted", user)
+        _record(restaurant_id, m, "accepted", user, db_path=db_path)
         out = {"ok": True, "status": "acted", "saved": saved, "sent": sent}
         if sent is not None and not (sent or {}).get("ok"):
             out["note"] = ("Saved to the week; it hasn't reached them — Send changes from the Studio "
@@ -1031,7 +1031,7 @@ def dismiss(restaurant_id, move_id, user=None, db_path=None) -> dict:
     if not m or m["status"] not in ("suggested", "pushed"):
         return {"ok": False, "error": "That suggestion was already answered."}
     _decide(move_id, "dismissed", "manager", _actor_name(user), db_path=db_path)
-    _record(restaurant_id, m, "dismissed", user)
+    _record(restaurant_id, m, "dismissed", user, db_path=db_path)
     return {"ok": True, "status": "dismissed"}
 
 
@@ -1065,9 +1065,12 @@ def reverse(restaurant_id, move_id, user=None, db_path=None) -> dict:
             "note": None if undone else "Somebody already took it — change the week in the Studio if it should go."}
 
 
-def _record(restaurant_id, m, event, user):
+def _record(restaurant_id, m, event, user, db_path=None):
     """A cut's answer into the recommendation ledger under the pulse's own
-    kind (pulse_cut), so the cut learners read the live ones too."""
+    kind (pulse_cut), so the cut learners read the live ones too. No
+    authority= on purpose: rec_ledger derives it (request_authority) - the
+    floor route's login for a manager's answer, none (system) for the
+    15-minute job's automatic cut."""
     if m["kind"] != "cut":
         return
     try:
@@ -1075,7 +1078,7 @@ def _record(restaurant_id, m, event, user):
         rec_ledger.record(restaurant_id, f"pulse_cut:{m['business_date']}:{_key(m['employee'])}", event,
                           surface="labor", user_id=(user or {}).get("id") if isinstance(user, dict) else None,
                           meta={"live_move": m["id"], "dollars": m.get("dollars")},
-                          source_ref=f"live_move:{m['id']}")
+                          source_ref=f"live_move:{m['id']}", **({"db_path": db_path} if db_path else {}))
     except Exception as e:
         print(f"[labor_live] rec ledger not written rid={restaurant_id}: {e!r}")
 

@@ -176,6 +176,8 @@ _DERIVED = {
     "guest_marketing.py": "marketing routes (request) and the send job (system)",
     "home_brief.py": "delegate-to-issue accept route — the request's login",
     "intraday.py": "intraday route — the request's login",
+    "labor_live.py": "a live move answered on the floor route (the request's login) or cut by autopilot in the "
+                     "15-minute job (system)",
     "issues.py": "issue resolved in a route (request) or a job (system)",
     "marketing.py": "marketing send routes (request) and jobs (system)",
     "marketing_opportunities.py": "campaign send route — the request's login",

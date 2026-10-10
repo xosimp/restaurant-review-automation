@@ -3931,7 +3931,7 @@ async function schedBenchmark(){
   const one = v => v==null ? '—' : (Math.round(v*100)/100).toString();
   const rows = Object.keys(d.measures || {}).map(k => Object.assign({k:k}, d.measures[k]));
   const cols = [{h:'Measure',key:'label'},
-    {h:'Cavnar − manager',key:'mean',r:true,cell:r=>`<span class="num">${one(r.mean)}</span> <span class="dim">${r.ci90?one(r.ci90[0])+' to '+one(r.ci90[1]):''}</span>`},
+    {h:'Cavnar AI − manager',key:'mean',r:true,cell:r=>`<span class="num">${one(r.mean)}</span> <span class="dim">${r.ci90?one(r.ci90[0])+' to '+one(r.ci90[1]):''}</span>`},
     {h:'Better is',key:'better'},
     {h:'Behind it',key:'restaurants',r:true,cell:r=>`<span class="num">${fmtN(r.restaurants||0)}</span> <span class="dim">rest. · ${fmtN(r.organisations||0)} orgs</span>`},
     {h:'Published',key:'published',cell:r=>r.published ? (r.published.claim ? esc(r.published.claim) : '<span class="dim">above the floor — no clear difference, nothing claimed</span>') : `<span class="dim">not published: ${esc(r.floor||'')}</span>`}];
