@@ -162,8 +162,16 @@ def _minute_of(dt) -> int:
 def is_locked(row) -> bool:
     """A row the owner pinned (contract #4: `locked`), the manager plan's
     (`_pinned`): kept exactly by every solve."""
-    v = (row or {}).get("locked")
-    return bool(row.get("_pinned")) or v is True or str(v).strip().lower() in ("1", "true", "yes")
+    if not row:
+        return False
+    if row.get("_pinned"):
+        return True
+    try:
+        import schedule_rows as _srows
+        return bool(_srows.is_locked(row))
+    except ImportError:                     # pragma: no cover - the one row format is part of the app
+        v = row.get("locked")
+        return v is True or str(v).strip().lower() in ("1", "true", "yes")
 
 
 # ── the problem: legality from the rule set, nothing else hard ────────────
