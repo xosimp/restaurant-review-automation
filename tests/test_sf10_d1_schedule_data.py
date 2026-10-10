@@ -381,16 +381,25 @@ def test_a_published_copy_is_replaced_only_by_a_newer_published_one(db, mail):
 
 
 def test_no_reader_asks_for_the_newest_row_of_schedule_history():
+    """ARCH-11: "the newest row" of schedule_history is a discarded rewrite
+    or a replaced draft as often as the week in force. Every newest-first
+    read of one row names the week in force (superseded_by IS NULL — the
+    rule models.newest_draft / week_draft apply) or goes through the
+    resolver."""
     import re
     import glob
     import os
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     bad = []
-    for path in glob.glob(os.path.join(root, "*.py")):
+    for path in glob.glob(os.path.join(root, "*.py")) + glob.glob(os.path.join(root, "dsr", "*.py")):
         src = open(path).read()
-        for m in re.finditer(r"FROM schedule_history\s+(?:h\s+)?WHERE\s+(?:h\.)?restaurant_id=\?\s*\"?\s*\"?\s*ORDER BY "
-                             r"(?:h\.)?id DESC LIMIT 1", src):
-            bad.append((os.path.basename(path), src[:m.start()].count("\n") + 1))
+        for m in re.finditer(r"ORDER BY (?:h\.)?id DESC LIMIT 1\b", src):
+            before = src[max(0, m.start() - 600):m.end()]
+            stmt = before[before.rfind('"""') + 1:] if before.count('"""') else before
+            if "FROM schedule_history" not in stmt:
+                continue
+            if "superseded_by IS NULL" not in stmt:
+                bad.append((os.path.basename(path), src[:m.start()].count("\n") + 1))
     assert bad == []
 
 

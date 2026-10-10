@@ -318,7 +318,9 @@ def test_server_sends_what_the_screens_read():
     assert "pricing=_econ.week_pricing(" in sr
     m = _read("mobile_api.py")
     assert "labor_view=labor_view" in m and "_capi.attach_labor_view(" in m
-    assert "attach_labor_view(current_user[\"restaurant_id\"], result)" in _read("client_api.py")
+    # The web status poll is the phone's body (schedule audit 10/10/26 ARCH-32).
+    assert "_capi.attach_labor_view(current_user[\"restaurant_id\"], result)" in m
+    assert '_m("mobile_schedule_status")' in _read("client_api.py")
 
 
 def test_ios_decodes_the_new_keys_and_rescores_with_the_weeks_targets():
