@@ -634,7 +634,11 @@ def test_the_engine_threads_the_redo_days_through_every_early_pass():
     for stage in (se._stage_person, se._stage_manager, se._stage_close_out, se._stage_overtime,
                   se._stage_min_hours, se._stage_role_times):
         assert "editable=x.editable" in inspect.getsource(stage), stage.__name__
-    assert "editable=_editable" in inspect.getsource(se._run_schedule_job).split("RepairContext(", 1)[1]
+    # the passes' editable days: the redo's, less an open day the model left
+    # empty (BUGSGEN-5 — open to the sweep, closed to the passes)
+    job_src = inspect.getsource(se._run_schedule_job)
+    assert "editable=_pass_editable" in job_src.split("RepairContext(", 1)[1]
+    assert "_pass_editable = _editable" in job_src
 
 
 def test_a_pinned_row_is_never_staggered_or_cut_at_the_cap():

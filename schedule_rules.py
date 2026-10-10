@@ -914,6 +914,26 @@ def window_holds(window, day, week_dates=None, today=None) -> bool:
     return not u or u >= (today or _date.today()).isoformat()
 
 
+def hours_on_file(day, open_times=None, close_times=None) -> bool:
+    """Whether the owner set an opening or a closing time for weekday `day`
+    — their word that the restaurant is open that day."""
+    return any(str((t or {}).get(day) or "").strip() for t in (open_times, close_times))
+
+
+def trading_day(day, open_times=None, close_times=None, trading=None) -> bool:
+    """Whether the restaurant trades on weekday `day`: the owner's hours for
+    it are on file, else its own record trades it (`trading`, the weekdays
+    with shifts on at least half the weeks on file; None — too little on
+    file — has no opinion, so every day trades). The ONE rule the generation
+    (which days must carry shifts) and the manager plan (which days to plan)
+    both read (BUGSGEN-5: the generation read the history alone, so a
+    weekday that started opening was never required and an empty one was
+    silently closed). Closures are decided before this."""
+    if hours_on_file(day, open_times, close_times):
+        return True
+    return trading is None or day in trading
+
+
 def _weekday_of(iso) -> str:
     try:
         return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")

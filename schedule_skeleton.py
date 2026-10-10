@@ -549,8 +549,8 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     # plan (the generation accepts it empty, schedule_engine._trading_weekdays).
     for d in dates:
         wd = _weekday(d)
-        hours_set = _clock((open_times or {}).get(wd)) is not None or _clock((close_times or {}).get(wd)) is not None
-        if trading is not None and wd not in trading and not hours_set:
+        # The one trading-day rule the generation reads too (BUGSGEN-5).
+        if not _rules.trading_day(wd, open_times, close_times, trading):
             continue
         w = day_window(c, d, open_times, close_times, spans)
         if w is None:
