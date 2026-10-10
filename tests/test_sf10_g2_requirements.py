@@ -674,6 +674,20 @@ def test_a_floor_the_work_never_needed_is_said_with_its_evidence(db_path):
     assert got and got[0]["floor"] == 3 and got[0]["suggest"] == 2 and "Wednesday lunch" in got[0]["text"]
 
 
+def test_the_read_only_report_runs_on_a_restaurant_with_nothing_yet(db_path, capsys):
+    import importlib.util
+    import os
+    rid = _rid()
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts",
+                        "staffing_requirements_report.py")
+    spec = importlib.util.spec_from_file_location("staffing_requirements_report", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.main(["--restaurant", str(rid), "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["restaurant_id"] == rid and out["go_live"] is None and out["standards"] == {}
+
+
 # ── the plumbing: the engine reads the model and the requirements carry it ─
 
 def test_the_engine_sizes_a_week_from_the_work_end_to_end(db_path):
