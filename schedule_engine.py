@@ -5250,15 +5250,23 @@ def _slot_fill(rows, date, day_name, role_name, part, short, c, close_times, rol
     def _covers(start, end):
         sp = _span_minutes({"shift_start": start, "shift_end": end})
         return sum(1 for m in minutes if sp and sp[0] <= m < sp[1])
-    tpls = sorted(book["templates"].get(key) or [],
-                  key=lambda t: (-_covers(t[0], t[1]), t[2] != date,
-                                 (_span_minutes({"shift_start": t[0], "shift_end": t[1]}) or (0, 0))[1]
-                                 - (_span_minutes({"shift_start": t[0], "shift_end": t[1]}) or (0, 0))[0]))
-    options = [(t[0], t[1]) for t in tpls if _covers(t[0], t[1])][:2]
+
+    def _length(start, end):
+        sp = _span_minutes({"shift_start": start, "shift_end": end})
+        return (sp[1] - sp[0]) if sp else 0
     lo, hi = minutes[0], minutes[-1] + _SLOT_MIN
     lo = min(lo, hi - 4 * 60)
-    options.append((_format_minutes_to_time(lo), _format_minutes_to_time(hi)))
-    for start, end in options:
+    built = (_format_minutes_to_time(lo), _format_minutes_to_time(hi), None)
+    # The most short half hours covered first; on a tie the restaurant's own
+    # shift shape (this date's first) before one built over the gap, the
+    # shorter before the longer.
+    cands = [t for t in (book["templates"].get(key) or []) if _covers(t[0], t[1])] + [built]
+    cands.sort(key=lambda t: (-_covers(t[0], t[1]), t[2] is None, t[2] != date, _length(t[0], t[1])))
+    options = []
+    for t in cands:
+        if (t[0], t[1]) not in options:
+            options.append((t[0], t[1]))
+    for start, end in options[:3]:
         probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
                  "shift_start": start, "shift_end": end, "scheduled_hours": "0", "notes": note}
         _enforce_close_time(probe, day_name, close_times, role_buffers)
