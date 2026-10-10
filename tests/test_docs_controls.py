@@ -772,13 +772,18 @@ def test_ai_trace_text_is_admin_only_and_kept_thirty_days():
     _says(SECURITY, "only a full admin can read the text", "the list, which support can read, carries no text")
 
 
-def test_the_ai_breaker_reset_is_admin_only_and_this_process_only():
+def test_the_ai_breaker_reset_is_admin_only_and_reaches_every_process():
+    # Shared since scheduler audit 10/10/26 (SCALE-24): the reset clears this
+    # process's breaker and publishes it (`ai_breakers`), and every other
+    # process reads it back within AI_BREAKER_SYNC_SECONDS.
     import admin_routes
     import ai_utils
     src = inspect.getsource(admin_routes.admin_api_ai_reset_breaker)
     assert "Admins only" in src and "reset_breaker(" in src
-    assert "_breakers" in inspect.getsource(ai_utils.reset_breaker)
-    _says(RECOVERY, "closes it now — in this process only")
+    reset = inspect.getsource(ai_utils.reset_breaker)
+    assert "_breakers" in reset and "_breaker_publish(" in reset
+    assert "_breaker_sync(provider)" in inspect.getsource(ai_utils._breaker_check)
+    _says(RECOVERY, "closes it now in this process and, through the shared `ai_breakers` row, in every other process")
 
 
 # ── the scheduler's supervisor, billing jobs, offboarding ─────────────────────

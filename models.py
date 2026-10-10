@@ -4506,6 +4506,10 @@ def init_db(db_path: str = DB_PATH):
     # 10/10/26 RM-7, SCALE-24).
     from job_queue import init_job_queue
     init_job_queue(db_path)
+    # The model gateway's minute windows, per-restaurant AI ceilings and the
+    # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
+    from model_gateway import init_model_gateway
+    init_model_gateway(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).

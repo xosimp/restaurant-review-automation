@@ -461,6 +461,12 @@ KEEP_COLUMNS = {
     ("ai_usage_daily", "output_tokens"): "a count of model tokens",
     ("ai_usage_daily", "cache_write_tokens"): "a count of model tokens",
     ("ai_usage_daily", "cache_read_tokens"): "a count of model tokens",
+    # The model gateway's minute windows (SCALE-32) and the job queue's
+    # per-tenant token bucket (RM-7): counts, not credentials.
+    ("model_token_windows", "input_tokens"): "a count of model tokens in one minute",
+    ("model_token_windows", "output_tokens"): "a count of model tokens in one minute",
+    ("model_tenant_windows", "output_tokens"): "a count of model tokens in one minute",
+    ("job_tenants", "tokens"): "a fairness token-bucket level (a number), not a credential",
 }
 
 
