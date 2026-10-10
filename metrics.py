@@ -1284,9 +1284,9 @@ def overtime_premium_per_hour(restaurant_id, db_path=DB_PATH):
     fallback = float(getattr(r, "hourly_rate", None) or labor.DEFAULT_HOURLY_RATE)
     rate = fallback
     try:
-        cd = models.get_client_data(restaurant_id, db_path=db_path)
-        if cd and cd.get("shifts_csv"):
-            shifts = labor.load_shifts(csv_string=cd["shifts_csv"])
+        # The one reader (SCALE-5): shift_facts once they are the record.
+        shifts = labor.shift_history(restaurant_id, db_path=db_path)
+        if shifts:
             rate = models.compute_blended_rate(shifts, models.get_role_rates(restaurant_id, db_path),
                                                fallback=fallback) or fallback
     except Exception as e:

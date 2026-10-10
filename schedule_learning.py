@@ -178,6 +178,25 @@ def _strength(hits_w, opps_w) -> tuple:
     return _s(hits_w, opps_w)
 
 
+def _since_onset(week_edits, kind, hit_ids, is_opp) -> tuple:
+    """One pattern's newest regime (schedule audit 10/10/26 LEARNING-2): the
+    weeks it was an opportunity (a hit, or `is_opp(week)`), oldest first,
+    read from its change point (learning_stats.since_change) instead of the
+    whole 24-week window — so a habit a new manager starts is counted from
+    its onset. (hits_w, opps_w, {history ids of the hits in it}, opportunities
+    in it, {history ids of every week in it})."""
+    import learning_stats
+    seq = []
+    for w in sorted(week_edits, key=lambda w_: (str(w_.get("week_start") or ""), int(w_.get("history_id") or 0))):
+        hid = w.get("history_id")
+        hit = hid in hit_ids
+        if hit or is_opp(w):
+            seq.append((hit, _weight(w, kind), hid))
+    sc = learning_stats.since_change([(h, wt) for h, wt, _hid in seq])
+    seg = seq[sc["start"]:]
+    return sc["hits_w"], sc["opps_w"], {hid for h, _wt, hid in seg if h}, len(seg), {hid for _h, _wt, hid in seg}
+
+
 # ── retimes ───────────────────────────────────────────────────────────────
 
 def _min_rate():
@@ -226,25 +245,26 @@ def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
                 e["ends"].add(_clock(r.get("shift_end")))
         drafted.append((w, at))
     out = []
+    at_by = {w["history_id"]: at for w, at in drafted}
     for (kind, rl, day, part, when), e in tally.items():
-        n = len(e["weeks"])
+        if len(e["weeks"]) < min_repeats:
+            continue
+
+        def _opp(w, kind=kind, rl=rl, day=day, part=part, when=when):
+            slot = at_by.get(w["history_id"], {}).get((rl, day, part))
+            times = (slot or {}).get("starts" if kind == "retime_start" else "ends") or set()
+            return bool(slot) and times != {when}
+        hits_w, opp_w, ids, of, _seg = _since_onset([w for w, _at in drafted], kind, set(e["weeks"]), _opp)
+        n = len(ids)
         if n < min_repeats:
             continue
-        opp_w, of = 0.0, 0
-        for w, at in drafted:
-            slot = at.get((rl, day, part))
-            hit = w["history_id"] in e["weeks"]
-            times = (slot or {}).get("starts" if kind == "retime_start" else "ends") or set()
-            if hit or (slot and times != {when}):
-                opp_w += _weight(w, kind)
-                of += 1
-        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         role = _display(e["role"])
         verb = "starting" if kind == "retime_start" else "ending"
         out.append({"kind": kind, "employee": "", "role": role, "day": day, "daypart": part, "time": when, "times": n,
-                    "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
                     "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"The manager keeps {verb} {_plural(role)} on {day} {_PRETTY.get(part, part)} at {when} "
                             f"({_weeks_text(n, of)}) — {'start' if kind == 'retime_start' else 'end'} them then in the draft."})
@@ -288,6 +308,7 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     for w in week_edits:
         before, sb = _slot_heads(w["base"])
         after, sa = _slot_heads(w["final"])
+        asked = w.get("asked") or {}
         for src in (sb, sa):
             for rl, c in src.items():
                 for k, v in c.items():
@@ -296,7 +317,14 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         traded.append((w, {(_weekday(d), part) for (d, part, _rl) in set(before) | set(after)}))
         per = {}
         for k in set(before) | set(after):
-            delta = len(after.get(k, ())) - len(before.get(k, ()))
+            # The residual against what the draft was ASKED for (schedule
+            # audit 10/10/26 LEARNING-3), where the week kept it: a draft
+            # that came in one short of its requirement and was filled by
+            # the manager taught "+1" on top of a requirement that was
+            # already right. A week saved before the requirement was kept
+            # reads against its draft, as before.
+            was = asked[k] if k in asked else len(before.get(k, ()))
+            delta = len(after.get(k, ())) - was
             if delta:
                 d, part, rl = k
                 slot = (_weekday(d), part, rl)
@@ -306,21 +334,34 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
                 tally.setdefault(slot, []).append((delta, int(w.get("history_id") or 0), _weight(w, "headcount_add"),
                                                    str(w.get("week_start") or "")))
     out = []
+    traded_by = {w["history_id"]: slots for w, slots in traded}
+    weeks_only = [w for w, _s in traded]
     for (day, part, rl), pairs in tally.items():
-        deltas = [d for d, _h, _w, _s in pairs]
-        ups = sorted(d for d in deltas if d > 0)
-        downs = sorted(d for d in deltas if d < 0)
-        side, other = (ups, downs) if len(ups) >= len(downs) else (downs, ups)
-        if len(side) < min_repeats or len(side) <= len(other):
+        # Each direction read from its own onset (LEARNING-2): the manager
+        # who used to cut a server and now adds one is adding, from the week
+        # they started.
+        best = None
+        for sign in (1, -1):
+            ids_sign = {h for d_, h, _w, _s in pairs if (d_ > 0) == (sign > 0)}
+            if len(ids_sign) < min_repeats:
+                continue
+            hits_w, opp_w, ids, of, seg = _since_onset(
+                weeks_only, "headcount_add", ids_sign,
+                lambda w, day=day, part=part: (day, part) in traded_by.get(w["history_id"], set()))
+            # More weeks moving this way than the other, inside the regime.
+            seg_other = sum(1 for d_, h, _w, _s in pairs if (d_ > 0) != (sign > 0) and h in seg)
+            if len(ids) < min_repeats or len(ids) <= seg_other:
+                continue
+            cand = (len(ids), max(ids), sign, hits_w, opp_w, ids, of)
+            if best is None or cand[:2] > best[:2]:
+                best = cand
+        if best is None:
             continue
+        _n, _last, sign, hits_w, opp_w, ids, of = best
+        side = sorted(d_ for d_, h, _w, _s in pairs if h in ids)
         delta = side[len(side) // 2]
-        hits = [p for p in pairs if (p[0] > 0) == (delta > 0)]
-        opp_w, of = 0.0, 0
-        for w, slots in traded:
-            if (day, part) in slots:
-                opp_w += _weight(w, "headcount_add")
-                of += 1
-        rate, conf = _strength(sum(p[2] for p in hits), opp_w)
+        hits = [p for p in pairs if p[1] in ids]
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         role = _display(spellings.get(rl, {})) or rl.title()
@@ -334,6 +375,7 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         out.append({"kind": "headcount_add" if delta > 0 else "headcount_cut", "employee": "", "role": role,
                     "day": day, "daypart": part, "delta": int(delta), "times": n, "text": text,
                     "opportunities": of, "rate": rate, "confidence": conf,
+                    "first_week_start": min((s_ for _d, _h, _w, s_ in hits), default=""),
                     "last_week": max((h for d, h, _w, _s in hits), default=0),
                     "last_week_start": max((s_ for _d, _h, _w, s_ in hits), default="")})
     return out
@@ -361,23 +403,23 @@ def role_change_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list
                 e[fld][val] = e[fld].get(val, 0) + 1
     out = []
     for (nl, ol, _w, day, part), e in tally.items():
-        n = len(e["weeks"])
+        if len(e["weeks"]) < min_repeats:
+            continue
+
+        def _there(w, nl=nl, ol=ol, day=day, part=part):
+            return any((r.get("employee") or "").strip().lower() == nl and (r.get("role") or "").strip().lower() == ol
+                       and _weekday(r.get("date"), r.get("day")) == day and _part(r.get("shift_start")) == part
+                       for r in w.get("base") or [])
+        hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "role_change", set(e["weeks"]), _there)
+        n = len(ids)
         if n < min_repeats:
             continue
-        opp_w, of = 0.0, 0
-        for w in week_edits:
-            there = any((r.get("employee") or "").strip().lower() == nl and (r.get("role") or "").strip().lower() == ol
-                        and _weekday(r.get("date"), r.get("day")) == day and _part(r.get("shift_start")) == part
-                        for r in w.get("base") or [])
-            if there or w["history_id"] in e["weeks"]:
-                opp_w += _weight(w, "role_change")
-                of += 1
-        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         name, old, new = _display(e["name"]), _display(e["old"]), _display(e["new"])
         out.append({"kind": "role_change", "employee": name, "role": new, "was_role": old, "day": day, "daypart": part,
-                    "times": n, "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "times": n, "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
                     "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"The manager keeps switching {name} from {old or 'no role'} to {new} on {day} "
                             f"{_PRETTY.get(part, part)} ({_weeks_text(n, of)}) — draft them as {new} there."})
@@ -428,23 +470,23 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
             e["names"][inc] = e["names"].get(inc, 0) + 1
     out = []
     for (day, part, rl), e in tally.items():
-        n = len(e["weeks"])
+        if len(e["weeks"]) < min_repeats:
+            continue
+
+        def _there(w, rl=rl, day=day, part=part):
+            return any((r.get("role") or "").strip().lower() == rl and _weekday(r.get("date"), r.get("day")) == day
+                       and _part(r.get("shift_start")) == part for r in w.get("base") or [])
+        hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "leader_swap", set(e["weeks"]), _there)
+        n = len(ids)
         if n < min_repeats:
             continue
-        opp_w, of = 0.0, 0
-        for w in week_edits:
-            there = any((r.get("role") or "").strip().lower() == rl and _weekday(r.get("date"), r.get("day")) == day
-                        and _part(r.get("shift_start")) == part for r in w.get("base") or [])
-            if there or w["history_id"] in e["weeks"]:
-                opp_w += _weight(w, "leader_swap")
-                of += 1
-        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         role = _display(e["role"])
         names = [k for k, _v in sorted(e["names"].items(), key=lambda kv: (-kv[1], kv[0]))][:3]
         out.append({"kind": "leader_swap", "employee": "", "role": role, "day": day, "daypart": part, "times": n,
-                    "names": names, "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "names": names, "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
                     "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"On {day} {_PRETTY.get(part, part)} the manager keeps swapping a stronger hand onto "
                             f"{role or 'the floor'} — a closer or a higher Operational Score ({', '.join(names)}) — "
@@ -489,9 +531,59 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
     longer shows it, and a live pattern its standing row has retired
     (without newer evidence) no longer applies. One being re-tested
     (status 'retest', L-30) is left out of the draft once on purpose."""
+    return {slot: {role: v["delta"] for role, v in roles.items()}
+            for slot, roles in learned_headcount(restaurant_id, weeks, min_weeks, db_path).items()}
+
+
+# The manager's settled level on a slot: the median of their final heads in
+# the newest weeks that slot ran (at most this many, and only weeks since the
+# pattern began when it is a live one).
+SETTLED_WEEKS = 4
+
+
+def _settled_levels(week_edits) -> dict:
+    """{(weekday, daypart, role lower): [(week_start, heads)], newest first}
+    — the people of each role the manager finished each slot with, in every
+    week the slot ran (LEARNING-3)."""
+    out = {}
+    for w in week_edits:
+        before, _sb = _slot_heads(w.get("base") or [])
+        after, _sa = _slot_heads(w.get("final") or [])
+        per = {}
+        for (d, part, rl) in set(before) | set(after):
+            per.setdefault((_weekday(d), part, rl), []).append(len(after.get((d, part, rl), ())))
+        for k, v in per.items():
+            out.setdefault(k, []).append((str(w.get("week_start") or ""), sum(v) / float(len(v))))
+    for k in out:
+        out[k].sort(reverse=True)
+    return out
+
+
+def _settled(levels, key, since=""):
+    vals = [h for ws, h in levels.get(key) or [] if ws >= (since or "")][:SETTLED_WEEKS] or \
+        [h for _ws, h in levels.get(key) or []][:SETTLED_WEEKS]
+    if not vals:
+        return None
+    vals = sorted(vals)
+    mid = len(vals) // 2
+    return vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+
+
+def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_PATH) -> dict:
+    """{(weekday, daypart): {role: {delta, settled}}} — learned_headcount_
+    adjustments with, beside each delta, the level the manager settled on
+    there (`settled`, the median of their final heads in the newest weeks
+    the slot ran — since the pattern began, for a live one). The
+    requirements table applies a delta only while its own baseline is short
+    of that level (labor.apply_learned_headcount — schedule audit 10/10/26
+    LEARNING-3): once the punches have absorbed the manager's extra server
+    the baseline already carries them, and adding the delta again asked for
+    a sixth server the manager never wanted."""
     from schedule_intel import dismissed_patterns, pattern_key
     import schedule_versions as _sv
-    pats = headcount_patterns(learning_weeks(restaurant_id, weeks, db_path), min_weeks)
+    recs = learning_weeks(restaurant_id, weeks, db_path)
+    pats = headcount_patterns(recs, min_weeks)
+    levels = _settled_levels(recs)
     dismissed = dismissed_patterns(restaurant_id, db_path)
     try:
         standing = {s_["key"]: s_ for s_ in _sv.standing_patterns(restaurant_id, db_path=db_path)
@@ -504,8 +596,10 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
         k = pattern_key(p)
         if k in dismissed or _sv.suppressed(p, standing.get(k), standing):
             continue
-        out.setdefault((p["day"], p["daypart"]), {})[p["role"]] = p["delta"]
-        live_slots.add((p["day"], p["daypart"], (p["role"] or "").strip().lower()))
+        slot = (p["day"], p["daypart"], (p["role"] or "").strip().lower())
+        out.setdefault((p["day"], p["daypart"]), {})[p["role"]] = {
+            "delta": p["delta"], "settled": _settled(levels, slot, since=p.get("first_week_start"))}
+        live_slots.add(slot)
     for k, s_ in standing.items():
         if s_["status"] != "active" or k in dismissed or s_.get("delta") in (None, ""):
             continue
@@ -517,9 +611,50 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
         except (TypeError, ValueError):
             continue
         if delta:
-            out.setdefault((s_["day"], s_["daypart"]), {})[s_["role"]] = delta
+            out.setdefault((s_["day"], s_["daypart"]), {})[s_["role"]] = {"delta": delta,
+                                                                         "settled": _settled(levels, slot)}
+            live_slots.add(slot)
+    # What the manager kept adding or cutting AFTER the week went out, by
+    # demand (LEARNING-16) — for a slot the pre-publish edits say nothing
+    # about. Its settled level is the week as it ended: the pre-publish
+    # level plus the reaction, so it too applies only while the baseline is
+    # short of it.
+    try:
+        reactions = reaction_headcount(restaurant_id, weeks, min_weeks, db_path)
+    except Exception as e:                 # a read; the edits above still apply
+        log.warning("reaction headcount unavailable for restaurant %s: %s", restaurant_id, e)
+        reactions = {}
+    for (day, part), roles in reactions.items():
+        for role, r in roles.items():
+            slot = (day, part, " ".join(str(role).split()).lower())
+            pk = pattern_key({"kind": "headcount_add" if r["delta"] > 0 else "headcount_cut", "employee": "",
+                              "day": day, "daypart": part, "role": role})
+            if slot in live_slots or pk in dismissed:
+                continue
+            pre = _settled(levels, slot)
+            out.setdefault((day, part), {})[role] = {"delta": r["delta"], "source": "reactions",
+                                                     "settled": (pre + r["delta"]) if pre is not None else None}
             live_slots.add(slot)
     return out
+
+
+def headcount_to_apply(base, delta, settled) -> int:
+    """How many of a learned headcount `delta` a requirement whose own
+    baseline is `base` still needs (LEARNING-3, RM-5): an add only while the
+    baseline is below the level the manager settled on — never past it — and
+    a cut only while it is above. With no settled level read, the delta."""
+    try:
+        base, delta = int(base or 0), int(round(float(delta or 0)))
+    except (TypeError, ValueError):
+        return 0
+    if settled is None:
+        return delta
+    target = int(round(float(settled)))
+    if delta > 0:
+        return max(0, min(delta, target - base))
+    if delta < 0:
+        return min(0, max(delta, target - base))
+    return 0
 
 
 # ── implicit recommendation acceptance ───────────────────────────────────
@@ -1156,6 +1291,9 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         for f in ("from", "to", "old_start", "new_start", "old_end", "new_end", "old_role", "new_role"):
             if it.get(f):
                 value[f] = it[f]
+        # The stable shift id, where the rows carry one (ARCH-28).
+        if row.get("shift_id") or it.get("shift_id"):
+            value["shift_id"] = row.get("shift_id") or it.get("shift_id")
         person = it.get("employee") or it.get("from") or it.get("to")
         if ch["origin"] == "cavnar":
             out["cavnar_changes"] += 1
@@ -1170,6 +1308,11 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
                 link = _attendance_link(restaurant_id, off, it.get("date"), db_path)
                 if link:
                     value["attendance"] = link
+            # What kind of reaction it is (schedule audit 10/10/26
+            # LEARNING-16): a call-off's replacement, a demand add or cut, a
+            # personal swap, a retime — what reaction_headcount and the
+            # one-tap why read.
+            value["class"] = classify_reaction(ch["kind"], value)
             out["reactions"] += 1
             schedule_memory.observe(restaurant_id, "reaction", week_start=week_start, date=it.get("date"),
                                     daypart=part, role=row.get("role"), person=person, value=value, origin="manager",
@@ -1199,13 +1342,140 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         except Exception as e:
             import ops
             ops.capture(e, job="schedule_cavnar_credit", context=f"restaurant_id={restaurant_id} history={history_id}")
-    if in_cold_start(restaurant_id, db_path):
-        try:
-            out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path)
-        except Exception as e:
-            import ops
-            ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")
+    # The one-tap why (L-35): every big change in the first weeks, and from
+    # then on the SECOND time any change repeats, at any age (schedule audit
+    # 10/10/26 LEARNING-2 — it used to be asked only in the first four
+    # published weeks, so a habit a new manager started in month six took
+    # ten weeks to reach the prompt and eighteen to bind).
+    try:
+        cold = in_cold_start(restaurant_id, db_path)
+        out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path,
+                                             repeats_only=not cold)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")
     return out
+
+
+REPEAT_LOOKBACK_DAYS = 168          # schedule_versions.LEARN_DAYS: the edit learners' own window
+
+# ── reactions to a sent week (schedule audit 10/10/26 LEARNING-16) ─────────
+#
+# A change to a week staff already have was stored and never read: the
+# strongest real-world signal of a draft's error — what the manager changed
+# after staff saw the week — fed nothing. Each reaction is now classified as
+# it is observed (capture_save) and read: a demand add or cut feeds the
+# requirement residual (reaction_headcount → learned_headcount), a likely
+# call-off asks the one-tap why at once (its "They called off" answer is the
+# attendance record reliability reads), and a personal swap teaches nothing.
+REACTION_CLASSES = ("call_off_replacement", "demand_add", "demand_cut", "personal_swap", "retime", "role_change")
+
+
+def classify_reaction(kind, value) -> str:
+    """One post-publish change's class: a person taken off (moved or
+    removed) whose absence the attendance record names (a call-out, a
+    no-show) is a call-off's replacement; a shift added is a demand add, one
+    removed with nobody missing a demand cut; a person swapped for another
+    with no absence on record is a personal swap; a retime and a role change
+    are themselves."""
+    att = (value or {}).get("attendance") or {}
+    missed = str(att.get("outcome") or "") in ("called_out", "no_show")
+    if kind in ("moved", "removed") and missed:
+        return "call_off_replacement"
+    if kind == "added":
+        return "demand_add"
+    if kind == "removed":
+        return "demand_cut"
+    if kind == "moved":
+        return "personal_swap"
+    if kind == "retimed":
+        return "retime"
+    return "role_change"
+
+
+def reaction_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_PATH) -> dict:
+    """{(weekday, daypart): {role: {delta, weeks, of}}} — the people of a
+    role the manager kept adding to (or cutting from) a slot AFTER the week
+    went out, by demand (classified demand_add / demand_cut — never a
+    call-off's replacement or a personal swap): the requirement's residual
+    the pre-publish edits never showed. A slot needs `min_weeks` weeks moving
+    the same way and more of them than the other way; its size is the
+    median net change of those weeks (LEARNING-16)."""
+    import schedule_memory
+    from datetime import date as _d, timedelta as _td
+    since = (_d.today() - _td(weeks=int(weeks))).isoformat()
+    rows = schedule_memory.observations(restaurant_id, kinds=("reaction",), since=since, counted_only=True,
+                                        db_path=None if db_path == DB_PATH else db_path)
+    per = {}
+    spell = {}
+    for o in rows:
+        v = o.get("value") or {}
+        cls = v.get("class") or classify_reaction(v.get("change"), v)
+        if cls not in ("demand_add", "demand_cut") or not o.get("role") or not o.get("daypart"):
+            continue
+        day = _weekday(o.get("date"))
+        if not day:
+            continue
+        rl = " ".join(str(o["role"]).split()).lower()
+        spell.setdefault(rl, o["role"])
+        wk = str(o.get("week_start") or o.get("history_id"))
+        e = per.setdefault((day, o["daypart"], rl), {})
+        e[wk] = e.get(wk, 0) + (1 if cls == "demand_add" else -1)
+    out = {}
+    for (day, part, rl), by_week in per.items():
+        ups = sorted(v for v in by_week.values() if v > 0)
+        downs = sorted(v for v in by_week.values() if v < 0)
+        side, other = (ups, downs) if len(ups) >= len(downs) else (downs, ups)
+        if len(side) < min_weeks or len(side) <= len(other):
+            continue
+        out.setdefault((day, part), {})[spell[rl]] = {"delta": int(side[len(side) // 2]), "weeks": len(side),
+                                                      "of": len(by_week)}
+    return out
+
+
+def _earlier_weeks(restaurant_id, history_id, subject, db_path=DB_PATH) -> int:
+    """How many EARLIER weeks the manager made this same change by hand —
+    the observation log's edits at first publish (schedule_versions.
+    observe_publish: edit_move, edit_retime, edit_headcount, edit_role) and
+    reactions to a sent week (capture_save), never an admin's or Cavnar AI's
+    own (counted_only) — matched on the change's kind, person or role,
+    weekday and daypart (LEARNING-2, LEARNING-16: the edit events read)."""
+    import schedule_memory
+    from datetime import date as _d, timedelta as _td
+    kind = subject.get("kind")
+    obs_kinds = {"moved_off": ("edit_move", "reaction"), "headcount_add": ("edit_headcount",),
+                 "retime_start": ("edit_retime", "reaction"), "retime_end": ("edit_retime", "reaction"),
+                 "role_change": ("edit_role", "reaction")}.get(kind)
+    if not obs_kinds:
+        return 0
+    since = (_d.today() - _td(days=REPEAT_LOOKBACK_DAYS)).isoformat()
+    rows = schedule_memory.observations(restaurant_id, kinds=obs_kinds, since=since, counted_only=True,
+                                        db_path=None if db_path == DB_PATH else db_path)
+    day, part = subject.get("day"), subject.get("daypart")
+    name = " ".join(str(subject.get("employee") or "").split()).casefold()
+    role = " ".join(str(subject.get("role") or "").split()).casefold()
+    weeks = set()
+    for o in rows:
+        if o.get("history_id") == history_id or _weekday(o.get("date")) != day or (o.get("daypart") or "") != part:
+            continue
+        v = o.get("value") or {}
+        ch = v.get("change")
+        who = lambda x: " ".join(str(x or "").split()).casefold()  # noqa: E731
+        if kind == "moved_off":
+            off = v.get("from") if ch == "moved" else (o.get("person") if ch == "removed" else None)
+            hit = bool(off) and who(off) == name
+        elif kind == "headcount_add":
+            hit = who(o.get("role")) == role and int(v.get("delta") or 0) > 0
+        elif kind in ("retime_start", "retime_end"):
+            col = "new_start" if kind == "retime_start" else "new_end"
+            hit = ch == "retimed" and who(o.get("role")) == role and bool(v.get(col)) and \
+                _clock(v.get(col)) == subject.get("time")
+        else:
+            hit = ch == "role_changed" and who(o.get("person")) == name and \
+                who(v.get("new_role")) == role
+        if hit:
+            weeks.add(str(o.get("week_start") or o.get("history_id")))
+    return len(weeks)
 
 
 def _day_label(iso) -> str:
@@ -1217,14 +1487,17 @@ def _meal(part) -> str:
     return {"morning": "lunch", "night": "dinner"}.get(part, part or "")
 
 
-def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PATH) -> list:
+def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PATH, repeats_only=False) -> list:
     """The one-tap "why" for the biggest of a save's own changes (L-35), at
     most WHY_MAX_QUESTIONS, never one already asked about this week: a
     person taken off a slot (moved or removed), more of a role on a slot,
     a role's start or end moved WHY_RETIME_MIN_MINUTES or more, a role
     change. Each is stored (schedule_edit_answers, answer NULL) and
     returned as {key, kind, text, options: [{answer, label}], date, employee,
-    role, daypart} — "They called off" only on a week staff already have."""
+    role, daypart, repeat} — "They called off" only on a week staff already
+    have. `repeats_only` (past the first weeks, LEARNING-2): only a change
+    the manager already made by hand in an earlier week — its second
+    occurrence onward — is asked about; `repeat` is how many earlier weeks."""
     import schedule_versions as _sv
     from shift_quality import present_dayparts
     from schedule_rules import parse_minutes
@@ -1298,12 +1571,30 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
                       f"Always draft {it.get('employee')} as {it.get('new_role')} on {subject['day']} {_meal(part)}"))
     if not cands:
         return []
+    repeats = {}
+    for _rank, key, subject, _text, _ch, _always in cands:
+        repeats[key] = _earlier_weeks(restaurant_id, history_id, subject, db_path=db_path)
+    if repeats_only:
+        # A person taken off a sent week's shift today or tomorrow is most
+        # likely a call-off: asked at once, so the owner's "They called off"
+        # becomes the attendance record reliability reads (LEARNING-16).
+        from datetime import date as _d, timedelta as _td
+        soon = {_d.today().isoformat(), (_d.today() + _td(days=1)).isoformat()}
+
+        def _likely_call_off(c):
+            return phase == _sv.POST_PUBLISH and c[2].get("kind") == "moved_off" and str(c[2].get("date"))[:10] in soon
+        cands = [c for c in cands if repeats.get(c[1]) or _likely_call_off(c)]
+        if not cands:
+            return []
     conn = get_conn(db_path)
     try:
         asked = {r[0] for r in conn.execute("SELECT question_key FROM schedule_edit_answers WHERE restaurant_id=? "
                                             "AND history_id=?", (restaurant_id, history_id)).fetchall()}
         out = []
-        for rank, key, subject, text, ch, always in sorted(cands, key=lambda c: (c[0], c[1])):
+        # A repeat first (the change most likely a habit), then the order of
+        # kinds as before.
+        for rank, key, subject, text, ch, always in sorted(cands, key=lambda c: (-min(1, repeats.get(c[1], 0)),
+                                                                                c[0], c[1])):
             if key in asked or len(out) >= WHY_MAX_QUESTIONS:
                 continue
             options = [{"answer": "always", "label": always}, {"answer": "this_week", "label": WHY_LABELS["this_week"]}]
@@ -1318,7 +1609,7 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
             asked.add(key)
             out.append({"key": key, "kind": subject["kind"], "text": text, "options": options,
                         "date": subject.get("date"), "employee": subject.get("employee"), "role": subject.get("role"),
-                        "daypart": subject.get("daypart")})
+                        "daypart": subject.get("daypart"), "repeat": int(repeats.get(key) or 0)})
         conn.commit()
     finally:
         conn.close()
@@ -1470,6 +1761,37 @@ def _solve(a, b):
     return x
 
 
+def _fe_group(sample) -> str:
+    """A sample's fixed-effect cell: its weekday × daypart (calibration v2,
+    LEARNING-8) — busy nights carry harder demand and more issues, and
+    without the cell the demand-sensitive dimensions absorbed it."""
+    meta = sample[3] if len(sample) > 3 else {}
+    return str((meta or {}).get("cell") or "")
+
+
+def _within(values, groups, demand=None):
+    """`values` with each fixed-effect cell's mean taken out, and — where a
+    demand ratio is given for every value — its linear part too (the
+    within estimator: the fit reads only how a shift differed from the
+    other shifts of its own weekday and daypart at its own demand)."""
+    by = {}
+    for v, g in zip(values, groups):
+        by.setdefault(g, []).append(v)
+    means = {g: sum(vs) / len(vs) for g, vs in by.items()}
+    out = [v - means[g] for v, g in zip(values, groups)]
+    if demand and all(d is not None for d in demand):
+        dm = {}
+        for d, g in zip(demand, groups):
+            dm.setdefault(g, []).append(d)
+        dmeans = {g: sum(vs) / len(vs) for g, vs in dm.items()}
+        dz = [d - dmeans[g] for d, g in zip(demand, groups)]
+        sxx = sum(x * x for x in dz)
+        if sxx > 1e-9:
+            b = sum(x * y for x, y in zip(dz, out)) / sxx
+            out = [y - b * x for x, y in zip(dz, out)]
+    return out
+
+
 def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     """One outcome regressed on every dimension at once, standardized, with
     a ridge penalty: {key: coefficient}, {key: shifts that dimension was
@@ -1482,11 +1804,19 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
 
     At most one dimension per CALIBRATION_SAMPLES_PER_DIMENSION shifts is
     fitted (SQ-22), the best-observed first; the ones that did not fit are
-    returned as `crowded`."""
-    rows = [(s[0], s[1][outcome]) for s in samples if s[1].get(outcome) is not None]
+    returned as `crowded`.
+
+    Calibration v2 (schedule audit 10/10/26 LEARNING-8): the fit is WITHIN
+    each weekday × daypart cell and at the shift's own demand (the samples'
+    `cell` and `demand` — _within), so a busy night's harder demand and its
+    issues are not read as the dimensions' doing."""
+    picked = [s for s in samples if s[1].get(outcome) is not None]
+    rows = [(s[0], s[1][outcome]) for s in picked]
     if len(rows) < min_pairs:
         return {}, {}, len(rows), []
-    ys = [y for _d, y in rows]
+    groups = [_fe_group(s) for s in picked]
+    demand = [(s[3] or {}).get("demand") if len(s) > 3 else None for s in picked]
+    ys = _within([y for _d, y in rows], groups, demand)
     my = sum(ys) / len(ys)
     sy = math.sqrt(sum((y - my) ** 2 for y in ys) / len(ys))
     if sy <= 1e-9:
@@ -1506,7 +1836,14 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     used, crowded = sorted(ranked[:room]), sorted(ranked[room:])
     if not used:
         return {}, seen, len(rows), crowded
-    xs = [[((d[k] - stats[k][0]) / stats[k][1]) if k in d else 0.0 for k in used] for d, _y in rows]
+    # Each regressor within its cell too (a dimension missing on a shift is
+    # held at its mean there, as before).
+    cols = {k: _within([(d[k] if k in d else stats[k][0]) for d, _y in rows], groups, demand) for k in used}
+    wsd = {k: math.sqrt(sum(v * v for v in cols[k]) / len(cols[k])) for k in used}
+    used = [k for k in used if wsd[k] > 1e-9]           # no variation inside any cell: nothing to read
+    if not used:
+        return {}, seen, len(rows), crowded
+    xs = [[cols[k][r] / wsd[k] for k in used] for r in range(len(rows))]
     yz = [(y - my) / sy for y in ys]
     n, p = len(xs), len(used)
     xtx = [[sum(xs[r][i] * xs[r][j] for r in range(n)) for j in range(p)] for i in range(p)]
@@ -1520,6 +1857,24 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     # what CALIBRATION_MIN_EVIDENCE was written against.
     return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows), crowded
 
+
+# Calibration v2 (schedule audit 10/10/26 LEARNING-8): each outcome is fitted
+# on its own and the fits are COMBINED by what each outcome costs — the
+# owner sees these: a coverage or no-show issue, one star on a meal's
+# reviews, one point of labor % on a shift's sales (its measured sales when
+# known, else CALIBRATION_LABOR_POINT_USD). Averaging the outcomes made
+# coverage's "fewer issues" and "higher labor" cancel into no signal.
+CALIBRATION_ISSUE_USD = 150.0
+CALIBRATION_REVIEW_POINT_USD = 200.0
+CALIBRATION_LABOR_POINT_USD = 25.0
+# A suggestion stands only when the weights fitted on the older weeks score
+# the newest CALIBRATION_HOLDOUT_SHARE of them better than the weights now
+# do (held out, never fitted on); a floor or bar moves only when its line
+# survives a permutation test over every line looked at.
+CALIBRATION_HOLDOUT_SHARE = 0.25
+CALIBRATION_HOLDOUT_CONFIDENCE = 0.8     # bootstrap resamples in which the suggestion tracks better
+CALIBRATION_THRESHOLD_ALPHA = 0.05
+CALIBRATION_PERMUTATIONS = 200
 
 # The outcomes a shift is judged by afterwards: +1 = a higher value is
 # better, −1 = a lower one is. Each carries the words its explanation uses.
@@ -1552,11 +1907,11 @@ def _calibration_samples(restaurant_id, db_path):
         # without a measured daypart figure has no labor reading at all.
         try:
             outs = conn.execute("SELECT history_id, date, daypart, issues, review_rating_attributed AS review_rating, "
-                                "labor_pct_daypart AS labor_pct FROM schedule_outcomes WHERE restaurant_id=?",
-                                (restaurant_id,)).fetchall()
-        except Exception:
-            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, NULL AS labor_pct "
+                                "labor_pct_daypart AS labor_pct, CASE WHEN split_basis='measured' THEN sales END AS sales "
                                 "FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        except Exception:
+            outs = conn.execute("SELECT history_id, date, daypart, issues, NULL AS review_rating, NULL AS labor_pct, "
+                                "NULL AS sales FROM schedule_outcomes WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         ids = sorted({o["history_id"] for o in outs})
         hist = {}
         for i in range(0, len(ids), 200):
@@ -1597,20 +1952,169 @@ def _calibration_samples(restaurant_id, db_path):
         except Exception as e:
             log.warning("[calibration] watched dates unavailable for %s: %s", restaurant_id, e)
             watched = set()
+    # The week AS IT RAN where it was scored so (schedule audit 10/10/26
+    # LEARNING-8: the planned week was fitted against what the run week
+    # did) — the as-run dimensions (schedule_intel.record_as_run_quality,
+    # sq_as_run); the planned ones only for a shift never scored as run.
+    as_run = {}
+    try:
+        import schedule_memory as _sm_cal
+        for ob in _sm_cal.observations(restaurant_id, kinds=("sq_as_run",),
+                                       db_path=None if db_path == DB_PATH else db_path):
+            dims_ = (ob.get("value") or {}).get("dims") or {}
+            if ob.get("date") and dims_:
+                as_run[(ob.get("history_id"), str(ob["date"])[:10], ob.get("daypart"))] = {
+                    k: float(v) for k, v in dims_.items() if v is not None}
+    except Exception as e:
+        log.warning("[calibration] as-run scores unavailable for %s: %s", restaurant_id, e)
+    # The demand each shift ran at, against its weekday and daypart's median
+    # measured sales — the fit's demand control.
+    med = {}
+    for o in outs:
+        if o["sales"]:
+            med.setdefault((_weekday(o["date"]), o["daypart"]), []).append(float(o["sales"]))
+    med = {k: sorted(v)[len(v) // 2] for k, v in med.items() if len(v) >= 3}
     samples = []
     for o in outs:
-        dims = dims_by.get((o["history_id"], o["date"], o["daypart"]))
+        key = (o["history_id"], o["date"], o["daypart"])
+        dims = as_run.get(key) or dims_by.get(key)
         if not dims:
             continue
         target = hist[o["history_id"]]["labor_target"] if o["history_id"] in hist else None
         labor = None
         if o["labor_pct"] is not None and target:
             labor = float(o["labor_pct"]) - float(target)
+        m = med.get((_weekday(o["date"]), o["daypart"]))
+        meta = dict(meta_by.get(key) or {}, basis="as_run" if key in as_run else "planned",
+                    cell=f"{_weekday(o['date'])}|{o['daypart']}",
+                    demand=round(float(o["sales"]) / m, 4) if (o["sales"] and m) else 1.0,
+                    sales=float(o["sales"]) if o["sales"] else None)
         samples.append((dims, {"issues": float(o["issues"] or 0) if o["date"] in watched else None,
                                "review_rating": float(o["review_rating"]) if o["review_rating"] is not None else None,
-                               "labor_vs_target": labor}, o["history_id"],
-                        meta_by.get((o["history_id"], o["date"], o["daypart"])) or {}))
+                               "labor_vs_target": labor}, o["history_id"], meta))
     return samples, watched
+
+
+def _dollar_weights(samples) -> dict:
+    """{outcome: dollars per unit} the fits are combined by (v2): an issue,
+    a star on a meal's reviews, a point of labor % on the shift's own
+    measured sales (the median shift's, else CALIBRATION_LABOR_POINT_USD)."""
+    sales = sorted(float((s[3] or {}).get("sales")) for s in samples
+                   if len(s) > 3 and (s[3] or {}).get("sales"))
+    labor = round(sales[len(sales) // 2] / 100.0, 2) if len(sales) >= 5 else CALIBRATION_LABOR_POINT_USD
+    return {"issues": CALIBRATION_ISSUE_USD, "review_rating": CALIBRATION_REVIEW_POINT_USD, "labor_vs_target": labor}
+
+
+def _outcome_scale(samples, usd) -> dict:
+    """{outcome: dollars one standard deviation of it moves} — what turns a
+    standardized coefficient into dollars."""
+    out = {}
+    for o in CALIBRATION_OUTCOMES:
+        ys = [s[1][o] for s in samples if s[1].get(o) is not None]
+        if len(ys) < 2:
+            continue
+        m = sum(ys) / len(ys)
+        sd = math.sqrt(sum((y - m) ** 2 for y in ys) / len(ys))
+        out[o] = sd * float(usd.get(o) or 0.0)
+    return out
+
+
+def _candidate_weights(samples, keys, current, usd) -> dict:
+    """The bounded next weights `samples` alone point to — calibrate_weights'
+    own arithmetic (per-outcome fits combined in dollars, the evidence
+    floor, the 30% ceiling, one 10% step), for the held-out check."""
+    from shift_quality import DEFAULT_WEIGHTS
+    fits = {o: _ridge_fit(samples, keys, o, CALIBRATION_MIN_PAIRS)[0] for o in CALIBRATION_OUTCOMES}
+    scale = _outcome_scale(samples, usd)
+    out = {}
+    for key, default in DEFAULT_WEIGHTS.items():
+        contrib = {o: CALIBRATION_OUTCOMES[o][0] * fits[o][key] for o in CALIBRATION_OUTCOMES if key in fits[o]}
+        norm = sum(scale.get(o, 0.0) for o in contrib)
+        ev = sum(c * scale.get(o, 0.0) for o, c in contrib.items()) / norm if (contrib and norm > 0) else None
+        nudge = max(-CALIBRATION_MAX_NUDGE, min(CALIBRATION_MAX_NUDGE, ev)) \
+            if (ev is not None and abs(ev) >= CALIBRATION_MIN_EVIDENCE) else 0.0
+        now = float(current.get(key, default))
+        step = CALIBRATION_MAX_STEP * default
+        out[key] = round(now + max(-step, min(step, default * (1 + nudge) - now)), 1)
+    return out
+
+
+def _holdout_check(samples, keys, current, usd) -> dict:
+    """{weeks, shifts, current, candidate, confirmed, reason}: the weights
+    the older weeks fit (_candidate_weights) against the weights now, on the
+    newest CALIBRATION_HOLDOUT_SHARE of the weeks, never fitted on — the
+    correlation, within each weekday and daypart, between a shift's score
+    under those weights and what its outcomes were worth in dollars.
+    `confirmed` None when there is too little to hold out or nothing moves."""
+    weeks = sorted({s[2] for s in samples})
+    k = max(1, int(round(len(weeks) * CALIBRATION_HOLDOUT_SHARE)))
+    held = set(weeks[-k:])
+    train = [s for s in samples if s[2] not in held]
+    test = [s for s in samples if s[2] in held]
+    out = {"weeks": k, "shifts": len(test), "current": None, "candidate": None, "confirmed": None, "reason": None}
+    if len(test) < 10 or len(train) < CALIBRATION_MIN_SHIFTS:
+        out["reason"] = "too few weeks to hold some out and check the suggestion on them"
+        return out
+    cand = _candidate_weights(train, keys, current, usd)
+    if all(abs(cand[k_] - float(current.get(k_, cand[k_]))) < 0.05 for k_ in cand):
+        out["reason"] = "the older weeks alone point nowhere"
+        return out
+    vals, comp_c, comp_n, groups = [], [], [], []
+    for s in test:
+        v = [CALIBRATION_OUTCOMES[o][0] * s[1][o] * float(usd.get(o) or 0) for o in CALIBRATION_OUTCOMES
+             if s[1].get(o) is not None]
+        dims = s[0]
+
+        def composite(w):
+            num = sum(float(w.get(k_, 0)) * x for k_, x in dims.items() if k_ in w)
+            den = sum(float(w.get(k_, 0)) for k_ in dims if k_ in w)
+            return num / den if den else None
+        a, b = composite(current), composite(cand)
+        if not v or a is None or b is None:
+            continue
+        vals.append(sum(v))
+        comp_c.append(a)
+        comp_n.append(b)
+        groups.append(_fe_group(s))
+    if len(vals) < 10:
+        out["reason"] = "too few held-out shifts with an outcome"
+        return out
+    yv = _within(vals, groups)
+    xa, xb = _within(comp_c, groups), _within(comp_n, groups)
+    rc = _pearson(list(zip(xa, yv)))
+    rn = _pearson(list(zip(xb, yv)))
+    out.update(current=round(rc, 3) if rc is not None else None, candidate=round(rn, 3) if rn is not None else None)
+    if rc is None or rn is None:
+        out["reason"] = "the held-out shifts did not vary enough to tell"
+        return out
+    out["p_better"] = paired_better(xa, xb, yv)
+    out["confirmed"] = rn > rc + 1e-9 and (out["p_better"] or 0) >= CALIBRATION_HOLDOUT_CONFIDENCE
+    if not out["confirmed"]:
+        out["reason"] = (f"on the newest {k} week{'s' if k != 1 else ''}, held out, the suggested weights were not "
+                         f"clearly better at tracking what the shifts were worth than the weights now")
+    return out
+
+
+def paired_better(xa, xb, yv, tries=200) -> float:
+    """The share of bootstrap resamples (paired, seeded) of the held-out
+    shifts in which the score `xb` correlates with the outcome `yv` better
+    than `xa` does — how sure a set of weights is the better one. None when
+    no resample could be read."""
+    import random
+    n = len(yv)
+    if n < 3:
+        return None
+    rng = random.Random(f"holdout|{n}|{round(sum(xa), 6)}|{round(sum(xb), 6)}|{round(sum(yv), 6)}")
+    wins = done = 0
+    for _ in range(int(tries)):
+        pick = [rng.randrange(n) for _ in range(n)]
+        c1 = _pearson([(xa[i], yv[i]) for i in pick])
+        c2 = _pearson([(xb[i], yv[i]) for i in pick])
+        if c1 is None or c2 is None:
+            continue
+        done += 1
+        wins += 1 if c2 > c1 else 0
+    return round(wins / float(done), 3) if done else None
 
 
 def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> dict:
@@ -1669,6 +2173,8 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     for outcome in CALIBRATION_OUTCOMES:
         coef, seen, used, crowded = _ridge_fit(samples, keys, outcome, CALIBRATION_MIN_PAIRS)
         fits[outcome] = {"coef": coef, "seen": seen, "shifts": used, "crowded": crowded}
+    usd = _dollar_weights(samples)
+    scale = _outcome_scale(samples, usd)
     report, suggested = {}, {}
     for key, default in DEFAULT_WEIGHTS.items():
         corr, pairs_n, coefs, contrib = {}, {}, {}, {}
@@ -1681,7 +2187,12 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
             coefs[outcome] = round(b, 3) if b is not None else None
             if b is not None:
                 contrib[outcome] = sign * b
-        ev = sum(contrib.values()) / len(contrib) if contrib else None
+        # Combined by what each outcome costs (v2): the dollars a standard
+        # deviation more of this dimension went with, over the dollars the
+        # outcomes move by — 1.0 is "every outcome, fully, the good way".
+        dollars = {o: c * scale.get(o, 0.0) for o, c in contrib.items()}
+        norm = sum(scale.get(o, 0.0) for o in contrib)
+        ev = (sum(dollars.values()) / norm) if (contrib and norm > 0) else None
         target_nudge = 0.0
         if ev is not None and abs(ev) >= CALIBRATION_MIN_EVIDENCE:
             target_nudge = max(-CALIBRATION_MAX_NUDGE, min(CALIBRATION_MAX_NUDGE, ev))
@@ -1708,11 +2219,25 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                        "step_pct": int(round((weight - now) / default * 100)) if default else 0,
                        "target": round(target, 1),
                        "evidence": round(ev, 3) if ev is not None else None,
+                       # What a standard deviation more of it went with, in
+                       # dollars per outcome (LEARNING-8).
+                       "dollars": {o: round(v, 2) for o, v in dollars.items()},
                        "correlation": corr, "coefficient": coefs, "pairs": pairs_n,
                        "driver": driver, "explanation": explanation,
                        "reading": ("tracked better outcomes" if target_nudge > 0 else
                                    "did not track outcomes here" if target_nudge < 0 else
                                    "no clear signal yet")}
+    # Held-out weeks before anything is suggested (LEARNING-8): the weights
+    # the OLDER weeks fit, against the weights now, on the newest weeks.
+    holdout = _holdout_check(samples, keys, current, usd)
+    if holdout.get("confirmed") is False or holdout.get("confirmed") is None:
+        why = holdout.get("reason") or "the newest weeks did not confirm it"
+        for key, d in report.items():
+            if abs(d["suggested"] - d["current"]) >= 0.05:
+                d["suggested"] = d["current"]
+                d["step_pct"] = 0
+                d["explanation"] = (d["explanation"] + f" Held back: {why}.")
+                suggested[key] = d["current"]
     moving = sorted((k for k, d in report.items() if abs(d["suggested"] - d["current"]) >= 0.05),
                     key=lambda k: -abs(report[k]["suggested"] - report[k]["current"]))
     watch_note = ("" if base["watched_shifts"] else
@@ -1721,6 +2246,13 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
             "moving": moving, "profiles": profiles, "suggested_profiles": suggested_profiles,
             "moving_profiles": sorted(suggested_profiles),
+            # v2 (LEARNING-8): what each outcome is worth, how the week was
+            # read (as it ran, or as planned), the fixed effects, and the
+            # held-out check the suggestion passed or failed.
+            "method": "v2", "dollar_weights": usd, "holdout": holdout,
+            "basis": {"as_run": sum(1 for s in samples if (s[3] or {}).get("basis") == "as_run"),
+                      "planned": sum(1 for s in samples if (s[3] or {}).get("basis") != "as_run")},
+            "controls": "within each weekday and daypart, at the shift's own demand",
             "fit": {o: {"shifts": f["shifts"], "dimensions": len(f["coef"]), "left_out": f["crowded"]}
                     for o, f in fits.items()},
             "limits": {"max_step_pct": int(CALIBRATION_MAX_STEP * 100), "max_total_pct": int(CALIBRATION_MAX_NUDGE * 100),
@@ -1774,6 +2306,25 @@ def _threshold_fit(points: list, current: float):
     return best
 
 
+def _threshold_pvalue(points: list, current, observed: float, name="") -> float:
+    """The share of CALIBRATION_PERMUTATIONS shuffles of the outcomes among
+    the shifts whose best line (_threshold_fit over the same range) shows a
+    gap at least `observed` — (1 + hits) / (1 + tries), deterministic (the
+    shuffle is seeded by the line's name)."""
+    import random
+    rng = random.Random(f"threshold|{name}|{len(points)}")
+    xs = [x for x, _oc in points]
+    ocs = [oc for _x, oc in points]
+    hits = 0
+    for _ in range(CALIBRATION_PERMUTATIONS):
+        shuffled = list(ocs)
+        rng.shuffle(shuffled)
+        fit = _threshold_fit(list(zip(xs, shuffled)), current)
+        if fit is not None and fit[1] >= observed - 1e-12:
+            hits += 1
+    return round((1 + hits) / float(1 + CALIBRATION_PERMUTATIONS), 4)
+
+
 def _line_reading(name: str, points: list, current) -> dict:
     """One floor's or bar's reading: {current, suggested, fitted, evidence,
     below, above, shifts, explanation} — a bounded step toward the line the
@@ -1790,6 +2341,17 @@ def _line_reading(name: str, points: list, current) -> dict:
     if ev < CALIBRATION_THRESHOLD_EVIDENCE:
         out["explanation"] = (f"{name} stays at {current}: shifts under no nearby line did clearly worse "
                               f"(the best gap was {ev:.2f} standard deviations).")
+        return out
+    # Corrected for looking at every line (schedule audit 10/10/26
+    # LEARNING-8): the best gap must beat the best gap the same search finds
+    # with the outcomes shuffled among the shifts, in all but
+    # CALIBRATION_THRESHOLD_ALPHA of CALIBRATION_PERMUTATIONS tries — a
+    # search over ±20 points finds some line by chance.
+    p = _threshold_pvalue(points, current, ev, name)
+    out["p_value"] = p
+    if p > CALIBRATION_THRESHOLD_ALPHA:
+        out["explanation"] = (f"{name} stays at {current}: the line at {line} could be chance — shuffled outcomes "
+                              f"found as big a gap {int(round(p * 100))}% of the time.")
         return out
     if line == current:
         out["explanation"] = (f"{name} stays at {current}, already where the record puts it: the {below} shifts "

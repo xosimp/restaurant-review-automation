@@ -305,6 +305,28 @@ def load_shifts(path: str = "sample_shifts.csv",
 _UNREAD = object()   # "client_data not passed in" — None is a real answer (no row)
 
 
+def shift_history(restaurant_id: int, since=None, until=None, db_path=None) -> list:
+    """The restaurant's own shift rows inside [since, until] (either may be
+    None), as load_shifts reads its stored file — from shift_facts by date
+    when that is its record (scheduler audit 10/10/26, SCALE-5), else the
+    stored file parsed and filtered. [] with nothing on file; never the
+    bundled sample. The one reader for a window of the history."""
+    import shift_facts as _sf_h
+    if _sf_h.store_of(restaurant_id, db_path) == "facts":
+        return _sf_h.history_rows(restaurant_id, since=since, until=until, db_path=db_path)
+    if db_path:
+        from models import get_client_data as _gcd_h
+        cd = _gcd_h(restaurant_id, db_path=db_path)
+        rows = load_shifts(csv_string=cd["shifts_csv"]) if cd and cd.get("shifts_csv") else []
+    else:
+        rows = load_shifts_for_restaurant(restaurant_id) or []
+    if since or until:
+        lo, hi = str(since or "")[:10], str(until or "")[:10]
+        rows = [r for r in rows if (not lo or str(r.get("date") or "")[:10] >= lo)
+                and (not hi or str(r.get("date") or "")[:10] <= hi)]
+    return rows
+
+
 def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False,
                                client_data=_UNREAD) -> list[dict]:
     """The restaurant's own shifts, or [] when it has uploaded none.
@@ -318,12 +340,43 @@ def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False,
     "$12,630/mo" gap into their Home and weekly email as their own figures.
     """
     if client_data is _UNREAD:
-        from models import get_client_data
-        client_data = get_client_data(restaurant_id)
+        import models as _m_scope
+        store = _m_scope.read_scope_store()
+        if store is not None:
+            # One parse per read_scope (a generation, an inputs build, one
+            # restaurant of a sweep — scheduler audit 10/10/26, SCALE-6): an
+            # inputs build parsed the whole history about 25 times. Shared
+            # like the request's _cached_shifts: read-only by convention.
+            key = ("shifts", int(restaurant_id))
+            if key not in store:
+                store[key] = _own_shifts(restaurant_id, None)
+            if store[key]:
+                return store[key]
+            return load_shifts() if allow_sample else []
+        rows = _own_shifts(restaurant_id, None)
+        return rows if rows else (load_shifts() if allow_sample else [])
     data = client_data
+    if data and (data.get("shifts_store") == "facts" or ("shifts_csv" not in data and data.get("has_shifts"))):
+        # Facts, or a row read without its file (get_client_data
+        # with_shifts=False): the one reader fetches what it needs.
+        rows = _own_shifts(restaurant_id, data)
+        return rows if rows else (load_shifts() if allow_sample else [])
     if data and data.get("shifts_csv"):
         return load_shifts(csv_string=data["shifts_csv"])
     return load_shifts() if allow_sample else []
+
+
+def _own_shifts(restaurant_id, client_data) -> list:
+    """Every shift on file: shift_facts' rows when they are the record
+    (SCALE-5 — no export rebuilt, no file parsed), else the stored file."""
+    from models import get_client_data
+    cd = client_data if client_data is not None else get_client_data(restaurant_id, with_shifts=False)
+    if cd and cd.get("shifts_store") == "facts":
+        import shift_facts as _sf_o
+        return _sf_o.history_rows(restaurant_id)
+    if cd and "shifts_csv" not in cd and cd.get("has_shifts"):
+        cd = get_client_data(restaurant_id)
+    return load_shifts(csv_string=cd["shifts_csv"]) if cd and cd.get("shifts_csv") else []
 
 
 def get_hourly_rate(restaurant_id: int) -> float:
@@ -644,8 +697,13 @@ def full_history_by_day(restaurant_id: int) -> dict:
 def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salaries=False):
     if client_data is _UNREAD:
         from models import get_client_data
-        client_data = get_client_data(restaurant_id)
-    is_live = bool(client_data and client_data.get("shifts_csv"))
+        import shift_facts as _sf_a
+        # On shift_facts (SCALE-5) the row without the file: the shifts are
+        # read below from the facts, and a stale export is never rebuilt
+        # for an analysis. On the file, the row with it, read once.
+        client_data = (get_client_data(restaurant_id, with_shifts=False)
+                       if _sf_a.store_of(restaurant_id) == "facts" else get_client_data(restaurant_id))
+    is_live = bool(client_data and (client_data.get("shifts_csv") or client_data.get("has_shifts")))
     # The labelled preview: is_live=False travels with the result.
     # Rows dated after the restaurant's today are typos and never read —
     # not by the current window, not by the per-day archive (B3#4).
@@ -3343,15 +3401,21 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
     adjustment is positive."""
     out = {k: dict(v) for k, v in (typical or {}).items()}
     try:
-        from schedule_learning import learned_headcount_adjustments
-        adj = learned_headcount_adjustments(restaurant_id) or {}
+        from schedule_learning import learned_headcount, headcount_to_apply
+        adj = learned_headcount(restaurant_id) or {}
     except Exception:
         return out
     for key, roles in adj.items():
         slot = out.setdefault(tuple(key), {})
-        for role, delta in (roles or {}).items():
+        for role, learned in (roles or {}).items():
             match = next((r for r in slot if r.strip().lower() == str(role).strip().lower()), role)
-            n = int(slot.get(match, 0) or 0) + int(round(float(delta or 0)))
+            base = int(slot.get(match, 0) or 0)
+            # Only while the baseline is short of the level the manager
+            # settled on (schedule audit 10/10/26 LEARNING-3, RM-5): once the
+            # punches carry the extra server, the baseline already asks for
+            # them, and the delta on top asked for one more than the manager
+            # ever wanted — kept by the trim until they cut it twice.
+            n = base + headcount_to_apply(base, (learned or {}).get("delta"), (learned or {}).get("settled"))
             if n > 0:
                 slot[match] = n
             else:
@@ -3565,8 +3629,14 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
     roles_by_employee = _dd(set)
     punch_rows = []
     punched = set()
-    from schedule_rules import is_training_role as _is_training
+    from schedule_rules import is_training_role as _is_training_raw
     from shift_quality import role_family as _family
+    _training_memo = {}
+
+    def _is_training(role):
+        if role not in _training_memo:
+            _training_memo[role] = _is_training_raw(role)
+        return _training_memo[role]
     for s in shifts or []:
         name = (s.get("employee") or "").strip()
         role = (s.get("role") or "").strip()
@@ -3731,7 +3801,12 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 out[day] = counts
         return out
 
-    p_by, p_dates, p_late, p_late_dates = _count(punch_rows)
+    # Only the dates the readings use (scheduler audit 10/10/26, SCALE-17):
+    # the usual crew, its trend and the late segment each read the newest
+    # TYPICAL_WEEKS dates of a weekday, but every row of a three-year history
+    # was counted first (1.5 s for 175k rows, against 40 ms for the weeks
+    # read). Who has worked which roles is still read from every punch above.
+    p_by, p_dates, p_late, p_late_dates = _count(_recent_rows(punch_rows))
     typical = _typical(p_by, p_dates, find_trends=True)
     late = _late(p_late, p_late_dates)
     published_typical = {}
@@ -3752,7 +3827,9 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
     # The same crew in people on at once (contract #2): the punches and, for
     # the people who never punch, their published shifts — different people,
     # one floor, so counted together.
-    concurrent = concurrent_patterns(list(punch_rows) + list(pub_rows), open_times=open_times,
+    # Counted over each weekday's newest TYPICAL_WEEKS dates only, the dates
+    # it reads (_recent_rows, SCALE-17) — not three years of rows.
+    concurrent = concurrent_patterns(_recent_rows(list(punch_rows) + list(pub_rows)), open_times=open_times,
                                      close_times=close_times, families=families)
     return {
         "typical_headcount": typical,
@@ -3774,6 +3851,35 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         # review to say: {(weekday, daypart): {role: people}}.
         "published_headcount": published_typical,
     }
+
+
+def _recent_rows(rows, weeks=None) -> list:
+    """`rows` from the oldest date historical_patterns' readings can reach:
+    for each weekday its newest `weeks` (TYPICAL_WEEKS) dates on file, so a
+    weekday the restaurant skipped some weeks still has all of its own. A
+    row whose date does not read as one is kept, as the count keeps it."""
+    weeks = int(weeks or TYPICAL_WEEKS)
+    by_day = {}
+    for d in {str(r.get("date") or "").strip()[:10] for r in rows or []}:
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").weekday()
+        except (ValueError, TypeError):
+            continue
+        by_day.setdefault(wd, []).append(d)
+    if not by_day:
+        return list(rows or [])
+    cutoff = min(sorted(ds)[-weeks:][0] for ds in by_day.values())
+    out = []
+    for r in rows or []:
+        d = str(r.get("date") or "").strip()[:10]
+        if d >= cutoff:
+            out.append(r)
+            continue
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            out.append(r)
+    return out
 
 
 def _close_m(value):
@@ -3816,7 +3922,7 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
     failure (the baseline then reads the punches alone)."""
     try:
         import canonical_facts as _cf
-        from models import get_schedule_history_detail
+        from models import get_published_week_csv
         from schedule_versions import rows_from_csv
         if before is None:
             from time_utils import restaurant_now_by_id
@@ -3827,8 +3933,11 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
         for w in _cf.published_weeks(restaurant_id, since):
             if w["week_start"] >= b.isoformat():
                 continue
-            detail = get_schedule_history_detail(w["history_id"], restaurant_id) or {}
-            rows.extend(rows_from_csv(detail.get("schedule_csv") or ""))
+            # The CSV alone (scheduler audit 10/10/26, SCALE-18): the full
+            # detail reader SELECTs * and parses the summary, the 130-440 KB
+            # quality, the review and the weather to hand back one column.
+            week = get_published_week_csv(w["history_id"], restaurant_id) or {}
+            rows.extend(rows_from_csv(week.get("schedule_csv") or ""))
         return rows
     except Exception as e:
         print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")
@@ -3847,7 +3956,26 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
     into it (crew_matrix.bind_answers): a "Leaner is fine" in force holds
     that shift's usual crew to what the owner accepted, so the requirement,
     the score, the top-up and the trim all read it (LOGIC-6, TRUST-8) —
-    `crew_answers` says which, for the requirement's reason."""
+    `crew_answers` says which, for the requirement's reason.
+
+    Read once per read_scope (scheduler audit 10/10/26, SCALE-17): an
+    inputs build, a generation and the crew matrix each asked for it more
+    than once, over the same history. Later callers in the scope get a copy."""
+    import copy as _copy_sb
+    import models as _m_sb
+    store = _m_sb.read_scope_store()
+    own = store is not None and (shifts is None or shifts is store.get(("shifts", int(restaurant_id))))
+    key = ("staffing_baseline", int(restaurant_id), str(before) if before else None,
+           tuple(sorted((str(k), str(v)) for k, v in (close_times or {}).items())) if close_times else None)
+    if own and key in store:
+        return _copy_sb.deepcopy(store[key])
+    out = _staffing_baseline(restaurant_id, shifts, before, close_times)
+    if own:
+        store[key] = _copy_sb.deepcopy(out)
+    return out
+
+
+def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
     if shifts is None:
         shifts = load_shifts_for_restaurant(restaurant_id) or []
     salaried = set()

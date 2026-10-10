@@ -46,9 +46,12 @@ restaurants.crew_answers_json, keyed "role|Weekday|part"; each is also an
 owner observation (schedule_memory, source "crew") and an item on the
 memory screen (memory_items — LEARNING-17). Deterministic; no model call.
 """
+import collections
 import csv
 import io
 import json
+import threading
+import time
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -354,9 +357,19 @@ def _shift_sales(restaurant_id, today=None, db_path=DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         try:
-            rows = conn.execute("SELECT business_date, opened_at, net_sales FROM pos_tickets WHERE restaurant_id=? "
-                                "AND business_date >= ? AND cancelled=0 AND opened_at IS NOT NULL",
-                                (restaurant_id, since)).fetchall()
+            # Summed by date and shift in SQL (scheduler audit 10/10/26,
+            # SCALE-27): every check of eight weeks — ~28k rows at a busy
+            # restaurant — came into Python on each Crew view; now one row
+            # per date and minute of the day. The time is read off the stamp
+            # as written (its 12th-16th characters, as fromisoformat(stamp[:19])
+            # read it), never converted.
+            rows = conn.execute(
+                "SELECT substr(business_date, 1, 10) AS d, substr(opened_at, 12, 5) AS hm, "
+                "TOTAL(net_sales) AS sales FROM pos_tickets "
+                "WHERE restaurant_id=? AND business_date >= ? AND cancelled=0 AND opened_at IS NOT NULL "
+                "AND opened_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][T ][0-9][0-9]:[0-9][0-9]*' "
+                "AND business_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' "
+                "GROUP BY d, hm", (restaurant_id, since)).fetchall()
         except Exception:
             rows = []
     finally:
@@ -364,17 +377,21 @@ def _shift_sales(restaurant_id, today=None, db_path=DB_PATH) -> dict:
     per = {}
     for t in rows:
         try:
-            opened = datetime.fromisoformat(str(t["opened_at"])[:19])
-            bd = date.fromisoformat(str(t["business_date"])[:10])
+            bd = date.fromisoformat(str(t["d"])[:10])
         except ValueError:
             continue
         # The check's open time against the one boundary (schedule_time,
         # ARCH-12): the small hours are the night's, the restaurant's
-        # daypart boundary (3pm unless set) splits the day.
+        # daypart boundary (3pm unless set) splits the day — read off the
+        # minute the SQL grouped the checks by (SCALE-27).
         import schedule_time as _stime
-        part = _stime.daypart_at(_stime.business_minute(opened.hour * 60 + opened.minute))
+        try:
+            hh, mm = int(str(t["hm"])[:2]), int(str(t["hm"])[3:5])
+        except (TypeError, ValueError):
+            continue
+        part = _stime.daypart_at(_stime.business_minute(hh * 60 + mm))
         k = (bd.isoformat(), part)
-        per[k] = per.get(k, 0.0) + float(t["net_sales"] or 0)
+        per[k] = per.get(k, 0.0) + float(t["sales"] or 0)
     by = {}
     for (d, part), v in per.items():
         by.setdefault((DAYS[date.fromisoformat(d).weekday()], part), []).append(v)
@@ -420,7 +437,9 @@ def build(restaurant_id, history_id=None, db_path=DB_PATH, today=None, baseline=
     r = get_restaurant(restaurant_id, db_path=db_path)
     if baseline is None:
         from labor import staffing_baseline
-        baseline = staffing_baseline(restaurant_id) or {}
+        import models as _m_cm
+        with _m_cm.read_scope():
+            baseline = staffing_baseline(restaurant_id) or {}
     when = _today(r, today)
     trends = {(t.get("day"), t.get("part"), str(t.get("role") or "").lower()): t
               for t in (baseline.get("concurrent_trends") or [])}
@@ -762,6 +781,68 @@ def answer(restaurant_id, role, day, part, choice, user=None, history_id=None, r
     return out, 200
 
 
+# The matrix as last built, per restaurant and week, while nothing it reads
+# changed (SCALE-27): each Crew view re-read eight weeks of checks and the
+# whole baseline (2.5 s for 250 people and three years). Keyed on the
+# restaurant's inputs (models.schedule_inputs_version — the answers and
+# floors are on its row), the week's draft as it stands, and the newest POS
+# day; MATRIX_CACHE_SECONDS backs it up. A cache, per worker.
+MATRIX_CACHE_SECONDS = 600
+MATRIX_CACHE_SIZE = 512
+_matrix_cache = collections.OrderedDict()
+_matrix_lock = threading.Lock()
+
+
+def _matrix_key(restaurant_id, history_id, db_path):
+    from models import get_conn, schedule_inputs_version
+    conn = get_conn(db_path)
+    try:
+        if history_id:
+            draft = conn.execute("SELECT id, edited_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                 (int(history_id), restaurant_id)).fetchone()
+        else:
+            draft = conn.execute("SELECT id, edited_at FROM schedule_history WHERE restaurant_id=? "
+                                 "ORDER BY id DESC LIMIT 1", (restaurant_id,)).fetchone()
+        try:
+            pos = conn.execute("SELECT MAX(business_date) FROM pos_tickets WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
+        except Exception:
+            pos = None
+    finally:
+        conn.close()
+    return (restaurant_id, history_id or None, db_path, date.today().isoformat(),
+            schedule_inputs_version(restaurant_id, db_path=db_path),
+            tuple(draft) if draft else None, tuple(pos) if pos else None)
+
+
+def cached_build(restaurant_id, history_id=None, db_path=DB_PATH) -> dict:
+    """build(), kept while nothing it reads changed (see _matrix_key)."""
+    try:
+        key = _matrix_key(restaurant_id, history_id, db_path)
+    except Exception:
+        return build(restaurant_id, history_id=history_id, db_path=db_path)
+    now = time.monotonic()
+    with _matrix_lock:
+        hit = _matrix_cache.get(key)
+        if hit is not None and now - hit[0] < MATRIX_CACHE_SECONDS:
+            _matrix_cache.move_to_end(key)
+            return json.loads(hit[1])
+    out = build(restaurant_id, history_id=history_id, db_path=db_path)
+    with _matrix_lock:
+        for k in [k for k in _matrix_cache if k[:3] == key[:3]]:
+            _matrix_cache.pop(k, None)
+        _matrix_cache[key] = (now, json.dumps(out, default=str))
+        while len(_matrix_cache) > MATRIX_CACHE_SIZE:
+            _matrix_cache.popitem(last=False)
+    return out
+
+
+def invalidate_cache(restaurant_id=None) -> None:
+    with _matrix_lock:
+        for k in [k for k in _matrix_cache if restaurant_id is None or k[0] == restaurant_id]:
+            _matrix_cache.pop(k, None)
+
+
 def _observe(restaurant_id, role, day, part, choice, wrote, before, user, history_id, db_path):
     """The answer into the scheduling memory's log — an owner's (or a
     manager's) explicit word about a role's crew, never lost to learning
@@ -962,4 +1043,4 @@ def api_body(restaurant_id, method, data=None, args=None, user=None, may_answer=
         hid = int((args or {}).get("history_id") or 0) or None
     except (TypeError, ValueError):
         hid = None
-    return build(restaurant_id, history_id=hid, db_path=db_path), 200
+    return cached_build(restaurant_id, history_id=hid, db_path=db_path), 200

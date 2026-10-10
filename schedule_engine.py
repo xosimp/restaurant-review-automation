@@ -775,8 +775,14 @@ def frozen_inputs():
         return
     store = {"reads": {}, "failed": []}
     token = _FROZEN.set(store)
+    # And one read of the client_data row and one parse of the shift history
+    # for the whole generation (models.read_scope — scheduler audit 10/10/26,
+    # SCALE-6): every stage re-parsed it, ~25 times per inputs build. The
+    # restaurant row stays live (restaurant_rows=False, P-41).
+    import models as _m_frozen
     try:
-        yield store
+        with _m_frozen.read_scope(restaurant_rows=False):
+            yield store
     finally:
         _FROZEN.reset(token)
 
@@ -5790,6 +5796,12 @@ def _merge_date_demand(restaurant_id, dates, signals_by_date: dict, weather=None
     return holiday, dd
 
 
+def _in_read_scope(fn):
+    import models as _m_rs
+    return _m_rs.in_read_scope(fn)
+
+
+@_in_read_scope
 def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=None):
     """Rebuild the engine's inputs for a schedule nobody just generated.
 
@@ -6275,9 +6287,14 @@ def _learned_preferences_signal(raw: dict) -> dict:
         both = {tuple(s) for s in avoid} & {tuple(s) for s in prefer}
         avoid = [s for s in avoid if tuple(s) not in both]
         prefer = [s for s in prefer if tuple(s) not in both]
-        if avoid or prefer:
+        if avoid or prefer or p.get("wants_hours"):
             out[name] = {"avoid": avoid, "prefer": prefer, "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
                          "source": "what they drop and pick up", "drops": p.get("drops"), "claims": p.get("claims")}
+            if p.get("wants_hours"):
+                # Picks up open shifts beyond any slot: wants more hours —
+                # the assigned week's band opens upward (shift_quality.
+                # usual_band, LEARNING-28).
+                out[name]["wants_hours"] = True
     return out
 
 
@@ -6305,6 +6322,7 @@ def _overtime_inputs(restaurant_id, c, rules=None) -> dict:
             "rates": rates, "default_rate": default, "rules": rules or {}}
 
 
+@_in_read_scope
 def _quality_signals(restaurant_id, result, **extra):
     """Every signal the Shift Quality Engine reads, gathered in one place.
 
@@ -6581,8 +6599,13 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         except (TypeError, ValueError):
             avg = 0.0
         if avg >= USUAL_HOURS_MIN and n not in signals.get("salaried", set()):
-            learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
-                                   "source": "their usual week"})["usual_hours"] = round(avg, 1)
+            # What they have been ASSIGNED (schedule audit 10/10/26
+            # LEARNING-28) — a stated want always wins over it, and one who
+            # keeps picking up open shifts gets a band open upward.
+            _lp_u = learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
+                                           "source": "the week they have been assigned"})
+            _lp_u["usual_hours"] = round(avg, 1)
+            _lp_u["usual_basis"] = "assigned"
     prefs = {n: dict(p) for n, p in (stated or {}).items() if isinstance(p, dict)}
     for n, lp in learned.items():
         prefs.setdefault(n, {"preferred_dayparts": [], "desired_hours": None})["learned"] = lp
@@ -6820,24 +6843,61 @@ def _reconcile_to_roster(signals: dict, c=None, restaurant_id=None) -> None:
 # exact local scorer are built once per week being edited and reused for
 # STUDIO_CACHE_SECONDS; each drag re-sweeps and re-scores only the people
 # and dates it moved (the answer is score_rows' and violations' exactly);
-# the what-if runs only when the editor asks for it. A save always rebuilds
-# from the database, so what is stored is never judged on minutes-old inputs.
+# the what-if runs only when the editor asks for it.
+#
+# Scheduler audit 10/10/26 (SCALE-8, BUGSLIFE-23): the kept inputs were 8
+# entries for the whole process on a 120-second guess, and every save rebuilt
+# them (4.6 s for a 250-person restaurant with three years of history) — past
+# eight editors at once every drag missed. Now they are keyed on
+# models.schedule_inputs_version (it moves the moment anything they were read
+# from moves), so a save re-uses them when nothing changed and what is stored
+# is still never judged on stale inputs; the store is an LRU sized in rows
+# (STUDIO_CACHE_BUDGET_ROWS — a 1,100-row week weighs what it holds), at most
+# STUDIO_CACHE_PER_RESTAURANT weeks per restaurant, with STUDIO_CACHE_SECONDS
+# only as a backstop for inputs the version cannot see; and one lock guards
+# it — four request threads mutated it with none.
 
-STUDIO_CACHE_SECONDS = 120.0
-STUDIO_CACHE_SIZE = 8
+STUDIO_CACHE_SECONDS = float(os.getenv("STUDIO_CACHE_SECONDS", "900"))
+STUDIO_CACHE_BUDGET_ROWS = int(os.getenv("STUDIO_CACHE_BUDGET_ROWS", "20000"))
+STUDIO_CACHE_PER_RESTAURANT = int(os.getenv("STUDIO_CACHE_PER_RESTAURANT", "3"))
 # The dates (in their edited variants) one week's kept scorer holds.
 STUDIO_SCORER_DATES = 96
-_studio_cache = {}
+import collections as _collections_studio
+_studio_cache = _collections_studio.OrderedDict()
 _studio_live = {}
+_studio_lock = threading.Lock()
 
 
 def studio_invalidate(restaurant_id=None) -> None:
     """Forget the kept Studio inputs and live checks — one restaurant's, or
     every one (the test suite's fresh database per test reuses ids)."""
-    for store in (_studio_cache, _studio_live):
-        for k in [k for k in list(store) if restaurant_id is None
-                  or (k[0] if isinstance(k, tuple) else k) == restaurant_id]:
-            store.pop(k, None)
+    with _studio_lock:
+        for store in (_studio_cache, _studio_live):
+            for k in [k for k in list(store) if restaurant_id is None
+                      or (k[0] if isinstance(k, tuple) else k) == restaurant_id]:
+                store.pop(k, None)
+
+
+def _studio_weight(entry) -> int:
+    return max(50, int(entry.get("rows") or 0))
+
+
+def _studio_put(key, entry, now) -> None:
+    """Keep `entry` under `key` (the lock held): this week's older variants
+    and anything past STUDIO_CACHE_SECONDS go, the restaurant keeps at most
+    STUDIO_CACHE_PER_RESTAURANT weeks, and the least recently used go until
+    the store fits STUDIO_CACHE_BUDGET_ROWS."""
+    for k in [k for k, v in _studio_cache.items()
+              if now - v["built"] >= STUDIO_CACHE_SECONDS or k[:3] == key[:3]]:
+        _studio_cache.pop(k, None)
+    mine = [k for k in _studio_cache if k[0] == key[0]]
+    while len(mine) >= max(1, STUDIO_CACHE_PER_RESTAURANT):
+        _studio_cache.pop(mine.pop(0), None)
+    _studio_cache[key] = entry
+    total = sum(_studio_weight(v) for v in _studio_cache.values())
+    while total > STUDIO_CACHE_BUDGET_ROWS and len(_studio_cache) > 1:
+        _k, old = _studio_cache.popitem(last=False)
+        total -= _studio_weight(old)
 
 
 def studio_is_live(restaurant_id) -> bool:
@@ -6846,14 +6906,16 @@ def studio_is_live(restaurant_id) -> bool:
     STUDIO_CACHE_SECONDS — it reads every shift the restaurant has."""
     import time as _time
     now = _time.monotonic()
-    hit = _studio_live.get(restaurant_id)
+    with _studio_lock:
+        hit = _studio_live.get(restaurant_id)
     if hit is not None and now - hit[1] < STUDIO_CACHE_SECONDS:
         return hit[0]
     from labor import analyse_shifts_for_restaurant
     live = bool((analyse_shifts_for_restaurant(restaurant_id) or {}).get("is_live"))
-    if len(_studio_live) > 256:
-        _studio_live.clear()
-    _studio_live[restaurant_id] = (live, now)
+    with _studio_lock:
+        if len(_studio_live) > 4096:
+            _studio_live.clear()
+        _studio_live[restaurant_id] = (live, now)
     return live
 
 
@@ -6863,41 +6925,46 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     the generation would rebuild (quality_inputs_from_db), the scorer's
     signals and weights (_quality_signals), the week's Constraints with the
     roster on them, a kept rule sweep (schedule_rules.IncrementalSweep) and
-    an exact local scorer (shift_quality.LocalScorer). Kept for
-    STUDIO_CACHE_SECONDS per restaurant, week, hour targets and
-    capability_version (a rating, profile, leader rule or weight changed);
-    `fresh` rebuilds it (a save)."""
+    an exact local scorer (shift_quality.LocalScorer). Kept per restaurant,
+    week, hour targets and models.schedule_inputs_version (anything the
+    inputs were read from changed — SCALE-8). `fresh` (a save) no longer
+    rebuilds by itself: the version is read on every call, so a save whose
+    inputs are unchanged re-uses them and one whose inputs moved rebuilds."""
     import time as _time
-    from models import capability_version
+    from models import schedule_inputs_version
     dates = tuple(sorted({r.get("date") for r in rows or [] if r.get("date")}))
     targets = tuple(sorted((str(k), float(v)) for k, v in (daily_target_hours or {}).items()))
     try:
-        cap = capability_version(restaurant_id)
+        version = schedule_inputs_version(restaurant_id)
     except Exception:
-        cap = None
-    key = (restaurant_id, history_id or None, dates, targets, cap)
+        version = None
+    key = (restaurant_id, history_id or None, dates, targets, version)
     now = _time.monotonic()
-    hit = _studio_cache.get(key)
-    if hit is not None and not fresh and now - hit["built"] < STUDIO_CACHE_SECONDS:
-        return hit
-    inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
-    c = inputs.get("constraints")
-    if c is not None and inputs.get("roster"):
-        c.active = {c.key(n) for n in inputs["roster"] if c.key(n)}
-        c.roster_names = list(inputs["roster"])
-    signals, weights = _quality_signals(restaurant_id, inputs)
+    with _studio_lock:
+        hit = _studio_cache.get(key)
+        if hit is not None and version is not None and now - hit["built"] < STUDIO_CACHE_SECONDS:
+            _studio_cache.move_to_end(key)
+            return hit
+    import models as _m_studio
+    # One read of everything the build reads, shared by the inputs and the
+    # signals (SCALE-6/SCALE-8).
+    with _m_studio.read_scope():
+        inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=dict(targets), week_rows=rows)
+        c = inputs.get("constraints")
+        if c is not None and inputs.get("roster"):
+            c.active = {c.key(n) for n in inputs["roster"] if c.key(n)}
+            c.roster_names = list(inputs["roster"])
+        signals, weights = _quality_signals(restaurant_id, inputs)
     import threading as _threading
     # One editor's drag at a time per week: the kept scorer re-points its
     # kept shifts at each call's week, so two at once would read each
     # other's (the web process runs four threads).
     entry = {"inputs": inputs, "signals": signals, "weights": weights, "built": now,
              "sweep": _rules.IncrementalSweep(c) if c is not None else None, "scorer": None,
-             "lock": _threading.Lock()}
-    for k in [k for k, v in _studio_cache.items() if now - v["built"] >= STUDIO_CACHE_SECONDS or k[:3] == key[:3]]:
-        _studio_cache.pop(k, None)
-    while len(_studio_cache) >= STUDIO_CACHE_SIZE:
-        _studio_cache.pop(next(iter(_studio_cache)))
-    _studio_cache[key] = entry
+             "lock": _threading.Lock(), "rows": len(rows or [])}
+    if version is not None:
+        with _studio_lock:
+            _studio_put(key, entry, now)
     return entry
 
 
@@ -7129,6 +7196,76 @@ def schedule_item_metric(item):
                                             module="schedule")
     except Exception:
         return None
+
+
+# The re-score's answer as a delta (scheduler audit 10/10/26, SCALE-29): the
+# quality object is 130-440 KB of JSON, 94% of it the per-shift readings, and
+# a drag moves two or three of fourteen. A client that holds the last answer
+# sends its etag with `delta: true` and gets the headline and only the
+# readings that changed; anything else — no etag, an etag this process no
+# longer holds (another worker, a rebuilt week) — gets the whole object.
+QUALITY_SERVED_KEEP = 4
+
+
+def _shift_key_list(shifts) -> list:
+    """A stable key for each reading of the week, in order: date|daypart,
+    with #n on a repeat."""
+    seen, keys = {}, []
+    for s in shifts or []:
+        k = f"{(s or {}).get('date') or ''}|{(s or {}).get('daypart') or ''}"
+        n = seen.get(k, 0)
+        seen[k] = n + 1
+        keys.append(k if not n else f"{k}#{n}")
+    return keys
+
+
+def quality_payload(prepared, quality, want_delta=False, base_etag=None) -> dict:
+    """{quality, quality_etag, quality_keys} — or, when the client holds the
+    answer `base_etag` names (kept on the Studio's prepared week),
+    {quality: None, quality_delta: {base, head, order, changed}, quality_etag,
+    quality_keys}. A reading is resent only when it changed: the same object
+    the kept scorer handed out before is unchanged by construction, and any
+    other is compared by its JSON."""
+    import hashlib
+    q = quality if isinstance(quality, dict) else {}
+    shifts = list(q.get("shifts") or [])
+    keys = _shift_key_list(shifts)
+    head = {k: v for k, v in q.items() if k != "shifts"}
+    served = prepared.setdefault("served", {}) if isinstance(prepared, dict) else {}
+    lock = prepared.get("lock") if isinstance(prepared, dict) else None
+    if lock is not None:
+        lock.acquire()
+    try:
+        prev = served.get(base_etag) if (want_delta and base_etag) else None
+        latest = next(reversed(served.values()), None) if served else None
+        known = {}
+        for state in (prev, latest):
+            for k, (obj, dig) in ((state or {}).get("shifts") or {}).items():
+                known.setdefault(id(obj), (obj, dig))
+        digests, objs = {}, {}
+        for k, s in zip(keys, shifts):
+            hit = known.get(id(s))
+            dig = hit[1] if hit is not None and hit[0] is s else \
+                hashlib.sha1(json.dumps(s, sort_keys=True, default=str).encode()).hexdigest()[:16]
+            digests[k] = dig
+            objs[k] = (s, dig)
+        etag = hashlib.sha1((json.dumps(head, sort_keys=True, default=str) + "|"
+                             + ",".join(f"{k}={digests[k]}" for k in keys)).encode()).hexdigest()[:20]
+        served[etag] = {"shifts": objs}
+        while len(served) > QUALITY_SERVED_KEEP:
+            served.pop(next(iter(served)))
+    finally:
+        if lock is not None:
+            lock.release()
+    out = {"quality_etag": etag, "quality_keys": keys}
+    if prev is None:
+        out["quality"] = quality
+        return out
+    before = {k: dig for k, (_o, dig) in (prev.get("shifts") or {}).items()}
+    out["quality"] = None
+    out["quality_delta"] = {"base": base_etag, "head": head, "order": keys,
+                            "changed": {k: s for k, s in zip(keys, shifts) if before.get(k) != digests[k]}}
+    return out
 
 
 def present_quality(restaurant_id, quality, user_id=None, authority=None):
@@ -8297,7 +8434,10 @@ def _stage_optimizer(rows, x):
     res = _opt.optimize(rows, x.result, signals=sig, weights=x.weights, constraints=x.c,
                         hours_budget=(x.budget or 0) if x.trim_on else None,
                         max_server_overlap=x.section_count, only_dates=x.editable,
-                        max_seconds=max(0.5, min(budget, x.search_seconds())))
+                        max_seconds=max(0.5, min(budget, x.search_seconds())),
+                        # The experiment's model arm: nobody reassigned by the
+                        # optimizer either (schedule audit 10/10/26 LOGIC-27).
+                        reassign=bool(getattr(x, "reassign_on", True)))
     x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
     if res.get("changes"):
         print(f"[schedule] optimizer {res['before_score']} -> {res['after_score']} "
@@ -8328,7 +8468,10 @@ def _stage_failure(key, exc, x) -> dict:
     blocks = tier <= _rules.TIER_COVERAGE
     print(f"[schedule] repair stage {key} failed: {exc!r}")
     try:
-        _ops.capture(exc, job=f"schedule_stage_{key}", context=f"restaurant_id={x.rid} stage={key}")
+        # The learning ablation's shadow run (RM-4) is no draft's stage: its
+        # failure is said under its own job, never as the week's.
+        _job = "schedule_learning_ablation" if getattr(x, "shadow", False) else f"schedule_stage_{key}"
+        _ops.capture(exc, job=_job, context=f"restaurant_id={x.rid} stage={key}")
     except Exception as _cx:
         print(f"[schedule] could not record that failure: {_cx}")
     return {"stage": key, "tier": tier, "blocks_publish": blocks, "error": type(exc).__name__,
@@ -9137,10 +9280,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # whether the solver re-solves who works each shift — pinned on
             # until the experiment can reach a verdict (P-21, L-11).
             _solver_on = True
+            _reassign_on = True
             try:
                 import schedule_experiments as _sx
                 result["experiment_arms"] = _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
                 _solver_on = _sx.flag(result["experiment_arms"], "solver")
+                # The model arm is clean (LOGIC-27): the optimizer's
+                # replace / swap / trade moves are off with the solver.
+                _reassign_on = _sx.flag(result["experiment_arms"], "reassign")
+                # learning_v1's off week (LEARNING-25): the learned memory
+                # binds none of this week's passes.
+                if not _sx.flag(result["experiment_arms"], "learned") and _pass_sig is not None:
+                    _pass_sig = dict(_pass_sig, learned=[])
             except Exception as _arx:
                 _soft_fail("experiment arm", _arx, restaurant_id)
             # The ranked repair loop (P-47, E-18): every pass a stage at the
@@ -9156,8 +9307,48 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                restaurant=_restaurant_for_sched, close_times=_close_times,
                                role_buffers=_role_close_buffers, signals=_pass_sig, weights=_pass_w,
                                requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on)
+            _repair_ctx.reassign_on = _reassign_on
+            # The rows as they come into the loop, each with its id, for the
+            # row origins (AI-29) and the learning ablation (RM-4).
+            _repair_ctx.give_ids(preview_rows)
+            _pre_repair = [dict(r) for r in preview_rows]
             with _timer.stage("repair"):
                 _loop = repair_week(preview_rows, _repair_ctx)
+            _gen_attr = {"pre": _pre_repair, "info": None, "ablation": None}
+            try:
+                import schedule_scorecard as _ssc
+                _gen_attr["info"] = _ssc.loop_info(_pre_repair, _loop.get("rows"), _loop, _repair_ctx.origin)
+                # The learning ablation (schedule audit 10/10/26 RM-4,
+                # LEARNING-7, LEARNING-25): the same loop over the same
+                # rows with the learned memory switched off — what the
+                # draft would have been without it, kept beside it and
+                # measured against the week the manager settles on. No
+                # customer sees it; bounded, and off with
+                # SCHEDULE_LEARNING_ABLATION=0.
+                _learned_now = (_pass_sig or {}).get("learned") or []
+                if _ssc.ablation_wanted(_learned_now, clock):
+                    _t_ab = time.monotonic()
+                    _ab_ctx = RepairContext(restaurant_id, dict(result), _constraints, editable=_editable,
+                                            restaurant=_restaurant_for_sched, close_times=_close_times,
+                                            role_buffers=_role_close_buffers,
+                                            signals=dict(_pass_sig or {}, learned=[]), weights=_pass_w,
+                                            requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on,
+                                            max_seconds=_ssc.ABLATION_MAX_SECONDS)
+                    _ab_ctx.reassign_on = _reassign_on
+                    _ab_ctx.shadow = True
+                    _ab_loop = repair_week([dict(r) for r in _pre_repair], _ab_ctx)
+                    _gen_attr["ablation"] = {"ran": True, "learned": len(_learned_now),
+                                             "rows_on": _ssc.compact(_loop.get("rows")),
+                                             "rows_off": _ssc.compact(_ab_loop.get("rows")),
+                                             "seconds": round(time.monotonic() - _t_ab, 2)}
+            except Exception as _abx:
+                # Not an input the draft went without — the draft is whole —
+                # so it is recorded for us, never said in the owner's review.
+                print(f"[schedule] learning ablation/row origins failed for restaurant {restaurant_id}: {_abx}")
+                try:
+                    _ops.capture(_abx, job="schedule_learning_ablation", context=f"restaurant_id={restaurant_id}")
+                except Exception as _cx:
+                    print(f"[schedule] could not record that failure: {_cx}")
             for _k, _s in (_loop.get("seconds") or {}).items():
                 _timer.add(f"repair.{_k}", _s)
             preview_rows = _loop["rows"]
@@ -9817,7 +10008,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                # reopened week and the edit line (SQ-6).
                                "blended_rate": result.get("blended_rate"),
                                "daily_target_hours": result.get("daily_target_hours") or {},
-                               "demand_data_through": result.get("demand_data_through")},
+                               "demand_data_through": result.get("demand_data_through"),
+                               # What the draft was ASKED for, kept with the
+                               # week (schedule audit 10/10/26 LEARNING-3):
+                               # the learned headcount is the manager's
+                               # settled heads less this, never less the draft.
+                               "requirements_by_date": _json_safe(result.get("requirements_by_date") or {})},
                     stage_seconds=_timer.as_dict(),
                     base=(int(base_history_id), _base_csv) if redo else None,
                 )
@@ -9863,6 +10059,23 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                if (result.get("solver") or {}).get("ran") else None)
             except Exception as _arx:
                 print(f"[schedule] experiment arm not recorded: {_arx}")
+            # What made this draft, kept for the Schedule Learning Scorecard
+            # (schedule audit 10/10/26 RM-4, AI-29, LEARNING-7): the commit
+            # and arms, each row's origin (the model, the managers' plan, a
+            # repair stage, a pass after the loop), the learning ablation,
+            # and the owner's rules the week honours. Never blocks the save.
+            try:
+                import schedule_scorecard as _ssc_tag
+                _ga = locals().get("_gen_attr") or {}
+                _ssc_tag.tag_generation(
+                    restaurant_id, _history_id, generation_id=result.get("generation_id"),
+                    arms=result.get("experiment_arms") or [],
+                    origins=_ssc_tag.classify_rows(_ga.get("pre") or [], preview_rows, _ga.get("info"))
+                    if _ga.get("pre") else {},
+                    ablation=_ga.get("ablation"),
+                    rules=_ssc_tag.rules_honoured(result.get("constraints"), result.get("rule_violations")))
+            except Exception as _tgx:
+                print(f"[schedule] generation tags not kept: {_tgx}")
             try:
                 # The version these rows are travels with them to the client,
                 # which sends it back with its first save (schedule re-audit

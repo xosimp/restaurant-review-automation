@@ -418,7 +418,9 @@ def test_only_the_called_winner_can_be_promoted_and_it_becomes_every_restaurants
         a = sx.arms_for(rid, week, db_path=db)[0]
         assert a["arm"] == "solver" and a["pinned"] and a["pin_source"] == "promoted"
     row = sx.active_promotions(db_path=db)[key]
-    assert row["promoted_by"] == "will" and "leads" in row["verdict"] and row["flags"] == {"solver": True}
+    # The solver arm also says the optimizer may reassign (LOGIC-27, 10/10/26).
+    assert row["promoted_by"] == "will" and "leads" in row["verdict"] and \
+        row["flags"] == {"solver": True, "reassign": True}
     # the kill switches still win
     monkeypatch.setenv(sx.PIN_ENV, "off")
     assert sx.arms_for(rid, "2026-10-05", db_path=db)[0]["arm"] == sx.EXPERIMENTS[0]["control"]
@@ -442,9 +444,11 @@ def test_a_promotion_holds_after_the_experiment_is_retired_in_code(db, monkeypat
     retired = tuple(dict(e, active=False) for e in sx.EXPERIMENTS)
     monkeypatch.setattr(sx, "EXPERIMENTS", retired)
     arms = sx.arms_for(rid, "2026-10-05", db_path=db)
+    # The model arm's stored flags also keep the optimizer from reassigning (LOGIC-27).
     assert arms == [{"experiment": key, "arm": "model", "pinned": True, "pin_source": "promoted",
-                     "flags": {"solver": False}}]
+                     "flags": {"solver": False, "reassign": False}}]
     assert sx.flag(arms, "solver") is False                    # the stored setting, not DEFAULT_FLAGS
+    assert sx.flag(arms, "reassign") is False
 
 
 def test_the_admin_promote_and_revert_routes(db, monkeypatch):

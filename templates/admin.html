@@ -3878,6 +3878,9 @@ async function experiments(){
       {h:'Arm',key:'label',cell:r=>`${esc(r.label)}${r.arm===e.control?' <span class="chip">control</span>':''}`},
       {h:'Drafts',key:'generated',r:true,cell:r=>`<span class="num">${fmtN(r.generated)}</span>${r.pinned?` <span class="dim">+${fmtN(r.pinned)} pinned</span>`:''}`},
       {h:'Published',key:'n',r:true,val:r=>r.acceptance.n,cell:r=>`<span class="num">${fmtN(r.acceptance.n)}</span> <span class="dim">${fmtN(r.restaurants)} rest.</span>`},
+      // The verdict's primary (LEARNING-25): edits per 100 drafted rows, with
+      // the smallest difference this sample could detect against the control.
+      {h:'Rework / 100 rows',key:'drr',r:true,val:r=>(r.drr||{}).mean,cell:r=>`<span class="num">${one((r.drr||{}).mean)}</span>${ci(r.drr, one)}${r.vs_control&&r.vs_control.drr?' <span class="dim">vs control</span> '+dlt(r.vs_control.drr, one):''}${r.power_read&&r.power_read.drr&&r.power_read.drr.mde!=null?` <span class="dim" title="The smallest difference this sample can detect (90%, 80% power); weeks per arm to detect ${r.power_read.drr.meaningful}">detects ±${one(r.power_read.drr.mde)} · ~${fmtN(r.power_read.drr.weeks_needed||0)} wk for ±${r.power_read.drr.meaningful}</span>`:''}`},
       {h:'Accepted unedited',key:'acc',r:true,val:r=>r.acceptance.mean,cell:r=>`<span class="num">${pct(r.acceptance.mean)}</span>${ci(r.acceptance, pct)}`},
       {h:'vs control',key:'dacc',r:true,val:r=>r.vs_control&&r.vs_control.acceptance?r.vs_control.acceptance.diff:null,cell:r=>r.vs_control?dlt(r.vs_control.acceptance, pct):'<span class="dim">—</span>'},
       {h:'Issues / week',key:'iss',r:true,val:r=>r.issues.mean,cell:r=>`<span class="num">${one(r.issues.mean)}</span>${ci(r.issues, one)} <span class="dim">n=${r.issues.n}</span>`},
@@ -3906,9 +3909,40 @@ async function experiments(){
     ${d.error?`<div class="err" style="margin-bottom:12px">${esc(d.error)}</div>`:''}
     ${d.env_pin?`<div class="err" style="margin-bottom:12px"><b>Every restaurant is pinned</b> by SCHEDULE_EXPERIMENT_PIN=${esc(d.env_pin)} — new weeks are not randomised.</div>`:''}
     ${d.experiments.length ? d.experiments.map(block).join('') : '<div class="empty">No experiment has recorded a week yet.</div>'}
+    <div id="sched-scorecard"></div>
     <div class="card"><div class="ch"><h2>Pins</h2><span class="sub">A pinned restaurant gets that arm every week and its weeks leave the comparison. Off is the control.</span></div><div class="cb">
       <div class="filters"><input id="exp-rid" placeholder="Restaurant ID" style="min-width:120px"><select id="exp-arm">${arms.map(a=>`<option value="${esc(a[0])}|${esc(a[1])}">${esc(a[2])}</option>`).join('')}${d.experiments.filter(e=>e.active).map(e=>`<option value="${esc(e.key)}|off">${esc(e.key)} · off</option>`).join('')}</select><button class="cbtn btn s w" onclick="expPinForm()">Pin</button></div>
       ${table(pinCols, d.pins, {id:'exp-pins', sort:'created_at', empty:'No restaurant is pinned.'})}</div></div>`;
+  schedScorecard();
+}
+// The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4): one frozen
+// row per published week. Each figure's trend is the within-restaurant
+// slope over weeks since its first scored week with a restaurant-cluster 90%
+// interval — "is it improving" as a slope, not a monthly mean; the learning
+// ablation's effect is the rework the learned memory saved (the draft with
+// it off, against the week the manager settled on).
+async function schedScorecard(){
+  const el = $('sched-scorecard');
+  if(!el) return;
+  const d = await api('/admin/api/schedule-learning-scorecard');
+  if(!d || !d.ok){ el.innerHTML = `<div class="err" style="margin-bottom:12px">${esc((d && d.error) || 'The scorecard could not be read.')}</div>`; return; }
+  const one = v => v==null ? '—' : (Math.round(v*100)/100).toString();
+  const LABEL = {drr:'Draft rework / 100 rows', labor_vs_target:'Hourly labor % vs target', ot_hours:'Overtime hours worked',
+    unmanaged_minutes:'Minutes with no manager (as run)', shortfall_hours:'Shortfall person-hours', uncovered_no_shows:'Uncovered no-shows',
+    req_error_asked:'Requirement error (asked vs published)', forecast_error:'Forecast error %'};
+  const rows = Object.keys(LABEL).map(k => { const t = (d.trend || {})[k] || {}; return {k:k, label:LABEL[k], mean:t.mean, slope:t.slope, lo:t.lo, hi:t.hi, n:t.n, rest:t.restaurants}; });
+  const cols = [{h:'Figure',key:'label'},
+    {h:'Mean',key:'mean',r:true,cell:r=>`<span class="num">${one(r.mean)}</span>`},
+    {h:'Per week',key:'slope',r:true,cell:r=>r.slope==null?'<span class="dim">too few weeks</span>':`<span class="num">${r.slope>0?'+':''}${one(r.slope)}</span> <span class="dim">${one(r.lo)} to ${one(r.hi)}</span>`},
+    {h:'Weeks',key:'n',r:true,cell:r=>`<span class="num">${fmtN(r.n||0)}</span> <span class="dim">${fmtN(r.rest||0)} rest.</span>`}];
+  const surv = Object.entries(d.origin_survival || {}).map(([k, v]) => `<span class="chip">${esc(k)} <span class="num">${v.share==null?'—':Math.round(v.share*100)+'%'}</span>&nbsp;<span class="dim">of ${fmtN(v.rows)}</span></span>`).join(' ');
+  const ab = d.ablation || {};
+  el.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="ch"><h2>Schedule Learning Scorecard</h2><span class="sub">${fmtN(d.restaurants||0)} restaurants · ${fmtN(d.weeks||0)} published weeks · each frozen ${fmtN(d.frozen_after_days||14)} days after it ends · ${esc(d.method||'')}</span></div><div class="cb">
+    ${table(cols, rows, {id:'sched-scorecard-trend', sort:'label', empty:'No week scored yet — the Monday 7am job writes the first.'})}
+    <div style="margin-top:10px"><span class="lbl">Learning ablation</span> ${ab.mean==null?'<span class="dim">no week with the ablation yet</span>':`the learned memory saved <span class="num">${one(ab.mean)}</span> edits per 100 rows <span class="dim">${ab.ci90?one(ab.ci90[0])+' to '+one(ab.ci90[1]):''} · n=${fmtN(ab.n||0)}</span>`}</div>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="lbl">Rows kept untouched, by origin</span>${surv || '<span class="dim">no origins recorded yet</span>'}</div>
+    <div class="dim" style="margin-top:8px">Cost per accepted week: <span class="num">${d.cost_per_accepted_week==null?'—':'$'+one(d.cost_per_accepted_week)}</span> (${fmtN(d.accepted_weeks||0)} weeks sent with no edit) · owner rules honoured: <span class="num">${d.instruction_honoured_rate==null?'—':Math.round(d.instruction_honoured_rate*100)+'%'}</span></div>
+  </div></div>`;
 }
 // The weekly stored verdict (schedule_experiment_verdicts, memory audit
 // 9/29/26): the first reading of each ISO week stands, oldest on the left,

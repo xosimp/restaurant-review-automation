@@ -94,6 +94,7 @@ def test_the_score_judges_a_week_far_from_someones_usual_and_a_stated_want_wins(
         pytest.skip("ShiftContext needs more fields than this test builds")
     res = sq.week_preferences([ctx])
     misses = " ".join(res.facts["learned_misses"])
-    assert "Cory usually works about 27h a week and has 7h" in misses
+    # Said as what they were assigned, never what they asked for (LEARNING-28, 10/10/26).
+    assert "Cory has usually been scheduled about 27h a week and has 7h" in misses
     assert "Steph" not in misses, "42h is inside 30% of 34h"
     assert sq._usual_hours({"usual_hours": 27}, {"desired_hours": 20}) is None, "a stated want is the one judged"

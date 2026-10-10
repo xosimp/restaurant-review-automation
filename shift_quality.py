@@ -3103,6 +3103,20 @@ LEARNED_PREFERENCE_WEIGHT = 0.5
 # within USUAL_HOURS_BAND of it, at LEARNED_PREFERENCE_WEIGHT (owner,
 # 10/9/26: Steph drafted 6 shifts and Cory 2 against their usual ~5 and ~4).
 USUAL_HOURS_BAND = 0.3
+# The usual week is what the managers ASSIGNED them (schedule audit 10/10/26
+# LEARNING-28), not a wish they stated: somebody under-scheduled for months
+# was held near it. When they show they want more — they keep picking up
+# open shifts (schedule_intel.behaviour_preferences wants_hours) — the band
+# opens upward this far, so more hours are never held against them.
+USUAL_HOURS_BAND_WANTS_MORE = 0.6
+
+
+def usual_band(lp) -> tuple:
+    """(below, above) — the shares of the usual (assigned) week a person's
+    hours may fall under and run over before the scorer and the solver count
+    it: wider above for somebody who wants more hours (LEARNING-28)."""
+    up = USUAL_HOURS_BAND_WANTS_MORE if (lp or {}).get("wants_hours") else USUAL_HOURS_BAND
+    return USUAL_HOURS_BAND, up
 
 
 def _parts_words(parts) -> str:
@@ -3235,11 +3249,14 @@ def week_preferences(contexts: list) -> DimensionResult | None:
         if usual:
             have = round(sum(float(e.get("hours") or 0) for e in mine), 1)
             w = _learned(learned[name])[2]
+            lo, hi = usual_band(learned.get(name))
             checked += w
-            if abs(have - usual) <= usual * USUAL_HOURS_BAND:
+            if usual * (1 - lo) <= have <= usual * (1 + hi):
                 met += w
             else:
-                learned_misses.append(f"{name} usually works about {usual:g}h a week and has {have:g}h")
+                # What they were assigned, said as that — never as what they
+                # asked for (LEARNING-28).
+                learned_misses.append(f"{name} has usually been scheduled about {usual:g}h a week and has {have:g}h")
                 strained.add(name)
         if learned.get(name):
             avoid, prefer, w = _learned(learned[name])

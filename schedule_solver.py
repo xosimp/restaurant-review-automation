@@ -391,7 +391,7 @@ class Problem:
         prefs = {self.key(k): v or {} for k, v in (s.get("preferences") or {}).items()}
         learned_prefs = {self.key(k): v or {} for k, v in (s.get("learned_preferences") or {}).items()}
         self.pref_parts, self.desired, self.l_avoid, self.l_prefer, self.l_weight = [], [], [], [], []
-        self.usual = []
+        self.usual, self.usual_up = [], []
         for n in self.names:
             p = prefs.get(self.key(n)) or {}
             self.pref_parts.append({x for x in (p.get("preferred_dayparts") or []) if x in ("morning", "night")})
@@ -407,6 +407,9 @@ class Problem:
             # Their usual week, for somebody who never stated one (shift_quality
             # USUAL_HOURS_BAND, at the learned weight).
             self.usual.append(sq._usual_hours(_lp, p))
+            # Wider above for somebody who keeps picking up open shifts: the
+            # usual week is what they were assigned (LEARNING-28).
+            self.usual_up.append(sq.usual_band(_lp)[1])
             self.l_avoid.append(avoid)
             self.l_prefer.append(prefer)
             self.l_weight.append(wt)
@@ -1883,7 +1886,7 @@ class Problem:
         # Their usual week (learned): past it by the band, once.
         usual = self.usual[p]
         if usual:
-            band = usual * (1 + sq.USUAL_HOURS_BAND)
+            band = usual * (1 + self.usual_up[p])
             if st.total[p] <= band + 1e-9 < st.total[p] + u.hours:
                 c += self.week_unit("preferences") / self.n_pref * 100.0 * self.l_weight[p]
         # Overtime premium (only ever less than the draft's: the caps hold

@@ -195,28 +195,17 @@ def half_life(kind) -> int:
 
 
 def recency_weight(age_days, half_life_days) -> float:
-    """1.0 for evidence from today, 0.5 one half-life ago (the edit
-    learners' own rule, schedule_versions.recency_weight)."""
-    try:
-        return 0.5 ** (max(0.0, float(age_days or 0)) / float(half_life_days))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 1.0
+    """1.0 for evidence from today, 0.5 one half-life ago — the one rule the
+    three schedule learners share (learning_stats.recency_weight, ARCH-28)."""
+    import learning_stats
+    return learning_stats.recency_weight(age_days, half_life_days)
 
 
 def wilson_lower(hits, n, z=1.645) -> float:
     """The Wilson lower bound of hits/n at 90% — 2 of 2 is far less sure
-    than 20 of 20; weighted counts allowed (schedule_versions.wilson_lower)."""
-    try:
-        n, hits = float(n), float(hits)
-    except (TypeError, ValueError):
-        return 0.0
-    if n <= 0:
-        return 0.0
-    p = min(1.0, max(0.0, hits / n))
-    z2 = z * z
-    centre = p + z2 / (2 * n)
-    margin = z * math.sqrt(max(0.0, p * (1 - p) / n + z2 / (4 * n * n)))
-    return max(0.0, (centre - margin) / (1 + z2 / n))
+    than 20 of 20; weighted counts allowed (learning_stats.wilson_lower)."""
+    import learning_stats
+    return learning_stats.wilson_lower(hits, n, z)
 
 
 def _nk(name) -> str:
@@ -395,6 +384,22 @@ def init_schedule_memory(db_path=None):
                 if "duplicate column" not in str(_e).lower():
                     raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_memory_status ON schedule_memory(restaurant_id, status)")
+        # Each week as the learners read it, kept (schedule audit 10/10/26
+        # SCALE-33, ARCH-28: the feature store the edit learners share) —
+        # schedule_versions.learning_weeks reads a week back while its
+        # signature (its versions, answers, redos, economics, the people)
+        # still matches, instead of replaying 24 weeks of CSV versions on
+        # every call. A cache: dropping a row only means it is read anew.
+        conn.execute("""CREATE TABLE IF NOT EXISTS schedule_learning_records (
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            history_id     INTEGER NOT NULL,
+            signature      TEXT    NOT NULL,
+            record_json    TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, history_id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_learning_records_created "
+                     "ON schedule_learning_records(created_at)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_memory_state (
             restaurant_id     INTEGER PRIMARY KEY REFERENCES restaurants(id),
             consolidated_at   TEXT,
@@ -412,6 +417,67 @@ def _norm(value, allowed, default):
     return v if v in allowed else default
 
 
+_OBSERVE_SQL = (
+    "INSERT INTO schedule_observations (restaurant_id, kind, history_id, week_start, date, daypart, role, "
+    "person, person_id, value_json, origin, phase, authority, editor, source, fact_key) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, fact_key) DO UPDATE SET "
+    "value_json=excluded.value_json, history_id=COALESCE(excluded.history_id, history_id), "
+    "week_start=COALESCE(excluded.week_start, week_start), role=COALESCE(excluded.role, role), "
+    "person=COALESCE(excluded.person, person), origin=excluded.origin, phase=excluded.phase, "
+    "authority=excluded.authority, source=COALESCE(excluded.source, source), "
+    "updated_at=datetime('now')")
+
+import contextlib as _contextlib_obs
+import contextvars as _contextvars_obs
+
+# Observations held for one transaction (observe_batch — scheduler audit
+# 10/10/26, SCALE-26): {restaurant_id, db_path, rows}.
+_OBS_BATCH = _contextvars_obs.ContextVar("schedule_observe_batch", default=None)
+
+
+@_contextlib_obs.contextmanager
+def observe_batch(restaurant_id, db_path=None):
+    """Every observe() of `restaurant_id` inside the block is written in ONE
+    transaction when it ends (executemany) instead of a connection, an
+    upsert and a commit per fact: the outcomes job wrote about 116 single-row
+    commits per restaurant, each taking the write lock (SCALE-26). Never
+    raises into the caller's work: a batch that cannot be written is
+    captured, as one observe() would be. A nested block joins the outer one;
+    an observe of another restaurant or database inside it writes at once."""
+    outer = _OBS_BATCH.get()
+    if outer is not None:
+        yield outer
+        return
+    batch = {"restaurant_id": restaurant_id, "db_path": db_path, "rows": []}
+    token = _OBS_BATCH.set(batch)
+    try:
+        yield batch
+    finally:
+        _OBS_BATCH.reset(token)
+        _flush_observations(batch)
+
+
+def _flush_observations(batch) -> int:
+    rows = batch.get("rows") or []
+    if not rows:
+        return 0
+    try:
+        conn = get_conn(batch.get("db_path"))
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.executemany(_OBSERVE_SQL, rows)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    except Exception as e:
+        _capture(e, f"observe batch of {len(rows)}", batch.get("restaurant_id"))
+        return 0
+    return len(rows)
+
+
 def observe(restaurant_id, kind, *, week_start=None, date=None, daypart=None, role=None, person=None,
             value=None, origin="manager", phase="pre_publish", authority="principal", editor=None,
             source=None, history_id=None, db_path=None, fact_key=None, person_id=None):
@@ -421,7 +487,8 @@ def observe(restaurant_id, kind, *, week_start=None, date=None, daypart=None, ro
     An event (an edit, a redo, a publish) is appended; a MEASURED fact passes
     `fact_key` — the same fact recorded again (the outcomes job re-reads the
     last weeks, the nightly join the last seven nights) replaces its value
-    instead of adding a row. Returns the row id."""
+    instead of adding a row. Returns the row id — None inside an
+    observe_batch, whose rows are written together when it ends."""
     try:
         k = str(kind or "").strip()[:40]
         if not restaurant_id or not k:
@@ -436,17 +503,13 @@ def observe(restaurant_id, kind, *, week_start=None, date=None, daypart=None, ro
                   _norm(authority, AUTHORITIES, "principal"),
                   (str(editor)[:120] or None) if editor else None, (str(source)[:60] or None) if source else None,
                   (str(fact_key)[:300] or None) if fact_key else None)
+        batch = _OBS_BATCH.get()
+        if batch is not None and batch["restaurant_id"] == restaurant_id and (batch["db_path"] or None) == (db_path or None):
+            batch["rows"].append(values)
+            return None
         conn = get_conn(db_path)
         try:
-            cur = conn.execute(
-                "INSERT INTO schedule_observations (restaurant_id, kind, history_id, week_start, date, daypart, role, "
-                "person, person_id, value_json, origin, phase, authority, editor, source, fact_key) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, fact_key) DO UPDATE SET "
-                "value_json=excluded.value_json, history_id=COALESCE(excluded.history_id, history_id), "
-                "week_start=COALESCE(excluded.week_start, week_start), role=COALESCE(excluded.role, role), "
-                "person=COALESCE(excluded.person, person), origin=excluded.origin, phase=excluded.phase, "
-                "authority=excluded.authority, source=COALESCE(excluded.source, source), "
-                "updated_at=datetime('now')", values)
+            cur = conn.execute(_OBSERVE_SQL, values)
             conn.commit()
             return cur.lastrowid
         finally:
@@ -958,6 +1021,8 @@ def _learn_patterns(ctx, patterns=None) -> list:
                  first=s.get("first_learned_iso") or "", last=s.get("last_confirmed_iso") or "")
         hand = s.get("last_hand_iso")
         e["hand_dates"] = [hand] if hand else []
+        # A week worked as published that kept it renews it (LEARNING-1).
+        e["kept_dates"] = [s["last_kept_iso"]] if s.get("last_kept_iso") else []
         m = _memory(ctx, "pattern:" + s["key"], kind, e, person=s.get("employee"), role=s.get("role"),
                     day=s.get("day"), daypart=s.get("daypart"), value=_pattern_value(s),
                     text=s.get("text") or "", source=("owner_said" if s.get("source") == "owner_said"
@@ -983,7 +1048,14 @@ def _learn_patterns(ctx, patterns=None) -> list:
         if status == "rule" and not _pattern_rule_alive(ctx, s):
             _unrule_pattern(ctx, s["key"])
             status = "active"
-        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and not owner_word:
+        # Bound by its lifecycle, not a decaying confidence (schedule audit
+        # 10/10/26 LEARNING-1): once a standing habit has bound the passes
+        # (enforced_since) it stays applied until a re-test fails, two
+        # reversals, dormancy or the owner end it — it used to fall back to a
+        # prompt line 9 to 15 weeks into being carried by the draft, so the
+        # solver could undo it until the manager taught it again.
+        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and not owner_word \
+                and not row.get("enforced_since"):
             status = "candidate"
         reason = s.get("retired_reason") if status == "retired" else None
         if s["key"] in dismissed:
@@ -999,7 +1071,7 @@ def _learn_patterns(ctx, patterns=None) -> list:
             "times_applied", "times_confirmed", "times_overridden", "last_overridden", "checked_through",
             "first_learned", "last_confirmed", "retired_at", "retired_week", "retest_since", "last_retest_end",
             "retests", "dormant_at", "rule_note", "ruled_by", "source", "authority", "status", "owner_kept_at",
-            "answer_authority") if f in row}
+            "answer_authority", "last_kept", "last_kept_week", "enforced_since") if f in row}
         if row.get("person_id"):
             m["person_id"] = row["person_id"]
         m["status"], m["retired_reason"] = status, reason
@@ -1451,25 +1523,18 @@ def _learn_overruns(ctx) -> list:
 
 
 def binom_tail(k, n, p, upper=True) -> float:
-    """P(X >= k) (or P(X <= k) with upper False) for X ~ Binomial(n, p)."""
-    n, k = int(n), int(k)
-    p = min(1.0, max(0.0, float(p)))
-    rng = range(k, n + 1) if upper else range(0, k + 1)
-    return min(1.0, sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in rng))
+    """P(X >= k) (or P(X <= k) with upper False) for X ~ Binomial(n, p)
+    (learning_stats.binom_tail, ARCH-28)."""
+    import learning_stats
+    return learning_stats.binom_tail(k, n, p, upper)
 
 
 def fisher_tail(hits, n, other_hits, other_n, upper=True) -> float:
     """One-sided Fisher exact p-value that `hits` of `n` is higher (upper)
     or lower than `other_hits` of `other_n` beyond chance — both rates
-    measured, neither taken as known (the hypergeometric tail)."""
-    hits, n, oh, on = int(hits), int(n), int(other_hits), int(other_n)
-    total, good = n + on, hits + oh
-    if n <= 0 or on <= 0:
-        return 1.0
-    denom = math.comb(total, n)
-    lo, hi = max(0, n - (total - good)), min(n, good)
-    rng = range(hits, hi + 1) if upper else range(lo, hits + 1)
-    return min(1.0, sum(math.comb(good, i) * math.comb(total - good, n - i) for i in rng) / float(denom))
+    measured, neither taken as known (learning_stats.fisher_tail)."""
+    import learning_stats
+    return learning_stats.fisher_tail(hits, n, other_hits, other_n, upper)
 
 
 def significant_teams(stats, base, alpha=PAIR_ALPHA) -> dict:
@@ -1530,12 +1595,14 @@ def _learn_pairs(ctx) -> list:
     """Teams that do well together (L-21: chemistry needed watched nights,
     read "no issue" as the only success, and nothing applied until the owner
     acted). Every recorded shift (schedule_outcomes, the punches for who
-    actually worked it) is read as ran-well or not against the restaurant's
-    own record: its sales per labor hour at or above the median for that
-    weekday and daypart, its Shift Quality as it ran at or above that
-    night's median, no coverage or no-show issue on a night the check was
-    watching, no review under GOOD_REVIEW placed on it — every reading
-    the shift has, none of the readings it lacks. A pair (or a trio) whose
+    actually worked it) is read as ran-well or not on outcomes a short-
+    staffed shift does not win (schedule audit 10/10/26 LEARNING-12;
+    schedule_intel.slot_readings / ran_well): sales against the forecast,
+    comps and table turns against that weekday and daypart's median, no
+    coverage or no-show issue on a watched night, the meal's reviews — and
+    every shift on the SAME set of readings (the ones most shifts have; a
+    shift missing any is not read). Sales per labor hour (a lean shift wins
+    it) and the engine's own as-run score are no longer readings. A pair (or a trio) whose
     shared shifts ran well clearly more often than the restaurant's do —
     PAIR_MIN_SHARED of them at least, PAIR_MIN_LIFT above it — is a
     candidate; active only with confidence. A pair that ran clearly worse
@@ -1568,54 +1635,21 @@ def _learn_pairs(ctx) -> list:
     import schedule_intel
     dates = sorted(d for d, _p in slots)
     kw = {"db_path": ctx.db} if ctx.db else {}
-    watched = schedule_intel.watched_dates(ctx.rid, dates[0], dates[-1], **kw)
     who = {}
     for p in ctx.punches():
         d = str(p.get("date") or "")[:10]
         part = _daypart(p.get("shift_start"))
         if (d, part) in slots:
             who.setdefault((d, part), {})[_nk(p.get("employee"))] = p.get("employee")
-    splh = {}
-    for (d, part), o in slots.items():
-        try:
-            if o["sales"] and o["actual_hours"]:
-                splh[(d, part)] = float(o["sales"]) / float(o["actual_hours"])
-        except (TypeError, ValueError, ZeroDivisionError):
-            continue
-    medians = {}
-    for (d, part), v in splh.items():
-        medians.setdefault((_weekday(d), part), []).append(v)
-    medians = {k: _median(v) for k, v in medians.items() if len(v) >= 3}
-
-    # The shift's Shift Quality as it ran (schedule_intel.record_as_run_quality),
-    # against the same weekday and daypart's median as-run score.
-    as_run = {}
-    for o in observations(ctx.rid, kinds=("sq_as_run",), since=ctx.since, db_path=ctx.db):
-        if o.get("date") and (o.get("value") or {}).get("score") is not None:
-            as_run[(str(o["date"])[:10], o.get("daypart"))] = float(o["value"]["score"])
-    sq_med = {}
-    for (d, part), v in as_run.items():
-        sq_med.setdefault((_weekday(d), part), []).append(v)
-    sq_med = {k: _median(v) for k, v in sq_med.items() if len(v) >= 3}
-
-    def ran_well(d, part, o):
-        readings = []
-        med = medians.get((_weekday(d), part))
-        if (d, part) in splh and med:
-            readings.append(splh[(d, part)] >= med)
-        if (d, part) in as_run and sq_med.get((_weekday(d), part)) is not None:
-            readings.append(as_run[(d, part)] >= sq_med[(_weekday(d), part)])
-        if (o["issues"] or 0) or d in watched:
-            readings.append(not (o["issues"] or 0))
-        if o["rating"] is not None and (o["reviews"] or 0):
-            readings.append(float(o["rating"]) >= GOOD_REVIEW)
-        return all(readings) if readings else None
-
-    read = {}
-    for (d, part), o in slots.items():
-        verdict = ran_well(d, part, o)
-        if verdict is not None and who.get((d, part)):
-            read[(d, part)] = verdict
+    # Ran well, on outcomes a short-staffed shift does not win and on ONE
+    # reading set for every shift (schedule audit 10/10/26 LEARNING-12:
+    # sales per labor hour rewarded the lean shift, the as-run score was the
+    # engine grading itself, and a shift with fewer readings faced fewer
+    # conditions) — schedule_intel.slot_readings / ran_well.
+    readings = schedule_intel.slot_readings(ctx.rid, dates[0], dates[-1], **kw)
+    verdicts = schedule_intel.ran_well({k: v for k, v in readings.items() if k in slots and who.get(k)})
+    chosen = schedule_intel.reading_set({k: v for k, v in readings.items() if k in slots and who.get(k)})
+    read = dict(verdicts)
     if not read:
         return []
     base = sum(1 for v in read.values() if v) / float(len(read))
@@ -1661,11 +1695,11 @@ def _learn_pairs(ctx) -> list:
             conf_e = dict(e, hits_w=e["opps_w"] - e["hits_w"], hits=e["opps"] - e["hits"])
         shown = [names.get(k) or k.title() for k in g]
         together = ", ".join(shown[:-1]) + " and " + shown[-1]
+        words = ", ".join(schedule_intel.READING_WORDS.get(k, k) for k in chosen)
         if kind_ == "prefer":
-            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well (sales per "
-                    f"labor hour and the Shift Quality as it ran at or above the usual for that night, no coverage "
-                    f"issue, no poor review) against {_pct(held_to)} of this restaurant's shifts — a team worth "
-                    f"keeping together.")
+            text = (f"{together} on the same shift: {e['hits']} of {e['opps']} shared shifts ran well ({words}, "
+                    f"each against the usual for that night) against {_pct(held_to)} of this restaurant's shifts "
+                    f"without them together — a team worth keeping together.")
         else:
             # Worded by what its evidence counts — the shared shifts that did
             # NOT run well — so "6 of 6" beside it reads true.
@@ -1676,7 +1710,7 @@ def _learn_pairs(ctx) -> list:
                     conf_e, person=names.get(g[0]) or g[0],
                     value={"with": [names.get(k) or k for k in g[1:]], "kind": kind_, "rate": rate,
                            "baseline": round(base, 3), "held_to": round(held_to, 3), "p_value": round(pvalue, 5),
-                           "shared": e["opps"], "ran_well": e["hits"], "size": len(g)},
+                           "shared": e["opps"], "ran_well": e["hits"], "size": len(g), "readings": list(chosen)},
                     text=text, source="outcomes_and_punches", origin="measured", habit=False,
                     # A trio is told to the model, never enforced (LEARN-7);
                     # keeping two apart is the owner's call alone.
@@ -1759,11 +1793,21 @@ def _learn_mirrors(ctx) -> list:
             for slot in p.get(which) or []:
                 wd, _sp, part = str(slot).partition(" ")
                 part = "night" if part == "night" else "morning"
-                verb = "keeps asking to drop" if kind == "staff_avoid" else "keeps picking up"
-                mirror(f"{kind}|{_person_token(ctx, name)}|{wd}|{part}", kind,
-                       f"{name} {verb} {wd} {_MEAL.get(part, part)} shifts.",
-                       {"drops": p.get("drops"), "claims": p.get("claims")}, person=name, day=wd, daypart=part,
-                       source="shift_requests")
+                ev = (p.get("evidence") or {}).get(slot) or {}
+                # Said with its denominator (LEARNING-15): how often they
+                # dropped it of the times they were on it, or picked it up
+                # of the open shifts offered there.
+                if kind == "staff_avoid":
+                    text = (f"{name} dropped {ev.get('dropped', '?')} of the {ev.get('scheduled', '?')} "
+                            f"{wd} {_MEAL.get(part, part)} shifts they were scheduled on.")
+                    conf = ev.get("drop_confidence")
+                else:
+                    text = (f"{name} picked up {ev.get('claimed', '?')} of the {ev.get('offered', '?')} open "
+                            f"{wd} {_MEAL.get(part, part)} shifts — more than the open shifts elsewhere.")
+                    conf = ev.get("claim_confidence")
+                mirror(f"{kind}|{_person_token(ctx, name)}|{wd}|{part}", kind, text,
+                       {"drops": p.get("drops"), "claims": p.get("claims"), "evidence": ev}, person=name, day=wd,
+                       daypart=part, conf=conf, source="shift_requests")
     try:
         rel = staff_settings.reliability(ctx.rid, today=ctx.today, **kw) or {}
     except Exception as e:
@@ -2830,6 +2874,77 @@ def _answer_words(r, principal=True) -> str:
         return None
     who = ("you" if principal else "the owner") if said_by_owner(r) else "a manager"
     return ("Kept by " if said == "keep" else "Let go by ") + who
+
+
+def why_row(restaurant_id, history_id, row, db_path=None) -> dict:
+    """The one place that answers "why did the draft do X" for one row of a
+    generated week (schedule audit 10/10/26 ARCH-28: three learners mined the
+    same edits with their own statistics and reached the prompt, the passes
+    and the review separately): {origin — who wrote the row (the model, the
+    managers' plan, a repair stage, a pass after the loop; schedule_scorecard
+    generation tags), asked — what the draft was asked for on its slot
+    (role, date, daypart), learned — every memory about its person or its
+    slot with its kind, status, enforcement, confidence and words (what the
+    passes were bound by), headcount — the learned headcount on its slot and
+    whether the baseline still needed it, preferences — what the person
+    drops and claims, with denominators}. Read-only."""
+    import schedule_scorecard
+    import schedule_versions as sv
+    d = str((row or {}).get("date") or "")[:10]
+    day = _weekday(d)
+    parts = []
+    try:
+        from shift_quality import present_dayparts
+        parts = [p for p in present_dayparts(row) if p in ("morning", "night", "late")]
+    except Exception:
+        parts = []
+    who = _nk((row or {}).get("employee"))
+    role = " ".join(str((row or {}).get("role") or "").split()).lower()
+    out = {"row": {k: (row or {}).get(k) for k in ("date", "employee", "role", "shift_start", "shift_end")},
+           "origin": None, "asked": {}, "learned": [], "headcount": {}, "preferences": None}
+    tags = schedule_scorecard.generation_tags(history_id, db_path=db_path) if history_id else {}
+    out["origin"] = (tags.get("origins") or {}).get(sv.row_sig(row or {}))
+    conn = get_conn(db_path)
+    try:
+        h = conn.execute("SELECT economics_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+                         (history_id, restaurant_id)).fetchone() if history_id else None
+        mems = [dict(r) for r in conn.execute(
+            "SELECT kind, person, role, day, daypart, status, enforcement, confidence, text, value_json FROM "
+            "schedule_memory WHERE restaurant_id=? AND status IN ('candidate', 'active', 'rule', 'retest') AND "
+            "(day IS NULL OR day=?)", (restaurant_id, day)).fetchall()]
+    finally:
+        conn.close()
+    try:
+        req = (json.loads((h or {})["economics_json"] or "{}") or {}).get("requirements_by_date") or {} if h else {}
+    except (TypeError, ValueError, KeyError):
+        req = {}
+    for p in parts:
+        for r_, n in ((req.get(f"{d}|{p}") or {}).items()):
+            if " ".join(str(r_).split()).lower() == role:
+                out["asked"][p] = n
+    for m in mems:
+        about_person = bool(m.get("person")) and _nk(m["person"]) == who
+        about_slot = (not m.get("person")) and (m.get("daypart") in parts or not m.get("daypart")) and \
+            (not m.get("role") or _nk(m["role"]) == role or _nk(m["role"]) in role)
+        if about_person or about_slot:
+            out["learned"].append({k: m.get(k) for k in ("kind", "person", "role", "day", "daypart", "status",
+                                                          "enforcement", "confidence", "text")})
+    try:
+        import schedule_learning
+        lh = schedule_learning.learned_headcount(restaurant_id, db_path=db_path or schedule_learning.DB_PATH)
+        for p in parts:
+            for r_, v in (lh.get((day, p)) or {}).items():
+                if " ".join(str(r_).split()).lower() == role:
+                    out["headcount"][p] = v
+    except Exception as e:
+        log.warning("why_row: learned headcount unreadable for %s: %s", restaurant_id, e)
+    try:
+        import schedule_intel
+        prefs = schedule_intel.behaviour_preferences(restaurant_id, db_path=db_path or schedule_intel.DB_PATH)
+        out["preferences"] = next((v for k, v in prefs.items() if _nk(k) == who), None)
+    except Exception as e:
+        log.warning("why_row: preferences unreadable for %s: %s", restaurant_id, e)
+    return out
 
 
 def memory_view(restaurant_id, db_path=None, include_retired=True, principal=True) -> dict:

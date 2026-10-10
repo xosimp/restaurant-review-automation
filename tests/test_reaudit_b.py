@@ -749,7 +749,8 @@ def test_b19_the_env_and_restaurant_pins_beat_a_retired_promotion(db, monkeypatc
     assert sx.arms_for(rid, "2026-10-05", db_path=db)[0]["arm"] == "solver"
     monkeypatch.setenv(sx.PIN_ENV, "off")
     a = sx.arms_for(rid, "2026-10-05", db_path=db)[0]
-    assert a["arm"] == "model" and a["pin_source"] == "env" and a["flags"] == {"solver": False}
+    # The model arm is clean: nobody reassigned by the optimizer either (LOGIC-27).
+    assert a["arm"] == "model" and a["pin_source"] == "env" and a["flags"] == {"solver": False, "reassign": False}
     monkeypatch.setenv(sx.PIN_ENV, f"{key}:off")
     assert sx.arms_for(rid, "2026-10-05", db_path=db)[0]["arm"] == "model"
     monkeypatch.delenv(sx.PIN_ENV)

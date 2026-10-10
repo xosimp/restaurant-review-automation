@@ -248,6 +248,30 @@ def test_a_drag_re_scores_on_kept_inputs_and_asks_for_the_what_if_only_on_demand
     assert studio["calls"]["inputs"] == 1
 
 
+def test_a_drag_asking_for_a_delta_gets_only_the_changed_readings_and_they_merge_to_the_whole(studio):
+    """Scheduler audit 10/10/26 (SCALE-29): the whole quality object went
+    back on every drag; a client holding the last answer gets the headline
+    and the readings that changed."""
+    import schedule_engine
+    rows = _week_rows()
+    first = studio["post"]({"rows": rows, "history_id": 11})
+    assert first["quality"] and first["quality_etag"] and first["quality_delta"] is None
+    dragged = [dict(r) for r in rows]
+    dragged[0]["shift_end"] = "11:30pm"
+    dragged[0]["scheduled_hours"] = "7.5"
+    delta = studio["post"]({"rows": dragged, "history_id": 11, "delta": True, "quality_etag": first["quality_etag"]})
+    assert delta["quality"] is None and delta["quality_delta"]["base"] == first["quality_etag"]
+    dl = delta["quality_delta"]
+    assert 0 < len(dl["changed"]) < len(dl["order"])
+    had = dict(zip(schedule_engine._shift_key_list(first["quality"]["shifts"]), first["quality"]["shifts"]))
+    merged = dict(dl["head"], shifts=[dl["changed"].get(k) or had[k] for k in dl["order"]])
+    schedule_engine.studio_invalidate()
+    whole = studio["post"]({"rows": dragged, "history_id": 11})["quality"]
+    for k in ("score", "raw_score", "checked", "band"):
+        assert merged.get(k) == whole.get(k), k
+    assert [s["score"] for s in merged["shifts"]] == [s["score"] for s in whole["shifts"]]
+
+
 def test_the_kept_re_score_is_the_whole_score_exactly(studio):
     """Whatever it reuses, a re-score's number, shifts and violations are
     those of scoring the edited week from scratch."""
@@ -266,8 +290,13 @@ def test_the_kept_re_score_is_the_whole_score_exactly(studio):
     assert kept["violations"] == fresh["violations"]
 
 
-def test_a_save_rebuilds_the_kept_inputs_from_the_database(studio):
-    from models import save_schedule_history
+def test_a_save_rebuilds_the_kept_inputs_only_when_what_they_were_read_from_changed(studio):
+    """Scheduler audit 10/10/26 (SCALE-8): a save used to rebuild the kept
+    inputs every time (4.6 s for a large restaurant); it re-uses them while
+    models.schedule_inputs_version stands, and rebuilds the moment anything
+    they were read from moves — what is stored is never judged on stale
+    inputs."""
+    from models import save_schedule_history, update_restaurant
     rows = _week_rows()
     csv = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "".join(
         f"{r['date']},{r['day']},{r['employee']},{r['role']},{r['shift_start']},{r['shift_end']},{r['scheduled_hours']},\n"
@@ -276,4 +305,8 @@ def test_a_save_rebuilds_the_kept_inputs_from_the_database(studio):
     studio["post"]({"rows": rows, "history_id": hid})
     saved = studio["post"]({"rows": rows, "history_id": hid, "save": True})
     assert saved["saved"] is True
+    assert studio["calls"]["inputs"] == 1
+    # A setting the inputs read changed: the next save reads them again.
+    update_restaurant(studio["rid"], {"role_strength_json": '{"Server": 7}'})
+    saved = studio["post"]({"rows": rows, "history_id": hid, "save": True, "version": saved.get("version")})
     assert studio["calls"]["inputs"] == 2
