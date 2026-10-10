@@ -180,7 +180,7 @@ def generation_cost(generation_id, db_path=None) -> dict:
         out["calls"] += 1
         out["cost_usd"] += _estimate_cost(r["model"], int(u.get("input_tokens") or 0),
                                           int(u.get("output_tokens") or 0), int(u.get("cache_write_tokens") or 0),
-                                          int(u.get("cache_read_tokens") or 0))
+                                          int(u.get("cache_read_tokens") or 0), batch=bool(u.get("batch")))
         out["model_seconds"] += float(r["seconds"] or 0)
         out["model"] = out["model"] or r["model"]
         out["contract"] = out["contract"] or r["contract"]

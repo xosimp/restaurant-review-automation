@@ -222,10 +222,11 @@ POLICIES = {p.workflow: p for p in (
     # its own; ~$6; the job's longest deadline (SCHEDULE_JOB_MAX_SECONDS).
     _p("labor_schedule", "scheduling", "schedule", ladder=("T3", "T4"), reviewer="rules",
        escalate_on=("rule_breach",), max_escalations=1,
-       caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background",
+       caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background", batch=True,
        context=("profile", "owner_rules", "roster", "sales_trend", "labor_trend", "events", "weather",
                 "memory", "data_state"),
-       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder"),
+       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder; "
+            "the unattended auto-draft's first call goes through Message Batches (schedule_batch), a press never"),
     # The schedule's two small calls (scheduler audit 10/10/26): the owner's
     # words read into typed rules (owner_rules — every proposed rule
     # validated in code, each sentence read once and cached) and the note

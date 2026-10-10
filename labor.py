@@ -4264,7 +4264,8 @@ def _usage_of(msg) -> dict:
     return {"input_tokens": int(getattr(u, "input_tokens", 0) or 0),
             "output_tokens": int(getattr(u, "output_tokens", 0) or 0),
             "cache_read_tokens": int(getattr(u, "cache_read_input_tokens", 0) or 0),
-            "cache_write_tokens": int(getattr(u, "cache_creation_input_tokens", 0) or 0)}
+            "cache_write_tokens": int(getattr(u, "cache_creation_input_tokens", 0) or 0),
+            **({"batch": True} if getattr(msg, "_cavnar_batch", False) is True else {})}
 
 
 def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_id=None, week_start=None,
@@ -5855,7 +5856,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # request-path default. The timeout is the longest silence between
         # streamed events, not the whole call; the job's deadline bounds the
         # whole call (create_with_retry cuts a stream still writing then).
-        msg = create_with_retry(_client, readiness=_ready_sched, **_call)
+        # The auto-draft's batched answer, when this is the call it was
+        # written for (schedule_batch — RM-10); while the auto-draft
+        # captures its request, this raises CallCaptured before anything is
+        # sent or recorded.
+        import schedule_batch as _sbatch
+        msg = _sbatch.answer_for(dict(_call, readiness=_ready_sched))
+        if msg is None:
+            msg = create_with_retry(_client, readiness=_ready_sched, **_call)
     except CallDeadlineExceeded as _dx:
         # Out of the job's time mid-answer (P-22): what streamed is read
         # like a truncated answer — the engine keeps its finished days and

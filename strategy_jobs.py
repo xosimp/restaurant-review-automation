@@ -1236,7 +1236,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
     import threading
     import scheduler as _sched
     import schedule_engine as _se
-    counts = {"drafted": 0, "skipped": 0}
+    counts = {"drafted": 0, "skipped": 0, "batched": 0}
     lock = threading.Lock()
     # Bounded and resumable, like run_daily_fetch: a worker pool, a
     # wall-clock bound and a cursor. It used to be one serial 40-minute pass
@@ -1303,12 +1303,14 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
     # landed short, and the bound reached job_runs only as `complete`.
     _done, ran_out = _sched.resumable_sweep(AUTO_DRAFT_CURSOR_KEY, sorted(by_id), _one, AUTO_DRAFT_MAX_SECONDS,
                                             workers=AUTO_DRAFT_WORKERS, job="auto_draft_schedule")
-    attempted = counts["drafted"] + counts["failed"]
-    return _counts(attempted, counts["drafted"], counts["failed"], counts["skipped"], ran_out,
-                   drafted=counts["drafted"], complete=not ran_out)
+    # A draft sent through Message Batches (schedule_batch, RM-10) is an
+    # attempt that went: its answer finishes it later, off this pass.
+    attempted = counts["drafted"] + counts["failed"] + counts["batched"]
+    return _counts(attempted, counts["drafted"] + counts["batched"], counts["failed"], counts["skipped"], ran_out,
+                   drafted=counts["drafted"], batched=counts["batched"], complete=not ran_out)
 
 
-def _draft_one(r, db_path, _se, _bump, period=None):
+def _draft_one(r, db_path, _se, _bump, period=None, batch=True):
     """One restaurant's auto-draft and, when it saved, the owner's nudge.
 
     Claimed like an owner's press (ops.claim_async_job): it used to start a
@@ -1318,8 +1320,23 @@ def _draft_one(r, db_path, _se, _bump, period=None):
     is the draft; today's claim is handed back so a later pass can try again
     if theirs fails. And it takes a slot of the bounded generation pool
     (schedule_engine.generation_scope) like any generation, with the same
-    wall clock."""
+    wall clock.
+
+    `batch` (scheduler audit 10/10/26 RM-10, AI-15, SCALE-12): the draft's
+    model call goes through Message Batches first (schedule_batch — half
+    the price, no slot held while it waits); its answer runs this again
+    with batch=False and the answer handed to the call. A gate's refusal
+    drafts nothing; batches off here or nothing to batch, it runs now."""
     import ops
+    if batch:
+        import schedule_batch as _sbat
+        sent = _sbat.submit_auto_draft(r, period=period)
+        if sent == "submitted":
+            _bump("batched")
+            return
+        if sent == "blocked":
+            _bump("skipped")
+            return
     from schedule_engine import generation_scope, generation_request, GEN_PRIORITY_BACKGROUND
     # What it asks, as an owner's press of Generate for next week would: an
     # owner's identical press joins it, and it never joins (or is joined by)
