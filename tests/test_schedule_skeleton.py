@@ -57,7 +57,10 @@ def _c(**kw):
     c.salaried = {"erik", "jim"}
     c.open_times = {d: "11:00am" for d in DAYS}
     c.close_times = dict(CLOSES)
+    # The owner's one "stays until close + 60" setting for the bar writes
+    # both the must-stay and the after-close allowance (D-43).
     c.role_buffers = {"Bartender": 60}
+    c.close_mins = {"bartender": 60}
     for k, v in kw.items():
         setattr(c, k, v)
     return c
@@ -199,7 +202,7 @@ def test_time_off_unavailable_days_and_hour_windows_are_kept():
 def test_usual_days_and_hours_come_from_published_weeks_and_punches():
     hist = (_hist("Jim", [1], "4:00pm", "10:00pm") + _hist("Jim", [3], "5:00pm", "12:00am", role="Bartender PM")
             + _hist("Andrew", [0, 2], "10:30", "17:00", published=False))
-    plan = sk.plan_manager_coverage(_c(role_buffers={}), WEEK, history=hist)
+    plan = sk.plan_manager_coverage(_c(role_buffers={}, close_mins={}), WEEK, history=hist)
     jim_tue, jim_thu = _on(plan, "2026-10-06", "Jim"), _on(plan, "2026-10-08", "Jim")
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_tue] == [("4:00pm", "10:00pm", "usual")]
     assert [(r["shift_start"], r["shift_end"], r["_plan_source"]) for r in jim_thu] == [("5:00pm", "12:00am", "usual")]
@@ -247,10 +250,21 @@ def test_a_salaried_manager_stops_at_their_weekly_cap_never_84h():
     assert shop["hours"]["Erik"] <= 45
 
 
-def test_an_hourly_manager_stays_under_the_overtime_line():
+def test_an_hourly_manager_goes_past_the_overtime_line_only_when_nobody_else_can():
+    # A manager on the floor every minute outranks overtime and the
+    # restaurant's 40h ceiling (sched audit 10/10/26 LOGIC-1): the only
+    # manager is planned past 40h, each leg past the line said as overtime,
+    # rather than the floor left with nobody running it.
     plan = sk.plan_manager_coverage(_c(managers={"andrew": "Manager FOH"}), WEEK)
-    assert 0 < plan["hours"]["Andrew"] <= 40
-    assert plan["uncovered"]
+    assert plan["hours"]["Andrew"] > 40
+    assert any("overtime" in r["_pin_reason"] or "scheduling limits" in r["_pin_reason"] for r in plan["rows"])
+    # Their own maximum stays theirs.
+    own = sk.plan_manager_coverage(_c(managers={"andrew": "Manager FOH"}, hours_limits={"andrew": (None, 45)}), WEEK)
+    assert 40 < own["hours"]["Andrew"] <= 45 and own["uncovered"]
+    # Two hourly managers with room between them: nobody past the line.
+    two = sk.plan_manager_coverage(_c(managers={"andrew": "Manager FOH", "anthony": "Manager FOH"},
+                                      salaried=set(), close_times={d: "9:00pm" for d in DAYS}), WEEK)
+    assert two["hours"]["Andrew"] <= 40 and two["hours"]["Anthony"] <= 40 and not two["uncovered"]
 
 
 def test_scarce_hours_cover_every_close_before_any_morning():
@@ -267,7 +281,11 @@ def test_scarce_hours_cover_every_close_before_any_morning():
     assert len(closed_nights) == 7
     assert plan["hours"]["Erik"] <= sk.SALARIED_WEEK_CAP
 
-    plan = sk.plan_manager_coverage(_c(managers={"andrew": "Manager FOH"}), WEEK)
+    # Where the jurisdiction makes six days in a row law (Illinois' One Day
+    # Rest in Seven Act), an hourly manager stops at six: the law outranks
+    # the manager rule; the restaurant's own policy would not (LOGIC-1).
+    law = dict(sr.DEFAULTS, _pack={"code": "IL", "law": ["max_consecutive_days"]})
+    plan = sk.plan_manager_coverage(_c(managers={"andrew": "Manager FOH"}, compliance=law), WEEK)
     for u in plan["uncovered"]:
         assert u["start"] == _window(plan, u["date"])[0], u
     closed_nights = [d for d in WEEK if _cover(plan, d) and _cover(plan, d)[-1][1] == _window(plan, d)[1]]

@@ -215,6 +215,16 @@ def test_the_replacement_check_never_asks_shift_quality_s_swap_index(db, monkeyp
     assert se.replacement_is_legal(rid, rows, 0, "Ben") == (True, "")
 
 
+def test_a_pickup_is_held_to_the_restaurants_own_limits_too(db):
+    """The one engine reaches TIER_POLICY (merged with B's tiers, 10/10/26):
+    rest between shifts still refuses a claim, as the swap index did."""
+    rid = _restaurant(db, [("Ana", "Server"), ("Ben", "Server")])
+    rows = sv.rows_from_csv(HEADER + f"\n{W1[1]},{_day(W1[1])},Ben,Server,5:00pm,11:30pm,6.5,"
+                            f"\n{W1[2]},{_day(W1[2])},Ana,Server,7:00am,1:00pm,6,")
+    ok, why = se.replacement_is_legal(rid, rows, 1, "Ben")
+    assert not ok and "rest" in why.lower()
+
+
 def test_a_pending_time_off_request_still_refuses_the_taker(db):
     rid = _restaurant(db, [("Ana", "Server"), ("Ben", "Server")])
     conn = models.get_conn(db)

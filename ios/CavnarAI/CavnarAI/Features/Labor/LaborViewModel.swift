@@ -1786,9 +1786,14 @@ struct GeneratedSchedule: Codable {
     // Time off still waiting for an answer, by name — a warning, not a
     // block, because nobody has decided it yet.
     var pendingTimeOff: [String: [String]]?
-    // The model's own short note. `summary` is the deterministic diff
-    // against the last published week; this is the one paragraph it wrote.
-    let narrative: String?
+    // The model's own note on the week, as bullets. `summary` is the
+    // deterministic diff against the last published week. The server has
+    // always sent a LIST here (labor.py's summary bullets, the per-part
+    // notes of a week drafted in parts); this was declared String?, so every
+    // finished generation polled on the phone failed to decode (schedule
+    // audit 10/10/26 TRUST-1). A single string — an older cache — reads as
+    // one bullet. Nil when the draft carried none.
+    let narrative: [String]?
     let generationSeconds: Double?
     // True when the roster was too large for one pass and the week was
     // generated in date slices, then stitched. Lenient: an older server
@@ -1903,6 +1908,11 @@ struct GeneratedSchedule: Codable {
     /// tiles' savings projection is worked on (iOS parity #47). Lenient.
     var projectedRevenue: LenientDouble? = nil
     var economics: ScheduleEconomicsLite? = nil
+    /// The keys this payload sent that the decoder could not read and set
+    /// to nil (schedule audit 10/10/26 TRUST-1): one odd field costs that
+    /// field, never the whole week. Not encoded; the contract test asserts
+    /// it is empty for the server's real payloads.
+    var undecodedKeys: [String] = []
 
     /// The week's forecast sales, wherever the payload carried them.
     var forecastSales: Double? { projectedRevenue?.value ?? economics?.projectedRevenue }
@@ -2030,6 +2040,113 @@ struct GeneratedSchedule: Codable {
         guard let date = f.date(from: shiftStart.lowercased()) else { return "night" }
         let hour = Calendar.current.component(.hour, from: date)
         return hour < 15 ? "morning" : "night"
+    }
+}
+
+extension GeneratedSchedule {
+    /// Field by field (schedule audit 10/10/26 TRUST-1). The synthesized
+    /// decoder failed the WHOLE week on one field of an unexpected kind —
+    /// `narrative` arriving as the list the server always sent — so a
+    /// finished generation never reached the phone. Now only `ok` and the
+    /// rows themselves can fail it (a week whose rows can't be read is not
+    /// shown as an empty week); any other field that can't be read is nil
+    /// and named in `undecodedKeys`. (An extension, so the memberwise
+    /// initialiser is kept.)
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        var dropped: [String] = []
+        func field<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? {
+            guard c.contains(key) else { return nil }
+            do {
+                return try c.decodeIfPresent(T.self, forKey: key)
+            } catch {
+                dropped.append(key.stringValue)
+                return nil
+            }
+        }
+        ok = try c.decode(Bool.self, forKey: .ok)
+        previewRows = try c.decodeIfPresent([ScheduleRow].self, forKey: .previewRows)
+        status = field(String.self, .status)
+        summary = field([String].self, .summary)
+        weekDates = field([String].self, .weekDates)
+        weekDays = field([String].self, .weekDays)
+        hoursScheduled = field(Double.self, .hoursScheduled)
+        laborTarget = field(Double.self, .laborTarget)
+        scheduleCsv = field(String.self, .scheduleCsv)
+        error = field(String.self, .error)
+        hoursBudget = field(Double.self, .hoursBudget)
+        laborBudgetDollars = field(Double.self, .laborBudgetDollars)
+        hoursHourly = field(Double.self, .hoursHourly)
+        hoursSalaried = field(Double.self, .hoursSalaried)
+        budgetBasis = field(LenientBudgetBasis.self, .budgetBasis)
+        staffConstraints = field([String: String].self, .staffConstraints)
+        strength = field(ScheduleStrength.self, .strength)
+        quality = field(ScheduleQuality.self, .quality)
+        whatIf = field(ScheduleWhatIf.self, .whatIf)
+        historyId = field(Int.self, .historyId)
+        review = field(ScheduleReview.self, .review)
+        ruleViolations = field([RuleViolation].self, .ruleViolations)
+        pendingTimeOff = field([String: [String]].self, .pendingTimeOff)
+        // A list of bullets; an older cached string is one bullet.
+        let bullets = c.sfWords(.narrative)
+        if bullets.isEmpty, c.contains(.narrative), (try? c.decodeNil(forKey: .narrative)) != true,
+           (try? c.decode([String].self, forKey: .narrative)) == nil,
+           (try? c.decode(String.self, forKey: .narrative)) == nil {
+            dropped.append(CodingKeys.narrative.stringValue)
+        }
+        narrative = bullets.isEmpty ? nil : bullets
+        generationSeconds = field(Double.self, .generationSeconds)
+        _chunked = try c.decode(LenientBool.self, forKey: .chunked)
+        calls = field(Int.self, .calls)
+        secondsLeft = field(Int.self, .secondsLeft)
+        progress = field(GenerationProgress.self, .progress)
+        roster = field([String].self, .roster)
+        publishedAt = field(String.self, .publishedAt)
+        publishedBy = field(String.self, .publishedBy)
+        republishedAt = field(String.self, .republishedAt)
+        supersededBy = field(Int.self, .supersededBy)
+        version = field(Int.self, .version)
+        replacedReason = field(String.self, .replacedReason)
+        whatIfJson = field(String.self, .whatIfJson)
+        trimmed = field([TrimmedShift].self, .trimmed)
+        hoursTrimmed = field(Double.self, .hoursTrimmed)
+        staggered = field([StaggeredStart].self, .staggered)
+        projectedCost = field(ProjectedCost.self, .projectedCost)
+        overBudgetDollars = field(Double.self, .overBudgetDollars)
+        projectedRevenueSource = field(String.self, .projectedRevenueSource)
+        hourlyProfileReady = field(Bool.self, .hourlyProfileReady)
+        demandDataThrough = field(DemandDataThrough.self, .demandDataThrough)
+        reservationFeed = field(ReservationFeedStatus.self, .reservationFeed)
+        holidayLift = field([String: HolidayLift].self, .holidayLift)
+        couldHold = field([String: [String]].self, .couldHold)
+        departments = field([String].self, .departments)
+        regeneratedDates = field([String].self, .regeneratedDates)
+        optimizer = field(ScheduleOptimizer.self, .optimizer)
+        gate = field(ScheduleGate.self, .gate)
+        standbyDays = field([StandbyDay].self, .standbyDays)
+        likelyEdits = field([LikelyEdit].self, .likelyEdits)
+        overtimeForecast = field([OvertimeForecastItem].self, .overtimeForecast)
+        likelyEditsNote = field(LenientText.self, .likelyEditsNote)
+        standbyNote = field(LenientText.self, .standbyNote)
+        demandAccuracy = field(DemandAccuracy.self, .demandAccuracy)
+        softRequirements = field(HomeLenientList<SoftRequirement>.self, .softRequirements)
+        patternConflicts = field(HomeLenientList<PatternConflict>.self, .patternConflicts)
+        laborTargetLabel = field(LenientText.self, .laborTargetLabel)
+        laborTargetSource = field(LenientText.self, .laborTargetSource)
+        detailThinnedAt = field(LenientText.self, .detailThinnedAt)
+        managerPlan = field(ManagerPlan.self, .managerPlan)
+        managerCoverage = field(ManagerCoverage.self, .managerCoverage)
+        laborView = field(ScheduleLaborView.self, .laborView)
+        dailyTargetHours = field(DailyHourTargets.self, .dailyTargetHours)
+        minHours = field(MinHoursReport.self, .minHours)
+        _partial = try c.decode(LenientBool.self, forKey: .partial)
+        unwrittenDates = field(HomeLenientList<UnwrittenDate>.self, .unwrittenDates)
+        unstaffableDates = field(HomeLenientList<UnstaffableDate>.self, .unstaffableDates)
+        startingPoint = field(StartingPoint.self, .startingPoint)
+        requirements = field(HomeLenientList<RequirementRow>.self, .requirements)
+        projectedRevenue = field(LenientDouble.self, .projectedRevenue)
+        economics = field(ScheduleEconomicsLite.self, .economics)
+        undecodedKeys = dropped
     }
 }
 
@@ -2472,7 +2589,7 @@ final class LaborViewModel {
     // the summary can say the score is no longer the generated one.
     var overriddenRows: Set<String> = []
 
-    private struct ScoreBody: Encodable {
+    struct ScoreBody: Encodable {
         let rows: [ScheduleRow]
         let dailyTargetHours: [String: Double]
         let save: Bool
@@ -2493,6 +2610,10 @@ final class LaborViewModel {
         /// a staff cover or swap the server named (BUGSLIFE-16).
         var keepMine: Bool? = nil
         var overrideStaff: Bool? = nil
+        /// A save's own key (`saveKey`): the server answers a repeat of the
+        /// same save from the first one instead of saving again
+        /// (schedule audit 10/10/26 BUGSLIFE-22). Nil on a re-score.
+        var idempotencyKey: String? = nil
         enum CodingKeys: String, CodingKey {
             case rows, save, version
             case dailyTargetHours = "daily_target_hours"
@@ -2501,6 +2622,60 @@ final class LaborViewModel {
             case whatIf = "what_if"
             case keepMine = "keep_mine"
             case overrideStaff = "override_staff"
+            case idempotencyKey = "idempotency_key"
+        }
+    }
+
+    /// The 409 a save answers while the same save (same key) is still
+    /// being made (BUGSLIFE-22).
+    struct SaveInProgress: Decodable {
+        let inProgress: Bool?
+        let error: String?
+        enum CodingKeys: String, CodingKey {
+            case error
+            case inProgress = "in_progress"
+        }
+    }
+
+    /// One key per distinct save — the week, the version its rows came from,
+    /// the rows, the daily targets and what Cavnar AI took out — so the
+    /// client's own retry of a request that died in transit, or Save tapped
+    /// again after an answer was lost, is answered from the save the server
+    /// already made: never a second "edited" version, never the learning
+    /// capture twice, never the owner's own save refused as a conflict
+    /// (BUGSLIFE-22). A different edit, or the same rows on a newer version,
+    /// is a different key.
+    static func saveKey(_ body: ScoreBody) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(body) else { return nil }
+        return APIClient.idempotencyKey(path: "/mobile/api/labor/schedule/score", fileData: data)
+    }
+
+    /// How many times a save answered "still being made" is asked again
+    /// (two seconds apart) before the owner is told.
+    static let saveInProgressWaits = 3
+
+    static func saveInProgress(_ error: APIClient.APIError) -> Bool {
+        guard error.status == 409, let body = error.body,
+              let busy = try? JSONDecoder().decode(SaveInProgress.self, from: body) else { return false }
+        return busy.inProgress == true
+    }
+
+    /// The re-score / save request. Retried once on a transient failure
+    /// (APIClient) — safe for a save because it carries its key; a save the
+    /// server is still making is asked again a few times, then said.
+    private func sendScore(_ body: ScoreBody) async throws -> ScoreResponse {
+        var waits = 0
+        while true {
+            do {
+                return try await client.send("/mobile/api/labor/schedule/score", method: .post, body: body,
+                                             hapticOnError: false, retryTransient: true)
+            } catch let error as APIClient.APIError
+                        where body.idempotencyKey != nil && Self.saveInProgress(error) && waits < Self.saveInProgressWaits {
+                waits += 1
+                try await Task.sleep(for: .seconds(2))
+            }
         }
     }
 
@@ -3992,19 +4167,19 @@ final class LaborViewModel {
         // which offers keep or reload — never a silent overwrite.
         let keep = save ? keepMinePending : nil
         if save { keepMinePending = nil }
+        var body = ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
+                             historyId: result.historyId,
+                             version: save ? latestVersion : nil,
+                             cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil)
+        // "Keep my edits": merged onto the newer week (ARCH-8, BUGSLIFE-16).
+        if let keep {
+            body.keepMine = true
+            if keep == .overStaff { body.overrideStaff = true }
+        }
+        // A save carries its key, so a retry of it lands once (BUGSLIFE-22).
+        if save { body.idempotencyKey = Self.saveKey(body) }
         do {
-            var body = ScoreBody(rows: rows, dailyTargetHours: result.dailyTargetHours?.hours ?? [:], save: save,
-                                 historyId: result.historyId,
-                                 version: save ? latestVersion : nil,
-                                 cavnarChanges: save && !cavnarRemoved.isEmpty ? cavnarRemoved : nil)
-            if let keep {
-                body.keepMine = true
-                if keep == .overStaff { body.overrideStaff = true }
-            }
-            let response: ScoreResponse = try await client.send(
-                "/mobile/api/labor/schedule/score", method: .post,
-                body: body,
-                hapticOnError: false, retryTransient: true)
+            let response: ScoreResponse = try await sendScore(body)
             guard response.ok, let quality = response.quality else {
                 overrideState = .failed(response.error ?? "Couldn't save that change.")
                 return

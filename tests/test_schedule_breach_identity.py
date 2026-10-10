@@ -49,12 +49,19 @@ def test_a_second_manager_gap_on_a_day_that_already_has_one_is_a_regression():
 def test_a_breach_made_worse_is_a_regression_even_when_it_was_there():
     c = _c(roster_names=["Ann"], active={"ann"})
     c.compliance["weekly_hours_ceiling"] = 40.0
+    c.hours_limits["ann"] = (None, 40)          # her own maximum: hard (LOGIC-1)
     rows = [_row("Ann", "Server", "9:00am", "9:00pm", date=d, hours=12)
             for d in ["2026-10-05", "2026-10-06", WED, "2026-10-08"]]
     more = rows + [_row("Ann", "Server", "9:00am", "1:00pm", date="2026-10-09", hours=4)]
     worse = regressions(breach_profile(rows, c), breach_profile(more, c))
     assert [w["id"][0] for w in worse] == ["over_max_hours"]
     assert worse[0]["after"] > worse[0]["before"]
+    # The restaurant's ceiling alone is the soft policy limit: no hard
+    # regression, but one at the policy tier for every pass ranked below it.
+    c.hours_limits.pop("ann")
+    assert regressions(breach_profile(rows, c), breach_profile(more, c)) == []
+    soft = regressions(breach_profile(rows, c), breach_profile(more, c), upto=sr.TIER_POLICY, hard_only=False)
+    assert [(w["id"][0], w["tier"]) for w in soft] == [("over_hours_ceiling", sr.TIER_POLICY)]
 
 
 def test_a_fixed_breach_and_a_moved_row_are_not_regressions():
@@ -80,7 +87,7 @@ def test_can_add_refuses_a_minor_past_their_end_a_seventh_day_and_overtime():
     assert ok                      # 40h exactly
     ok, why = c.can_add(_row("Cook", "Cook", "8:00am", "1:00pm", date="2026-10-09", hours=5),
                         long + [_row("Cook", "Cook", "8:00am", "6:00pm", date="2026-10-08", hours=10)])
-    assert not ok and "over 40h" in why
+    assert not ok and "40h" in why and "ceiling" in why
     # an owner-set maximum above the ceiling allows the person those hours
     # (P-12): 45h is inside a 50h maximum when overtime is not asked about
     c.hours_limits["cook"] = (None, 50)

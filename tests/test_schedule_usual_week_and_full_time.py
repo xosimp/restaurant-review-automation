@@ -94,7 +94,24 @@ def rid(db_path, monkeypatch):
     return r
 
 
+def test_the_full_time_line_is_a_preference_until_the_owner_confirms_it(rid):
+    # An employment field typed "full" (a POS import, say) no longer makes a
+    # 30h promise the passes fill and the trim protects (sched audit 10/10/26
+    # LOGIC-29): until the owner confirms the line it is wanted hours.
+    c = sr.build_constraints(rid, WEEK, list(sr.DAYS))
+    assert "ana" not in c.hours_limits and "ana" not in c.full_time_default
+    assert c.full_time_unconfirmed["ana"] == 30.0 and c.preferred["Ana"]["desired_hours"] == 30.0
+    assert c.hours_limits["ben"][0] == 36                   # a minimum the owner set is theirs
+    rows = [{"date": WEEK[0], "day": "Monday", "employee": "Ana", "role": "Cook", "shift_start": "9:00am",
+             "shift_end": "5:00pm", "scheduled_hours": "8"}]
+    assert not [v for v in sr.violations(rows, c, person_only=True) if v["kind"] == "under_min_hours"]
+    items = __import__("schedule_setup").setup_review(c)["items"]
+    ft = next(i for i in items if i["kind"] == "full_time_unconfirmed")
+    assert "Ana" in ft["text"] and "30h" in ft["text"] and ft["action"]["rules"] == {"full_time_min_confirmed": True}
+
+
 def test_full_time_means_a_minimum_unless_the_owner_set_one(rid):
+    sr.save_compliance(rid, {"full_time_min_confirmed": True})
     c = sr.build_constraints(rid, WEEK, list(sr.DAYS))
     assert c.hours_limits["ana"] == (30.0, None) and "ana" in c.full_time_default
     assert c.hours_limits["ben"][0] == 36 and "ben" not in c.full_time_default
@@ -112,7 +129,7 @@ def test_full_time_means_a_minimum_unless_the_owner_set_one(rid):
 
 
 def test_the_owner_can_set_the_full_time_line_or_turn_it_off(rid):
-    sr.save_compliance(rid, {"full_time_min_hours": 35})
+    sr.save_compliance(rid, {"full_time_min_hours": 35, "full_time_min_confirmed": True})
     assert sr.build_constraints(rid, WEEK, list(sr.DAYS)).hours_limits["ana"] == (35.0, None)
     sr.save_compliance(rid, {"full_time_min_hours": 0})
     assert "ana" not in sr.build_constraints(rid, WEEK, list(sr.DAYS)).hours_limits
@@ -123,6 +140,7 @@ def test_a_salaried_style_owner_is_never_held_to_the_full_time_line(rid):
     their pay does not follow their hours either, so the restaurant's
     full-time line is not their minimum (D-41)."""
     import staff_settings
+    sr.save_compliance(rid, {"full_time_min_confirmed": True})
     models.add_manual_team_member(rid, "Olive", role="Owner")
     staff_settings.upsert(rid, "Olive", employment_type="full")
     c = sr.build_constraints(rid, WEEK, list(sr.DAYS))

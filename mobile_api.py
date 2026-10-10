@@ -8365,8 +8365,63 @@ def _refuse_team_write():
 
 # ── Shift Quality Engine ───────────────────────────────────────────────────
 
+# How long a save that never answered (its process died mid-request) holds
+# its idempotency key as "still being made" (BUGSLIFE-22): longer than any
+# save takes, short enough that the owner's next Save is not refused long.
+SAVE_PENDING_MINUTES = 2
+
+
+def _response_pair(rv):
+    """(payload dict, status) from a view's return — a Response, or a
+    (Response, status) pair — for the idempotency store."""
+    status = None
+    if isinstance(rv, tuple):
+        rv, status = rv[0], (rv[1] if len(rv) > 1 else None)
+    payload = rv.get_json(silent=True) if hasattr(rv, "get_json") else rv
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "error": "That answer couldn't be read."}
+    return payload, int(status or getattr(rv, "status_code", 200) or 200)
+
+
+def _idempotent_save(view):
+    """A schedule save (`save: true`) is idempotent on the client's key —
+    the `Idempotency-Key` header or `idempotency_key` in the body (schedule
+    audit 10/10/26 BUGSLIFE-22). The phone retries a request that died in
+    transit, and a retry of a save the server had already committed ran the
+    whole save again: with the same rows it wrote a second identical
+    "edited" version and ran the learning capture twice; with an edit, it
+    refused the owner's own save as a conflict with themselves. Now a
+    repeat gets the first save's answer (strategy_routes._idempotent, keyed
+    on the restaurant, the week and the key); one that lands while the
+    first is still being made is answered 409 `{in_progress: true}`; a first
+    that failed (5xx) is not remembered, so the retry saves. A re-score
+    (no `save`) and a save with no key — the web, an older app — run as
+    before."""
+    import functools
+
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True) or {}
+        if not (isinstance(data, dict) and data.get("save")):
+            return view(*args, **kwargs)
+        user = kwargs.get("current_user", args[0] if args else None)
+        try:
+            hid = int(data.get("history_id") or 0)
+        except (TypeError, ValueError):
+            hid = 0
+        import strategy_routes as _sr_idem
+        run = _sr_idem._idempotent(lambda u: _response_pair(view(*args, **kwargs)), f"schedule_save:{hid}",
+                                   busy="That save is still being made — your edits are on screen. "
+                                        "Try Save again in a moment.",
+                                   pending_minutes=SAVE_PENDING_MINUTES)
+        payload, status = run(user)
+        return jsonify(**payload), status
+    return wrapped
+
+
 @mobile_bp.route("/labor/schedule/score", methods=["POST"])
 @mobile_login_required
+@_idempotent_save
 def mobile_score_schedule(current_user):
     """Re-score a schedule a manager has just edited.
 
