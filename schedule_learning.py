@@ -178,6 +178,25 @@ def _strength(hits_w, opps_w) -> tuple:
     return _s(hits_w, opps_w)
 
 
+def _since_onset(week_edits, kind, hit_ids, is_opp) -> tuple:
+    """One pattern's newest regime (schedule audit 10/10/26 LEARNING-2): the
+    weeks it was an opportunity (a hit, or `is_opp(week)`), oldest first,
+    read from its change point (learning_stats.since_change) instead of the
+    whole 24-week window — so a habit a new manager starts is counted from
+    its onset. (hits_w, opps_w, {history ids of the hits in it}, opportunities
+    in it, {history ids of every week in it})."""
+    import learning_stats
+    seq = []
+    for w in sorted(week_edits, key=lambda w_: (str(w_.get("week_start") or ""), int(w_.get("history_id") or 0))):
+        hid = w.get("history_id")
+        hit = hid in hit_ids
+        if hit or is_opp(w):
+            seq.append((hit, _weight(w, kind), hid))
+    sc = learning_stats.since_change([(h, wt) for h, wt, _hid in seq])
+    seg = seq[sc["start"]:]
+    return sc["hits_w"], sc["opps_w"], {hid for h, _wt, hid in seg if h}, len(seg), {hid for _h, _wt, hid in seg}
+
+
 # ── retimes ───────────────────────────────────────────────────────────────
 
 def _min_rate():
@@ -226,25 +245,26 @@ def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
                 e["ends"].add(_clock(r.get("shift_end")))
         drafted.append((w, at))
     out = []
+    at_by = {w["history_id"]: at for w, at in drafted}
     for (kind, rl, day, part, when), e in tally.items():
-        n = len(e["weeks"])
+        if len(e["weeks"]) < min_repeats:
+            continue
+
+        def _opp(w, kind=kind, rl=rl, day=day, part=part, when=when):
+            slot = at_by.get(w["history_id"], {}).get((rl, day, part))
+            times = (slot or {}).get("starts" if kind == "retime_start" else "ends") or set()
+            return bool(slot) and times != {when}
+        hits_w, opp_w, ids, of, _seg = _since_onset([w for w, _at in drafted], kind, set(e["weeks"]), _opp)
+        n = len(ids)
         if n < min_repeats:
             continue
-        opp_w, of = 0.0, 0
-        for w, at in drafted:
-            slot = at.get((rl, day, part))
-            hit = w["history_id"] in e["weeks"]
-            times = (slot or {}).get("starts" if kind == "retime_start" else "ends") or set()
-            if hit or (slot and times != {when}):
-                opp_w += _weight(w, kind)
-                of += 1
-        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         role = _display(e["role"])
         verb = "starting" if kind == "retime_start" else "ending"
         out.append({"kind": kind, "employee": "", "role": role, "day": day, "daypart": part, "time": when, "times": n,
-                    "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
                     "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"The manager keeps {verb} {_plural(role)} on {day} {_PRETTY.get(part, part)} at {when} "
                             f"({_weeks_text(n, of)}) — {'start' if kind == 'retime_start' else 'end'} them then in the draft."})
@@ -306,21 +326,34 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
                 tally.setdefault(slot, []).append((delta, int(w.get("history_id") or 0), _weight(w, "headcount_add"),
                                                    str(w.get("week_start") or "")))
     out = []
+    traded_by = {w["history_id"]: slots for w, slots in traded}
+    weeks_only = [w for w, _s in traded]
     for (day, part, rl), pairs in tally.items():
-        deltas = [d for d, _h, _w, _s in pairs]
-        ups = sorted(d for d in deltas if d > 0)
-        downs = sorted(d for d in deltas if d < 0)
-        side, other = (ups, downs) if len(ups) >= len(downs) else (downs, ups)
-        if len(side) < min_repeats or len(side) <= len(other):
+        # Each direction read from its own onset (LEARNING-2): the manager
+        # who used to cut a server and now adds one is adding, from the week
+        # they started.
+        best = None
+        for sign in (1, -1):
+            ids_sign = {h for d_, h, _w, _s in pairs if (d_ > 0) == (sign > 0)}
+            if len(ids_sign) < min_repeats:
+                continue
+            hits_w, opp_w, ids, of, seg = _since_onset(
+                weeks_only, "headcount_add", ids_sign,
+                lambda w, day=day, part=part: (day, part) in traded_by.get(w["history_id"], set()))
+            # More weeks moving this way than the other, inside the regime.
+            seg_other = sum(1 for d_, h, _w, _s in pairs if (d_ > 0) != (sign > 0) and h in seg)
+            if len(ids) < min_repeats or len(ids) <= seg_other:
+                continue
+            cand = (len(ids), max(ids), sign, hits_w, opp_w, ids, of)
+            if best is None or cand[:2] > best[:2]:
+                best = cand
+        if best is None:
             continue
+        _n, _last, sign, hits_w, opp_w, ids, of = best
+        side = sorted(d_ for d_, h, _w, _s in pairs if h in ids)
         delta = side[len(side) // 2]
-        hits = [p for p in pairs if (p[0] > 0) == (delta > 0)]
-        opp_w, of = 0.0, 0
-        for w, slots in traded:
-            if (day, part) in slots:
-                opp_w += _weight(w, "headcount_add")
-                of += 1
-        rate, conf = _strength(sum(p[2] for p in hits), opp_w)
+        hits = [p for p in pairs if p[1] in ids]
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         role = _display(spellings.get(rl, {})) or rl.title()
@@ -361,23 +394,23 @@ def role_change_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list
                 e[fld][val] = e[fld].get(val, 0) + 1
     out = []
     for (nl, ol, _w, day, part), e in tally.items():
-        n = len(e["weeks"])
+        if len(e["weeks"]) < min_repeats:
+            continue
+
+        def _there(w, nl=nl, ol=ol, day=day, part=part):
+            return any((r.get("employee") or "").strip().lower() == nl and (r.get("role") or "").strip().lower() == ol
+                       and _weekday(r.get("date"), r.get("day")) == day and _part(r.get("shift_start")) == part
+                       for r in w.get("base") or [])
+        hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "role_change", set(e["weeks"]), _there)
+        n = len(ids)
         if n < min_repeats:
             continue
-        opp_w, of = 0.0, 0
-        for w in week_edits:
-            there = any((r.get("employee") or "").strip().lower() == nl and (r.get("role") or "").strip().lower() == ol
-                        and _weekday(r.get("date"), r.get("day")) == day and _part(r.get("shift_start")) == part
-                        for r in w.get("base") or [])
-            if there or w["history_id"] in e["weeks"]:
-                opp_w += _weight(w, "role_change")
-                of += 1
-        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         name, old, new = _display(e["name"]), _display(e["old"]), _display(e["new"])
         out.append({"kind": "role_change", "employee": name, "role": new, "was_role": old, "day": day, "daypart": part,
-                    "times": n, "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "times": n, "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
                     "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"The manager keeps switching {name} from {old or 'no role'} to {new} on {day} "
                             f"{_PRETTY.get(part, part)} ({_weeks_text(n, of)}) — draft them as {new} there."})
@@ -428,23 +461,23 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
             e["names"][inc] = e["names"].get(inc, 0) + 1
     out = []
     for (day, part, rl), e in tally.items():
-        n = len(e["weeks"])
+        if len(e["weeks"]) < min_repeats:
+            continue
+
+        def _there(w, rl=rl, day=day, part=part):
+            return any((r.get("role") or "").strip().lower() == rl and _weekday(r.get("date"), r.get("day")) == day
+                       and _part(r.get("shift_start")) == part for r in w.get("base") or [])
+        hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "leader_swap", set(e["weeks"]), _there)
+        n = len(ids)
         if n < min_repeats:
             continue
-        opp_w, of = 0.0, 0
-        for w in week_edits:
-            there = any((r.get("role") or "").strip().lower() == rl and _weekday(r.get("date"), r.get("day")) == day
-                        and _part(r.get("shift_start")) == part for r in w.get("base") or [])
-            if there or w["history_id"] in e["weeks"]:
-                opp_w += _weight(w, "leader_swap")
-                of += 1
-        rate, conf = _strength(sum(x[0] for x in e["weeks"].values()), opp_w)
+        rate, conf = _strength(hits_w, opp_w)
         if rate < min_rate:
             continue
         role = _display(e["role"])
         names = [k for k, _v in sorted(e["names"].items(), key=lambda kv: (-kv[1], kv[0]))][:3]
         out.append({"kind": "leader_swap", "employee": "", "role": role, "day": day, "daypart": part, "times": n,
-                    "names": names, "last_week": max(e["weeks"]), "last_week_start": max(x[1] for x in e["weeks"].values()),
+                    "names": names, "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
                     "opportunities": of, "rate": rate, "confidence": conf,
                     "text": f"On {day} {_PRETTY.get(part, part)} the manager keeps swapping a stronger hand onto "
                             f"{role or 'the floor'} — a closer or a higher Operational Score ({', '.join(names)}) — "
@@ -1199,13 +1232,67 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         except Exception as e:
             import ops
             ops.capture(e, job="schedule_cavnar_credit", context=f"restaurant_id={restaurant_id} history={history_id}")
-    if in_cold_start(restaurant_id, db_path):
-        try:
-            out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path)
-        except Exception as e:
-            import ops
-            ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")
+    # The one-tap why (L-35): every big change in the first weeks, and from
+    # then on the SECOND time any change repeats, at any age (schedule audit
+    # 10/10/26 LEARNING-2 — it used to be asked only in the first four
+    # published weeks, so a habit a new manager started in month six took
+    # ten weeks to reach the prompt and eighteen to bind).
+    try:
+        cold = in_cold_start(restaurant_id, db_path)
+        out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path,
+                                             repeats_only=not cold)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")
     return out
+
+
+REPEAT_LOOKBACK_DAYS = 168          # schedule_versions.LEARN_DAYS: the edit learners' own window
+
+
+def _earlier_weeks(restaurant_id, history_id, subject, db_path=DB_PATH) -> int:
+    """How many EARLIER weeks the manager made this same change by hand —
+    the observation log's edits at first publish (schedule_versions.
+    observe_publish: edit_move, edit_retime, edit_headcount, edit_role) and
+    reactions to a sent week (capture_save), never an admin's or Cavnar AI's
+    own (counted_only) — matched on the change's kind, person or role,
+    weekday and daypart (LEARNING-2, LEARNING-16: the edit events read)."""
+    import schedule_memory
+    from datetime import date as _d, timedelta as _td
+    kind = subject.get("kind")
+    obs_kinds = {"moved_off": ("edit_move", "reaction"), "headcount_add": ("edit_headcount",),
+                 "retime_start": ("edit_retime", "reaction"), "retime_end": ("edit_retime", "reaction"),
+                 "role_change": ("edit_role", "reaction")}.get(kind)
+    if not obs_kinds:
+        return 0
+    since = (_d.today() - _td(days=REPEAT_LOOKBACK_DAYS)).isoformat()
+    rows = schedule_memory.observations(restaurant_id, kinds=obs_kinds, since=since, counted_only=True,
+                                        db_path=None if db_path == DB_PATH else db_path)
+    day, part = subject.get("day"), subject.get("daypart")
+    name = " ".join(str(subject.get("employee") or "").split()).casefold()
+    role = " ".join(str(subject.get("role") or "").split()).casefold()
+    weeks = set()
+    for o in rows:
+        if o.get("history_id") == history_id or _weekday(o.get("date")) != day or (o.get("daypart") or "") != part:
+            continue
+        v = o.get("value") or {}
+        ch = v.get("change")
+        who = lambda x: " ".join(str(x or "").split()).casefold()  # noqa: E731
+        if kind == "moved_off":
+            off = v.get("from") if ch == "moved" else (o.get("person") if ch == "removed" else None)
+            hit = bool(off) and who(off) == name
+        elif kind == "headcount_add":
+            hit = who(o.get("role")) == role and int(v.get("delta") or 0) > 0
+        elif kind in ("retime_start", "retime_end"):
+            col = "new_start" if kind == "retime_start" else "new_end"
+            hit = ch == "retimed" and who(o.get("role")) == role and bool(v.get(col)) and \
+                _clock(v.get(col)) == subject.get("time")
+        else:
+            hit = ch == "role_changed" and who(o.get("person")) == name and \
+                who(v.get("new_role")) == role
+        if hit:
+            weeks.add(str(o.get("week_start") or o.get("history_id")))
+    return len(weeks)
 
 
 def _day_label(iso) -> str:
@@ -1217,14 +1304,17 @@ def _meal(part) -> str:
     return {"morning": "lunch", "night": "dinner"}.get(part, part or "")
 
 
-def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PATH) -> list:
+def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PATH, repeats_only=False) -> list:
     """The one-tap "why" for the biggest of a save's own changes (L-35), at
     most WHY_MAX_QUESTIONS, never one already asked about this week: a
     person taken off a slot (moved or removed), more of a role on a slot,
     a role's start or end moved WHY_RETIME_MIN_MINUTES or more, a role
     change. Each is stored (schedule_edit_answers, answer NULL) and
     returned as {key, kind, text, options: [{answer, label}], date, employee,
-    role, daypart} — "They called off" only on a week staff already have."""
+    role, daypart, repeat} — "They called off" only on a week staff already
+    have. `repeats_only` (past the first weeks, LEARNING-2): only a change
+    the manager already made by hand in an earlier week — its second
+    occurrence onward — is asked about; `repeat` is how many earlier weeks."""
     import schedule_versions as _sv
     from shift_quality import present_dayparts
     from schedule_rules import parse_minutes
@@ -1298,12 +1388,22 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
                       f"Always draft {it.get('employee')} as {it.get('new_role')} on {subject['day']} {_meal(part)}"))
     if not cands:
         return []
+    repeats = {}
+    for _rank, key, subject, _text, _ch, _always in cands:
+        repeats[key] = _earlier_weeks(restaurant_id, history_id, subject, db_path=db_path)
+    if repeats_only:
+        cands = [c for c in cands if repeats.get(c[1])]
+        if not cands:
+            return []
     conn = get_conn(db_path)
     try:
         asked = {r[0] for r in conn.execute("SELECT question_key FROM schedule_edit_answers WHERE restaurant_id=? "
                                             "AND history_id=?", (restaurant_id, history_id)).fetchall()}
         out = []
-        for rank, key, subject, text, ch, always in sorted(cands, key=lambda c: (c[0], c[1])):
+        # A repeat first (the change most likely a habit), then the order of
+        # kinds as before.
+        for rank, key, subject, text, ch, always in sorted(cands, key=lambda c: (-min(1, repeats.get(c[1], 0)),
+                                                                                c[0], c[1])):
             if key in asked or len(out) >= WHY_MAX_QUESTIONS:
                 continue
             options = [{"answer": "always", "label": always}, {"answer": "this_week", "label": WHY_LABELS["this_week"]}]
@@ -1318,7 +1418,7 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
             asked.add(key)
             out.append({"key": key, "kind": subject["kind"], "text": text, "options": options,
                         "date": subject.get("date"), "employee": subject.get("employee"), "role": subject.get("role"),
-                        "daypart": subject.get("daypart")})
+                        "daypart": subject.get("daypart"), "repeat": int(repeats.get(key) or 0)})
         conn.commit()
     finally:
         conn.close()

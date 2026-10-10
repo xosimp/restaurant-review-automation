@@ -1535,7 +1535,9 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
     # manager's final version: counted per save, taking Bob off, putting him
     # back and taking him off again in one week read as "2 times recently",
     # and an undone edit taught the opposite of what the manager kept.
-    counts, last, opps = {}, {}, {}
+    # Per key, every week it was an opportunity, oldest first: {hit, w (the
+    # week's recency weight), hid, editor, ws}.
+    series = {}
 
     def _key(kind, name, date_, start, end, day_hint):
         try:
@@ -1588,33 +1590,47 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
                             ad.get("day")))
         # A reversal clears the same editor's earlier evidence only: two
         # editors pulling opposite ways are a conflict for the owner
-        # (patterns_for_draft), not one editor changing their mind.
+        # (patterns_for_draft), not one editor changing their mind. The
+        # cleared weeks stay opportunities the manager did not take.
         ed = w.get("editor") or ""
         for k in undone:
-            if k in counts:
-                counts[k] = [e for e in counts[k] if e[1] != ed]
-        for k in seen - undone:
-            counts.setdefault(k, []).append((int(w.get("history_id") or 0), ed, recency_weight(age, half_life(k[0])),
-                                             str(w.get("week_start") or "")))
-        for k in could | (seen - undone):
-            opps.setdefault(k, []).append(recency_weight(age, half_life(k[0])))
+            for e in series.get(k) or []:
+                if e["hit"] and e["editor"] == ed:
+                    e["hit"] = False
+        hits_now = seen - undone
+        for k in could | hits_now:
+            series.setdefault(k, []).append({"hit": k in hits_now, "w": recency_weight(age, half_life(k[0])),
+                                             "hid": int(w.get("history_id") or 0), "editor": ed,
+                                             "ws": str(w.get("week_start") or "")})
     out = []
-    for k in list(counts):
-        last[k] = max((e[0] for e in counts[k]), default=0)
-    ranked = sorted(counts.items(), key=lambda kv: -len(kv[1]))
-    for (kind, name, day, part), ev in ranked:
-        n = len(ev)
+    # Read from the newest regime (schedule audit 10/10/26 LEARNING-2): a
+    # habit's rate is counted from its change point (learning_stats.
+    # since_change), not averaged over the 24-week window — a new manager
+    # taking Bob off a slot the draft had him on for months used to need 10
+    # weeks to reach the prompt and 18 to bind; now two in a row are a
+    # candidate and five bind.
+    found = []
+    for k, ev in series.items():
+        if not any(e["hit"] for e in ev) or not k[1]:
+            continue
+        sc = _stats.since_change([(e["hit"], e["w"]) for e in ev])
+        seg = ev[sc["start"]:]
+        hits = [e for e in seg if e["hit"]]
+        found.append((k, hits, sc))
+    found.sort(key=lambda t: -len(t[1]))
+    for (kind, name, day, part), hits, sc in found:
+        n = len(hits)
         if n < min_repeats or not name:
             continue
-        rate, conf = _strength(sum(e[2] for e in ev), sum(opps.get((kind, name, day, part)) or [0.0]))
+        rate, conf = _strength(sc["hits_w"], sc["opps_w"])
         if rate < min_rate:
             continue
-        of = len(opps.get((kind, name, day, part)) or [])
+        of = sc["opps"]
         pretty = {"morning": "lunch/day", "night": "dinner/night"}.get(part, part)
-        lw = last.get((kind, name, day, part))
+        lw = max((e["hid"] for e in hits), default=0)
         common = {"kind": kind, "employee": name, "day": day, "daypart": part, "times": n, "last_week": lw,
-                  "last_week_start": max((e[3] for e in ev), default=""), "opportunities": of,
-                  "rate": rate, "confidence": conf}
+                  "last_week_start": max((e["ws"] for e in hits), default=""), "opportunities": of,
+                  "rate": rate, "confidence": conf, "onset": sc["changed"]}
         if kind == "moved_off":
             out.append(dict(common, text=f"The manager has taken {name} off {day} {pretty} in {weeks_phrase(n, of)} — "
                                          f"avoid scheduling them there."))

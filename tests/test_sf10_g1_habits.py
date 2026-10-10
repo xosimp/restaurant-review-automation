@@ -171,3 +171,71 @@ def test_two_reversals_still_retire_a_bound_habit_and_unbind_it():
     schedule_versions.refresh_standing_patterns(rid)
     row = _bob_off(rid)
     assert row["status"] == "retired" and not row["enforced_since"]
+
+
+# ── LEARNING-2: a new habit is read from its onset ──────────────────────────
+
+def test_a_new_habit_in_a_mature_restaurant_is_a_pattern_after_two_weeks_and_binds_after_five():
+    rid = _rid()
+    # 19 weeks the draft had Bob on Tuesday dinner and nobody touched it.
+    for w in range(23, 4, -1):
+        _week(rid, _tuesday(w), EVERYONE, EVERYONE, age_days=7 * w)
+    # A new manager starts taking him off.
+    _week(rid, _tuesday(4), EVERYONE, WITHOUT_BOB, age_days=28)
+    _week(rid, _tuesday(3), EVERYONE, WITHOUT_BOB, age_days=21)
+    pats = [p for p in schedule_versions.learned_patterns(rid) if p["kind"] == "moved_off" and p["employee"] == "Bob"]
+    # Before: 2 hits over 21 opportunities, a rate of ~0.1 — not a pattern
+    # for another ten weeks.
+    assert pats and pats[0]["times"] == 2 and pats[0]["opportunities"] == 2 and pats[0]["onset"]
+    assert pats[0]["confidence"] < schedule_memory.ACTIVE_CONFIDENCE
+    for w in (2, 1, 0):
+        _week(rid, _tuesday(w), EVERYONE, WITHOUT_BOB, age_days=7 * w)
+    pats = [p for p in schedule_versions.learned_patterns(rid) if p["kind"] == "moved_off" and p["employee"] == "Bob"]
+    assert pats[0]["times"] == 5 and pats[0]["confidence"] >= schedule_memory.ACTIVE_CONFIDENCE
+
+
+def _edit_save(rid, hid, rows_csv, published=False):
+    conn = models.get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        before = schedule_versions.latest_rows(conn, hid)
+        after = schedule_versions.rows_from_csv(rows_csv)
+        step = schedule_versions.step_origins(before, after)
+        version = schedule_versions.write_on(conn, rid, hid, "edited", rows_csv, saved_by="erik",
+                                             saved_authority="principal", row_origins=step["stored"])
+        conn.commit()
+    finally:
+        conn.close()
+    import schedule_learning
+    return schedule_learning.capture_save(rid, hid, version, step,
+                                          user={"id": 1, "username": "erik", "role": "owner"}, published=published)
+
+
+def _draft(rid, tuesday):
+    conn = models.get_conn()
+    ws = tuesday - timedelta(days=1)
+    hid = conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv) "
+                       "VALUES (?,?,?,?)", (rid, ws.isoformat(), (ws + timedelta(days=6)).isoformat(),
+                                            _csv(tuesday, EVERYONE))).lastrowid
+    conn.commit()
+    conn.close()
+    schedule_versions.append(rid, hid, "generated", _csv(tuesday, EVERYONE), saved_by="Cavnar AI",
+                             saved_authority="system")
+    return hid
+
+
+def test_the_second_time_a_change_repeats_it_is_asked_about_at_any_age():
+    rid = _rid()
+    for w in range(9, 4, -1):                      # well past the first four weeks
+        _week(rid, _tuesday(w), EVERYONE, EVERYONE, age_days=7 * w)
+    # The first time: nothing asked (not a repeat).
+    hid = _draft(rid, _tuesday(1))
+    assert _edit_save(rid, hid, _csv(_tuesday(1), WITHOUT_BOB))["why_questions"] == []
+    schedule_versions.append(rid, hid, "published", _csv(_tuesday(1), WITHOUT_BOB), saved_by="erik",
+                             saved_authority="principal")
+    schedule_versions.observe_publish(rid, hid, authority="principal", editor="erik")
+    # The second time, a week later: the one-tap "Always / just this week".
+    hid2 = _draft(rid, _tuesday(0))
+    q = _edit_save(rid, hid2, _csv(_tuesday(0), WITHOUT_BOB))["why_questions"]
+    assert len(q) == 1 and q[0]["kind"] == "moved_off" and q[0]["employee"] == "Bob" and q[0]["repeat"] == 1
+    assert [o["answer"] for o in q[0]["options"]] == ["always", "this_week"]
