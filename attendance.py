@@ -263,14 +263,15 @@ def _releases(restaurant_id, day, restaurant=None, db_path=None) -> list:
         return []
 
 
-def _unworked(releases, name, start):
+def _unworked(releases, name, start, end=None):
     """(outcome, covered_by, notice_minutes) for a published shift with no
     punch: covered when somebody took it, excused when a manager let them
-    off it (an approved drop nobody claimed — schedule audit 10/3/26 E-5),
-    called_out when they asked off and it was never approved (with the
-    notice they gave — L-18), else a no-show."""
+    off it (an approved drop nobody claimed — schedule audit 10/3/26 E-5 —
+    or approved time off over it, 10/10/26 BUGSLIFE-5), called_out when
+    they asked off and it was never approved (with the notice they gave —
+    L-18), else a no-show."""
     import shift_requests
-    hit = shift_requests.released_for(releases, name, start)
+    hit = shift_requests.released_for(releases, name, start, end)
     if not hit:
         return "no_show", None, None
     if hit["outcome"] == "covered":
@@ -380,18 +381,21 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
         from models import salaried_name_key
         rows = [r for r in rows if salaried_name_key(r["employee"]) not in sal]
     pids = _person_ids(restaurant_id, [r["employee"] for r in rows], db_path)
+    # Each punch is one shift's, matched by overlap (schedule audit 10/10/26
+    # BUGSLIFE-20): every row took the punch nearest its start from all the
+    # person's punches, so a double whose lunch was worked and dinner missed
+    # judged the dinner on the lunch punch and called it left_early.
+    matched = match_punches(rows, punches, leads)
     releases = None
     n = 0
-    for r in rows:
+    for i, r in enumerate(rows):
         name, start = r["employee"], (r.get("shift_start") or "").strip()
-        mine = punches.get(_nk(name)) or []
         sched_start, sched_end = _minutes(start), _minutes(r.get("shift_end"))
         # When they were due to clock in: the start less their role's lead.
         due_in = None if sched_start is None else sched_start - leads.get((r.get("role") or "").strip().lower(), 0)
         outcome, late, covered, notice = None, None, None, None
-        if mine:
-            # The punch nearest the scheduled start is this shift's.
-            best = min(mine, key=lambda p: abs((_minutes(p.get("shift_start")) or 0) - (sched_start or 0)))
+        best = matched.get(i)
+        if best is not None:
             in_m, out_m = _minutes(best.get("shift_start")), _minutes(best.get("shift_end"))
             outcome = "on_time"
             if in_m is not None and due_in is not None and in_m - due_in > LATE_AFTER_MINUTES:
@@ -408,12 +412,74 @@ def join_published(restaurant_id, day, db_path=None) -> dict:
         else:
             if releases is None:
                 releases = _releases(restaurant_id, day, restaurant=restaurant, db_path=db_path)
-            outcome, covered, notice = _unworked(releases, name, start)
+            outcome, covered, notice = _unworked(releases, name, start, r.get("shift_end"))
         if record(restaurant_id, name, day, outcome, "schedule_vs_punch_join", shift_start=start, minutes_late=late,
                   covered_by=covered, role=r.get("role"), history_id=hid, person_id=pids.get(name),
                   notice_minutes=notice, db_path=db_path):
             n += 1
     return {"watched": True, "recorded": n}
+
+
+# How far ahead of a shift a clock-in with no clock-out still counts as that
+# shift's (beyond the role's own clock-in lead).
+PUNCH_EARLY_SLACK_MINUTES = 60
+
+
+def _span_minutes(start, end):
+    """(start, end) minutes on the business day — an end at or before the
+    start runs past midnight — or (start, None) with no readable end."""
+    s, e = _minutes(start), _minutes(end)
+    if s is None:
+        return None, None
+    if e is not None and e <= s:
+        e += 24 * 60
+    return s, e
+
+
+def match_punches(rows, punches, leads=None) -> dict:
+    """{index into rows: punch} — each scheduled row's own punch, one to one
+    (schedule audit 10/10/26 BUGSLIFE-20). A punch belongs to the row whose
+    span it overlaps most (a clock-in alone: the row it falls inside, from
+    the role's lead plus PUNCH_EARLY_SLACK_MINUTES before the start to the
+    end); each punch is used once and each row takes one, the biggest
+    overlaps first. A row no punch overlaps is unworked — a worked lunch
+    never stands in for a missed dinner. `punches` is {name_key: [punch]}."""
+    leads = leads or {}
+    pairs = []
+    by_person = {}
+    for i, r in enumerate(rows or []):
+        by_person.setdefault(_nk(r.get("employee")), []).append(i)
+    for key, idxs in by_person.items():
+        mine = list(punches.get(key) or [])
+        for i in idxs:
+            r = rows[i]
+            rs, re_ = _span_minutes(r.get("shift_start"), r.get("shift_end"))
+            if rs is None:
+                continue
+            lead = leads.get((r.get("role") or "").strip().lower(), 0)
+            lo = rs - lead - PUNCH_EARLY_SLACK_MINUTES
+            hi = re_ if re_ is not None else rs + 12 * 60
+            for j, p in enumerate(mine):
+                ps, pe = _span_minutes(p.get("shift_start"), p.get("shift_end"))
+                if ps is None:
+                    continue
+                if pe is not None:
+                    score = min(pe, hi) - max(ps, rs - lead)
+                    if score <= 0:
+                        continue
+                elif lo <= ps < hi:
+                    score = 1
+                else:
+                    continue
+                pairs.append((score, -abs(ps - rs), i, key, j))
+    pairs.sort(reverse=True)
+    out, used = {}, set()
+    for _score, _near, i, key, j in pairs:
+        if i in out or (key, j) in used:
+            continue
+        out[i] = punches[key][j]
+        used.add((key, j))
+    return out
 
 
 def _observe_stayed_late(restaurant_id, row, punch, day, history_id=None, db_path=None) -> None:
@@ -529,7 +595,7 @@ def from_closeout(restaurant_id, business_date, callouts_text, db_path=None) -> 
         if not row:
             continue
         start = (row.get("shift_start") or "").strip()
-        outcome, covered, notice = _unworked(releases, row["employee"], start)
+        outcome, covered, notice = _unworked(releases, row["employee"], start, row.get("shift_end"))
         if outcome == "covered":
             continue                       # their shift was somebody else's tonight
         if outcome == "no_show":

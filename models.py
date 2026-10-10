@@ -631,6 +631,9 @@ class Restaurant:
     reply_keywords: Optional[str] = None   # reply_keywords: JSON list of search phrases worked into review replies
     reply_programs: Optional[str] = None   # reply_programs: JSON list of memberships pitched in happy guests' replies
     crew_answers_json: Optional[str] = None  # crew_matrix: {"role|Weekday|part": {"answer": "hold"|"lean", ...}} the Studio's Crew answers
+    # request_autonomy (schedule audit 10/10/26 MARKET-14/15): {"auto_approve": bool, "kinds": ["drop","swap"],
+    # "notice_hours": n, "max_quality_drop": n, "availability_approval": bool}. None = the defaults (off; approval on).
+    staff_request_policy_json: Optional[str] = None
 
     def reply_program_in(self, text) -> dict:
         """The membership program a reply names (reply_programs) — its name
@@ -1238,6 +1241,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "reply_keywords", "TEXT"),
         ("restaurants", "reply_programs", "TEXT"),
         ("restaurants", "crew_answers_json", "TEXT"),
+        # Drops and swaps that approve themselves once earned, and whether a
+        # staff availability cut waits on a manager (request_autonomy,
+        # schedule audit 10/10/26 MARKET-14/15).
+        ("restaurants", "staff_request_policy_json", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -4963,7 +4970,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5729,6 +5736,7 @@ def _restaurant_from_row(row) -> Restaurant:
         reply_keywords=row["reply_keywords"] if "reply_keywords" in row.keys() else None,
         reply_programs=row["reply_programs"] if "reply_programs" in row.keys() else None,
         crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
+        staff_request_policy_json=row["staff_request_policy_json"] if "staff_request_policy_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
@@ -8448,7 +8456,17 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # people (H2); the decider who recorded a colleague's
                        # in-person yes (LG-12).
                        ("decision_note", "TEXT"), ("escalated_at", "TEXT"), ("told_json", "TEXT"),
-                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT")):
+                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT"),
+                       # schedule audit 10/10/26: a claim held for a decider
+                       # because it creates overtime while a teammate has
+                       # room (BUGSLIFE-14); who decided — a manager or the
+                       # earned auto-approval — with its reasons, and a
+                       # manager's reversal of an automatic one (MARKET-14);
+                       # a notice owed after the week moved under a live
+                       # request, sent after the write commits (ARCH-9).
+                       ("held_claimant", "TEXT"), ("held_claim_at", "TEXT"), ("held_claim_note", "TEXT"),
+                       ("decided_how", "TEXT"), ("auto_reasons_json", "TEXT"),
+                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):
