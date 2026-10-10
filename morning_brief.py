@@ -759,11 +759,15 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     # ── next week's schedule ── (Thursday onward, if nothing is drafted yet;
     # with the auto-draft on, only once the owner's draft day has passed
     # without one - before it, the draft is on its way)
+    # Counted in days into the restaurant's own schedule week
+    # (restaurants.week_start_day): the fourth day on, or the day after the
+    # draft day.
+    _wsd = int(getattr(restaurant, "week_start_day", 0) or 0) % 7
     _sched_from = 3
     if getattr(restaurant, "auto_draft_schedule", 0) and not (getattr(restaurant, "external_scheduling_tool", None) or "").strip():
         from models import auto_draft_weekday
-        _sched_from = auto_draft_weekday(restaurant) + 1
-    if getattr(restaurant, "module_labor", 0) and "labor" not in denied and today.weekday() >= _sched_from:
+        _sched_from = (auto_draft_weekday(restaurant) - _wsd) % 7 + 1
+    if getattr(restaurant, "module_labor", 0) and "labor" not in denied and (today.weekday() - _wsd) % 7 >= _sched_from:
         if not _safe(_schedule_drafted_recently, restaurant_id, db_path):
             lines.append({"key": "schedule", "tone": "action", "rec": "schedule:next-week",
                           "action": line_action("schedule"),

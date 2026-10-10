@@ -647,7 +647,7 @@ def _real_build(monkeypatch, db, rid, lines):
     monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: dt.datetime(2026, 10, 1, 9, 0))
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
 
     def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
         return {"schedule_csv": HEADER + "\n" + "\n".join(lines), "narrative": ["ok"], "generation_seconds": 1.0,

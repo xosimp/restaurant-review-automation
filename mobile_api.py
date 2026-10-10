@@ -3671,8 +3671,10 @@ def mobile_generate_schedule(current_user):
             import schedule_versions as _sv_open
             from schedule_engine import _week_monday
             from time_utils import restaurant_now_by_id
+            from labor import get_week_start_day
             _discarded = _sv_open.open_draft_for_week(
-                rid, _week_monday(restaurant_now_by_id(rid, naive=True), week_start).strftime("%Y-%m-%d"))
+                rid, _week_monday(restaurant_now_by_id(rid, naive=True), week_start,
+                                  start_day=get_week_start_day(rid)).strftime("%Y-%m-%d"))
         except Exception as _odx:
             _ops.capture(_odx, job="schedule_rejection", context=f"restaurant_id={rid} (open draft)")
     _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}

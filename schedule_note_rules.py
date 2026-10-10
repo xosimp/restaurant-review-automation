@@ -532,9 +532,19 @@ def restaurant_roles(restaurant_id, db_path=DB_PATH) -> list:
 
 # ── the rules ──────────────────────────────────────────────────────────────
 
-def _monday(iso):
+def _monday(iso, start_day=0):
+    """The first day of the schedule week holding `iso`, on the restaurant's
+    own week start (`start_day`, restaurants.week_start_day; 0 = Monday)."""
     d = date.fromisoformat(str(iso)[:10])
-    return d - timedelta(days=d.weekday())
+    return d - timedelta(days=(d.weekday() - int(start_day or 0)) % 7)
+
+
+def _start_day(restaurant_id) -> int:
+    try:
+        from labor import get_week_start_day
+        return get_week_start_day(restaurant_id)
+    except Exception:
+        return 0
 
 
 TIME_KINDS = ("start", "end")
@@ -592,7 +602,7 @@ def note_rules(restaurant_id, week_start=None, include_past=False, db_path=DB_PA
             if not _held(r["role"], held):
                 r["stale"] = f"Not held: nobody on the roster is a {r['role']} now."
     if week_start:
-        mon = _monday(week_start).isoformat()
+        mon = _monday(week_start, _start_day(restaurant_id)).isoformat()
         return [r for r in rows if r["scope"] == "every" or r.get("week_start") == mon]
     if include_past:
         return rows
@@ -601,7 +611,7 @@ def note_rules(restaurant_id, week_start=None, include_past=False, db_path=DB_PA
         today = restaurant_now_by_id(restaurant_id, naive=True).date()
     except Exception:
         today = date.today()
-    this_monday = (today - timedelta(days=today.weekday())).isoformat()
+    this_monday = _monday(today.isoformat(), _start_day(restaurant_id)).isoformat()
     return [r for r in rows if r["scope"] == "every" or (r.get("week_start") or "") >= this_monday]
 
 
@@ -644,13 +654,14 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
         raw, err = schedule_engine.check_week_start(restaurant_id, week_start or "")
         if err:
             raise ValueError(err)
+        sd = _start_day(restaurant_id)
         if raw:
-            mon = _monday(raw)
+            mon = _monday(raw, sd)
         else:
             # No week named: next week, the one Generate drafts by default.
             from time_utils import restaurant_now_by_id
             today = restaurant_now_by_id(restaurant_id, naive=True).date()
-            mon = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+            mon = today + timedelta(days=(sd - today.weekday()) % 7 or 7)
         mon = mon.isoformat()
     who = None
     if user:
@@ -796,7 +807,7 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
         import schedule_rules
         held = roster_roles(restaurant_id, db_path=db_path)
         roles = held if held is not None else {r.lower() for r in restaurant_roles(restaurant_id, db_path=db_path)}
-        mondays = {_monday(d).isoformat() for d in c.week_dates}
+        mondays = {_monday(d, getattr(c, "week_start_day", 0)).isoformat() for d in c.week_dates}
         for r in note_rules(restaurant_id, week_start=c.week_dates[0], db_path=db_path):
             if r["scope"] == "week" and mondays != {r.get("week_start")}:
                 continue

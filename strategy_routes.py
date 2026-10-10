@@ -1052,8 +1052,12 @@ def _do_auto_draft_get(u):
     from models import get_restaurant, auto_draft_weekday, auto_publish_weekday, WEEKDAY_NAMES
     r = get_restaurant(_rid(u))
     wd = auto_draft_weekday(r)
+    from models import auto_draft_days
     return {"ok": True, "enabled": bool(getattr(r, "auto_draft_schedule", 0)),
             "weekday": wd, "day": WEEKDAY_NAMES[wd], "publish_day": WEEKDAY_NAMES[auto_publish_weekday(r)],
+            # The days this restaurant's draft may be made on (its week's eve
+            # is not one — models.auto_draft_days).
+            "draft_days": list(auto_draft_days(getattr(r, "week_start_day", 0) or 0)),
             "external_tool": getattr(r, "external_scheduling_tool", None) or "",
             # Whether this login may switch it (the POST's own check): a
             # login that cannot is shown the state, never a switch that
@@ -1086,11 +1090,13 @@ def _do_auto_draft_set(u):
     if "external_tool" in b:
         fields["external_scheduling_tool"] = (str(b["external_tool"] or "").strip()[:60]) or None
     if "weekday" in b:
-        from models import AUTO_DRAFT_WEEKDAYS
-        wd = _weekday_arg(b["weekday"], AUTO_DRAFT_WEEKDAYS)
+        from models import auto_draft_days, get_restaurant as _gr_ad, WEEKDAY_NAMES as _WN_AD
+        _sd = int(getattr(_gr_ad(_rid(u)), "week_start_day", 0) or 0) % 7
+        wd = _weekday_arg(b["weekday"], auto_draft_days(_sd))
         if wd is None:
-            return {"ok": False, "error": "Pick Monday to Saturday — the draft is for the week that starts the next "
-                                          "Monday, and the auto-publish goes out the day after."}, 400
+            return {"ok": False, "error": f"Pick any day but {_WN_AD[(_sd - 1) % 7]} — the draft is for the week that "
+                                          f"starts the next {_WN_AD[_sd]}, and the auto-publish goes out the day "
+                                          f"after."}, 400
         fields["auto_draft_weekday"] = wd
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
@@ -2192,15 +2198,18 @@ def _do_note_rules_get(u):
         if err:
             return {"ok": False, "error": err}, 400
     notes = getattr(get_restaurant(_rid(u)), "sched_notes", None) or ""
-    # The week a "this week only" rule would hold for: the picked week's
-    # Monday, else next week's (the one Generate drafts by default).
+    # The week a "this week only" rule would hold for: the first day of the
+    # picked week, else of next week (the one Generate drafts by default) —
+    # on the restaurant's own week start (restaurants.week_start_day).
     from datetime import date as _date, timedelta as _td
+    from labor import get_week_start_day
+    sd = get_week_start_day(_rid(u))
     if week:
         d = _date.fromisoformat(week)
-        week_of = d - _td(days=d.weekday())
+        week_of = d - _td(days=(d.weekday() - sd) % 7)
     else:
         t = _local_today(u)
-        week_of = t + _td(days=(7 - t.weekday()) % 7 or 7)
+        week_of = t + _td(days=(sd - t.weekday()) % 7 or 7)
     return {"ok": True, "week_of": week_of.isoformat(),
             "sentences": snr.read_notes(_rid(u), notes, week_start=week or week_of.isoformat()),
             "rules": snr.note_rules(_rid(u), week_start=week or week_of.isoformat()),

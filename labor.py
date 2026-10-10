@@ -3859,7 +3859,8 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
     and the hours each day's forecast calls for. One implementation for the
     draft (generate_optimized_schedule) and the Studio's Forecast tab
     (schedule_engine.forecast_preview), so the tab shows the numbers the
-    draft is then given. `week_dates` are the seven ISO dates from Monday.
+    draft is then given. `week_dates` are the week's seven ISO dates, from its
+    first day (restaurants.week_start_day).
 
     salaried — models.salaried_week_share for this week ({cost, people,
         trading_days}): the target judges labor WITH salaries (9/30/26), so
@@ -3879,7 +3880,8 @@ def week_hours_plan(analysis: dict, week_dates: list, labor_target: float, hourl
     show_salary — False for a reader who may not see salaries
         (models.viewer_sees_salaries): the basis then names the deduction
         without its dollars."""
-    week_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    from schedule_engine import week_day_names
+    week_days = week_day_names(week_dates)
     analysis = analysis or {}
     closed = {str(d)[:10] for d in (closed_dates or ())}
     demand = date_demand or {}
@@ -4417,6 +4419,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  sched_notes: str = None,
                                  staff_availability: list = None,
                                  tz_name: str = None,
+                                 week_start_day: int = 0,
                                  restaurant_id: int = None,
                                  weather_forecast: list = None,
                                  operational_scores: dict = None,
@@ -4789,10 +4792,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Next Monday as schedule start — in the restaurant's local week, not ours
     from time_utils import restaurant_now
     today = restaurant_now(tz_name, naive=True)
-    from schedule_engine import _week_monday
-    monday = _week_monday(today, week_start)
-    week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-    week_days  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    from schedule_engine import _week_monday, week_dates_from, week_day_names
+    monday = _week_monday(today, week_start, start_day=week_start_day)
+    week_dates = week_dates_from(monday)
+    week_days = week_day_names(week_dates)
     _closed_set = {str(d)[:10] for d in (closed_dates or ())}
 
     # ── THE OWNER'S STANDING RULES — every channel the owner's (and the

@@ -331,8 +331,9 @@ def test_reservations_sync_the_day_before_each_draft(db, monkeypatch):
 
 def test_the_brief_waits_for_the_owners_draft_day():
     src = open("morning_brief.py", encoding="utf-8").read()
-    assert "_sched_from = auto_draft_weekday(restaurant) + 1" in src
-    assert 'today.weekday() >= _sched_from' in src
+    # Counted in days into the restaurant's own week (week_start_day 10/10/26).
+    assert "_sched_from = (auto_draft_weekday(restaurant) - _wsd) % 7 + 1" in src
+    assert "(today.weekday() - _wsd) % 7 >= _sched_from" in src
 
 
 # ── the page ────────────────────────────────────────────────────────────────

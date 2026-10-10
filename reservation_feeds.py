@@ -149,7 +149,7 @@ def run_reservation_sync(db_path=None, weekday=None) -> dict:
     db_path = _path(db_path)
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT id, auto_draft_weekday, auto_draft_weekday_chosen FROM restaurants "
+        rows = conn.execute("SELECT id, auto_draft_weekday, auto_draft_weekday_chosen, week_start_day FROM restaurants "
                             "WHERE reservation_provider IS NOT NULL AND reservation_provider<>'' "
                             "AND module_labor=1").fetchall()
     except Exception:
@@ -158,7 +158,8 @@ def run_reservation_sync(db_path=None, weekday=None) -> dict:
         conn.close()
     ids = [r["id"] for r in rows
            if weekday is None or effective_auto_draft_weekday(r["id"], r["auto_draft_weekday"],
-                                                              r["auto_draft_weekday_chosen"]) == (weekday + 1) % 7]
+                                                              r["auto_draft_weekday_chosen"],
+                                                              week_start_day=r["week_start_day"] or 0) == (weekday + 1) % 7]
     synced = skipped = failed = 0
     for rid in ids:
         res = sync(rid, db_path=db_path)

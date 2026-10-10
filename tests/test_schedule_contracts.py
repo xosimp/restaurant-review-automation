@@ -266,7 +266,7 @@ def test_the_call_files_a_broken_answer_as_salvaged_and_says_so(monkeypatch):
 
 def test_the_engine_retries_only_the_days_after_the_break_and_says_why(monkeypatch):
     import datetime as dt
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 12))
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 12))
     calls = []
     answers = [
         {"schedule_csv": HEADER + "\n" + f"{WEEK[0]},Monday,Ana,Server,4:00pm,10:00pm,6,",
@@ -352,7 +352,7 @@ def test_rows_already_on_the_week_are_held_and_count_toward_each_persons_rules()
 
 def test_a_shape_generation_puts_the_solved_rows_in_the_week_and_retries_an_unstaffed_day(monkeypatch):
     import datetime as dt
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 12))
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 12))
     names = ["Ann", "Bob"]
     c = _cons(names, blocked_dates={"ann": {WEEK[1]: "off"}, "bob": {WEEK[1]: "off"}})
     monkeypatch.setattr(se, "_quality_signals", lambda rid, result, **k: (

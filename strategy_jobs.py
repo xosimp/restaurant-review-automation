@@ -1275,9 +1275,11 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None):
             _bump("skipped")
             return
         # The week it would write, as the job reads it (schedule_engine.
-        # _week_monday of the restaurant's own today): next week.
+        # _week_monday of the restaurant's own today, on its own week start):
+        # next week.
         from datetime import datetime as _dt_ad
-        target = _se._week_monday(_dt_ad.strptime(local[r.id][1], "%Y-%m-%d")).strftime("%Y-%m-%d")
+        target = _se._week_monday(_dt_ad.strptime(local[r.id][1], "%Y-%m-%d"),
+                                  start_day=_se.week_start_day_of(r)).strftime("%Y-%m-%d")
         conn = get_conn(db_path)
         try:
             if _week_has_schedule(conn, r.id, target):

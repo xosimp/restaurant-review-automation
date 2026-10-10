@@ -77,8 +77,8 @@ def _next_date(weekday, today=None):
 
 def next_draft_date(restaurant_id, weekday, today=None):
     """The date of `weekday` in the week the NEXT schedule draft covers
-    (schedule_engine._week_monday: the week starting next Monday, in the
-    restaurant's own time) — what advice "on the next schedule" is about
+    (schedule_engine._week_monday: the restaurant's next week, on its own
+    week start, in its own time) — what advice "on the next schedule" is about
     (re-audit 9/29/26, CROSSMODULE-21). None for a name that is not a
     weekday."""
     if weekday not in WEEKDAYS:
@@ -90,12 +90,17 @@ def next_draft_date(restaurant_id, weekday, today=None):
         except Exception:
             today = date.today()
     try:
-        from schedule_engine import _week_monday
-        monday = _week_monday(today)
-        monday = monday.date() if isinstance(monday, datetime) else monday
+        from labor import get_week_start_day
+        start_day = get_week_start_day(restaurant_id)
     except Exception:
-        monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
-    return monday + timedelta(days=WEEKDAYS.index(weekday))
+        start_day = 0
+    try:
+        from schedule_engine import _week_monday
+        first = _week_monday(today, start_day=start_day)
+        first = first.date() if isinstance(first, datetime) else first
+    except Exception:
+        first = today + timedelta(days=(start_day - today.weekday()) % 7 or 7)
+    return first + timedelta(days=(WEEKDAYS.index(weekday) - start_day) % 7)
 
 
 # ── reviews ─────────────────────────────────────────────────────────────────

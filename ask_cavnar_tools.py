@@ -4441,15 +4441,24 @@ def _schedule_card(args, restaurant_id):
             days.append(_d.fromisoformat(x))
         except ValueError:
             return None, None, f"'{x}' isn't a date — give the days as YYYY-MM-DD."
+    # The restaurant's own week (restaurants.week_start_day): a Wednesday
+    # week holds the Monday and Tuesday after it.
+    start_day = 0
+    if restaurant_id is not None:
+        try:
+            from labor import get_week_start_day
+            start_day = get_week_start_day(restaurant_id)
+        except Exception:
+            start_day = 0
     monday = None
     if raw_week:
         try:
             wk = _d.fromisoformat(raw_week)
         except ValueError:
             return None, None, "Give the week as a date in it, YYYY-MM-DD."
-        monday = wk - _t(days=wk.weekday())
+        monday = wk - _t(days=(wk.weekday() - start_day) % 7)
     elif days:
-        monday = days[0] - _t(days=days[0].weekday())
+        monday = days[0] - _t(days=(days[0].weekday() - start_day) % 7)
     if monday is not None and restaurant_id is not None:
         from schedule_engine import check_week_start
         _ok, err = check_week_start(restaurant_id, monday.isoformat())

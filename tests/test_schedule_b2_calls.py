@@ -100,7 +100,7 @@ def _csv(lines):
 
 
 def _pin_week(monkeypatch):
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
 
 
 def _gen(answers, calls):

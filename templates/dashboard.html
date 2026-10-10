@@ -16189,7 +16189,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             {# The owner's day for the draft and for trusted orders (9/27/26):
                Thursday and Monday were fixed. Mirrored by the day in the
                Studio's AI tab and on What to order this week. #}
-            <div class="ac-row" id="as-autodraft-day-row" hidden><div class="l"><b>Draft day</b><span>It drafts the week that starts the next Monday, from 6am that day &mdash; so Monday to Saturday. Publish it for me goes the day after.</span></div>
+            <div class="ac-row" id="as-autodraft-day-row" hidden><div class="l"><b>Draft day</b><span>It drafts your next week, on your own week start, from 6am that day &mdash; any day but the day before your week starts. Publish it for me goes the day after.</span></div>
               <div class="c"><select id="as-autodraft-day" class="ac-select" onchange="saveAutoDraftDay(this)" aria-label="Day Cavnar AI drafts the schedule"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option></select></div></div>
             <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
@@ -27235,6 +27235,8 @@ function ssCrewDraw() {
     body.innerHTML = legend + '<div class="ss-crew-empty">This draft matches your usual crew on every shift.</div>';
     return;
   }
+  // The restaurant's own week order (Wednesday first at a Wednesday week).
+  var cdays = (d.days && d.days.length === 7) ? d.days : SS_CREW_DAYS;
   var h = legend + '<div class="ss-crew-list">', i, j;
   for (i = 0; i < roles.length; i++) {
     var r = roles[i], by = {}, parts = [];
@@ -27244,11 +27246,11 @@ function ssCrewDraw() {
     h += '<article class="ss-crew-role"><div class="ss-crew-rh"><b>' + _escHtml(r.role) + '</b><span><span class="hb-num">' + r.usual_week
       + '</span> shifts usual a week' + (d.week_start ? ' · <span class="hb-num">' + r.draft_week + '</span> in this draft' : '') + '</span></div>'
       + '<div class="ss-crew-scroll"><table class="ss-crew-t"><thead><tr><th class="p"></th>';
-    for (j = 0; j < 7; j++) h += '<th scope="col">' + SS_CREW_DAYS[j].slice(0, 3) + '</th>';
+    for (j = 0; j < 7; j++) h += '<th scope="col">' + cdays[j].slice(0, 3) + '</th>';
     h += '</tr></thead><tbody>';
     for (var p = 0; p < parts.length; p++) {
       h += '<tr><th class="p" scope="row">' + (parts[p] === 'morning' ? 'Lunch' : 'Dinner') + '</th>';
-      for (j = 0; j < 7; j++) h += ssCrewCell(r.role, by[SS_CREW_DAYS[j] + '|' + parts[p]]);
+      for (j = 0; j < 7; j++) h += ssCrewCell(r.role, by[cdays[j] + '|' + parts[p]]);
       h += '</tr>';
     }
     h += '</tbody></table></div></article>';
@@ -29815,11 +29817,20 @@ function asDayNames(cls, name) {
   var els = document.querySelectorAll('.' + cls);
   for (var i = 0; i < els.length; i++) els[i].textContent = name;
 }
+/* The draft-day pickers list the days this restaurant's draft may be made
+   on (draft_days: every day but its week's eve - models.auto_draft_days),
+   in its own week order. */
+function asDraftDayOptions(el, days) {
+  if (!el || !days || !days.length) return;
+  var names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], h = '', i;
+  for (i = 0; i < days.length; i++) h += '<option value="' + days[i] + '">' + names[days[i]] + '</option>';
+  el.innerHTML = h;
+}
 function asDraftDay(d) {
   if (!d || d.weekday === undefined) return;
   var row = document.getElementById('as-autodraft-day-row'); if (row) row.hidden = false;
   var ids = ['as-autodraft-day', 'lb2-autodraft-day'];
-  for (var i = 0; i < ids.length; i++) { var el = document.getElementById(ids[i]); if (el) el.value = String(d.weekday); }
+  for (var i = 0; i < ids.length; i++) { var el = document.getElementById(ids[i]); if (el) { asDraftDayOptions(el, d.draft_days); el.value = String(d.weekday); } }
   asDayNames('as-draftday-name', d.day);
   asDayNames('as-publishday-name', d.publish_day);
 }
@@ -39293,7 +39304,7 @@ window.cavPalette = cavPalette;
       var sw = $id('lb2-autodraft-sw'), el = $id('lb2-autodraft'), day = $id('lb2-autodraft-day');
       if (!d.ok || !sw || !el || d.external_tool) return;
       el.checked = !!d.enabled; sw.hidden = false;
-      if (day && d.weekday !== undefined) day.value = String(d.weekday);
+      if (day && d.weekday !== undefined) { if (window.asDraftDayOptions) asDraftDayOptions(day, d.draft_days); day.value = String(d.weekday); }
     });
   }
   window.fc2SaveAutoOrder = function (el) {

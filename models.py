@@ -15611,19 +15611,34 @@ def default_auto_draft_weekday(restaurant_id) -> int:
     return AUTO_DRAFT_SPREAD_WEEKDAYS[rid % len(AUTO_DRAFT_SPREAD_WEEKDAYS)]
 
 
-def effective_auto_draft_weekday(restaurant_id, stored, chosen) -> int:
+def auto_draft_days(week_start_day=0) -> tuple:
+    """The days a draft may be made on, for a restaurant whose schedule week
+    starts on `week_start_day` (0 = Monday; schedule_engine._week_monday):
+    every day but the one before the week starts — the auto-publish goes the
+    day after the draft, and a draft that day would publish on the week's
+    own first day. Monday to Saturday for a Monday week (AUTO_DRAFT_WEEKDAYS);
+    Thursday to Monday plus Wednesday for Simple EJ's Wednesday week."""
+    eve = (int(week_start_day or 0) - 1) % 7
+    return tuple(d for d in range(7) if d != eve)
+
+
+def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0) -> int:
     """The day the draft is made, from the row's own columns: the stored
-    day when somebody chose it (and it is a draft day), else the spread
-    default. One rule for the Restaurant object (auto_draft_weekday) and a
-    reader of the raw columns (reservation_feeds)."""
+    day when somebody chose it (and it is a draft day for this restaurant's
+    week, auto_draft_days), else the spread default — moved a day earlier
+    when it would fall on the eve of the week. One rule for the Restaurant
+    object (auto_draft_weekday) and a reader of the raw columns
+    (reservation_feeds)."""
+    allowed = auto_draft_days(week_start_day)
     if chosen:
         try:
             v = int(stored)
         except (TypeError, ValueError):
             v = None
-        if v in AUTO_DRAFT_WEEKDAYS:
+        if v in allowed:
             return v
-    return default_auto_draft_weekday(restaurant_id)
+    d = default_auto_draft_weekday(restaurant_id)
+    return d if d in allowed else (d - 1) % 7
 
 
 # Auto-draft on by default for a paid Labor purchase (AI cost audit 10/7/26
@@ -15692,13 +15707,15 @@ def auto_draft_weekday(restaurant) -> int:
     (AI cost audit 10/7/26 #5)."""
     return effective_auto_draft_weekday(getattr(restaurant, "id", None),
                                         getattr(restaurant, "auto_draft_weekday", None),
-                                        getattr(restaurant, "auto_draft_weekday_chosen", 0))
+                                        getattr(restaurant, "auto_draft_weekday_chosen", 0),
+                                        week_start_day=getattr(restaurant, "week_start_day", 0) or 0)
 
 
 def auto_publish_weekday(restaurant) -> int:
-    """The day after the draft: Friday for a Thursday draft, Sunday at the
-    latest - always before the week it publishes starts."""
-    return auto_draft_weekday(restaurant) + 1
+    """The day after the draft: Friday for a Thursday draft — always before
+    the week it publishes starts (auto_draft_days keeps the draft off the
+    week's eve)."""
+    return (auto_draft_weekday(restaurant) + 1) % 7
 
 
 def auto_order_weekday(restaurant) -> int:

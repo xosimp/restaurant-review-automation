@@ -599,7 +599,7 @@ def test_a_week_written_in_slices_carries_each_planned_row_once(monkeypatch):
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
     monkeypatch.setattr(labor, "model_for", lambda k: "m")
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: se.CHUNK_ROWS_PER_CALL + 40)
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
     out = se._generate_in_parts(_ANALYSIS, _history(), [(n, MANAGERS.get(n.lower()) or "Server") for n in ROSTER],
                                 {"tz_name": None, "week_start": "2026-10-05", "closed_dates": [],
                                  "roster": [(n, MANAGERS.get(n.lower()) or "Server") for n in ROSTER],

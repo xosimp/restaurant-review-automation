@@ -169,7 +169,7 @@ import schedule_engine as se  # noqa: E402
 @pytest.fixture
 def ejs(db, monkeypatch):
     import datetime as dt
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
     # The punches are the two weeks before WEEK, whatever day the suite runs.
     monkeypatch.setattr(demo_seed, "_seed_today", lambda: dt.date(2026, 10, 5))
     return demo_seed._seed_simple_ejs(db)

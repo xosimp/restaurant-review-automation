@@ -600,7 +600,9 @@ def generation_request(restaurant_id, week_start=None, dates=None, history_id=No
         from time_utils import restaurant_now_by_id
         today = restaurant_now_by_id(restaurant_id, naive=True)
     days = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]}) or None
-    monday = _week_monday(today, week_start or (days[0] if days else None)).strftime("%Y-%m-%d")
+    from labor import get_week_start_day
+    monday = _week_monday(today, week_start or (days[0] if days else None),
+                          start_day=get_week_start_day(restaurant_id)).strftime("%Y-%m-%d")
     try:
         hid = int(history_id) if (days and history_id not in (None, "")) else None
     except (TypeError, ValueError):
@@ -1128,18 +1130,46 @@ def _expected_rows(shifts, roster_pairs) -> int:
     return per_head
 
 
-def _week_monday(today, week_start=None):
-    """The Monday the week starts on: the owner's choice when given (any
-    date in the wanted week works), else next Monday."""
+def _week_monday(today, week_start=None, start_day=0):
+    """The first day of the week to schedule. A schedule week is the
+    restaurant's own week — `start_day` is restaurants.week_start_day
+    (0 = Monday, the default; Simple EJ's runs Wednesday to Tuesday, owner
+    10/10/26), the same week its payroll and overtime are counted in: the
+    owner's choice when given (any date in the wanted week works), else the
+    next one after today. The name is kept from when every week was a
+    Monday's (callers across the app import it)."""
     from datetime import datetime as _d, timedelta as _t
+    sd = int(start_day or 0) % 7
     if week_start:
         try:
             d = _d.strptime(str(week_start)[:10], "%Y-%m-%d")
-            return d - _t(days=d.weekday())
+            return d - _t(days=(d.weekday() - sd) % 7)
         except ValueError:
             pass
-    days_ahead = (7 - today.weekday()) % 7 or 7
+    days_ahead = (sd - today.weekday()) % 7 or 7
     return today + _t(days=days_ahead)
+
+
+def week_start_day_of(restaurant) -> int:
+    """The weekday a restaurant's schedule week starts on (0 = Monday) —
+    restaurants.week_start_day, its payroll week (_week_monday)."""
+    try:
+        return int(getattr(restaurant, "week_start_day", 0) or 0) % 7
+    except (TypeError, ValueError):
+        return 0
+
+
+def week_dates_from(first) -> list:
+    """The seven ISO dates of the week starting `first` (a date or datetime)."""
+    from datetime import timedelta as _t
+    return [(first + _t(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+
+
+def week_day_names(dates) -> list:
+    """The weekday name of each ISO date, in the dates' own order — a week
+    that starts Wednesday reads Wednesday first (never a fixed Monday list
+    beside dates that start elsewhere)."""
+    return [_weekday_name(d) for d in dates or []]
 
 
 def revenue_source_words(basis, override_source=None):
@@ -1181,8 +1211,8 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
     # with the label that says whose target it is.
     tgt = _thr.target_for(restaurant, "labor")
     target = tgt["pct"]
-    monday = _week_monday(restaurant_now(restaurant, naive=True), week_start)
-    dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    monday = _week_monday(restaurant_now(restaurant, naive=True), week_start, start_day=week_start_day_of(restaurant))
+    dates = week_dates_from(monday)
     monthly = float(getattr(restaurant, "monthly_revenue_target", 0) or 0)
     revenue = {"value": None, "source": None}
     try:
@@ -1274,6 +1304,13 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
 _DAY_ORDER = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
+def week_day_order(start_day=0) -> list:
+    """The seven weekday names in a restaurant's own week order: Wednesday
+    first for a Wednesday week (restaurants.week_start_day)."""
+    sd = int(start_day or 0) % 7
+    return [_DAY_ORDER[(sd + i) % 7] for i in range(7)]
+
+
 def learned_crew(restaurant_id) -> dict:
     """{"learned_crew": [{day, part, roles: [{role, n, trend?}]}],
     "crew_trends": [{day, part, role, now, was, since, direction}]} — the
@@ -1286,7 +1323,8 @@ def learned_crew(restaurant_id) -> dict:
     trends = p.get("headcount_trends") or []
     tkey = {(t["day"], t["part"], t["role"]): t for t in trends}
     rows = []
-    for day in _DAY_ORDER:
+    from labor import get_week_start_day
+    for day in week_day_order(get_week_start_day(restaurant_id)):
         for part in ("morning", "night"):
             roles = typ.get((day, part)) or {}
             if not roles:
@@ -1327,7 +1365,8 @@ def check_week_start(restaurant_id, raw):
         today = restaurant_now_by_id(restaurant_id, naive=True).date()
     except Exception:
         today = _date.today()
-    monday = d - _t(days=d.weekday())
+    from labor import get_week_start_day
+    monday = d - _t(days=(d.weekday() - get_week_start_day(restaurant_id)) % 7)
     if monday + _t(days=6) < today:
         return None, "That week has already happened — pick this week or a later one."
     if monday > today + _t(days=7 * 12):
@@ -1573,10 +1612,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # Compute next week dates — the restaurant's week, not the server's
     from time_utils import restaurant_now
     today = restaurant_now(restaurant, naive=True)
-    monday = _week_monday(today, week_start)
-    next_week_dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-
-    week_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    _start_day = week_start_day_of(restaurant)
+    monday = _week_monday(today, week_start, start_day=_start_day)
+    next_week_dates = week_dates_from(monday)
+    week_days = week_day_names(next_week_dates)
     # Everything the rules need to know about who can work when, gathered
     # once and shared by the prompt, the backstops, the swap search, the
     # review panel and the publish gate.
@@ -2089,6 +2128,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         sched_notes=_sched_notes_with_findings(restaurant_id, getattr(restaurant, 'sched_notes', None)),
         staff_availability=staff_availability or None,
         tz_name=getattr(restaurant, 'timezone', None),
+        week_start_day=_start_day,
         restaurant_id=restaurant_id,
         weather_forecast=weather_forecast or None,
         prior_schedule_summary=prior_schedule_summary or None,
@@ -2520,8 +2560,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     kwargs["closed_dates"] = sorted(closed)
     clock = current_clock()
     today0 = restaurant_now(kwargs.get("tz_name"), naive=True)
-    monday0 = _week_monday(today0, kwargs.get("week_start"))
-    all_dates = [(monday0 + _t0(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    monday0 = _week_monday(today0, kwargs.get("week_start"), start_day=kwargs.get("week_start_day") or 0)
+    all_dates = week_dates_from(monday0)
     trading_wd = _trading_weekdays(shifts)
     open_dates = [d for d in all_dates if d not in closed]
     trading_dates = [d for d in open_dates if _dt0.strptime(d, "%Y-%m-%d").weekday() in trading_wd]

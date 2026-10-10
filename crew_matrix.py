@@ -212,8 +212,12 @@ def build(restaurant_id, history_id=None, db_path=DB_PATH, today=None, baseline=
         if cells:
             roles_out.append({"role": role, "usual_week": uw, "draft_week": dw, "cells": cells})
     roles_out.sort(key=lambda x: (-x["usual_week"], x["role"].lower()))
+    # The columns in the restaurant's own week order (Wednesday first at
+    # Simple EJ's, restaurants.week_start_day).
+    from schedule_engine import week_day_order, week_start_day_of
     return {"ok": True, "week_start": week_start, "history_id": hid, "has_sales": bool(sales),
-            "has_usual": bool(usual), "differences": differences, "open": open_n, "roles": roles_out}
+            "has_usual": bool(usual), "differences": differences, "open": open_n, "roles": roles_out,
+            "days": week_day_order(week_start_day_of(r))}
 
 
 def _save_answers(restaurant_id, data, db_path=DB_PATH):
