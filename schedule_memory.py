@@ -2812,6 +2812,77 @@ def _answer_words(r, principal=True) -> str:
     return ("Kept by " if said == "keep" else "Let go by ") + who
 
 
+def why_row(restaurant_id, history_id, row, db_path=None) -> dict:
+    """The one place that answers "why did the draft do X" for one row of a
+    generated week (schedule audit 10/10/26 ARCH-28: three learners mined the
+    same edits with their own statistics and reached the prompt, the passes
+    and the review separately): {origin — who wrote the row (the model, the
+    managers' plan, a repair stage, a pass after the loop; schedule_scorecard
+    generation tags), asked — what the draft was asked for on its slot
+    (role, date, daypart), learned — every memory about its person or its
+    slot with its kind, status, enforcement, confidence and words (what the
+    passes were bound by), headcount — the learned headcount on its slot and
+    whether the baseline still needed it, preferences — what the person
+    drops and claims, with denominators}. Read-only."""
+    import schedule_scorecard
+    import schedule_versions as sv
+    d = str((row or {}).get("date") or "")[:10]
+    day = _weekday(d)
+    parts = []
+    try:
+        from shift_quality import present_dayparts
+        parts = [p for p in present_dayparts(row) if p in ("morning", "night", "late")]
+    except Exception:
+        parts = []
+    who = _nk((row or {}).get("employee"))
+    role = " ".join(str((row or {}).get("role") or "").split()).lower()
+    out = {"row": {k: (row or {}).get(k) for k in ("date", "employee", "role", "shift_start", "shift_end")},
+           "origin": None, "asked": {}, "learned": [], "headcount": {}, "preferences": None}
+    tags = schedule_scorecard.generation_tags(history_id, db_path=db_path) if history_id else {}
+    out["origin"] = (tags.get("origins") or {}).get(sv.row_sig(row or {}))
+    conn = get_conn(db_path)
+    try:
+        h = conn.execute("SELECT economics_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+                         (history_id, restaurant_id)).fetchone() if history_id else None
+        mems = [dict(r) for r in conn.execute(
+            "SELECT kind, person, role, day, daypart, status, enforcement, confidence, text, value_json FROM "
+            "schedule_memory WHERE restaurant_id=? AND status IN ('candidate', 'active', 'rule', 'retest') AND "
+            "(day IS NULL OR day=?)", (restaurant_id, day)).fetchall()]
+    finally:
+        conn.close()
+    try:
+        req = (json.loads((h or {})["economics_json"] or "{}") or {}).get("requirements_by_date") or {} if h else {}
+    except (TypeError, ValueError, KeyError):
+        req = {}
+    for p in parts:
+        for r_, n in ((req.get(f"{d}|{p}") or {}).items()):
+            if " ".join(str(r_).split()).lower() == role:
+                out["asked"][p] = n
+    for m in mems:
+        about_person = bool(m.get("person")) and _nk(m["person"]) == who
+        about_slot = (not m.get("person")) and (m.get("daypart") in parts or not m.get("daypart")) and \
+            (not m.get("role") or _nk(m["role"]) == role or _nk(m["role"]) in role)
+        if about_person or about_slot:
+            out["learned"].append({k: m.get(k) for k in ("kind", "person", "role", "day", "daypart", "status",
+                                                          "enforcement", "confidence", "text")})
+    try:
+        import schedule_learning
+        lh = schedule_learning.learned_headcount(restaurant_id, db_path=db_path or schedule_learning.DB_PATH)
+        for p in parts:
+            for r_, v in (lh.get((day, p)) or {}).items():
+                if " ".join(str(r_).split()).lower() == role:
+                    out["headcount"][p] = v
+    except Exception as e:
+        log.warning("why_row: learned headcount unreadable for %s: %s", restaurant_id, e)
+    try:
+        import schedule_intel
+        prefs = schedule_intel.behaviour_preferences(restaurant_id, db_path=db_path or schedule_intel.DB_PATH)
+        out["preferences"] = next((v for k, v in prefs.items() if _nk(k) == who), None)
+    except Exception as e:
+        log.warning("why_row: preferences unreadable for %s: %s", restaurant_id, e)
+    return out
+
+
 def memory_view(restaurant_id, db_path=None, include_retired=True, principal=True) -> dict:
     """The memory for the owner's screen: {items, counts, consolidated_at
     (M/D/YY), classes, ladder}. Each item says what it is (class, kind,

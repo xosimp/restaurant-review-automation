@@ -821,6 +821,11 @@ step); an answer with nothing left is replaced by a fixed sentence.
   `learning_v1` (a within-restaurant switchback, `design: switchback`; arms
   `memory_on` — the control — and `memory_off`, one week in four) tests the
   learned memory, paused like any experiment until it can conclude.
+- `GET /admin/api/schedule-why?restaurant_id=&history_id=&date=&employee=[&shift_start=]` — why the draft did one
+  row (schedule audit 10/10/26 ARCH-28, `schedule_memory.why_row`; internal, read-only): `{ok, row, origin (model |
+  manager_plan | model_edited:<stage> | added:<stage> | post_loop), asked {daypart: people the draft was asked for},
+  learned [{kind, person, role, day, daypart, status, enforcement, confidence, text}] (every memory about the person
+  or the slot), headcount {daypart: {delta, settled, source?}}, preferences}`; 404 for a week or row not found.
 - `GET /admin/api/schedule-learning-scorecard` — the Schedule Learning
   Scorecard across eligible restaurants (`schedule_scorecard.admin_view`,
   internal, read-only): `{restaurants, weeks, trend: {drr, labor_vs_target,

@@ -224,6 +224,25 @@ def test_the_job_returns_the_standard_counts_and_the_admin_view_reads_the_trend(
     assert owner["trend"] is not None and owner["trend_sentence"]
 
 
+def test_one_place_says_why_the_draft_did_a_row():
+    import schedule_memory
+    rid = _rid()
+    mon = _monday(1)
+    gen = [_row(mon, "Ana"), _row(mon, "Bob")]
+    hid = _week(rid, mon, gen, gen, asked={f"{mon.isoformat()}|night": {"Server": 2}})
+    ssc.tag_generation(rid, hid, origins={sv.row_sig(gen[0]): "model", sv.row_sig(gen[1]): "added:top_up"})
+    conn = models.get_conn()
+    conn.execute("INSERT INTO schedule_memory (restaurant_id, memory_key, kind, fact_class, person, day, daypart, "
+                 "status, enforcement, confidence, text) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                 (rid, "pattern:moved_on|bob|Monday|night", "moved_on", "habit", "Bob", mon.strftime("%A"), "night",
+                  "active", "soft", 0.7, "The manager has put Bob on Monday dinner."))
+    conn.commit()
+    conn.close()
+    why = schedule_memory.why_row(rid, hid, gen[1])
+    assert why["origin"] == "added:top_up" and why["asked"] == {"night": 2}
+    assert [m["kind"] for m in why["learned"]] == ["moved_on"] and why["learned"][0]["enforcement"] == "soft"
+
+
 def test_the_owner_route_and_the_labor_intel_carry_the_scorecard():
     import strategy_routes
     rid = _rid()

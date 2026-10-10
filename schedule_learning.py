@@ -1291,6 +1291,9 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         for f in ("from", "to", "old_start", "new_start", "old_end", "new_end", "old_role", "new_role"):
             if it.get(f):
                 value[f] = it[f]
+        # The stable shift id, where the rows carry one (ARCH-28).
+        if row.get("shift_id") or it.get("shift_id"):
+            value["shift_id"] = row.get("shift_id") or it.get("shift_id")
         person = it.get("employee") or it.get("from") or it.get("to")
         if ch["origin"] == "cavnar":
             out["cavnar_changes"] += 1

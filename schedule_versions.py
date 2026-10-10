@@ -3150,6 +3150,11 @@ def observe_publish(restaurant_id, history_id, authority=None, editor=None, db_p
         for f in ("from", "to", "old_start", "new_start", "old_end", "new_end", "old_role", "new_role"):
             if it.get(f):
                 value[f] = it[f]
+        # The shift the event is about, where rows carry their stable id
+        # (schedule audit 10/10/26 ARCH-28: one event log of operations on
+        # shifts) — never invented.
+        if it.get("shift_id"):
+            value["shift_id"] = it["shift_id"]
         schedule_memory.observe(restaurant_id, kind, week_start=rec["week_start"], date=it.get("date"),
                                 daypart=(present_dayparts({"shift_start": start, "shift_end": it.get("shift_end") or ""})
                                          or ["unknown"])[0],

@@ -3771,6 +3771,39 @@ def admin_api_schedule_experiments(current_user):
     return jsonify(**admin_ops.schedule_experiments())
 
 
+@admin_bp.route("/admin/api/schedule-why")
+@admin_required
+def admin_api_schedule_why(current_user):
+    """Why the draft did X, for one row of a generated week (internal,
+    read-only; schedule audit 10/10/26 ARCH-28 — schedule_memory.why_row):
+    ?restaurant_id=&history_id=&date=&employee=[&shift_start=]."""
+    import schedule_memory
+    import schedule_versions
+    from models import get_conn as _gc
+    try:
+        rid = int(request.args.get("restaurant_id") or 0)
+        hid = int(request.args.get("history_id") or 0)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="restaurant_id and history_id are numbers"), 400
+    conn = _gc()
+    try:
+        h = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                         (hid, rid)).fetchone()
+    finally:
+        conn.close()
+    if h is None:
+        return jsonify(ok=False, error="No such week"), 404
+    d = str(request.args.get("date") or "")[:10]
+    who = " ".join(str(request.args.get("employee") or "").split()).lower()
+    start = str(request.args.get("shift_start") or "").strip().lower()
+    row = next((r for r in schedule_versions.rows_from_csv(h["schedule_csv"] or "")
+                if r.get("date") == d and " ".join(str(r.get("employee") or "").split()).lower() == who
+                and (not start or str(r.get("shift_start") or "").strip().lower() == start)), None)
+    if row is None:
+        return jsonify(ok=False, error="No such row in that week"), 404
+    return jsonify(ok=True, **schedule_memory.why_row(rid, hid, row))
+
+
 @admin_bp.route("/admin/api/schedule-learning-scorecard")
 @admin_required
 def admin_api_schedule_learning_scorecard(current_user):
