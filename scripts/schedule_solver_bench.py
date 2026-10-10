@@ -36,7 +36,7 @@ def _throwaway_database():
     """The repair stages read a few tables (staff availability, notes): a
     throwaway database with the boot schema, never anybody's reviews.db —
     pointed at before models is imported, as tests/conftest.py does."""
-    if os.environ.get("SCHEDULE_BENCH_KEEP_DB") or "models" in sys.modules:
+    if "models" in sys.modules:
         return
     import tempfile
     vol = tempfile.mkdtemp(prefix="cavnar-bench-volume-")
