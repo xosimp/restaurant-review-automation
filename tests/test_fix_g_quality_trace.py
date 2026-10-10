@@ -272,3 +272,28 @@ def test_an_insight_route_fallback_is_captured_and_recorded(db_path, monkeypatch
     assert len(captured) == 1, "a budget stop is not a code failure"
     rows = _q(db_path, "SELECT surface, kind FROM ai_quality_events")
     assert rows == [{"surface": "review_insight", "kind": "fallback"}] * 2
+
+
+def test_a_backfill_over_different_items_is_a_batch_and_a_repeat_is_a_loop(db_path, monkeypatch):
+    """Owner, 10/9/26: Simple EJ's read Critical for "review_analysis ran
+    207x" - one run per review of a newly connected listing. 200+ runs over
+    different subjects is a batch (said, never an issue); over the same
+    few subjects it is still a loop."""
+    import admin_ops
+    real = sqlite3.connect
+    monkeypatch.setattr(admin_ops, "get_conn", lambda *a, **k: _row_conn(real(db_path)))
+    rid = _rid(db_path)
+    conn = sqlite3.connect(db_path)
+    for action, subject in (("review_analysis", lambda i: f"review:{i}"), ("labor_insight", lambda i: "week")):
+        for i in range(210):
+            conn.execute("INSERT INTO ai_usage (restaurant_id, action, model, cost_usd, created_at, outcome, vendor) "
+                         "VALUES (?, ?, 'claude-haiku', 0.001, datetime('now'), 'ok', 'anthropic')", (rid, action))
+            conn.execute("INSERT INTO ai_runs (run_id, created_at, restaurant_id, workflow, subject) "
+                         "VALUES (?, datetime('now'), ?, ?, ?)", (f"{action}-{i}", rid, action, subject(i)))
+    conn.commit()
+    conn.close()
+    got = {(a["kind"], a.get("action")) for a in admin_ops.ai_anomalies(days=1)}
+    assert ("batch", "review_analysis") in got and ("loop", "review_analysis") not in got
+    assert ("loop", "labor_insight") in got
+    assert not [i for i in admin_ops.ai_anomaly_issues([a for a in admin_ops.ai_anomalies(days=1)
+                                                         if a["kind"] == "batch"])]

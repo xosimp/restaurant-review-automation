@@ -3342,6 +3342,9 @@ ANOMALY_COST_MULTIPLE = 3.0
 ANOMALY_COST_FLOOR_USD = 1.0
 ANOMALY_RATE_MULTIPLE = 4.0
 ANOMALY_RATE_FLOOR = 15
+# 200+ runs of an action in a day are a loop unless at least this share of
+# them were about different items (ai_runs.subject) — then a batch.
+LOOP_BATCH_DISTINCT = 0.8
 
 
 def ai_anomalies(days=7, conn=None):
@@ -3366,6 +3369,19 @@ def ai_anomalies(days=7, conn=None):
         wk = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? GROUP BY restaurant_id", (week,))}
         pv = {r["restaurant_id"]: r["n"] for r in _rows_dict(conn, "SELECT restaurant_id, COUNT(*) AS n FROM ai_usage WHERE created_at >= ? AND created_at < ? GROUP BY restaurant_id", (prev, week))}
         names = {r["id"]: r["name"] for r in _rows_dict(conn, "SELECT id, name FROM restaurants")}
+        # What each day's runs were about (ai_runs.subject, e.g. "review:28432"):
+        # 200 runs over 200 different reviews is a batch — a backfill of a
+        # newly connected listing — not a loop (owner, 10/9/26: Simple EJ's
+        # read Critical for "review_analysis ran 207x", one run per review).
+        subjects = {}
+        try:
+            for r in _rows_dict(conn, "SELECT restaurant_id, workflow, substr(created_at,1,10) AS day, COUNT(*) AS n, "
+                                      "COUNT(DISTINCT subject) AS s FROM ai_runs WHERE created_at >= ? "
+                                      "AND restaurant_id IS NOT NULL AND subject IS NOT NULL AND subject != '' "
+                                      "GROUP BY restaurant_id, workflow, day", (since,)):
+                subjects[(r["restaurant_id"], r["workflow"], r["day"])] = (int(r["n"] or 0), int(r["s"] or 0))
+        except Exception:
+            subjects = {}
     finally:
         if own:
             conn.close()
@@ -3400,7 +3416,15 @@ def ai_anomalies(days=7, conn=None):
             span = max(1, min(ANOMALY_BASELINE_DAYS, len(base_days)))
             base = median([series[d] for d in base_days] + [0.0] * (span - len(base_days))) if base_days else 0.0
             n = series[day]
-            if n >= 200:
+            runs, distinct = subjects.get((rid, action, day), (0, 0))
+            batch = runs >= 20 and distinct >= LOOP_BATCH_DISTINCT * runs
+            if n >= 200 and batch:
+                # Each run on its own item: a batch, said but never an issue.
+                out.append({"kind": "batch", "restaurant_id": rid, "restaurant": names.get(rid), "day": day,
+                            "action": action, "calls": int(n), "items": distinct,
+                            "detail": f"{action} ran {int(n)}× on {day}, over {distinct} different items — a batch, "
+                                      f"not a loop"})
+            elif n >= 200:
                 out.append({"kind": "loop", "restaurant_id": rid, "restaurant": names.get(rid), "day": day,
                             "action": action, "calls": int(n), "detail": f"{action} ran {int(n)}× on {day}"})
             elif n >= ANOMALY_RATE_FLOOR and n > ANOMALY_RATE_MULTIPLE * base:

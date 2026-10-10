@@ -111,9 +111,12 @@ Answer with JSON only: {{"score": <0.0-1.0, how well it meets every point>, "fla
 
 
 def _schema():
+    # No "maxItems": structured output rejects it ("For 'array' type, property
+    # 'maxItems' is not supported", 10/9/26 - every reviewer call failed with
+    # a 400). "at most 3" is in the prompt and review_text keeps the first 3.
     return {"type": "object", "additionalProperties": False, "required": ["score", "flags"],
             "properties": {"score": {"type": "number"},
-                           "flags": {"type": "array", "items": {"type": "string"}, "maxItems": 3}}}
+                           "flags": {"type": "array", "items": {"type": "string"}}}}
 
 
 def review_text(kind, draft, restaurant_id=None, context="", mode="haiku_gate"):
