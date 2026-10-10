@@ -3000,13 +3000,9 @@ TOOLS = [
         "module": "module_labor",
         "spec": {
             "name": "propose_resolve",
-            "description": (
-                "Re-solve days of the schedule (someone out, a shift added): what would change and why. "
-                "Saves nothing; the Studio's Re-solve applies it."),
+            "description": "Re-solve days with people out or shifts added (date, role, shift_start, shift_end); saves nothing.",
             "input_schema": {"type": "object", "properties": {
-                "dates": {"type": "array", "items": {"type": "string"}},
-                "out": {"type": "array", "items": {"type": "string"}},
-                "add": {"type": "array", "items": {"type": "object"}, "description": "{date, role, shift_start, shift_end}"}},
+                "dates": {"type": "array"}, "out": {"type": "array"}, "add": {"type": "array"}},
                 "required": ["dates"]},
         },
     },
