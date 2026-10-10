@@ -434,6 +434,12 @@ class Problem:
         # who is due a weekend off, who should rest from closing — what
         # fairness now judges a week against.
         self.rot_weekend, self.rot_rest, self.rot_rich, self.rich_slots = {}, {}, {}, {}
+        # Retention (retention_risk, MARKET-29, owner-only): the valued people
+        # at risk the owner protects, and the slots they keep dropping.
+        self.protect_avoid = {}
+        for n, v in ((s.get("retention") or {}).items()):
+            if (v or {}).get("protect") and self.key(n) in self.pidx:
+                self.protect_avoid[self.pidx[self.key(n)]] = {(d_, p_) for d_, p_ in (v.get("avoid") or [])}
         for role, plan in (((s.get("rotation") or {}).get("roles")) or {}).items():
             key = _low(role)
             self.rot_weekend[key] = {self.pidx[self.key(n)] for n in (plan.get("weekend_due") or []) if self.key(n) in self.pidx}
@@ -1521,6 +1527,14 @@ class Problem:
         if lv and u.draft is not None and p != u.draft:
             import commitment_ladder as _cl
             out["commitment"] = self.dim_cost("stability", _cl.COMMIT_POINTS.get(lv, 0.0), dw0)
+        # Retention (MARKET-29): taking a protected person's drafted shift
+        # away, or putting them on a slot they keep dropping, is a soft cost.
+        if self.protect_avoid:
+            import retention_risk as _rr
+            if u.draft is not None and p != u.draft and u.draft in self.protect_avoid:
+                out["retention_hours"] = self.dim_cost("preferences", _rr.RETENTION_POINTS, dw0)
+            if p in self.protect_avoid and any((u.day, part) in self.protect_avoid[p] for part in u.primary):
+                out["retention_slot"] = self.dim_cost("preferences", _rr.RETENTION_POINTS, dw0)
         if self.rot_rich and any(p in self.rot_rich.get(r, ()) and any((u.day, part) in self.rich_slots.get(r, ())
                                                                      for part in u.primary) for r in u.roles):
             out["rotation_tips"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
@@ -2944,6 +2958,8 @@ _WHY = {
     "rotation_close": lambda P, u, o, n: f"{P.names[o]} has closed more than their share and is due a rest from it",
     "rotation_tips": lambda P, u, o, n: f"{P.names[o]} has had more than their share of the best-tipped shifts",
     "commitment": lambda P, u, o, n: f"{P.names[o]} was told this shift is {P.commit_level.get(u.id, 'committed')}",
+    "retention_hours": lambda P, u, o, n: f"{P.names[o]}'s hours have been cut lately (you protect them)",
+    "retention_slot": lambda P, u, o, n: f"{P.names[o]} keeps dropping that shift (you protect them)",
     "role": lambda P, u, o, n: f"it is {P.names[n]}'s own role",
     "dollars": lambda P, u, o, n: "the same shift at a lower wage",
     "learned": lambda P, u, o, n: "it is what the manager keeps doing on that shift",

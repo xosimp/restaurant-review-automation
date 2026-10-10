@@ -1559,6 +1559,7 @@ _INPUT_WORDS = {
     "schedule_memory": "Cavnar AI's scheduling memory", "load_ledger": "the weeks before this one",
     "rotation_plan": "the weekend and close rotation", "splh_objective": "the sales-per-labor-hour objective",
     "commitments": "how firm each published shift was",
+    "retention": "who you protect from losing hours",
     "overtime rates": "pay rates for overtime", "learned preferences": "what staff drop and pick up",
     "leader rule check": "who can meet the leader rules", "hard breaches": "the rule check behind the score",
     "shifts_file": "the uploaded shifts file", "tenure": "how long each person has worked here",
@@ -6630,7 +6631,7 @@ def _learning_signals(restaurant_id, result) -> dict:
     """{rotation, splh_targets, daypart_sales, learned, load_ledger} for the
     scorer. Each failing costs only its own part (each withdraws on {})."""
     out = {"rotation": {}, "splh_targets": {}, "daypart_sales": {}, "learned": [], "load_ledger": {},
-           "commitments": {}}
+           "commitments": {}, "retention": {}}
     c = result.get("constraints")
     week = list(result.get("week_dates") or (getattr(c, "week_dates", None) if c is not None else None) or [])
     # A re-draft of a week already published: each shift's commitment level
@@ -6642,6 +6643,14 @@ def _learning_signals(restaurant_id, result) -> dict:
             out["commitments"] = _cl.committed_for_week(restaurant_id, week) or {}
         except Exception as _cx:
             _soft_fail("commitments", _cx, restaurant_id)
+    # The valued people at risk of leaving the owner protects (retention_
+    # risk, MARKET-29): owner-only, a soft cost in the solver, never said to
+    # anyone on the schedule.
+    try:
+        import retention_risk as _rr
+        out["retention"] = _rr.protect_signal(restaurant_id) or {}
+    except Exception as _rx:
+        _soft_fail("retention", _rx, restaurant_id)
     # What the restaurant's scheduling memory holds that binds this week
     # (schedule audit 10/3/26 L-3: learned manager patterns reached only
     # the prompt): its active memories, for the scorer, the solver and the
