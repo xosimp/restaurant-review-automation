@@ -3470,8 +3470,14 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
     roles_by_employee = _dd(set)
     punch_rows = []
     punched = set()
-    from schedule_rules import is_training_role as _is_training
+    from schedule_rules import is_training_role as _is_training_raw
     from shift_quality import role_family as _family
+    _training_memo = {}
+
+    def _is_training(role):
+        if role not in _training_memo:
+            _training_memo[role] = _is_training_raw(role)
+        return _training_memo[role]
     for s in shifts or []:
         name = (s.get("employee") or "").strip()
         role = (s.get("role") or "").strip()
@@ -3636,7 +3642,12 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 out[day] = counts
         return out
 
-    p_by, p_dates, p_late, p_late_dates = _count(punch_rows)
+    # Only the dates the readings use (scheduler audit 10/10/26, SCALE-17):
+    # the usual crew, its trend and the late segment each read the newest
+    # TYPICAL_WEEKS dates of a weekday, but every row of a three-year history
+    # was counted first (1.5 s for 175k rows, against 40 ms for the weeks
+    # read). Who has worked which roles is still read from every punch above.
+    p_by, p_dates, p_late, p_late_dates = _count(_recent_rows(punch_rows))
     typical = _typical(p_by, p_dates, find_trends=True)
     late = _late(p_late, p_late_dates)
     published_typical = {}
@@ -3670,6 +3681,35 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         # review to say: {(weekday, daypart): {role: people}}.
         "published_headcount": published_typical,
     }
+
+
+def _recent_rows(rows, weeks=None) -> list:
+    """`rows` from the oldest date historical_patterns' readings can reach:
+    for each weekday its newest `weeks` (TYPICAL_WEEKS) dates on file, so a
+    weekday the restaurant skipped some weeks still has all of its own. A
+    row whose date does not read as one is kept, as the count keeps it."""
+    weeks = int(weeks or TYPICAL_WEEKS)
+    by_day = {}
+    for d in {str(r.get("date") or "").strip()[:10] for r in rows or []}:
+        try:
+            wd = datetime.strptime(d, "%Y-%m-%d").weekday()
+        except (ValueError, TypeError):
+            continue
+        by_day.setdefault(wd, []).append(d)
+    if not by_day:
+        return list(rows or [])
+    cutoff = min(sorted(ds)[-weeks:][0] for ds in by_day.values())
+    out = []
+    for r in rows or []:
+        d = str(r.get("date") or "").strip()[:10]
+        if d >= cutoff:
+            out.append(r)
+            continue
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            out.append(r)
+    return out
 
 
 def _close_m(value):
@@ -3712,7 +3752,7 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
     failure (the baseline then reads the punches alone)."""
     try:
         import canonical_facts as _cf
-        from models import get_schedule_history_detail
+        from models import get_published_week_csv
         from schedule_versions import rows_from_csv
         if before is None:
             from time_utils import restaurant_now_by_id
@@ -3723,8 +3763,11 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
         for w in _cf.published_weeks(restaurant_id, since):
             if w["week_start"] >= b.isoformat():
                 continue
-            detail = get_schedule_history_detail(w["history_id"], restaurant_id) or {}
-            rows.extend(rows_from_csv(detail.get("schedule_csv") or ""))
+            # The CSV alone (scheduler audit 10/10/26, SCALE-18): the full
+            # detail reader SELECTs * and parses the summary, the 130-440 KB
+            # quality, the review and the weather to hand back one column.
+            week = get_published_week_csv(w["history_id"], restaurant_id) or {}
+            rows.extend(rows_from_csv(week.get("schedule_csv") or ""))
         return rows
     except Exception as e:
         print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")
@@ -3737,7 +3780,26 @@ def staffing_baseline(restaurant_id, shifts: list = None, before=None, close_tim
     less the salaried (D-4), the published weeks for the people who never
     punch (L-1), the late segment by the restaurant's close times (D-32),
     and the manager's settled headcount adjustments on top
-    (apply_learned_headcount)."""
+    (apply_learned_headcount).
+
+    Read once per read_scope (scheduler audit 10/10/26, SCALE-17): an
+    inputs build, a generation and the crew matrix each asked for it more
+    than once, over the same history. Later callers in the scope get a copy."""
+    import copy as _copy_sb
+    import models as _m_sb
+    store = _m_sb.read_scope_store()
+    own = store is not None and (shifts is None or shifts is store.get(("shifts", int(restaurant_id))))
+    key = ("staffing_baseline", int(restaurant_id), str(before) if before else None,
+           tuple(sorted((str(k), str(v)) for k, v in (close_times or {}).items())) if close_times else None)
+    if own and key in store:
+        return _copy_sb.deepcopy(store[key])
+    out = _staffing_baseline(restaurant_id, shifts, before, close_times)
+    if own:
+        store[key] = _copy_sb.deepcopy(out)
+    return out
+
+
+def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
     if shifts is None:
         shifts = load_shifts_for_restaurant(restaurant_id) or []
     salaried = set()
