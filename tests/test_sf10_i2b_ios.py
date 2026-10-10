@@ -107,7 +107,7 @@ def test_the_send_sheet_reads_the_one_review_and_sends_each_override_by_key():
     views = _swift("PrePublishReviewViews.swift")
     assert "item.hard ? .cavnarRed : .cavnarAmber" in views
     # The review's actions as I1 published them.
-    for action in ("edit_rows", "acknowledge", "override", "optimize", "apply_fixes"):
+    for action in ("edit_rows", "acknowledge", "override", "optimize", "apply_fixes", "dismiss", "open", "post"):
         assert f'"{action}"' in review + sheet + views, action
     assert '"/mobile/api/labor/standby/ask"' in sheet and '"/mobile/api/labor/crew-matrix"' in sheet
 

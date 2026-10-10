@@ -590,6 +590,13 @@ final class PublishScheduleViewModel {
             dismissRequested = true
             return
         }
+        // "Leave them off this week", "Keep 3": an answer that changes
+        // nothing — said on the sheet, never sent.
+        if action.action == "dismiss" {
+            if let decision { answered[decision] = action.buttonLabel }
+            Haptic.selection()
+            return
+        }
         actionBusy = action.id
         defer { actionBusy = nil }
         var refusal: String?
@@ -633,9 +640,24 @@ final class PublishScheduleViewModel {
         var suggestion: [String: LooseValue]? = nil
     }
 
-    private struct StandbyBody: Encodable {
-        let body: [String: LooseValue]
-        func encode(to encoder: Encoder) throws { try body.encode(to: encoder) }
+    /// The review's standby ask, as the route reads it.
+    private struct StandbyAskBody: Encodable {
+        let date: String
+        let employee: String
+        var shiftStart: String? = nil
+        var shiftEnd: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case date, employee
+            case shiftStart = "shift_start"
+            case shiftEnd = "shift_end"
+        }
+    }
+
+    /// A floor lowered on one weekday and meal: the role's floors as the
+    /// review wrote them (`role_floors`, merged role by role).
+    private struct RoleFloorsBody: Encodable {
+        let roleFloors: [String: LooseValue]
+        enum CodingKeys: String, CodingKey { case roleFloors = "role_floors" }
     }
 
     private struct PostAnswer: Decodable {
@@ -655,16 +677,32 @@ final class PublishScheduleViewModel {
             let r: PostAnswer
             switch path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) {
             case "labor/crew-matrix":
-                if body["history_id"] == nil, let id = scheduleId { body["history_id"] = .number(Double(id)) }
-                r = try await client.send("/mobile/api/labor/crew-matrix", method: .post, body: StandbyBody(body: body),
+                guard let role = LaborViewModel.payloadText(body, "role"), let day = LaborViewModel.payloadText(body, "day"),
+                      let part = LaborViewModel.payloadText(body, "part"),
+                      let answer = LaborViewModel.payloadText(body, "answer") else { return "That answer couldn\u{2019}t be read." }
+                let hid = LaborViewModel.payloadText(body, "history_id").flatMap { Int($0) } ?? scheduleId
+                r = try await client.send("/mobile/api/labor/crew-matrix", method: .post,
+                                          body: CrewAnswerRequest(role: role, day: day, part: part, answer: answer,
+                                                                  historyId: hid),
                                           hapticOnError: false, retryTransient: false)
-                if r.ok, LaborViewModel.payloadText(body, "answer") == "add" {
+                if r.ok, answer == "add" {
                     guard let row = r.suggestion else { return r.error ?? "Nobody can legally take it this week." }
                     guard let runner = rowActionRunner else { return "Open the week on the Labor screen to add it." }
                     return await runner(PublishReview.Action(label: "Add 1 this week", action: "add_shift", payload: row))
                 }
             case "labor/standby/ask":
-                r = try await client.send("/mobile/api/labor/standby/ask", method: .post, body: StandbyBody(body: body),
+                guard let date = LaborViewModel.payloadText(body, "date"),
+                      let who = LaborViewModel.payloadText(body, "employee") else { return "That ask couldn\u{2019}t be read." }
+                r = try await client.send("/mobile/api/labor/standby/ask", method: .post,
+                                          body: StandbyAskBody(date: date, employee: who,
+                                                               shiftStart: LaborViewModel.payloadText(body, "shift_start"),
+                                                               shiftEnd: LaborViewModel.payloadText(body, "shift_end")),
+                                          hapticOnError: false, retryTransient: false)
+            case "labor/rules":
+                // A floor the work never needed, lowered on that weekday and
+                // meal — the owner's own floors, role by role.
+                guard case .object(let floors)? = body["role_floors"] else { return "That change couldn\u{2019}t be read." }
+                r = try await client.send("/mobile/api/labor/rules", method: .post, body: RoleFloorsBody(roleFloors: floors),
                                           hapticOnError: false, retryTransient: false)
             default:
                 return "Open the week on the web to do this one."
