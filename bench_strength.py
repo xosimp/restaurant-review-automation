@@ -49,6 +49,13 @@ MIN_TREND_WEEKS = 6
 MAX_WEEK_HOURS = 40.0
 
 
+
+def _models_db():
+    """The database path as models has it now (CLAUDE.md, bound imports: a
+    module's own DB_PATH is the one it was imported with)."""
+    import models
+    return models.DB_PATH
+
 def _key(name) -> str:
     return " ".join(str(name or "").split()).casefold()
 
@@ -82,7 +89,7 @@ def _inputs(restaurant_id, today, db_path=None) -> dict:
         log.warning("bench: shifts unreadable rid=%s: %s", restaurant_id, e)
     try:
         import staff_settings
-        out["roster"] = {_key(e["name"]): e["name"] for e in staff_settings.roster(restaurant_id) if e.get("active", True)}
+        out["roster"] = {_key(e["name"]): e["name"] for e in staff_settings.roster(restaurant_id, db_path=db_path or _models_db()) if e.get("active", True)}
     except Exception:
         out["roster"] = None
     try:
@@ -91,18 +98,18 @@ def _inputs(restaurant_id, today, db_path=None) -> dict:
         r = models.get_restaurant(restaurant_id, db_path or models.DB_PATH)
         out["families"] = schedule_rules.role_families(r) or {}
         out["closers"] = {f: {_key(k) for k in v} for f, v in (schedule_rules.chosen_closers(restaurant_id, restaurant=r) or {}).items()}
-        out["leaders"] = {_key(n) for n, v in (models.get_leader_flags(restaurant_id) or {}).items() if v}
-        out["scores"] = {_key(n): v for n, v in (models.get_operational_scores(restaurant_id) or {}).items()}
+        out["leaders"] = {_key(n) for n, v in (models.get_leader_flags(restaurant_id, db_path or _models_db()) or {}).items() if v}
+        out["scores"] = {_key(n): v for n, v in (models.get_operational_scores(restaurant_id, db_path or _models_db()) or {}).items()}
     except Exception as e:
         log.warning("bench: rules unreadable rid=%s: %s", restaurant_id, e)
     try:
         import staff_settings
-        out["settings"] = {_key(n): v for n, v in (staff_settings.get_all(restaurant_id) or {}).items()}
+        out["settings"] = {_key(n): v for n, v in (staff_settings.get_all(restaurant_id, db_path=db_path or _models_db()) or {}).items()}
     except Exception:
         out["settings"] = {}
     try:
         import schedule_intel
-        out["mentored"] = {_key(n): v for n, v in (schedule_intel.mentoring(restaurant_id) or {}).items()}
+        out["mentored"] = {_key(n): v for n, v in (schedule_intel.mentoring(restaurant_id, db_path=db_path or _models_db()) or {}).items()}
     except Exception:
         out["mentored"] = {}
     try:

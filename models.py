@@ -4485,6 +4485,9 @@ def init_db(db_path: str = DB_PATH):
     # The owner's protect switch for people at risk of leaving (retention_risk, MARKET-29).
     from retention_risk import init_retention
     init_retention(db_path)
+    # The organization's certified bench: site switches, consents, asks (org_bench, MARKET-30).
+    from org_bench import init_org_bench
+    init_org_bench(db_path)
     # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
     from schedule_calibration import init_schedule_calibration
     init_schedule_calibration(db_path)

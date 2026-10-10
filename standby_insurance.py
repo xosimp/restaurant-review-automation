@@ -46,7 +46,6 @@ started phoning round.
 Owner-facing (studio_bench 'standby'); staff see their own offers
 (/staff/api/standby). Nothing calls a model.
 """
-import json
 import logging
 from datetime import date, datetime, timedelta
 
@@ -58,6 +57,13 @@ SHORT_LOOKBACK_DAYS = 365
 STATUSES = ("offered", "accepted", "declined", "withdrawn", "dispatched", "released", "expired")
 CONSENT_VERSION = 1
 
+
+
+def _models_db():
+    """The database path as models has it now (CLAUDE.md, bound imports: a
+    module's own DB_PATH is the one it was imported with)."""
+    import models
+    return models.DB_PATH
 
 def get_conn(db_path=None):
     """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
@@ -348,7 +354,7 @@ def suggestions(restaurant_id, week_dates, rows=None, today=None, db_path=None) 
     import schedule_learning
     try:
         days = schedule_learning.standby_days(restaurant_id, list(week_dates or []), rows=rows, limit=3,
-                                              db_path=db_path or schedule_learning.DB_PATH)
+                                              db_path=db_path or _models_db())
     except Exception as e:
         log.warning("standby suggestions unavailable rid=%s: %s", restaurant_id, e)
         return []
@@ -548,7 +554,7 @@ def dispatch_for(restaurant_id, business_date, missing, issue_id, db_path=None) 
             log.warning("standby cover not added rid=%s: %s", restaurant_id, e)
         try:
             got = intraday.ask_to_cover(restaurant_id, issue_id, slot["employee_name"], surface="standby",
-                                        db_path=db_path or intraday.DB_PATH, actor="Cavnar AI (standby)")
+                                        db_path=db_path or _models_db(), actor="Cavnar AI (standby)")
         except Exception as e:
             got = {"ok": False, "error": str(e)}
         conn = get_conn(db_path)

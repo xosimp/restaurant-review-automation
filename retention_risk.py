@@ -44,7 +44,7 @@ RETENTION_POINTS on preferences — a soft cost under every hard rule.
 import logging
 import math
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,13 @@ FEATURES = ("hours_cut", "unwanted_share", "drops", "missed_share", "promises_br
 _MODEL_CACHE = {}
 _MODEL_LOCK = threading.Lock()
 
+
+
+def _models_db():
+    """The database path as models has it now (CLAUDE.md, bound imports: a
+    module's own DB_PATH is the one it was imported with)."""
+    import models
+    return models.DB_PATH
 
 def get_conn(db_path=None):
     """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
@@ -137,13 +144,13 @@ def _load(restaurant_id, today, db_path=None) -> dict:
     try:
         import schedule_intel
         out["avoids"] = {_key(n): set(v.get("avoids") or []) for n, v in
-                         (schedule_intel.behaviour_preferences(restaurant_id) or {}).items()}
+                         (schedule_intel.behaviour_preferences(restaurant_id, db_path=db_path or _models_db()) or {}).items()}
     except Exception:
         out["avoids"] = {}
     try:
         import staff_settings
         out["stated"] = {_key(n): set(v.get("preferred_dayparts") or []) for n, v in
-                         (staff_settings.stated_preferences(restaurant_id) or {}).items()}
+                         (staff_settings.stated_preferences(restaurant_id, db_path=db_path or _models_db()) or {}).items()}
     except Exception:
         out["stated"] = {}
     by = {}
@@ -330,10 +337,10 @@ def set_protect(restaurant_id, name, protect, by=None, db_path=None) -> dict:
     return {"name": name, "protect": bool(protect)}
 
 
-def _valued(restaurant_id, data, key, today):
+def _valued(restaurant_id, data, key, today, db_path=None):
     try:
         import models
-        scores = {_key(n): v for n, v in (models.get_operational_scores(restaurant_id) or {}).items()}
+        scores = {_key(n): v for n, v in (models.get_operational_scores(restaurant_id, db_path or _models_db()) or {}).items()}
     except Exception:
         scores = {}
     sc = scores.get(key)
@@ -358,7 +365,7 @@ def assess(restaurant_id, today=None, db_path=None) -> dict:
     m = model(restaurant_id, today=today, db_path=db_path, data=data)
     try:
         import staff_settings
-        roster = [e["name"] for e in staff_settings.roster(restaurant_id) if e.get("active", True)]
+        roster = [e["name"] for e in staff_settings.roster(restaurant_id, db_path=db_path or _models_db()) if e.get("active", True)]
     except Exception:
         roster = []
     over = _overrides(restaurant_id, db_path)
@@ -383,7 +390,7 @@ def assess(restaurant_id, today=None, db_path=None) -> dict:
             level = "high" if risk >= HIGH_PROB else ("watch" if risk >= WATCH_PROB else "none")
         else:
             level = "high" if len(reasons) >= 2 else ("watch" if reasons else "none")
-        valued, why = _valued(restaurant_id, data, key, today)
+        valued, why = _valued(restaurant_id, data, key, today, db_path)
         protect = over.get(key, valued and level == "high")
         people.append({"name": name, "level": level, "risk": risk, "signals": s, "reasons": reasons,
                        "valued": valued, "valued_because": why, "protect": bool(protect),
@@ -405,7 +412,7 @@ def protect_signal(restaurant_id, today=None, db_path=None) -> dict:
     data_avoid = {}
     try:
         import schedule_intel
-        data_avoid = {n: v.get("avoids") or [] for n, v in (schedule_intel.behaviour_preferences(restaurant_id) or {}).items()}
+        data_avoid = {n: v.get("avoids") or [] for n, v in (schedule_intel.behaviour_preferences(restaurant_id, db_path=db_path or _models_db()) or {}).items()}
     except Exception:
         pass
     out = {}

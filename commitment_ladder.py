@@ -46,7 +46,7 @@ Nothing calls a model.
 """
 import logging
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,13 @@ LEVEL_WORDS = {
                  "if that doesn't happen.",
 }
 
+
+
+def _models_db():
+    """The database path as models has it now (CLAUDE.md, bound imports: a
+    module's own DB_PATH is the one it was imported with)."""
+    import models
+    return models.DB_PATH
 
 def get_conn(db_path=None):
     """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
@@ -162,7 +169,7 @@ def ladder(restaurant_id, rows, forecasts=None, db_path=None) -> dict:
             try:
                 import demand
                 forecasts[d] = demand.forecast_day(restaurant_id, date.fromisoformat(d),
-                                                   db_path=db_path or demand.DB_PATH)
+                                                   db_path=db_path or _models_db())
             except Exception as e:
                 log.warning("ladder forecast unavailable rid=%s %s: %s", restaurant_id, d, e)
                 forecasts[d] = {"available": False}
@@ -315,7 +322,6 @@ def annotate(restaurant_id, shifts, name, db_path=None) -> list:
 def change_cost(restaurant_id, before_rows, after_rows, db_path=None) -> dict:
     """A change to committed rows priced: {points, rows: [{employee, date,
     start, level, change}], predictability_pay: {...} | None, text}."""
-    from schedule_versions import rows_from_csv  # noqa: F401  (rows are dicts already)
     dates = sorted({str(r.get("date") or "")[:10] for r in (before_rows or []) if r.get("date")})
     if not dates:
         return {"points": 0.0, "rows": [], "predictability_pay": None, "text": None}

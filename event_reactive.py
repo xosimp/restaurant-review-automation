@@ -41,13 +41,19 @@ told when a proposal opens. Nothing calls a model.
 """
 import json
 import logging
-import math
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 log = logging.getLogger(__name__)
 
 MAX_DAYS_AHEAD = 28
 
+
+
+def _models_db():
+    """The database path as models has it now (CLAUDE.md, bound imports: a
+    module's own DB_PATH is the one it was imported with)."""
+    import models
+    return models.DB_PATH
 
 def get_conn(db_path=None):
     """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
@@ -244,7 +250,7 @@ def propose(restaurant_id, history_id, day, before_events, after_events, pct_the
             try:
                 import labor_replacements
                 fits = labor_replacements.for_gap(restaurant_id, shape.get("role"), d.strftime("%A"), exclude=working,
-                                                  db_path=db_path or labor_replacements.DB_PATH, limit=3 + heads,
+                                                  db_path=db_path or _models_db(), limit=3 + heads,
                                                   on_date=day)
             except Exception as e:
                 log.warning("event proposal targets unavailable rid=%s: %s", restaurant_id, e)
@@ -423,14 +429,14 @@ def approve(restaurant_id, proposal_id, by=None, db_path=None) -> dict:
                 out = shift_requests.post_open_shift(restaurant_id, a["date"], a["shift_start"], a["shift_end"],
                                                      role=a["role"], actor=by or "event change",
                                                      note="Added for an event change", offer_to=a.get("offer_to"),
-                                                     db_path=db_path or shift_requests.DB_PATH)
+                                                     db_path=db_path or _models_db())
                 results.append({"ok": True, "kind": "add", "offered_to": a.get("offer_to"),
                                 "request_id": (out.get("request") or {}).get("id")})
             except shift_requests.NotOnApp:
                 out = shift_requests.post_open_shift(restaurant_id, a["date"], a["shift_start"], a["shift_end"],
                                                      role=a["role"], actor=by or "event change",
                                                      note="Added for an event change",
-                                                     db_path=db_path or shift_requests.DB_PATH)
+                                                     db_path=db_path or _models_db())
                 results.append({"ok": True, "kind": "add", "posted": True,
                                 "request_id": (out.get("request") or {}).get("id")})
             except shift_requests.ShiftRequestError as e:
