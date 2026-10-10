@@ -1534,6 +1534,13 @@ struct ScheduleRow: Codable, Identifiable {
     var dstHours: Double? = nil
     var origin: String? = nil
     var originSig: String? = nil
+    // Schedule audit 10/10/26 (ARCH-6, contract #4): the shift's own id,
+    // kept through edits, versions, swaps and covers — sent back on Save so
+    // the shift keeps it — the person it is (people.id), and whether the
+    // owner locked it (every pass and a regenerate keep a locked row).
+    var shiftId: String? = nil
+    var personId: String? = nil
+    var locked: Bool? = nil
 
     var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
     var isManagerPlan: Bool { pinned == "manager_plan" }
@@ -1550,6 +1557,9 @@ struct ScheduleRow: Codable, Identifiable {
         case rowId = "_rid"
         case dstHours = "dst_hours"
         case originSig = "origin_sig"
+        case shiftId = "shift_id"
+        case personId = "person_id"
+        case locked
     }
 }
 
@@ -1582,6 +1592,9 @@ extension ScheduleRow {
         dstHours = c.sfDouble(.dstHours)
         origin = c.sfText(.origin)
         originSig = c.sfText(.originSig)
+        shiftId = c.sfText(.shiftId)
+        personId = c.sfText(.personId)
+        locked = c.sfBool(.locked)
     }
 
     /// Everything that makes two rows the same shift, for telling whether

@@ -407,6 +407,10 @@ class ShiftContext:
     day_rows: list = field(default_factory=list)
     role_floors: dict = field(default_factory=dict)    # {role: people required on this daypart}
     demand_curve: dict = field(default_factory=dict)   # {hour: share of the day's sales}
+    # The meal breaks the law (or the owner) puts inside long shifts
+    # (breaks.rules_for): coverage by the hour takes a person off the floor
+    # for their placed meal (schedule audit 10/10/26 MARKET-6). None: none.
+    break_rules: dict | None = None
     # ── people facts (reliability, pairings, limits) ───────────────────
     reliability: dict = field(default_factory=dict)    # {name: {"no_show_rate", "shifts"}}
     pairs: dict = field(default_factory=dict)          # {"prefer": {frozenset}, "avoid": {frozenset}}
@@ -2697,14 +2701,33 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     if not required and not has_curve and not has_late:
         return None
     rows = ctx.day_rows or ctx.rows
+    # Each person's placed meal takes them off the floor for its minutes
+    # (breaks.plan_day — the same placement the staff app shows): a server
+    # on her 30-minute meal is not coverage at the half hour she eats.
+    meals = {}
+    if ctx.break_rules and (ctx.break_rules.get("meals")):
+        try:
+            import breaks as _breaks
+            plan = _breaks.plan_day(rows, ctx.break_rules, ctx.demand_curve or None, families=ctx.family)
+            meals = {i: [(b["start"], b["end"]) for b in bl if b.get("kind") == "meal" and b.get("placed")]
+                     for i, bl in plan.items()}
+        except Exception:
+            meals = {}
     spans = []
-    for r in rows:
+    for idx, r in enumerate(rows):
         sp = _row_span(r)
         # Who is really on: not a row that will not stand, not a training
         # shift — the rules' own floor count (SQ-8).
         if sp is None or ctx._is_flagged(r) or ctx.training_row(r):
             continue
-        spans.append((ctx.family(r.get("role")), (r.get("employee") or "").strip().lower(), sp[0], sp[1]))
+        fam, who = ctx.family(r.get("role")), (r.get("employee") or "").strip().lower()
+        cur = sp[0]
+        for bs, be in sorted(meals.get(idx) or []):
+            if bs > cur:
+                spans.append((fam, who, cur, bs))
+            cur = max(cur, be)
+        if sp[1] > cur:
+            spans.append((fam, who, cur, sp[1]))
     if not spans:
         return None
     day_open = ctx.open_minutes if ctx.open_minutes is not None else min(s for _f, _p, s, _e in spans)
@@ -5281,6 +5304,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             day_rows=day_rows_by_date.get(date, []),
             role_floors=floors_here,
             demand_curve=demand_curves.get(day) or {},
+            break_rules=signals.get("break_rules"),
             reliability=signals.get("reliability") or {},
             pairs=signals.get("pairs") or {},
             max_shift_hours=signals.get("max_shift_hours"),
@@ -5841,6 +5865,12 @@ class _SwapIndex:
         self.base_hours = {k.lower(): float(v or 0) for k, v in (rules.get("base_hours") or {}).items()}
         self.ceiling = float(rules.get("weekly_ceiling") or WEEKLY_HOURS_CEILING)
         self.min_rest = float(rules.get("min_rest_hours") or 0)
+        # {lower: {"standing", "dates"}} — written consents to a short rest
+        # under a consent rest rule (schedule_rules.Constraints.rest_waivers).
+        self.rest_waived = {str(k).lower(): v for k, v in (rules.get("rest_waived") or {}).items()}
+        # Owners and managers keep their own turnaround (schedule_rules.
+        # rest_rule_applies) — the sweep's exemption, held here too.
+        self.rest_exempt = {str(k).lower() for k in (rules.get("rest_exempt") or ())}
         self.inactive = {str(n).lower() for n in (rules.get("inactive") or [])}
         # The rules the violation sweep holds a finished week to, so a swap,
         # a fix or a claim can never create a breach the sweep would flag:
@@ -5935,9 +5965,16 @@ class _SwapIndex:
                     return False          # an overlap is never legal, rest rule or not
                 # Same calendar date is a double shift, not a rest
                 # breach — the rule is the overnight turnaround.
-                if not self.min_rest or ps.date() == s.date():
+                if not self.min_rest or ps.date() == s.date() or low in self.rest_exempt:
                     continue
                 if gap < self.min_rest:
+                    # Under a consent rest rule a short turnaround the person
+                    # agreed to in writing is allowed (priced as the sweep's
+                    # rest_premium — schedule audit 10/10/26 MARKET-3).
+                    later = ps if ps >= e else s
+                    w = self.rest_waived.get(low)
+                    if w and (w.get("standing") or later.date().isoformat() in (w.get("dates") or ())):
+                        continue
                     return False
         return True
 

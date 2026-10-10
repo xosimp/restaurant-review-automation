@@ -337,8 +337,14 @@ class Problem:
             self.fams_of.append({x for x in f if x})
         self.flexible = [len(f) > 1 for f in self.fams_of]
         self.cross_on = bool(cross or held)
+        # A person with a written note the code cannot read is kept as the
+        # draft had them — unless every open part of their note is read as
+        # rules (held, confirmed, or typed — owner_rules, scheduler audit
+        # 10/10/26 AI-10): those rules are in the Constraints the domains are
+        # built from, so the solver may choose them like anyone else.
+        read = {self.key(n) for n in (s.get("notes_read") or ())}
         self.constrained = {self.key(n) for n, note in (s.get("constraints") or {}).items()
-                            if n and str(note or "").strip()}
+                            if n and str(note or "").strip()} - read
         pend = pending if pending is not None else (getattr(self.c, "pending_off", None) or {})
         self.pending = {self.key(k): set(v or ()) for k, v in (pend or {}).items()}
         scores = s.get("scores") or {}
@@ -461,7 +467,11 @@ class Problem:
         except (TypeError, ValueError):
             self.max_run = 0
         try:
-            self.need_rest = float(comp.get("min_rest_hours") or 0)
+            # No rule unless one is set; "off" is none (MARKET-3). Under a
+            # consent rule the solver still never plans a short turnaround —
+            # one is the person's to agree to, in writing, not a draft's.
+            self.need_rest = (float(comp.get("min_rest_hours") or 0)
+                              if _rules.rest_mode(comp) != "off" else 0.0)
         except (TypeError, ValueError):
             self.need_rest = 0.0
         try:
@@ -765,7 +775,9 @@ class Problem:
                         cap = min(cap, max(line - 0.06, draft[p].get(b, 0.0)))
                 if c is not None and self.key(n) in c.minors:
                     br = _rules.minor_rules(c.minor_bands.get(self.key(n)), c.jurisdiction)
-                    wk = br.get("max_weekly_school_week")
+                    # the school week's cap (the stricter), else the state's one
+                    # weekly cap (Oregon's 44 for 16-17s) — MARKET-5
+                    wk = br.get("max_weekly_school_week") or br.get("max_weekly_other_week")
                     if wk:
                         cap = min(cap, max(float(wk), draft[p].get(b, 0.0)))
                 caps[b] = cap

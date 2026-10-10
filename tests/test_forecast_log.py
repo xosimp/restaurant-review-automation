@@ -268,8 +268,9 @@ def test_the_weekly_projection_is_frozen_at_publish_and_scored_on_the_same_days(
     row = forecast_log.frozen(rid, "revenue_week", week, db_path=db_path)
     assert row["actual"] == 7200.0 and row["signed_error_pct"] == round((6000 - 7200) / 7200 * 100, 1)
     # the publish path freezes it
-    import client_api
-    assert "freeze_week_projection(rid, row[\"week_start\"])" in inspect.getsource(client_api._publish_schedule)
+    # (the publish service records it once the week is stamped — ARCH-15)
+    import schedule_publish
+    assert "freeze_week_projection(rid, row[\"week_start\"])" in inspect.getsource(schedule_publish._after_publish)
 
 
 def test_a_week_missing_a_projected_night_is_not_scored(db_path):

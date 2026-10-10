@@ -239,16 +239,10 @@ def published_conflicts(restaurant_id, employee_name, start, end, db_path=None, 
     from schedule_versions import rows_from_csv
     s, e = _as_date(start).isoformat(), _as_date(end).isoformat()
     key = " ".join((employee_name or "").split()).casefold()
-    conn = get_conn(db_path)
-    try:
-        weeks = conn.execute(
-            "SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND published_at IS NOT NULL "
-            "AND superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE "
-            "nw.restaurant_id=schedule_history.restaurant_id AND nw.week_start=schedule_history.week_start "
-            "AND nw.published_at IS NOT NULL AND nw.id > schedule_history.id) "
-            "AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ?", (restaurant_id, e, s)).fetchall()
-    finally:
-        conn.close()
+    # The live weeks' PUBLISHED copies (models.live_weeks, ARCH-11): the
+    # shifts this person was told about.
+    import models as _m
+    weeks = _m.live_weeks(restaurant_id, lo=s, hi=e, db_path=db_path or _m.DB_PATH)
     out = []
     for w in weeks:
         for r in rows_from_csv(w["schedule_csv"]):

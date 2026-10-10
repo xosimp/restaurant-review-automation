@@ -208,25 +208,17 @@ def _published_rows(restaurant_id, day, db_path=None):
     """(rows, history_id) of the published week covering `day`, each row's
     name read as the person it means now (people.canonical_names)."""
     try:
-        import intraday
         from schedule_versions import rows_from_csv
-        text = intraday._published_csv(restaurant_id, date.fromisoformat(str(day)[:10]), db_path=db_path or
-                                       _models_mod.DB_PATH)
-        rows = [r for r in rows_from_csv(text) if (r.get("date") or "")[:10] == str(day)[:10]]
+        # The live week's published copy and its id from ONE read
+        # (models.live_week_for, ARCH-11): the id used to come from a
+        # second query of its own (the newest published id), which could
+        # name another copy than the rows.
+        w = _models_mod.live_week_for(restaurant_id, date.fromisoformat(str(day)[:10]),
+                                      db_path=db_path or _models_mod.DB_PATH) or {}
+        rows = [r for r in rows_from_csv(w.get("schedule_csv") or "") if (r.get("date") or "")[:10] == str(day)[:10]]
+        hid = w.get("id")
     except Exception:
         return [], None
-    hid = None
-    try:
-        conn = get_conn(db_path)
-        try:
-            row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? AND week_start<=? AND "
-                               "week_end>=? AND published_at IS NOT NULL ORDER BY id DESC LIMIT 1",
-                               (restaurant_id, str(day)[:10], str(day)[:10])).fetchone()
-            hid = row["id"] if row else None
-        finally:
-            conn.close()
-    except Exception:
-        hid = None
     try:
         import people
         canon = people.canonical_names(restaurant_id, [r["employee"] for r in rows], db_path=db_path)

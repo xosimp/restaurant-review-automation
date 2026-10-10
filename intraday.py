@@ -148,33 +148,21 @@ def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
 
 
 def _published_csv(restaurant_id, day, db_path=DB_PATH):
-    """The schedule staff were actually SENT for `day`: the newest published,
-    non-superseded week containing it — or "" when none is.
+    """The schedule staff were actually SENT for `day`: the published copy
+    of the live week containing it (models.live_week_for — the one rule,
+    schedule audit 10/10/26 ARCH-11) — or "" when none is.
 
     This read the newest schedule_history row whose CSV contained today's
     date, whatever it was: a draft nobody published, an auto-draft, or a
     week superseded by a re-publish. So a no-show issue could name someone
-    who was never told they were on (#13). A draft is not a commitment."""
-    iso = day.isoformat()
-    conn = get_conn(db_path)
+    who was never told they were on (#13). A draft is not a commitment —
+    nor is a manager's saved edit to a sent week before Send (ARCH-1)."""
     try:
-        rows = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history h WHERE h.restaurant_id=? "
-            "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL "
-            "AND NOT EXISTS (SELECT 1 FROM schedule_history nw WHERE nw.restaurant_id=h.restaurant_id "
-            "AND nw.week_start=h.week_start AND nw.published_at IS NOT NULL AND nw.id > h.id) "
-            "ORDER BY h.generated_at DESC, h.id DESC LIMIT 8", (restaurant_id,)).fetchall()
+        import models as _m
+        w = _m.live_week_for(restaurant_id, day, db_path=db_path)
     except Exception:
-        rows = []
-    finally:
-        conn.close()
-    for r in rows:
-        ws, we = str(r["week_start"] or "")[:10], str(r["week_end"] or "")[:10]
-        if ws and we and not (ws <= iso <= we):
-            continue
-        if iso in (r["schedule_csv"] or ""):
-            return r["schedule_csv"] or ""
-    return ""
+        w = None
+    return (w or {}).get("schedule_csv") or ""
 
 
 def published_rows(restaurant_id, day, db_path=DB_PATH):

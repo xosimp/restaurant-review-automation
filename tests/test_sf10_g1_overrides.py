@@ -10,6 +10,7 @@ from flask import Flask
 
 import auth
 import client_api
+import schedule_publish
 import emails
 import labor
 import mobile_api
@@ -65,7 +66,9 @@ def _save(db_path, rid):
 def _gate(monkeypatch, rid, blockers):
     """publish_review as the gate builds it, learned from — with these
     blockers on every week."""
-    monkeypatch.setattr(client_api, "publish_review",
+    # The gate lives in schedule_publish (ARCH-15); client_api re-exports it.
+    import schedule_publish
+    monkeypatch.setattr(schedule_publish, "publish_review",
                         lambda r, s=None, unattended=False, today=None: so.annotate(
                             r, {"blockers": [dict(b) for b in blockers], "soft": [], "notes": [], "schedule_id": s},
                             unattended=unattended))
@@ -112,7 +115,7 @@ def test_a_warning_the_owner_always_overrides_is_demoted_but_a_rule_never_is(db,
     assert st["hours_over"]["overridden"] == 5 and st["hours_over"]["demoted"]
     assert st["rule:min_rest"]["overridden"] == 5 and not st["rule:min_rest"]["demoted"], "a hard rule was quieted"
     hid = _save(db, rid)
-    review = client_api.publish_review(rid, hid)
+    review = schedule_publish.publish_review(rid, hid)
     assert [b["key"] for b in review["blockers"]] == [RULE["key"]]
     assert review["blockers"][0]["overridden_before"]["weeks"] == 5
     assert any(n.get("demoted") and "5 of 5 weeks" in n["text"] for n in review["notes"])
@@ -122,7 +125,7 @@ def test_a_warning_the_owner_always_overrides_is_demoted_but_a_rule_never_is(db,
     assert status == 200 and out["ok"]
     # Never for an unattended send: the automation's gate is unchanged.
     hid = _save(db, rid)
-    review = client_api.publish_review(rid, hid, unattended=True)
+    review = schedule_publish.publish_review(rid, hid, unattended=True)
     assert "hours_over" in [b["key"] for b in review["blockers"]]
 
 

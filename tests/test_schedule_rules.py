@@ -103,24 +103,32 @@ def test_under_min_hours_is_soft():
 
 # ── rest, overlap, double booking ──────────────────────────────────────
 
+# The rest rule holds only where the owner or a covering jurisdiction set
+# one (schedule audit 10/10/26 MARKET-3, LOGIC-21: the global 10h default
+# is gone) — these set it, as an owner would.
+_REST10 = {**sr.DEFAULTS, "min_rest_hours": 10.0}
+
+
 def test_close_then_open_breaks_the_rest_rule():
-    c = _c()
+    c = _c(compliance=dict(_REST10))
     rows = [_row(WEEK[0], "Ana", "4:00pm", "11:30pm"), _row(WEEK[1], "Ana", "7:00am", "3:00pm")]
     v = sr.violations(rows, c)
     assert any(x["kind"] == "rest_gap" and x["hard"] for x in v)
     assert "7.5h" in next(x["detail"] for x in v if x["kind"] == "rest_gap")
+    # no rule set: no rest flag at all
+    assert not any(x["kind"] == "rest_gap" for x in sr.violations(rows, _c()))
 
 
 def test_rest_is_measured_against_the_published_tail_too():
     tail = _row("2026-10-04", "Ana", "4:00pm", "11:30pm")
     tail["day"] = "Sunday"
-    c = _c(base_rows={"ana": [tail]})
+    c = _c(base_rows={"ana": [tail]}, compliance=dict(_REST10))
     v = sr.violations([_row(WEEK[0], "Ana", "7:00am", "3:00pm")], c)
     assert any(x["kind"] == "rest_gap" for x in v)
 
 
 def test_rest_ok_helper_agrees_with_the_sweep():
-    c = _c()
+    c = _c(compliance=dict(_REST10))
     other = [_row(WEEK[0], "Ana", "4:00pm", "11:30pm")]
     ok, why = c.rest_ok("Ana", _row(WEEK[1], "Ana", "7:00am", "3:00pm"), other)
     assert not ok and "rest" in why.lower()
@@ -219,6 +227,7 @@ def test_build_constraints_reads_time_off_roster_and_published_hours(db_path, ri
                   "2026-10-03,Saturday,Ana,Server,4:00pm,10:00pm,6.0,\n"))
     conn.commit()
     conn.close()
+    sr.save_compliance(rid, {"min_rest_hours": 10}, db_path=db_path)      # the owner's own rest rule
 
     c = sr.build_constraints(rid, WEEK, DAYS, db_path=db_path)
     assert "ana" in c.active and "gone" in c.inactive and c.roster_names == ["Ana"]

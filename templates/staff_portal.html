@@ -1014,6 +1014,17 @@
   function act(key, path, body, posted, after){
     S.rowErr[key] = null;
     return postJson(path, body).then(function(d){
+      /* A shift that is legal only with your written agreement to a short
+         turnaround (your restaurant's rest rule allows it with a premium):
+         asked in the same tap, sent again with your agreement. */
+      if (!d.ok && d.needs_consent && !body.consent_rest) {
+        var again = {}, k;
+        for (k in body) { if (body.hasOwnProperty(k)) again[k] = body[k]; }
+        again.consent_rest = true;
+        askConfirm('Agree to a short turnaround?', d.needs_consent.text + ' You can withdraw a standing agreement in Me any time.',
+          'I agree — take it', function(){ act(key, path, again, posted, after); });
+        return d;
+      }
       if (d.ok) {
         closeSheet();
         toast(posted);
@@ -1322,7 +1333,52 @@
     /* Shifts at the group's other locations (schedule audit 10/10/26
        MARKET-16): only for someone who says yes here. */
     api('/staff/api/travel').then(function(d){ S.travel = d; renderMe(); });
+    S.agree = undefined;
+    api('/staff/api/compliance').then(function(d){ S.agree = d; renderMe(); });
   };
+  /* Agreements (schedule audit 10/10/26 RM-15): what your manager asked you
+     to agree to in writing, a standing agreement to short turnarounds where
+     the rest rule allows one, your schedule estimate to sign for, and your
+     requests to change it with their written answers. Each answer is
+     stamped with the time you gave it. */
+  function agreementsCard(){
+    var a = S.agree, html = '', i;
+    if (a === undefined || !a || !a.ok) return '';
+    var c = a.consents || {}, pend = c.pending || [], est = a.estimate, reqs = a.requests || [];
+    if (!pend.length && !a.rest && !est && !reqs.length) return '';
+    html += '<div class="sechead">Agreements</div><div class="card">';
+    for (i = 0; i < pend.length; i++) {
+      html += '<p class="note ink2" style="margin:0 0 6px">' + esc(pend[i].text) + '</p>' +
+        '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="consent-yes" data-id="' + pend[i].id + '">I agree</button>' +
+        '<button type="button" class="cbtn cbtn-secondary" data-act="consent-no" data-id="' + pend[i].id + '">No</button></div>';
+    }
+    if (a.rest) {
+      var st = c.standing_rest;
+      html += '<p class="note" style="margin:' + (pend.length ? '14px' : '0') + ' 0 6px">' + esc(a.rest.text) + '</p>';
+      html += st ? '<p class="note ink2" style="margin:0 0 6px">You agreed on ' + esc(mdy((st.answered_at || '').slice(0, 10))) +
+        ' to be scheduled with a short turnaround, each time paid the premium.</p><div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="rest-revoke" data-id="' + st.id + '">Withdraw my agreement</button></div>'
+        : '<div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="rest-standing">Agree to short turnarounds</button></div>';
+    }
+    if (est) {
+      html += '<p class="note ink2" style="margin:14px 0 6px">' + esc(est.text) + '</p>';
+      html += est.acknowledged_at ? '<p class="note" style="margin:0">You signed for it on ' + esc(mdy(est.acknowledged_at.slice(0, 10))) + '.</p>'
+        : '<div class="acts"><button type="button" class="cbtn cbtn-primary" data-act="est-ack" data-id="' + est.id + '">I’ve read my estimate</button></div>';
+      html += '<div class="acts"><button type="button" class="cbtn cbtn-secondary" data-act="est-change">Ask for a change</button></div>';
+    }
+    for (i = 0; i < reqs.length && i < 5; i++) {
+      var r = reqs[i];
+      html += '<div class="kv"><span class="strong">' + esc(r.body) + '</span><span class="muted">' +
+        esc(r.status === 'open' ? ('waiting' + (r.due_at ? ' — answer due ' + mdy(r.due_at.slice(0, 10)) : '')) : r.status) + '</span></div>' +
+        (r.answer ? '<p class="note" style="margin:0 0 8px">' + esc(r.answer) + '</p>' : '');
+    }
+    return html + '<div class="errline" id="agree-err" role="status" aria-live="polite"></div></div>';
+  }
+  function agreePost(path, body, posted){
+    return postJson(path, body).then(function(d){
+      if (!d.ok) { var e = $('agree-err'); if (e) e.textContent = errText(d); return d; }
+      closeSheet(); toast(posted); LOADERS.me(); return d;
+    });
+  }
   var ME_OPEN = {};
   function disclosure(id, label, value, body){
     var open = !!ME_OPEN[id];
@@ -1338,6 +1394,7 @@
     html += '<div class="card">' + disclosure('avail', 'My availability', '', availBody) + '<div style="height:10px"></div>' +
       disclosure('prefs', 'What I’d like', '', prefsBody) + '</div>';
     html += attendanceCard();
+    html += agreementsCard();
     html += '<div class="sechead">Notices</div><div class="card">';
     var p = S.prefs;
     if (p === undefined) html += pulse('Loading your notices');
@@ -1574,6 +1631,30 @@
     'reload-tasks': function(){ LOADERS.tasks(); },
     'reload-inbox': function(){ LOADERS.inbox(); },
     'reload-me': function(){ LOADERS.me(); },
+    /* Agreements: each answer goes to the server stamped with its time. */
+    'consent-yes': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/consents/' + id + '/answer', {agree: true}, 'Agreed'); },
+    'consent-no': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/consents/' + id + '/answer', {agree: false}, 'Your manager is told'); },
+    'rest-standing': function(){
+      askConfirm('Agree to short turnarounds?', (S.agree && S.agree.rest ? S.agree.rest.text : '') +
+        ' You can withdraw this any time.', 'I agree', function(){ agreePost('/staff/api/consents/rest-standing', {agree: true}, 'Agreed'); });
+    },
+    'rest-revoke': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/consents/' + id + '/revoke', {}, 'Withdrawn'); },
+    'est-ack': function(el){ var id = el.getAttribute('data-id'); agreePost('/staff/api/estimate/' + id + '/acknowledge', {}, 'Signed'); },
+    'est-change': function(){
+      openSheet('Ask for a change', '<label class="lbl" for="est-why" style="margin-top:0">What would you like changed?</label>' +
+        '<textarea class="fld" id="est-why" maxlength="1000"></textarea><div class="errline" id="est-err" role="status" aria-live="polite"></div>' +
+        '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-block" data-act="est-send">Send to your manager</button></div>');
+    },
+    'est-send': function(btn){
+      var why = ($('est-why').value || '').replace(/^\s+|\s+$/g, '');
+      if (!why) { $('est-err').textContent = 'Say what you’d like changed.'; return; }
+      busyBtn(btn, 'Sending');
+      postJson('/staff/api/estimate/request-change', {body: why}).then(function(d){
+        unbusyBtn(btn);
+        if (!d.ok) { $('est-err').textContent = errText(d); return; }
+        closeSheet(); toast('Sent — your manager answers in writing'); LOADERS.me();
+      });
+    },
     message: function(el){
       var ctx = null, sd = el.getAttribute('data-shift-date'), rid = el.getAttribute('data-request-id');
       if (sd) ctx = {shift_date: sd, label: el.getAttribute('data-label') || mdy(sd)};

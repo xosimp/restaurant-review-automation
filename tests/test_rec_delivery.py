@@ -600,9 +600,13 @@ def test_a_delivered_draft_presents_its_standby_and_overtime_moves(db_path):
 
 
 def test_the_status_poll_presents_only_a_finished_draft():
-    for src in (open("client_api.py").read(), open("mobile_api.py").read()):
-        assert 'if job["status"] == "done":' in src
-        assert "present_schedule_result(current_user[\"restaurant_id\"], result, current_user.get(\"id\"))" in src
+    src = open("mobile_api.py").read()
+    assert 'if job["status"] == "done":' in src
+    assert "present_schedule_result(current_user[\"restaurant_id\"], result, current_user.get(\"id\"))" in src
+    # The web poll is the phone's body (schedule audit 10/10/26 ARCH-32).
+    import inspect
+    import client_api
+    assert '_m("mobile_schedule_status")' in inspect.getsource(client_api.schedule_status)
 
 
 # ── #40 the owner's edits to reply drafts ───────────────────────────────────

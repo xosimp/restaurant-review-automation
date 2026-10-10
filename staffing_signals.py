@@ -651,8 +651,9 @@ def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None,
     try:
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT review_json, schedule_csv, week_start FROM schedule_history WHERE id=? "
-                               "AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
+            row = conn.execute("SELECT review_json, COALESCE(published_csv, schedule_csv) AS schedule_csv, "
+                               "week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (history_id, restaurant_id)).fetchone()
         finally:
             conn.close()
     except Exception as e:
