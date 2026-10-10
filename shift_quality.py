@@ -47,6 +47,7 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 
 from time_utils import BUSINESS_DAY_START_HOUR
+import schedule_time as _stime
 from types import SimpleNamespace
 
 # The scale every dimension reports on. Percentages, because "Coverage 100%"
@@ -799,11 +800,12 @@ def shift_role_requirements(typical: dict = None, floors: dict = None, minimums:
 
 
 def _capped(ctx: ShiftContext, required: dict) -> tuple:
-    """(required, trimmed) under the section cap (staffing_curve.cap_requirement)."""
+    """(required, trimmed) under the section cap (staffing_curve.cap_requirement)
+    — for a half hour's need only: people on at once, the cap's own unit."""
     if not ctx.section_cap:
         return dict(required), {}
     from staffing_curve import cap_requirement
-    return cap_requirement(required, ctx.section_cap, ctx.cap_roles)
+    return cap_requirement(required, ctx.section_cap, ctx.cap_roles, getattr(ctx, "role_families", None) or None)
 
 
 def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
@@ -820,10 +822,13 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     if not reqs:
         return None
     required = {r: n for r, (n, _src) in reqs.items()}
-    # Never more of the section-counted roles than there are sections: the
-    # generator and the backstop hold the draft to the cap, so a requirement
-    # over it marked every such shift short however it was built.
-    required, over_cap = _capped(ctx, required)
+    # Different people on the floor for the daypart — NOT cut to the section
+    # cap, which counts people on at once: six staggered servers fit five
+    # sections, and holding the requirement to five scored five as full
+    # coverage and never asked for the sixth (schedule audit 10/10/26
+    # LOGIC-7). The cap holds where it is in its own unit — the half-hour
+    # needs (dim_coverage_curve) and the sweep's over_section_cap.
+    over_cap = {}
     sources = sorted({src for _n, src in reqs.values()})
     source = sources[0] if len(sources) == 1 else ", ".join(sources)
 
@@ -882,18 +887,16 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
         for entry in (ctx.elsewhere.get(name) or []):
             if entry.get("date") != ctx.date:
                 continue
-            es, ee = _end_minutes(entry.get("shift_start")), _end_minutes(entry.get("shift_end"))
-            if es >= 0 and ee >= 0 and mine:
-                if ee <= es:
-                    ee += 24 * 60
+            esp = _stime.span(entry)
+            if esp is not None and mine:
+                es, ee = esp
                 clash = False
                 for r in mine:
-                    rs, re_ = _end_minutes(r.get("shift_start")), _end_minutes(r.get("shift_end"))
-                    if rs < 0 or re_ < 0:
+                    rsp = _stime.span(r)
+                    if rsp is None:
                         clash = True
                         break
-                    if re_ <= rs:
-                        re_ += 24 * 60
+                    rs, re_ = rsp
                     if rs < ee and es < re_:
                         clash = True
                         break
@@ -2430,39 +2433,29 @@ def cross_training_target_for(role: str, owner: dict = None, fallback: float = N
 # ── Coverage by the half hour ──────────────────────────────────────────────
 
 SLOT_MINUTES = 30
-DAYPART_CUTOVER = 15 * 60
+# The default daypart boundary (schedule_time.DAYPART_SPLIT); the one in
+# force — a restaurant's own, inside schedule_time.daypart_scope — is
+# schedule_time.daypart_split().
+DAYPART_CUTOVER = _stime.DAYPART_SPLIT
 
 
-@lru_cache(maxsize=4096)
 def _clock(raw: str):
-    """(hour, minute) of a normalised clock string ("4:30pm", "16:30"), or
-    None. Remembered: the scorer reads the same few dozen times a thousand
-    times a week score, and strptime was most of a score's cost (schedule
-    audit 10/3/26 P-38)."""
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour, t.minute
-        except ValueError:
-            continue
-    return None
+    """(hour, minute) of a clock string ("4:30pm", "16:30", "noon"), or None
+    — schedule_time.parse_minutes, remembered per spelling there (P-38)."""
+    m = _stime.parse_minutes(raw)
+    return None if m is None else divmod(m, 60)
 
 
 def _slot_minutes(value: str):
-    raw = (value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    hm = _clock(raw)
-    return hm[0] * 60 + hm[1] if hm else None
+    """A clock time as minutes past midnight (schedule_time.parse_minutes)."""
+    return _stime.parse_minutes(value)
 
 
 def _row_span(row: dict):
-    """(start, end) minutes of a row on its own date; an end at or before
-    its start runs past midnight. None when either time is unreadable."""
-    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
-    if s is None or e is None:
-        return None
-    return (s, e + 24 * 60) if e <= s else (s, e)
+    """(start, end) minutes of a row on its business date's timeline
+    (schedule_time.span): an end at or before its start runs past midnight
+    and a start in the small hours is that night's. None when unreadable."""
+    return _stime.span(row)
 
 
 def floor_window(daypart: str, open_minutes=None, close_minutes=None):
@@ -2486,10 +2479,10 @@ def floor_window(daypart: str, open_minutes=None, close_minutes=None):
     if open_minutes is not None:
         lo = max(lo, int(open_minutes))
     if close_minutes is not None:
-        close = int(close_minutes)
-        # A close before 5am, or at or before opening, is after midnight.
-        if close < 5 * 60 or (open_minutes is not None and close <= int(open_minutes)):
-            close += 24 * 60
+        # A close at or before opening, or in the small hours with no open
+        # to judge by, is after midnight (schedule_time.close_on_timeline).
+        close = _stime.close_on_timeline(int(close_minutes),
+                                         int(open_minutes) if open_minutes is not None else None)
         hi = min(hi, close)
     return (lo, hi) if hi - lo >= SLOT_MINUTES else None
 
@@ -2553,6 +2546,127 @@ def floor_shortfall(rows: list, role: str, need: int, daypart: str, open_minutes
     return out
 
 
+# ── the one headcount unit: people on at once ─────────────────────────────
+# Every requirement, floor, usual crew and cap is "how many people are on at
+# once" at a half hour (schedule audit 10/10/26 LOGIC-2, BUGSGEN-1/2): a
+# floor is held at every half hour of the core window (floor_shortfall), a
+# section cap is a count on at once. "How many different people worked some
+# part of dinner" is a second number — six staggered servers who are never
+# more than four on at once — and saving it as a floor made the restaurant's
+# own usual night break its own minimum. concurrent_on is the one count the
+# Crew stage, the staffing baseline and the setup's suggested floors read.
+
+def daypart_span(daypart: str, open_minutes=None, close_minutes=None):
+    """(lo, hi) minutes of a daypart's half of the business day: open (5am
+    when unknown) to the 3pm changeover for lunch, the changeover to close
+    (midnight when unknown; a small-hours close is past 24h) for dinner.
+    None for any other daypart."""
+    # The restaurant's boundary and the close read against the open
+    # (schedule_time — ARCH-12, BUGSGEN-22).
+    split = _stime.daypart_split()
+    if daypart == "morning":
+        lo = int(open_minutes) if open_minutes is not None and int(open_minutes) < split else 5 * 60
+        return (lo, split) if split - lo >= SLOT_MINUTES else None
+    if daypart == "night":
+        hi = 24 * 60
+        if close_minutes is not None:
+            c = _stime.close_on_timeline(int(close_minutes),
+                                         int(open_minutes) if open_minutes is not None else None)
+            if c > split:
+                hi = c
+        return (split, hi)
+    return None
+
+
+def _counted_key(role, families=None, by_family=True) -> str:
+    if by_family:
+        return role_family(role, families)
+    return " ".join(str(role or "").split()).casefold()
+
+
+def concurrent_on(rows: list, daypart: str, role=None, open_minutes=None, close_minutes=None,
+                  families: dict = None, by_family: bool = True, skip=None) -> dict:
+    """People on at once across one date's `rows` for one daypart:
+    {"held": the fewest on at any half hour of the floor window (the count a
+    staffing floor is tested against — floor_shortfall), None when the
+    restaurant serves none of the core window; "peak": the most on at once
+    over the daypart's half of the day (daypart_span); "slots": {minute:
+    people on} at each half hour of it}.
+
+    `role` keeps the count to its AM/PM job codes as one role (role_family,
+    by `families`) or, with by_family False, to that job code alone; None
+    counts every row given. A person on two overlapping rows is one; a row
+    `skip(row)` says does not stand (time off, a double booking) is nobody."""
+    want = _counted_key(role, families, by_family) if role is not None else None
+    spans = []
+    for r in rows or []:
+        person = " ".join(str(r.get("employee") or "").split()).casefold()
+        if not person or (skip is not None and skip(r)):
+            continue
+        if want is not None and _counted_key(r.get("role"), families, by_family) != want:
+            continue
+        sp = _row_span(r)
+        if sp:
+            spans.append((person, sp[0], sp[1]))
+    return _concurrency(spans, daypart, open_minutes, close_minutes)
+
+
+def _concurrency(spans, daypart, open_minutes=None, close_minutes=None) -> dict:
+    """concurrent_on's figures for spans [(person, start, end)] already kept
+    to one role."""
+    out = {"held": None, "peak": 0, "slots": {}}
+    span = daypart_span(daypart, open_minutes, close_minutes)
+    if not span:
+        return out
+    lo, hi = span
+    for t in range(lo + (-lo) % SLOT_MINUTES, hi, SLOT_MINUTES):
+        out["slots"][t] = len({p for p, s, e in spans if s <= t < e})
+    out["peak"] = max(out["slots"].values()) if out["slots"] else 0
+    fslots = floor_slots(daypart, open_minutes, close_minutes)
+    if fslots:
+        out["held"] = min(len({p for p, s, e in spans if s <= t < e}) for t in fslots)
+    return out
+
+
+def concurrent_groups(rows: list, daypart: str, open_minutes=None, close_minutes=None,
+                      families: dict = None, skip=None) -> dict:
+    """concurrent_on for every role in one date's `rows` at once:
+    {"role": {job code: figures}, "family": {role family: figures}} — the
+    job code as the rows spell it (its first spelling). Training codes are
+    nobody's crew and are left out."""
+    by_code, by_fam, spelled = {}, {}, {}
+    for r in rows or []:
+        person = " ".join(str(r.get("employee") or "").split()).casefold()
+        role = " ".join(str(r.get("role") or "").split())
+        if not person or not role or is_training_role(role) or (skip is not None and skip(r)):
+            continue
+        sp = _row_span(r)
+        if not sp:
+            continue
+        key = role.casefold()
+        spelled.setdefault(key, role)
+        by_code.setdefault(key, []).append((person, sp[0], sp[1]))
+        by_fam.setdefault(role_family(role, families), []).append((person, sp[0], sp[1]))
+    return {"role": {spelled[k]: _concurrency(v, daypart, open_minutes, close_minutes) for k, v in by_code.items()},
+            "family": {f: _concurrency(v, daypart, open_minutes, close_minutes) for f, v in by_fam.items()}}
+
+
+def present_people(rows: list, daypart: str, role, families: dict = None, by_family: bool = False,
+                   skip=None) -> int:
+    """How many different people of `role` are on the floor for `daypart`
+    (present_dayparts — the requirement's own count, labor.historical_
+    patterns'): the second number beside concurrent_on's, never mixed with it."""
+    want = _counted_key(role, families, by_family)
+    names = set()
+    for r in rows or []:
+        person = " ".join(str(r.get("employee") or "").split()).casefold()
+        if not person or (skip is not None and skip(r)) or _counted_key(r.get("role"), families, by_family) != want:
+            continue
+        if daypart in present_dayparts(r):
+            names.add(person)
+    return len(names)
+
+
 def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     """Is every required position filled at every half hour, not just on
     average across the daypart?
@@ -2602,12 +2716,13 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     # own shifts hand over, not a fixed 3pm: lunch ending at 2:30 and dinner
     # starting at 4 is a handover, not an hour and a half "short".
     own = [sp for r in (ctx.rows or []) for sp in [_row_span(r)] if sp is not None and not ctx._is_flagged(r)]
+    split = _stime.daypart_split()
     if ctx.daypart == "morning":
-        latest = max((e for _s, e in own), default=DAYPART_CUTOVER)
-        lo, hi = day_open, min(day_close, max(CORE_WINDOWS["morning"][1], min(latest, DAYPART_CUTOVER)))
+        latest = max((e for _s, e in own), default=split)
+        lo, hi = day_open, min(day_close, max(CORE_WINDOWS["morning"][1], min(latest, split)))
     elif ctx.daypart == "night":
-        earliest = min((s for s, _e in own), default=DAYPART_CUTOVER)
-        lo, hi = max(day_open, min(CORE_WINDOWS["night"][0], max(earliest, DAYPART_CUTOVER))), day_close
+        earliest = min((s for s, _e in own), default=split)
+        lo, hi = max(day_open, min(CORE_WINDOWS["night"][0], max(earliest, split))), day_close
     else:
         lo, hi = day_open, day_close
     if hi - lo < SLOT_MINUTES:
@@ -2733,14 +2848,17 @@ def dim_coverage_curve(ctx: ShiftContext) -> DimensionResult | None:
     if not gaps:
         held_lo, held_hi = fwin if (fwin and not curve_needs) else (lo, hi)
         res.strengths.append(f"Every floor is held from {_fmt_minutes(held_lo)} to {_fmt_minutes(held_hi)}.")
-    in_window = {h: v for h, v in (ctx.demand_curve or {}).items() if lo <= int(h) * 60 < hi}
+    # Hours on the business timeline (schedule_time.business_hour): a 1am
+    # hour is the night's tail, never the start of the day (BUGSGEN-19).
+    in_window = {_stime.business_hour(int(h)): v for h, v in (ctx.demand_curve or {}).items()
+                 if 0 <= int(h) <= 23 and lo <= _stime.business_hour(int(h)) * 60 < hi}
     if in_window:
         # The busiest hour of THIS daypart by sales share, and whether it is
         # the best-staffed — lunch was being told about the dinner peak.
         peak_hour = max(in_window.items(), key=lambda kv: kv[1])[0]
         on_peak = len({p for _f, p, s, e in spans if s <= int(peak_hour) * 60 < e})
         on_max = max((len({p for _f, p, s, e in spans if s <= t < e}) for t in slots), default=0)
-        res.facts["peak_hour"] = int(peak_hour)
+        res.facts["peak_hour"] = int(peak_hour) % 24
         res.facts["on_at_peak"] = on_peak
         if on_max and on_peak < on_max:
             res.weaknesses.append(
@@ -2776,7 +2894,8 @@ def _half_hour_requirement(ctx: ShiftContext, lo: int, hi: int) -> dict:
     # Normalised over the daypart's whole half of the day, as the
     # requirements table is (schedule_requirements._service_window), so the
     # two agree on every half hour; then only this shift's window is judged.
-    half = (0, DAYPART_CUTOVER) if ctx.daypart == "morning" else (DAYPART_CUTOVER, 48 * 60)
+    split = _stime.daypart_split()
+    half = (0, split) if ctx.daypart == "morning" else (split, 48 * 60)
     needs = half_hour_needs(ctx.demand_curve, ctx.typical_headcount, *half)
     return {m: n for m, n in needs.items() if lo <= m < hi}
 
@@ -2786,11 +2905,15 @@ def _peak_requirement(ctx: ShiftContext):
     measured sales curve and the usual crew — or None without both."""
     if not ctx.demand_curve or not ctx.typical_headcount:
         return None
-    lo, hi = (0, DAYPART_CUTOVER // 60) if ctx.daypart == "morning" else (DAYPART_CUTOVER // 60, 24)
-    hours = {int(h): v for h, v in ctx.demand_curve.items() if lo <= int(h) < hi and v}
+    split_h = _stime.daypart_split() // 60
+    lo, hi = (0, split_h) if ctx.daypart == "morning" else (split_h, 24 + _stime.BUSINESS_DAY_START_HOUR)
+    # On the business timeline: a bar's 1am hour is the night's, never a
+    # candidate for the lunch peak (BUGSGEN-19).
+    hours = {_stime.business_hour(int(h)): v for h, v in ctx.demand_curve.items()
+             if 0 <= int(h) <= 23 and lo <= _stime.business_hour(int(h)) < hi and v}
     if not hours:
         return None
-    hour = max(hours.items(), key=lambda kv: kv[1])[0]
+    hour = max(hours.items(), key=lambda kv: kv[1])[0] % 24
     import math
     needs = {role: max(1, int(math.ceil(PEAK_SHARE * int(n)))) for role, n in ctx.typical_headcount.items() if n}
     return (hour, needs) if needs else None
@@ -4473,18 +4596,11 @@ def daypart_of(shift_start: str) -> str:
     guessing, because a wrong daypart silently reassigns people between
     shifts that are judged against different profiles.
     """
-    raw = (shift_start or "").strip().lower().replace(" ", "")
-    if not raw:
-        return "unknown"
-    hm = _clock(raw)
-    if hm is None:
-        return "unknown"
-    hour = hm[0]
-    # A start in the small hours is the night it belongs to — the row's
-    # date is its business date (time_utils.BUSINESS_DAY_START_HOUR;
-    # schedule audit 10/3/26 E-32), never the next morning; from 4am it
-    # is early prep for the morning (schedule_rules._night_offset).
-    return "night" if hour >= 15 or _small_hours_night(hour * 60) else "morning"
+    # The one rule, in schedule_time (BUGSGEN-25): a start in the small
+    # hours is the night it belongs to — the row's date is its business date
+    # (schedule audit 10/3/26 E-32), never the next morning; from 4am it is
+    # early prep for the morning; otherwise the restaurant's boundary.
+    return _stime.start_daypart(shift_start)
 
 
 @lru_cache(maxsize=1024)
@@ -4508,21 +4624,23 @@ def _day_name(date_str: str, fallback: str = "") -> str:
 
 
 def _end_minutes(value: str) -> int:
-    """Minutes past midnight for a shift end, or -1 when it cannot be read.
+    """Minutes past midnight for a shift end read alone, or -1 when it
+    cannot be read: an end in the small hours (before schedule_time.
+    SMALL_HOURS_BEFORE) is past midnight — for the one question this answers,
+    which bucket closes the day, a 1:00am end is the last one out, and
+    treating it as 60 would make the lunch crew the closers. With the whole
+    row in hand, _row_end reads it on the row's own timeline."""
+    m = _stime.parse_minutes(value)
+    if m is None:
+        return -1
+    return m + _stime.DAY if m < _stime.SMALL_HOURS_BEFORE else m
 
-    A shift ending after midnight is deliberately NOT wrapped: for the one
-    question this answers — which bucket closes the day — a 1:00am end is
-    the last one out, and treating it as 60 would make the lunch crew the
-    closers.
-    """
-    raw = (value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return -1
-    hm = _clock(raw)
-    if hm is None:
-        return -1
-    minutes = hm[0] * 60 + hm[1]
-    return minutes + 1440 if hm[0] < 5 else minutes
+
+def _row_end(row: dict) -> int:
+    """A row's end on its business date's timeline (schedule_time.end_of),
+    or -1 when unreadable."""
+    e = _stime.end_of(row)
+    return -1 if e is None else e
 
 
 def _row_hours(row: dict) -> float:
@@ -4537,8 +4655,8 @@ def _row_hours(row: dict) -> float:
 # that daypart's core: an 11:30am-7pm server is on the floor for dinner, and
 # bucketing people by start time alone read that dinner as a server short
 # while the generator was told (correctly) that she counts toward it.
-CORE_WINDOWS = {"morning": (11 * 60, 14 * 60 + 30), "night": (17 * 60 + 30, 20 * 60 + 30)}
-PRESENCE_MIN_OVERLAP = 60
+CORE_WINDOWS = _stime.CORE_WINDOWS
+PRESENCE_MIN_OVERLAP = _stime.PRESENCE_MIN_OVERLAP
 
 # The late segment (schedule audit 10/3/26 D-32): late-night service, from
 # 10pm to close, on a day that closes past 11pm. Not a third daypart — a
@@ -4557,11 +4675,9 @@ def late_window(close_minutes):
     if close_minutes is None:
         return None
     try:
-        c = int(close_minutes)
+        c = _stime.close_on_timeline(int(close_minutes))
     except (TypeError, ValueError):
         return None
-    if c < 5 * 60:
-        c += 24 * 60
     return (LATE_WINDOW_START, c) if c > LATE_CLOSE_AFTER else None
 
 
@@ -4570,16 +4686,15 @@ def late_minutes(row: dict, window) -> int:
     0 outside it or when its times cannot be read."""
     if not window:
         return 0
-    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
-    if s is None or e is None:
+    sp = _stime.span(row)
+    if sp is None:
         return 0
-    if e <= s:
-        e += 24 * 60
-    return max(0, min(e, window[1]) - max(s, window[0]))
+    return max(0, min(sp[1], window[1]) - max(sp[0], window[0]))
 
 
 def present_dayparts(row: dict) -> list:
-    """The dayparts a row is on the floor for: each whose core service
+    """The dayparts a row is on the floor for — THE daypart rule, in
+    schedule_time.present_dayparts (BUGSGEN-25): each whose core service
     window it covers for at least PRESENCE_MIN_OVERLAP minutes, the one it
     covers most first (that is the row's own daypart, where its hours and
     week assignment count). A shift covering neither core window (an early
@@ -4588,43 +4703,20 @@ def present_dayparts(row: dict) -> list:
     Judged by what the shift covers, not when it starts: a 2pm-11:30pm cook
     started "at lunch" by the 3pm cutover and was counted as full lunch
     coverage for half an hour of it."""
-    primary = daypart_of(row.get("shift_start", ""))
-    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
-    if s is None or e is None or primary == "unknown":
-        return [primary]
-    if e <= s:
-        e += 24 * 60
-    covered = []
-    for part, (lo, hi) in CORE_WINDOWS.items():
-        overlap = min(e, hi) - max(s, lo)
-        if overlap >= min(PRESENCE_MIN_OVERLAP, hi - lo):
-            covered.append((overlap, part == primary, part))
-    if not covered:
-        return [primary]
-    covered.sort(key=lambda t: (-t[0], not t[1]))
-    return [p for _o, _pr, p in covered]
+    return _stime.present_dayparts(row)
 
 
 def touched_dayparts(row: dict) -> list:
-    """The dayparts a row reaches into at all — each whose core service
-    window it overlaps by any minute, the start's daypart first — for a
-    block on a half of the day (part-day time off, morning-only or
-    night-only availability). present_dayparts' hour of presence is right
-    for counting coverage and wrong for a block: a 10:30am-6:25pm shift ran
-    55 minutes into an approved dinner off, and 1:35-10pm into the lunch of
-    somebody available for dinner only, and neither was flagged (schedule
-    re-audit 10/4/26 RULES-11). A row touching neither core window is its
-    start's daypart."""
-    primary = daypart_of(row.get("shift_start", ""))
-    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
-    if s is None or e is None or primary == "unknown":
-        return [primary]
-    if e <= s:
-        e += 24 * 60
-    hit = [part for part, (lo, hi) in CORE_WINDOWS.items() if min(e, hi) - max(s, lo) > 0]
-    if not hit:
-        return [primary]
-    return sorted(hit, key=lambda p: p != primary)
+    """The dayparts a row reaches into at all (schedule_time.touched_dayparts)
+    — each whose core service window it overlaps by any minute, the start's
+    daypart first — for a block on a half of the day (part-day time off,
+    morning-only or night-only availability). present_dayparts' hour of
+    presence is right for counting coverage and wrong for a block: a
+    10:30am-6:25pm shift ran 55 minutes into an approved dinner off, and
+    1:35-10pm into the lunch of somebody available for dinner only, and
+    neither was flagged (schedule re-audit 10/4/26 RULES-11). A row touching
+    neither core window is its start's daypart."""
+    return _stime.touched_dayparts(row)
 
 
 def works_daypart_ok(row: dict, choice: str) -> bool:
@@ -4740,8 +4832,9 @@ def strength_crews(profiles: list = None, typical_headcount: dict = None, role_f
     """{(family, target): (crew, source)} — the full crew each strength
     target was set for: the most of the target's role that any weekday and
     daypart the target governs needs (each resolved to its profile, the
-    requirement read as coverage reads it — shift_role_requirements under
-    the section cap — and a role's AM/PM job codes added up). A target
+    requirement read as coverage reads it — shift_role_requirements, in
+    different people, never cut to the section cap (LOGIC-7) — and a role's
+    AM/PM job codes added up). A target
     written for Saturday's two bartenders is judged as 4 a person, so a
     lunch that needs one bartender asks for a 4, not for 8 (SQ-4). A target
     the profile set apart keeps its own crew. Pure; the scorer and, through
@@ -4759,10 +4852,11 @@ def strength_crews(profiles: list = None, typical_headcount: dict = None, role_f
                                            profile.critical_positions)
             if not reqs:
                 continue
+            # The crew is different people across the daypart, as coverage
+            # reads it — the section cap (people on at once) is not this
+            # unit's limit (LOGIC-7); `section_cap` / `cap_roles` are kept
+            # for the callers and read nowhere here.
             need = {r: n for r, (n, _s) in reqs.items()}
-            if section_cap:
-                from staffing_curve import cap_requirement
-                need, _trimmed = cap_requirement(need, section_cap, cap_roles)
             by_family = {}
             for r, n in need.items():
                 entry = by_family.setdefault(role_family(r, families), [0, set()])
@@ -4908,7 +5002,8 @@ def _breach_items(breaches, rows_by_date: dict):
             elif v.get("gap_start") is not None and v.get("gap_end") is not None:
                 try:
                     gs, ge = int(v["gap_start"]), int(v["gap_end"])
-                    parts = (["morning"] if gs < DAYPART_CUTOVER else []) + (["night"] if ge > DAYPART_CUTOVER else [])
+                    split = _stime.daypart_split()
+                    parts = (["morning"] if gs < split else []) + (["night"] if ge > split else [])
                 except (TypeError, ValueError):
                     parts = None
             elif kind == "no_manager_on_duty" and v.get("shift_start"):
@@ -4993,7 +5088,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
     # row's own daypart, so a straight-through does not make lunch a close.
     closes_on, latest_end = {}, {}
     for (date, part), shift_rows in primary.items():
-        latest = max((_end_minutes(r.get("shift_end")) for r in shift_rows), default=-1)
+        latest = max((_row_end(r) for r in shift_rows), default=-1)
         latest_end[date] = max(latest_end.get(date, -1), latest)
         if latest > closes_on.get(date, (-1, None))[0]:
             closes_on[date] = (latest, part)
@@ -5031,8 +5126,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
                 continue
             entries = week_assignments.setdefault(name, [])
             closing = part == closing_part or (
-                _end_minutes(row.get("shift_end")) >= 0
-                and _end_minutes(row.get("shift_end")) == latest_end.get(date))
+                _row_end(row) >= 0 and _row_end(row) == latest_end.get(date))
             existing = [e for e in entries if e["date"] == date and e["daypart"] == part and not e.get("prior")]
             if not existing:
                 entries.append({"date": date, "daypart": part, "day": day, "demand": demand,
@@ -5682,35 +5776,19 @@ def _unavailable(availability: dict, name: str, day: str) -> bool:
 
 
 def _small_hours_night(start_m, end_m=None) -> int:
-    """1440 when a shift belongs to the small hours of its row's night —
-    schedule_rules._night_offset's rule, here because this module is pure:
-    it starts before the business day's first hour and is over by 6am (a
-    12:30am porter), or, with no end to judge by, starts before 4am. A
-    4:30am–12:30pm baker is the morning's (schedule audit 10/3/26 E-32)."""
-    if start_m is None or start_m >= BUSINESS_DAY_START_HOUR * 60:
-        return 0
-    if end_m is None:
-        return 24 * 60 if start_m < 4 * 60 else 0
-    end = end_m if end_m > start_m else end_m + 24 * 60
-    return 24 * 60 if end <= 6 * 60 else 0
+    """1440 when a shift starting at `start_m` belongs to the small hours of
+    its row's night — schedule_time.night_offset, the start alone deciding
+    (BUGSGEN-8): before 4am it is the night's (a 12:30am porter); a 4:30am-
+    12:30pm baker is the morning's (schedule audit 10/3/26 E-32)."""
+    return _stime.night_offset(start_m)
 
 
 def _span(row):
-    """(start, end) datetimes on the row's date; an end before the start
-    crosses midnight, and a start in the small hours is that night's
-    (schedule_rules.shift_span, E-32), so a swap's rest and overlap checks
-    read a 12:30am porter the way the rule sweep does."""
-    try:
-        base = _iso_datetime(row.get("date", ""))
-    except (ValueError, TypeError):
-        return None, None
-    s, e = _slot_minutes(row.get("shift_start")), _slot_minutes(row.get("shift_end"))
-    if s is None or e is None:
-        return None, None
-    night = _small_hours_night(s, e)
-    start = base + timedelta(minutes=s + night)
-    end = base + timedelta(minutes=(e if e > s else e + 24 * 60) + night)
-    return start, end
+    """(start, end) datetimes on the row's date (schedule_time.shift_span):
+    an end before the start crosses midnight, and a start in the small hours
+    is that night's, so a swap's rest and overlap checks read a 12:30am
+    porter the way the rule sweep does."""
+    return _stime.shift_span(row)
 
 
 class _SwapIndex:
@@ -6335,7 +6413,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
                     after = _rules.breach_profile(trial, c, viols=viols)
                     if after["by_id"].get(target, 0.0) >= before["by_id"].get(target, 0.0) - 1e-9:
                         continue            # the breach this fix is for is still there
-                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_COVERAGE,
+                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_POLICY,
                                           hard_only=not under_line):
                         continue            # a fix that trades one breach for another is not a fix
                     fl = {((x.get("employee") or "").strip().lower(), x.get("date") or "", x.get("shift_start") or "")

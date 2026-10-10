@@ -67,6 +67,7 @@ import time as _time
 from datetime import datetime as _dt
 
 import shift_quality as sq
+import schedule_time as _stime
 
 # Stop once the week reaches this, or when no candidate improves it.
 DEFAULT_TARGET = 92
@@ -86,13 +87,16 @@ BUDGET_TOLERANCE = 1.02
 # How far a shift may be stretched in one move.
 MAX_EXTEND_MINUTES = 150
 STEP = 30
-# A move that takes hours out of a weekday where cutting staffing was taken
-# and measured WORSE here (inputs["learned_worse"], rec_learning.
-# worsened_levers — memory audit 9/29/26, "what_worked") pays this much of
-# its gain per worse result, capped: a small score gain no longer repeats a
-# cut that went badly, a large one (a breach fixed) still goes through and
-# says what it overrode.
-LEARNED_WORSE_STEP = 0.5
+# A move that takes hours out of a slot where cutting staffing was taken and
+# measured WORSE here (inputs["learned_worse"], rec_learning.
+# worsened_levers — memory audit 9/29/26, "what_worked") pays up to this
+# much of its gain, graded by the evidence's strength there (rec_learning.
+# learned_cut_penalty: the Wilson lower bound of the worsened share above
+# the restaurant's own base rate, scoped to the daypart and role the cuts
+# named) — the trim's one meaning of the same memory (sched audit 10/10/26
+# LOGIC-15): a small score gain no longer repeats a cut that went badly, a
+# large one (a breach fixed) still goes through and says what it overrode.
+LEARNED_WORSE_STEP = 0.5          # kept for readers of the old per-result rate
 LEARNED_WORSE_MAX = 1.5
 # What labor dollars are worth against the score (schedule audit 10/3/26
 # P-32): week points per 1% of the week's labor dollars a move adds over the
@@ -126,16 +130,21 @@ def _fmt(minutes: int) -> str:
 
 
 def _span(row):
-    s, e = _m(row.get("shift_start")), _m(row.get("shift_end"))
-    if s is None or e is None:
-        return None, None
-    if e <= s:
-        e += 24 * 60
-    return s, e
+    """(start, end) minutes of a row on its business date's timeline
+    (schedule_time.span — the one placement, ARCH-12): a 12:30am-4:00am
+    porter is 1470-1680 of the night it works, as the rules read it, never
+    30-240 at the start of its date (the "nobody at close" move ranked such
+    a porter as ending at dawn and proposed retimes _judge then refused).
+    (None, None) when unreadable."""
+    sp = _stime.span(row)
+    return sp if sp is not None else (None, None)
 
 
-def _hours_between(s, e) -> float:
-    return round((e - s) / 60.0, 2)
+def _hours_text(row, constraints=None) -> str:
+    """A row's scheduled_hours from its real span in the restaurant's zone
+    (BUGSGEN-6): a retime or an added shift across the night the clocks
+    change is an hour more or less than the wall clock."""
+    return _stime.row_hours_text(row, getattr(constraints, "tz", None) if constraints is not None else None)
 
 
 def _day(date: str) -> str:
@@ -674,15 +683,14 @@ class _State:
         return True
 
 
-def _new_row(date, name, role, start, end, why):
-    s, e = _m(start), _m(end)
-    hours = _hours_between(s, e if e > s else e + 24 * 60) if s is not None and e is not None else 0
+def _new_row(date, name, role, start, end, why, constraints=None):
     # A string, like every row the engine writes: the iOS ScheduleRow
     # decodes scheduled_hours as String and a bare number failed the whole
-    # response.
-    return {"date": date, "day": _day(date), "employee": name, "role": role,
-            "shift_start": start, "shift_end": end, "scheduled_hours": str(hours),
-            "notes": f"{NOTE_TAG} {why}"}
+    # response. From the real span (BUGSGEN-6).
+    row = {"date": date, "day": _day(date), "employee": name, "role": role,
+           "shift_start": start, "shift_end": end, "notes": f"{NOTE_TAG} {why}"}
+    row["scheduled_hours"] = _hours_text(row, constraints)
+    return row
 
 
 def _tag(row, why):
@@ -730,7 +738,7 @@ def _moves_for(problem, state: _State) -> list:
         pool = sorted(people, key=lambda n: (-(prefer(n) if prefer else 0), state.rate(n, role),
                                              state.index.total_hours(n.lower()), n))
         for name in pool:
-            row = _new_row(date, name, role, start, end, why)
+            row = _new_row(date, name, role, start, end, why, getattr(state, "constraints", None))
             if state.can_add(name, row):
                 moves.append((("add", date, name, role, start),
                               f"Added {name} as {role} on {where} ({start}–{end}) — {why}.",
@@ -1408,8 +1416,9 @@ def _retime_move(state, i, new_s, new_e, why):
     # not offered.
     c = getattr(state, "constraints", None)
     if c is not None:
-        new = dict(row, shift_start=start, shift_end=end, scheduled_hours=str(_hours_between(new_s, new_e)))
-        grows = _hours_between(new_s, new_e) > sq._row_hours(row) + 0.01
+        new = dict(row, shift_start=start, shift_end=end)
+        new["scheduled_hours"] = _hours_text(new, c)
+        grows = float(new["scheduled_hours"]) > sq._row_hours(row) + 0.01
         if not c.can_add(new, state._others({i}), overtime=grows)[0]:
             return None
         try:
@@ -1421,11 +1430,11 @@ def _retime_move(state, i, new_s, new_e, why):
                      or (spec.get("end") is not None and new_e % (24 * 60) != spec["end"] % (24 * 60))):
             return None
 
-    def apply(rows, i=i, start=start, end=end, new_s=new_s, new_e=new_e, why=why):
+    def apply(rows, i=i, start=start, end=end, new_s=new_s, new_e=new_e, why=why, c=c):
         out = [dict(r) for r in rows]
         was = f"{out[i].get('shift_start')}–{out[i].get('shift_end')}"
         out[i]["shift_start"], out[i]["shift_end"] = start, end
-        out[i]["scheduled_hours"] = str(_hours_between(new_s, new_e))
+        out[i]["scheduled_hours"] = _hours_text(out[i], c)
         _tag(out[i], f"{why} (was {was})")
         return out
     return (("retime", i, start, end),
@@ -1608,36 +1617,51 @@ def _what_if_moves(state: _State, quality: dict, limit: int = WHAT_IF_CANDIDATES
 
 
 def learned_worse_days(inputs) -> dict:
-    """{weekday (lower): {worsened, measured, label}} from
-    inputs["learned_worse"], keeping the days with a worse result."""
+    """{weekday (lower): lever} from inputs["learned_worse"] (rec_learning.
+    worsened_levers), keeping the days with a worse result."""
     return {str(k).strip().lower(): v for k, v in ((inputs or {}).get("learned_worse") or {}).items()
             if isinstance(v, dict) and int(v.get("worsened") or 0) > 0}
 
 
 def learned_penalty(worse, before_rows, after_rows):
-    """(penalty, note) for a move that takes hours out of a weekday whose
-    cuts measured worse here (learned_worse_days), else (0.0, None). Pure."""
+    """(penalty, note) for a move that takes hours out of a slot whose cuts
+    measured worse here, graded by the evidence there (rec_learning.
+    learned_cut_penalty — the trim's own meaning, LOGIC-15): LEARNED_WORSE_MAX
+    times the strongest slot it cuts into, by weekday, daypart and role;
+    (0.0, None) when it cuts nothing the evidence weighs. Pure."""
     if not worse:
         return 0.0, None
-    hb, ha = {}, {}
-    for r in before_rows or []:
-        hb[r.get("date")] = hb.get(r.get("date"), 0.0) + sq._row_hours(r)
-    for r in after_rows or []:
-        ha[r.get("date")] = ha.get(r.get("date"), 0.0) + sq._row_hours(r)
-    hit = set()
-    for d, h in hb.items():
-        if ha.get(d, 0.0) < h - 0.01:
+    import rec_learning as _rl
+
+    def _hours_by(rows):
+        out = {}
+        for r in rows or []:
+            d = r.get("date")
             try:
-                hit.add(_dt.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A").lower())
+                wd = _dt.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A").lower()
             except (TypeError, ValueError):
                 continue
-    hit &= set(worse)
-    if not hit:
+            fam = sq.role_family(r.get("role")) if r.get("role") else None
+            for part in (sq.present_dayparts(r) or [None]):
+                k = (wd, part, fam)
+                out[k] = out.get(k, 0.0) + sq._row_hours(r)
+        return out
+    hb, ha = _hours_by(before_rows), _hours_by(after_rows)
+    best, hit = 0.0, set()
+    for (wd, part, fam), h in hb.items():
+        if ha.get((wd, part, fam), 0.0) >= h - 0.01 or wd not in worse:
+            continue
+        s = _rl.learned_cut_penalty(worse, wd, part, fam)
+        if s > 0:
+            hit.add(wd)
+            best = max(best, s)
+    if best <= 0:
         return 0.0, None
+    pen = round(LEARNED_WORSE_MAX * best, 3)
     n = sum(int(worse[d].get("worsened") or 0) for d in hit)
-    pen = min(LEARNED_WORSE_MAX, LEARNED_WORSE_STEP * n)
     labels = ", ".join(sorted(str(worse[d].get("label") or d) for d in hit))
-    return pen, f"{labels} measured worse here {n} time{'s' if n != 1 else ''} (before and after, not proof)"
+    return pen, (f"{labels} measured worse here {n} time{'s' if n != 1 else ''} — weighed at "
+                 f"{round(best * 100):d}% strength (before and after, not proof)")
 
 
 def _pinned_rows(rows) -> list:

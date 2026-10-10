@@ -226,9 +226,11 @@ def stay_on(restaurant_id, gap, on_today, exclude=(), db_path=DB_PATH, limit=2, 
     import schedule_engine as _se
     import staff_settings as _ss
     from shift_quality import role_family
-    from schedule_rules import parse_minutes
     from models import get_operational_scores
-    start = parse_minutes(gap.get("shift_start") or "")
+    import schedule_time as _stime
+    # Both ends on the business date's timeline (schedule_time, ARCH-12): a
+    # gap at 12:30am and a shift ending at 12:30am are the same night.
+    start = _stime.start_of({"shift_start": gap.get("shift_start") or ""})
     if start is None:
         return []
     try:
@@ -248,12 +250,9 @@ def stay_on(restaurant_id, gap, on_today, exclude=(), db_path=DB_PATH, limit=2, 
     cands = {}
     for r in on_today or []:
         name = (r.get("employee") or "").strip()
-        end = parse_minutes(r.get("shift_end") or "")
+        end = _stime.end_of(r)
         if not name or _ss.name_key(name) in excluded or end is None:
             continue
-        s = parse_minutes(r.get("shift_start") or "")
-        if s is not None and end <= s:
-            end += 24 * 60                 # ends after midnight
         if not (start - COVER_ABUT_MINUTES <= end <= start):
             continue                       # still on when it starts, or long gone
         role = (r.get("role") or "").strip().lower()

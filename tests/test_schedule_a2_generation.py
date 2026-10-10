@@ -130,5 +130,5 @@ def test_the_halloween_close_is_counted_in_real_hours(db, monkeypatch):
              _line("2026-10-31", "Gm", "General Manager", "5:00pm", "2:00am", 9)]
     res = _run(monkeypatch, rid, lines, week=week, roles={"Gm": "General Manager", "Ana": "Bartender"})
     ana = next(r for r in res["preview_rows"] if r["employee"] == "Ana")
-    assert ana["scheduled_hours"] == "10.0" and ana.get("dst_hours") == 1.0
+    assert ana["scheduled_hours"] == "10" and ana.get("dst_hours") == 1.0
     assert "extra hour when the clocks go back" in ana["notes"]

@@ -25,6 +25,7 @@ from models import get_restaurant
 import schedule_output as _sched_out
 import schedule_prompt as _sp
 import schedule_rules as _rules
+import schedule_time as _stime
 import schedule_versions as _versions
 import staff_settings as _staff
 import demand_signals as _signals
@@ -182,6 +183,13 @@ class ScheduleStopped(ScheduleGenerationError):
 
 
 STOPPED_MESSAGE = "Stopped — nothing was saved."
+# Stop pressed after the generation had saved a draft (schedule audit
+# 10/10/26 ARCH-2): the job says which draft is in force, never "nothing was
+# saved" over a draft that replaced the owner's.
+STOPPED_RESTORED_MESSAGE = ("Stopped — your draft from before is back as it was. What Cavnar AI had started is in "
+                            "Schedule History.")
+STOPPED_KEPT_LINE = ("Stopped — Cavnar AI had already saved this draft, so it is kept as it was when you stopped it "
+                     "(it was still being improved).")
 
 
 class GenerationClock:
@@ -199,6 +207,10 @@ class GenerationClock:
         # Building screen's "N of 7 days drafted" (AI cost audit 10/7/26 #36).
         self.days_planned = None
         self.days_drafted = set()
+        # The draft that was in force when the owner pressed (the one a
+        # whole-week Generate would replace, or a redo's own draft): a Stop
+        # after this job saved puts it back (ARCH-2). submit_generation sets it.
+        self.prior_draft_id = None
         self._record()
 
     # ── how far the draft has got (#36) ─────────────────────────────────
@@ -259,9 +271,17 @@ class GenerationClock:
         return self.model_deadline - time.time()
 
     def stopped(self) -> bool:
-        """Whether the owner stopped this generation (or a poll called it
-        dead): its job row is no longer pending (ops.job_still_pending)."""
-        return bool(self.job_id) and not _ops.job_still_pending(self.job_id)
+        """Whether this generation must start nothing more: the owner pressed
+        Stop (ops.stop_async_job — the row finished as stopped, or, once a
+        draft was saved, a stop requested on it), or a poll called it dead
+        (its row is no longer pending)."""
+        if not self.job_id:
+            return False
+        return _ops.job_stop_state(self.job_id) != "running" or not _ops.job_still_pending(self.job_id)
+
+    def stop_requested(self) -> bool:
+        """Whether the owner pressed Stop (not a poll calling it dead)."""
+        return bool(self.job_id) and _ops.job_stop_state(self.job_id) in ("stop_requested", "stopped")
 
     def seconds_left(self) -> float:
         return self.deadline - time.time()
@@ -442,8 +462,31 @@ _gen_pool = None
 _gen_pool_lock = threading.Lock()
 
 
+def _settle_rejection(job_id, restaurant_id, rejection) -> None:
+    """Record the owner's redo, or the draft their whole-week Generate threw
+    away (schedule_versions.record_rejection), once the job has finished with
+    its own draft in force (schedule audit 10/10/26 ARCH-18): it was recorded
+    at the press, so a Generate pressed by accident and stopped taught the
+    learners the strongest "no" there is (L-26) about a draft the owner kept.
+    Nothing is recorded for a job that failed, was stopped, or put the
+    earlier draft back. Never raises."""
+    if not rejection or not rejection.get("history_id"):
+        return
+    try:
+        state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
+        res = state.get("result") if isinstance(state.get("result"), dict) else {}
+        if state.get("status") != "done" or not res.get("ok") or not res.get("history_id") or res.get("stopped"):
+            return
+        import schedule_versions as _sv_rej
+        _sv_rej.record_rejection(restaurant_id, int(rejection["history_id"]), rejection["kind"],
+                                 dates=rejection.get("dates"), reason_chip=rejection.get("reason_chip"),
+                                 reason_text=rejection.get("reason_text"), user=rejection.get("user"))
+    except Exception as e:
+        _ops.capture(e, job="schedule_rejection", context=f"restaurant_id={restaurant_id} job={job_id}")
+
+
 @contextlib.contextmanager
-def generation_scope(job_id, priority=GEN_PRIORITY_PRESS):
+def generation_scope(job_id, priority=GEN_PRIORITY_PRESS, restaurant_id=None):
     """One generation's slot and clock: waits for one of the
     SCHEDULE_GEN_WORKERS slots (P-39), then starts the clock (P-22) — a
     generation queued behind two others does not spend its time waiting.
@@ -456,11 +499,25 @@ def generation_scope(job_id, priority=GEN_PRIORITY_PRESS):
         clock = GenerationClock(job_id)
         token = _CLOCK.set(clock)
         try:
-            yield clock
+            # The restaurant's own lunch/dinner boundary (restaurants.
+            # daypart_boundary — schedule_time.daypart_scope, ARCH-12) for
+            # every daypart question the generation asks.
+            with _stime.daypart_scope(_restaurant_split(restaurant_id)):
+                yield clock
         finally:
             _CLOCK.reset(token)
     finally:
         _GEN_SLOTS.release(job_id)
+
+
+def _restaurant_split(restaurant_id):
+    """restaurants.daypart_boundary as minutes, or None (3pm)."""
+    if not restaurant_id:
+        return None
+    try:
+        return _stime.restaurant_split(get_restaurant(restaurant_id))
+    except Exception:
+        return None
 
 
 def promote_generation(job_id) -> str:
@@ -472,11 +529,19 @@ def promote_generation(job_id) -> str:
     return _GEN_SLOTS.promote(job_id)
 
 
-def submit_generation(job_id, restaurant_id, **job_kwargs):
+def submit_generation(job_id, restaurant_id, prior_draft_id=None, rejection=None, **job_kwargs):
     """Queue an owner's generation on the bounded pool (P-39). The pool's
     thread has no request to read who asked from, so the owner's attribution
     is taken here, on the request thread (ai_utils.attributed, #148). Returns
-    the Future."""
+    the Future.
+
+    `prior_draft_id` is the draft in force when the owner pressed — a Stop
+    after this job saved its own puts that one back (ARCH-2). `rejection`
+    ({kind, history_id, dates, reason_chip, reason_text, user}) is the
+    owner's redo or the draft this press throws away: recorded only once the
+    job has finished with its own draft in force (_settle_rejection,
+    ARCH-18) — never at the press, so a press stopped or failed teaches the
+    learners nothing."""
     global _gen_pool
     import concurrent.futures
     import ai_utils as _ai
@@ -490,7 +555,8 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
 
     def _run(*a, **k):
         try:
-            with generation_scope(job_id):
+            with generation_scope(job_id, restaurant_id=restaurant_id) as clock:
+                clock.prior_draft_id = prior_draft_id
                 return job(*a, **k)
         except Exception as e:
             # The job reports its own failures; this is one around it (the
@@ -499,6 +565,7 @@ def submit_generation(job_id, restaurant_id, **job_kwargs):
             _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
             _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
         finally:
+            _settle_rejection(job_id, restaurant_id, rejection)
             # The owner who pressed may have left: their phone hears the
             # draft landed (iOS parity #16).
             notify_generation_watchers(job_id, restaurant_id)
@@ -1469,6 +1536,8 @@ def _soft_fail(what, exc, restaurant_id):
 # the review's one line about what the draft was made without (P-17). An
 # input not named here reads as its own name.
 _INPUT_WORDS = {
+    # The closing manager's assumed stay, said and priced (TRUST-21).
+    "assumed stays": "the closing manager's assumed stay",
     # The shape contract's slot filling (AI cost audit 10/7/26 #69, off by default).
     "shape slot assignment": "who fills each slot the draft asked for",
     "staff_availability": "staff availability", "staffing_baseline": "the usual crew from past weeks",
@@ -1517,19 +1586,72 @@ _INPUT_WORDS = {
 }
 
 
-def _input_failure_line(failed) -> str:
-    """One review line naming every input the draft was made without (P-17)
-    — "" when none failed."""
+# What a failed input means for the week (schedule audit 10/10/26 ARCH-25).
+# Every input a generation can go without is one of:
+#   required — the job fails: the week cannot be trusted at all without it.
+#     None of the soft-failable inputs is: each has a checked fallback (the
+#     rules and the sweep read their own copy of availability, time off and
+#     the roster), and the inputs a week truly cannot be made without (the
+#     restaurant, the roster, the rules at the start, the model's answer)
+#     already fail the job where they are read. The class is kept so an
+#     input that becomes one fails the job, never a week.
+#   safety — the week is held: the review leads with a "⚠" line naming it
+#     (the publish gate holds the week until the owner has read it, and the
+#     auto-publish holds it for them): an input that carries a hard fact
+#     about people or the rules into the draft that nothing else checks the
+#     same way — free-text staff notes only the model reads, each person's
+#     limits and availability as the prompt states them, the managers' plan,
+#     the rules as they stand after the model wrote, shifts at the group's
+#     other sites, who goes by which name, the rule check behind the score,
+#     the salaried list.
+#   optional — a note at the end of the review (P-17), as before.
+_INPUT_REQUIRED = frozenset()
+_INPUT_SAFETY = frozenset({
+    "staff_availability", "availability", "roster facts", "staff notes", "manager_plan", "rules after the model",
+    "other sites' shifts", "identity", "hard breaches", "salaried staff", "salaried_week", "shape slot assignment",
+    "leader_flags", "leader rule check",
+})
+
+
+def input_class(name) -> str:
+    """"required", "safety" or "optional" for an input a generation can go
+    without (_soft_fail's name) — ARCH-25."""
+    if name in _INPUT_REQUIRED:
+        return "required"
+    return "safety" if name in _INPUT_SAFETY else "optional"
+
+
+def _input_words(names) -> list:
     words = []
-    for w in failed or []:
+    for w in names or []:
         t = _INPUT_WORDS.get(w) or str(w).replace("_", " ")
         if t not in words:
             words.append(t)
+    return words
+
+
+def _input_failure_line(failed) -> str:
+    """One review line naming every OPTIONAL input the draft was made
+    without (P-17) — "" when none failed. The safety-relevant ones are
+    _input_hold_line's."""
+    words = _input_words([w for w in failed or [] if input_class(w) == "optional"])
     if not words:
         return ""
     shown = ", ".join(words[:6]) + (f" and {len(words) - 6} more" if len(words) > 6 else "")
     return (f"Some of what Cavnar AI reads for a draft couldn't be read, so this one was made and checked without "
             f"it: {shown}. We've been alerted; generate again later to include it.")
+
+
+def _input_hold_line(failed) -> str:
+    """The "⚠" line for safety-relevant inputs the draft was made without
+    (ARCH-25): it leads the review, so the publish gate and the auto-publish
+    hold the week until the owner has read it — "" when none failed."""
+    words = _input_words([w for w in failed or [] if input_class(w) == "safety"])
+    if not words:
+        return ""
+    shown = ", ".join(words[:4]) + (f" and {len(words) - 4} more" if len(words) > 4 else "")
+    return (f"⚠ This draft was made without {shown}, which couldn't be read — check it against what you know "
+            "before it goes to staff, or generate again later. We've been alerted.")
 
 
 def _no_history_analysis() -> dict:
@@ -2430,6 +2552,44 @@ def with_redo_reason(instruction, reason):
     return " ".join(w for w in (instruction, said) if w)[:500] or None
 
 
+_WD_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _capacity_short(missing, trading_dates, roster_pairs, max_days) -> bool:
+    """Whether `missing` are only the days off a roster too small to cover
+    every trading day must take (six days in a row at most each)."""
+    people = len({n for n, _r in (roster_pairs or []) if n})
+    if not people:
+        return False
+    capacity = people * int(max_days or 6)
+    return len(missing) <= max(0, len(trading_dates) - capacity)
+
+
+def _accepted_why(d, roster_pairs, owner_hours=False) -> str:
+    """Why a trading day may stay empty, in the owner's words."""
+    from schedule_economics import _holiday_dates
+    try:
+        name = _holiday_dates(int(d[:4])).get(d)
+    except Exception:
+        name = None
+    if name in _CLOSURE_HOLIDAYS and not owner_hours:
+        return f"{name}, with no hours on file for it"
+    n = len({x for x, _r in (roster_pairs or []) if x})
+    return f"a team of {n} can't cover every open day" if n else "nobody to schedule"
+
+
+def _accepted_empty_line(items) -> str:
+    """The review's line for trading days the week left empty on purpose (a
+    holiday with no hours on file, a small roster's day off) — BUGSGEN-5:
+    they were closed with no word."""
+    from time_utils import mdy
+    bits = [f"{it['day']} {mdy(it['date'])} ({it['why']})" for it in items]
+    which = bits[0] if len(bits) == 1 else ", ".join(bits[:-1]) + " and " + bits[-1]
+    one = len(bits) == 1
+    return (f"No shifts on {which} — {'it is' if one else 'they are'} treated as closed. If you're open, set "
+            f"{'its' if one else 'their'} hours and redo {'it' if one else 'them'}.")
+
+
 def _acceptable_missing(missing, trading_dates, roster_pairs, max_days) -> bool:
     """Whether dates the model left empty are a legitimate week: a closure
     holiday, or the day off a roster too small to cover every trading day
@@ -2570,7 +2730,16 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     all_dates = week_dates_from(monday0)
     trading_wd = _trading_weekdays(shifts)
     open_dates = [d for d in all_dates if d not in closed]
-    trading_dates = [d for d in open_dates if _dt0.strptime(d, "%Y-%m-%d").weekday() in trading_wd]
+    # A trading day is one the owner's hours say is open, else one the
+    # restaurant's own history trades (BUGSGEN-5 — the one rule the manager
+    # plan reads too, schedule_rules.trading_day): a weekday that started
+    # opening (hours set, no history yet) was never required, and a day the
+    # model left empty was silently closed.
+    open_t, close_t = kwargs.get("open_times") or {}, kwargs.get("close_times") or {}
+    owner_open = {d for d in open_dates if _rules.hours_on_file(_date_of(d).strftime("%A"), open_t, close_t)}
+    trading_dates = [d for d in open_dates
+                     if _rules.trading_day(_date_of(d).strftime("%A"), open_t, close_t,
+                                           {_WD_NAMES[w] for w in trading_wd})]
     asked = [d for d in open_dates if redo is None or d in set(redo)]
     want = [d for d in asked if d not in unstaffable]
     if not open_dates:
@@ -2618,9 +2787,30 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     call_cap = len(plan) + MAX_EXTRA_CALLS
     no_one = sorted(set(unstaffable) & set(all_dates))
 
+    accepted = {}           # date -> why it may stay empty (said in the review)
+
     def _required(dates):
+        """The dates of `dates` that must carry shifts: every trading day,
+        save a holiday or the day off a small roster must take — and those
+        only on a day with no hours on file: a holiday the owner has hours
+        for is a day they trade until they mark it closed (BUGSGEN-5)."""
         miss = [d for d in dates if d in trading_dates]
-        return [] if miss and _acceptable_missing(miss, trading_dates, roster_pairs, max_days) else miss
+        no_hours = [d for d in miss if d not in owner_open]
+        hours = [d for d in miss if d in owner_open]
+        out = []
+        if no_hours:
+            if _acceptable_missing(no_hours, trading_dates, roster_pairs, max_days):
+                for d in no_hours:
+                    accepted[d] = _accepted_why(d, roster_pairs)
+            else:
+                out += no_hours
+        if hours:
+            if _capacity_short(hours, trading_dates, roster_pairs, max_days):
+                for d in hours:
+                    accepted[d] = _accepted_why(d, roster_pairs, owner_hours=True)
+            else:
+                out += hours
+        return sorted(out)
 
     queue = list(plan)
     written = []            # (date, employee key, line, valid, plan) kept from the answers
@@ -2817,11 +3007,24 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs):
     # Dates the week leaves empty — closed, never traded, nobody able, not
     # written — are closed to every pass after this one, so no backstop
     # staffs a day the model did not. A redo's unwritten dates keep the
-    # owner's rows (the caller puts them back), so they stay open.
+    # owner's rows (the caller puts them back), so they stay open. A day the
+    # owner's hours say is open is never closed here (BUGSGEN-5): it stays
+    # open to the sweep — its no-manager stretch, floors and closer are
+    # breaches on the day, the planned managers stay on it — and only the
+    # repair passes leave it alone (open_unwritten), as they leave a day the
+    # model did not write.
     empty = set(_missing_dates(merged["schedule_csv"], asked)) | (set(unstaffable) & set(asked))
     if redo is not None:
         empty -= set(gaps)
-    merged["closed_dates"] = sorted(closed | empty)
+    held_open = (empty & owner_open) - set(unstaffable)
+    merged["closed_dates"] = sorted(closed | (empty - held_open))
+    merged["open_unwritten"] = sorted(held_open)
+    # The days left empty that may be — no hours on file and a holiday or a
+    # small roster's day off — said, never silent (BUGSGEN-5).
+    said = sorted(d for d in accepted if d in empty and d not in unwritten)
+    merged["empty_accepted"] = [{"date": d, "day": _date_of(d).strftime("%A"), "why": accepted[d]} for d in said]
+    if said and redo is None:
+        merged["generation_notes"].append(_accepted_empty_line(merged["empty_accepted"]))
     return merged
 
 
@@ -3220,11 +3423,10 @@ def _span_lines(rows, dates, exclude=()) -> list:
         for r in rows:
             if r.get("date") != d or " ".join(str(r.get("employee") or "").lower().split()) in exclude:
                 continue
-            s, e = _rules.parse_minutes(r.get("shift_start")), _rules.parse_minutes(r.get("shift_end"))
-            if s is None or e is None:
+            sp = _stime.span(r)
+            if sp is None:
                 continue
-            if e <= s:
-                e += 24 * 60
+            s, e = sp
             lo = s if lo is None else min(lo, s)
             hi = e if hi is None else max(hi, e)
         if lo is not None:
@@ -3263,11 +3465,9 @@ def _neighbour_lines(kept, dates, cap: int = 60) -> list:
         d, name = r.get("date"), (r.get("employee") or "").strip()
         if not name or d not in before | after:
             continue
-        s, e = _rules.parse_minutes(r.get("shift_start")), _rules.parse_minutes(r.get("shift_end"))
+        s, e = _stime.start_of(r), _stime.end_of(r)
         slot = by.setdefault(name, {})
         if d in before and e is not None:
-            if s is not None and e <= s:
-                e += 24 * 60
             slot[d] = ("until", max(e, slot[d][1]) if d in slot else e)
         if d in after and s is not None:
             slot[d] = ("from", min(s, slot[d][1]) if d in slot else s)
@@ -3916,27 +4116,26 @@ def _reconcile_scheduled_hours(row, tz=None):
     wrote, never the clock change), or 0.0 when the row was already right or
     its times can't be parsed.
     """
-    start = _parse_time_to_minutes(row.get("shift_start", ""))
-    end = _parse_time_to_minutes(row.get("shift_end", ""))
-    if start is None or end is None:
+    if _stime.span(row) is None:
         return 0.0
-    span = end - start
-    if span < 0:
-        span += 24 * 60          # closing shift running past midnight
-    wall = round(span / 60, 1)
+    # Two decimals, never a tenth's banker's rounding: 4:45pm-11pm is 6.25,
+    # which round(6.25, 1) wrote as 6.2, so the rows of one week carried
+    # mixed precision and payroll totals drifted near the 40.05 overtime
+    # test (BUGSGEN-7). Drift is compared at 0.01.
+    wall = _stime.wall_hours(row)
     correct = wall
     clock = 0.0
     if tz:
-        real = _rules.span_hours(row, tz) if row.get("date") else 0.0
+        real = _stime.real_hours(row, tz) if row.get("date") else 0.0
         if real and abs(real - wall) >= 0.1:
-            correct, clock = round(real, 1), round(real - wall, 1)
+            correct, clock = real, round(real - wall, 2)
     raw_hours = (row.get("scheduled_hours") or "").strip() if isinstance(row.get("scheduled_hours"), str) \
         else row.get("scheduled_hours")
     if raw_hours in (None, ""):
         stated = None            # nothing was stated, so nothing was wrong
     else:
         try:
-            stated = round(float(raw_hours), 1)
+            stated = round(float(raw_hours), 2)
         except (ValueError, TypeError):
             stated = None
     if clock:
@@ -3947,45 +4146,31 @@ def _reconcile_scheduled_hours(row, tz=None):
         if text not in note:
             row["notes"] = f"{note} ({text})".strip() if note else f"({text})"
     if stated is None:
-        row["scheduled_hours"] = str(correct)
+        row["scheduled_hours"] = _stime.hours_text(correct)
         return 0.0
-    drift = round(wall - stated, 1)
-    if abs(drift) < 0.1 and not clock:
+    drift = round(wall - stated, 2)
+    if abs(drift) < 0.01 and not clock:
         return 0.0          # already right — leave the row exactly as written
-    row["scheduled_hours"] = str(correct)
-    if abs(drift) < 0.1:
+    row["scheduled_hours"] = _stime.hours_text(correct)
+    if abs(drift) < 0.01:
         return 0.0          # the model counted the wall clock right; the clock change is ours to add
-    row["hours_corrected_from"] = str(stated)
+    row["hours_corrected_from"] = str(raw_hours).strip()
     return drift
 
 
 def _parse_time_to_minutes(t: str):
-    """Parses a "9:00pm"/"9:30 am" style string (the exact format the AI is
-    instructed to always produce) to minutes-since-midnight, or None if it
-    doesn't match that format at all."""
-    if not t or not _TIME_FIELD_RE.match(t.strip()):
-        return None
-    t_clean = t.strip().lower().replace(" ", "")
-    period, hm = t_clean[-2:], t_clean[:-2]
-    try:
-        hour_str, minute_str = hm.split(":")
-        hour, minute = int(hour_str), int(minute_str)
-    except (ValueError, IndexError):
-        return None
-    if period == "pm" and hour != 12:
-        hour += 12
-    if period == "am" and hour == 12:
-        hour = 0
-    return hour * 60 + minute
+    """A clock time as minutes since midnight (schedule_time.parse_minutes:
+    "9:00pm", "9:30 am", "21:30", "noon", "midnight", "12:00 a.m."), or None.
+    It read only the "9:00pm" form, so a close stored from the web's time
+    input ("01:00") silently dropped the close cap for that day
+    (BUGSGEN-20)."""
+    return _stime.parse_minutes(t)
 
 
 def _format_minutes_to_time(total_minutes: int) -> str:
-    """Inverse of _parse_time_to_minutes — "9:00pm" style."""
-    total_minutes %= 24 * 60
-    hour24, minute = divmod(total_minutes, 60)
-    period = "am" if hour24 < 12 else "pm"
-    hour12 = hour24 % 12 or 12
-    return f"{hour12}:{minute:02d}{period}"
+    """Inverse of _parse_time_to_minutes — "9:00pm" style (any day's minutes:
+    1500 is 1:00am)."""
+    return _stime.fmt_minutes(total_minutes)
 
 
 def _summarize_schedule_csv_by_day_role(csv_text: str) -> dict:
@@ -4061,7 +4246,8 @@ def _normalise_row_times(row: dict) -> None:
             row[key] = _format_minutes_to_time(m)
 
 
-def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict) -> None:
+def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict,
+                        constraints=None) -> None:
     """Hard-caps a row's shift_end at that day's actual close time (plus any
     role-specific after-close allowance, e.g. a bartender's stated "stay 1h
     after close") — mutates `row` in place. A no-op for any restaurant that
@@ -4075,30 +4261,43 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
     note to Friday's later close time too) — this is the deterministic
     backstop for a rule that must never be violated, not one more request
     the model can occasionally miss.
+
+    With the week's `constraints` the ceiling is the sweep's own
+    (schedule_rules.close_cap_minutes): a manager may stay as long as any
+    role does, so the model's manager row to midnight behind 60-minute
+    bartenders is no longer cut at an 11pm close — which opened an hour with
+    nobody managing that the closing-manager allowance then hid
+    (BUGSGEN-15). The close is read against that day's open, and the hours
+    written are the real ones in the restaurant's zone, two decimals
+    (BUGSGEN-6, -7, -22).
     """
     if not real_day or real_day not in close_times:
         return
     close_minutes = _parse_time_to_minutes(close_times[real_day])
     if close_minutes is None:
         return
-    # A close in the small hours is the next morning: "1:00am" is 25:00, not
-    # one in the morning before the doors open (SCHED-13).
-    if close_minutes < _rules._OVERNIGHT_LATEST_BEFORE:
-        close_minutes += 24 * 60
-    role = (row.get("role") or "").strip()
-    # By role family: "Bartender": 30 holds for a "Bartender PM" row, which
-    # was clamped at close while the stays-after-close rule wanted it on
-    # (schedule audit 10/3/26 D-13, D-43).
-    ceiling = close_minutes + int(_rules.role_minutes(role_buffers, role) or 0)
+    ceiling = None
+    if constraints is not None and getattr(constraints, "close_times", None):
+        ceiling = _rules.close_cap_minutes(constraints, row)
+    if ceiling is None:
+        # A close in the small hours is the next morning: "1:00am" is 25:00,
+        # not one in the morning before the doors open (SCHED-13).
+        open_m = _parse_time_to_minutes((getattr(constraints, "open_times", None) or {}).get(real_day, "")) \
+            if constraints is not None else None
+        close_minutes = _stime.close_on_timeline(close_minutes, open_m)
+        role = (row.get("role") or "").strip()
+        # By role family: "Bartender": 30 holds for a "Bartender PM" row, which
+        # was clamped at close while the stays-after-close rule wanted it on
+        # (schedule audit 10/3/26 D-13, D-43).
+        ceiling = close_minutes + int(_rules.role_minutes(role_buffers, role) or 0)
 
-    start_minutes = _parse_time_to_minutes(row.get("shift_start", ""))
-    end_minutes = _parse_time_to_minutes(row.get("shift_end", ""))
+    start_minutes = _stime.start_of(row)
+    end_minutes = _stime.end_of(row)
     if end_minutes is None:
         return
-    # A shift that ends past midnight ends on the next day's clock; reading
-    # 2:00am as 120 minutes let a 5pm-2am shift through a 10pm close.
-    if start_minutes is not None and end_minutes <= start_minutes:
-        end_minutes += 24 * 60
+    # On the row's business timeline: a shift that ends past midnight ends
+    # on the next day's clock; reading 2:00am as 120 minutes let a 5pm-2am
+    # shift through a 10pm close.
     if end_minutes <= ceiling:
         return
 
@@ -4110,7 +4309,8 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
         return
 
     row["shift_end"] = _format_minutes_to_time(ceiling)
-    row["scheduled_hours"] = str(round((ceiling - start_minutes) / 60, 1))
+    row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(constraints) if constraints is not None
+                                                   else None)
     note = (row.get("notes") or "").strip()
     row["notes"] = f"{note} (auto-capped to close time)" if note else "auto-capped to close time"
 
@@ -4227,8 +4427,10 @@ def change_regressions(before_rows, after_rows, c, date, people=(), upto=None, h
     person's whole week (their hours, rest, run of days). Nothing else in the
     week moved, so this finds exactly what the change made new or worse, at
     a fraction of a whole-week sweep. `upto` is the lowest rank still
-    protected (schedule_rules.TIER_COVERAGE by default: no new hard breach);
-    [] when nothing got worse, or with no Constraints to judge by."""
+    protected (schedule_rules.TIER_POLICY by default: no new hard breach —
+    the restaurant's policy limits are hard too, ranked below the manager
+    and coverage rules, sched audit 10/10/26 LOGIC-1); [] when nothing got
+    worse, or with no Constraints to judge by."""
     if c is None:
         return []
     keys = {_name_key(p) for p in people or () if _name_key(p)}
@@ -4237,7 +4439,7 @@ def change_regressions(before_rows, after_rows, c, date, people=(), upto=None, h
         return [r for r in rs or [] if r.get("date") == date or _name_key(r.get("employee")) in keys]
     return _rules.regressions(_rules.breach_profile(_sub(before_rows), c),
                               _rules.breach_profile(_sub(after_rows), c),
-                              upto=_rules.TIER_COVERAGE if upto is None else upto, hard_only=hard_only)
+                              upto=_rules.TIER_POLICY if upto is None else upto, hard_only=hard_only)
 
 
 def _will_not_stand(rows, c) -> set:
@@ -4260,14 +4462,11 @@ def _ramp_end(day, part, c=None):
     midnight with no close on file — the service window the requirements
     table builds the ramp over. None for any other daypart: its last step
     holds for one half hour."""
-    split = 15 * 60
+    split = _stime.daypart_split()
     if part == "morning":
         return split
     if part == "night":
-        closes = (getattr(c, "close_times", None) or {}) if c is not None else {}
-        m = _rules.parse_minutes(closes.get(day, "") or "")
-        if m is not None and m < _rules._OVERNIGHT_LATEST_BEFORE:
-            m += 24 * 60
+        m = _rules.close_minutes(c, day) if (c is not None and getattr(c, "close_times", None)) else None
         return m if (m is not None and m > split) else 24 * 60
     return None
 
@@ -4400,6 +4599,8 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
             close_times=(getattr(c, "close_times", None) or None) if c is not None else None,
             section_cap=int(getattr(c, "section_cap", 0) or 0) if c is not None else 0,
             cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}) if c is not None else None,
+            # The Crew answers bound into the baseline, named as reasons.
+            crew_answers=result.get("crew_answers") or None,
             # The hours and ceilings the owner's hours notes state (PROMPT-1).
             **_limit_kwargs(c))
     except Exception as exc:
@@ -4422,21 +4623,28 @@ def _legal_fills(c, rows, options, date, coverage=True, limit=None) -> tuple:
     own week legal (Constraints.can_add) and makes no breach about the day
     new or worse (change_regressions). First only people who stay under
     their overtime line with no daily overtime; a coverage pass (a floor, a
-    station — they outrank overtime in the ranked priorities, P-47) that
-    finds nobody then takes somebody past their overtime line, never past
-    their hours maximum or any hard rule. A quality pass (the top-up) never
-    does. `refused` names everybody the last round turned down."""
+    station — they outrank overtime and the restaurant's policy limits in
+    the ranked priorities, P-47) that finds nobody then takes somebody past
+    their overtime line — the teammate test, exactly: only when nobody in
+    the role can take it inside theirs — and, when nobody can inside the
+    restaurant's own limits either (the weekly ceiling, six days in a row,
+    rest where it is not law), past them (schedule_rules.FILL_ROUNDS —
+    sched audit 10/10/26 LOGIC-3); never past a person's own maximum or the
+    law. A pass ranked below them (the top-up) never does. `refused` names
+    everybody the last round turned down."""
     limit = limit or FILL_SCORE_CANDIDATES
     refused = set()
-    for relaxed in ((False, True) if coverage else (False,)):
+    for mode in (_rules.FILL_ROUNDS if coverage else _rules.FILL_ROUNDS[:1]):
+        strict = mode == _rules.FILL_ROUNDS[0]
         out, refused = [], set()
         for e, row in options:
-            if not c.fillable(e, date)[0] or not c.can_add(row, rows, overtime=not relaxed)[0]:
+            if not c.fillable(e, date)[0] or not c.can_add(row, rows, overtime=mode[0], policy=mode[1])[0]:
                 refused.add(e)
                 continue
             worse = change_regressions(rows, list(rows) + [row], c, date, [e],
-                                       upto=_rules.TIER_COVERAGE if relaxed else _rules.TIER_OVERTIME,
-                                       hard_only=relaxed)
+                                       upto=(_rules.TIER_OVERTIME if strict else
+                                             _rules.TIER_POLICY if mode[1] else _rules.TIER_COVERAGE),
+                                       hard_only=not strict)
             if worse:
                 refused.add(e)
                 continue
@@ -4453,8 +4661,12 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                        close_times: dict, role_buffers: dict, constraints=None, scorer_for=None,
                        requirements=None, only_dates=None) -> tuple:
     """Deterministic post-generation pass that adds a real shift where a
-    role on a daypart is genuinely short of what that shift needs — never
-    past the week's hours budget, which is a ceiling, not a quota.
+    role on a daypart is genuinely short of what that shift needs. The
+    SHIFT REQUIREMENTS outrank the hours budget in both directions (sched
+    audit 10/10/26 LOGIC-4: the trim never cut under them, but this fill
+    stopped at the budget, so a light draft ended under its requirements
+    and a heavy one over its budget from the same inputs): a short shift is
+    filled even past the budget, and the review says what that costs.
 
     Prompt-only fixes for this (see par_block/_daily_targets in labor.py)
     plateaued around -240h under a ~1314h budget on live testing — asking
@@ -4493,9 +4705,6 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     {date: shifts_added_count}.
     """
     if not daily_target_hours or not requirements:
-        return preview_rows, 0.0, {}
-    remaining_gap = (hours_budget - hours_scheduled) if hours_budget and hours_budget > 0 else float("inf")
-    if remaining_gap <= 0:
         return preview_rows, 0.0, {}
 
     import json as _json_avail
@@ -4563,7 +4772,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         # Keyed by daypart: a Saturday with seven morning servers and no
         # dinner ones used to read as "seven servers", and the template it
         # cloned was the first morning row. (role, daypart) is the unit.
-        part = _rules.daypart_of(r.get("shift_start", ""))
+        part = _stime.primary_daypart(r)
         if r.get("shift_start") and r.get("shift_end"):
             tpl = (r["shift_start"], r["shift_end"], role)
             for book, k in ((tpl_by_date, (date, key, part)), (tpl_by_part, (key, part))):
@@ -4590,8 +4799,6 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     exhausted = set()
     MAX_ADDS = 100  # hard safety ceiling regardless of gap size
     for _pass in range(MAX_ADDS):
-        if remaining_gap <= 0:
-            break
         slots = {}
         for d in sorted(index):
             if d not in dates_with_rows or d in closed or (only_dates is not None and d not in only_dates):
@@ -4648,7 +4855,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         probe = {"date": target_date, "day": day_name, "employee": "", "role": row_role,
                  "shift_start": start, "shift_end": end, "scheduled_hours": "0",
                  "notes": "added — coverage top-up"}
-        _enforce_close_time(probe, day_name, close_times, role_buffers)
+        _enforce_close_time(probe, day_name, close_times, role_buffers, constraints=c)
         sp = _span_minutes(probe)
         # A template (borrowed from another day) that does not produce a sane
         # shift once capped to this day's close, that would not count where
@@ -4659,9 +4866,10 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         if probe.get("needs_review") or not sp or not counts:
             exhausted.add(target)
             continue
-        hrs = round((sp[1] - sp[0]) / 60, 1)
-        probe["scheduled_hours"] = str(hrs)
-        if hrs <= 0 or hrs > remaining_gap + 0.01:
+        # Real hours in the restaurant's zone, two decimals (BUGSGEN-6, -7).
+        probe["scheduled_hours"] = _stime.row_hours_text(probe, _rules.tz_of(c))
+        hrs = float(probe["scheduled_hours"])
+        if hrs <= 0:
             exhausted.add(target)
             continue
 
@@ -4685,8 +4893,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         added_dates[target_date] = added_dates.get(target_date, 0) + 1
         added_by_date[target_date] = added_by_date.get(target_date, 0.0) + hrs
         if not c.is_salaried(employee):
-            # The hourly budget and the hourly daily target (SQ-7 sibling).
-            remaining_gap -= hrs
+            # The hourly daily target (SQ-7 sibling).
             by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + hrs
         working_on_date.setdefault(target_date, set()).add(employee)
         hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + hrs
@@ -4825,18 +5032,30 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     rows_trimmed = 0
     conflicts = []
 
-    def _on(rs, date, key, part):
-        return len({_name_key(x.get("employee")) for x in rs if x.get("date") == date
-                    and _family(x.get("role"), fams) == key and part in _present(x)})
+    import types as _types_cap
+    _fc = c if c is not None else _types_cap.SimpleNamespace(open_times={}, close_times=close_times or {},
+                                                             role_families=None)
 
     def _cut_ok(r, cut, date, day_name):
         """(ok, why) for `r` becoming `cut` (None: removed)."""
         after = [x for x in preview_rows if x is not r] + ([cut] if cut is not None else [])
         key = _family(r.get("role"), fams)
-        for part in _present(r):
-            floor = max((_rules.floor_for(floors, role, day_name, part) for role in floors
-                         if _family(role, fams) == key), default=0)
-            if floor and _on(after, date, key, part) < min(floor, _on(preview_rows, date, key, part)):
+        # A floor is people on at once at every half hour of the core window
+        # (the coverage_floor test, _floor_short_slots): a cut that leaves the
+        # role's family further under it, at any half hour, is held by the
+        # floor. It used to count who was merely present for the daypart, so
+        # a cut to 6:30pm that left 7-8:30pm under the floor read as fine here
+        # (schedule audit 10/10/26 — one headcount unit).
+        for part in ("morning", "night"):
+            floor = sum(_rules.floor_for(floors, role, day_name, part) for role in floors
+                        if _family(role, fams) == key)
+            if not floor:
+                continue
+            was = _floor_short_slots(_fc, day_name, [x for x in preview_rows if x.get("date") == date],
+                                     r.get("role"), floor, part)
+            now = _floor_short_slots(_fc, day_name, [x for x in after if x.get("date") == date],
+                                     r.get("role"), floor, part)
+            if sum(now.values()) > sum(was.values()):
                 return False, {"kind": "floor", "role": r.get("role"), "daypart": part, "floor": floor}
         worse = change_regressions(preview_rows, after, c, date, [r.get("employee")],
                                    upto=_rules.TIER_MIN_HOURS, hard_only=False)
@@ -4891,7 +5110,7 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
             for r in ranked:
                 if legal and (_priority(r)[:2] != _priority(legal[0][0])[:2] or len(legal) >= want):
                     break
-                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap)
+                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap, constraints=c)
                 if cut is False:
                     continue
                 ok, why = _cut_ok(r, cut, date, day_name)
@@ -4933,7 +5152,8 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     return preview_rows, rows_trimmed, trimmed_dates
 
 
-def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int):
+def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int,
+                 constraints=None):
     """The row cut to end at `peak_time` (a new dict), None when that would
     leave under half an hour (the row goes), False when it cannot be read.
     `peak_time` past midnight (24:30) is the next morning's 12:30am."""
@@ -4945,11 +5165,12 @@ def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_bu
     out = dict(row)
     out["shift_end"] = _format_minutes_to_time(peak_time)
     if day_name:
-        _enforce_close_time(out, day_name, close_times, role_buffers)
+        _enforce_close_time(out, day_name, close_times, role_buffers, constraints=constraints)
     sp = _span_minutes(out)
     if not sp:
         return False
-    out["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
+    out["scheduled_hours"] = _stime.row_hours_text(out, _rules.tz_of(constraints) if constraints is not None
+                                                   else None)
     note = (out.get("notes") or "").strip()
     out["notes"] = f"{note} (trimmed — over the {cap}-server cap)" if note else f"trimmed — over the {cap}-server cap"
     return out
@@ -5014,9 +5235,12 @@ def _window_overlap(row: dict, window: tuple) -> bool:
     return bool(sp) and sp[0] < window[1] and sp[1] > window[0]
 
 
-_MORNING_WINDOW = (_parse_time_to_minutes("11:00am"), _parse_time_to_minutes("2:30pm"))
-_NIGHT_WINDOW = (_parse_time_to_minutes("5:30pm"), _parse_time_to_minutes("8:30pm"))
-_DAYPART_SPLIT = 15 * 60   # the same 3pm the rules and the quality engine use
+# The core service windows and the default daypart boundary are
+# schedule_time's (the one daypart rule, BUGSGEN-25); the boundary in force
+# is schedule_time.daypart_split().
+_MORNING_WINDOW = _stime.CORE_WINDOWS["morning"]
+_NIGHT_WINDOW = _stime.CORE_WINDOWS["night"]
+_DAYPART_SPLIT = _stime.DAYPART_SPLIT
 
 
 def _daypart_windows(constraints, day_name: str) -> list:
@@ -5026,15 +5250,15 @@ def _daypart_windows(constraints, day_name: str) -> list:
     measured on a fixed 11am–2:30pm slot counted a 6am–10:30am cook as
     nobody and added a second one. A close in the small hours is the next
     morning (a 2am close runs dinner to 26:00)."""
-    open_m = _parse_time_to_minutes((getattr(constraints, "open_times", None) or {}).get(day_name, "")) if constraints else None
-    close_m = _parse_time_to_minutes((getattr(constraints, "close_times", None) or {}).get(day_name, "")) if constraints else None
+    open_m, close_m = _stime.day_hours(
+        (getattr(constraints, "open_times", None) or {}).get(day_name, "") if constraints else "",
+        (getattr(constraints, "close_times", None) or {}).get(day_name, "") if constraints else "")
+    split = _stime.daypart_split()
     if open_m is None:
         open_m = 6 * 60
-    if close_m is not None and close_m < _rules._OVERNIGHT_LATEST_BEFORE:
-        close_m += 24 * 60
-    if close_m is None or close_m <= _DAYPART_SPLIT:
+    if close_m is None or close_m <= split:
         close_m = 24 * 60 - 1
-    return [("morning", (open_m, _DAYPART_SPLIT)), ("night", (_DAYPART_SPLIT, close_m))]
+    return [("morning", (open_m, split)), ("night", (split, close_m))]
 
 
 # The fill-in and trim passes (#12): each chooses, among the legal options
@@ -5101,13 +5325,24 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     daypart, doubled on that restaurant's busy days, with a 15-hour
     fallback shift). Only ever adds a shift for somebody who already works
     that role (this week, on the roster, or holding it), never invents a
-    person. Times come from another shift of that role in the same daypart
-    this week when one exists, else the daypart's slice of the opening hours.
+    person.
 
-    Who counts toward a floor is who is on the floor for that daypart
-    (shift_quality.present_dayparts — the rule sweep's and the score's own
-    count), by role family, never somebody whose row will not stand (time
-    off, a double booking). Each person added is one the code may choose
+    It fills until the hard rule itself is met — the SAME test the
+    coverage_floor breach makes (schedule_rules.floor_needs +
+    _floor_test → shift_quality.floor_shortfall): each role family's floors
+    for the daypart added up across its job codes, held by that many of the
+    family on at EVERY half hour of the core window. It used to count one
+    code's floor at a time against the family members merely present
+    (an hour in the core window), so servers 4-8pm and 7-10pm "met" a dinner
+    floor of 2 that the sweep held short from 5:30, and "Server AM" night 1
+    plus "Server PM" night 2 was never filled to 3 — the hard breach went on
+    to the optimizer, a paid rewrite or a held publish (schedule audit
+    10/10/26 BUGSGEN-3). Each added shift covers the half hours still short:
+    a shift of the family this week that covers the most of them, else one
+    built over them (at least four hours), clipped to the close.
+
+    Who counts is never somebody whose row will not stand (time off, a
+    double booking). Each person added is one the code may choose
     (Constraints.fillable) whose own week the row keeps legal — a minor's
     hours, rest including last week's published tail, the run of days, the
     hours maximum (Constraints.can_add) — and the row may not open a manager
@@ -5127,41 +5362,19 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     if not floors:
         return preview_rows, 0, {}
     scorer = scorer_for(preview_rows) if scorer_for else None
-    from models import get_staff_availability
     if constraints is None:
         constraints = _rules.build_constraints(restaurant_id, week_dates, week_days)
     c = constraints
-    _avail_rows = get_staff_availability(restaurant_id) or []
-    notes_restricted = {a.get("employee_name") for a in _avail_rows
-                        if a.get("employee_name") and (a.get("notes") or "").strip()
-                        and _name_key(a.get("employee_name")) not in c.daypart_avail}
-
-    role_people = {}
-    working_on_date = {}
-    hours_by_employee = {}
-    templates = {}
-    for r in preview_rows:
-        emp, role, date = (r.get("employee") or "").strip(), (r.get("role") or "").strip(), r.get("date")
-        if not (emp and date):
-            continue
-        working_on_date.setdefault(date, set()).add(emp)
-        hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + _row_hours_value(r)
-        if role:
-            key = _role_key(role, c)
-            role_people.setdefault(key, set()).add(emp)
-            part = _rules.daypart_of(r.get("shift_start", ""))
-            if part in ("morning", "night") and r.get("shift_start") and r.get("shift_end"):
-                templates.setdefault((key, part), (r["shift_start"], r["shift_end"]))
-    for name, role in (getattr(c, "roster_roles", None) or {}).items():
-        if name and role:
-            role_people.setdefault(_role_key(role, c), set()).add(name)
-    _display = {_name_key(n): n for n in (getattr(c, "roster_names", None) or [])}
-    for _low, _held in (getattr(c, "held_roles", None) or {}).items():
-        if _display.get(_low):
-            for _hr in _held or ():
-                role_people.setdefault(_role_key(_hr, c), set()).add(_display[_low])
+    # The floors to fill to are the caller's (the generation passes the
+    # Constraints' own); the rule's test reads them from a Constraints, so a
+    # different map gets a copy for the test alone — what a row may break
+    # is still judged by the caller's Constraints.
+    fc = c
+    if floors is not c.role_floors:
+        fc = copy.copy(c)
+        fc.role_floors = floors
+    book = _fill_book(preview_rows, restaurant_id, c)
     skip = _will_not_stand(preview_rows, c)
-    _rel = getattr(c, "reliability", None) or {}
 
     rows_added = 0
     added_dates = {}
@@ -5172,51 +5385,181 @@ def _ensure_role_floors(preview_rows: list, week_dates: list, week_days: list, r
     for date, day_name in zip(week_dates, week_days):
         if date in _closed or (only_dates is not None and date not in only_dates):
             continue
-        for role_name in floors:
-            key = _role_key(role_name, c)
-            for part, _window in _daypart_windows(c, day_name):
-                need = _rules.floor_for(floors, role_name, day_name, part)
-                if not need:
+        for (fam, part), (need, role_name) in sorted(_rules.floor_needs(fc, day_name).items()):
+            tried = set()
+            for _attempt in range(40):
+                counted = [r for r in preview_rows if r.get("date") == date and id(r) not in skip]
+                short = _floor_short_slots(fc, day_name, counted, role_name, need, part)
+                if not short:
+                    break
+                got = _slot_fill(preview_rows, date, day_name, role_name, part, short, c, close_times, role_buffers,
+                                 book, tried, scorer, f"added — {role_name} floor")
+                if got is None:
+                    break
+                employee, new_row = got
+                preview_rows.append(new_row)
+                after = _floor_short_slots(fc, day_name, counted + [new_row], role_name, need, part)
+                if sum(after.values()) >= sum(short.values()):
+                    # It did not close any of it (never expected: the shift
+                    # covers a short half hour and its person was off): not
+                    # kept, and that person is not asked again here.
+                    preview_rows.pop()
+                    tried.add(employee)
                     continue
-                tried = set()
-                for _attempt in range(40):
-                    on = {_name_key(r.get("employee")) for r in preview_rows
-                          if r.get("date") == date and id(r) not in skip and _name_key(r.get("employee"))
-                          and _role_key(r.get("role"), c) == key and part in _present(r)}
-                    if len(on) >= need:
-                        break
-                    pool = set(role_people.get(key, set())) - working_on_date.get(date, set()) - tried
-                    pool = {e for e in pool if e not in notes_restricted or _name_key(e) in c.time_windows}
-                    if not pool:
-                        break
-                    start, end = templates.get((key, part)) or _daypart_fallback(c, day_name, part)
-                    probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
-                             "shift_start": start, "shift_end": end, "scheduled_hours": "0",
-                             "notes": f"added — {role_name} floor"}
-                    _enforce_close_time(probe, day_name, close_times, role_buffers)
-                    sp = _span_minutes(probe)
-                    # A template that does not produce a sane shift, or one
-                    # that would not count toward this daypart's floor.
-                    if probe.get("needs_review") or not sp or part not in _present(probe):
-                        break
-                    probe["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
-                    # The fewest hours so far, and among those the most reliable,
-                    # is the order; the score chooses among the first few
-                    # legal ones (_fill_pick).
-                    ordered = sorted(pool, key=lambda e: (hours_by_employee.get(e, 0.0),
-                                                          float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
-                    legal, refused = _legal_fills(c, preview_rows, [(e, dict(probe, employee=e)) for e in ordered],
-                                                  date, coverage=True)
-                    tried |= refused
-                    if not legal:
-                        continue
-                    employee, new_row = _fill_pick(scorer, preview_rows, legal)
-                    preview_rows.append(new_row)
-                    working_on_date.setdefault(date, set()).add(employee)
-                    hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + _row_hours_value(new_row)
-                    rows_added += 1
-                    added_dates[date] = added_dates.get(date, 0) + 1
+                book["working"].setdefault(date, set()).add(employee)
+                book["hours"][employee] = book["hours"].get(employee, 0.0) + _row_hours_value(new_row)
+                rows_added += 1
+                added_dates[date] = added_dates.get(date, 0) + 1
     return preview_rows, rows_added, added_dates
+
+
+def _floor_short_slots(c, day_name, rows, role, need, part) -> dict:
+    """{minute: people short} at each half hour of the core window where
+    fewer than `need` of `role`'s family are on — the half hours the
+    coverage_floor rule (_floor_test) holds short; {} when the floor holds."""
+    import shift_quality as _sqf
+    open_m = _rules.parse_minutes((c.open_times or {}).get(day_name, "") or "")
+    close_m = _rules.parse_minutes((c.close_times or {}).get(day_name, "") or "")
+    slots = _sqf.floor_slots(part, open_m, close_m)
+    if not slots or need <= 0:
+        return {}
+    on = _sqf.concurrent_on(rows, part, role, open_m, close_m, families=c.role_families)["slots"]
+    return {t: int(need) - int(on.get(t, 0)) for t in slots if int(on.get(t, 0)) < int(need)}
+
+
+def _fill_book(rows, restaurant_id, c) -> dict:
+    """Who may be added and what is already on, for a fill pass: {"people":
+    {role family: names who work it this week, on the roster or hold it},
+    "working": {date: names on}, "hours": {name: hours}, "templates":
+    {role family: [(start, end, date)]}, "restricted": names whose free-text
+    availability note no rule reads}."""
+    from models import get_staff_availability
+    _avail_rows = get_staff_availability(restaurant_id) or []
+    restricted = {a.get("employee_name") for a in _avail_rows
+                  if a.get("employee_name") and (a.get("notes") or "").strip()
+                  and _name_key(a.get("employee_name")) not in c.daypart_avail}
+    people, working, hours, templates = {}, {}, {}, {}
+    for r in rows:
+        emp, role, date = (r.get("employee") or "").strip(), (r.get("role") or "").strip(), r.get("date")
+        if not (emp and date):
+            continue
+        working.setdefault(date, set()).add(emp)
+        hours[emp] = hours.get(emp, 0.0) + _row_hours_value(r)
+        if role:
+            key = _role_key(role, c)
+            people.setdefault(key, set()).add(emp)
+            if r.get("shift_start") and r.get("shift_end"):
+                tpl = (r["shift_start"], r["shift_end"], date)
+                if tpl not in templates.setdefault(key, []):
+                    templates[key].append(tpl)
+    for name, role in (getattr(c, "roster_roles", None) or {}).items():
+        if name and role:
+            people.setdefault(_role_key(role, c), set()).add(name)
+    _display = {_name_key(n): n for n in (getattr(c, "roster_names", None) or [])}
+    for _low, _held in (getattr(c, "held_roles", None) or {}).items():
+        if _display.get(_low):
+            for _hr in _held or ():
+                people.setdefault(_role_key(_hr, c), set()).add(_display[_low])
+    return {"people": people, "working": working, "hours": hours, "templates": templates,
+            "restricted": restricted}
+
+
+def _slot_fill(rows, date, day_name, role_name, part, short, c, close_times, role_buffers, book, tried,
+               scorer, note):
+    """(employee, row) — one legal shift of `role_name` on `date` covering
+    the most of the `short` half hours ({minute: people short}), for the
+    fewest-hours legal person (_legal_fills, coverage rank: past the
+    overtime line only when nobody can without), or None. Times: the
+    family's shift this week covering the most of them (this date's first),
+    else one built over them, four hours at the least, clipped to close."""
+    key = _role_key(role_name, c)
+    minutes = sorted(short)
+
+    def _covers(start, end):
+        sp = _span_minutes({"shift_start": start, "shift_end": end})
+        return sum(1 for m in minutes if sp and sp[0] <= m < sp[1])
+
+    def _length(start, end):
+        sp = _span_minutes({"shift_start": start, "shift_end": end})
+        return (sp[1] - sp[0]) if sp else 0
+    lo, hi = minutes[0], minutes[-1] + _SLOT_MIN
+    lo = min(lo, hi - 4 * 60)
+    built = (_format_minutes_to_time(lo), _format_minutes_to_time(hi), None)
+    # The most short half hours covered first; on a tie the restaurant's own
+    # shift shape (this date's first) before one built over the gap, the
+    # shorter before the longer.
+    cands = [t for t in (book["templates"].get(key) or []) if _covers(t[0], t[1])] + [built]
+    cands.sort(key=lambda t: (-_covers(t[0], t[1]), t[2] is None, t[2] != date, _length(t[0], t[1])))
+    options = []
+    for t in cands:
+        if (t[0], t[1]) not in options:
+            options.append((t[0], t[1]))
+    for start, end in options[:3]:
+        probe = {"date": date, "day": day_name, "employee": "", "role": role_name,
+                 "shift_start": start, "shift_end": end, "scheduled_hours": "0", "notes": note}
+        # The sweep's own close cap (a manager may stay as long as any role,
+        # BUGSGEN-15) and real hours to two decimals (BUGSGEN-6, -7).
+        _enforce_close_time(probe, day_name, close_times, role_buffers, constraints=c)
+        sp = _span_minutes(probe)
+        if probe.get("needs_review") or not sp or not any(sp[0] <= m < sp[1] for m in minutes):
+            continue
+        probe["scheduled_hours"] = _stime.row_hours_text(probe, _rules.tz_of(c))
+        pool = set(book["people"].get(key, set())) - book["working"].get(date, set()) - tried
+        pool = {e for e in pool if e not in book["restricted"] or _name_key(e) in c.time_windows}
+        if not pool:
+            return None
+        _rel = getattr(c, "reliability", None) or {}
+        ordered = sorted(pool, key=lambda e: (book["hours"].get(e, 0.0),
+                                              float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
+        legal, refused = _legal_fills(c, rows, [(e, dict(probe, employee=e)) for e in ordered], date,
+                                      coverage=True)
+        if not legal:
+            continue
+        return _fill_pick(scorer, rows, legal)
+    return None
+
+
+def crew_add_suggestion(restaurant_id, rows: list, date: str, role: str, part: str, constraints=None):
+    """(row, their week's hours with it) — one legal shift of `role` on
+    `date` that covers the shift's core window, for the Studio's Crew "Add 1
+    this week" (TRUST-9): the floors stage's own choice of times and person
+    (_slot_fill — legal, no new breach, overtime only when nobody else can),
+    asked as if the shift's floor were one more than the role has on at
+    once through it. None when nobody can take it. Nothing is saved."""
+    import shift_quality as _sqf
+    rows = [dict(r) for r in rows or []]
+    try:
+        day_name = _date_of(date).strftime("%A")
+    except (TypeError, ValueError):
+        return None
+    if constraints is None:
+        dates = sorted({r.get("date") for r in rows if r.get("date")} | {date})
+        constraints = _rules.build_constraints(restaurant_id, dates, [_weekday_name(d) for d in dates])
+    c = constraints
+    if date in set(getattr(c, "closed_dates", None) or ()):
+        return None
+    skip = _will_not_stand(rows, c)
+    counted = [r for r in rows if r.get("date") == date and id(r) not in skip]
+    open_m = _rules.parse_minutes((c.open_times or {}).get(day_name, "") or "")
+    close_m = _rules.parse_minutes((c.close_times or {}).get(day_name, "") or "")
+    figs = _sqf.concurrent_on(counted, part, role, open_m, close_m, families=c.role_families, by_family=False)
+    slots = _sqf.floor_slots(part, open_m, close_m) or sorted(figs["slots"])
+    if not slots:
+        return None
+    level = figs["held"] if figs["held"] is not None else figs["peak"]
+    short = {t: 1 for t in slots if int(figs["slots"].get(t, 0)) <= int(level or 0)}
+    if not short:
+        return None
+    book = _fill_book(rows, restaurant_id, c)
+    got = _slot_fill(rows, date, day_name, role, part, short, c, c.close_times or {}, c.role_buffers or {}, book,
+                     set(), None, f"added — one more {role} this week")
+    if not got:
+        return None
+    employee, row = got
+    hours = round(book["hours"].get(employee, 0.0) + _row_hours_value(row), 1)
+    out = {k: row.get(k, "") for k in ("date", "day", "employee", "role", "shift_start", "shift_end",
+                                       "scheduled_hours", "notes")}
+    return out, hours
 
 
 def _ensure_station_coverage(preview_rows: list, week_dates: list, week_days: list,
@@ -5272,11 +5615,11 @@ def _ensure_station_coverage(preview_rows: list, week_dates: list, week_days: li
             row = {"date": date, "day": day, "employee": name, "role": person_role,
                    "shift_start": start, "shift_end": end, "scheduled_hours": "0",
                    "notes": f"added — {station} station"}
-            _enforce_close_time(row, day, close_times, role_buffers)
+            _enforce_close_time(row, day, close_times, role_buffers, constraints=c)
             sp = _span_minutes(row)
             if row.get("needs_review") or not sp or part not in _ks.parts_of(row):
                 continue
-            row["scheduled_hours"] = str(round((sp[1] - sp[0]) / 60, 1))
+            row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(c))
             options.append((name, row))
         legal, _refused = _legal_fills(c, preview_rows, options, date, coverage=True)
         if not legal:
@@ -5314,17 +5657,19 @@ def _daypart_fallback(constraints, day_name: str, part: str) -> tuple:
     next morning: a 2am close gives dinner 6pm–2am (at most eight hours to
     the close), not the four-hour 3–7pm stub it read as when 2am was taken
     for 2 in the morning before the doors opened."""
-    open_m = _parse_time_to_minutes((constraints.open_times or {}).get(day_name, "")) if constraints else None
-    close_m = _parse_time_to_minutes((constraints.close_times or {}).get(day_name, "")) if constraints else None
-    late = close_m is not None and close_m < _rules._OVERNIGHT_LATEST_BEFORE
+    open_m, close_m = _stime.day_hours(
+        (constraints.open_times or {}).get(day_name, "") if constraints else "",
+        (constraints.close_times or {}).get(day_name, "") if constraints else "")
+    split = _stime.daypart_split()
+    late = close_m is not None and close_m >= 24 * 60
     if part == "morning":
         start = open_m if open_m is not None else _parse_time_to_minutes("11:00am")
-        end = min(close_m, 15 * 60) if (close_m is not None and not late) else 15 * 60
+        end = min(close_m, split) if (close_m is not None and not late) else split
     elif late:
-        end = close_m + 24 * 60
-        start = max(open_m if open_m is not None else 0, 15 * 60, end - 8 * 60)
+        end = close_m
+        start = max(open_m if open_m is not None else 0, split, end - 8 * 60)
     else:
-        start = max(open_m, 15 * 60) if open_m is not None else 16 * 60
+        start = max(open_m, split) if open_m is not None else 16 * 60
         end = close_m if close_m is not None else 22 * 60
     if end <= start:
         end = start + 4 * 60
@@ -5581,7 +5926,8 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         close_times=c.close_times or None, section_cap=int(getattr(c, "section_cap", 0) or 0),
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
-        standard_needs=standard_needs or None, **_limit_kwargs(c))
+        standard_needs=standard_needs or None, crew_answers=(patterns or {}).get("crew_answers") or None,
+        **_limit_kwargs(c))
 
 
 def learned_worse_levers(restaurant_id) -> dict:
@@ -5662,7 +6008,8 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
                 _dt.strptime(date, "%Y-%m-%d")
             except ValueError:
                 continue
-            part = _sq.daypart_of(start)
+            part = _stime.primary_daypart({"date": date, "shift_start": start,
+                                           "shift_end": parts[5] if len(parts) > 5 else ""})
             entry = {"date": date, "daypart": part,
                      "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A")}
             bucket = out.setdefault(name, [])
@@ -5696,7 +6043,7 @@ def _prior_week_from_punches(restaurant_id, before, days_back=7) -> dict:
         date, name = str(r.get("date") or "")[:10], (r.get("employee") or "").strip()
         if not (date and name) or not (start <= date <= end):
             continue
-        part = _sq.daypart_of(r.get("shift_start") or "")
+        part = _stime.primary_daypart(r)
         bucket = out.setdefault(name, [])
         if not any(e["date"] == date and e["daypart"] == part for e in bucket):
             bucket.append({"date": date, "daypart": part, "day": _dt.strptime(date, "%Y-%m-%d").strftime("%A"),
@@ -5778,9 +6125,10 @@ def _breach_dayparts(v: dict, row: dict = None) -> list:
         return [v["daypart"]]
     if v.get("gap_start") is not None and v.get("gap_end") is not None:
         out = []
-        if int(v["gap_start"]) < _sq.DAYPART_CUTOVER:
+        split = _stime.daypart_split()
+        if int(v["gap_start"]) < split:
             out.append("morning")
-        if int(v["gap_end"]) > _sq.DAYPART_CUTOVER:
+        if int(v["gap_end"]) > split:
             out.append("night")
         return out
     if row is not None:
@@ -6572,6 +6920,24 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     return entry
 
 
+def in_restaurant_dayparts(fn):
+    """Run `fn(restaurant_id, ...)` inside that restaurant's own lunch/dinner
+    boundary (restaurants.daypart_boundary — schedule_time.daypart_scope,
+    ARCH-12): the score and the publish gate read the dayparts the
+    generation did."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(restaurant_id, *a, **k):
+        split = _restaurant_split(restaurant_id)
+        if split is None or split == _stime.daypart_split():
+            return fn(restaurant_id, *a, **k)
+        with _stime.daypart_scope(split):
+            return fn(restaurant_id, *a, **k)
+    return wrapper
+
+
+@in_restaurant_dayparts
 def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=None, frozen=None, **extra):
     """Score the finished schedule, then see whether a better one existed.
 
@@ -7122,8 +7488,8 @@ def _gate_someone_free(v, rows, c) -> bool:
         role = next((r for k, r in (c.managers or {}).items()), "Manager") or "Manager"
         stretch = {"date": d, "day": _weekday_name(d), "role": role, "notes": "",
                    "shift_start": _rules._fmt_minutes(int(gs) % (24 * 60)),
-                   "shift_end": _rules._fmt_minutes(int(ge) % (24 * 60)),
-                   "scheduled_hours": str(round((int(ge) - int(gs)) / 60.0, 2))}
+                   "shift_end": _rules._fmt_minutes(int(ge) % (24 * 60))}
+        stretch["scheduled_hours"] = _stime.row_hours_text(stretch, _rules.tz_of(c))
         return any(takes(n, dict(stretch, role=(c.managers or {}).get(str(n).strip().lower()) or role), rows)
                    for n in managers)
     if kind in ("keyholder_until_close", "nobody_at_close"):
@@ -7363,7 +7729,11 @@ def _gate_model_rewrite(job_id, restaurant_id, week_start, gate, fallback, instr
     """The quality gate's model rewrite of its days, after the code's fill
     did not settle them (#21), over `fallback` — the draft now in force (the
     fill when it was kept). With too little of the job's model time left
-    (P-22) the draft in force is the answer."""
+    (P-22) the draft in force is the answer; stopped, the job says so."""
+    if clock is not None and clock.stopped():
+        _finish_stopped(job_id, restaurant_id, clock, fallback.get("history_id"), fallback.get("payload"),
+                        fallback)
+        return
     if clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS:
         print(f"[schedule] quality gate rewrite skipped: {int(clock.model_seconds_left())}s of model time left")
         _run_gate(gate, "skipped")
@@ -7458,16 +7828,24 @@ REPAIR_STAGES = (
     ("floors", _rules.TIER_COVERAGE, "The staffing-floor fill", "check each role's staffing floor"),
     ("stations", _rules.TIER_COVERAGE, "The kitchen-station fill", "check each kitchen station has a trained cook"),
     ("close_out", _rules.TIER_COVERAGE, "The closer repair", "check each role's closer stays until close"),
+    # The restaurant's own limits — rest between shifts, the longest shift
+    # — where they are not law: ranked below the manager rule and coverage,
+    # so their repair runs after those and may cost neither (LOGIC-1).
+    ("policy", _rules.TIER_POLICY, "The repair of shifts past your scheduling limits",
+     "check rest between shifts and shift lengths"),
     ("overtime", _rules.TIER_OVERTIME, "The overtime rebalance", "overtime a teammate could take may still be in it"),
     ("min_hours", _rules.TIER_MIN_HOURS, "The minimum-hours fill",
      "people under the minimum you set may still be short"),
+    # The SHIFT REQUIREMENTS outrank the budget whichever way a pass moves
+    # (LOGIC-4): the top-up fills to them before the trim, which never cuts
+    # under them, so a light draft and a heavy one end at the same week.
+    ("top_up", _rules.TIER_REQUIREMENT, "The fill to the shift requirements", "a shift may be short of its usual crew"),
     # Closes that measurably run late, ended when they really end (L-16) —
     # counted against the budget before the trim makes room for them.
     ("pad_overruns", _rules.TIER_BUDGET, "The pass that ends late-running closes when they really end",
      "the closes that usually run late still end at their scheduled time"),
     ("section_cap", _rules.TIER_BUDGET, "The section-count trim", "a night may have more servers than sections"),
     ("budget", _rules.TIER_BUDGET, "The trim to the hours budget", "the week may be over its hours budget"),
-    ("top_up", _rules.TIER_QUALITY, "The fill to the shift requirements", "a shift may be short of its usual crew"),
     ("stagger", _rules.TIER_QUALITY, "The staggered-start pass", "starts weren't spread along the sales curve"),
     ("solver", _rules.TIER_QUALITY, "The assignment solver", "who works each shift is as the model wrote it"),
     ("optimizer", _rules.TIER_QUALITY, "The Shift Quality optimizer", "the draft wasn't tuned for Shift Quality"),
@@ -7531,6 +7909,12 @@ class RepairContext:
         self.roster = list(result.get("roster") or [])
         self.profiles = result.get("shift_profiles") or None
         self.budget = float(result.get("hours_budget") or 0)
+        # The hourly budget in dollars (labor.py: the all-in target's dollars
+        # less salaries): what the week is held to, priced at each person's
+        # rate with overtime at its premium (sched audit 10/10/26 LOGIC-13);
+        # the hours budget stays the display view.
+        self.budget_dollars = float(result.get("labor_budget_dollars") or 0)
+        self._pricing = None
         self.trim_on = bool(int(getattr(restaurant, "trim_to_budget", 1) or 0)) if restaurant is not None else True
         # A budget mostly priced at the assumed wage is not cut to (E-24):
         # budget_basis.trim_ok, said in the review.
@@ -7587,12 +7971,45 @@ class RepairContext:
     def hourly(self, rows) -> float:
         return _hourly_hours_sum(rows, self.c)
 
+    def pricing(self):
+        """The week's pricing inputs (schedule_economics.week_pricing — each
+        person's rate, the 40h line per payroll week, salaried people free),
+        read once; None when they cannot be read."""
+        if self._pricing is None:
+            try:
+                import schedule_economics as _econ
+                self._pricing = _econ.week_pricing(self.rid, self.c, blended_rate=self.result.get("blended_rate")) \
+                    if self.rid is not None else {}
+            except Exception as exc:
+                print(f"[schedule] week pricing unavailable: {exc!r}")
+                self._pricing = {}
+        return self._pricing or None
+
+    def cost(self, rows):
+        """The week's hourly pay in dollars — each person at their own rate,
+        overtime at its premium, and an hourly closing manager's assumed stay
+        counted (schedule_rules.with_assumed_stays, TRUST-21) — or
+        None without a dollar budget or the rates to price it."""
+        if self.budget_dollars <= 0:
+            return None
+        p = self.pricing()
+        if not p:
+            return None
+        import schedule_economics as _econ
+        return _econ.price_week(_rules.with_assumed_stays(rows, self.c), p, rounded=False)["total"]
+
     def over_budget(self, rows) -> float:
-        """Hourly hours past the budget and the trim's own tolerance."""
+        """How far the week is past the budget and the trim's own tolerance:
+        dollars when the week can be priced (LOGIC-13), else hourly hours
+        (an hourly closing manager's assumed stay counted either way)."""
+        import schedule_economics as _econ
+        cost = self.cost(rows)
+        if cost is not None:
+            return round(max(0.0, cost - self.budget_dollars * (1 + _econ.TRIM_TOLERANCE)), 2)
         if self.budget <= 0:
             return 0.0
-        import schedule_economics as _econ
-        return round(max(0.0, self.hourly(rows) - self.budget * (1 + _econ.TRIM_TOLERANCE)), 2)
+        return round(max(0.0, self.hourly(_rules.with_assumed_stays(rows, self.c))
+                         - self.budget * (1 + _econ.TRIM_TOLERANCE)), 2)
 
 
 def _full_sig(r) -> tuple:
@@ -7615,15 +8032,29 @@ def _flagged_rows(viols) -> set:
 
 
 def _hard_total(prof, tier) -> float:
+    tiers = prof.get("tiers") or {}
     return sum(sev for bid, sev in (prof.get("by_id") or {}).items()
-               if bid[0] in _rules.HARD and _rules.BREACH_TIER.get(bid[0]) == tier)
+               if bid[0] in _rules.HARD and tiers.get(bid, _rules.BREACH_TIER.get(bid[0])) == tier)
 
 
 def _hard_key(prof) -> tuple:
     """The ranks the loop may never end worse on than the best state it saw:
-    legality, unmanaged minutes, the hard coverage rules."""
+    legality, unmanaged minutes, the hard coverage rules, the restaurant's
+    hard policy limits."""
     return (round(_hard_total(prof, _rules.TIER_PERSON), 3), int(sum((prof.get("manager") or {}).values())),
-            round(_hard_total(prof, _rules.TIER_COVERAGE), 3))
+            round(_hard_total(prof, _rules.TIER_COVERAGE), 3), round(_hard_total(prof, _rules.TIER_POLICY), 3))
+
+
+def _stage_gained(tier, before_prof, after) -> bool:
+    """Whether a stage ranked above the policy limits made the thing it is
+    for strictly better: fewer unmanaged minutes (the manager rule), less of
+    the hard coverage rules broken (coverage) — the only case its change may
+    make a policy limit worse (LOGIC-1)."""
+    if tier == _rules.TIER_MANAGER:
+        return sum((after.get("manager") or {}).values()) < sum((before_prof.get("manager") or {}).values())
+    if tier == _rules.TIER_COVERAGE:
+        return _hard_total(after, _rules.TIER_COVERAGE) < _hard_total(before_prof, _rules.TIER_COVERAGE) - 0.01
+    return False
 
 
 def _kept_rows_moved(before, after, editable) -> str:
@@ -7654,18 +8085,24 @@ def _judge(tier, before_rows, after_rows, before_prof, x) -> tuple:
     if tier == _rules.TIER_PERSON:
         worse = _rules.regressions(before_prof, after, upto=_rules.TIER_PERSON, hard_only=False)
         if not worse:
-            lower = _rules.regressions(before_prof, after, upto=_rules.TIER_COVERAGE, hard_only=True)
-            # Legality outranks a manager on the floor and the floors (owner,
-            # 10/2/26): a repair that leaves the week more legal may cost them
-            # — a minor cut to their limit with nobody to take the stretch —
-            # and one that does not may not.
+            lower = _rules.regressions(before_prof, after, upto=_rules.TIER_POLICY, hard_only=True)
+            # Legality outranks a manager on the floor, the floors and the
+            # restaurant's own limits (owner, 10/2/26): a repair that leaves
+            # the week more legal may cost them — a minor cut to their limit
+            # with nobody to take the stretch — and one that does not may not.
             if lower and not (_hard_total(after, _rules.TIER_PERSON)
                               < _hard_total(before_prof, _rules.TIER_PERSON) - 0.01):
                 worse = lower
         return worse, after
     worse = _rules.regressions(before_prof, after, upto=tier - 1, hard_only=False)
-    worse += [w for w in _rules.regressions(before_prof, after, upto=_rules.TIER_COVERAGE, hard_only=True)
-              if w["tier"] >= tier]
+    hard = [w for w in _rules.regressions(before_prof, after, upto=_rules.TIER_POLICY, hard_only=True)
+            if w["tier"] >= tier]
+    # The manager rule and the coverage rules outrank the restaurant's own
+    # limits (LOGIC-1): their stage may break one — six days in a row for
+    # the only manager who can close — when it makes its own rule better.
+    if tier in (_rules.TIER_MANAGER, _rules.TIER_COVERAGE) and _stage_gained(tier, before_prof, after):
+        hard = [w for w in hard if w["tier"] != _rules.TIER_POLICY]
+    worse += hard
     if not worse and tier > _rules.TIER_BUDGET:
         was, now = x.over_budget(before_rows), x.over_budget(after_rows)
         if now > was + 0.05:
@@ -7743,9 +8180,22 @@ def _stage_replace(rows, x):
     apply_fixes), the replacement that costs the week the least score. A
     breach about a day (no manager on, a floor short) is no row's to fix by
     changing its person (E-13) and is left to its own stage."""
+    return _replace_tier(rows, x, _rules.TIER_PERSON)
+
+
+def _stage_policy(rows, x):
+    """Rows past the restaurant's own limits — rest between shifts, the
+    longest shift, where no pack makes them law — handed to somebody who
+    can work them inside the limits (shift_quality.apply_fixes), ranked
+    below the manager rule and coverage, so the change may cost neither
+    (sched audit 10/10/26 LOGIC-1). Days in a row are the person stage's."""
+    return _replace_tier(rows, x, _rules.TIER_POLICY)
+
+
+def _replace_tier(rows, x, tier):
     viols = _rules.violations(rows, x.c)
     todo = [v for v in viols if v.get("hard") and not v.get("day_level")
-            and _rules.BREACH_TIER.get(v.get("kind")) == _rules.TIER_PERSON
+            and _rules.tier_of(v) == tier and not (tier == _rules.TIER_POLICY and v.get("kind") == "long_run")
             and isinstance(v.get("index"), int)
             and (x.editable is None or rows[v["index"]].get("date") in x.editable)]
     if not todo:
@@ -7867,7 +8317,11 @@ def _stage_budget(rows, x):
         splh=x.result.get("splh_by_daypart") or {}, rainy_dates=x.rainy, patio_roles=x.c.patio_roles,
         score_fn=score_fn, only_dates=x.editable, requirements=x.requirements,
         learned_worse=x.result.get("learned_worse"), outcomes=x.result.get("outcomes_by_daypart"),
-        soft_asks=x.result.get("soft_requirements"), report=rep)
+        soft_asks=x.result.get("soft_requirements"), report=rep,
+        # In dollars, the loop's own measure (LOGIC-13): the trim stops where
+        # the judge says the week fits.
+        cost_fn=x.cost if x.cost([]) is not None else None, budget_value=x.budget_dollars or None,
+        pricing=x.pricing() if x.budget_dollars > 0 else None)
     return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
 
 
@@ -7948,7 +8402,7 @@ def _stage_role_times(rows, x):
             "report": {"retimed": len(out["retimed"]), "left": out.get("left") or []}}
 
 
-_STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _stage_manager,
+_STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _stage_manager, "policy": _stage_policy,
               "floors": _stage_floors, "stations": _stage_stations, "close_out": _stage_close_out,
               "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
               "section_cap": _stage_section_cap,
@@ -8026,6 +8480,10 @@ def repair_week(rows, x: RepairContext) -> dict:
         ledger["cycle"] = ledger["cycles"] = cycle
         changed = False
         for key, _tier, _what, _check in REPAIR_STAGES:
+            # Stop is read between stages (BUGSGEN-12): it was read only
+            # before model calls, so a Stop after the last one ran the loop,
+            # the score and the gate to the save.
+            _raise_if_stopped(x.clock)
             if key in failed or (key in _REPAIR_ONCE and key in ran):
                 continue
             if key in _REPAIR_SEARCHES and x.search_seconds() < REPAIR_MIN_SEARCH_SECONDS:
@@ -8334,7 +8792,8 @@ def _added_above_budget_line(added: dict) -> str:
     words = {"person": "a person's legal limits", "replace": "replacing people who couldn't work",
              "manager": "a manager every minute", "floors": "your staffing floors", "stations": "kitchen stations",
              "close_out": "closers until close", "overtime": "moving overtime to teammates",
-             "min_hours": "the minimum hours you set"}
+             "policy": "your scheduling limits", "min_hours": "the minimum hours you set",
+             "top_up": "the shift requirements (the crew each shift needs)"}
     parts = [(words.get(k, k), v) for k, v in sorted((added or {}).items(), key=lambda kv: -kv[1]) if v >= 0.5]
     if not parts:
         return ""
@@ -8668,7 +9127,11 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     _dropped_rows.append(_line[:120])
                     continue
 
-                _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers)
+                # The sweep's own ceiling (close_cap_minutes) with the rules
+                # the prompt was built from: a manager stays as long as any
+                # role does (BUGSGEN-15).
+                _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers,
+                                    constraints=result.get("constraints"))
 
                 # Times win over the model's own arithmetic — see
                 # _reconcile_scheduled_hours — in real hours, so the night
@@ -8772,7 +9235,13 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # The ranked repair loop (P-47, E-18): every pass a stage at the
             # rank of the rule it repairs, cycle after cycle until nothing
             # changes, no change ever paid for by a rule ranked above it.
-            _repair_ctx = RepairContext(restaurant_id, result, _constraints, editable=_editable,
+            # An open day the model left empty (BUGSGEN-5) is open to the
+            # sweep and closed to the passes, as a day it did not write.
+            _frozen = set(result.get("open_unwritten") or ())
+            _pass_editable = _editable
+            if _frozen:
+                _pass_editable = set(_editable if _editable is not None else (result.get("week_dates") or [])) - _frozen
+            _repair_ctx = RepairContext(restaurant_id, result, _constraints, editable=_pass_editable,
                                restaurant=_restaurant_for_sched, close_times=_close_times,
                                role_buffers=_role_close_buffers, signals=_pass_sig, weights=_pass_w,
                                requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on)
@@ -8802,7 +9271,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     # on a week that owes none (NS3 H5).
                     _pricing = _econ.week_pricing(restaurant_id, _constraints,
                                                   blended_rate=result.get("blended_rate"))
-                    _priced = _econ.price_week(_rows, _pricing)
+                    # An hourly closing manager's assumed stay is paid time:
+                    # priced (sched audit 10/10/26 TRUST-21).
+                    _priced = _econ.price_week(_rules.with_assumed_stays(_rows, _constraints), _pricing)
                     result["projected_cost"] = _priced
                     _lbd = float(result.get("labor_budget_dollars") or 0)
                     result["over_budget_dollars"] = round(_priced["total"] - _lbd, 0) if _lbd else None
@@ -8826,7 +9297,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # What is still broken on a row comes from that final sweep, each
             # with why it was left (P-15: it came from the first fix pass,
             # reported after later passes had changed the rows).
-            _unfixed = _unfixed_from(_viols, preview_rows, _editable, _repair_ctx.unfixed_why)
+            _unfixed = _unfixed_from(_viols, preview_rows, _pass_editable, _repair_ctx.unfixed_why)
             for _v in _viols:
                 # A breach about a DAY (no manager on, a floor short) is shown
                 # on the day (review.hard_days), never as "needs review" on
@@ -8899,6 +9370,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             result["review"]["manager_plan"] = {
                 "question": _mplan.get("question"), "unknown_pattern": list(_mplan.get("unknown_pattern") or []),
                 "uncovered": _skeleton.payload(_mplan)["uncovered"]}
+            # The closing manager the owner's verdict assumes stays past their
+            # scheduled end until the last person leaves: said per day, with
+            # the one tap that writes it into the schedule, and priced for an
+            # hourly manager (sched audit 10/10/26 TRUST-21).
+            try:
+                _stays = _rules.assumed_stays(preview_rows, _constraints)
+            except Exception as _sx:
+                _soft_fail("assumed stays", _sx, restaurant_id)
+                _stays = []
+            result["review"]["assumed_stays"] = _stays
+            result["review"]["stay_lines"] = [_s["text"] for _s in _stays]
+            result["review"]["lines"].extend(result["review"]["stay_lines"])
             # Why the manager rule could not be met, once for the week (each
             # day's stretch is already its own day-level line), and who is
             # still under the minimum hours set for them, with why (E-12,
@@ -8970,14 +9453,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             _off = sorted(n for n in (result.get("operational_scores") or {}) if not _known(n)) if _roster_low else []
             result["ratings_off_roster"] = _off
             # The section cap against what this restaurant's own history
-            # runs: every requirement is held to the cap, and where the
-            # history runs over it the owner is told the cap is probably
-            # wrong, rather than every such shift quietly scoring short.
+            # runs ON AT ONCE (labor.concurrent_patterns — the cap's unit,
+            # LOGIC-7): the half-hour needs are held to the cap, and where the
+            # history runs more on at once than it the owner is told the cap
+            # is probably wrong, rather than every such shift scoring short.
             try:
                 import staffing_curve as _stc
                 _cap_roles = getattr(_constraints, "foh_roles", None) or {"server"}
-                _conf = _stc.cap_conflicts(result.get("typical_headcount") or {},
-                                           getattr(_constraints, "section_cap", 0), _cap_roles)
+                _conf = _stc.cap_conflicts(result.get("concurrent") or {},
+                                           getattr(_constraints, "section_cap", 0), _cap_roles,
+                                           getattr(_constraints, "role_families", None) or None)
                 result["section_cap_conflicts"] = _conf
                 _line = _stc.cap_conflict_line(
                     _conf, "servers" if set(_cap_roles) == {"server"} else "front-of-house staff")
@@ -9002,10 +9487,25 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except (TypeError, ValueError):
                 _hs = _hb = 0.0
             _budget_lines = []
-            if _hb > 0 and _hs > _hb * 1.02:
+            # The budget is held in dollars when the week is priced (sched
+            # audit 10/10/26 LOGIC-13): each person at their own rate, overtime
+            # at its premium, an hourly manager's assumed stay — the hours the
+            # display view beside it. 20h of overtime no longer reads "on
+            # budget" because the hours fit.
+            _lbd = float(result.get("labor_budget_dollars") or 0)
+            _cost = float(((result.get("projected_cost") or {}).get("total")) or 0)
+            _over_d = _lbd > 0 and _cost > _lbd * 1.02
+            if _over_d:
+                result["review"]["over_budget_dollars"] = round(_cost - _lbd, 0)
+                result["review"]["over_budget_hours"] = round(max(0.0, _hs - _hb), 1)
+                _budget_lines.append(
+                    f"⚠ ${_cost:,.0f} of hourly pay against a ${_lbd:,.0f} hourly budget — ${_cost - _lbd:,.0f} over "
+                    f"({_hs:,.0f}h scheduled against {_hb:,.0f}h)")
+            elif (_lbd <= 0 or not _cost) and _hb > 0 and _hs > _hb * 1.02:
                 result["review"]["over_budget_hours"] = round(_hs - _hb, 1)
                 _budget_lines.append(
                     f"⚠ {_hs:,.0f}h scheduled against a {_hb:,.0f}h budget — {_hs - _hb:,.0f}h over the ceiling")
+            if _budget_lines:
                 # Why the trim left it there — the shifts' requirement, days
                 # kept from cuts, the rules — said once, beside it (SQ-7).
                 _bc = result.get("budget_conflict")
@@ -9155,6 +9655,7 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # generated fine must never be lost because a scoring dimension
             # raised, so a failure here degrades to "not scored" and the week
             # still ships.
+            _raise_if_stopped(clock)
             _t_score = time.monotonic()
             try:
                 result["staff_constraints"] = staff_constraints
@@ -9327,21 +9828,38 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                     owner_rules_unchecked=result["review"].get("owner_rules_unchecked"))
         except Exception as _ux:
             _soft_fail("unmet list", _ux, restaurant_id)
-        # Everything the draft was made or checked without, in one line at
-        # the end of the review (P-17): each was captured as it failed.
-        _ifl = _input_failure_line(_inputs_failed())
-        if _ifl and isinstance(result.get("review"), dict):
-            result["review"]["lines"].append(_ifl)
-            result["review"]["inputs_missing"] = _inputs_failed()
+        # Everything the draft was made or checked without (P-17): each was
+        # captured as it failed. A required one fails the job; a
+        # safety-relevant one leads the review with a "⚠" line, so the
+        # publish gate and the auto-publish hold the week; the rest are one
+        # line at the end (ARCH-25).
+        _failed_inputs = _inputs_failed()
+        _required_gone = [w for w in _failed_inputs if input_class(w) == "required"]
+        if _required_gone:
+            raise ScheduleGenerationError(
+                "The schedule couldn't be made: " + ", ".join(_input_words(_required_gone))
+                + " couldn't be read, so nothing was saved. Try again in a few minutes.")
+        _ifl = _input_failure_line(_failed_inputs)
+        _ihl = _input_hold_line(_failed_inputs)
+        if isinstance(result.get("review"), dict) and _failed_inputs:
+            result["review"]["inputs_missing"] = _failed_inputs
+            result["review"]["inputs_held"] = [w for w in _failed_inputs if input_class(w) == "safety"]
+            if _ihl:
+                result["review"]["lines"].insert(0, _ihl)
+                result["review"]["lead_lines"] = [_ihl] + list(result["review"].get("lead_lines") or [])
+            if _ifl:
+                result["review"]["lines"].append(_ifl)
         # A job past its own deadline, or one a poll has already called dead,
         # saves nothing (P-22): the owner was told it didn't finish, and a
         # draft turning up in history afterwards contradicted that. Checked
         # with half the store's grace still in hand, so the save and the
         # verdict can never cross.
+        # Stopped by the owner is said as stopped, never as out of time
+        # (BUGSGEN-12); the save itself re-checks the row in its own write.
+        _raise_if_stopped(clock, owner_only=True)
         if (clock is not None and clock.seconds_left() < -_ops.ASYNC_DEADLINE_GRACE_SECONDS / 2) \
                 or not _ops.job_still_pending(job_id):
-            raise ScheduleGenerationError("The schedule didn't finish in the time a generation is given, so "
-                                          "nothing was saved. Try again.")
+            raise ScheduleGenerationError(_TIMED_OUT_MESSAGE)
         _history_id = None
         _history_version = None
         # The week's hours split by pay (schedule audit 10/3/26 E-7, P-6):
@@ -9373,8 +9891,8 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # its partial-week and failed-stage blockers. A redo writes only
             # over the draft it read (PIPE-2).
             try:
-                _history_id = save_schedule_history(
-                    restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
+                _history_id = _save_durably(
+                    job_id, clock, restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
                     round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
                     result["schedule_csv"], result.get("summary", []),
                     quality=result.get("quality"), what_if=result.get("what_if"),
@@ -9451,14 +9969,31 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             except Exception:
                 pass
         except ScheduleGenerationError:
-            raise                      # the redo's draft changed under it: said, nothing saved
+            raise                      # the redo's draft changed under it, or the save failed: said
         except Exception as _hist_ex:
-            print(f"[schedule history] save error: {_hist_ex}")
-            # The history row is the ONLY durable copy of this schedule — the
-            # async result is deleted the first time it is polled. If the save
-            # failed and the poll is then lost, a paid-for Claude call is gone.
+            # Something after the save failed (the draft is saved and in
+            # force): captured, and the week goes on with its id. A failure
+            # before the save is the job's failure (_save_durably, ARCH-3) —
+            # never an ok result with no draft behind it.
+            print(f"[schedule history] after the save: {_hist_ex}")
             _ops.capture(_hist_ex, job="schedule_generate",
-                         context=f"restaurant_id={restaurant_id} — history save failed, result is poll-only")
+                         context=f"restaurant_id={restaurant_id} — a step after the history save failed")
+            if not _history_id:
+                raise ScheduleGenerationError(_SAVE_FAILED_MESSAGE)
+        if not _history_id:
+            # The draft is the job's commit point (ARCH-3): no durable id, no
+            # "ok" — a draft on screen that can never be saved or sent.
+            raise ScheduleGenerationError(_SAVE_FAILED_MESSAGE)
+        try:
+            # The rules, requirements and signals this week was checked and
+            # scored against, kept with it (ARCH-35): the live tables move on,
+            # and a replay must judge the week by what judged it.
+            import schedule_output as _so_snap
+            _so_snap.record_check_snapshot(restaurant_id, _history_id, result.get("generation_id"),
+                                           result.get("constraints"), result.get("shift_requirements"),
+                                           _pass_sig, _pass_w)
+        except Exception as _snx:
+            _ops.capture(_snx, job="schedule_check_snapshot", context=f"restaurant_id={restaurant_id}")
 
         if _dropped_rows:
             # Not fatal — the rest of the week is still usable — but the owner
@@ -9565,6 +10100,16 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             likely_edits=result.get("likely_edits") or [],
             demand_accuracy=result.get("demand_accuracy"),
             week_projection_accuracy=result.get("week_projection_accuracy"),
+            # What the draft read beside the rows (memory round 9/29/26): the
+            # staffing asks and whether the rows honoured each, the pairs two
+            # editors pull opposite ways, and which labor target the budget
+            # was built against. Both clients read these top level (the web's
+            # notes, the phone's ScheduleWeekNotes); they were computed here
+            # and never sent (schedule audit 10/10/26 TRUST-1 contract audit).
+            soft_requirements=_json_safe(result.get("soft_requirements") or []),
+            pattern_conflicts=_json_safe(result.get("pattern_conflicts") or []),
+            labor_target_label=result.get("labor_target_label"),
+            labor_target_source=result.get("labor_target_source"),
             # What schedule learning set the draft against: the rotation
             # plan, the sales-per-labor-hour objective and how the draft
             # landed on it, and a borrowed starting headcount (new accounts).
@@ -9621,6 +10166,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             stage_failures=_json_safe(result.get("stage_failures") or []),
             stage_seconds=result.get("stage_seconds") or {},
         )
+        # Stopped while this draft was being saved: the gate's fill and
+        # rewrite start nothing more, and the job says what is in force.
+        _raise_if_stopped(clock)
         _q_now = (result.get("quality") or {}).get("score")
         # The finished week as the gate reads it (P-43): its rows beside its
         # sweep, its rules and its quality.
@@ -9743,6 +10291,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                 "reason": "The weakest days were regenerated with what was wrong with them."}
         _ops.finish_async_job(job_id, "done", _json_ready(_payload))
     except Exception as e:
+        if isinstance(e, ScheduleStopped):
+            # The owner's Stop (ARCH-2, BUGSGEN-12): the job, which knows
+            # what it saved, says what is in force.
+            _finish_stopped(job_id, restaurant_id, clock, locals().get("_history_id"), locals().get("_payload"),
+                            _fallback)
+            return
         tb = _tb.format_exc()
         print(f"[schedule job] FAILED:\n{tb}")
         if not _fallback:
@@ -9782,6 +10336,126 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
         # The owner gets a sentence that says what stopped it (P-44), never
         # the exception or the traceback.
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e, clock)})
+
+
+_TIMED_OUT_MESSAGE = ("The schedule didn't finish in the time a generation is given, so nothing was saved. "
+                      "Try again.")
+_SAVE_FAILED_MESSAGE = ("The schedule was written but couldn't be saved — the database was busy — so it isn't in "
+                        "force and your earlier draft is as it was. Generate again in a minute.")
+# How the save is retried before the job fails (ARCH-3): a busy database
+# ("database is locked" past the busy timeout) clears in seconds.
+SAVE_ATTEMPTS = 4
+SAVE_BACKOFF_SECONDS = (0.5, 1.5, 3.0)
+
+
+def _raise_if_stopped(clock, owner_only=False) -> None:
+    """ScheduleStopped when the generation on `clock` was stopped — by the
+    owner, or (unless `owner_only`) by a poll that called it dead."""
+    if clock is None:
+        return
+    if clock.stop_requested() if owner_only else clock.stopped():
+        raise ScheduleStopped(STOPPED_MESSAGE)
+
+
+def _save_durably(job_id, clock, *args, **kwargs):
+    """models.save_schedule_history as the job's commit point (ARCH-3,
+    BUGSLIFE-26): written only while the job is still pending and not
+    stopped, checked inside the write (`job_id`); a busy database retried
+    with backoff; a save that still fails fails the job with a sentence the
+    owner can read — it used to finish "ok" with no history id, a draft on
+    screen that could never be saved or sent."""
+    import sqlite3
+    from models import save_schedule_history, DraftChanged, JobNotPending
+    last = None
+    for attempt in range(SAVE_ATTEMPTS):
+        try:
+            return save_schedule_history(*args, job_id=job_id, **kwargs)
+        except DraftChanged:
+            raise
+        except JobNotPending as stop:
+            if stop.stop or (clock is not None and clock.stop_requested()):
+                raise ScheduleStopped(STOPPED_MESSAGE)
+            raise ScheduleGenerationError(_TIMED_OUT_MESSAGE)
+        except sqlite3.OperationalError as e:
+            last = e
+            if attempt + 1 < SAVE_ATTEMPTS:
+                time.sleep(SAVE_BACKOFF_SECONDS[min(attempt, len(SAVE_BACKOFF_SECONDS) - 1)])
+                continue
+        except Exception as e:
+            last = e
+            break
+    _ops.capture(last or RuntimeError("history save failed"), job="schedule_generate",
+                 context=f"restaurant_id={args[0] if args else '?'} — history save failed")
+    raise ScheduleGenerationError(_SAVE_FAILED_MESSAGE)
+
+
+def _finish_stopped(job_id, restaurant_id, clock, history_id=None, payload=None, fallback=None) -> None:
+    """The owner pressed Stop (schedule audit 10/10/26 ARCH-2): the job, not
+    the route, says what is in force.
+
+    Nothing saved yet: the route already finished the job "Stopped — nothing
+    was saved", and that is true — the save re-checks the job in its own
+    write (BUGSLIFE-26). After this job saved a draft (a Stop during the
+    quality gate's fill or rewrite): the draft in force before the press
+    comes back when there was one (_restore_draft — it had been superseded,
+    read-only), with STOPPED_RESTORED_MESSAGE; with none, the draft already
+    saved stays — the gate's unfinished rewrite never does — with
+    STOPPED_KEPT_LINE leading its review."""
+    _run_failed(ScheduleStopped(STOPPED_MESSAGE))
+    state = _ops.job_stop_state(job_id) if job_id else "stopped"
+    if state != "stop_requested":
+        # Finished already: by the route (nothing was saved) or a poll.
+        _ops.finish_async_job(job_id, "error", {"ok": False, "stopped": True, "error": STOPPED_MESSAGE})
+        return
+    first = (fallback or {}).get("history_id") or history_id
+    prior = getattr(clock, "prior_draft_id", None)
+    if prior and first and int(prior) != int(first):
+        _restore_draft(restaurant_id, int(prior))
+        _ops.finish_async_job(job_id, "error", {"ok": False, "stopped": True, "restored_history_id": int(prior),
+                                                "error": STOPPED_RESTORED_MESSAGE})
+        return
+    if first and history_id and int(history_id) != int(first):
+        _restore_draft(restaurant_id, int(first), int(history_id))
+    base = dict((fallback or {}).get("payload") or payload or {})
+    if first and base:
+        review = dict(base.get("review") or {})
+        review["lines"] = [STOPPED_KEPT_LINE] + list(review.get("lines") or [])
+        out = dict(base, history_id=int(first), review=review, stopped=True)
+        _ops.finish_async_job(job_id, "done", _json_ready(out))
+        return
+    _ops.finish_async_job(job_id, "error", {"ok": False, "stopped": True, "saved": bool(first),
+                                            "history_id": first, "error": STOPPED_KEPT_LINE})
+
+
+def replay_checks(restaurant_id, history_id, rows=None, db_path=None) -> dict:
+    """The rule sweep of a saved week run again against the rules it was
+    checked against when it was generated (schedule_output.check_snapshot,
+    ARCH-35) — not the live tables, which have moved since (a time-off
+    approval, a new floor). `rows` default to the week as generated (its
+    "generated" version), else as saved. {"ok", "rules_version",
+    "same_code", "violations", "review"}; {"ok": False, "error"} with no
+    snapshot."""
+    import schedule_output as _so
+    snap = _so.check_snapshot(history_id, restaurant_id=restaurant_id, db_path=db_path)
+    if not snap or snap.get("constraints") is None:
+        return {"ok": False, "error": "no check snapshot is kept for this week"}
+    if rows is None:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            got = conn.execute("SELECT schedule_csv FROM schedule_versions WHERE restaurant_id=? AND history_id=? "
+                               "AND reason='generated' ORDER BY version LIMIT 1",
+                               (restaurant_id, int(history_id))).fetchone()
+            if got is None:
+                got = conn.execute("SELECT schedule_csv FROM schedule_history WHERE restaurant_id=? AND id=?",
+                                   (restaurant_id, int(history_id))).fetchone()
+        finally:
+            conn.close()
+        rows = _versions.rows_from_csv((got["schedule_csv"] if got else "") or "")
+    viols = _rules.violations(rows, snap["constraints"])
+    return {"ok": True, "rules_version": snap.get("rules_version"),
+            "same_code": snap.get("rules_version") == _so.rules_version(),
+            "violations": viols, "review": _rules.summarize(viols)}
 
 
 def _finish_after_save(job_id, restaurant_id, history_id, payload, week_dates) -> None:
@@ -9876,10 +10550,23 @@ def _fix_sig(r) -> tuple:
 
 
 def _span_of(frm, to):
-    s, e = _rules.parse_minutes(frm or ""), _rules.parse_minutes(to or "")
-    if s is None or e is None:
-        return None
-    return (s, e + 24 * 60 if e <= s else e)
+    """(start, end) of a stored stretch's clock words on the business
+    timeline (schedule_time.place): a stretch starting in the small hours is
+    that night's, as manager_gaps reads it (BUGSGEN-10). For a review saved
+    before its entries carried their minutes."""
+    return _stime.place(_rules.parse_minutes(frm or ""), _rules.parse_minutes(to or ""))
+
+
+def _left_span(entry):
+    """(start, end) minutes of a manager stretch the backstop left: its own
+    gap_start/gap_end when it carries them (BUGSGEN-10), else read from its
+    words."""
+    try:
+        if entry.get("gap_start") is not None and entry.get("gap_end") is not None:
+            return int(entry["gap_start"]), int(entry["gap_end"])
+    except (TypeError, ValueError):
+        pass
+    return _span_of(entry.get("from"), entry.get("to"))
 
 
 def refresh_review(saved, violations, rows, constraints=None, hours_budget=None, extras=None) -> dict:
@@ -9920,13 +10607,26 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
         mc = dict(saved["manager_coverage"])
         still = []
         for e in mc.get("left") or []:
-            want = _span_of(e.get("from"), e.get("to"))
+            want = _left_span(e)
             if want and any(gs < want[1] and want[0] < ge for gs, ge, _i in gaps.get(e.get("date"), [])):
                 still.append(e)
         mc["left"] = still
         if not still:
             mc["shortfall"] = None
         out["manager_coverage"] = mc
+    # The closing stays the owner's verdict assumes, as the rows now stand
+    # (TRUST-21): an edit that wrote a manager to the last person out, or
+    # moved the last person, changes them.
+    old_stay_lines = list(saved.get("stay_lines") or [])
+    if constraints is not None:
+        try:
+            stays = _rules.assumed_stays(rows or [], constraints)
+        except Exception as _sx:
+            print(f"[schedule] assumed stays unavailable: {_sx!r}")
+            stays = None
+        if stays is not None:
+            out["assumed_stays"] = stays
+            out["stay_lines"] = [s["text"] for s in stays]
     if isinstance(saved.get("min_hours"), dict):
         short = {(v.get("employee") or "").strip().lower() for v in violations or [] if v.get("kind") == "under_min_hours"}
         mh = dict(saved["min_hours"])
@@ -9943,6 +10643,8 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
                 if ln not in rule_lines and ln not in set(budget_old) and ln not in set(lead)]
     else:
         tail = [ln for ln in saved.get("lines") or [] if not str(ln).startswith("⚠")]
+    if "stay_lines" in out and out.get("stay_lines") != old_stay_lines:
+        tail = [ln for ln in tail if ln not in set(old_stay_lines)] + list(out["stay_lines"])
     # A day the generation could not write, or nobody could work, that the
     # owner has since filled is not said as empty any more.
     on = {r.get("date") for r in rows or [] if (r.get("employee") or "").strip()}

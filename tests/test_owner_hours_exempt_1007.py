@@ -37,7 +37,7 @@ def kinds_for(rows, c, who):
     return {v["kind"] for v in sr.violations(rows, c) if (v.get("employee") or "") == who}
 
 
-HOURS_KINDS = {"over_max_hours", "under_min_hours", "long_run", "rest_gap", "consecutive_days_off",
+HOURS_KINDS = {"over_max_hours", "over_hours_ceiling", "under_min_hours", "long_run", "rest_gap", "consecutive_days_off",
                "daily_overtime", "payroll_tail_full"}
 
 
@@ -55,7 +55,9 @@ def test_a_long_week_of_closes_flags_the_hourly_manager_only():
         rows = [R(i, who, "10:00am", "11:30pm") for i in range(7)] + [R(0, who, "1:00am", "2:00am")]
         got = kinds_for(rows, c, who) & HOURS_KINDS
         if who == "Andrew":
-            assert {"over_max_hours", "long_run"} <= got, got
+            # past the restaurant's ceiling (no maximum of his own): the
+            # policy limit, still flagged (LOGIC-1)
+            assert {"over_hours_ceiling", "long_run"} <= got, got
         else:
             assert not got, (who, got)
     # A minimum the owner typed is not scored against them either.

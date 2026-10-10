@@ -17,6 +17,7 @@ while it builds the prompt; schedule_engine gathers the inputs.
 from datetime import datetime
 
 import shift_quality as _sq
+import schedule_time as _stime
 
 DAYPARTS = ("morning", "night")
 _PART_LABEL = {"morning": "morning", "night": "night", "late": "late night"}
@@ -69,12 +70,30 @@ def _limit_for(limits, role, day):
     return (got or {}).get(day) if isinstance(got, dict) else None
 
 
-def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=1, idx_floor=2, idx_why=5):
+def _role_cap(role_caps, role, day, part):
+    """The owner's "most of a role on at once" for a shift, or None."""
+    caps = _limit_for(role_caps, role, day) or {}
+    cap = caps.get(part) if isinstance(caps, dict) else None
+    if cap is None and isinstance(caps, dict):
+        cap = caps.get("any")
+    try:
+        return int(cap) if cap is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=1, idx_floor=2, idx_why=5,
+                  concurrent=False):
     """Hold one shift's numbers to the owner's RESTAURANT HOURS & SHIFT
     RULES (PROMPT-1): a role outside the hours they give it is asked for
-    only its floor (none, normally — a floor is never set outside them), and
-    no role for more than their ceiling — never below its floor. `need` is
-    {key: [display, required, floor, ...]}, changed in place."""
+    only its floor (none, normally — a floor is never set outside them).
+    Their "most on at once" ceiling cuts a number only when it is itself
+    people on at once (`concurrent` — the late segment's crew); a daypart's
+    count of different people is never cut to it (staggered starts fit more
+    people than the most on at once — schedule audit 10/10/26, LOGIC-7's
+    rule for the section cap, the same for the owner's ceiling): the row
+    says the ceiling instead, and the half-hour needs are held to it.
+    `need` is {key: [display, required, floor, ...]}, changed in place."""
     for k in list(need):
         v = need[k]
         w = _limit_for(role_windows, v[idx_name], day)
@@ -84,14 +103,14 @@ def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=
             else:
                 del need[k]
                 continue
-        caps = _limit_for(role_caps, v[idx_name], day) or {}
-        cap = caps.get(part) if isinstance(caps, dict) else None
-        if cap is None and isinstance(caps, dict):
-            cap = caps.get("any")
-        if cap is not None and v[idx_req] > int(cap):
-            v[idx_req] = max(int(cap), int(v[idx_floor] or 0))
-            if idx_why is not None:
-                v[idx_why].append(f"held to your maximum of {int(cap)} on at once")
+        cap = _role_cap(role_caps, v[idx_name], day, part)
+        if cap is not None and v[idx_req] > cap:
+            if concurrent:
+                v[idx_req] = max(cap, int(v[idx_floor] or 0))
+                if idx_why is not None:
+                    v[idx_why].append(f"held to your maximum of {cap} on at once")
+            elif idx_why is not None:
+                v[idx_why].append(f"your maximum of {cap} on at once: stagger them")
 
 
 def demand_factor(ratio=1.0, hold=1.0) -> float:
@@ -129,17 +148,9 @@ def _day_name(date_str: str, fallback: str = "") -> str:
 
 
 def _minutes(value):
-    """Minutes past midnight from "4:00pm", "4pm" or "16:00"; None if unreadable."""
-    raw = str(value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour * 60 + t.minute
-        except ValueError:
-            continue
-    return None
+    """Minutes past midnight from "4:00pm", "4pm", "16:00", "noon"
+    (schedule_time.parse_minutes); None if unreadable."""
+    return _stime.parse_minutes(value)
 
 
 def floor_for(spec: dict, day: str, part: str) -> int:
@@ -183,7 +194,7 @@ def closing_part(day: str, close_times: dict = None) -> str:
     """The daypart a date's close falls in: the morning for a close before
     the 3pm changeover (a breakfast-and-lunch place), else the night."""
     close_m = _minutes((close_times or {}).get(day))
-    if close_m is not None and 5 * 60 <= close_m <= _sq.DAYPART_CUTOVER:
+    if close_m is not None and _stime.SMALL_HOURS_BEFORE <= close_m <= _stime.daypart_split():
         return "morning"
     return "night"
 
@@ -238,7 +249,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        demand_curve: dict = None, open_times: dict = None, close_times: dict = None,
                        section_cap: int = 0, cap_roles=None, date_demand: dict = None, splh_hold: dict = None,
                        adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None,
-                       role_windows: dict = None, role_caps: dict = None) -> list:
+                       role_windows: dict = None, role_caps: dict = None, crew_answers: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -267,11 +278,18 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 (staffing_curve.half_hour_needs, interpolated from the hourly
                 readings), the same needs the coverage-by-the-hour score
                 judges. Without it nothing changes.
-    section_cap / cap_roles — the section count and the roles it counts: no
-                requirement, whole-shift or half-hour, asks for more of them
-                than the cap (staffing_curve.cap_requirement). A borrowed
-                figure held down by the cap is no longer the lent figure,
-                so it is not marked borrowed.
+    section_cap / cap_roles — the section count and the roles it counts (by
+                role family): no half-hour need — people on at once — asks
+                for more of them than the cap (staffing_curve.
+                cap_requirement). The whole-shift number is different people
+                across the daypart, a unit the cap does not limit (staggered
+                starts fit more people than sections), so it is never cut to
+                the cap (schedule audit 10/10/26 LOGIC-7).
+    crew_answers — {(weekday, daypart): {role: {"people", "was", "since"}}}
+                (staffing_baseline's `crew_answers`, crew_matrix.bind_answers):
+                the shifts the owner said "leaner is fine" about in Crew,
+                whose usual crew is already held to what they accepted —
+                named as the reason.
     date_demand — {date: {"ratio", "pct", "reasons"}}
                 (schedule_economics.date_demand): how far each date sits
                 from a typical night of its weekday, and why.
@@ -355,7 +373,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             # Asks folded in (PR-7): +1 of a role, with its reason.
             for key, word, a in _adjust_for(adjustments, d, part, need, raw_by_part):
                 try:
-                    delta = int(a.get("delta") or 1)
+                    delta = int(a["delta"]) if a.get("delta") is not None else 1
                 except (TypeError, ValueError):
                     delta = 1
                 if key is None:
@@ -365,25 +383,36 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 v[1] += delta
                 if not a.get("firm", False):
                     v[4] += delta
+                # A position that is one of the usual crew (schedule_dedicated,
+                # LOGIC-16): no +1 on top, but never fewer than it.
+                try:
+                    at_least = int(a.get("at_least") or 0)
+                except (TypeError, ValueError):
+                    at_least = 0
+                if at_least and v[1] < at_least:
+                    v[1] = at_least
                 if a.get("reason"):
-                    v[5].append(f"{delta:+d} {a['reason']}")
+                    v[5].append(f"{delta:+d} {a['reason']}" if delta else str(a["reason"]))
             # Held to the owner's hours and ceilings by role (PROMPT-1).
             _apply_limits(need, day, part, role_windows, role_caps)
-            # Held under the section cap, as the scorer holds it.
+            # A shift the owner said "leaner is fine" about in Crew carries
+            # it as its reason (crew_matrix.bind_answers already held the
+            # usual crew to what they accepted).
+            for role_c, bound in ((crew_answers or {}).get((day, part)) or {}).items():
+                v = need.get(role_c.strip().lower())
+                if v is not None and int(bound.get("was") or 0) > int(bound.get("people") or 0):
+                    from time_utils import mdy as _mdy_c
+                    v[5].append(f"leaner is fine (you, {_mdy_c(bound.get('since'))}; usual "
+                                f"{int(bound.get('was') or 0)})")
+            # The section cap is NOT applied here: it counts people on at
+            # once, and these are the different people on the floor for the
+            # daypart — six staggered servers who are never more than five on
+            # at once fit five sections, and holding the six to five left the
+            # sixth never asked for and told the owner the cap was "probably
+            # wrong" when it was not (schedule audit 10/10/26 LOGIC-7). The
+            # cap holds over the half-hour needs below, which ARE people on
+            # at once, and the sweep's over_section_cap holds the draft.
             held = {}
-            if section_cap:
-                capped, held = _curve.cap_requirement({v[0]: v[1] for v in need.values()}, section_cap, cap_roles)
-                for k, v in need.items():
-                    # The cap takes the soft ask first: the firm part (what
-                    # the shift needs without the ask) is held to the cap
-                    # too, and only what is left over it is still "asked".
-                    # Lowering `required` alone left the ask whole, so a
-                    # Friday of 4 usual servers under a 4-section cap scored
-                    # firm 3 — full coverage with 3 (schedule re-audit
-                    # 10/4/26 SQ-10).
-                    firm = v[1] - v[4]
-                    v[1] = int(capped.get(v[0], v[1]))
-                    v[4] = max(0, v[1] - min(firm, v[1]))
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
             if not need:
@@ -394,11 +423,27 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 lo, hi = _service_window(day, part, open_times, close_times)
                 # Normalised over the daypart's half of the day, as the scorer
                 # does, then kept to the hours the restaurant is open.
-                whole = (0, _sq.DAYPART_CUTOVER) if part == "morning" else (_sq.DAYPART_CUTOVER, 48 * 60)
+                split = _stime.daypart_split()
+                whole = (0, split) if part == "morning" else (split, 48 * 60)
                 needs = {m: n for m, n in _curve.half_hour_needs(curve_here, typical_here, *whole).items()
                          if lo <= m < hi}
                 if section_cap:
-                    needs = {m: _curve.cap_requirement(n, section_cap, cap_roles)[0] for m, n in needs.items()}
+                    # People on at once at each half hour: the unit the
+                    # section count is in.
+                    capped_needs = {}
+                    for m, n in needs.items():
+                        capped_n, trimmed = _curve.cap_requirement(n, section_cap, cap_roles)
+                        capped_needs[m] = capped_n
+                        for r_t, k_t in trimmed.items():
+                            held[r_t] = max(held.get(r_t, 0), k_t)
+                    needs = capped_needs
+                if role_caps:
+                    # The owner's "most of a role on at once", in its own unit.
+                    for m, rn in needs.items():
+                        for r_c in list(rn):
+                            cap_c = _role_cap(role_caps, r_c, day, part)
+                            if cap_c is not None and rn[r_c] > cap_c:
+                                rn[r_c] = cap_c
                 if roles is not None:
                     needs = {m: {r: n for r, n in rn.items() if r.strip().lower() in roles} for m, rn in needs.items()}
                 half = {r: pts for r, pts in _curve.ramp_runs(needs).items() if len(pts) > 1
@@ -436,7 +481,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     entry["firm"] = required - asked
                 if why:
                     entry["reason"] = "; ".join(why)
-                if _k in lent and typical and typical > floor and name not in held:
+                if _k in lent and typical and typical > floor:
                     entry["borrowed"] = True
                 roles_out.append(entry)
             reasons = _row_reasons(factor, ratio, hold, why_date, held)
@@ -446,7 +491,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             if half:
                 row["half_hours"] = half
             if held:
-                row["held_to_cap"] = {"cap": int(section_cap), "trimmed": held}
+                row["held_to_cap"] = {"cap": int(section_cap), "trimmed": held, "unit": "on_at_once"}
             out.append(row)
         late = _late_row(d, day, (late_headcount or {}).get(day) or {}, close_times, ratio,
                          ((splh_hold or {}).get(day) or {}).get(LATE_PART), why_date, roles, section_cap, cap_roles,
@@ -482,7 +527,8 @@ def _row_reasons(factor, ratio, hold, why_date, held) -> list:
             pass
         out.append(f"usual crew {moved:+d}%{bounded} — " + "; ".join(bits) if bits else f"usual crew {moved:+d}%")
     if held:
-        out.append("held to the section cap (" + ", ".join(f"{r} -{n}" for r, n in sorted(held.items())) + ")")
+        out.append("on at once held to the section count (" + ", ".join(f"{r} -{n}" for r, n in sorted(held.items()))
+                   + ")")
     return out
 
 
@@ -506,7 +552,9 @@ def _late_row(d, day, late_typical, close_times, ratio, hold, why_date, roles, s
     if role_windows or role_caps:
         # [display, required, floor] for the shared limits (PROMPT-1).
         view = {r: [r, v[0], 0] for r, v in need.items()}
-        _apply_limits(view, day, LATE_PART, role_windows, role_caps, idx_why=None)
+        # The late crew is people on across the window (labor's late_headcount
+        # is the median on at each half hour): the ceiling's own unit.
+        _apply_limits(view, day, LATE_PART, role_windows, role_caps, idx_why=None, concurrent=True)
         need = {r: [view[r][1], v[1]] for r, v in need.items() if r in view}
     if not need:
         return None
@@ -528,7 +576,7 @@ def _close_minutes(day: str, close_times: dict = None):
     m = _minutes((close_times or {}).get(day))
     if m is None:
         return None
-    return m + 24 * 60 if m < 5 * 60 else m
+    return _stime.close_on_timeline(m)
 
 
 def requirements_map(rows: list, firm: bool = True) -> dict:
@@ -559,11 +607,10 @@ def _service_window(day: str, part: str, open_times: dict = None, close_times: d
     """(lo, hi) minutes of one daypart's service: opening to the 3pm
     changeover, or the changeover to close, from the hours on file; the
     whole half of the day when they are not."""
-    split = _sq.DAYPART_CUTOVER
-    open_m = _minutes((open_times or {}).get(day))
-    close_m = _minutes((close_times or {}).get(day))
-    if close_m is not None and close_m < 5 * 60:
-        close_m += 24 * 60                      # a close after midnight
+    split = _stime.daypart_split()
+    # A close at or before the open, or in the small hours, is after
+    # midnight (schedule_time.close_on_timeline, BUGSGEN-22).
+    open_m, close_m = _stime.day_hours((open_times or {}).get(day), (close_times or {}).get(day))
     if part == "morning":
         return (open_m if open_m is not None and open_m < split else 0), split
     return split, (close_m if close_m is not None and close_m > split else 24 * 60)
@@ -668,10 +715,14 @@ def presence_rule() -> str:
     lo_m, hi_m = _sq.CORE_WINDOWS["morning"]
     lo_n, hi_n = _sq.CORE_WINDOWS["night"]
     need = _sq.PRESENCE_MIN_OVERLAP
-    return (f"A shift counts toward the daypart it starts in (morning before 3:00pm, night from 3:00pm), "
-            f"and ALSO toward the other daypart when it covers at least {need} minutes of that daypart's core "
-            f"window (lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}). So an "
-            f"11:30am-7:00pm shift counts at lunch AND at dinner; a 10:00am-5:00pm shift counts at lunch only.")
+    split = _clock(_stime.daypart_split())
+    # schedule_time.present_dayparts in words (BUGSGEN-25): presence decides,
+    # the start only when a shift covers neither core window.
+    return (f"A shift counts toward each daypart whose core window it covers for at least {need} minutes "
+            f"(lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}); one that covers "
+            f"neither counts toward the daypart it starts in (morning before {split}, night from {split}). So an "
+            f"11:30am-7:00pm shift counts at lunch AND at dinner; a 10:00am-5:00pm shift counts at lunch only; "
+            f"a 2:00pm-10:00pm shift counts at dinner only.")
 
 
 def _weekday_span(dates) -> str:
@@ -703,11 +754,9 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
     Friday and Saturday nights count."""
     latest = {}
     for pr in prior_rows or []:
-        s, e = _minutes(pr.get("shift_start")), _minutes(pr.get("shift_end"))
+        e = _stime.end_of(pr)
         if e is None:
             continue
-        if s is not None and e <= s:
-            e += 24 * 60
         d = pr.get("date") or ""
         latest[d] = max(latest.get(d, -1), e)
     weeks = dict(payroll_weeks or {})
@@ -732,10 +781,8 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
         if key > e["_k"]:
             e["_k"] = key
             e["last"] = f"{_day_name(date)[:3] or pr.get('day') or ''} {date} until {pr.get('shift_end')}".strip()
-        s, end = _minutes(pr.get("shift_start")), _minutes(pr.get("shift_end"))
+        end = _stime.end_of(pr)
         if end is not None:
-            if s is not None and end <= s:
-                end += 24 * 60
             if end >= latest.get(date, 10 ** 6) - 30:
                 e["closes"] += 1
         full_day = _day_name(date, pr.get("day") or "")

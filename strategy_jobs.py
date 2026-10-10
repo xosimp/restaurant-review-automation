@@ -1383,9 +1383,10 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None):
     # a generation of anything else (re-audit 10/4/26 UI-8).
     from datetime import datetime as _dt_req
     _today = _dt_req.strptime(period, "%Y-%m-%d") if period else None
+    _request = generation_request(r.id, today=_today)
     try:
         job_id, joined = ops.claim_async_job(f"auto-{uuid.uuid4().hex[:12]}", "schedule", r.id,
-                                             request=generation_request(r.id, today=_today))
+                                             request=_request)
     except ops.JobBusy:
         job_id, joined = None, True
     if joined:
@@ -1406,8 +1407,11 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None):
         # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
         # presses Generate takes the next free slot ahead of queued drafts.
         try:
-            with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND):
-                _se._run_schedule_job(job_id, r.id)
+            with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND, restaurant_id=r.id):
+                # The week it claimed, resolved before the wait for a slot
+                # (up to GEN_BACKGROUND_WAIT_SECONDS): across midnight it
+                # built the week after (BUGSGEN-11).
+                _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
         except _se.GenerationSlotTimeout:
             # Every slot stayed busy (owners' presses first): the job is closed,
             # the day handed back, and the next hourly pass tries again.

@@ -2501,6 +2501,9 @@ def _do_compliance_get(u):
             # (schedule_rules over_section_cap). Moved here from the admin
             # page, its only editor until 9/30/26.
             "section_count": int(getattr(r, "section_count", 0) or 0) or None,
+            # Where lunch ends and dinner starts for a shift covering neither
+            # core window (schedule_time, ARCH-12): "3:00pm" unless set.
+            "daypart_boundary": getattr(r, "daypart_boundary", None) or None,
             # Dayparts whose floors for the section-counted roles add up to
             # more people than there are sections — no draft can hold both,
             # so the rules screen says so (schedule audit 10/3/26 P-29).
@@ -2765,6 +2768,14 @@ def _do_compliance_set(u):
                 return _refuse("Dining sections must be a whole number from 1 to 30, or blank.")
         settings["section_count"] = n
         out["section_count"] = n
+    if "daypart_boundary" in b:
+        import schedule_time as _stime_b
+        v = b.get("daypart_boundary")
+        m = None if v in (None, "") else _stime_b.split_minutes(str(v))
+        if v not in (None, "") and m is None:
+            return _refuse("Where lunch ends must be a time from 12:00pm to 6:00pm, or blank for 3:00pm.")
+        settings["daypart_boundary"] = None if m is None else _stime_b.fmt_minutes(m)
+        out["daypart_boundary"] = settings["daypart_boundary"]
     if "trim_to_budget" in b:
         settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
         out["trim_to_budget"] = bool(b.get("trim_to_budget"))
@@ -5728,7 +5739,7 @@ def _do_morning_brief_settings(u):
 
 # ── registration: every body on both blueprints ───────────────────────────────
 
-def _idempotent(body, route, busy=None):
+def _idempotent(body, route, busy=None, pending_minutes=10):
     """Answer a repeated request (same restaurant, route and Idempotency-Key)
     from the first one's result. The key is derived from the uploaded file
     on iOS, so tapping Scan again after a timeout no longer pays for a
@@ -5741,8 +5752,13 @@ def _idempotent(body, route, busy=None):
     wins): the phone's offline queue persists a write as its body alone, so
     a waste line or a delivery parked in the walk-in carries its key with
     it and its replay is answered from the first send (parity audit #23).
-    `busy`: the sentence for a request still in flight."""
+    `busy`: the sentence for a request still in flight. `pending_minutes`:
+    how long a first request that never answered (a process that died
+    mid-request) holds its key as "in flight" before a repeat runs again —
+    a model scan's ten minutes; a schedule save's two (schedule audit
+    10/10/26 BUGSLIFE-22)."""
     import json as _json
+    _pending = f"-{max(1, int(pending_minutes))} minutes"
 
     def wrapped(u, **kw):
         key = (request.headers.get("Idempotency-Key") or "").strip()[:128]
@@ -5757,9 +5773,9 @@ def _idempotent(body, route, busy=None):
         conn = get_conn()
         try:
             conn.execute("DELETE FROM idempotent_responses WHERE created_at < datetime('now','-7 days')")
-            row = conn.execute("SELECT status, payload_json, created_at >= datetime('now','-10 minutes') AS fresh "
+            row = conn.execute("SELECT status, payload_json, created_at >= datetime('now', ?) AS fresh "
                                "FROM idempotent_responses WHERE restaurant_id=? AND route=? AND idem_key=?",
-                               (rid, route, key)).fetchone()
+                               (_pending, rid, route, key)).fetchone()
             if row and row["payload_json"] is not None:
                 conn.commit()
                 return _json.loads(row["payload_json"]), int(row["status"] or 200)

@@ -442,7 +442,6 @@ def _observe_actuals(restaurant_id, w, d, part, e, a, labor_part, sales, db_path
             "sales": sales}, fact_key=f"labor_daypart|{d}|{part}", **common)
 
 
-MORNING_SPLIT_HOUR = 15        # schedule_rules.daypart_of: a shift starting at 3pm or later is "night"
 MORNING_SHARE_MIN_DAYS = 3
 
 
@@ -533,7 +532,10 @@ def _morning_share(conn, restaurant_id) -> dict:
     for (wd, _), caps in by.items():
         caps.sort()
         total = caps[-1][1]
-        at3 = max((s for h, s in caps if h <= MORNING_SPLIT_HOUR), default=None)
+        # Sales captured by the restaurant's lunch/dinner boundary (schedule_
+        # time.daypart_split — 3pm unless set, ARCH-12).
+        import schedule_time as _stime
+        at3 = max((s for h, s in caps if h * 60 <= _stime.daypart_split()), default=None)
         if total > 0 and at3 is not None:
             tmp.setdefault(wd, []).append(min(1.0, at3 / total))
     out = {wd: sorted(v)[len(v) // 2] for wd, v in tmp.items() if len(v) >= MORNING_SHARE_MIN_DAYS}
@@ -541,6 +543,12 @@ def _morning_share(conn, restaurant_id) -> dict:
         if wd not in out and len(v) >= MORNING_SHARE_MIN_DAYS:
             out[wd] = sorted(v)[len(v) // 2]
     return out
+
+
+def _split_now() -> int:
+    """The lunch/dinner boundary in force (schedule_time.daypart_split)."""
+    import schedule_time as _stime
+    return _stime.daypart_split()
 
 
 def _dsr_morning_shares(conn, restaurant_id) -> dict:
@@ -573,7 +581,7 @@ def _dsr_morning_shares(conn, restaurant_id) -> dict:
             if net <= 0:
                 continue
             tot += net
-            if BUSINESS_DAY_START_HOUR <= hour < MORNING_SPLIT_HOUR:
+            if BUSINESS_DAY_START_HOUR * 60 <= hour * 60 < _split_now():
                 early += net
         if tot > 0:
             nights[str(r["business_date"])[:10]] = early / tot

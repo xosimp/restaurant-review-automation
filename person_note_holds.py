@@ -384,6 +384,14 @@ def _row(r):
     return d
 
 
+def _local_today(restaurant_id) -> date:
+    """The restaurant's own date (models._restaurant_today), never the
+    server's: date.today() is UTC on Railway, so from about 7pm Chicago a
+    hold ending "today" was already over (BUGSGEN-16)."""
+    from models import _restaurant_today
+    return _restaurant_today(restaurant_id)
+
+
 def holds(restaurant_id, db_path=DB_PATH, include_ended=False, today=None) -> list:
     conn = get_conn(db_path)
     try:
@@ -396,7 +404,7 @@ def holds(restaurant_id, db_path=DB_PATH, include_ended=False, today=None) -> li
         conn.close()
     if include_ended:
         return rows
-    t = (today or date.today()).isoformat()
+    t = (today or _local_today(restaurant_id)).isoformat()
     return [h for h in rows if not h.get("end") or h["end"] >= t]
 
 
@@ -460,6 +468,8 @@ def remove_hold(restaurant_id, hold_id, user=None, db_path=DB_PATH):
 def readings(restaurant_id, notes, today=None, db_path=DB_PATH) -> list:
     """Each note part of get_staff_notes rows, with its reading and the hold
     made from it (`held`) — what Labor → Scheduling notes draws."""
+    if today is None:
+        today = _local_today(restaurant_id)
     have = {(h["employee_key"], _key(h["part_text"])): h for h in holds(restaurant_id, db_path=db_path,
                                                                          include_ended=True)}
     for n in notes or []:

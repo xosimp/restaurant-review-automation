@@ -661,8 +661,16 @@ def test_the_generate_route_keeps_a_redo_and_a_discarded_draft(observed, monkeyp
     rid = _rid(timezone="America/Chicago")
     uid = create_user(rid, "erik", "erik@x.test", "pw-h1-test-2")
     upsert_membership(uid, rid, "client")
-    monkeypatch.setattr(schedule_engine, "_run_schedule_job", lambda *a, **k: None)
+    # The job saves a draft and finishes with it in force: only then is the
+    # owner's redo or discarded draft recorded (schedule audit 10/10/26
+    # ARCH-18 — it was recorded at the press, stopped or not).
+    monkeypatch.setattr(schedule_engine, "_run_schedule_job",
+                        lambda job_id, rid_, **k: ops.finish_async_job(job_id, "done", {"ok": True, "history_id": 999}))
     monkeypatch.setattr(ops, "active_job", lambda *a, **k: None)
+    futures = []
+    real_submit = schedule_engine.submit_generation
+    monkeypatch.setattr(schedule_engine, "submit_generation",
+                        lambda *a, **k: futures.append(real_submit(*a, **k)) or futures[-1])
     app = Flask(__name__)
     app.register_blueprint(mobile_api.mobile_bp)
     head = {"Authorization": "Bearer " + create_session(uid, device_type="ios")}
@@ -673,10 +681,12 @@ def test_the_generate_route_keeps_a_redo_and_a_discarded_draft(observed, monkeyp
                                json={"week_start": mon.isoformat(), "dates": [fri], "history_id": draft,
                                      "reason_chip": "too_thin", "reason_text": "nobody to close"})
     assert r.status_code == 200, r.get_json()
+    futures[-1].result(timeout=60)
     _sql("DELETE FROM async_jobs")
     r = app.test_client().post("/mobile/api/labor/generate-schedule", headers=head,
                                json={"week_start": mon.isoformat()})
     assert r.status_code == 200, r.get_json()
+    futures[-1].result(timeout=60)
     rows = [tuple(x) for x in _sql("SELECT kind, history_id, dates_json, reason_chip, reason_text FROM "
                                    "schedule_rejections WHERE restaurant_id=? ORDER BY id", rid).fetchall()]
     assert rows == [("redo_days", draft, json.dumps([fri]), "too_thin", "nobody to close"),

@@ -62,17 +62,68 @@ enum StaffTime {
         return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
     }
 
-    /// The moment a leg starts and ends on `dayISO` (yyyy-MM-dd) in
-    /// `calendar`'s zone; an end at or before the start runs past midnight.
+    /// The moment a leg starts and ends. `dayISO` (yyyy-MM-dd) is the row's
+    /// BUSINESS date and `calendar` should be in the restaurant's zone
+    /// (StaffShiftsResponse.calendar). An end at or before the start runs
+    /// past midnight; a leg in the small hours of its night (a 12:30am–4am
+    /// porter dated Friday) is after that night's midnight — the server's
+    /// rule, `nightOffsetDays`.
+    ///
+    /// Each moment is that day's wall-clock time built from its components,
+    /// never minutes added as seconds to midnight: on the days the clocks
+    /// change (23 or 25 hours long) that was an hour off, so a 5pm shift on
+    /// 11/1/26 read as 4pm and "On now" and Running late opened an hour
+    /// early (schedule audit 10/10/26 BUGSLIFE-21).
     static func span(dayISO: String, start: String?, end: String?,
                      calendar: Calendar) -> (start: Date, end: Date?)? {
-        guard let base = day(dayISO, calendar: calendar),
-              let s = start.flatMap(minutes) else { return nil }
-        let startDate = base.addingTimeInterval(TimeInterval(s * 60))
-        guard let e = end.flatMap(minutes) else { return (startDate, nil) }
-        var endDate = base.addingTimeInterval(TimeInterval(e * 60))
-        if endDate <= startDate { endDate = endDate.addingTimeInterval(24 * 3600) }
+        guard let s = start.flatMap(minutes) else { return nil }
+        let e = end.flatMap(minutes)
+        let night = nightOffsetDays(startMinutes: s, endMinutes: e)
+        guard let startDate = at(dayISO, minutes: s, dayOffset: night, calendar: calendar) else { return nil }
+        guard let e else { return (startDate, nil) }
+        guard let endDate = at(dayISO, minutes: e, dayOffset: night + (e <= s ? 1 : 0), calendar: calendar) else {
+            return (startDate, nil)
+        }
         return (startDate, endDate)
+    }
+
+    /// The wall-clock time `minutes` past midnight on the day `dayOffset`
+    /// days after `iso`, in `calendar`'s zone. A time the clocks skip (2:30am
+    /// on the spring-forward night) is read as the same distance past the
+    /// jump; a time they repeat is its first occurrence.
+    static func at(_ iso: String, minutes total: Int, dayOffset: Int = 0, calendar: Calendar) -> Date? {
+        let p = iso.prefix(10).split(separator: "-")
+        guard p.count == 3, let y = Int(p[0]), let m = Int(p[1]), let d = Int(p[2]),
+              // Noon exists on every day in every zone; midnight does not.
+              let noon = calendar.date(from: DateComponents(year: y, month: m, day: d, hour: 12)),
+              let day = calendar.date(byAdding: .day, value: dayOffset, to: noon) else { return nil }
+        var c = calendar.dateComponents([.year, .month, .day], from: day)
+        let mins = ((total % 1440) + 1440) % 1440
+        c.hour = mins / 60
+        c.minute = mins % 60
+        return calendar.date(from: c)
+    }
+
+    /// Before this hour a row's date is still last night's service — the
+    /// server's time_utils.BUSINESS_DAY_START_HOUR (RestaurantClock's too).
+    static let businessDayStartMinutes = 5 * 60
+    /// …unless the leg runs into the morning: a start from 4am with no end
+    /// to judge by, or one still on at 6am, is early prep for the day
+    /// (schedule_rules._EARLY_PREP_FROM, _OVERNIGHT_LATEST_BEFORE).
+    static let earlyPrepFromMinutes = 4 * 60
+    static let overnightLatestBeforeMinutes = 6 * 60
+
+    /// 1 when a leg belongs to the small hours of its row's night, so its
+    /// moments are on the next calendar day; 0 otherwise. The server's one
+    /// rule (schedule_rules._night_offset, staff_comms' Running-late clock):
+    /// a start before the business day's first hour that is over by 6am, or
+    /// — with no end — a start before 4am. A 4:30am–12:30pm baker is the
+    /// morning's.
+    static func nightOffsetDays(startMinutes s: Int, endMinutes e: Int?) -> Int {
+        guard s < businessDayStartMinutes else { return 0 }
+        guard let e else { return s < earlyPrepFromMinutes ? 1 : 0 }
+        let end = e > s ? e : e + 1440
+        return end <= overnightLatestBeforeMinutes ? 1 : 0
     }
 
     /// Midnight of an ISO day in `calendar`'s zone.

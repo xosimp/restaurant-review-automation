@@ -3664,20 +3664,33 @@ def mobile_generate_schedule(current_user):
     # is kept with the owner's optional reason (a chip and their words —
     # reason_chip / reason, reason_text / whats_wrong), and a whole week
     # generated over a draft never sent is kept as that draft discarded —
-    # the draft in force read before the job can replace it.
+    # the draft in force read before the job can replace it. Recorded by the
+    # job once its own draft is in force (schedule_engine._settle_rejection,
+    # ARCH-18), never here at the press: a press stopped or failed rejected
+    # nothing. The same draft is what a Stop after the job's save puts back
+    # (ARCH-2).
     _discarded = None
     if not dates:
         try:
             import schedule_versions as _sv_open
-            from schedule_engine import _week_monday
-            from time_utils import restaurant_now_by_id
-            from labor import get_week_start_day
-            _discarded = _sv_open.open_draft_for_week(
-                rid, _week_monday(restaurant_now_by_id(rid, naive=True), week_start,
-                                  start_day=get_week_start_day(rid)).strftime("%Y-%m-%d"))
+            # The week this press asked for, resolved once (_req): the job
+            # builds this week, not the one "next week" is when a slot frees
+            # (BUGSGEN-11 — a press at 11:50pm Sunday built the week after).
+            _discarded = _sv_open.open_draft_for_week(rid, _req["week_start"])
         except Exception as _odx:
             _ops.capture(_odx, job="schedule_rejection", context=f"restaurant_id={rid} (open draft)")
-    _job_kw = {"week_start": week_start, "dates": dates, "base_history_id": base_history_id}
+    _chip = body.get("reason_chip") or body.get("reason")
+    _words = body.get("reason_text") or body.get("whats_wrong")
+    _rejection = None
+    if dates and base_history_id:
+        _rejection = {"kind": "redo_days", "history_id": base_history_id, "dates": dates}
+    elif _discarded:
+        _rejection = {"kind": "draft_discarded", "history_id": _discarded}
+    if _rejection:
+        _rejection.update(reason_chip=_chip if isinstance(_chip, str) else None,
+                          reason_text=_words if isinstance(_words, str) else None,
+                          user=dict(current_user))
+    _job_kw = {"week_start": week_start or _req["week_start"], "dates": dates, "base_history_id": base_history_id}
     if instruction:
         _job_kw["instruction"] = instruction
     # On the bounded generation pool, not a thread of its own (schedule audit
@@ -3689,27 +3702,14 @@ def mobile_generate_schedule(current_user):
     # before the job is queued, so a fast job never finishes unwatched.
     _se.watch_generation(job_id, current_user)
     try:
-        _se.submit_generation(job_id, rid, **_job_kw)
+        _se.submit_generation(job_id, rid, prior_draft_id=(base_history_id if dates else _discarded),
+                              rejection=_rejection, **_job_kw)
     except BaseException:
         # Never queued: nothing will finish or announce it, so the watch is
         # dropped and the job closed (re-audit 10/8/26 #14).
         _se.take_generation_watchers(job_id)
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": "The schedule couldn't be started — try again."})
         raise
-    try:
-        import schedule_versions as _sv_rej
-        _chip = body.get("reason_chip") or body.get("reason")
-        _words = body.get("reason_text") or body.get("whats_wrong")
-        _chip = _chip if isinstance(_chip, str) else None
-        _words = _words if isinstance(_words, str) else None
-        if dates and base_history_id:
-            _sv_rej.record_rejection(rid, int(base_history_id), "redo_days", dates=dates, reason_chip=_chip,
-                                     reason_text=_words, user=current_user)
-        elif _discarded:
-            _sv_rej.record_rejection(rid, _discarded, "draft_discarded", reason_chip=_chip, reason_text=_words,
-                                     user=current_user)
-    except Exception as _rjx:
-        _ops.capture(_rjx, job="schedule_rejection", context=f"restaurant_id={rid}")
     # How long the job can run (P-22): the client waits this long, not a
     # guessed 15 minutes; a poll while it is pending says what is left.
     return jsonify(ok=True, job_id=job_id, week_start=week_start, dates=dates,
@@ -3748,12 +3748,18 @@ def mobile_follow_generation(current_user):
 @mobile_login_required
 def mobile_stop_generation(current_user):
     """Stop a running generation (owner, 10/9/26: Generate pressed by
-    accident). Body: job_id. The job is finished as stopped at once — every
-    poll reads "Stopped — nothing was saved.", the restaurant may start
-    another, and the run itself starts no further model call and saves
-    nothing (schedule_engine.ScheduleStopped; a call already in flight
-    finishes and is discarded). Only a pending schedule job of this
-    restaurant; the ONE body, /api/generate-schedule/stop is its twin."""
+    accident). Body: job_id. Only a pending schedule job of this restaurant;
+    the ONE body, /api/generate-schedule/stop is its twin.
+
+    Before the job has saved anything, it is finished as stopped at once —
+    every poll reads "Stopped — nothing was saved.", the restaurant may start
+    another, and the run starts no further model call and saves nothing (its
+    save re-checks the job in the same write — schedule audit 10/10/26
+    BUGSLIFE-26). Once it has saved a draft (during the quality gate), the
+    Stop is a request the job answers itself (ops.stop_async_job, ARCH-2):
+    the draft from before the press comes back, or the one already saved is
+    kept and said — never "nothing was saved" over a draft that replaced the
+    owner's. `stopping` is true while the job finishes that."""
     rid = current_user["restaurant_id"]
     from permissions import has_permission, SCHEDULE_DRAFT
     if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_DRAFT)):
@@ -3768,8 +3774,11 @@ def mobile_stop_generation(current_user):
     if job.get("status") != "pending":
         return jsonify(ok=True, stopped=False, status=job.get("status"),
                        error="It had already finished — check the draft or Schedule History."), 200
-    _ops.finish_async_job(job_id, "error", {"ok": False, "stopped": True, "error": _se.STOPPED_MESSAGE})
-    return jsonify(ok=True, stopped=True, job_id=job_id)
+    verdict = _ops.stop_async_job(job_id, {"ok": False, "stopped": True, "error": _se.STOPPED_MESSAGE})
+    if verdict == "finished":
+        return jsonify(ok=True, stopped=False, status="done",
+                       error="It had already finished — check the draft or Schedule History."), 200
+    return jsonify(ok=True, stopped=True, stopping=verdict == "stopping", job_id=job_id)
 
 
 @mobile_bp.route("/labor/schedule-status/<job_id>")
@@ -8307,8 +8316,63 @@ def _refuse_team_write():
 
 # ── Shift Quality Engine ───────────────────────────────────────────────────
 
+# How long a save that never answered (its process died mid-request) holds
+# its idempotency key as "still being made" (BUGSLIFE-22): longer than any
+# save takes, short enough that the owner's next Save is not refused long.
+SAVE_PENDING_MINUTES = 2
+
+
+def _response_pair(rv):
+    """(payload dict, status) from a view's return — a Response, or a
+    (Response, status) pair — for the idempotency store."""
+    status = None
+    if isinstance(rv, tuple):
+        rv, status = rv[0], (rv[1] if len(rv) > 1 else None)
+    payload = rv.get_json(silent=True) if hasattr(rv, "get_json") else rv
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "error": "That answer couldn't be read."}
+    return payload, int(status or getattr(rv, "status_code", 200) or 200)
+
+
+def _idempotent_save(view):
+    """A schedule save (`save: true`) is idempotent on the client's key —
+    the `Idempotency-Key` header or `idempotency_key` in the body (schedule
+    audit 10/10/26 BUGSLIFE-22). The phone retries a request that died in
+    transit, and a retry of a save the server had already committed ran the
+    whole save again: with the same rows it wrote a second identical
+    "edited" version and ran the learning capture twice; with an edit, it
+    refused the owner's own save as a conflict with themselves. Now a
+    repeat gets the first save's answer (strategy_routes._idempotent, keyed
+    on the restaurant, the week and the key); one that lands while the
+    first is still being made is answered 409 `{in_progress: true}`; a first
+    that failed (5xx) is not remembered, so the retry saves. A re-score
+    (no `save`) and a save with no key — the web, an older app — run as
+    before."""
+    import functools
+
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True) or {}
+        if not (isinstance(data, dict) and data.get("save")):
+            return view(*args, **kwargs)
+        user = kwargs.get("current_user", args[0] if args else None)
+        try:
+            hid = int(data.get("history_id") or 0)
+        except (TypeError, ValueError):
+            hid = 0
+        import strategy_routes as _sr_idem
+        run = _sr_idem._idempotent(lambda u: _response_pair(view(*args, **kwargs)), f"schedule_save:{hid}",
+                                   busy="That save is still being made — your edits are on screen. "
+                                        "Try Save again in a moment.",
+                                   pending_minutes=SAVE_PENDING_MINUTES)
+        payload, status = run(user)
+        return jsonify(**payload), status
+    return wrapped
+
+
 @mobile_bp.route("/labor/schedule/score", methods=["POST"])
 @mobile_login_required
+@_idempotent_save
 def mobile_score_schedule(current_user):
     """Re-score a schedule a manager has just edited.
 

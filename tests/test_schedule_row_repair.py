@@ -224,11 +224,11 @@ def test_shift_scheduled_past_close_is_trimmed_not_just_flagged(monkeypatch):
     assert len(result["preview_rows"]) == 1
     row = result["preview_rows"][0]
     assert row["shift_end"] == "9:00pm"
-    assert row["scheduled_hours"] == "5.0"
+    assert row["scheduled_hours"] == "5"
     assert "auto-capped to close time" in row["notes"]
     assert "needs_review" not in row
     # The shared/exported CSV must reflect the trim too.
-    assert "9:00pm,5.0" in result["schedule_csv"]
+    assert "9:00pm,5," in result["schedule_csv"]
 
 
 def test_role_with_configured_after_close_buffer_is_left_alone(monkeypatch):
@@ -369,8 +369,13 @@ def test_a_week_over_forty_hours_is_flagged(monkeypatch):
             for d, n in (("17", "Monday"), ("18", "Tuesday"), ("19", "Wednesday"),
                          ("20", "Thursday"))]
     result = _run(monkeypatch, HEADER + "\n" + "\n".join(rows), roster=["Jamie L."])
-    assert all(r.get("needs_review") for r in result["preview_rows"])
-    assert "over 40h" in result["preview_rows"][0]["review_reason"]
+    # Past the restaurant's 40h ceiling with nobody else on the roster to
+    # take a shift: overtime, said and priced — a policy limit, not a row
+    # that cannot stand (sched audit 10/10/26 LOGIC-1). A maximum of the
+    # person's own is still hard (test_schedule_breach_identity).
+    over = [v for v in result["rule_violations"] if v["kind"] == "over_hours_ceiling"]
+    assert over and not over[0]["hard"] and "4h of overtime" in over[0]["detail"]
+    assert not any(r.get("needs_review") for r in result["preview_rows"])
 
 
 def test_a_flagged_row_carries_its_warning_into_the_published_csv(monkeypatch):
