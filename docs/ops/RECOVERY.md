@@ -142,6 +142,20 @@ post to them directly.
 
 ---
 
+## Background work after a restart (the job queue, 10/10/26)
+
+Schedule generations, auto-drafts and the nightly learners' per-restaurant
+passes are rows in `jobs` (`job_queue.py`). A deploy hands the running rows
+back at SIGTERM and the new process resumes them — a generation that had
+saved its draft finishes with it, one that had not re-reads the model
+answers it already paid for — so after a restart nothing needs pressing
+again. To see them: `SELECT id, kind, restaurant_id, state, attempts, error
+FROM jobs WHERE state IN ('queued','running','failed') ORDER BY id DESC`.
+A row stuck `running` with a lease in the past is claimed by the next
+consumer within a minute (the `job_queue_tick` minute duty). Turning the
+queue off is `JOB_QUEUE=0` (the old in-process paths). The Postgres cutover
+and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
+
 ## Database recovery
 
 `/health` returns 500 with a database error code, or SQLite reports corruption.
