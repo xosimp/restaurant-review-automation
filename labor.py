@@ -3401,15 +3401,21 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
     adjustment is positive."""
     out = {k: dict(v) for k, v in (typical or {}).items()}
     try:
-        from schedule_learning import learned_headcount_adjustments
-        adj = learned_headcount_adjustments(restaurant_id) or {}
+        from schedule_learning import learned_headcount, headcount_to_apply
+        adj = learned_headcount(restaurant_id) or {}
     except Exception:
         return out
     for key, roles in adj.items():
         slot = out.setdefault(tuple(key), {})
-        for role, delta in (roles or {}).items():
+        for role, learned in (roles or {}).items():
             match = next((r for r in slot if r.strip().lower() == str(role).strip().lower()), role)
-            n = int(slot.get(match, 0) or 0) + int(round(float(delta or 0)))
+            base = int(slot.get(match, 0) or 0)
+            # Only while the baseline is short of the level the manager
+            # settled on (schedule audit 10/10/26 LEARNING-3, RM-5): once the
+            # punches carry the extra server, the baseline already asks for
+            # them, and the delta on top asked for one more than the manager
+            # ever wanted — kept by the trim until they cut it twice.
+            n = base + headcount_to_apply(base, (learned or {}).get("delta"), (learned or {}).get("settled"))
             if n > 0:
                 slot[match] = n
             else:

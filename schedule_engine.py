@@ -6253,9 +6253,14 @@ def _learned_preferences_signal(raw: dict) -> dict:
         both = {tuple(s) for s in avoid} & {tuple(s) for s in prefer}
         avoid = [s for s in avoid if tuple(s) not in both]
         prefer = [s for s in prefer if tuple(s) not in both]
-        if avoid or prefer:
+        if avoid or prefer or p.get("wants_hours"):
             out[name] = {"avoid": avoid, "prefer": prefer, "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
                          "source": "what they drop and pick up", "drops": p.get("drops"), "claims": p.get("claims")}
+            if p.get("wants_hours"):
+                # Picks up open shifts beyond any slot: wants more hours —
+                # the assigned week's band opens upward (shift_quality.
+                # usual_band, LEARNING-28).
+                out[name]["wants_hours"] = True
     return out
 
 
@@ -6556,8 +6561,13 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         except (TypeError, ValueError):
             avg = 0.0
         if avg >= USUAL_HOURS_MIN and n not in signals.get("salaried", set()):
-            learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
-                                   "source": "their usual week"})["usual_hours"] = round(avg, 1)
+            # What they have been ASSIGNED (schedule audit 10/10/26
+            # LEARNING-28) — a stated want always wins over it, and one who
+            # keeps picking up open shifts gets a band open upward.
+            _lp_u = learned.setdefault(n, {"avoid": [], "prefer": [], "weight": _sq.LEARNED_PREFERENCE_WEIGHT,
+                                           "source": "the week they have been assigned"})
+            _lp_u["usual_hours"] = round(avg, 1)
+            _lp_u["usual_basis"] = "assigned"
     prefs = {n: dict(p) for n, p in (stated or {}).items() if isinstance(p, dict)}
     for n, lp in learned.items():
         prefs.setdefault(n, {"preferred_dayparts": [], "desired_hours": None})["learned"] = lp
@@ -8386,7 +8396,10 @@ def _stage_optimizer(rows, x):
     res = _opt.optimize(rows, x.result, signals=sig, weights=x.weights, constraints=x.c,
                         hours_budget=(x.budget or 0) if x.trim_on else None,
                         max_server_overlap=x.section_count, only_dates=x.editable,
-                        max_seconds=max(0.5, min(budget, x.search_seconds())))
+                        max_seconds=max(0.5, min(budget, x.search_seconds())),
+                        # The experiment's model arm: nobody reassigned by the
+                        # optimizer either (schedule audit 10/10/26 LOGIC-27).
+                        reassign=bool(getattr(x, "reassign_on", True)))
     x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
     if res.get("changes"):
         print(f"[schedule] optimizer {res['before_score']} -> {res['after_score']} "
@@ -8417,7 +8430,10 @@ def _stage_failure(key, exc, x) -> dict:
     blocks = tier <= _rules.TIER_COVERAGE
     print(f"[schedule] repair stage {key} failed: {exc!r}")
     try:
-        _ops.capture(exc, job=f"schedule_stage_{key}", context=f"restaurant_id={x.rid} stage={key}")
+        # The learning ablation's shadow run (RM-4) is no draft's stage: its
+        # failure is said under its own job, never as the week's.
+        _job = "schedule_learning_ablation" if getattr(x, "shadow", False) else f"schedule_stage_{key}"
+        _ops.capture(exc, job=_job, context=f"restaurant_id={x.rid} stage={key}")
     except Exception as _cx:
         print(f"[schedule] could not record that failure: {_cx}")
     return {"stage": key, "tier": tier, "blocks_publish": blocks, "error": type(exc).__name__,
@@ -9226,10 +9242,18 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
             # whether the solver re-solves who works each shift — pinned on
             # until the experiment can reach a verdict (P-21, L-11).
             _solver_on = True
+            _reassign_on = True
             try:
                 import schedule_experiments as _sx
                 result["experiment_arms"] = _sx.arms_for(restaurant_id, (result.get("week_dates") or [None])[0])
                 _solver_on = _sx.flag(result["experiment_arms"], "solver")
+                # The model arm is clean (LOGIC-27): the optimizer's
+                # replace / swap / trade moves are off with the solver.
+                _reassign_on = _sx.flag(result["experiment_arms"], "reassign")
+                # learning_v1's off week (LEARNING-25): the learned memory
+                # binds none of this week's passes.
+                if not _sx.flag(result["experiment_arms"], "learned") and _pass_sig is not None:
+                    _pass_sig = dict(_pass_sig, learned=[])
             except Exception as _arx:
                 _soft_fail("experiment arm", _arx, restaurant_id)
             # The ranked repair loop (P-47, E-18): every pass a stage at the
@@ -9245,8 +9269,48 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                restaurant=_restaurant_for_sched, close_times=_close_times,
                                role_buffers=_role_close_buffers, signals=_pass_sig, weights=_pass_w,
                                requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on)
+            _repair_ctx.reassign_on = _reassign_on
+            # The rows as they come into the loop, each with its id, for the
+            # row origins (AI-29) and the learning ablation (RM-4).
+            _repair_ctx.give_ids(preview_rows)
+            _pre_repair = [dict(r) for r in preview_rows]
             with _timer.stage("repair"):
                 _loop = repair_week(preview_rows, _repair_ctx)
+            _gen_attr = {"pre": _pre_repair, "info": None, "ablation": None}
+            try:
+                import schedule_scorecard as _ssc
+                _gen_attr["info"] = _ssc.loop_info(_pre_repair, _loop.get("rows"), _loop, _repair_ctx.origin)
+                # The learning ablation (schedule audit 10/10/26 RM-4,
+                # LEARNING-7, LEARNING-25): the same loop over the same
+                # rows with the learned memory switched off — what the
+                # draft would have been without it, kept beside it and
+                # measured against the week the manager settles on. No
+                # customer sees it; bounded, and off with
+                # SCHEDULE_LEARNING_ABLATION=0.
+                _learned_now = (_pass_sig or {}).get("learned") or []
+                if _ssc.ablation_wanted(_learned_now, clock):
+                    _t_ab = time.monotonic()
+                    _ab_ctx = RepairContext(restaurant_id, dict(result), _constraints, editable=_editable,
+                                            restaurant=_restaurant_for_sched, close_times=_close_times,
+                                            role_buffers=_role_close_buffers,
+                                            signals=dict(_pass_sig or {}, learned=[]), weights=_pass_w,
+                                            requirements=_reqs, curve=_curve, clock=clock, solver_on=_solver_on,
+                                            max_seconds=_ssc.ABLATION_MAX_SECONDS)
+                    _ab_ctx.reassign_on = _reassign_on
+                    _ab_ctx.shadow = True
+                    _ab_loop = repair_week([dict(r) for r in _pre_repair], _ab_ctx)
+                    _gen_attr["ablation"] = {"ran": True, "learned": len(_learned_now),
+                                             "rows_on": _ssc.compact(_loop.get("rows")),
+                                             "rows_off": _ssc.compact(_ab_loop.get("rows")),
+                                             "seconds": round(time.monotonic() - _t_ab, 2)}
+            except Exception as _abx:
+                # Not an input the draft went without — the draft is whole —
+                # so it is recorded for us, never said in the owner's review.
+                print(f"[schedule] learning ablation/row origins failed for restaurant {restaurant_id}: {_abx}")
+                try:
+                    _ops.capture(_abx, job="schedule_learning_ablation", context=f"restaurant_id={restaurant_id}")
+                except Exception as _cx:
+                    print(f"[schedule] could not record that failure: {_cx}")
             for _k, _s in (_loop.get("seconds") or {}).items():
                 _timer.add(f"repair.{_k}", _s)
             preview_rows = _loop["rows"]
@@ -9906,7 +9970,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                # reopened week and the edit line (SQ-6).
                                "blended_rate": result.get("blended_rate"),
                                "daily_target_hours": result.get("daily_target_hours") or {},
-                               "demand_data_through": result.get("demand_data_through")},
+                               "demand_data_through": result.get("demand_data_through"),
+                               # What the draft was ASKED for, kept with the
+                               # week (schedule audit 10/10/26 LEARNING-3):
+                               # the learned headcount is the manager's
+                               # settled heads less this, never less the draft.
+                               "requirements_by_date": _json_safe(result.get("requirements_by_date") or {})},
                     stage_seconds=_timer.as_dict(),
                     base=(int(base_history_id), _base_csv) if redo else None,
                 )
@@ -9952,6 +10021,23 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
                                if (result.get("solver") or {}).get("ran") else None)
             except Exception as _arx:
                 print(f"[schedule] experiment arm not recorded: {_arx}")
+            # What made this draft, kept for the Schedule Learning Scorecard
+            # (schedule audit 10/10/26 RM-4, AI-29, LEARNING-7): the commit
+            # and arms, each row's origin (the model, the managers' plan, a
+            # repair stage, a pass after the loop), the learning ablation,
+            # and the owner's rules the week honours. Never blocks the save.
+            try:
+                import schedule_scorecard as _ssc_tag
+                _ga = locals().get("_gen_attr") or {}
+                _ssc_tag.tag_generation(
+                    restaurant_id, _history_id, generation_id=result.get("generation_id"),
+                    arms=result.get("experiment_arms") or [],
+                    origins=_ssc_tag.classify_rows(_ga.get("pre") or [], preview_rows, _ga.get("info"))
+                    if _ga.get("pre") else {},
+                    ablation=_ga.get("ablation"),
+                    rules=_ssc_tag.rules_honoured(result.get("constraints"), result.get("rule_violations")))
+            except Exception as _tgx:
+                print(f"[schedule] generation tags not kept: {_tgx}")
             try:
                 # The version these rows are travels with them to the client,
                 # which sends it back with its first save (schedule re-audit

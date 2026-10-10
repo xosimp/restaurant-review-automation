@@ -18,6 +18,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 
+import learning_stats as _stats
 import models as _models_mod
 from models import DB_PATH
 
@@ -1181,8 +1182,8 @@ LEARN_DAYS = LEARN_WEEKS * 7        # the retention registry's reader window (op
 # Evidence fades by half-life rather than falling off an 8- or 16-week cliff
 # (L-27, raw_L §3 B): a person on a slot 120 days, a role's headcount or
 # start time 180 days.
-PERSON_HALF_LIFE_DAYS = 120
-SLOT_HALF_LIFE_DAYS = 180
+PERSON_HALF_LIFE_DAYS = _stats.PERSON_HALF_LIFE_DAYS      # 120 — one value for the three learners (ARCH-28)
+SLOT_HALF_LIFE_DAYS = _stats.SLOT_HALF_LIFE_DAYS          # 180
 HALF_LIFE_DAYS = {"moved_off": PERSON_HALF_LIFE_DAYS, "moved_on": PERSON_HALF_LIFE_DAYS,
                   "role_change": PERSON_HALF_LIFE_DAYS, "leader_swap": SLOT_HALF_LIFE_DAYS,
                   "retime_start": SLOT_HALF_LIFE_DAYS, "retime_end": SLOT_HALF_LIFE_DAYS,
@@ -1192,7 +1193,7 @@ HALF_LIFE_DAYS = {"moved_off": PERSON_HALF_LIFE_DAYS, "moved_on": PERSON_HALF_LI
 PATTERN_MIN_RATE = 0.5
 # The confidence bound on a rate: the Wilson lower bound at 90%, the level the
 # experiment readout's intervals use.
-WILSON_Z = 1.645
+WILSON_Z = _stats.WILSON_Z
 PRE_PUBLISH, POST_PUBLISH = "pre_publish", "post_publish"
 # Answers to the one-tap "why" that keep a change out of the habits (L-35).
 ONE_OFF_ANSWERS = ("this_week", "call_off")
@@ -1202,28 +1203,15 @@ def half_life(kind) -> int:
     return HALF_LIFE_DAYS.get(kind, PERSON_HALF_LIFE_DAYS)
 
 
-def recency_weight(age_days, half_life_days) -> float:
-    """1.0 for evidence from today, 0.5 one half-life ago."""
-    try:
-        return 0.5 ** (max(0.0, float(age_days or 0)) / float(half_life_days))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return 1.0
+# The shared statistics (learning_stats, ARCH-28): the names stay here too,
+# because tests and other modules call them on this module.
+recency_weight = _stats.recency_weight
 
 
 def wilson_lower(hits, n, z=WILSON_Z) -> float:
     """The lower bound of the rate hits/n — 2 of 2 is far less sure than 20
-    of 20. Weighted counts are allowed. 0.0 with no opportunities."""
-    try:
-        n, hits = float(n), float(hits)
-    except (TypeError, ValueError):
-        return 0.0
-    if n <= 0:
-        return 0.0
-    p = min(1.0, max(0.0, hits / n))
-    z2 = z * z
-    centre = p + z2 / (2 * n)
-    margin = z * math.sqrt(max(0.0, p * (1 - p) / n + z2 / (4 * n * n)))
-    return max(0.0, (centre - margin) / (1 + z2 / n))
+    of 20 (learning_stats.wilson_lower). 0.0 with no opportunities."""
+    return _stats.wilson_lower(hits, n, z)
 
 
 def _col(row, name):
@@ -1311,7 +1299,8 @@ class _WeekData:
             for i in range(0, len(ids), 400):
                 chunk = ids[i:i + 400]
                 marks = ",".join("?" for _ in chunk)
-                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by FROM schedule_history "
+                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json "
+                                      f"FROM schedule_history "
                                       f"WHERE restaurant_id=? AND id IN ({marks})", (restaurant_id, *chunk)):
                     hist[h["id"]] = dict(h)
                     if h["week_start"]:
@@ -1322,7 +1311,8 @@ class _WeekData:
             for i in range(0, len(wk), 400):
                 chunk = wk[i:i + 400]
                 marks = ",".join("?" for _ in chunk)
-                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by FROM schedule_history "
+                for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json "
+                                      f"FROM schedule_history "
                                       f"WHERE restaurant_id=? AND week_start IN ({marks})", (restaurant_id, *chunk)):
                     hist.setdefault(h["id"], dict(h))
             self.hist = hist
@@ -1362,6 +1352,28 @@ class _WeekData:
         if v["id"] not in self._rows:
             self._rows[v["id"]] = canonical_rows(self.rid, [rows_from_csv(v["schedule_csv"])], mapping=self.canon)[0]
         return self._rows[v["id"]]
+
+    def asked(self, chain) -> dict:
+        """{(date, daypart, role lower): people} — the requirement each draft
+        of the chain was ASKED for (schedule_history.economics_json
+        requirements_by_date, kept with the week since 10/10/26 —
+        LEARNING-3), the newest draft's word on a date over an older one's.
+        {} for a week saved before it was kept."""
+        out = {}
+        for hid in chain:
+            raw = (self.hist.get(hid) or {}).get("economics_json")
+            try:
+                req = (json.loads(raw or "{}") or {}).get("requirements_by_date") or {}
+            except (TypeError, ValueError):
+                req = {}
+            for k, roles in (req.items() if isinstance(req, dict) else []):
+                d, _sep, part = str(k).partition("|")
+                for role, n in (roles or {}).items() if isinstance(roles, dict) else []:
+                    try:
+                        out[(d[:10], part, " ".join(str(role).split()).lower())] = int(n)
+                    except (TypeError, ValueError):
+                        continue
+        return out
 
     def generated(self, hid):
         return next((v for v in self.versions.get(hid) or [] if v["reason"] == "generated"), None)
@@ -1644,7 +1656,9 @@ def _record(data: _WeekData, hid: int, today=None):
             "publish_authority": (pub or {}).get("saved_authority"),
             "published_by_person": legacy_pub or _person_published(pub, data.auto_ids),
             "generated_at": (gen or {}).get("created_at"), "week_date": wd,
-            "age_days": max(0, (today - wd).days) if wd else 0}
+            "age_days": max(0, (today - wd).days) if wd else 0,
+            # What the draft was asked for per date × daypart × role (LEARNING-3).
+            "asked": data.asked(comp["chain"])}
 
 
 def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_ids=None, include_unlooked=False,
@@ -1655,6 +1669,15 @@ def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_id
     evidence that the draft was kept (L-6). `history_ids` reads those weeks
     instead of a window; `include_unlooked` keeps the weeks nobody looked at
     (flagged looked_at False).
+
+    Each week's record is KEPT (schedule_learning_records — schedule audit
+    10/10/26 SCALE-33) under a signature of everything it is read from: the
+    versions, the owner's answers and redos of every draft of that week, its
+    economics, whether an automatic publish sent it, and the restaurant's
+    people (a rename reads old weeks anew). A week nothing has touched since
+    is read back, not replayed: the nightly learners, the generation and the
+    acceptance read used to rebuild all 24 weeks from their CSV versions on
+    every call.
 
     Replayed once per read_scope (scheduler audit 10/10/26, LEARNING-23): a
     generation replayed 24 weeks of saved versions four to six times — the
@@ -1677,20 +1700,218 @@ def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_id
 
 
 def _learning_weeks(restaurant_id, weeks, db_path, history_ids, include_unlooked, today) -> list:
-    data = _WeekData(restaurant_id, db_path=db_path, lookback_days=int(weeks) * 7, history_ids=history_ids)
-    ids = list(history_ids) if history_ids is not None else data.finals()
+    today = today or date.today()
+    ids, sigs = _record_plan(restaurant_id, int(weeks) * 7, history_ids, db_path)
+    cached = _load_records(restaurant_id, sigs, db_path)
+    stale = [h for h in ids if h not in cached]
+    fresh = {}
+    if stale:
+        data = _WeekData(restaurant_id, db_path=db_path, history_ids=stale)
+        for hid in stale:
+            try:
+                fresh[hid] = _record(data, int(hid), today=today)
+            except Exception as e:          # one unreadable week never hides the rest
+                log.warning("learning week %s unreadable for restaurant %s: %s", hid, restaurant_id, e)
+                continue
+        _store_records(restaurant_id, {h: (sigs.get(h), r) for h, r in fresh.items() if sigs.get(h)}, db_path)
     out = []
     for hid in ids:
-        try:
-            rec = _record(data, int(hid), today=today)
-        except Exception as e:          # one unreadable week never hides the rest
-            log.warning("learning week %s unreadable for restaurant %s: %s", hid, restaurant_id, e)
-            continue
+        rec = cached[hid] if hid in cached else fresh.get(hid)
         if rec is None or (not rec["looked_at"] and not include_unlooked):
             continue
+        wd = rec.get("week_date")
+        rec["age_days"] = max(0, (today - wd).days) if wd else 0
         out.append(rec)
     out.sort(key=lambda w: (str(w["week_start"] or ""), w["history_id"]))
     return out
+
+
+# ── the kept week records (SCALE-33) ───────────────────────────────────────
+
+# Bump when _record's reading of a week changes: every kept record is then
+# read anew once.
+RECORD_VERSION = 1
+
+
+def _people_epoch(conn, restaurant_id) -> str:
+    """A short hash of the restaurant's people and aliases — a rename, a
+    merge or an erase reads every week's names anew."""
+    import hashlib
+    h = hashlib.sha1()
+    try:
+        for r in conn.execute("SELECT id, display_name, name_key, merged_into FROM people WHERE restaurant_id=? "
+                              "ORDER BY id", (restaurant_id,)):
+            h.update(f"{r[0]}|{r[1]}|{r[2]}|{r[3]};".encode())
+        for r in conn.execute("SELECT person_id, name_key FROM person_aliases WHERE restaurant_id=? "
+                              "ORDER BY person_id, name_key", (restaurant_id,)):
+            h.update(f"{r[0]}|{r[1]};".encode())
+    except sqlite3.OperationalError:
+        pass
+    return h.hexdigest()[:16]
+
+
+def _record_plan(restaurant_id, lookback_days, history_ids, db_path=DB_PATH) -> tuple:
+    """(the history ids learning_weeks reads — the window's final draft of
+    each week, as _WeekData.finals picks it, or `history_ids` — and {id:
+    signature}), from a handful of light queries: no CSV is read here."""
+    import hashlib
+    conn = get_conn(db_path)
+    try:
+        if history_ids is not None:
+            want = sorted({int(h) for h in history_ids if h})
+        else:
+            want = [r[0] for r in conn.execute(
+                "SELECT DISTINCT history_id FROM schedule_versions WHERE restaurant_id=? "
+                "AND created_at >= datetime('now', ?)", (restaurant_id, f"-{int(lookback_days or 0)} days"))]
+        hist, weeks = {}, set()
+        for i in range(0, len(want), 400):
+            chunk = want[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json FROM "
+                                  f"schedule_history WHERE restaurant_id=? AND id IN ({marks})", (restaurant_id, *chunk)):
+                hist[h["id"]] = dict(h)
+                if h["week_start"]:
+                    weeks.add(h["week_start"])
+        wk = sorted(weeks)
+        for i in range(0, len(wk), 400):
+            chunk = wk[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for h in conn.execute(f"SELECT id, week_start, published_at, superseded_by, economics_json FROM "
+                                  f"schedule_history WHERE restaurant_id=? AND week_start IN ({marks})",
+                                  (restaurant_id, *chunk)):
+                hist.setdefault(h["id"], dict(h))
+        if history_ids is not None:
+            ids = [h for h in want if h in hist]
+        else:
+            by_week = {}
+            for hid in want:
+                h = hist.get(hid)
+                if h:
+                    by_week.setdefault(h["week_start"] or f"#{hid}", []).append(h)
+            ids = []
+            for wkey, hs in by_week.items():
+                if not wkey.startswith("#"):
+                    hs = [h for h in hist.values() if h["week_start"] == wkey]
+                pub = [h for h in hs if h["published_at"]]
+                if pub:
+                    pick = max([h for h in pub if not h["superseded_by"]] or pub, key=lambda h: h["id"])
+                else:
+                    pick = max([h for h in hs if not h["superseded_by"]] or hs, key=lambda h: h["id"])
+                ids.append(pick["id"])
+            ids.sort()
+        every = sorted(hist)
+        vsig, asig, rsig = {}, {}, {}
+        for i in range(0, len(every), 400):
+            chunk = every[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for r in conn.execute(f"SELECT history_id, COUNT(*), MAX(id), MAX(COALESCE(adopted_at, '')) FROM "
+                                  f"schedule_versions WHERE restaurant_id=? AND history_id IN ({marks}) "
+                                  f"GROUP BY history_id", (restaurant_id, *chunk)):
+                vsig[r[0]] = (r[1], r[2], r[3])
+            try:
+                for r in conn.execute(f"SELECT history_id, COUNT(*), MAX(id), MAX(COALESCE(answered_at, '')), "
+                                      f"MAX(COALESCE(adopted_at, '')), GROUP_CONCAT(answer) FROM schedule_edit_answers "
+                                      f"WHERE restaurant_id=? AND history_id IN ({marks}) AND answer IS NOT NULL "
+                                      f"GROUP BY history_id", (restaurant_id, *chunk)):
+                    asig[r[0]] = tuple(r[1:])
+            except sqlite3.OperationalError:
+                pass
+            try:
+                for r in conn.execute(f"SELECT history_id, COUNT(*), MAX(id) FROM schedule_rejections WHERE "
+                                      f"restaurant_id=? AND history_id IN ({marks}) GROUP BY history_id",
+                                      (restaurant_id, *chunk)):
+                    rsig[r[0]] = (r[1], r[2])
+            except sqlite3.OperationalError:
+                pass
+        auto = _auto_published_ids(conn, restaurant_id)
+        epoch = _people_epoch(conn, restaurant_id)
+    finally:
+        conn.close()
+    sigs = {}
+    for hid in ids:
+        h = hist[hid]
+        group = sorted((x for x in hist.values() if x["week_start"] == h["week_start"]) if h["week_start"] else [h],
+                       key=lambda x: x["id"])
+        parts = [RECORD_VERSION, epoch, hid in auto]
+        for x in group:
+            econ = hashlib.sha1(str(x.get("economics_json") or "").encode()).hexdigest()[:12]
+            parts.append([x["id"], str(x["published_at"] or ""), x["superseded_by"], econ, x["id"] in auto,
+                          list(vsig.get(x["id"]) or ()), list(asig.get(x["id"]) or ()), list(rsig.get(x["id"]) or ())])
+        sigs[hid] = hashlib.sha1(json.dumps(parts, default=str).encode()).hexdigest()
+    return ids, sigs
+
+
+def _rec_dumps(rec) -> str:
+    if rec is None:
+        return "null"
+    out = dict(rec)
+    out["items"] = [dict(e, keys=[list(k) for k in sorted(e.get("keys") or [])]) for e in rec.get("items") or []]
+    out["asked"] = [[d, p, r, n] for (d, p, r), n in (rec.get("asked") or {}).items()]
+    out["week_date"] = rec["week_date"].isoformat() if rec.get("week_date") else None
+    out.pop("age_days", None)
+    return json.dumps(out, default=str)
+
+
+def _rec_loads(raw):
+    rec = json.loads(raw)
+    if rec is None:
+        return None
+    rec["items"] = [dict(e, keys={tuple(k) for k in e.get("keys") or []}) for e in rec.get("items") or []]
+    rec["asked"] = {(d, p, r): n for d, p, r, n in rec.get("asked") or []}
+    try:
+        rec["week_date"] = date.fromisoformat(rec["week_date"]) if rec.get("week_date") else None
+    except (TypeError, ValueError):
+        rec["week_date"] = None
+    return rec
+
+
+def _load_records(restaurant_id, sigs, db_path=DB_PATH) -> dict:
+    """{history id: record (None for a week with no generated draft)} for
+    every kept record whose signature still matches."""
+    if not sigs:
+        return {}
+    out = {}
+    conn = get_conn(db_path)
+    try:
+        ids = sorted(sigs)
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            for r in conn.execute(f"SELECT history_id, signature, record_json FROM schedule_learning_records "
+                                  f"WHERE restaurant_id=? AND history_id IN ({marks})", (restaurant_id, *chunk)):
+                if r["signature"] != sigs.get(r["history_id"]):
+                    continue
+                try:
+                    out[r["history_id"]] = _rec_loads(r["record_json"])
+                except (TypeError, ValueError, KeyError) as e:
+                    log.warning("kept learning week %s unreadable: %s", r["history_id"], e)
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+    return out
+
+
+def _store_records(restaurant_id, entries, db_path=DB_PATH) -> int:
+    """Keep each freshly read week under its signature. Never raises into
+    the read: a write that failed only means the next read replays it."""
+    if not entries:
+        return 0
+    try:
+        rows = [(restaurant_id, int(hid), sig, _rec_dumps(rec)) for hid, (sig, rec) in entries.items()]
+        conn = get_conn(db_path)
+        try:
+            conn.executemany("INSERT INTO schedule_learning_records (restaurant_id, history_id, signature, "
+                             "record_json, created_at) VALUES (?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, "
+                             "history_id) DO UPDATE SET signature=excluded.signature, "
+                             "record_json=excluded.record_json, created_at=excluded.created_at", rows)
+            conn.commit()
+        finally:
+            conn.close()
+        return len(rows)
+    except Exception as e:
+        log.warning("learning weeks not kept for restaurant %s: %s", restaurant_id, e)
+        return 0
 
 
 def acceptance(restaurant_id, weeks=8, db_path=DB_PATH) -> dict:
@@ -1823,10 +2044,9 @@ def weeks_phrase(n, of=None) -> str:
 
 
 def _strength(hits_w, opps_w) -> tuple:
-    """(rate, confidence) of weighted hits over weighted opportunities."""
-    if opps_w <= 0:
-        return 0.0, 0.0
-    return round(min(1.0, hits_w / opps_w), 3), round(wilson_lower(hits_w, opps_w), 3)
+    """(rate, confidence) of weighted hits over weighted opportunities
+    (learning_stats.strength)."""
+    return _stats.strength(hits_w, opps_w)
 
 
 def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PATH, min_rate=PATTERN_MIN_RATE) -> list:
@@ -1837,7 +2057,9 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
     # manager's final version: counted per save, taking Bob off, putting him
     # back and taking him off again in one week read as "2 times recently",
     # and an undone edit taught the opposite of what the manager kept.
-    counts, last, opps = {}, {}, {}
+    # Per key, every week it was an opportunity, oldest first: {hit, w (the
+    # week's recency weight), hid, editor, ws}.
+    series = {}
 
     def _key(kind, name, date_, start, end, day_hint):
         try:
@@ -1890,33 +2112,47 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
                             ad.get("day")))
         # A reversal clears the same editor's earlier evidence only: two
         # editors pulling opposite ways are a conflict for the owner
-        # (patterns_for_draft), not one editor changing their mind.
+        # (patterns_for_draft), not one editor changing their mind. The
+        # cleared weeks stay opportunities the manager did not take.
         ed = w.get("editor") or ""
         for k in undone:
-            if k in counts:
-                counts[k] = [e for e in counts[k] if e[1] != ed]
-        for k in seen - undone:
-            counts.setdefault(k, []).append((int(w.get("history_id") or 0), ed, recency_weight(age, half_life(k[0])),
-                                             str(w.get("week_start") or "")))
-        for k in could | (seen - undone):
-            opps.setdefault(k, []).append(recency_weight(age, half_life(k[0])))
+            for e in series.get(k) or []:
+                if e["hit"] and e["editor"] == ed:
+                    e["hit"] = False
+        hits_now = seen - undone
+        for k in could | hits_now:
+            series.setdefault(k, []).append({"hit": k in hits_now, "w": recency_weight(age, half_life(k[0])),
+                                             "hid": int(w.get("history_id") or 0), "editor": ed,
+                                             "ws": str(w.get("week_start") or "")})
     out = []
-    for k in list(counts):
-        last[k] = max((e[0] for e in counts[k]), default=0)
-    ranked = sorted(counts.items(), key=lambda kv: -len(kv[1]))
-    for (kind, name, day, part), ev in ranked:
-        n = len(ev)
+    # Read from the newest regime (schedule audit 10/10/26 LEARNING-2): a
+    # habit's rate is counted from its change point (learning_stats.
+    # since_change), not averaged over the 24-week window — a new manager
+    # taking Bob off a slot the draft had him on for months used to need 10
+    # weeks to reach the prompt and 18 to bind; now two in a row are a
+    # candidate and five bind.
+    found = []
+    for k, ev in series.items():
+        if not any(e["hit"] for e in ev) or not k[1]:
+            continue
+        sc = _stats.since_change([(e["hit"], e["w"]) for e in ev])
+        seg = ev[sc["start"]:]
+        hits = [e for e in seg if e["hit"]]
+        found.append((k, hits, sc))
+    found.sort(key=lambda t: -len(t[1]))
+    for (kind, name, day, part), hits, sc in found:
+        n = len(hits)
         if n < min_repeats or not name:
             continue
-        rate, conf = _strength(sum(e[2] for e in ev), sum(opps.get((kind, name, day, part)) or [0.0]))
+        rate, conf = _strength(sc["hits_w"], sc["opps_w"])
         if rate < min_rate:
             continue
-        of = len(opps.get((kind, name, day, part)) or [])
+        of = sc["opps"]
         pretty = {"morning": "lunch/day", "night": "dinner/night"}.get(part, part)
-        lw = last.get((kind, name, day, part))
+        lw = max((e["hid"] for e in hits), default=0)
         common = {"kind": kind, "employee": name, "day": day, "daypart": part, "times": n, "last_week": lw,
-                  "last_week_start": max((e[3] for e in ev), default=""), "opportunities": of,
-                  "rate": rate, "confidence": conf}
+                  "last_week_start": max((e["ws"] for e in hits), default=""), "opportunities": of,
+                  "rate": rate, "confidence": conf, "onset": sc["changed"]}
         if kind == "moved_off":
             out.append(dict(common, text=f"The manager has taken {name} off {day} {pretty} in {weeks_phrase(n, of)} — "
                                          f"avoid scheduling them there."))
@@ -2074,7 +2310,27 @@ def _slot_rows(p, rows) -> list:
                    r.get("shift_end") or "") for r in rows if _on_slot(p, r))
 
 
-def _week_verdict(p, draft, final, edited):
+def _asked_heads(p, asked, draft_heads) -> dict:
+    """The draft's heads on a headcount pattern's slot, read as what the
+    draft was ASKED for where the week kept its requirement (LEARNING-3): a
+    draft the model left one short, filled by the manager, is the
+    requirement kept — not the manager adding still more."""
+    if not asked:
+        return draft_heads
+    out = dict(draft_heads)
+    rl = " ".join(str(p.get("role") or "").split()).lower()
+    for (d, part, role), n in asked.items():
+        if part != p.get("daypart") or role != rl:
+            continue
+        try:
+            if datetime.strptime(d, "%Y-%m-%d").strftime("%A") == p.get("day"):
+                out[d] = int(n)
+        except ValueError:
+            continue
+    return out
+
+
+def _week_verdict(p, draft, final, edited, asked=None):
     """What one published week says about a standing pattern:
       "confirmed"  the manager's own hand kept it — the draft had not already
                    carried it, or they edited that slot and kept it
@@ -2090,7 +2346,7 @@ def _week_verdict(p, draft, final, edited):
     if kind in _HEADCOUNT_KINDS:
         if draft is None:
             return None
-        hd, hf = _heads(p, draft), _heads(p, final)
+        hd, hf = _asked_heads(p, asked, _heads(p, draft)), _heads(p, final)
         dates = set(hd) | set(hf)
         if not dates:
             return None
@@ -2136,15 +2392,102 @@ def _retest_verdict(p, draft, final):
     return "confirmed" if kept else "failed"
 
 
+def renewed_on(row):
+    """The date a standing pattern's decay runs from: the newer of a
+    manager's own hand last confirming it (last_hand) and the newest date a
+    week that kept it was worked as published (last_kept — schedule audit
+    10/10/26 LEARNING-1: a week the draft kept used to add a hit but never
+    renew it, so a habit the draft carried every week fell under the line
+    9 to 15 weeks in and stopped binding while it was working). A datetime,
+    or None."""
+    stamps = [w for w in (_when(_col(row, "last_hand") or _col(row, "first_learned")), _when(_col(row, "last_kept")))
+              if w is not None]
+    return max(stamps) if stamps else None
+
+
 def standing_confidence(row, today=None) -> float:
     """The Wilson lower bound of the weeks that kept a standing pattern over
-    the weeks that tested it, times its half-life decay since a manager's
-    own hand last confirmed it (L-6, L-30). 0-1."""
+    the weeks that tested it, times its half-life decay since it was last
+    renewed — by a manager's own hand or by a week worked as published that
+    kept it (L-6, L-30, LEARNING-1). 0-1."""
     today = today or date.today()
     hits, opps = int(_col(row, "hits") or 0), int(_col(row, "opportunities") or 0)
-    hand = _when(_col(row, "last_hand") or _col(row, "first_learned"))
-    age = (today - hand.date()).days if hand else 0
+    renewed = renewed_on(row)
+    age = (today - renewed.date()).days if renewed else 0
     return round(wilson_lower(hits, opps) * recency_weight(age, half_life(_col(row, "kind"))), 3)
+
+
+def _slot_date(week_start, day):
+    """The date in the seven days from `week_start` that falls on `day` (a
+    weekday name), or None."""
+    try:
+        d0 = week_start if isinstance(week_start, date) else date.fromisoformat(str(week_start)[:10])
+    except (TypeError, ValueError):
+        return None
+    for i in range(7):
+        d = d0 + timedelta(days=i)
+        if d.strftime("%A") == day:
+            return d
+    return None
+
+
+def _worked_kept(restaurant_id, rows, today, db_path=DB_PATH) -> dict:
+    """{standing row id: ISO date} — for each pattern whose newest kept week
+    (last_kept_week) has run on the pattern's weekday, that date, when the
+    week was WORKED as published (LEARNING-1, RM-5): the punches on that
+    date do not undo it — the person taken off did not work the slot, the
+    person put on did, a swapped-in leader was there; a time or a headcount
+    renews once the slot's date ran. A restaurant with no punches at all
+    (no POS) is read as having worked what it published; one with a POS
+    whose punches miss that date renews nothing from it (not known to have
+    run). The renewal only moves forward."""
+    want = {}
+    for r in rows:
+        wk = _when(r.get("last_kept_week"))
+        if wk is None or not r.get("day"):
+            continue
+        d = _slot_date(wk.date(), r["day"])
+        if d is None or d >= today:
+            continue
+        if str(r.get("last_kept") or "")[:10] >= d.isoformat():
+            continue
+        want[r["id"]] = (r, d)
+    if not want:
+        return {}
+    lo = min(d for _r, d in want.values())
+    hi = max(d for _r, d in want.values())
+    try:
+        import shift_facts
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        punches = shift_facts.rows(restaurant_id, since=(lo - timedelta(days=28)).isoformat(), until=hi.isoformat(),
+                                   **kw)
+    except Exception as e:                  # a read; the decay simply is not renewed tonight
+        log.warning("punches unreadable for standing renewal rid=%s: %s", restaurant_id, e)
+        return {}
+    by_date = {}
+    for p in punches:
+        by_date.setdefault(str(p.get("date") or "")[:10], []).append(p)
+    has_pos = bool(punches)
+    out = {}
+    for row_id, (r, d) in want.items():
+        iso = d.isoformat()
+        if not has_pos:
+            out[row_id] = iso
+            continue
+        day_rows = by_date.get(iso) or []
+        if not day_rows:
+            continue
+        kind = r["kind"]
+        p = dict(r, names=_detail(r).get("names"))
+        if kind == "moved_off":
+            ok = _respects(p, day_rows, need_presence=False) is True
+        elif kind in ("moved_on", "role_change", "leader_swap"):
+            ok = _respects(p, day_rows, need_presence=False) is True
+        else:
+            ok = any(_on_slot(p, x) for x in day_rows)
+        if ok:
+            out[row_id] = iso
+    return out
 
 
 def _person_id(restaurant_id, name, db_path=DB_PATH):
@@ -2298,6 +2641,19 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
         return dict(stats, skipped="not_eligible")
     today = today or date.today()
     _read_weeks(restaurant_id, stats, db_path, today=today)
+    # The weeks that kept a pattern and have since been worked as published
+    # renew its decay (LEARNING-1) — read before the write lock is taken.
+    try:
+        _c = get_conn(db_path)
+        try:
+            _pre = [r for r in _standing_rows(_c, restaurant_id) if r["status"] in ("active", "retest")]
+        finally:
+            _c.close()
+        renew = _worked_kept(restaurant_id, _pre, today, db_path)
+    except Exception as e:
+        log.warning("standing renewal unreadable rid=%s: %s", restaurant_id, e)
+        renew = {}
+    stats["renewed"] = 0
     live = _live(restaurant_id, db_path)
     pids = {p.get("employee"): _person_id(restaurant_id, p.get("employee"), db_path)
             for p in live if p.get("kind") in _NAMED_KINDS}
@@ -2342,7 +2698,7 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
                 # manager wants it back.
                 conn.execute("UPDATE schedule_standing_patterns SET status='active', times_overridden=0, "
                              "last_overridden=NULL, retired_at=NULL, retired_week=NULL, retired_reason=NULL, "
-                             "retest_since=NULL, text=?, editors=?, detail=?, last_confirmed=?, "
+                             "retest_since=NULL, enforced_since=NULL, text=?, editors=?, detail=?, last_confirmed=?, "
                              "checked_through=MAX(checked_through, ?), opportunities=?, hits=?, last_hand=?, "
                              "updated_at=datetime('now') WHERE id=?",
                              (p.get("text"), editors, detail, now, lw, opps, hits, hand, row["id"]))
@@ -2379,6 +2735,7 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
         # A row retired by decay comes back only on a draft made after it.
         newest_week = conn.execute("SELECT MAX(id) FROM schedule_history WHERE restaurant_id=?",
                                    (restaurant_id,)).fetchone()[0] or 0
+        import schedule_memory as _smem
         for r in _standing_rows(conn, restaurant_id):
             if r["status"] not in ("active", "retest"):
                 continue
@@ -2388,12 +2745,21 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
             if not r.get("last_hand"):
                 r["last_hand"] = _iso_day(r.get("last_confirmed") if int(r.get("times_confirmed") or 0)
                                           else r.get("first_learned")) or today.isoformat()
+            if renew.get(r["id"], "") > str(r.get("last_kept") or "")[:10]:
+                r["last_kept"] = renew[r["id"]]
+                stats["renewed"] += 1
             conf = standing_confidence(r, today)
             hl = half_life(r["kind"])
+            # The re-test is the one check-in, a half-life after a manager's
+            # own hand last confirmed it; the decay that retires it runs
+            # from its last renewal — hand or a kept week worked
+            # (LEARNING-1), so a habit that is working never fades out.
             hand = _when(r["last_hand"])
             age = (today - hand.date()).days if hand else 0
+            renewed = renewed_on(r)
+            renewed_age = (today - renewed.date()).days if renewed else age
             status, retest_since, reason = r["status"], r.get("retest_since"), None
-            if age >= 2 * hl and conf < STANDING_RETIRE_CONFIDENCE:
+            if renewed_age >= 2 * hl and conf < STANDING_RETIRE_CONFIDENCE:
                 status, retest_since, reason = "retired", None, "decayed"
                 stats["decayed"] += 1
                 stats["retired"] += 1
@@ -2402,12 +2768,22 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
                 if gap is None or (datetime.utcnow() - gap).days >= RETEST_GAP_DAYS:
                     status, retest_since = "retest", now
                     stats["retests"] += 1
+            # Bound from when it first earned it until its lifecycle ends it
+            # (LEARNING-1): a failed re-test or two reversals retire it; a
+            # decaying confidence never demotes it to a prompt line.
+            enforced = r.get("enforced_since")
+            if status == "retired":
+                enforced = None
+            elif not enforced and (conf >= _smem.ACTIVE_CONFIDENCE or _owner_kept(r)):
+                enforced = now
             conn.execute("UPDATE schedule_standing_patterns SET confidence=?, opportunities=?, hits=?, last_hand=?, "
+                         "last_kept=?, enforced_since=?, "
                          "status=?, retest_since=?, retired_reason=COALESCE(?, retired_reason), "
                          "retired_at=CASE WHEN ?='retired' THEN datetime('now') ELSE retired_at END, "
                          "retired_week=CASE WHEN ?='retired' THEN ? ELSE retired_week END, "
                          "updated_at=datetime('now') WHERE id=?",
-                         (conf, int(r.get("opportunities") or 0), int(r.get("hits") or 0), r["last_hand"], status,
+                         (conf, int(r.get("opportunities") or 0), int(r.get("hits") or 0), r["last_hand"],
+                          r.get("last_kept"), enforced, status,
                           retest_since, reason, status, status, newest_week, r["id"]))
         conn.commit()
     finally:
@@ -2445,7 +2821,7 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                        "through": int(r["checked_through"] or 0), "last": None, "retired": None, "row": r,
                        "hits": 0, "opps": 0, "hand": r.get("last_hand"), "reason": None,
                        "retest_since": r.get("retest_since") if r["status"] == "retest" else None,
-                       "retest_weeks": 0, "retest_end": None}
+                       "retest_weeks": 0, "retest_end": None, "kept_week": r.get("last_kept_week")}
              for r in rows}
     for w in weeks:
         rec = recs.get(w["id"])
@@ -2473,6 +2849,7 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                     u["hits"] += 1
                     u["opps"] += 1
                     u["hand"] = week_day or u["hand"]
+                    u["kept_week"] = max(str(u["kept_week"] or ""), week_day or "") or None
                     u["last"] = str(w["published_at"])[:19]
                     u["retest_since"], u["retest_end"] = None, True
                     continue
@@ -2482,12 +2859,16 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                     continue
                 if u["retest_weeks"] >= RETEST_MAX_WEEKS:
                     u["retest_since"], u["retest_end"] = None, True
-            verdict = _week_verdict(p, draft, final, edited)
+            verdict = _week_verdict(p, draft, final, edited, asked=rec.get("asked"))
             if verdict in ("kept", "confirmed"):
                 u["applied"] += 1
                 u["hits"] += 1
                 u["opps"] += 1
                 u["last"] = str(w["published_at"])[:19]
+                # A week that went out keeping it (LEARNING-1): once it is
+                # WORKED as published it renews the decay (_worked_kept), as
+                # the punches renew an opener's (schedule_memory kept_dates).
+                u["kept_week"] = max(str(u["kept_week"] or ""), week_day or "") or None
                 if verdict == "confirmed":
                     u["confirmed"] += 1
                     u["hand"] = week_day or u["hand"]
@@ -2510,20 +2891,22 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
                          "times_confirmed=COALESCE(times_confirmed, 0)+?, times_overridden=?, last_overridden=?, "
                          "last_confirmed=COALESCE(?, last_confirmed), checked_through=?, "
                          "hits=COALESCE(hits, 0)+?, opportunities=COALESCE(opportunities, 0)+?, last_hand=?, "
+                         "last_kept_week=?, "
                          "status=?, retest_since=?, "
                          "retests=COALESCE(retests, 0)+?, "
                          "last_retest_end=CASE WHEN ? THEN datetime('now') ELSE last_retest_end END, "
                          "retired_reason=CASE WHEN ? THEN ? ELSE retired_reason END, "
                          "retired_at=CASE WHEN ? THEN datetime('now') ELSE retired_at END, "
-                         "retired_week=CASE WHEN ? THEN ? ELSE retired_week END, updated_at=datetime('now') "
+                         "retired_week=CASE WHEN ? THEN ? ELSE retired_week END, "
+                         "enforced_since=CASE WHEN ? THEN NULL ELSE enforced_since END, updated_at=datetime('now') "
                          "WHERE id=? AND status IN ('active', 'retest')",
                          (u["applied"], u["confirmed"], u["over"],
                           u["last_over"].strftime("%Y-%m-%d %H:%M:%S") if u["last_over"] else None,
-                          u["last"], u["through"], u["hits"], u["opps"], u["hand"], status,
+                          u["last"], u["through"], u["hits"], u["opps"], u["hand"], u["kept_week"], status,
                           u["retest_since"], 1 if (ended or (retire and u["reason"] == "retest")) else 0,
                           1 if (ended or (retire and u["reason"] == "retest")) else 0,
                           1 if retire else 0, u["reason"], 1 if retire else 0, 1 if retire else 0,
-                          u["retired"], rid_))
+                          u["retired"], 1 if retire else 0, rid_))
             stats["confirmed"] += u["confirmed"]
             stats["overridden"] += u["new_over"]
             stats["retired"] += 1 if retire else 0
@@ -2584,6 +2967,11 @@ def standing_patterns(restaurant_id, db_path=DB_PATH, include_retired=True) -> l
                     "last_hand": mdy(r["last_hand"]) if r.get("last_hand") else None,
                     "last_hand_iso": str(r["last_hand"])[:10] if r.get("last_hand") else None,
                     "retest_since": mdy(r["retest_since"]) if r.get("retest_since") else None,
+                    # LEARNING-1: the newest date a week that kept it was
+                    # worked as published, and since when it binds the passes.
+                    "last_kept": mdy(r["last_kept"]) if r.get("last_kept") else None,
+                    "last_kept_iso": str(r["last_kept"])[:10] if r.get("last_kept") else None,
+                    "enforced_since": str(r["enforced_since"])[:10] if r.get("enforced_since") else None,
                     "source": r.get("source") or "learned",
                     "can_be_rule": r["kind"] in RULE_KINDS and r["status"] in ("active", "retest"),
                     "rule": ({"note": r["rule_note"], "by": r["ruled_by"]} if r["status"] == "ruled" else None)})
@@ -2891,7 +3279,7 @@ def confirm_standing(restaurant_id, pattern_key, user=None, keep=True, db_path=D
                                   (restaurant_id,)).fetchone()[0] or 0
             conn.execute("UPDATE schedule_standing_patterns SET status='retired', retired_reason=?, "
                          "retired_at=datetime('now'), retired_week=?, retest_since=NULL, owner_kept_at=NULL, "
-                         "answer_authority=?, updated_at=datetime('now') WHERE id=?",
+                         "enforced_since=NULL, answer_authority=?, updated_at=datetime('now') WHERE id=?",
                          ("owner" if owner else "manager", newest, "principal" if owner else "delegate", row["id"]))
         conn.commit()
     finally:
@@ -3051,6 +3439,11 @@ def observe_publish(restaurant_id, history_id, authority=None, editor=None, db_p
         for f in ("from", "to", "old_start", "new_start", "old_end", "new_end", "old_role", "new_role"):
             if it.get(f):
                 value[f] = it[f]
+        # The shift the event is about, where rows carry their stable id
+        # (schedule audit 10/10/26 ARCH-28: one event log of operations on
+        # shifts) — never invented.
+        if it.get("shift_id"):
+            value["shift_id"] = it["shift_id"]
         schedule_memory.observe(restaurant_id, kind, week_start=rec["week_start"], date=it.get("date"),
                                 daypart=(present_dayparts({"shift_start": start, "shift_end": it.get("shift_end") or ""})
                                          or ["unknown"])[0],

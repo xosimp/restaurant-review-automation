@@ -26,8 +26,19 @@ Measured per arm, internal only (admin_ops / templates/admin.html):
 Owners never see an arm. The readout refuses to call a winner below
 MIN_WEEKS_PER_ARM published weeks from MIN_RESTAURANTS_PER_ARM restaurants
 in every arm (weeks inside one restaurant are not independent), and calls
-one only when the 90% interval for the difference in acceptance excludes
-zero and no outcome is significantly worse for the leader.
+one on the PRIMARIES — the Draft Rework Rate (schedule_scorecard) and the
+week's outcomes (issues, labor %, labor against the hourly target, minutes
+with no manager, uncovered no-shows): better on at least one at 90% and
+worse on none (schedule audit 10/10/26 LEARNING-25 — it used to call on
+acceptance, which reads a manager who stopped looking as improvement).
+Each arm carries `power_read`: the smallest difference its sample can
+detect and the weeks it would take to see one worth seeing — honest about
+an experiment that cannot conclude. The model arm of assign_v1 is clean
+(LOGIC-27): the optimizer's reassignments are off with the solver.
+learning_v1 is a within-restaurant SWITCHBACK (switchback_arm): the learned
+memory off one week in four, judged the same way — and the offline
+learning ablation (schedule_scorecard) answers it with no customer
+exposure every generation meanwhile.
 
 The interval is CLUSTER-ROBUST by restaurant (memory audit 9/29/26,
 PLATFORM-13): weeks were treated as independent, so one busy restaurant
@@ -89,15 +100,45 @@ EXPERIMENTS = (
     {"key": "assign_v1",
      "active": True,
      "started": "2026-09-23",
-     "question": "Does the constraint solver's assignment beat the model's own?",
+     # The model arm is the model's assignment (schedule audit 10/10/26
+     # LOGIC-27): the optimizer's replace / swap / trade moves are off with
+     # the solver ("reassign"), so the readout compares the model's own
+     # assignment with the solver's, not two partly optimizer-assigned weeks.
+     "question": "Does the constraint solver's assignment (with the optimizer's reassignments) beat the model's own "
+                 "assignment (nobody reassigned by code)?",
      "control": "model",
      # Every week runs the solver until the experiment can conclude (P-21).
      "until_powered": "solver",
-     "arms": ({"key": "model", "label": "Model assignment", "weight": 1, "flags": {"solver": False}},
-              {"key": "solver", "label": "Solver assignment", "weight": 1, "flags": {"solver": True}})},
+     "arms": ({"key": "model", "label": "Model assignment", "weight": 1,
+               "flags": {"solver": False, "reassign": False}},
+              {"key": "solver", "label": "Solver assignment", "weight": 1,
+               "flags": {"solver": True, "reassign": True}})},
+    # Whether binding the learned memory makes weeks better (schedule audit
+    # 10/10/26 LEARNING-25: the framework never tested learning). A
+    # within-restaurant SWITCHBACK — the arm follows the week, so each
+    # restaurant is its own control — with the memory off on one week in
+    # four, judged on the outcome primaries and the rework rate. Until it
+    # can conclude every week keeps the memory on (pinned, not counted); the
+    # offline learning ablation (schedule_scorecard: the same loop over the
+    # same answer with the memory off, every generation) answers the same
+    # question with no customer exposure meanwhile.
+    {"key": "learning_v1",
+     "active": True,
+     "started": "2026-10-10",
+     "design": "switchback",
+     "question": "Does binding the learned scheduling memory in the solver, optimizer and score make weeks better? "
+                 "(control: the memory on, as every week runs today; the treatment switches it off)",
+     # The control is what every week does today, so the kill switch "off"
+     # (every experiment to its control) keeps the memory ON.
+     # (Arm keys never "off": that word is the kill switch's, meaning the
+     # control.)
+     "control": "memory_on",
+     "until_powered": "memory_on",
+     "arms": ({"key": "memory_off", "label": "Learned memory off", "weight": 1, "flags": {"learned": False}},
+              {"key": "memory_on", "label": "Learned memory on", "weight": 3, "flags": {"learned": True}})},
 )
 # What a week gets from a flag no active experiment sets.
-DEFAULT_FLAGS = {"solver": True}
+DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
 
@@ -109,15 +150,20 @@ POWER_WINDOW_DAYS = 56
 # No one restaurant carries an arm (PLATFORM-13): its most recent published
 # weeks per arm, at most this many.
 MAX_WEEKS_PER_RESTAURANT = 8
-VERDICT_METHOD = "cluster_robust_v1"
+# v2 (schedule audit 10/10/26 LEARNING-25): judged on the primaries — the
+# Draft Rework Rate and the week's outcomes — not on acceptance.
+VERDICT_METHOD = "cluster_robust_outcomes_v2"
 Z90 = 1.645
 # Bounds on the readout, which runs on an admin request.
 READOUT_MAX_RESTAURANTS = 500
 READOUT_WEEKS = 52
 
 RULE = (f"A winner is called only when every arm has at least {MIN_WEEKS_PER_ARM} published weeks from at least "
-        f"{MIN_RESTAURANTS_PER_ARM} restaurants, the 90% interval for the difference in acceptance excludes zero, "
-        "and the leader's issues and labor % are not significantly worse. Intervals are clustered by restaurant, "
+        f"{MIN_RESTAURANTS_PER_ARM} restaurants with a rework rate read, and on the primaries — the edits per 100 "
+        "drafted rows, issues, labor %, labor against the hourly target, minutes with no manager and uncovered "
+        "no-shows — the leader is better on at least one at 90% and worse on none; acceptance is shown, never "
+        "decisive. Each arm also says the smallest difference its sample can detect and the weeks it would take to "
+        "see one worth seeing. Intervals are clustered by restaurant, "
         f"each restaurant counts at most {MAX_WEEKS_PER_RESTAURANT} weeks per arm, demo and test accounts are "
         "left out, and pinned weeks are not counted. Until "
         f"{MIN_RESTAURANTS_PER_ARM} restaurants that may teach generate schedules (the last {POWER_WINDOW_DAYS} "
@@ -132,9 +178,29 @@ def _arm_def(exp, arm_key):
     return next((a for a in exp["arms"] if a["key"] == arm_key), None)
 
 
+def switchback_arm(exp, restaurant_id, week_start) -> str:
+    """A switchback's arm (LEARNING-25): the weeks of each restaurant cycle
+    through the arms by their weights in a fixed order — with weights 1 and
+    3, one week in four off — offset per restaurant by a stable hash, so the
+    restaurants are not all off the same week. Deterministic: a
+    regeneration of the same week keeps its arm."""
+    import datetime as _dt
+    try:
+        d = _dt.date.fromisoformat(str(week_start)[:10])
+    except (TypeError, ValueError):
+        return exp["arms"][-1]["key"]
+    cycle = [a["key"] for a in exp["arms"] for _ in range(max(0, int(a.get("weight", 1))))] or \
+        [exp["arms"][-1]["key"]]
+    offset = int(hashlib.sha256(f"{exp['key']}|{int(restaurant_id)}".encode()).hexdigest()[:8], 16)
+    return cycle[(d.toordinal() // 7 + offset) % len(cycle)]
+
+
 def hashed_arm(exp, restaurant_id, week_start) -> str:
     """The arm a week falls in: a stable hash of (experiment, restaurant,
-    week start) onto the arms' weights."""
+    week start) onto the arms' weights — or, for a switchback design, the
+    restaurant's own cycle (switchback_arm)."""
+    if exp.get("design") == "switchback":
+        return switchback_arm(exp, restaurant_id, week_start)
     digest = hashlib.sha256(f"{exp['key']}|{int(restaurant_id)}|{week_start or ''}".encode()).hexdigest()
     x = int(digest[:15], 16) / float(16 ** 15)
     total = float(sum(max(0, a.get("weight", 1)) for a in exp["arms"])) or 1.0
@@ -555,42 +621,110 @@ def _outcomes(conn, history_ids) -> dict:
             for h, e in out.items()}
 
 
+# The verdict's primaries (schedule audit 10/10/26 LEARNING-25): what the
+# week DID and the rework the draft needed — every one lower is better —
+# never the owner's acceptance alone (which reads a manager who stopped
+# looking as improvement). Acceptance is reported beside them.
+PRIMARIES = (("drr", "edits per 100 drafted rows"), ("issues", "issues per week"), ("labor_pct", "labor %"),
+             ("labor_vs_target", "labor % against the hourly target"),
+             ("unmanaged_minutes", "minutes with no manager"), ("uncovered_no_shows", "uncovered no-shows"))
+# What counts as a difference worth detecting, per primary — the honest
+# power read says how many weeks it would take to see one.
+MEANINGFUL = {"drr": 5.0, "issues": 1.0, "labor_pct": 1.0, "labor_vs_target": 1.0, "unmanaged_minutes": 30.0,
+              "uncovered_no_shows": 0.5}
+Z80 = 0.8416
+
+
+def power_read(a, n_weeks) -> dict:
+    """{metric: {mde, meaningful, weeks_needed}} for one arm against the
+    control: the smallest difference this sample could detect (90% two-
+    sided, 80% power: (z.95 + z.80) × the clustered standard error) and,
+    for the difference worth detecting, about how many weeks per arm that
+    takes (the sample scales as (mde / meaningful)²)."""
+    out = {}
+    for key, _label in PRIMARIES:
+        d = (a.get("vs_control") or {}).get(key)
+        if not d or d.get("se") is None:
+            out[key] = {"mde": None, "meaningful": MEANINGFUL.get(key), "weeks_needed": None}
+            continue
+        mde = (Z90 + Z80) * float(d["se"])
+        need = None
+        if MEANINGFUL.get(key) and n_weeks:
+            need = int(math.ceil(n_weeks * (mde / MEANINGFUL[key]) ** 2))
+        out[key] = {"mde": round(mde, 3), "meaningful": MEANINGFUL.get(key), "weeks_needed": need}
+    return out
+
+
+def _scored(db_path, history_ids) -> dict:
+    """{history_id: {drr, labor_vs_target, unmanaged_minutes,
+    uncovered_no_shows}} from the Schedule Learning Scorecard
+    (schedule_learning_scores) — {} for a week not scored yet."""
+    ids = sorted(int(h) for h in history_ids or [] if h)
+    out = {}
+    if not ids:
+        return out
+    conn = get_conn(db_path)
+    try:
+        for k in range(0, len(ids), 400):
+            chunk = ids[k:k + 400]
+            marks = ",".join("?" for _ in chunk)
+            try:
+                for r in conn.execute(f"SELECT history_id, drr, labor_vs_target, unmanaged_minutes, uncovered_no_shows "
+                                      f"FROM schedule_learning_scores WHERE history_id IN ({marks})", tuple(chunk)):
+                    out[r["history_id"]] = dict(r)
+            except Exception:
+                return {}
+    finally:
+        conn.close()
+    return out
+
+
 def verdict(exp, arms: list) -> dict:
-    """Whether to call a winner, by RULE. `arms` are readout rows."""
+    """Whether to call a winner, by RULE: on the PRIMARIES (the rework rate
+    and the week's outcomes), never on acceptance alone. An arm beats the
+    control when some primary is better at 90% (clustered) and none is
+    worse; one better on some and worse on another is a conflict. `arms`
+    are readout rows."""
     control = next((a for a in arms if a["arm"] == exp["control"]), None)
-    short = [a for a in arms if a["acceptance"]["n"] < MIN_WEEKS_PER_ARM or a["restaurants"] < MIN_RESTAURANTS_PER_ARM]
+
+    def n_of(a):
+        return (a.get("drr") or {}).get("n", 0)
+    short = [a for a in arms if n_of(a) < MIN_WEEKS_PER_ARM or a["restaurants"] < MIN_RESTAURANTS_PER_ARM]
     if short or control is None:
-        need = ", ".join(f"{a['label']} {a['acceptance']['n']}/{MIN_WEEKS_PER_ARM} weeks from "
+        need = ", ".join(f"{a['label']} {n_of(a)}/{MIN_WEEKS_PER_ARM} weeks from "
                          f"{a['restaurants']}/{MIN_RESTAURANTS_PER_ARM} restaurants" for a in arms)
         return {"call": None, "state": "insufficient",
                 "text": f"No call: not enough published weeks yet ({need})."}
-    best, conflicts = None, []
+    beats, lost, conflicts = [], [], []
     for a in arms:
         if a is control:
             continue
-        sign = _excludes_zero(a["vs_control"]["acceptance"])
-        if sign == 0:
-            continue
-        leader = a if sign > 0 else control
-        worse = []
-        for key, label in (("issues", "issues per week"), ("labor_pct", "labor %")):
-            # The clustered difference, leader minus the other arm.
-            d = a["vs_control"].get(key) if leader is a else _negate(a["vs_control"].get(key))
-            if _excludes_zero(d) > 0:
+        better, worse = [], []
+        for key, label in PRIMARIES:
+            sign = _excludes_zero((a.get("vs_control") or {}).get(key))
+            if sign < 0:
+                better.append(label)
+            elif sign > 0:
                 worse.append(label)
-        if worse:
-            conflicts.append(f"{leader['label']} is accepted more but its {' and '.join(worse)} "
-                             f"{'is' if len(worse) == 1 else 'are'} worse")
-            continue
-        if best is None or leader["acceptance"]["mean"] > best["acceptance"]["mean"]:
-            best = leader
+        if better and worse:
+            conflicts.append(f"{a['label']} has fewer {' and '.join(better)} but more {' and '.join(worse)}")
+        elif better:
+            beats.append((a, better))
+        elif worse:
+            lost.append((a, worse))
     if conflicts:
         return {"call": None, "state": "conflicting", "text": "No call: " + "; ".join(conflicts) + "."}
-    if best is None:
-        return {"call": None, "state": "no_difference",
-                "text": "No detectable difference in acceptance at 90%."}
-    return {"call": best["arm"], "state": "winner",
-            "text": f"{best['label']} leads on acceptance with no outcome worse at 90%."}
+    if beats:
+        best, why = min(beats, key=lambda t: (t[0].get("drr") or {}).get("mean") or 0)
+        return {"call": best["arm"], "state": "winner",
+                "text": f"{best['label']} leads: fewer {' and '.join(why)} at 90%, and no outcome worse."}
+    if lost and len(lost) == len(arms) - 1:
+        why = sorted({w for _a, ws in lost for w in ws})
+        return {"call": control["arm"], "state": "winner",
+                "text": f"{control['label']} leads: the other arm{'s have' if len(lost) > 1 else ' has'} more "
+                        f"{' and '.join(why)} at 90%."}
+    return {"call": None, "state": "no_difference",
+            "text": "No detectable difference in the rework or the outcomes at 90%."}
 
 
 def _excluded(db_path):
@@ -684,12 +818,25 @@ def readout(db_path=DB_PATH) -> dict:
     # has no share and is left out of the acceptance series (schedule audit
     # 10/3/26 L-7) — its outcomes and quality still count for its arm.
     accepted, published = {}, set()
+    # The primaries (LEARNING-25): each looked-at week's Draft Rework Rate
+    # (the scorecard's, or read from the week now), and what the scorecard
+    # measured of the week as it ran.
+    scored = _scored(db_path, {r["history_id"] for r in rows if not r["pinned"]})
+    rework = {h: s["drr"] for h, s in scored.items() if s.get("drr") is not None}
     for rid in rids:
         try:
-            for w in (sv.acceptance(rid, weeks=READOUT_WEEKS, db_path=db_path).get("weeks") or []):
+            weeks_ = sv.acceptance(rid, weeks=READOUT_WEEKS, db_path=db_path).get("weeks") or []
+            for w in weeks_:
                 published.add(w["history_id"])
                 if w.get("unchanged_share") is not None:
                     accepted[w["history_id"]] = w["unchanged_share"]
+            need = [w["history_id"] for w in weeks_ if w.get("looked_at") and w["history_id"] not in rework]
+            if need:
+                import schedule_scorecard as _ssc
+                for rec in sv.learning_weeks(rid, history_ids=need, include_unlooked=True, db_path=db_path):
+                    d = _ssc.drr(rec)
+                    if d.get("rate") is not None:
+                        rework[rec["history_id"]] = d["rate"]
         except Exception as e:
             print(f"[experiments] acceptance unavailable for restaurant {rid}: {e}")
     exps = []
@@ -712,28 +859,42 @@ def readout(db_path=DB_PATH) -> dict:
             # newest weeks sent unattended must not crowd out its looked-at ones.
             looked = _capped([r for r in live if r["history_id"] in accepted])
             outs = [(r["restaurant_id"], outcomes[r["history_id"]]) for r in pub if r["history_id"] in outcomes]
+            reworked = _capped([r for r in live if r["history_id"] in rework])
             series[a["key"]] = {
                 "acceptance": [(r["restaurant_id"], accepted[r["history_id"]]) for r in looked],
                 "quality": [(r["restaurant_id"], r["quality_score"]) for r in pub],
                 "issues": [(rid, o["issues"]) for rid, o in outs],
-                "labor_pct": [(rid, o["labor_pct"]) for rid, o in outs]}
+                "labor_pct": [(rid, o["labor_pct"]) for rid, o in outs],
+                "drr": [(r["restaurant_id"], rework[r["history_id"]]) for r in reworked]}
+            for key in ("labor_vs_target", "unmanaged_minutes", "uncovered_no_shows"):
+                series[a["key"]][key] = [(r["restaurant_id"], scored[r["history_id"]][key]) for r in pub
+                                         if (scored.get(r["history_id"]) or {}).get(key) is not None]
             arms.append({
                 "arm": a["key"], "label": a.get("label") or a["key"], "flags": dict(a.get("flags") or {}),
                 "generated": len(live), "pinned": sum(1 for r in mine if r["arm"] == a["key"] and r["pinned"]),
-                # The restaurants a verdict on acceptance rests on: those
-                # with a week somebody looked at (L-7).
-                "restaurants": len({r["restaurant_id"] for r in looked}),
+                # The restaurants a verdict rests on: those with a week
+                # somebody looked at (L-7) and a rework rate read.
+                "restaurants": len({r["restaurant_id"] for r in reworked}),
                 "acceptance": cluster_mean_ci(series[a["key"]]["acceptance"], 0.0, 1.0),
                 "quality": cluster_mean_ci(series[a["key"]]["quality"], 0.0, 100.0),
                 "issues": cluster_mean_ci(series[a["key"]]["issues"], 0.0),
                 "labor_pct": cluster_mean_ci(series[a["key"]]["labor_pct"], 0.0),
+                "drr": cluster_mean_ci(series[a["key"]]["drr"], 0.0),
+                "labor_vs_target": cluster_mean_ci(series[a["key"]]["labor_vs_target"]),
+                "unmanaged_minutes": cluster_mean_ci(series[a["key"]]["unmanaged_minutes"], 0.0),
+                "uncovered_no_shows": cluster_mean_ci(series[a["key"]]["uncovered_no_shows"], 0.0),
                 "solver_applied": sum(1 for r in live if r.get("solver_applied")),
             })
         control = next((a for a in arms if a["arm"] == exp.get("control")), None)
         for a in arms:
             a["vs_control"] = ({k: cluster_diff(series[a["arm"]][k], series[control["arm"]][k])
-                                for k in ("acceptance", "quality", "issues", "labor_pct")}
+                                for k in ("acceptance", "quality", "issues", "labor_pct", "drr", "labor_vs_target",
+                                          "unmanaged_minutes", "uncovered_no_shows")}
                                if control is not None and a is not control else None)
+            # Honest powering (LEARNING-25): the smallest difference this
+            # sample can see on each primary, and the weeks it would take
+            # to see the one worth seeing.
+            a["power_read"] = power_read(a, (a.get("drr") or {}).get("n")) if a.get("vs_control") else None
         call = verdict(exp, arms) if exp.get("control") else \
             {"call": None, "state": "retired", "text": "Retired experiment."}
         power = None
