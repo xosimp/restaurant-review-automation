@@ -6460,7 +6460,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
                     after = _rules.breach_profile(trial, c, viols=viols)
                     if after["by_id"].get(target, 0.0) >= before["by_id"].get(target, 0.0) - 1e-9:
                         continue            # the breach this fix is for is still there
-                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_COVERAGE,
+                    if _rules.regressions(before, after, upto=_rules.TIER_MIN_HOURS if under_line else _rules.TIER_POLICY,
                                           hard_only=not under_line):
                         continue            # a fix that trades one breach for another is not a fix
                     fl = {((x.get("employee") or "").strip().lower(), x.get("date") or "", x.get("shift_start") or "")

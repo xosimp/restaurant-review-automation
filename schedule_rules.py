@@ -50,7 +50,11 @@ DEFAULTS = {
     # What "full-time" means when the owner set no minimum for the person
     # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
     # the field said nothing): at least this many hours a week. 30 is the
-    # usual US full-time line (the ACA's); 0 or blank turns it off.
+    # usual US full-time line (the ACA's); 0 or blank turns it off. Only a
+    # line the owner CONFIRMED (full_time_min_confirmed) is a minimum the
+    # passes fill and the trim protects; until then it is a preference — an
+    # employment field a POS import typed "full" silently made a 30h promise
+    # (sched audit 10/10/26 LOGIC-29).
     "full_time_min_hours": 30.0,
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hours": (1, 12), "daily_ot_hours": (4, 24),
@@ -70,6 +74,12 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
                             "no_manager", "role_not_held", "role_window"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
+                  # Past the restaurant's weekly ceiling with no maximum of
+                  # their own: overtime, a priced policy limit, never a
+                  # refusal the manager rule or coverage must lose to
+                  # (schedule audit 10/10/26 LOGIC-1). A person's own
+                  # maximum is still the hard over_max_hours.
+                  "over_hours_ceiling",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
                   "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max"})
@@ -80,10 +90,12 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
 # under a soft note).
 ROSTER_BLOCKERS = frozenset({"no_manager_roster"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
-# delayed run of one): a meal break owed, daily overtime and a time-off
-# request nobody answered are things a person decides, not a week to send
-# unread (NS5 M7). A person publishing may still send them.
-HOLD_UNATTENDED = frozenset({"meal_break", "daily_ot", "pending_time_off"})
+# delayed run of one): a meal break owed, daily or weekly overtime (past the
+# restaurant's ceiling — a cost the passes take only when nobody else can,
+# sched audit 10/10/26 LOGIC-1) and a time-off request nobody answered are
+# things a person decides, not a week to send unread (NS5 M7). A person
+# publishing may still send them.
+HOLD_UNATTENDED = frozenset({"meal_break", "daily_ot", "pending_time_off", "over_hours_ceiling"})
 
 LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
@@ -91,7 +103,8 @@ LABELS = {
     "overlap": "two shifts overlap", "approved_time_off": "on approved time off",
     "unavailable_day": "marked unavailable that day",
     "note_unavailable": "off by a scheduling note", "unavailable_daypart": "not available for that daypart",
-    "elsewhere": "already scheduled at another location", "over_max_hours": "over their hours ceiling for the payroll week",
+    "elsewhere": "already scheduled at another location", "over_max_hours": "over their own weekly maximum for the payroll week",
+    "over_hours_ceiling": "past the restaurant's weekly hours ceiling — overtime",
     "shift_too_long": "shift longer than the maximum", "rest_gap": "not enough rest since their previous shift",
     "minor_late": "a minor working past the latest allowed end", "minor_hours": "a minor over the daily hours limit",
     "days_off": "fewer consecutive days off than the rule", "pending_time_off": "has a time-off request waiting on you",
@@ -364,6 +377,7 @@ def compliance(restaurant) -> dict:
     out["manager_on_duty"] = False
     if "keyholder_until_close" in data:
         out["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    out["full_time_min_confirmed"] = bool(data.get("full_time_min_confirmed"))
     return _with_pack(out, restaurant, data)
 
 
@@ -405,6 +419,42 @@ def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
     for k in DAYS_OFF_RETIRED:
         out[k] = None
     return out
+
+
+def law_backed(c, setting: str) -> bool:
+    """Whether the restaurant's value for compliance `setting` (min_rest_hours,
+    max_consecutive_days, ...) is its jurisdiction's law — a value the
+    restaurant's pack lists as law (compliance_packs, `_pack["law"]`), the
+    pack's own or a stricter one the owner typed over it — rather than a
+    policy default. Law is TIER_LEGAL: nothing outranks it. Anything else
+    (the code's 10h rest, six days in a row, the 12h shift, the 40h
+    ceiling) is the restaurant's policy, TIER_POLICY, below a manager on the
+    floor every minute and the coverage rules (schedule audit 10/10/26
+    LOGIC-1). A Constraints built by hand (no pack) has no law."""
+    comp = getattr(c, "compliance", None) or {}
+    pack = comp.get("_pack") or {}
+    return setting in set(pack.get("law") or ())
+
+
+def _law_tier(c, setting: str) -> dict:
+    """{"tier": TIER_LEGAL, "law": True} for a breach of a value the
+    jurisdiction makes law (law_backed), else {} — the kind's own policy
+    tier (BREACH_TIER) stands."""
+    return {"tier": TIER_LEGAL, "law": True} if law_backed(c, setting) else {}
+
+
+def tier_of(v) -> int:
+    """The rank of one breach (a violation, or a regressions() entry): its
+    own `tier` when the sweep set one (a rest rule a jurisdiction makes law
+    is TIER_LEGAL, the same kind as a policy default is TIER_POLICY), else
+    its kind's (BREACH_TIER); None for a kind no tier ranks."""
+    t = v.get("tier") if isinstance(v, dict) else None
+    if t is not None:
+        return t
+    kind = v.get("kind") if isinstance(v, dict) else None
+    if kind is None and isinstance(v, dict) and v.get("id"):
+        kind = v["id"][0]
+    return BREACH_TIER.get(kind)
 
 
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -531,6 +581,8 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
         clean["manager_on_duty"] = bool(data["manager_on_duty"])
     if "keyholder_until_close" in data:
         clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    if "full_time_min_confirmed" in data:
+        clean["full_time_min_confirmed"] = bool(data["full_time_min_confirmed"])
     return clean
 
 
@@ -1119,6 +1171,10 @@ class Constraints:
     # {lower: last worked iso date}. Still on the roster — a row the owner
     # writes for them is legal — but never a candidate for a fill.
     dormant: dict = field(default_factory=dict)
+    # The days of a begun payroll week still to come, never published here,
+    # whose hours toward the overtime line are each person's usual ones
+    # (BUGSGEN-21): {"dates", "hours", "people"}, or None.
+    projected_tail: dict = None
     # A person's scheduling note nobody has confirmed as a rule (D-34):
     # {lower: {"days": set(weekday names), "dates": set(iso), "text": str}}.
     # The model is told it; the fill passes keep off those days.
@@ -1138,6 +1194,11 @@ class Constraints:
     # Full-timers whose minimum is the restaurant's full-time line, not one
     # the owner set for them (D-41) — said so wherever the minimum is.
     full_time_default: set = field(default_factory=set)
+    # Full-timers the full-time line would apply to, while the owner has not
+    # confirmed it (LOGIC-29): {key: the line}. Their week aims at it as a
+    # preference (desired hours); nothing fills or protects it as a minimum,
+    # and the setup review asks the owner to confirm the line.
+    full_time_unconfirmed: dict = field(default_factory=dict)
     # Per-person inputs whose name matches nobody on the roster, active or
     # not (D-8): [{"source", "name", "detail"}] — the review names each,
     # so a fact typed under a spelling nobody goes by is never silent.
@@ -1288,6 +1349,55 @@ class Constraints:
             return float(lim[1])
         return float(self.compliance.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"])
 
+    def own_max(self, name: str) -> bool:
+        """Whether max_hours(name) is the person's OWN limit — a maximum the
+        owner set for them, or the salaried cap the owner set — rather than
+        the restaurant's weekly ceiling or the salaried default. An own
+        limit is hard (over_max_hours, TIER_LEGAL); the restaurant's ceiling
+        is a priced policy limit (over_hours_ceiling, TIER_POLICY) that the
+        manager rule and coverage may pass when nobody can cover inside it
+        (schedule audit 10/10/26 LOGIC-1)."""
+        lim = self.hours_limits.get(self.key(name))
+        if lim and lim[1]:
+            return True
+        return bool(self.is_salaried(name) and self.salaried_cap)
+
+    def overtime_ok(self, row: dict, rows=(), line: float = None, policy: bool = True) -> tuple:
+        """(ok, teammate): the owner's overtime rule, exactly (10/2/26): no
+        overtime while a same-role teammate has room, overtime when nobody
+        else can. `ok` is True when no teammate — somebody else who holds the
+        row's role family, whom code may choose that day (fillable) and for
+        whom the row stays inside their own overtime line and every rule
+        about them (can_add, `policy` as given) — could take `row`;
+        otherwise `teammate` names the first who could. Somebody a fill
+        would put past their line is asked this before it does (LOGIC-3)."""
+        name = (row.get("employee") or "").strip()
+        me = self.sweep_key(name)
+        d = row.get("date") or ""
+        fam = self.family(row.get("role"))
+        others = [r for r in (rows or ()) if r is not row]
+        for other in self.roster_names or ():
+            k = self.key(other)
+            if not k or self.sweep_key(other) == me:
+                continue
+            mine = self.known_roles.get(k)
+            if not mine or fam not in {self.family(x) for x in mine}:
+                continue
+            if self.active and k not in self.active:
+                continue
+            if not self.fillable(other, d)[0]:
+                continue
+            cand = dict(row, employee=other)
+            # A second shift that day counts as room only inside the
+            # longest shift, as the overtime rebalance hands one (_receivers).
+            day = sum(row_hours(r) for r in others if r.get("date") == d and self.sweep_key(r.get("employee")) == k)
+            mx = float(self.compliance.get("max_shift_hours") or DEFAULTS["max_shift_hours"])
+            if day and day + row_hours(cand) > mx + 0.01:
+                continue
+            if self.can_add(cand, others, line=line, overtime=True, policy=policy)[0]:
+                return False, other
+        return True, None
+
     def min_hours(self, name: str):
         lim = self.hours_limits.get(self.key(name))
         return float(lim[0]) if lim and lim[0] else None
@@ -1407,18 +1517,37 @@ class Constraints:
                     return False, f"their note: {str(caution.get('text') or '')[:80]}"
         return True, ""
 
-    def can_add(self, row: dict, rows=(), line: float = None, overtime: bool = True) -> tuple:
+    def can_add(self, row: dict, rows=(), line: float = None, overtime=True, policy: bool = True) -> tuple:
         """(ok, reason): whether `row` can join `rows` without a breach about
         its person — the one question every pass that adds a shift or hands
         one to somebody asks (schedule audit 10/3/26 P-2). The fill passes
         used to ask only can_work, so a cloned closing shift landed on a
         16-17 year old and a seventh day in a row on a dishwasher. Beyond
         can_work (every daypart the row covers), the window and the
-        certificate, the person's week is swept with the row in: overlaps
-        and rest (the published tail too), a minor's end, start and day and
-        week caps, the hours maximum, the run of days, the shift-length rule
-        — anything new or worse refuses it. Unless `overtime` is False the
-        row may not take them past their overtime line either."""
+        certificate, the person's week is swept with the row in: overlaps,
+        a minor's end, start and day and week caps, their own weekly maximum
+        and any rule a jurisdiction makes law (TIER_LEGAL) — anything new or
+        worse refuses it, always. With `policy` (the default) the
+        restaurant's own limits hold too (TIER_POLICY: the weekly ceiling,
+        the longest shift, days in a row, rest); a pass ranked above them —
+        the manager rule, a floor, a closer — passes False only once nobody
+        could take the shift inside them (LOGIC-1).
+
+        `overtime`: True (the default) — the row may not take them past
+        their overtime line; False — it may; "teammate" — it may only when
+        no teammate in the role could take the row inside theirs (the
+        owner's rule exactly: overtime_ok)."""
+        if overtime == "teammate":
+            ok, why = self.can_add(row, rows, line=line, overtime=True, policy=policy)
+            if ok:
+                return True, ""
+            ok, why = self.can_add(row, rows, line=line, overtime=False, policy=policy)
+            if not ok:
+                return False, why
+            free, mate = self.overtime_ok(row, rows, line=line, policy=policy)
+            if not free:
+                return False, f"overtime while {mate} in the same role has room"
+            return True, ""
         name = (row.get("employee") or "").strip()
         key = self.key(name)
         if not key:
@@ -1450,7 +1579,11 @@ class Constraints:
         group = self.sweep_key(name)
         mine = [r for r in (rows or ()) if r is not row and self.sweep_key(r.get("employee")) == group]
         worse = regressions(breach_profile(mine, self, person_only=True),
-                            breach_profile(mine + [row], self, person_only=True), upto=TIER_PERSON)
+                            breach_profile(mine + [row], self, person_only=True),
+                            upto=TIER_POLICY if policy else TIER_LEGAL, hard_only=False)
+        # Only the person's own tiers: a row's stay past close (COVERAGE,
+        # soft) is the close rules' to weigh, never this question's.
+        worse = [w for w in worse if w["tier"] == TIER_LEGAL or (policy and w["tier"] == TIER_POLICY)]
         if worse:
             return False, worse[0]["label"]
         if overtime:
@@ -2726,8 +2859,13 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     if st.get("employment_type") == "full" and st.get("min_hours") is None and ft and key not in c.salaried:
         mx = st.get("max_hours")
         if mx is None or float(mx) >= float(ft):
-            c.hours_limits[key] = (float(ft), mx)
-            c.full_time_default.add(key)
+            if c.compliance.get("full_time_min_confirmed"):
+                c.hours_limits[key] = (float(ft), mx)
+                c.full_time_default.add(key)
+            else:
+                # Not confirmed (LOGIC-29): a preference, below every rule —
+                # read with the preferred hours below.
+                c.full_time_unconfirmed[key] = float(ft)
     if st.get("daypart_availability"):
         c.daypart_avail[key] = dict(st["daypart_availability"])
     if st.get("is_minor") or st.get("minor_age_band"):
@@ -2768,6 +2906,11 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     if st.get("preferred_dayparts") or st.get("desired_hours"):
         c.preferred[e["name"]] = {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
                                   "desired_hours": st.get("desired_hours")}
+    if key in c.full_time_unconfirmed and not st.get("desired_hours"):
+        # The unconfirmed full-time line is what they'd like, not a promise:
+        # the scorer, the solver and the optimizer weigh it as wanted hours.
+        c.preferred.setdefault(e["name"], {"preferred_dayparts": list(st.get("preferred_dayparts") or []),
+                                           "desired_hours": None})["desired_hours"] = c.full_time_unconfirmed[key]
     if not e["active"]:
         return
     # Standing in as the manager on given dates (E-13).
@@ -3803,6 +3946,20 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                           "punches")
         except Exception as exc:
             _input_problem(c, "last week's punches", exc)
+    # The rest of a payroll week that has begun and was never published here
+    # (sched audit 10/10/26 BUGSGEN-21): its past days read the time clock
+    # above, but its days still to come counted nothing, so next week's
+    # overtime line could not see this Friday to Sunday. Each person's own
+    # usual hours on that weekday (their punches over the last four of
+    # them) stand in, toward the payroll week's hours only — never as rows
+    # a rest, overlap or run of days is judged on — and the review says so.
+    ahead = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 8))
+                   if d not in covered and d >= today and c.bucket(d) in buckets)
+    if ahead:
+        try:
+            _projected_tail(c, restaurant_id, ahead, today, db_path)
+        except Exception as exc:
+            _input_problem(c, "this payroll week's remaining days", exc)
     # The organisation's other sites (E-26, D-40).
     for sib_id, label, sib_rows in _sibling_weeks(restaurant_id, lo, hi, db_path):
         names = sorted({(r.get("employee") or "").strip() for r in sib_rows} - {""})
@@ -3831,6 +3988,52 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                     c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + row_hours(row)
             else:
                 _take(r, "published", site=label, key=k)
+
+
+PROJECTED_WEEKS = 4
+
+
+def _projected_tail(c: Constraints, restaurant_id, ahead, today, db_path) -> None:
+    """Each person's usual hours on the dates `ahead` (the begun payroll
+    week's days still to come, nothing published covers them): the mean of
+    their punched hours over the last PROJECTED_WEEKS same weekdays, a week
+    they did not work counted as 0, added to c.base_hours for the payroll
+    week (BUGSGEN-21). c.projected_tail says which dates and how much, for
+    the review."""
+    import shift_facts
+    first = datetime.strptime(min(ahead), "%Y-%m-%d") - timedelta(weeks=PROJECTED_WEEKS)
+    rows = shift_facts.person_rows(restaurant_id, since=first.strftime("%Y-%m-%d"), until=today,
+                                   db_path=None if db_path == DB_PATH else db_path)
+    by = {}
+    for r in rows or []:
+        d = str(r.get("date") or "")[:10]
+        if not d or d >= today:
+            continue
+        k = c.key(r.get("employee"))
+        if not k:
+            continue
+        hours = r.get("actual_hours") if r.get("actual_hours") not in (None, "") else r.get("scheduled_hours")
+        try:
+            h = float(hours or 0)
+        except (TypeError, ValueError):
+            continue
+        by.setdefault(k, {})[d] = by.get(k, {}).get(d, 0.0) + h
+    total, people = 0.0, set()
+    for d in ahead:
+        dt = datetime.strptime(d, "%Y-%m-%d")
+        past = [(dt - timedelta(weeks=w)).strftime("%Y-%m-%d") for w in range(1, PROJECTED_WEEKS + 1)]
+        b = c.bucket(d)
+        for k, days in by.items():
+            if any(r.get("date") == d for r in (c.base_rows.get(k) or [])):
+                continue
+            mean = round(sum(days.get(p, 0.0) for p in past) / float(PROJECTED_WEEKS), 2)
+            if mean <= 0:
+                continue
+            c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + mean
+            total += mean
+            people.add(k)
+    if total > 0:
+        c.projected_tail = {"dates": list(ahead), "hours": round(total, 1), "people": len(people)}
 
 
 def _fold_name(name) -> str:
@@ -3952,7 +4155,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         # restaurant's are different). max_shift_applies is the one answer.
         if mx and hrs > float(mx) + 0.01 and max_shift_applies(c, key):
             out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h",
-                          severity=round(hrs - float(mx), 2)))
+                          severity=round(hrs - float(mx), 2), **_law_tier(c, "max_shift_hours")))
         shortest = c.compliance.get("min_shift_hours")
         if shortest and 0 < hrs < float(shortest) - 0.01:
             out.append(_v("shift_too_short", i, r, f"{hrs:g}h shift, your shortest is {float(shortest):g}h"))
@@ -4054,25 +4257,18 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
     # whenever the roster has one, and somebody is on at close.
+    facts = None
     if not person_only:
         out.extend(_coverage_violations(rows, c))
         # a manager on the floor every minute anyone is (owner, 10/2/26)
-        out.extend(_manager_violations(rows, c, context=context))
+        facts = {}
+        out.extend(_manager_violations(rows, c, context=context, facts=facts))
 
-    # every open daypart needs a manager or keyholder, when the owner says so
-    if c.compliance.get("manager_on_duty") and not c.keyholders and rows and not person_only:
-        out.append(_v("manager_rule_unusable", 0, rows[0], LABELS["manager_rule_unusable"]))
-    if c.compliance.get("manager_on_duty") and c.keyholders and not person_only:
-        slots = {}
-        for i, r in enumerate(rows or []):
-            if r.get("date") and (r.get("employee") or "").strip():
-                slots.setdefault((r["date"], daypart_of(r.get("shift_start", ""))), []).append((i, r))
-        for (d, part), items in sorted(slots.items()):
-            if part == "unknown":
-                continue
-            if not any(c.key(r.get("employee")) in c.keyholders for _, r in items):
-                i0, r0 = items[0]
-                out.append(_v("no_manager_on_duty", i0, r0, f"{LABELS['no_manager_on_duty']} ({part})"))
+    # The per-daypart "manager or keyholder on duty" switch (no_manager_on_
+    # duty, manager_rule_unusable) is gone (schedule audit 10/10/26 LOGIC-22):
+    # superseded by the manager-every-minute rule on 10/2/26 and forced off
+    # by compliance() on every read since, so it could only fire on a
+    # Constraints built by hand — one fact, two hard breaches.
 
     # more front-of-house on the floor at once than there are sections. A
     # shift past midnight ends on the next day's clock (12:30am is 24:30,
@@ -4149,13 +4345,25 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
         # (hours_rules_apply, 10/7/26) - but a weekly cap the owner set is.
         hours_held = hours_rules_apply(c, key)
         # Two names an open question joins are held to the stricter limit.
-        mx = min((c.max_hours(n) for n in {(r.get("employee") or "").strip() for _, r in items}),
-                 default=c.max_hours(name)) if (hours_held or c.salaried_cap_set(name)) else None
+        # A limit that is the person's own (an owner-set maximum, the
+        # salaried cap the owner set) is hard, TIER_LEGAL; the restaurant's
+        # weekly ceiling is a priced policy limit — overtime the manager
+        # rule and coverage may need when nobody else can (LOGIC-1).
+        limits = sorted((c.max_hours(n), not c.own_max(n))
+                        for n in {(r.get("employee") or "").strip() for _, r in items})
+        mx, ceiling_only = limits[0] if limits else (c.max_hours(name), not c.own_max(name))
+        if not (hours_held or c.salaried_cap_set(name)):
+            mx = None
         for b, total in per_bucket.items():
             if mx and total > mx + 0.05 and b:
                 for i, r in items:
                     if c.bucket(r.get("date", "")) == b:
-                        v = _v("over_max_hours", i, r, f"{total:g}h in the payroll week — over {mx:g}h")
+                        if ceiling_only:
+                            v = _v("over_hours_ceiling", i, r,
+                                   f"{total:g}h in the payroll week — past the {mx:g}h weekly ceiling, "
+                                   f"{round(total - mx, 2):g}h of overtime")
+                        else:
+                            v = _v("over_max_hours", i, r, f"{total:g}h in the payroll week — over {mx:g}h")
                         # Which payroll week, and by how much, so a fix moves
                         # that week's excess and nothing more.
                         v["bucket"], v["over_by"] = b, round(total - mx, 2)
@@ -4285,7 +4493,7 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                                 else "before " + _whose(other, own_r, "next shift"))
                         out.append(_v("rest_gap", own_i, own_r, f"{gap:.1f}h {said}{_tail_note(other)}, "
                                                                  f"the rule is {need:g}h{_maybe_same(other, own_r)}",
-                                      severity=round(need - gap, 2)))
+                                      severity=round(need - gap, 2), **_law_tier(c, "min_rest_hours")))
             if reach is None or e_cur > reach[3]:
                 reach = cur
         # too many days in a row — the published tail counts, so a Saturday
@@ -4307,7 +4515,8 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                 i_last, r_last = week_rows[-1]
                 out.append(_v("long_run", i_last, r_last,
                               f"{len(best)} days in a row — the rule is at most {int(max_run)}",
-                              severity=sum(len(run) - int(max_run) for run in over)))
+                              severity=sum(len(run) - int(max_run) for run in over),
+                              **_law_tier(c, "max_consecutive_days")))
         # consecutive days off inside the generated week
         req = c.compliance.get("part_time_days_off") if c.employment.get(key) == "part" else c.compliance.get("min_consecutive_days_off")
         if req and c.week_dates and hours_held:
@@ -4329,7 +4538,18 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                 if best < int(req):
                     out.append(_v("days_off", items[0][0], items[0][1],
                                   f"{len(off)} day{'s' if len(off) != 1 else ''} off, longest run {best} — the rule is {int(req)} together"))
-    return out
+    return Swept(out, facts)
+
+
+class Swept(list):
+    """A sweep's breaches (a plain list to every reader), carrying the
+    manager facts the same reading found — {date: (raw unmanaged minutes,
+    minutes a manager covers)} (manager_facts) — so breach_profile never
+    reads the week a second time for them. None for a person-only sweep."""
+
+    def __init__(self, items=(), manager_facts=None):
+        super().__init__(items)
+        self.manager_facts = manager_facts
 
 
 def _mdy_safe(iso) -> str:
@@ -5082,7 +5302,100 @@ def opening_prep(gap, manager_starts, open_min) -> bool:
             and gap[1] <= open_min - OPENING_MANAGER_LEAD_MINUTES)
 
 
-def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
+def manager_need(c: "Constraints", d: str, spans, hours=None) -> list:
+    """The stretches of date `d` a manager has to be on, merged (business
+    minutes): the hours the restaurant is open on file, and every span in
+    `spans` — when people are on. The one definition of the manager
+    requirement: the check (manager_gaps) passes this week's rows, the
+    manager plan (schedule_skeleton.day_window) the spans it expects this
+    week to have, so the plan covers exactly what the check will ask
+    (schedule audit 10/10/26 ARCH-13: planned from the usual first start to
+    close plus the longest stay, checked against open hours and the week's
+    rows). `hours` (open, close) stands in for the hours on file."""
+    need = [tuple(sp) for sp in (spans or ()) if sp and sp[1] > sp[0]]
+    try:
+        day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+    except (ValueError, TypeError):
+        day = ""
+    o, cl = hours if hours is not None else (open_hours(c, day) if day else (None, None))
+    if o is not None or cl is not None:
+        lo = o if o is not None else (min(s for s, _e in need) if need else None)
+        hi = cl if cl is not None else (max(e for _s, e in need) if need else None)
+        if lo is not None and hi is not None and hi > lo:
+            need.append((lo, hi))
+    return _merge(need)
+
+
+def _manager_days(rows: list, c: "Constraints", dates=None, context=()) -> dict:
+    """{date: {"items": [(span, index, row)], "raw": [(s, e)], "owner": [(s,
+    e)], "allow": [{kind, start, end, minutes, ...}], "need": minutes,
+    "cover": minutes}} for each judged date with somebody on: the stretches
+    with no manager before the owner's two allowances ("raw"), the ones the
+    owner's verdict reads ("owner" — the closing manager's stay and the
+    opening prep taken out, "allow"), and how many minutes of the day's need
+    a manager covers. {} when nobody on the roster manages."""
+    if not c.managers and not c.acting_managers:
+        return {}
+    by_date, cover = {}, []
+    for i, r in enumerate(rows or []):
+        d = r.get("date")
+        if not d or not (r.get("employee") or "").strip() or d in (c.closed_dates or set()):
+            continue
+        sp = _span(r)
+        if not sp:
+            continue
+        if counts_as_manager(c, r):
+            cover.append((d, sp, i, r))
+        if dates is not None and d not in dates:
+            continue
+        by_date.setdefault(d, []).append((sp, i, r))
+    for r in context or ():
+        d = r.get("date")
+        sp = _span(r) if d and (r.get("employee") or "").strip() and d not in (c.closed_dates or set()) else None
+        if sp and counts_as_manager(c, r):
+            cover.append((d, sp, None, r))
+    out = {}
+    for d, items in sorted(by_date.items()):
+        try:
+            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            day = ""
+        staffed = manager_need(c, d, [sp for sp, _i, _r in items])
+        o = open_hours(c, day)[0] if day else None
+        mgr, ends_by = [], {}
+        for md, (s, e), mi, mr in cover:
+            off = _day_offset(md, d)
+            if off is not None and -1 <= off <= 1:
+                s2, e2 = s + off * 24 * 60, e + off * 24 * 60
+                mgr.append((s2, e2))
+                if off == 0:
+                    ends_by.setdefault(e2, []).append((mi, mr))
+        mgr_cover = _merge(mgr)
+        mgr_ends = {e for _s, e in mgr_cover}
+        mgr_starts = {s for s, _e in mgr_cover}
+        last_end = max((e for _s, e in staffed), default=None)
+        raw = [(s, e) for s, e in _uncovered(staffed, mgr_cover) if e - s > 0]
+        owner, allow = [], []
+        for s, e in raw:
+            # The closing manager's end-of-night stretch: it opens where a
+            # manager's cover ends and runs to the end of the DAY's last
+            # staffed block — never a mid-day block end (a lunch manager off
+            # at 2pm with a server to 3pm on a split day is a gap: BUGSGEN-4).
+            if s in mgr_ends and e == last_end and e - s <= CLOSING_MANAGER_STAYS_MINUTES:
+                who = (ends_by.get(s) or [(None, None)])[0]
+                allow.append({"kind": "closing_stay", "start": s, "end": e, "minutes": e - s,
+                              "index": who[0], "row": who[1]})
+            elif opening_prep((s, e), mgr_starts, o):
+                allow.append({"kind": "opening_prep", "start": s, "end": e, "minutes": e - s})
+            else:
+                owner.append((s, e))
+        need_m = sum(e - s for s, e in staffed)
+        out[d] = {"items": items, "raw": raw, "owner": owner, "allow": allow, "need": need_m,
+                  "cover": need_m - sum(e - s for s, e in raw)}
+    return out
+
+
+def manager_gaps(rows: list, c: "Constraints", dates=None, context=(), raw: bool = False) -> dict:
     """{date: [(start_min, end_min, row_index)]} — each stretch the
     restaurant is open or somebody is on and no manager is, pinned to the
     first row on at its start (else the day's first row). Empty when the
@@ -5096,58 +5409,20 @@ def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
     manager covers a Saturday-dated porter's last hour — per date they read
     as false gaps at the date boundary (RULES-10). `context` is rows of the
     neighbouring dates that may cover these dates' minutes but are not
-    judged here (IncrementalSweep's one-date sweep passes them)."""
-    if not c.managers and not c.acting_managers:
-        return {}
-    by_date, cover = {}, []
-    for i, r in enumerate(rows or []):
-        d = r.get("date")
-        if not d or not (r.get("employee") or "").strip() or d in (c.closed_dates or set()):
-            continue
-        sp = _span(r)
-        if not sp:
-            continue
-        if counts_as_manager(c, r):
-            cover.append((d, sp))
-        if dates is not None and d not in dates:
-            continue
-        by_date.setdefault(d, []).append((sp, i, r))
-    for r in context or ():
-        d = r.get("date")
-        sp = _span(r) if d and (r.get("employee") or "").strip() and d not in (c.closed_dates or set()) else None
-        if sp and counts_as_manager(c, r):
-            cover.append((d, sp))
+    judged here (IncrementalSweep's one-date sweep passes them).
+
+    The owner's two allowances — the closing manager's stay and the prep
+    before the opening manager — are taken out: this is the owner's
+    verdict (the review, the publish gate, what the manager backstop
+    chases). `raw` keeps them in: what no repair pass may grow by shortening
+    a manager (manager_facts, regressions — schedule audit 10/10/26
+    BUGSGEN-4)."""
     out = {}
-    for d, items in sorted(by_date.items()):
-        try:
-            day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
-        except (ValueError, TypeError):
-            day = ""
-        need = [sp for sp, _i, _r in items]
-        o, cl = open_hours(c, day) if day else (None, None)
-        if o is not None or cl is not None:
-            lo = o if o is not None else min(s for s, _e in need)
-            hi = cl if cl is not None else max(e for _s, e in need)
-            if hi > lo:
-                need.append((lo, hi))
-        staffed = _merge(need)
-        mgr = []
-        for md, (s, e) in cover:
-            off = _day_offset(md, d)
-            if off is not None and -1 <= off <= 1:
-                mgr.append((s + off * 24 * 60, e + off * 24 * 60))
-        mgr_cover = _merge(mgr)
-        mgr_ends = {e for _s, e in mgr_cover}
-        mgr_starts = {s for s, _e in mgr_cover}
-        block_ends = {e for _s, e in staffed}
-        gaps = [(s, e) for s, e in _uncovered(staffed, mgr_cover) if e - s > 0
-                # The closing manager's end-of-night stretch (above): it opens
-                # where a manager's cover ends and runs to the end of the block.
-                and not (s in mgr_ends and e in block_ends and e - s <= CLOSING_MANAGER_STAYS_MINUTES)
-                # The prep before the opening manager (above).
-                and not opening_prep((s, e), mgr_starts, o)]
+    for d, day in _manager_days(rows, c, dates=dates, context=context).items():
+        gaps = day["raw"] if raw else day["owner"]
         if not gaps:
             continue
+        items = day["items"]
         pinned = []
         for gs, ge in gaps:
             on = sorted((sp[0], i) for sp, i, _r in items if sp[0] <= gs < sp[1])
@@ -5156,14 +5431,77 @@ def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
     return out
 
 
-def _manager_violations(rows: list, c: "Constraints", context=()) -> list:
+def manager_facts(rows: list, c: "Constraints", dates=None, context=()) -> dict:
+    """{date: (raw unmanaged minutes, minutes a manager covers)} — what
+    regressions() holds every repair pass to beside the owner's verdict: a
+    change that leaves a day's raw minutes higher AND its manager cover
+    lower has shortened a manager into an allowance (the closing stay, the
+    opening prep), which only the owner's verdict may forgive (BUGSGEN-4)."""
+    return {d: (sum(e - s for s, e in day["raw"]), day["cover"])
+            for d, day in _manager_days(rows, c, dates=dates, context=context).items()}
+
+
+def assumed_stays(rows: list, c: "Constraints", tz: str = None) -> list:
+    """The closing managers the owner's verdict assumes stay past their
+    scheduled end until the last person leaves (CLOSING_MANAGER_STAYS_
+    MINUTES), said and priced (schedule audit 10/10/26 TRUST-21): [{date,
+    day, employee, index, scheduled_end, until, minutes, hours, hourly,
+    text, action}] — `action` the one-tap that writes the stay into the
+    schedule ("Schedule Erik to 11:45pm"), so staff see it too."""
+    out = []
+    for d, day in sorted(_manager_days(rows, c).items()):
+        for a in day["allow"]:
+            if a["kind"] != "closing_stay" or a.get("row") is None:
+                continue
+            r = a["row"]
+            name = (r.get("employee") or "").strip()
+            until = _fmt_minutes(a["end"] % (24 * 60))
+            mins = int(a["minutes"])
+            hourly = not c.is_salaried(name)
+            wd = _weekday_of(d) or d
+            text = (f"{wd} {_mdy_safe(d)} close: {name} is assumed to stay until {until}, {mins} min past "
+                    f"the scheduled end of {r.get('shift_end')} — the last person leaves then"
+                    + (f"; those {mins} min are counted in the labor cost." if hourly else "."))
+            out.append({"date": d, "day": wd, "employee": name, "index": a.get("index"),
+                        "shift_start": r.get("shift_start"), "scheduled_end": r.get("shift_end"),
+                        "until": until, "minutes": mins, "hours": round(mins / 60.0, 2), "hourly": hourly,
+                        "text": text,
+                        "action": {"label": f"Schedule {name.split()[0] if name else 'them'} to {until}",
+                                   "action": "extend_shift",
+                                   "payload": {"employee": name, "date": d, "shift_start": r.get("shift_start"),
+                                               "shift_end": r.get("shift_end"), "new_end": until}}})
+    return out
+
+
+def with_assumed_stays(rows: list, c: "Constraints", stays: list = None) -> list:
+    """`rows` with each hourly closing manager's assumed stay written into
+    their row's end — what the week is priced and its overtime judged on
+    (TRUST-21: an hourly manager's 45 unscheduled minutes were missing from
+    the projected labor %). The rows themselves are not changed."""
+    stays = assumed_stays(rows, c) if stays is None else stays
+    if not stays:
+        return list(rows or [])
+    out = [dict(r) for r in rows or []]
+    for st in stays:
+        i = st.get("index")
+        if not st.get("hourly") or not isinstance(i, int) or not (0 <= i < len(out)):
+            continue
+        sp = _span(out[i])
+        if not sp:
+            continue
+        out[i] = _retimed(out[i], sp[0], sp[1] + int(st["minutes"]), c)
+    return out
+
+
+def _manager_violations(rows: list, c: "Constraints", context=(), facts: dict = None) -> list:
     """no_manager per unmanaged stretch, and no_manager_roster when nobody on
     the roster manages — soft to the repair passes (no change to the week
     can mend the roster), but a blocker at publish (ROSTER_BLOCKERS,
     schedule re-audit 10/4/26 RULES-13). Each no_manager is about its DAY, not the
     row it is pinned to (`day_level`): the review shows it on the day, never
     as "needs review" on whichever server happened to be on at its start
-    (schedule audit 10/3/26 E-13)."""
+    (schedule audit 10/3/26 E-13). `facts`, a dict when given, takes each
+    judged date's manager_facts from the same reading."""
     out = []
     staffed = [(i, r) for i, r in enumerate(rows or []) if r.get("date") and (r.get("employee") or "").strip()
                and r.get("date") not in (c.closed_dates or set())]
@@ -5183,11 +5521,22 @@ def _manager_violations(rows: list, c: "Constraints", context=()) -> list:
                           "runs the floor in Team (Floor manager: yes) before this week goes out"))
         if not only:
             return out
-    for d, gaps in manager_gaps(rows, c, dates=only, context=context).items():
+    days = _manager_days(rows, c, dates=only, context=context)
+    if facts is not None:
+        for d, mday in days.items():
+            facts[d] = (sum(e - s for s, e in mday["raw"]), mday["cover"])
+    for d, mday in days.items():
+        if not mday["owner"]:
+            continue
         try:
             day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):
             day = d
+        items = mday["items"]
+        gaps = []
+        for gs, ge in mday["owner"]:
+            on = sorted((sp[0], i) for sp, i, _r in items if sp[0] <= gs < sp[1])
+            gaps.append((gs, ge, on[0][1] if on else items[0][1]))
         for gs, ge, idx in gaps:
             nobody = not any(sp and sp[0] < ge and gs < sp[1] for sp in
                              (_span(r) for r in rows if r.get("date") == d and (r.get("employee") or "").strip()))
@@ -5213,19 +5562,100 @@ def _manager_violations(rows: list, c: "Constraints", context=()) -> list:
 #
 # The ranked priorities every repair is held to (P-47): a change made for a
 # lower tier may never worsen a higher one.
-TIER_PERSON = 0       # the person can't legally or physically work it
+#
+# The person tier used to hold every limit on a person's week, the
+# restaurant's own defaults among them: the 40h weekly ceiling, the 12h
+# shift, six days in a row and ten hours' rest all ranked as "the person
+# can't legally work it", above a manager on the floor every minute — so an
+# hourly manager could never pass 40h to close a gap nobody else could, and
+# a Friday floor went short rather than give a cook 2h of overtime (sched
+# audit 10/10/26 LOGIC-1, LOGIC-3). A person's own limits and the law stay
+# at the top (TIER_LEGAL); the restaurant's policy defaults rank below the
+# manager rule and the coverage rules (TIER_POLICY), where a jurisdiction
+# pack does not make them law (law_backed). Overtime is a cost with the
+# teammate test (Constraints.overtime_ok): no overtime while a same-role
+# teammate has room, and overtime when nobody else can.
+TIER_LEGAL = 0        # the person can't legally or physically work it: availability, time off, overlap,
+                      # minors, certificates, their own owner-set maximum, a jurisdiction's law
+TIER_PERSON = TIER_LEGAL   # the name every pass and test knew it by
 TIER_MANAGER = 1      # a manager on the floor every minute (owner, 10/2/26)
 TIER_COVERAGE = 2     # floors, a closer until close, somebody at close
-TIER_OVERTIME = 3
-TIER_MIN_HOURS = 4
-TIER_BUDGET = 5
-TIER_QUALITY = 6
+TIER_POLICY = 3       # the restaurant's own limits that are not law: the weekly ceiling, the longest shift,
+                      # days in a row and rest between shifts (unless a jurisdiction pack makes them law)
+TIER_OVERTIME = 4
+TIER_MIN_HOURS = 5
+# The SHIFT REQUIREMENTS (the people each role needs on each shift) rank
+# above the hours budget whichever way a pass moves: the trim never cuts
+# under them and the top-up fills to them past the budget, the overrun said
+# in the review — one order, so the week no longer depends on whether the
+# model drafted heavy or light (LOGIC-4).
+TIER_REQUIREMENT = 6
+TIER_BUDGET = 7
+TIER_QUALITY = 8
 
-PERSON_KINDS = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "minor_late", "minor_hours",
-                                    "long_run", "minor_early", "minor_week_hours", "role_not_held"})
-COVERAGE_KINDS = frozenset({"coverage_floor", "keyholder_until_close", "nobody_at_close", "no_manager_on_duty",
+# The one ranked table: what each tier is, in the words the model reads —
+# schedule_prompt.PRIORITIES is built from it, item by item (PRIORITY_LAYOUT),
+# so the prompt can never rank a rule differently from the code (LOGIC-20:
+# it put requirements and leadership above the hours ceiling while the code
+# stopped the top-up at the budget and held leadership to it). Order is rank.
+TIER_TABLE = (
+    (TIER_LEGAL, "legal", "Employee availability and approved time off (the person cannot be there), STAFF "
+     "CONSTRAINTS, closed dates, and each person's own limits in the ROSTER and the rules — the roles they may "
+     "work, a minor's hours, their own weekly maximum, and rest between shifts or days in a row where the law "
+     "requires them (a minor's hours and the law are the owner's legal exposure) — and each date's opening and "
+     "closing times."),
+    (TIER_MANAGER, "manager", "A manager or owner on the floor every minute anyone is scheduled — the owner's "
+     "highest staffing rule: somebody is always in charge of the floor. It gives way only to a manager's own "
+     "availability and time off and the legal limits in 1b; overtime and the restaurant's own scheduling limits "
+     "(2b) give way to it when no manager can cover a stretch inside them. Where MANAGER COVERAGE plans the "
+     "managers' shifts, code adds those rows to your answer: do not write them, and write no other shift for "
+     "those managers on those dates; a stretch it says no manager can legally cover is staffed as usual, and the "
+     "owner is told."),
+    (TIER_COVERAGE, "coverage", "First the staffing rules: the staffing floors, each role's closer and somebody "
+     "on until close, and the hours a role may start and end by the RESTAURANT HOURS & SHIFT RULES (all [HARD]), "
+     "and the owner's standing rules (OWNER_RULE, as their tags say)."),
+    (TIER_POLICY, "policy", "Then the restaurant's own scheduling limits that are not law: the weekly hours "
+     "ceiling, the longest shift, days in a row and rest between shifts as the rules give them. They hold for "
+     "everything below; 1a and 2a may go past them only for a shift nobody can cover inside them."),
+    (TIER_OVERTIME, "overtime", "Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the "
+     "same role has room: overtime is a cost the owner does not want, only for a shift nobody else in the role "
+     "can legally work."),
+    (TIER_MIN_HOURS, "min_hours", "Fill shifts from the people still under their minimum hours first (MIN in "
+     "the ROSTER; a full-timer's is the full-time line), then from those with the most room before their "
+     "overtime line."),
+    (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS, the people each role needs on each shift, with the "
+     "floors the hard minimum inside them — met even when that costs more than the hours budget (4): the "
+     "owner is told the overrun."),
+    (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling) — the code holds the week to its dollars "
+     "at each person's own rate, overtime at its premium. Trim toward it only in ways that keep 1-3 intact; it "
+     "never adds hours."),
+    (TIER_QUALITY, "quality", "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S "
+     "REQUEST FOR THIS DRAFT first, then leadership (every shift that needs somebody to run it has one and every "
+     "SHIFT LEADER REQUIREMENT is met — by WHO works the shifts 3 calls for, never by hours past the budget), "
+     "then every [SOFT] preference: strength and pairing, the experience mix, a fair share of closes, weekends "
+     "and busy shifts, people's usual days, dayparts and hours, what staff want — and last the defaults above, "
+     "which apply only where this restaurant's own data says nothing."),
+)
+TIER_NAMES = {t: name for t, name, _text in TIER_TABLE}
+# Where each tier sits in PRIORITIES: (item, tier). 1a states the manager
+# rule before 1b's legal limits it yields to — the text says so; every
+# other item is in rank order.
+PRIORITY_LAYOUT = (("1a", TIER_MANAGER), ("1b", TIER_LEGAL), ("2a", TIER_COVERAGE), ("2b", TIER_POLICY),
+                   ("3a", TIER_OVERTIME), ("3b", TIER_MIN_HOURS), ("3c", TIER_REQUIREMENT), ("4", TIER_BUDGET),
+                   ("5", TIER_QUALITY))
+
+# The restaurant's own limits that are policy, not law, unless a
+# jurisdiction pack makes them law (law_backed): ranked TIER_POLICY.
+POLICY_KINDS = frozenset({"shift_too_long", "rest_gap", "long_run", "over_hours_ceiling"})
+# The compliance value each policy kind is held to, for law_backed.
+POLICY_SETTING = {"rest_gap": "min_rest_hours", "long_run": "max_consecutive_days",
+                  "shift_too_long": "max_shift_hours", "over_hours_ceiling": "weekly_hours_ceiling"}
+PERSON_KINDS = NO_SHOW | frozenset({"over_max_hours", "minor_late", "minor_hours",
+                                    "minor_early", "minor_week_hours", "role_not_held"})
+COVERAGE_KINDS = frozenset({"coverage_floor", "keyholder_until_close", "nobody_at_close",
                             "owner_rule", "ends_before_role_close"})
 BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
+               **{k: TIER_POLICY for k in POLICY_KINDS},
                "no_manager": TIER_MANAGER,
                **{k: TIER_COVERAGE for k in COVERAGE_KINDS},
                "daily_ot": TIER_OVERTIME,
@@ -5251,7 +5681,7 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                # ranked below the floors is refused one that makes it worse.
                "over_section_cap": TIER_COVERAGE}
 # Breaches named on several rows that are one breach at its worst row.
-_WORST_OF = frozenset({"over_max_hours", "long_run", "under_min_hours", "minor_week_hours", "minor_hours",
+_WORST_OF = frozenset({"over_max_hours", "over_hours_ceiling", "long_run", "under_min_hours", "minor_week_hours", "minor_hours",
                        "daily_ot", "payroll_tail_full"})
 
 
@@ -5284,7 +5714,7 @@ def breach_id(v) -> tuple:
     kind = v.get("kind")
     emp = (v.get("employee") or "").strip().lower()
     d = v.get("date") or ""
-    if kind in ("over_max_hours", "payroll_tail_full"):
+    if kind in ("over_max_hours", "over_hours_ceiling", "payroll_tail_full"):
         return (kind, emp, v.get("bucket") or d)
     if kind in ("long_run", "under_min_hours", "minor_age_unknown", "days_off"):
         return (kind, emp)
@@ -5309,14 +5739,20 @@ def breach_id(v) -> tuple:
     return (kind, d, emp)
 
 
-def breach_profile(rows: list, c: "Constraints", viols: list = None, person_only: bool = False) -> dict:
+def breach_profile(rows: list, c: "Constraints", viols: list = None, person_only: bool = False,
+                   manager_facts: dict = None) -> dict:
     """{"by_id": {breach_id: severity}, "labels": {breach_id: label},
-    "manager": {date: unmanaged minutes}} for `rows` — the before or after
-    of a change, compared by regressions(). Pass `viols` when the sweep has
-    already been run on these rows."""
+    "tiers": {breach_id: tier} (only where a breach's own tier differs from
+    its kind's — a rest rule the jurisdiction makes law), "manager": {date:
+    unmanaged minutes, the owner's verdict}, "manager_raw": {date: (raw
+    unmanaged minutes, minutes a manager covers)} (manager_facts: before
+    the closing stay and the opening prep are forgiven)} for `rows` — the
+    before or after of a change, compared by regressions(). Pass `viols`
+    when the sweep has already been run on these rows; its manager facts
+    ride on it (Swept), else they are read from the rows."""
     if viols is None:
         viols = violations(rows, c, person_only=person_only)
-    by_id, labels, manager = {}, {}, {}
+    by_id, labels, manager, tiers = {}, {}, {}, {}
     for v in viols:
         if v.get("kind") == "no_manager":
             d = v.get("date") or ""
@@ -5335,19 +5771,44 @@ def breach_profile(rows: list, c: "Constraints", viols: list = None, person_only
         else:
             by_id[bid] = by_id.get(bid, 0.0) + sev
         labels.setdefault(bid, v.get("detail") or v.get("label") or v.get("kind"))
-    return {"by_id": by_id, "labels": labels, "manager": manager}
+        if v.get("tier") is not None and v.get("tier") != BREACH_TIER.get(v.get("kind")):
+            tiers[bid] = v["tier"]
+    out = {"by_id": by_id, "labels": labels, "manager": manager, "tiers": tiers}
+    if not person_only:
+        facts = manager_facts if manager_facts is not None else getattr(viols, "manager_facts", None)
+        if facts is None:
+            facts = _week_manager_facts(rows, c)
+        out["manager_raw"] = dict(facts or {})
+    return out
+
+
+def _week_manager_facts(rows: list, c: "Constraints") -> dict:
+    """manager_facts over the dates the manager rule judges (every date, or
+    only an acting manager's when nobody on the roster manages)."""
+    if not c.managers:
+        only = {d for ds in (c.acting_managers or {}).values() for d in (ds or ())}
+        if not only:
+            return {}
+        return manager_facts(rows, c, dates=only)
+    return manager_facts(rows, c)
 
 
 def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only: bool = True) -> list:
     """What `after` made worse than `before`: a breach that is new or more
-    severe, in a tier at or above `upto` (TIER_PERSON is the highest), and
-    any day with more unmanaged minutes when the manager tier is in range.
-    Soft kinds count only when they carry a tier in range and `hard_only` is
-    False. [{id, before, after, label, tier}], most important first."""
+    severe, in a tier at or above `upto` (TIER_LEGAL is the highest — a
+    breach's own tier, else its kind's), and, when the manager tier is in
+    range, any day with more unmanaged minutes by the owner's verdict — or
+    more unmanaged minutes before the owner's allowances AND less of the
+    day under a manager: a manager shortened into the closing stay or the
+    opening prep, which only the owner's verdict may forgive, never a pass
+    (schedule audit 10/10/26 BUGSGEN-4). Soft kinds count only when they
+    carry a tier in range and `hard_only` is False. [{id, before, after,
+    label, tier}], most important first."""
     out = []
+    tiers = after.get("tiers") or {}
     for bid, sev in (after.get("by_id") or {}).items():
         kind = bid[0]
-        tier = BREACH_TIER.get(kind)
+        tier = tiers.get(bid, BREACH_TIER.get(kind))
         if tier is None or tier > upto:
             continue
         if hard_only and kind not in HARD:
@@ -5357,11 +5818,24 @@ def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only:
             out.append({"id": bid, "before": was, "after": sev, "tier": tier,
                         "label": (after.get("labels") or {}).get(bid) or LABELS.get(kind, kind)})
     if TIER_MANAGER <= upto:
+        flagged = set()
         for d, mins in (after.get("manager") or {}).items():
             was = (before.get("manager") or {}).get(d, 0)
             if mins > was:
+                flagged.add(d)
                 out.append({"id": ("no_manager", d), "before": was, "after": mins, "tier": TIER_MANAGER,
                             "label": (after.get("labels") or {}).get(("no_manager", d)) or LABELS["no_manager"]})
+        raw_b, raw_a = before.get("manager_raw"), after.get("manager_raw")
+        if raw_b is not None and raw_a is not None:
+            for d, (mins, cov) in raw_a.items():
+                if d in flagged:
+                    continue
+                was, was_cov = raw_b.get(d, (0, None))
+                if mins > was and was_cov is not None and cov < was_cov:
+                    out.append({"id": ("no_manager", d), "before": was, "after": mins, "tier": TIER_MANAGER,
+                                "label": f"a manager's shift cut into the time the owner assumes they stay "
+                                         f"({_mdy_safe(d)}: {mins - was} more unmanaged minutes before that "
+                                         f"allowance)"})
     out.sort(key=lambda x: (x["tier"], str(x["id"])))
     return out
 
@@ -5384,7 +5858,7 @@ def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only:
 
 # The person-level kinds violations() emits in its per-person block, after
 # every day-level rule; every other person-level kind is a row's own check.
-_PERSON_WEEK_KINDS = frozenset({"over_max_hours", "payroll_tail_full", "under_min_hours", "minor_hours",
+_PERSON_WEEK_KINDS = frozenset({"over_max_hours", "over_hours_ceiling", "payroll_tail_full", "under_min_hours", "minor_hours",
                                 "daily_ot", "minor_age_unknown", "minor_week_hours", "overlap", "rest_gap",
                                 "long_run", "days_off"})
 # violations()' order of the day-level blocks.
@@ -5463,7 +5937,7 @@ class IncrementalSweep:
             for seq, v in enumerate(self._cache(self._person, (key, sig), _person)):
                 gi = items[v["index"]][0]
                 out.append(((8, pos, seq) if v["kind"] in _PERSON_WEEK_KINDS else (1, gi, seq), dict(v, index=gi)))
-        firsts = {}
+        firsts, facts = {}, {}
         for d, items in by_date.items():
             # A manager on the dates either side reaches across midnight
             # (manager_gaps' one timeline, RULES-10): their rows are part of
@@ -5474,9 +5948,12 @@ class IncrementalSweep:
 
             def _day(items=items, ctx=ctx):
                 self.swept_dates += 1
-                return [v for v in violations([r for _i, r in items], c, day_only=True, context=ctx)
-                        if v["kind"] not in _WEEK_KINDS]
-            for seq, v in enumerate(self._cache(self._date, (d, sig), _day)):
+                swept = violations([r for _i, r in items], c, day_only=True, context=ctx)
+                return ([v for v in swept if v["kind"] not in _WEEK_KINDS],
+                        dict(getattr(swept, "manager_facts", None) or {}))
+            day_viols, day_facts = self._cache(self._date, (d, sig), _day)
+            facts.update(day_facts)
+            for seq, v in enumerate(day_viols):
                 gi = items[v["index"]][0]
                 phase = _DAY_PHASE.get(v["kind"], 9)
                 if phase == 2:
@@ -5497,18 +5974,15 @@ class IncrementalSweep:
                     sk = (phase, 1, d, seq)
                 out.append((sk, dict(v, index=gi)))
         # The week's own: nobody on the roster manages (pinned to the first
-        # row somebody is on), and the retired per-daypart switch with nobody
-        # to satisfy it (pinned to the first row).
+        # row somebody is on).
         staffed = next(((i, r) for i, r in enumerate(rows) if r.get("date") and (r.get("employee") or "").strip()
                         and r.get("date") not in (c.closed_dates or set())), None)
         if staffed is not None:
             for v in _manager_violations([staffed[1]], c):
                 if v["kind"] == "no_manager_roster":
                     out.append(((5, 0), dict(v, index=staffed[0])))
-        if c.compliance.get("manager_on_duty") and not c.keyholders and rows:
-            out.append(((6, 0), _v("manager_rule_unusable", 0, rows[0], LABELS["manager_rule_unusable"])))
         out.sort(key=lambda t: t[0])
-        return [v for _k, v in out]
+        return Swept([v for _k, v in out], facts)
 
     @staticmethod
     def _first(memo, items, tag, test) -> int:
@@ -5639,8 +6113,17 @@ def summarize(viols: list) -> dict:
     by_kind = {}
     for v in viols:
         by_kind[v["kind"]] = by_kind.get(v["kind"], 0) + 1
-    lines = []
-    for v in sorted(viols, key=lambda x: (not x["hard"], x["date"] or "", x["employee"] or ""))[:12]:
+    lines, said = [], set()
+    for v in sorted(viols, key=lambda x: (not x["hard"], x["date"] or "", x["employee"] or "")):
+        if len(lines) >= 12:
+            break
+        # A breach named on every row of a payroll week (the ceiling, a
+        # maximum) is one line, not one per shift.
+        if v.get("kind") in _WORST_OF:
+            bid = breach_id(v)
+            if bid in said:
+                continue
+            said.add(bid)
         lines.append(f"{'⚠ ' if v['hard'] else ''}{breach_text(v)}")
     return {"hard": len(hard), "soft": len(soft), "by_kind": by_kind, "lines": lines,
             "hard_rows": sorted({v["index"] for v in hard if not v.get("day_level")}),
@@ -6181,11 +6664,14 @@ def shortest_shift_hours(c: "Constraints", default=None) -> float:
 class _Repair:
     """One repair pass's working rows, their sweep and breach profile, and
     the test every change it tries must pass. `upto`: the hard tiers that
-    may not get new or worse; `soft_upto`: soft kinds of the tiers after
-    TIER_COVERAGE through it (daily overtime, the payroll reserve) may not
-    either; `ignore`: kinds the pass weighs itself instead."""
+    may not get new or worse (TIER_POLICY by default: every hard rule; a
+    pass ranked above the policy limits passes TIER_COVERAGE in its last
+    round, once nobody could do it inside them — LOGIC-1); `soft_upto`:
+    soft kinds of the tiers after TIER_COVERAGE through it (the weekly
+    ceiling, daily overtime, the payroll reserve) may not either; `ignore`:
+    kinds the pass weighs itself instead."""
 
-    def __init__(self, rows, c, upto=TIER_COVERAGE, soft_upto=None, max_sweeps=OT_MAX_SWEEPS, ignore=(),
+    def __init__(self, rows, c, upto=TIER_POLICY, soft_upto=None, max_sweeps=OT_MAX_SWEEPS, ignore=(),
                  tier=None):
         self.c = c
         # The rank the pass serves (its engine stage's): the soft rules of
@@ -6388,7 +6874,7 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
     hours, line, role, kind}], sweeps, over_before}. `editable` (a set of
     dates) limits which rows may change — a redo of some days keeps the
     owner's others. `kind` is "overtime", or "minor" for a minor's weekly cap."""
-    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+    rep = _Repair(rows, c, upto=TIER_POLICY, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
                   ignore=("payroll_tail_full",), tier=TIER_OVERTIME)
     moves, trims, left = [], [], []
     display = _display(c, rep.rows, roster_roles)
@@ -6677,31 +7163,45 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
             cands = sorted(((e, i, r) for e, i, r in mine if c.key(r.get("employee")) in closers
                             and not r.get("_pinned") and e >= target - 3 * 60 and e < target - 0.5),
                            key=lambda t: -t[0])
-            for e, i, r in cands:
-                if sweeps >= max_sweeps:
+            done = False
+            # A closer until close outranks overtime and the restaurant's own
+            # limits: inside both first, then past the line only when no
+            # closer can run on inside it (the teammate test), then past the
+            # policy limits only when nobody can inside them (LOGIC-1, LOGIC-3).
+            for mode in FILL_ROUNDS:
+                for e, i, r in cands:
+                    if sweeps >= max_sweeps:
+                        break
+                    s0 = parse_minutes(r.get("shift_start", ""))
+                    if s0 is None:
+                        continue
+                    new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)),
+                               scheduled_hours=str(round((target - s0) / 60.0, 2)).rstrip("0").rstrip("."))
+                    ok, _why = c.can_add(new, [x for j, x in enumerate(rows) if j != i], line=line,
+                                         overtime=mode[0], policy=mode[1])
+                    sweeps += 1
+                    if not ok:
+                        continue
+                    trial = [dict(x) for x in rows]
+                    trial[i] = new
+                    after = sweep.profile(trial)
+                    if regressions(before, after, upto=TIER_POLICY if mode[1] else TIER_COVERAGE) or \
+                            after["by_id"].get(bid, 0.0) >= before["by_id"].get(bid, 0.0):
+                        continue
+                    name = (r.get("employee") or "").strip()
+                    why_ot = ("" if mode == FILL_ROUNDS[0] else
+                              " (overtime: no closer could stay inside their hours)" if mode == FILL_ROUNDS[1]
+                              else " (past your scheduling limits: no closer could stay inside them)")
+                    extended.append({"index": i, "employee": name, "day": day, "from": r.get("shift_end"),
+                                     "to": new["shift_end"], "kind": "close",
+                                     "reason": f"Kept {name} on until close ({_fmt_minutes(target % (24 * 60))}) on "
+                                               f"{day} — the last {_family_label(c, fam)} out is one of your "
+                                               f"closers{why_ot}."})
+                    rows, before = trial, after
+                    done = True
                     break
-                s0 = parse_minutes(r.get("shift_start", ""))
-                if s0 is None:
-                    continue
-                new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)),
-                           scheduled_hours=str(round((target - s0) / 60.0, 2)).rstrip("0").rstrip("."))
-                ok, _why = c.can_add(new, [x for j, x in enumerate(rows) if j != i], line=line)
-                sweeps += 1
-                if not ok:
-                    continue
-                trial = [dict(x) for x in rows]
-                trial[i] = new
-                after = sweep.profile(trial)
-                if regressions(before, after, upto=TIER_COVERAGE) or \
-                        after["by_id"].get(bid, 0.0) >= before["by_id"].get(bid, 0.0):
-                    continue
-                name = (r.get("employee") or "").strip()
-                extended.append({"index": i, "employee": name, "day": day, "from": r.get("shift_end"),
-                                 "to": new["shift_end"], "kind": "close",
-                                 "reason": f"Kept {name} on until close ({_fmt_minutes(target % (24 * 60))}) on {day} — "
-                                           f"the last {_family_label(c, fam)} out is one of your closers."})
-                rows, before = trial, after
-                break
+                if done or sweeps >= max_sweeps:
+                    break
     return {"rows": rows, "extended": extended}
 
 
@@ -6936,7 +7436,10 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
                     for i, nm in plan:
                         trial[i] = _with_note(dict(rep.rows[i], employee=nm),
                                               f"(was {first.get('employee')} — too many days in a row)")
-                    worse, after = rep.judge(trial)
+                    # Six days in a row is policy unless a pack makes it law
+                    # (LOGIC-1): a policy repair may not cost another policy
+                    # limit; the law may.
+                    worse, after = rep.judge(trial, upto=TIER_POLICY if tier_of(v) == TIER_POLICY else None)
                     if worse or not improved(bid, after):
                         continue
                     rep.take(trial, after)
@@ -6979,6 +7482,17 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
 # why each manager could not, and the week's `shortfall` says so once.
 
 MANAGER_FILL_MAX_SWEEPS = 120
+# The rounds every pass ranked above the policy limits fills in — the
+# manager filler, the closer repair, the floor and station fills, the
+# manager plan and the standing positions — each (inside the overtime line,
+# inside the restaurant's policy limits): nobody past their line while a
+# teammate has room; overtime only when nobody in the role can take the
+# shift inside it (the owner's rule exactly); and past the restaurant's own
+# limits (the weekly ceiling, the longest shift, six days in a row and rest
+# where a pack does not make them law) only when nobody can inside them —
+# the manager on the floor and the staffing rules outrank them, never the
+# law or a person's own maximum (schedule audit 10/10/26 LOGIC-1, LOGIC-3).
+FILL_ROUNDS = ((True, True), (False, True), (False, False))
 # Four hours: the gap filler sized every added manager shift to at least
 # this, so a 1h gap bought 4h (E-16) — it now sizes to the stretch or the
 # owner's min_shift_hours. Kept because the manager plan
@@ -6994,7 +7508,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
     {unmanaged_hours, dates, text} or None}. A change is kept only when the
     day's unmanaged minutes fall and nothing about a person's legality or
     coverage gets new or worse (E-1)."""
-    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+    rep = _Repair(rows, c, upto=TIER_POLICY, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
                   tier=TIER_MANAGER)
     extended, added, left = [], [], []
     if not c.managers and not c.acting_managers:
@@ -7011,12 +7525,12 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
         lows = set(c.managers) | {low for low, ds in (c.acting_managers or {}).items() if d in (ds or ())}
         return {low: display[low] for low in sorted(lows) if low in display}
 
-    def legal(new, others, strict):
+    def legal(new, others, mode):
         nm, d = new.get("employee"), new.get("date")
         ok, why = c.fillable(nm, d)
         if not ok:
             return False, why
-        ok, why = c.can_add(new, others, line=line, overtime=strict)
+        ok, why = c.can_add(new, others, line=line, overtime=mode[0], policy=mode[1])
         if not ok:
             return False, why
         if c.is_salaried(nm):
@@ -7049,6 +7563,8 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
         return lo, hi
 
     def options(d, gs, ge, strict):
+        # `strict` is the round (inside the overtime line?, inside the
+        # restaurant's policy limits?) — FILL_ROUNDS.
         out = []
         mgrs = managing(d)
         day_rows = [(j, x) for j, x in enumerate(rep.rows) if x.get("date") == d and (x.get("employee") or "").strip()]
@@ -7126,7 +7642,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             if ok:
                 probe = _new_row({}, d, nm, c.managers.get(low) or roles.get(low) or "Manager",
                                  gs, min(ge, gs + max_shift_m), "", c)
-                ok, why = c.can_add(probe, rep.rows, line=line, overtime=False)
+                ok, why = c.can_add(probe, rep.rows, line=line, overtime=False, policy=False)
                 if ok:
                     why = "could not be fitted around their other shifts that day"
             reasons.append({"employee": nm, "why": why})
@@ -7147,7 +7663,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             gs, ge, _pin = gaps[0]
             before = int((rep.prof.get("manager") or {}).get(d, 0))
             done = None
-            for strict in (True, False):
+            for strict in FILL_ROUNDS:
                 for opt in options(d, gs, ge, strict):
                     if rep.spent:
                         break
@@ -7157,7 +7673,11 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                         trial[j] = new
                     else:
                         trial.append(new)
-                    worse, after = rep.judge(trial, soft_upto=TIER_OVERTIME if strict else None)
+                    # Inside the policy limits every hard rule holds; the last
+                    # round (nobody could inside them) holds the law, the
+                    # manager rule and coverage only (LOGIC-1).
+                    worse, after = rep.judge(trial, upto=TIER_POLICY if strict[1] else TIER_COVERAGE,
+                                             soft_upto=TIER_OVERTIME if strict == FILL_ROUNDS[0] else None)
                     if worse or int((after[1].get("manager") or {}).get(d, 0)) >= before:
                         continue
                     done = (kind, j, nm, new, trial, after, strict)
@@ -7175,10 +7695,18 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                 continue
             kind, j, nm, new, trial, after, strict = done
             was = rep.rows[j] if kind == "extend" else None
+            before_prof = rep.prof
             rep.take(trial, after)
             idx = j if kind == "extend" else len(trial) - 1
             span_txt = f"{_fmt_minutes(gs % (24 * 60))}–{_fmt_minutes(ge % (24 * 60))}"
-            ot = "" if strict else " (overtime: nobody who manages could cover it inside their hours)"
+            ot = ""
+            if strict == FILL_ROUNDS[1]:
+                ot = " (overtime: nobody who manages could cover it inside their hours)"
+            elif strict == FILL_ROUNDS[2]:
+                past = [w["label"] for w in regressions(before_prof, after[1], upto=TIER_POLICY, hard_only=False)
+                        if w["tier"] == TIER_POLICY]
+                ot = (" (past your " + (past[0] if past else "scheduling limits") + ": a manager on the floor "
+                      "outranks it, and nobody who manages could cover the stretch inside it)")
             now = f"{new['shift_start']}–{new['shift_end']}"
             if kind == "extend":
                 extended.append({"index": idx, "employee": nm, "day": day, "date": d,
@@ -7206,12 +7734,16 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
 # full-time cook, set to 40-45h, got 7h. This pass gives a person under
 # their minimum legal shifts in roles they can work — a shift taken from a
 # teammate who stays at or above their own target (their minimum or the
-# hours they asked for), the furthest above it first; else, when the week
-# has an hours budget, a shift of the kind the role already works that day,
-# added inside the budget. Nothing about a person's legality, the manager
-# rule, coverage or overtime (weekly, daily, the payroll reserve) may get
-# new or worse (tiers 0-3), and the receiver is never taken past their
-# overtime line. What it cannot fill stays the soft under_min_hours, with why.
+# hours they asked for), the furthest above it first; else a shift of the
+# kind the role already works that day. A minimum outranks the hours budget
+# whichever way a pass moves (sched audit 10/10/26 LOGIC-4: the trim never
+# cut anyone under it, but this fill stopped at the budget, so the week
+# depended on the draft): the shift is added past the budget when it has
+# to be, and the review says so. Nothing about a person's legality, the
+# manager rule, coverage, the restaurant's limits or overtime (weekly,
+# daily, the payroll reserve) may get new or worse, and the receiver is
+# never taken past their overtime line. What it cannot fill stays the soft
+# under_min_hours, with why.
 
 MIN_HOURS_MAX_SWEEPS = 200
 
@@ -7221,9 +7753,9 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
                    max_sweeps: int = MIN_HOURS_MAX_SWEEPS) -> dict:
     """Returns {rows, moves: [{index, from, to, hours, kind, reason}], added:
     [{index, employee, hours, kind, reason}], left: [{employee, hours, min,
-    short_by, reason}], sweeps}. `hours_budget` (the week's hourly hours) is
-    the ceiling for added shifts; without one only transfers are made."""
-    rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
+    short_by, reason}], sweeps}. `hours_budget` (the week's hourly hours)
+    is only said: an added shift past it is named as past it (LOGIC-4)."""
+    rep = _Repair(rows, c, upto=TIER_POLICY, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
                   tier=TIER_MIN_HOURS)
     moves, added, left = [], [], []
     display = _display(c, rep.rows, roster_roles)
@@ -7288,8 +7820,6 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
         return False
 
     def add(low, nm, mn) -> bool:
-        if not hours_budget or float(hours_budget) <= 0:
-            return False
         short = mn - week(low)
         cands = []
         dates = sorted(set(c.week_dates or []) or {r.get("date") for r in rep.rows if r.get("date")})
@@ -7321,8 +7851,8 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
             s, e = _span(x)
             new = _new_row(x, d, nm, x.get("role") or "", s, e,
                            f"Cavnar AI: {nm} is under their {mn:g}h minimum", c)
-            if not c.is_salaried(nm) and hourly_hours(rep.rows, c) + row_hours(new) > float(hours_budget) + 0.05:
-                continue          # added inside the hours budget only
+            past_budget = bool(hours_budget and float(hours_budget) > 0 and not c.is_salaried(nm)
+                               and hourly_hours(rep.rows, c) + row_hours(new) > float(hours_budget) + 0.05)
             if not c.can_add(new, rep.rows, line=line, overtime=True)[0]:
                 continue
             trial = list(rep.rows) + [new]
@@ -7333,8 +7863,11 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
                 continue          # never more servers on than there are sections
             rep.take(trial, after)
             added.append({"index": len(trial) - 1, "employee": nm, "hours": row_hours(new), "kind": "min_hours",
+                          "past_budget": past_budget,
                           "reason": (f"{nm} had {week(low) - row_hours(new):g}h of the {mn:g}h minimum you set; added "
-                                     f"{_weekday_of(d)} {new['shift_start']}–{new['shift_end']} inside the hours budget.")})
+                                     f"{_weekday_of(d)} {new['shift_start']}–{new['shift_end']}"
+                                     + (" — past the hours budget: the minimum you set comes first."
+                                        if past_budget else " inside the hours budget."))})
             return True
         return False
 
@@ -7344,11 +7877,8 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
             return c.fillable(nm, days[0])[1] or "not one we can choose this week"
         if days and not any(c.can_work(nm, d)[0] for d in days):
             return "not available any day this week"
-        if not hours_budget:
-            return ("no teammate in their roles had a shift to spare above their own target, and there is no "
-                    "hours budget to add one")
-        return ("no legal shift in their roles could move to them, and none fits inside the hours budget "
-                "without breaking a rule")
+        return ("no legal shift in their roles could move to them, and none could be added without breaking "
+                "a rule")
 
     under = []
     for low, nm in display.items():

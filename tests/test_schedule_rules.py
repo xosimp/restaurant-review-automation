@@ -88,8 +88,10 @@ def test_published_tail_counts_toward_the_payroll_week():
     rows = [_row(WEEK[0], "Ana", "9:00am", "5:00pm"), _row(WEEK[1], "Ana", "9:00am", "5:00pm"),
             _row(WEEK[2], "Ana", "9:00am", "5:00pm")]
     kinds = {v["kind"] for v in sr.violations(rows, c)}
-    assert "over_max_hours" in kinds
-    assert "over_max_hours" not in {v["kind"] for v in sr.violations(rows, _c())}
+    # Past the restaurant's weekly ceiling with no maximum of her own: the
+    # priced policy limit, not a legality breach (sched audit 10/10/26 LOGIC-1).
+    assert "over_hours_ceiling" in kinds and "over_max_hours" not in kinds
+    assert "over_hours_ceiling" not in {v["kind"] for v in sr.violations(rows, _c())}
 
 
 def test_under_min_hours_is_soft():

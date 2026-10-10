@@ -2488,12 +2488,79 @@ def _is_cut(e) -> bool:
     return bool(_CUT_WORDS.search(str(e.get("title") or "")))
 
 
+# Staffing cuts measured worse, read as evidence, not a veto (sched audit
+# 10/10/26 LOGIC-15, LEARNING-10): one noisy week after a Tuesday cut froze
+# every Tuesday trim for the whole effect window, and one measured success
+# allowed nothing. A slot's cuts weigh only from this many measured results;
+# its strength is how far the Wilson lower bound of its worsened share sits
+# above the restaurant's own base rate of worsened cuts (each result decayed
+# by age, decay_weight), 0 (no reason to hold back) to 1 (every cut there
+# went worse); improved cuts are the mirror — evidence the slot can run
+# leaner. The trim and the optimizer read the one strength
+# (learned_cut_penalty) as a graded cost, never a freeze.
+MIN_CUTS_MEASURED = 3
+CUT_BASE_PRIOR = (1.0, 3.0)        # a worsened share of 1 in 3 before the restaurant's own results say
+_CUT_PARTS = {"lunch": "morning", "breakfast": "morning", "brunch": "morning", "morning": "morning",
+              "dinner": "night", "night": "night", "late_night": "night", "happy_hour": "night"}
+# Role words a cut's subject may name ("trim a server Tuesday dinner"): a
+# result that names one is about that role only.
+CUT_ROLE_WORDS = ("server", "cook", "bartender", "host", "busser", "dish", "barback", "runner", "expo", "prep",
+                  "manager", "cashier", "porter")
+
+
+def _cut_strength(k_w, n_w, n_count, base) -> tuple:
+    """(strength 0-1, wilson low) of `k_w` of `n_w` decayed results against
+    the base rate `base`; (0.0, None) under MIN_CUTS_MEASURED results."""
+    if n_count < MIN_CUTS_MEASURED or n_w <= 0:
+        return 0.0, None
+    low, _high = wilson(min(k_w, n_w), n_w)
+    if low is None:
+        return 0.0, None
+    base = min(0.95, max(0.0, float(base)))
+    return round(max(0.0, (low - base) / (1.0 - base)), 3), low
+
+
+def learned_cut_penalty(levers, weekday, part=None, family=None, lean=False) -> float:
+    """The one meaning of "staffing cuts measured worse here" every pass
+    reads (LOGIC-15): 0-1, how strongly the evidence says not to cut this
+    slot — the weekday's strength, its daypart's when results named the
+    daypart, and nothing for a role the results never named when they named
+    roles. `lean` reads the mirror: how strongly improved cuts say the slot
+    can run leaner. `levers` is worsened_levers' answer; an older one
+    ({"worsened", "measured"} only) is graded the same way against the prior.
+    Pure."""
+    e = (levers or {}).get(str(weekday or "").strip().lower())
+    if not isinstance(e, dict):
+        return 0.0
+    key = "leaner" if lean else "strength"
+    if key not in e and not lean:
+        # The old shape: graded against the prior, never a freeze.
+        k, n = int(e.get("worsened") or 0), int(e.get("measured") or 0)
+        return _cut_strength(k, n, n, CUT_BASE_PRIOR[0] / CUT_BASE_PRIOR[1])[0]
+    words = set(e.get("roles") or ())
+    if words and family:
+        fam = str(family).strip().lower()
+        if not any(w in fam for w in words):
+            return 0.0
+    parts = e.get("parts") or {}
+    if part and part in parts:
+        return float((parts[part] or {}).get(key) or 0.0)
+    if parts and part and not e.get("whole_day"):
+        return 0.0                      # every result named another daypart
+    return float(e.get(key) or 0.0)
+
+
 def worsened_levers(restaurant_id, db_path=DB_PATH, now=None, episodes=None) -> dict:
-    """{weekday: {"worsened", "measured", "label"}} — weekdays where advice
-    that CUT staffing or hours (topic staffing / hours, a day tag) was taken
-    and measured worse at least once, one result per change. What the
-    schedule optimizer reads to hold back a trim of the same day (memory
-    audit 9/29/26, "what_worked"). Never raises."""
+    """{weekday: {"worsened", "improved", "measured", "strength", "leaner",
+    "low", "base", "parts": {daypart: {...}}, "roles", "whole_day",
+    "label"}} — weekdays where advice that CUT staffing or hours (topic
+    staffing / hours, a day tag) was taken and measured, one result per
+    change: how strongly the evidence there says not to cut again
+    (`strength`, learned_cut_penalty) and that cutting worked (`leaner`),
+    scoped to the dayparts and roles the results named. What the budget trim
+    and the schedule optimizer read as one graded cost (memory audit
+    9/29/26, "what_worked"; sched audit 10/10/26 LOGIC-15, LEARNING-10).
+    Never raises."""
     now = now or datetime.utcnow()
     try:
         if episodes is None:
@@ -2506,21 +2573,65 @@ def worsened_levers(restaurant_id, db_path=DB_PATH, now=None, episodes=None) -> 
     except Exception as e:
         print(f"[rec_learning] worsened levers unavailable for {restaurant_id}: {e}")
         return {}
-    by_day = {}
+    by_day, cuts = {}, []
     for e in episodes or []:
         if not (e.get("shown") and _taken(e) and e.get("verdict")):
             continue
         tags = e.get("tag_list") or []
         if not any(t in ("topic:staffing", "topic:hours") for t in tags) or not _is_cut(e):
             continue
+        cuts.append(e)
         for t in tags:
             if t.startswith("day:"):
                 by_day.setdefault(t[4:], []).append(e)
+
+    def weight(e):
+        return decay_weight(e.get("kind") or rec_ledger.kind_of(e.get("key")),
+                            e.get("verdict_at") or e.get("created_at"), now, key=e.get("key"))
+
+    def tally(eps):
+        kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
+        ws = [(weight(e), e["verdict"]) for e in kept]
+        return {"n": len(kept), "n_w": sum(w for w, _v in ws),
+                "worse": sum(1 for _w, v in ws if v == "worsened"),
+                "worse_w": sum(w for w, v in ws if v == "worsened"),
+                "better": sum(1 for _w, v in ws if v == "improved"),
+                "better_w": sum(w for w, v in ws if v == "improved")}
+
+    # The restaurant's own base rates of worsened and improved cuts, pulled
+    # toward the prior until it has results of its own.
+    allt = tally(cuts)
+    pk, pn = CUT_BASE_PRIOR
+    base_worse = (allt["worse_w"] + pk) / (allt["n_w"] + pn)
+    base_better = (allt["better_w"] + pk) / (allt["n_w"] + pn)
     out = {}
     for day, eps in by_day.items():
-        kept = [e for e in _one_per_window(eps) if e["verdict"] in CLEAR_VERDICTS]
-        worse = sum(1 for e in kept if e["verdict"] == "worsened")
-        if worse:
-            out[day] = {"worsened": worse, "measured": len(kept),
-                        "label": f"staffing cuts on {day.capitalize()}s"}
+        t = tally(eps)
+        if not t["n"]:
+            continue
+        strength, low = _cut_strength(t["worse_w"], t["n_w"], t["n"], base_worse)
+        leaner, _blow = _cut_strength(t["better_w"], t["n_w"], t["n"], base_better)
+        parts, roles, whole = {}, set(), False
+        for e in eps:
+            named = {_CUT_PARTS[x[8:]] for x in (e.get("tag_list") or [])
+                     if x.startswith("daypart:") and x[8:] in _CUT_PARTS}
+            if not named:
+                whole = True
+            words = {w for w in CUT_ROLE_WORDS if w in str(e.get("key") or "").lower()}
+            if e.get("verdict") == "worsened":
+                roles |= words
+        for part in ("morning", "night"):
+            mine = [e for e in eps if part in {_CUT_PARTS[x[8:]] for x in (e.get("tag_list") or [])
+                                               if x.startswith("daypart:") and x[8:] in _CUT_PARTS}]
+            if not mine:
+                continue
+            pt = tally(mine)
+            ps, plow = _cut_strength(pt["worse_w"], pt["n_w"], pt["n"], base_worse)
+            pl, _pl = _cut_strength(pt["better_w"], pt["n_w"], pt["n"], base_better)
+            parts[part] = {"worsened": pt["worse"], "improved": pt["better"], "measured": pt["n"],
+                           "strength": ps, "leaner": pl, "low": plow}
+        out[day] = {"worsened": t["worse"], "improved": t["better"], "measured": t["n"],
+                    "strength": strength, "leaner": leaner, "low": low, "base": round(base_worse, 3),
+                    "parts": parts, "roles": sorted(roles), "whole_day": whole or not parts,
+                    "label": f"staffing cuts on {day.capitalize()}s"}
     return out

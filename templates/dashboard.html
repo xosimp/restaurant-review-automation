@@ -36480,6 +36480,9 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
        last of their role to leave), not a key holder (owner, 10/2/26). */
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-kh"'+(rules.keyholder_until_close!==false?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">A closer until close<small>Somebody marked to close stays until close every open day, the last of their role to leave. Checked once anyone is marked a closer.</small></div></div>';
     h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-trim"'+(d.trim_to_budget?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the hours budget, remove the lowest-value shifts until it fits. Off leaves the overage for you to see.</small></div></div>';
+    /* The full-time line is a minimum only once confirmed (LOGIC-29): off,
+       a full-timer's week aims at it as hours they'd like. */
+    h+='<div class="rul-sw"><label class="ac-switch"><input type="checkbox" id="rul-ftmin"'+(rules.full_time_min_confirmed?' checked':'')+(ro?' disabled':'')+'><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Full-time line is a minimum<small>Anyone marked full-time with no minimum of their own gets at least the full-time hours above. Off, their week only aims at it.</small></div></div>';
     // Closed days: weekdays and dates the restaurant does not trade. The
     // draft writes no shifts on them and the week is not failed for it.
     var cl=d.closures||{},cdates=cl.closed_dates||[];
@@ -36627,6 +36630,7 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     rules.manager_on_duty=false;
     var kh=document.getElementById('rul-kh');if(kh)rules.keyholder_until_close=!!kh.checked;
+    var ftm=document.getElementById('rul-ftmin');if(ftm)rules.full_time_min_confirmed=!!ftm.checked;
     var body={rules:rules,role_floors:floors,rules_default:reset};
     var jur=document.getElementById('rul-jur');if(jur)body.jurisdiction=jur.value||null;
     var trim=document.getElementById('rul-trim');if(trim)body.trim_to_budget=!!trim.checked;
@@ -37954,6 +37958,9 @@ function sfw1RatingLine(s) {
       bb: data.budget_basis || null,
       req: data.requirements || [],
       setup: rv.setup || [],
+      /* The closing managers the verdict assumes stay to the last person
+         out (TRUST-21): said, with the tap that writes the stay in. */
+      stays: rv.assumed_stays || data.assumed_stays || [],
       hourly: data.hours_hourly, salaried: data.hours_salaried, budget: data.hours_budget,
       redo: data.redo || null
     };
@@ -38002,6 +38009,11 @@ function sfw1RatingLine(s) {
     }
     var sk = p.skipped || [];
     for (i = 0; i < Math.min(sk.length, 3); i++) h += note('', n(sfw1SkippedLine(sk[i])));
+    var st = S.stays || [];
+    for (i = 0; i < st.length; i++) {
+      var sa = st[i].action || {};
+      h += note('', n(st[i].text), ed && sa.label ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-stay="' + i + '">' + e(sa.label) + '</button>' : '');
+    }
     var mh = (S.minh && S.minh.left) || [];
     for (i = 0; i < Math.min(mh.length, 4); i++) h += note('', n(mh[i].employee + ' is ' + sfw1G(mh[i].short_by) + 'h under the ' + sfw1G(mh[i].min) + 'h minimum you set' + (mh[i].reason ? ' — ' + mh[i].reason : '') + '.'));
     if (S.start && S.start.no_history && S.startLine) h += note('', n(S.startLine.replace(/^A starting point:\s*/, '')), '', '');
@@ -38020,6 +38032,9 @@ function sfw1RatingLine(s) {
       if (!it.text || it.line === false) continue;
       if (it.kind === 'leader_rules_inactive') h += note('warn', n(it.text), it.can_adopt ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-adopt="1">Count them as mine</button>' : '');
       else if (it.kind === 'close_times_missing') h += note('warn', n(it.text), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set the hours</button>');
+      /* The full-time line nobody confirmed (LOGIC-29): one tap makes it the
+         minimum; the next draft fills and keeps it. */
+      else if (it.kind === 'full_time_unconfirmed') h += note('', n(it.text), canEdit() && it.action ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-ftmin="1">' + e(it.action.label) + '</button>' : '');
       else rest.push(it);
     }
     if (rest.length) {
@@ -38339,10 +38354,40 @@ function sfw1RatingLine(s) {
     el.innerHTML = window.sfw1PubHtml(c || window._psCheck);
   };
 
+  /* "Schedule Erik to 11:45pm": the closing manager's assumed stay written
+     into their shift, so the staff schedule shows it and the cost counts it
+     (TRUST-21). An edit like any other: Save keeps it. */
+  function writeStay(i) {
+    var st = (S.stays || [])[i], p = st && st.action && st.action.payload, rs = rows(), j, r;
+    if (!p) return;
+    for (j = 0; j < rs.length; j++) {
+      r = rs[j];
+      if (r.employee === p.employee && r.date === p.date && r.shift_start === p.shift_start && r.shift_end === p.shift_end) break;
+    }
+    if (j >= rs.length) { say('That shift changed since — check the close by hand', 'error'); return; }
+    r.shift_end = p.new_end;
+    if (typeof _schedHoursBetween === 'function') r.scheduled_hours = _schedHoursBetween(r.shift_start, r.shift_end);
+    S.stays.splice(i, 1);
+    if (typeof schedAfterEdit === 'function') schedAfterEdit();
+    renderNotes();
+    say(p.employee + ' now ends ' + p.new_end + ' — save to keep it');
+  }
+
   // ── Clicks ─────────────────────────────────────────────────────────────
   document.addEventListener('click', function (ev) {
-    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-redo],[data-sfw1-chip],[data-sfw1-close],[data-sfw1-redo-go],[data-sfw1-why],[data-sfw1-adopt],[data-sfw1-act],[data-sfw1-wk-save],[data-sfw1-sel],[data-sfw1-sec],[data-sfw1-add-role],[data-sfw1-swap-role],[data-sfw1-mem],[data-sfw1-rate]') : null;
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw1-redo],[data-sfw1-chip],[data-sfw1-close],[data-sfw1-redo-go],[data-sfw1-why],[data-sfw1-adopt],[data-sfw1-act],[data-sfw1-wk-save],[data-sfw1-sel],[data-sfw1-sec],[data-sfw1-add-role],[data-sfw1-swap-role],[data-sfw1-mem],[data-sfw1-rate],[data-sfw1-stay],[data-sfw1-ftmin]') : null;
     if (!t || t.disabled) return;
+    if (t.hasAttribute('data-sfw1-stay')) { writeStay(+t.getAttribute('data-sfw1-stay')); return; }
+    if (t.hasAttribute('data-sfw1-ftmin')) {
+      var finFt = busy(t, 'Saving…');
+      jpost('/api/labor/rules', {rules: {full_time_min_confirmed: true}}, function (d) {
+        finFt();
+        if (!d.ok) { say(d.error || 'That didn’t save.', 'error'); return; }
+        say('The full-time line is now a minimum — the next draft fills it');
+        t.disabled = true; t.textContent = 'Confirmed';
+      });
+      return;
+    }
     if (t.hasAttribute('data-sfw1-redo')) { sfw1RedoSheet(String(t.getAttribute('data-sfw1-redo')).split(',')); return; }
     if (t.hasAttribute('data-sfw1-chip')) {
       var k = t.getAttribute('data-sfw1-chip'), on = _redo.chip !== k, cs = document.querySelectorAll('#sfw1-modal-card [data-sfw1-chip]'), i;

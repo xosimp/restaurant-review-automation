@@ -766,6 +766,33 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
                               + (f" until {mdy(t['until'])}" if t.get("until") else "")
                               + (f" with {t['trainer']}" if t.get("trainer") else "")
                               + f" — their {t['target_role']} shifts don't count toward headcount."})
+    # A begun payroll week's days still to come, never published here: the
+    # hours toward this week's overtime line are each person's usual ones
+    # (sched audit 10/10/26 BUGSGEN-21).
+    pt = getattr(c, "projected_tail", None) or {}
+    if pt.get("dates"):
+        from time_utils import mdy
+        ds = sorted(pt["dates"])
+        when = mdy(ds[0]) if len(ds) == 1 else f"{mdy(ds[0])}–{mdy(ds[-1])}"
+        items.append({"kind": "projected_tail", "line": True, "dates": ds,
+                      "text": f"The payroll week's days before this one ({when}) were never published here, so "
+                              f"each person's usual hours on them ({pt.get('hours'):g}h across {pt.get('people')} "
+                              f"{'person' if pt.get('people') == 1 else 'people'}) count toward this week's "
+                              "overtime line — publish that week in Cavnar AI for its real hours."})
+    # The full-time line nobody confirmed (sched audit 10/10/26 LOGIC-29):
+    # typed "full" with no minimum of their own, the people it would hold
+    # are aimed at it as wanted hours until the owner makes it the minimum.
+    unconf = sorted((c.full_time_unconfirmed or {}).items())
+    if unconf:
+        line = unconf[0][1]
+        who = [_sr._display_name(c, k) for k, _v in unconf]
+        items.append({"kind": "full_time_unconfirmed", "line": True, "names": who, "hours": line,
+                      "text": f"{_and(who[:4])}{' and others' if len(who) > 4 else ''} "
+                              f"{'is' if len(who) == 1 else 'are'} marked full-time with no minimum of their own: "
+                              f"their week aims at {line:g}h, but the full-time line isn't a minimum until you "
+                              f"confirm it.",
+                      "action": {"label": f"Make {line:g}h the full-time minimum", "endpoint": "/api/labor/rules",
+                                 "rules": {"full_time_min_confirmed": True}}})
     for key in sorted(c.salaried_style or ()):
         who = _sr._display_name(c, key)
         lim = (c.hours_limits or {}).get(key)
