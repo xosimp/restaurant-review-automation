@@ -126,9 +126,22 @@ def test_a_night_nobody_closes_keeps_a_keyholder_on_to_close():
     assert not {v["kind"] for v in sr.violations(out["rows"], c)} & {"nobody_at_close", "keyholder_until_close"}
 
 
-def test_close_out_never_pushes_a_keyholder_into_overtime():
+def test_close_out_takes_overtime_only_when_no_closer_has_room():
+    # A closer until close outranks overtime and the restaurant's ceiling
+    # (sched audit 10/10/26 LOGIC-3): Jade, the bar's only closer, already at
+    # 40h, stays the half hour to close — said as overtime — because nobody
+    # else can; the old pass left the night with no closer.
     c = _c(keyholders={"jade"}, closers_by_role={"bartender": {"jade"}}, close_times={"Thursday": "12:00am"})
     rows = [_row(i, "Jade", "3:00pm", "11:30pm", 8, role="Bartender") for i in range(5)]
     rows[3]["scheduled_hours"] = "8"
     out = sr.close_out_gaps(rows, c)
-    assert not out["extended"], "40h already: the half hour would be overtime"
+    assert [e["employee"] for e in out["extended"]] == ["Jade"]
+    assert "overtime" in out["extended"][0]["reason"] or "limits" in out["extended"][0]["reason"]
+    # With a second closer who has room, she closes instead: no overtime
+    # while a teammate in the role has room.
+    c2 = _c(keyholders={"jade", "kai"}, closers_by_role={"bartender": {"jade", "kai"}},
+            close_times={"Thursday": "12:00am"})
+    rows2 = rows + [_row(3, "Kai", "5:00pm", "11:30pm", 6.5, role="Bartender")]
+    out2 = sr.close_out_gaps(rows2, c2)
+    assert [e["employee"] for e in out2["extended"]] == ["Kai"]
+    assert "overtime" not in out2["extended"][0]["reason"]

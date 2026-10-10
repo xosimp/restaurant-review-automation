@@ -365,16 +365,24 @@ def test_the_floor_pass_never_lands_a_minor_past_their_end_or_a_seventh_day(no_a
                                                constraints=c)
     mon = [r for r in out if r["date"] == MON]
     assert [r["employee"] for r in mon] == ["Ok"], mon
-    # with nobody legal on the week's own cook shape (5-11pm) the floor is
-    # never filled illegally: the minor gets a shift built over the short
-    # half hours that ends before his limit (schedule audit 10/10/26
-    # BUGSGEN-3 — the fill covers the core window it is short in), or none
+    # With only the minor and Sev left: never filled illegally — the minor
+    # may get a shift built over the short half hours that ends before his
+    # limit (schedule audit 10/10/26 BUGSGEN-3); only when nobody can inside
+    # the restaurant's own limits does the floor outrank its six-days-in-a-row
+    # policy and Sev take the seventh day (LOGIC-1) — never the minor past
+    # his end, which is the law.
     c.roster_roles = {"Kid": "Cook", "Sev": "Cook"}
     out, added, dates = se._ensure_role_floors([dict(r) for r in rows], WEEK, DAYS, 1, {}, {}, floors=floors,
                                                constraints=c)
     mon = [r for r in out if r["date"] == MON]
-    assert [r["employee"] for r in mon] in ([], ["Kid"])
-    assert all(se._span_minutes(r)[1] <= 22 * 60 for r in mon)
+    assert [r["employee"] for r in mon] in (["Kid"], ["Sev"])
+    assert all(se._span_minutes(r)[1] <= 22 * 60 for r in mon if r["employee"] == "Kid")
+    assert not _kinds(out, c, "minor_late")
+    # Where the jurisdiction makes the run law, Sev never takes it.
+    c.compliance["_pack"] = {"code": "IL", "law": ["max_consecutive_days"]}
+    out, added, dates = se._ensure_role_floors([dict(r) for r in rows], WEEK, DAYS, 1, {}, {}, floors=floors,
+                                               constraints=c)
+    assert "Sev" not in [r["employee"] for r in out if r["date"] == MON]
     assert not _kinds(out, c, "minor_late") and not _kinds(out, c, "long_run")
 
 

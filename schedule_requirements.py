@@ -380,7 +380,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             # Asks folded in (PR-7): +1 of a role, with its reason.
             for key, word, a in _adjust_for(adjustments, d, part, need, raw_by_part):
                 try:
-                    delta = int(a.get("delta") or 1)
+                    delta = int(a["delta"]) if a.get("delta") is not None else 1
                 except (TypeError, ValueError):
                     delta = 1
                 if key is None:
@@ -390,8 +390,16 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 v[1] += delta
                 if not a.get("firm", False):
                     v[4] += delta
+                # A position that is one of the usual crew (schedule_dedicated,
+                # LOGIC-16): no +1 on top, but never fewer than it.
+                try:
+                    at_least = int(a.get("at_least") or 0)
+                except (TypeError, ValueError):
+                    at_least = 0
+                if at_least and v[1] < at_least:
+                    v[1] = at_least
                 if a.get("reason"):
-                    v[5].append(f"{delta:+d} {a['reason']}")
+                    v[5].append(f"{delta:+d} {a['reason']}" if delta else str(a["reason"]))
             # Held to the owner's hours and ceilings by role (PROMPT-1).
             _apply_limits(need, day, part, role_windows, role_caps)
             # A shift the owner said "leaner is fine" about in Crew carries
