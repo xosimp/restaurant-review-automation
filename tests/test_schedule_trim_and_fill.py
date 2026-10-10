@@ -365,11 +365,16 @@ def test_the_floor_pass_never_lands_a_minor_past_their_end_or_a_seventh_day(no_a
                                                constraints=c)
     mon = [r for r in out if r["date"] == MON]
     assert [r["employee"] for r in mon] == ["Ok"], mon
-    # with nobody legal the floor stays open (and flagged), never filled illegally
+    # with nobody legal on the week's own cook shape (5-11pm) the floor is
+    # never filled illegally: the minor gets a shift built over the short
+    # half hours that ends before his limit (schedule audit 10/10/26
+    # BUGSGEN-3 — the fill covers the core window it is short in), or none
     c.roster_roles = {"Kid": "Cook", "Sev": "Cook"}
     out, added, dates = se._ensure_role_floors([dict(r) for r in rows], WEEK, DAYS, 1, {}, {}, floors=floors,
                                                constraints=c)
-    assert MON not in dates
+    mon = [r for r in out if r["date"] == MON]
+    assert [r["employee"] for r in mon] in ([], ["Kid"])
+    assert all(se._span_minutes(r)[1] <= 22 * 60 for r in mon)
     assert not _kinds(out, c, "minor_late") and not _kinds(out, c, "long_run")
 
 
@@ -406,7 +411,11 @@ def test_a_fill_never_opens_a_manager_gap(no_avail):
             _row(TUE, "Dee", "Dish", "5:00pm", "11:30pm")]
     out, added, dates = se._ensure_role_floors([dict(r) for r in rows], [MON], ["Monday"], 1, {}, {},
                                                floors=floors, constraints=c)
-    assert MON not in dates, "a dish shift to 11:30pm would leave 10-11:30pm with no manager"
+    # The 11:30pm template is refused; a shift over the short half hours
+    # (5:30-8:30pm) inside the manager's hours fills it instead (BUGSGEN-3).
+    added_mon = [r for r in out if r["date"] == MON and r["role"] == "Dish"]
+    assert all(se._span_minutes(r)[1] <= 22 * 60 for r in added_mon), \
+        "a dish shift to 11:30pm would leave 10-11:30pm with no manager"
     assert not [v for v in _kinds(out, c, "no_manager") if v["date"] == MON]
     # a template inside the manager's hours is added
     rows[2] = _row(TUE, "Dee", "Dish", "5:00pm", "10:00pm")

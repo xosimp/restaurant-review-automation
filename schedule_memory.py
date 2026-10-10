@@ -2885,6 +2885,19 @@ def memory_view(restaurant_id, db_path=None, include_retired=True, principal=Tru
             "can_be_rule": (not mirror and r["status"] in ("candidate", "active", "retest")
                             and _rule_refusal(r, value) is None)})
         counts[r["status"]] = counts.get(r["status"], 0) + 1
+    # The owner's answers in the Studio's Crew stage — a minimum kept, a
+    # leaner shift accepted — each with its review date, held in code and
+    # answered there (crew_matrix.memory_items; schedule audit 10/10/26
+    # LEARNING-17: an explicit owner label is never lost to the memory).
+    try:
+        import crew_matrix as _cm
+        from models import get_restaurant as _gr
+        _r = _gr(restaurant_id) if db_path is None else _gr(restaurant_id, db_path=db_path)
+        for it in _cm.memory_items(_r):
+            items.append(it)
+            counts[it["status"]] = counts.get(it["status"], 0) + 1
+    except Exception as e:
+        log.warning("schedule_memory: crew answers unreadable for %s: %s", restaurant_id, e)
     return {"items": items, "counts": counts,
             "consolidated_at": mdy(st["consolidated_at"]) if st and st["consolidated_at"] else None,
             "classes": CLASS_LABELS,
