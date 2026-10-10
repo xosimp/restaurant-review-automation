@@ -10789,6 +10789,11 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .swg-chip .s{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .swg-chip.bad{border-color:var(--hb-bad);box-shadow:inset 3px 0 0 var(--hb-bad)}
 .swg-chip.bad .s{color:var(--hb-bad)}
+/* TRUST-23: a moved shift keeps its flag while the rules recheck; dashed until they answer. */
+.swg-chip.pending{border-style:dashed}
+.sched-row.pending .rr.pending{color:var(--ink3)}
+/* TRUST-17: a shift the owner pinned - a regenerate keeps it exactly. */
+.swg-chip.locked::after{content:'';position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:2px;background:var(--ember)}
 .swg-chip.chg:after{content:'';position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--blue)}
 .swg-chip.sched-leaving{opacity:0;transform:scale(.94)}
 .swg-chip.editing{box-shadow:0 0 0 2px var(--ember)}
@@ -22266,40 +22271,22 @@ var _dayColors = {'Monday':'#1a2e40','Tuesday':'#1a2e40','Wednesday':'#1a2840','
 var _schedBtn = null;
 var _schedPollInterval = null;
 
-// What the generator is actually doing, while it does it.
-//
-// A spinner for sixty seconds tells an owner that something is slow. These
-// lines tell them something intelligent is happening, and each one names a
-// real stage: the prompt genuinely carries availability, labor targets,
-// operational scores and leadership rules, and the passes afterwards
-// genuinely repair rows, check strength and score quality.
-//
-// The timings are estimates, never progress. The one real measure is the
-// days the answer has finished (schedDaysLine, from the poll): the server
-// reports those, never a percentage, so this never claims one — the last
-// step simply holds until the schedule arrives.
-// The first step names last year's same days only when the page says that
-// input exists (labor.last_year_available, read tolerantly - an older
-// server never sends it): a progress line is a claim about the inputs, and
-// most restaurants have no year of history (NS1 #21).
-var _SCHED_STEPS = [
-  [0,  window._SCHED_HAS_LAST_YEAR ? "Reading last year's same days" : 'Reading your shift and sales history'],
-  [7,  'Checking who is available'],
-  [15, 'Balancing against your labor target'],
-  [26, 'Weighing operational scores'],
-  [36, 'Checking leadership requirements'],
-  [46, 'Building the strongest team it can'],
-  [62, 'Scoring every shift for quality']
-];
+// What the generator is actually doing, while it does it (schedule audit
+// 10/10/26 TRUST-16): the steps are the stages the JOB REPORTED reaching
+// (schedule_engine.GENERATION_STAGES on the poll's `progress.stages`) -
+// done, the one it is on, the next - never an elapsed-time script ticking
+// "Checking leadership requirements" while the model was still writing
+// Monday. Until the first stage is reported the pulse bar shows, nothing
+// is ticked. The days the answer has finished (schedDaysLine) ride beside
+// it, as before. The inputs stage names last year's same days only when
+// the page says that input exists (labor.last_year_available - a progress
+// line is a claim about the inputs; NS1 #21).
+var SCHED_INPUT_LABEL = window._SCHED_HAS_LAST_YEAR ? "Reading last year's same days" : 'Reading your shift and sales history';
 var _schedStepTimer = null;
-// The step times above are a 75-second sketch; a week now takes minutes, so
-// they stretch to the measured typical draft (scheduleTiming) and the last
-// step no longer sits on "Scoring" for most of the wait.
-var _schedStepScale = 1;
 var _schedTiming = null;
-// {days_total, days_drafted, dates_drafted} from a pending poll: the days
-// the answer has finished as it streams (AI cost audit 10/7/26 #36). A real
-// count, unlike the step times above; absent until the first day is done.
+// {days_total, days_drafted, dates_drafted, stage, stages} from a pending
+// poll: the days the answer has finished as it streams (AI cost audit
+// 10/7/26 #36) and the stages the job reported (TRUST-16).
 var _schedProgress = null;
 
 // "3 of 7 days drafted", or '' before the first day is finished.
@@ -22317,7 +22304,6 @@ function schedDaysLine(p) {
 function scheduleTiming(start, typical, waitSeconds) {
   _schedTiming = {start: start, typical: typical && +typical.seconds > 0 ? typical : null,
                   until: +waitSeconds > 0 ? start + waitSeconds * 1000 : null};
-  _schedStepScale = _schedTiming.typical ? Math.max(1, _schedTiming.typical.seconds / 75) : 3;
 }
 function _schedClock(ms) {
   var d = new Date(ms), h = d.getHours(), m = d.getMinutes();
@@ -22344,7 +22330,7 @@ function renderScheduleEta(startedAt) {
 
 function startScheduleSteps(startedAt) {
   stopScheduleSteps();
-  _schedTiming = null; _schedStepScale = 1; _schedProgress = null;
+  _schedTiming = null; _schedProgress = null;
   _schedStepTimer = setInterval(function () { renderScheduleSteps(startedAt); }, 500);
   renderScheduleSteps(startedAt);
 }
@@ -22356,28 +22342,31 @@ function stopScheduleSteps() {
 function renderScheduleSteps(startedAt) {
   var el = document.getElementById('sched-steps');
   if (!el) { stopScheduleSteps(); return; }
-  var elapsed = (Date.now() - startedAt) / 1000;
-  var current = 0, i;
-  for (i = 0; i < _SCHED_STEPS.length; i++) {
-    if (elapsed >= _SCHED_STEPS[i][0] * _schedStepScale) current = i;
-  }
   renderScheduleEta(startedAt);
+  var st = (_schedProgress && _schedProgress.stages) || [], i, current = -1;
+  for (i = 0; i < st.length; i++) if (st[i].current) current = i;
+  if (current < 0) {
+    // Nothing reported yet: the pulse, never a tick the job did not send.
+    el.innerHTML = '<div class="dr-pulse" role="status" aria-label="Starting the draft"><i></i></div>';
+    return;
+  }
   // A window rather than the whole list, so the block keeps its height and
   // the eye stays on the live line.
   var lower = Math.max(0, current - 2);
-  var upper = Math.min(_SCHED_STEPS.length - 1, current + 1);
+  var upper = Math.min(st.length - 1, current + 1);
   var html = '';
   for (i = lower; i <= upper; i++) {
-    var done = i < current, live = i === current;
+    var done = !!st[i].done, live = i === current;
     var mark = done
       ? '<i class="cv-ok" style="width:17px;height:17px" aria-hidden="true"></i>'
       : (live ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ember)"></span>'
               : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;border:1px solid var(--paper3)"></span>');
     var colour = live ? 'var(--ink)' : 'var(--ink3)';
+    var label = st[i].key === 'inputs' ? SCHED_INPUT_LABEL : (st[i].label || '');
     html += '<div style="display:flex;align-items:center;gap:11px;padding:5px 0;opacity:' + (done ? '.65' : '1') + '">'
           + '<span style="width:18px;display:inline-flex;justify-content:center">' + mark + '</span>'
           + '<span style="font-size:14.5px;font-weight:' + (live ? '600' : '400') + ';color:' + colour + '">'
-          + _escHtml(_SCHED_STEPS[i][1]) + '</span></div>';
+          + _escHtml(label) + '</span></div>';
   }
   el.innerHTML = html;
 }
@@ -22599,7 +22588,10 @@ function _schedHandleResult(data) {
     var rv = data.review || null;
     var otMoves = [], oi, otf = data.overtime_forecast || [];
     for (oi = 0; oi < otf.length; oi++) if (otf[oi] && otf[oi].candidate) otMoves.push(otf[oi]);
-    renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations,
+    // A reopened week has no sweep of its own yet: its list starts empty
+    // until ssRescoreOnOpen's recheck lands, never another week's flags
+    // (schedule audit 10/10/26 TRUST-25).
+    renderScheduleReview({review: rv, pending_time_off: data.pending_time_off, violations: data.rule_violations || [],
                           overtime_moves: otMoves, standby_days: data.standby_days || [],
                           likely_edits: data.likely_edits || [],
                           fixes: rv ? (rv.fixes || []) : [], unfixed: rv ? (rv.unfixed || []) : [],
@@ -23760,8 +23752,7 @@ function openShiftSwap(index, anchorEl) {
 function applyShiftSwap(index, name) {
   if (_schedReadOnly()) { _schedRenderTable(); return; }
   _schedRows[index].employee = name;
-  _schedRows[index].needs_review = false;
-  _schedRows[index].review_reason = '';
+  _schedPendRecheck(_schedRows[index]);
   _schedOverrides[index] = true;
   // Staged like every other edit: the rules check re-runs now, the score
   // and the stored week move when the manager presses Save.
@@ -23951,7 +23942,7 @@ function _schedRenderTable(collapse) {
     var constraintBadge = constraintNote
       ? ' <span title="' + _escAttr(constraintNote) + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
       : '';
-    var cls = 'sched-row' + (row.needs_review ? ' needs-review' : '') + (_schedWhyOpen === i ? ' open' : '');
+    var cls = 'sched-row' + (row.needs_review || row.review_unchecked ? ' needs-review' : '') + (row.review_pending ? ' pending' : '') + (_schedWhyOpen === i ? ' open' : '');
     tHtml += '<tr class="' + cls + '" data-sched-row="' + i + '" style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
     tHtml += '<td data-sort-key="' + _escAttr((row.date || '') + ' ' + ('0000' + i).slice(-4)) + '" style="' + TD + 'color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + _escHtml(day) + (isNewDay ? _schedHolidayMark(row.date) : '') + '</td>';
     // Clicking a name opens the list of people who could take that shift
@@ -23960,7 +23951,9 @@ function _schedRenderTable(collapse) {
           + '<span data-shift-row="' + i + '" title="Swap for somebody who can take this shift" style="cursor:pointer">'
           + _escHtml(empName) + '</span>' + constraintBadge
           + (_schedOverrides[i] ? ' <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:#56ccf2;background:rgba(86,204,242,.15);padding:1px 5px;border-radius:8px">CHANGED</span>' : '')
-          + (row.needs_review ? '<span class="rr">&#9888; ' + _escHtml(row.review_reason || 'needs review') + '</span>' : '')
+          + (row.review_unchecked ? '<span class="rr">&#9888; Not checked \u2014 recheck before sending</span>'
+             : (row.needs_review ? '<span class="rr">&#9888; ' + _escHtml(row.review_reason || 'needs review') + (row.review_pending ? ' \u00b7 rechecking' : '') + '</span>'
+                : (row.review_pending ? '<span class="rr pending">Rechecking\u2026</span>' : '')))
           + '</td>';
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.45)">' + _escHtml(row.role || '') + '</td>';
     tHtml += '<td style="' + TD + 'color:rgba(255,255,255,.75);white-space:nowrap">' + _escHtml(row.shift_start || '') + '\u2013' + _escHtml(row.shift_end || '') + '</td>';
@@ -24704,6 +24697,29 @@ function _schedSetDirty(on) {
   if (window.psLabel) psLabel();
 }
 
+// A moved, swapped or edited row keeps its flag until the recheck answers
+// (schedule audit 10/10/26 TRUST-23): it used to be cleared on the drop,
+// before any rule had looked, and a recheck that failed left it clean - a
+// "clean" week the gate later rejected. Pending, the old flag stays on
+// screen; a recheck that fails marks the row "not checked" and holds Send
+// until one succeeds.
+var _schedUnchecked = false;
+function _schedPendRecheck(r) {
+  if (!r) return;
+  r.review_pending = true;
+  r.review_unchecked = false;
+}
+function _schedRecheckSettled(ok) {
+  var i, any = false;
+  for (i = 0; i < _schedRows.length; i++) {
+    var r = _schedRows[i];
+    if (ok) { r.review_pending = false; r.review_unchecked = false; }
+    else if (r.review_pending || r.review_unchecked) { r.review_pending = false; r.review_unchecked = true; any = true; }
+  }
+  _schedUnchecked = !ok && any;
+  if (!ok && typeof _schedRenderTable === 'function') _schedRenderTable();
+  if (window.psLabel) psLabel();
+}
 function _schedRecheck() {
   var base = [];
   try { base = JSON.parse(_schedSaved) || []; } catch (e) { base = []; }
@@ -24712,14 +24728,20 @@ function _schedRecheck() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, baseline_rows: base, history_id: _schedHistoryId || null})
   }).then(apiJson).then(function (d) {
-    if (d && d.ok && window.renderScheduleReview) {
+    if (!(d && d.ok)) { _schedRecheckSettled(false); _schedRenderCost(null); return; }
+    // Only an answer for the rows still on screen settles them; a late one
+    // for rows since edited waits for the next recheck.
+    if (sent === _swRowsSig(_schedRows)) _schedRecheckSettled(true);
+    if (window.renderScheduleReview) {
       renderScheduleReview({review: d.review, pending_time_off: d.pending_time_off, violations: d.violations, overtime_moves: d.overtime_moves || [], fixes: [], unfixed: []});
     }
+    // The pre-publish review follows the rows on screen (TRUST-4, TRUST-24).
+    if (window.prStale) prStale();
     // Kept only for the rows still on screen: a late answer for rows since
     // edited (or another week's) waits for the next recheck.
     if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); }
     _schedRenderCost(d && d.ok ? d.cost : null);
-  }).catch(function () { _schedRenderCost(null); });
+  }).catch(function () { _schedRecheckSettled(false); _schedRenderCost(null); });
 }
 
 // "+6h · +$90 · 2h overtime" — what the edits on screen move against the
@@ -24865,7 +24887,7 @@ function schedFinishEdit(i, box) {
   if (date) { row.date = date; row.day = _schedDayOf(date) || row.day; }
   row.employee = emp; row.role = val('role') || ''; row.shift_start = start; row.shift_end = end;
   row.scheduled_hours = _schedHoursBetween(start, end);
-  row.needs_review = false; row.review_reason = '';
+  _schedPendRecheck(row);
   _schedOverrides[i] = true;
   _schedEditIdx = null; _schedEditOpts = []; _schedAddedIdx = null;
   _schedSortRows();
@@ -26263,7 +26285,7 @@ function swRenderGrid() {
         for (var c = 0; c < list.length; c++) {
           var ri = list[c], rw = _schedRows[ri], why = rw.needs_review ? (rw.review_reason || 'needs review') : (rw.notes || '');
           var sub = '<span class="hb-num">' + _schedHrs(_swRowHrs(rw)) + 'h</span>' + (rw.role && rw.role !== q.role ? ' · ' + _escHtml(rw.role) : '') + (rw.needs_review ? ' · ' + _escHtml(String(why).slice(0, 40)) : '');
-          h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review ? ' bad' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
+          h += '<button type="button" draggable="true" class="swg-chip' + (rw.needs_review || rw.review_unchecked ? ' bad' : '') + (rw.review_pending ? ' pending' : '') + (rw.locked ? ' locked' : '') + (_schedOverrides[ri] ? ' chg' : '') + (_swEditIdx === ri ? ' editing' : '') + (_swSel === ri ? ' sel' : '') + '" data-swg-chip="' + ri + '"'
              + ' aria-label="' + _escAttr(q.name + ', ' + _schedDayOf(days[k]) + ' ' + (rw.shift_start || '') + ' to ' + (rw.shift_end || '') + (rw.needs_review ? ', needs review' : '')) + '">'
              + '<span class="t">' + _escHtml(_swShort(rw.shift_start)) + '–' + _escHtml(_swShort(rw.shift_end)) + '</span><span class="s">' + sub + '</span>'
              // A manager shift planned before the draft, and the clocks going back (M-2, A2-6).
@@ -27670,7 +27692,7 @@ function ssFindCover(i, btn) {
 function ssSwapTo(i, name) {
   var r = _schedRows[i]; if (!r || !name) return;
   var was = r.employee;
-  r.employee = name; r.needs_review = false; r.review_reason = '';
+  r.employee = name; _schedPendRecheck(r);
   r.notes = ((r.notes || '') + ' (was ' + was + ')').trim();
   _schedOverrides[i] = true; _swSelRow = r;
   schedAfterEdit();
@@ -27844,7 +27866,7 @@ document.addEventListener('drop', function (ev) {
   var r = _schedRows[i], pr = String(cell.getAttribute('data-swg-drop')).split('|'), was = r.employee + ' ' + _schedDayOf(r.date).slice(0, 3);
   r.employee = pr[0];
   if (pr[1] && pr[1] !== r.date) { r.date = pr[1]; r.day = _schedDayOf(pr[1]) || r.day; }
-  r.needs_review = false; r.review_reason = '';
+  _schedPendRecheck(r);
   r.notes = ((r.notes || '') + ' (moved from ' + was + ')').trim();
   _schedOverrides[i] = true; _swSelRow = r;
   _schedSortRows();
@@ -39481,6 +39503,10 @@ window.cavPalette = cavPalette;
         // The rows' version, and whether a newer copy replaced this one
         // (schedule re-audit 10/4/26 UI-1, UI-3).
         version: d.version, superseded_by: d.superseded_by || null, replaced_reason: d.replaced_reason || null,
+        // The aids a fresh draft carries, worked out again on the rows as
+        // they stand (schedule_engine.generation_aids - TRUST-25).
+        overtime_forecast: d.overtime_forecast || [], standby_days: d.standby_days || [],
+        likely_edits: d.likely_edits || [],
         pending_time_off: undefined});
       if (!opts.quiet && panel) panel.scrollIntoView({behavior: 'smooth', block: 'start'});
     });

@@ -51,5 +51,8 @@ def test_the_building_screen_centres_the_steps_and_says_the_time():
     assert "t.typical.seconds * 1.5" in eta and "_schedClock(t.until)" in eta
     steps = DASH[DASH.index("function renderScheduleSteps(startedAt) {"):]
     steps = steps[:steps.index("\n}\n")]
-    assert "_SCHED_STEPS[i][0] * _schedStepScale" in steps and "font-size:14.5px" in steps
+    # The steps are the stages the job reported (schedule audit 10/10/26
+    # TRUST-16), never an elapsed-time script.
+    assert "(_schedProgress && _schedProgress.stages)" in steps and "font-size:14.5px" in steps
+    assert "elapsed" not in steps and "_SCHED_STEPS" not in DASH
     assert 'width:17px;height:17px' in steps
