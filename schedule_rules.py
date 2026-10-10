@@ -795,121 +795,70 @@ def cut_policy(restaurant, text: str = "") -> dict:
 
 
 # ── time helpers ───────────────────────────────────────────────────────────
+# The one notion of a row's time is schedule_time's (schedule audit 10/10/26
+# ARCH-12, BUGSGEN-8): these names stay because the passes, the routes and
+# the tests import them, and each is that module's rule, never a copy.
 
-def parse_minutes(t: str):
-    """'9:30pm' / '21:30' → minutes past midnight, or None. The parse is
-    remembered per spelling (_parse_clock): the sweep reads the same few
-    dozen times on every trial a pass weighs (schedule audit 10/3/26 P-37)."""
-    raw = (t or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    return _parse_clock(raw)
+import schedule_time as _stime  # noqa: E402
 
-
-@lru_cache(maxsize=4096)
-def _parse_clock(raw: str):
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            d = datetime.strptime(raw, fmt)
-            return d.hour * 60 + d.minute
-        except ValueError:
-            continue
-    return None
-
-
-# A start between these hours with no end to judge by is early prep for the
-# morning (a 4:30am baker), not last night's tail.
-_EARLY_PREP_FROM = 4 * 60
+parse_minutes = _stime.parse_minutes
+_EARLY_PREP_FROM = _stime.NIGHT_TAIL_BEFORE
 
 
 def _night_offset(start_m, end_m=None) -> int:
-    """1440 when a shift is in the small hours of its row's night: a row's
-    date is its BUSINESS date, and a shift that starts before the business
-    day's first hour (time_utils.BUSINESS_DAY_START_HOUR) AND is over by
-    6am is after that night's midnight — a 12:30am–4:00am porter dated
-    Friday works Saturday 00:30, after Friday's close. It was read as the
-    start of Friday, so the porter's own Thursday close looked like an
-    overlap and the row opened a false manager gap at dawn (schedule audit
-    10/3/26 E-32). A shift that starts that early and runs into the morning
-    is the morning's (a 4:30am–12:30pm baker); with no end to judge by, a
-    start from 4am on is too. The same night as the no-show watch
-    (intraday.coverage_gaps, staff_comms._due)."""
-    from time_utils import BUSINESS_DAY_START_HOUR
-    if start_m is None or start_m >= BUSINESS_DAY_START_HOUR * 60:
-        return 0
-    if end_m is None:
-        return 24 * 60 if start_m < _EARLY_PREP_FROM else 0
-    end = end_m if end_m > start_m else end_m + 24 * 60
-    return 24 * 60 if end <= _OVERNIGHT_LATEST_BEFORE else 0
+    """1440 when a shift starting at `start_m` is in the small hours of its
+    row's night (schedule_time.night_offset): the start alone decides, so an
+    hour's difference in the end can never move a shift a day (BUGSGEN-8 —
+    1:00-5:30am sat on the next day and 1:00-6:30am on the same one). A
+    12:30am-4:00am porter dated Friday works Saturday 00:30, after Friday's
+    close (E-32); a 4:30am baker is the morning's. `end_m` is ignored and
+    kept for the callers that pass it."""
+    return _stime.night_offset(start_m)
 
 
 def start_minutes(row):
     """A row's start as minutes past its own (business) date's midnight —
     past 1440 for a start in the small hours of its night (E-32)."""
-    s = parse_minutes(row.get("shift_start", ""))
-    return None if s is None else s + _night_offset(s, parse_minutes(row.get("shift_end", "")))
+    return _stime.start_of(row)
 
 
 def shift_span(row, tz=None) -> tuple:
-    """(start_dt, end_dt) as datetimes on the row's date; an end before the
-    start crosses midnight, and a start before the business day's first hour
-    is that night's small hours (E-32, _night_offset). (None, None) when
-    unreadable.
-
-    With `tz` (the restaurant's IANA zone) both ends are the real instants,
-    as naive UTC: a close and an open either side of a clock change are an
-    hour closer or further apart than the wall clock says, and the rest rule
-    is about hours actually off (SCHED-32). Without it, wall-clock time."""
-    try:
-        base = datetime.strptime(row.get("date", ""), "%Y-%m-%d")
-    except (ValueError, TypeError):
-        return None, None
-    s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
-    if s is None or e is None:
-        return None, None
-    night = _night_offset(s, e)
-    start = base + timedelta(minutes=s + night)
-    end = base + timedelta(minutes=(e if e > s else e + 24 * 60) + night)
-    zone = _zone(tz)
-    if zone is not None:
-        start = start.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
-        end = end.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
-    return start, end
+    """(start_dt, end_dt) of a row (schedule_time.shift_span): wall clock on
+    its business date, or with `tz` (the restaurant's IANA zone) the real
+    instants as naive UTC — the rest rule is about hours actually off
+    (SCHED-32). (None, None) when unreadable."""
+    return _stime.shift_span(row, tz)
 
 
 def span_hours(row, tz=None) -> float:
-    """A row's length in hours as actually worked: with the restaurant's zone
-    the real instants, so a 5pm-2am close on the night the clocks go back
-    (Halloween 10/31/26 at Simple EJ's) is 10 hours, not the 9 the wall
-    clock reads (schedule audit 10/3/26 E-23). 0.0 when unreadable. Every
-    pass that writes a row's times writes its hours from this."""
-    s, e = shift_span(row, tz)
-    return round((e - s).total_seconds() / 3600, 2) if s and e else 0.0
+    """A row's length in hours as actually worked (schedule_time.real_hours):
+    with the restaurant's zone a 5pm-2am close on the night the clocks go
+    back (Halloween 10/31/26 at Simple EJ's) is 10 hours, not 9 (E-23). 0.0
+    when unreadable. Every pass that writes a row's times writes its hours
+    from this (retimed / schedule_time.retime — BUGSGEN-6)."""
+    return _stime.real_hours(row, tz)
 
 
-def hours_text(hours) -> str:
-    """Hours as the rows carry them: "9", "7.5", "6.25"."""
-    return str(round(float(hours or 0), 2)).rstrip("0").rstrip(".") or "0"
+hours_text = _stime.hours_text
+_zone = _stime.zone
 
 
-_ZONES = {}
+def retimed(row, start_m=None, end_m=None, tz=None) -> dict:
+    """`row` re-timed to `start_m`/`end_m` (minutes, any day's) with its
+    scheduled_hours written from its real span in the restaurant's zone —
+    the one way a pass writes a row's times (BUGSGEN-6, BUGSGEN-7). In place;
+    returns the row."""
+    return _stime.retime(row, start_m, end_m, tz)
 
 
-def _zone(tz):
-    if not tz:
-        return None
-    if tz not in _ZONES:
-        try:
-            from zoneinfo import ZoneInfo
-            _ZONES[tz] = ZoneInfo(str(tz))
-        except Exception:
-            _ZONES[tz] = None
-    return _ZONES[tz]
+def tz_of(c) -> str:
+    """The restaurant's IANA zone a Constraints carries (or None)."""
+    return getattr(c, "tz", None) or None
 
 
 # A "latest" this early with no "earliest" after it is the small hours of
 # the next morning ("until 1:00am"), not a one-in-the-morning curfew.
-_OVERNIGHT_LATEST_BEFORE = 6 * 60
+_OVERNIGHT_LATEST_BEFORE = _stime.SMALL_HOURS_BEFORE
 
 
 def window_allows(lo, hi, start_m, end_m) -> tuple:
@@ -970,24 +919,21 @@ def row_hours(row) -> float:
     try:
         return float(row.get("scheduled_hours") or 0)
     except (TypeError, ValueError):
-        s, e = shift_span(row)
-        return round((e - s).total_seconds() / 3600, 1) if s and e else 0.0
+        return _stime.wall_hours(row)
 
 
 def _fmt_minutes(m: int) -> str:
-    h, mm = divmod(int(m), 60)
-    suffix = "am" if h < 12 or h == 24 else "pm"
-    h12 = h % 12 or 12
-    return f"{h12}:{mm:02d}{suffix}"
+    """Minutes (any day's — 1500 is 1:00am) as "1:00am"."""
+    return _stime.fmt_minutes(m)
 
 
 def daypart_of(shift_start: str) -> str:
-    """Morning or night on a 3pm cutoff — and a start in the small hours is
-    the night it belongs to, never the next morning (E-32, _night_offset)."""
-    m = parse_minutes(shift_start)
-    if m is None:
-        return "unknown"
-    return "night" if m >= 15 * 60 or _night_offset(m) else "morning"
+    """The daypart a start time alone falls in (schedule_time.start_daypart):
+    before the restaurant's daypart boundary (3pm by default) the morning,
+    from it the night, and a start in the small hours the night it belongs
+    to (E-32). For a whole row use schedule_time.primary_daypart /
+    present_dayparts — the one lunch/dinner rule (BUGSGEN-25)."""
+    return _stime.start_daypart(shift_start)
 
 
 # ── the constraint set ─────────────────────────────────────────────────────
@@ -4352,13 +4298,17 @@ def _tail_note(r: dict) -> str:
 
 def close_minutes(c: Constraints, day: str):
     """The close on `day` as minutes past that day's midnight — a close in
-    the small hours ("12:00am", "1:30am") is the NEXT morning, past 24h. It
-    was read as minute 0, so a midnight close never flagged a bartender
-    leaving at 9pm under "stays an hour after close" (NS5 L14)."""
+    the small hours ("12:00am", "1:30am"), or at or before that day's open,
+    is the NEXT morning, past 24h. It was read as minute 0, so a midnight
+    close never flagged a bartender leaving at 9pm under "stays an hour
+    after close" (NS5 L14)."""
     m = parse_minutes((c.close_times or {}).get(day, ""))
     if m is None:
         return None
-    return m + 24 * 60 if m < _OVERNIGHT_LATEST_BEFORE else m
+    # Read against that day's open (schedule_time.close_on_timeline): a close
+    # at or before the open is the next morning, so a 6am-6am diner or a bar
+    # closing at 6am closes at 6am tomorrow, not before it opened (BUGSGEN-22).
+    return _stime.close_on_timeline(m, parse_minutes((getattr(c, "open_times", None) or {}).get(day, "") or ""))
 
 
 def close_cap_minutes(c, row):
@@ -4403,13 +4353,7 @@ def end_minutes(row):
     """A row's end as minutes past its own date's midnight: an end at or
     before its start crosses midnight, and a row starting in the small hours
     of its night ends in them too (E-32, _night_offset)."""
-    s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
-    if e is None:
-        return None
-    night = _night_offset(s, e)
-    if s is not None and e <= s:
-        e += 24 * 60
-    return e + night
+    return _stime.end_of(row)
 
 
 def role_time_for(c, row) -> dict:
@@ -4973,10 +4917,7 @@ def open_hours(c: "Constraints", day: str):
     from the hours on file — a close in the small hours is the next
     morning's. Either end is None when it is not on file."""
     o = parse_minutes((c.open_times or {}).get(day, "") or "")
-    cl = close_minutes(c, day)
-    if o is not None and cl is not None and cl <= o:
-        cl += 24 * 60
-    return o, cl
+    return o, close_minutes(c, day)
 
 
 def _day_offset(d: str, base: str):

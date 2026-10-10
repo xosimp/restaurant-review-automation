@@ -107,6 +107,7 @@ from datetime import datetime
 
 import schedule_rules as _rules
 import shift_quality as sq
+import schedule_time as _stime
 
 # The same order of budget the repair loop uses on the background job.
 DEFAULT_SECONDS = 12.0
@@ -637,7 +638,9 @@ class Problem:
             primary.setdefault((r["date"], part), []).append(r)
         closes_on = {}
         for (date, part), rs in primary.items():
-            latest = max((sq._end_minutes(r.get("shift_end")) for r in rs), default=-1)
+            # Each row's end on its own business timeline — the scorer's
+            # reading (shift_quality._row_end), so the two name one closer.
+            latest = max((sq._row_end(r) for r in rs), default=-1)
             latest_end[date] = max(latest_end.get(date, -1), latest)
             if latest > closes_on.get(date, (-1, None))[0]:
                 closes_on[date] = (latest, part)
@@ -694,7 +697,7 @@ class Problem:
             u.dw = sq.DEMAND_WEIGHT.get(u.demand, 1.0)
             u.hard = sq.DEMAND_RANK.get(u.demand, 1) >= sq.DEMAND_RANK[sq.HARD_DEMAND]
             u.closing = any(p == self.closes_on.get(u.date) or
-                            (sq._end_minutes(r.get("shift_end")) >= 0 and sq._end_minutes(r.get("shift_end")) == latest_end.get(u.date))
+                            (sq._row_end(r) >= 0 and sq._row_end(r) == latest_end.get(u.date))
                             for r, p in zip(rs, u.primary))
             u.weekend = u.day in ("Friday", "Saturday", "Sunday")
             name = (rs[0].get("employee") or "").strip()
@@ -1360,8 +1363,9 @@ class Problem:
                             f"a manager on {sq._day_name(d)} from {_rules._fmt_minutes(a % 1440)}", True)
             for m, spans in soft.items():
                 minutes = sum(b - a for a, b in spans)
-                parts = {("morning" if a < sq.DAYPART_CUTOVER else "night") for a, _b in spans} | \
-                        {("night" if b > sq.DAYPART_CUTOVER else "morning") for _a, b in spans}
+                split = _stime.daypart_split()
+                parts = {("morning" if a < split else "night") for a, _b in spans} | \
+                        {("night" if b > split else "morning") for _a, b in spans}
                 dw = sum(self.shift_dw.get((d, p), 0.0) for p in parts) or 1.0
                 cap_loss = (CAP_REF - sq.HARD_BREACH_CAP) * dw
                 self._cover(("m", d, tuple(sorted(m))), m, ok, f"no manager on {sq._day_name(d)}", False,

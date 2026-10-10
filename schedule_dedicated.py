@@ -40,7 +40,6 @@ NOTE_MARK = "Cavnar AI: standing position"
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 PARTS = ("morning", "night")
 PART_WORDS = {"morning": "daytime", "night": "night"}
-SPLIT_MIN = 15 * 60          # schedule_engine._DAYPART_SPLIT: a shift starting at 3pm or later is a night shift
 
 _ALLOW_RX = re.compile(r"\b(no|skip|skipping|without|waive|waived|don'?t need|do not need|not needed|no need|"
                        r"drop|leave off|off)\b", re.I)
@@ -116,11 +115,11 @@ def waivers(text, rules) -> list:
 
 
 def _part_of(row):
-    import schedule_skeleton as sk
-    sp = sk._span(row)
-    if not sp:
-        return None
-    return "night" if sp[0] >= SPLIT_MIN else "morning"
+    """The daypart a past row is, by the one rule (schedule_time.
+    primary_daypart, BUGSGEN-25) — None when its times cannot be read."""
+    import schedule_time as _stime
+    part = _stime.primary_daypart(row)
+    return part if part in PARTS else None
 
 
 def _usual(history, family, day, part):
@@ -190,7 +189,11 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
                 row = {"date": d, "day": day, "role": role, "shift_start": sk._fmt(s), "shift_end": sk._fmt(e % 1440),
                        "notes": f"{rule['label']} — {NOTE_MARK}", "_pinned": DEDICATED_SOURCE,
                        "_pin_reason": rule["label"]}
-                row["scheduled_hours"] = round(((e - s) % 1440 or 1440) / 60.0, 2)
+                # As every row carries it — a string, from the real span in
+                # the restaurant's zone (BUGSGEN-6): it was a float of the
+                # wall-clock span.
+                import schedule_time as _stime
+                row["scheduled_hours"] = _stime.row_hours_text(row, getattr(c, "tz", None))
                 chosen, why_not = None, []
                 for overtime in (False, True):
                     order = sorted(people, key=lambda n: (planned_hours.get(n, 0.0), n))
