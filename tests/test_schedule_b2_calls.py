@@ -311,9 +311,13 @@ def test_the_redo_route_hands_the_owners_reason_to_the_job_on_the_instruction(db
     assert got[0]["instruction"] == ("Keep Ana off doubles What was wrong with the previous draft: "
                                      "Too few people on; Sat is slammed")
     assert "redo_reason" not in got[0] and got[0]["dates"] == [WEEK[5]] and got[0]["base_history_id"] == 1
-    # ...and H1 still records the owner's rejection of those days from the request.
-    assert kept[0][:2] == (1, "redo_days") and kept[0][2]["reason_chip"] == "too_thin"
-    assert kept[0][2]["reason_text"] == "  Sat  is slammed "
+    # ...and H1's rejection of those days rides to the job, recorded only once
+    # its own draft is in force — never at the press (ARCH-18).
+    assert kept == []
+    rej = got[0]["rejection"]
+    assert (rej["history_id"], rej["kind"], rej["dates"]) == (1, "redo_days", [WEEK[5]])
+    assert rej["reason_chip"] == "too_thin" and rej["reason_text"] == "  Sat  is slammed "
+    assert got[0]["prior_draft_id"] == 1                  # a Stop after the redo saved puts it back (ARCH-2)
     # A chip off the list and long words are kept as the owner's (never a 400).
     ops.finish_async_job(body["job_id"], "done", {})
     long = c.post("/mobile/api/labor/generate-schedule", headers=headers,
@@ -922,9 +926,9 @@ def test_the_auto_draft_takes_its_slot_behind_presses():
     import inspect
     import strategy_jobs
     src = inspect.getsource(strategy_jobs._draft_one)
-    assert "generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND)" in src
+    assert "generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND, restaurant_id=r.id)" in src
     sub = inspect.getsource(se.submit_generation)
-    assert "_GEN_SLOTS.announce(job_id)" in sub and "with generation_scope(job_id):" in sub
+    assert "_GEN_SLOTS.announce(job_id)" in sub and "with generation_scope(job_id, restaurant_id=restaurant_id)" in sub
     # The number of generations at once is unchanged.
     assert se._GEN_SLOTS.slots == se.SCHEDULE_GEN_WORKERS
 
@@ -937,7 +941,7 @@ def test_the_auto_draft_joins_an_owners_running_generation_instead_of_starting_a
 
     class _SE:
         @staticmethod
-        def _run_schedule_job(job_id, rid_):
+        def _run_schedule_job(job_id, rid_, **_kw):
             ran.append(job_id)
     assert ops.claim_period(f"auto_draft:{rid}", "2026-10-01")
     strategy_jobs._draft_one(r, db, _SE, bumps.append, period="2026-10-01")
@@ -952,7 +956,7 @@ def test_an_auto_draft_with_nothing_running_claims_its_own_job_and_takes_a_slot(
 
     class _SE:
         @staticmethod
-        def _run_schedule_job(job_id, rid_):
+        def _run_schedule_job(job_id, rid_, **_kw):
             seen.append((job_id, se.current_clock() is not None, ops.active_job("schedule", rid_)))
     strategy_jobs._draft_one(r, db, _SE, lambda k: None, period="2026-10-01")
     job_id, clocked, active = seen[0]
@@ -1485,7 +1489,7 @@ def test_an_auto_draft_with_unwritten_days_is_announced_as_partly_drafted(db, mo
 
     class _SE:
         @staticmethod
-        def _run_schedule_job(job_id, rid_):
+        def _run_schedule_job(job_id, rid_, **_kw):
             ops.finish_async_job(job_id, "done", {"ok": True, "partial": True, "unwritten_dates": [
                 {"date": WEEK[6], "day": "Sunday", "why": "provider"}]})
     strategy_jobs._draft_one(r, db, _SE, lambda k: None, period="2026-10-01")
@@ -1568,7 +1572,7 @@ def test_an_auto_draft_with_no_free_slot_hands_its_day_back(db, monkeypatch):
     monkeypatch.setattr(ops, "release_period", lambda name, period: released.append((name, period)))
 
     @contextlib.contextmanager
-    def busy(job_id, priority=se.GEN_PRIORITY_PRESS):
+    def busy(job_id, priority=se.GEN_PRIORITY_PRESS, restaurant_id=None):
         raise se.GenerationSlotTimeout("no slot")
         yield
     monkeypatch.setattr(se, "generation_scope", busy)

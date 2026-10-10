@@ -232,17 +232,10 @@ def _weekday(iso) -> str:
 
 
 def _minutes(value):
-    """Minutes past midnight from "4:00pm", "4pm", "16:00" or "16:00:00"."""
-    raw = str(value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour * 60 + t.minute
-        except ValueError:
-            continue
-    return None
+    """Minutes past midnight from "4:00pm", "4pm", "16:00", "noon"
+    (schedule_time.parse_minutes — the one reading)."""
+    import schedule_time as _stime
+    return _stime.parse_minutes(value)
 
 
 def _daypart(start) -> str:
@@ -252,12 +245,18 @@ def _daypart(start) -> str:
 
 def _end_part(row) -> str:
     """The daypart a shift ENDS in — what a close is about: a double that
-    started at 10am and closed at 11pm closed the night."""
-    s, e = _minutes(row.get("shift_start")), _minutes(row.get("shift_end"))
-    if s is None or e is None:
-        return _daypart(row.get("shift_start"))
-    e = e + 1440 if e <= s else e
-    return "night" if e > 15 * 60 else "morning"
+    started at 10am and closed at 11pm closed the night
+    (schedule_time.end_daypart: the restaurant's boundary, read at the end
+    of the shift on its business night)."""
+    import schedule_time as _stime
+    part = _stime.end_daypart(row)
+    return _daypart(row.get("shift_start")) if part == "unknown" else part
+
+
+def _row_end(row):
+    """A row's end on its business date's timeline (schedule_time.end_of)."""
+    import schedule_time as _stime
+    return _stime.end_of(row)
 
 
 def _clock(minutes, like=""):
@@ -811,12 +810,17 @@ def _display(e, field="names") -> str:
     return max(d.items(), key=lambda kv: kv[1])[0] if d else ""
 
 
-def _week_of(iso) -> str:
+def _week_of(iso, start_day=0) -> str:
+    """The first date of the schedule week holding `iso` — the restaurant's
+    own week (restaurants.week_start_day, 0 = Monday; ARCH-24): a Wednesday-
+    to-Tuesday week read as two Monday weeks counted one published week of
+    evidence twice, and a redo's week_start (a Wednesday) never matched a
+    Monday key."""
     try:
         d = date.fromisoformat(str(iso)[:10])
     except ValueError:
         return ""
-    return (d - timedelta(days=d.weekday())).isoformat()
+    return (d - timedelta(days=(d.weekday() - int(start_day or 0) % 7) % 7)).isoformat()
 
 
 def _confidence(e, kind, ctx, habit=True) -> float:
@@ -1119,7 +1123,7 @@ def _learn_edges(ctx, kind) -> list:
             e = ev.setdefault((ctx.fam(role), _weekday(d), k), dict(_evidence(kind), ends=[]))
             hit = k in edge
             _note(e, d, w, hit, hand=hit and by_hand(k), person=name, role=role,
-                  start=m if hit else None, week=_week_of(d))
+                  start=m if hit else None, week=_week_of(d, ctx.week_start_day))
             if hit and end is not None:
                 e["ends"].append(_end_adj(m, end))
             if not hit and k in missed:
@@ -1229,7 +1233,7 @@ def _learn_sections(ctx) -> list:
         for sec in {s for _d, s, _n in entries}:
             e = _evidence("section")
             for d, s, name in entries:
-                _note(e, d, recency_weight(ctx.age(d), hl), s == sec, hand=True, person=name, week=_week_of(d))
+                _note(e, d, recency_weight(ctx.age(d), hl), s == sec, hand=True, person=name, week=_week_of(d, ctx.week_start_day))
             if not e["hits"]:
                 continue
             name = _display(e)
@@ -1391,10 +1395,10 @@ def _learn_overruns(ctx) -> list:
             d = str(r.get("date") or "")[:10]
             if len(d) != 10 or d >= today or _nk(r.get("employee")) in ctx.salaried:
                 continue
-            s, e_ = _minutes(r.get("shift_start")), _minutes(r.get("shift_end"))
-            if s is None or e_ is None:
+            e_ = _row_end(r)
+            if e_ is None or _minutes(r.get("shift_start")) is None:
                 continue
-            by.setdefault((d, ctx.fam(r.get("role"))), []).append((e_ + (1440 if e_ <= s else 0), r))
+            by.setdefault((d, ctx.fam(r.get("role"))), []).append((e_, r))
         for (d, fam), g in by.items():
             if not fam:
                 continue
@@ -1419,7 +1423,7 @@ def _learn_overruns(ctx) -> list:
                 e = ev.setdefault((fam, _weekday(d), part), dict(_evidence("end_overrun"), over=[], ends=[]))
                 e["ends"].append(base)
                 hit = over >= STAYED_LATE_MINUTES
-                _note(e, d, recency_weight(ctx.age(d), hl), hit, role=(r.get("role") or "").strip(), week=_week_of(d))
+                _note(e, d, recency_weight(ctx.age(d), hl), hit, role=(r.get("role") or "").strip(), week=_week_of(d, ctx.week_start_day))
                 if hit:
                     e["over"].append(over)
                     observe(ctx.rid, "stayed_late", date=d, daypart=part, role=r.get("role"), person=r.get("employee"),
@@ -1631,7 +1635,7 @@ def _learn_pairs(ctx) -> list:
             groups += list(combinations(keys, 3))
         for g in groups:
             e = ev.setdefault(g, _evidence("pair"))
-            _note(e, d, w, good, week=_week_of(d))
+            _note(e, d, w, good, week=_week_of(d, ctx.week_start_day))
     stats = {}
     for g, e in ev.items():
         if e["opps"] < PAIR_MIN_SHARED:
@@ -1709,7 +1713,7 @@ def _learn_redos(ctx) -> list:
             continue
         chip = " ".join(str((o.get("value") or {}).get("reason") or "").split())[:40]
         by.setdefault((wd, chip.casefold()), {"chip": chip, "weeks": set()})["weeks"].add(
-            str(o.get("week_start") or _week_of(o.get("date")))[:10])
+            str(o.get("week_start") or _week_of(o.get("date"), ctx.week_start_day))[:10])
     out = []
     for (wd, ck), v in by.items():
         e = _evidence("redo_reason")
@@ -2394,8 +2398,9 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
                         closes.setdefault(r.get("date"), []).append(i)
                 for _d, idx in closes.items():
                     def _end(i):
-                        s, e = _minutes(rows[i].get("shift_start")), _minutes(rows[i].get("shift_end"))
-                        return None if s is None or e is None else e + (1440 if e <= s else 0)
+                        if _minutes(rows[i].get("shift_start")) is None:
+                            return None
+                        return _row_end(rows[i])
                     ends = [(_end(i), i) for i in idx if _end(i) is not None]
                     if ends:
                         last = max(e for e, _i in ends)
@@ -2474,10 +2479,10 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
             d = str(r.get("date") or "")[:10]
             if _weekday(d) != day or _fam(r.get("role"), fams) != fam:
                 continue
-            s, e = _minutes(r.get("shift_start")), _minutes(r.get("shift_end"))
-            if s is None or e is None:
+            e = _row_end(r)
+            if e is None or _minutes(r.get("shift_start")) is None:
                 continue
-            by_date.setdefault(d, []).append((e + (1440 if e <= s else 0), i))
+            by_date.setdefault(d, []).append((e, i))
         for d, g in sorted(by_date.items()):
             last = max(e for e, _i in g)
             for end, i in g:
@@ -2491,10 +2496,6 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                     continue
                 if editable is not None and d not in editable:
                     continue
-                try:
-                    hours = float(r.get("scheduled_hours") or 0)
-                except (TypeError, ValueError):
-                    hours = 0.0
                 want = _minutes(v.get("padded_end"))
                 if want is not None:
                     # The usual close, read on the same side of midnight as this one.
@@ -2515,8 +2516,13 @@ def pad_overruns(rows, learned, c=None, editable=None) -> dict:
                     left.append({"index": i, "employee": r.get("employee"), "date": d,
                                  "reason": _allowance_reason(r, v, fam, cut)})
                     continue
-                trial = dict(r, shift_end=_clock(end + step, like=r.get("shift_end")),
-                             scheduled_hours=f"{hours + step / 60.0:g}")
+                trial = dict(r, shift_end=_clock(end + step, like=r.get("shift_end")))
+                # Hours from the real span (BUGSGEN-6): a pad across the
+                # night the clocks change is an hour more or less than the
+                # wall clock's sum.
+                import schedule_time as _stime_pad
+                trial["scheduled_hours"] = _stime_pad.row_hours_text(trial, getattr(c, "tz", None) if c is not None
+                                                                     else None)
                 if c is not None:
                     ok, why = c.can_add(trial, [x for j, x in enumerate(out) if j != i], overtime=True)
                     if not ok:

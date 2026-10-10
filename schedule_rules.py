@@ -756,9 +756,15 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
             from time_utils import restaurant_now
             day = restaurant_now(restaurant, naive=True).date()
         day = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
-        mon = day - _td(days=day.weekday())
-        c = Constraints(restaurant_id=restaurant.id, week_dates=[(mon + _td(days=i)).isoformat() for i in range(7)],
-                        week_days=list(DAYS))
+        # The restaurant's own week (restaurants.week_start_day, ARCH-24): a
+        # Monday-anchored week straddled two of Simple EJ's Wednesday weeks,
+        # so a one-week note rule never held for either.
+        wsd = int(getattr(restaurant, "week_start_day", 0) or 0) % 7
+        first = day - _td(days=(day.weekday() - wsd) % 7)
+        dates = [first + _td(days=i) for i in range(7)]
+        c = Constraints(restaurant_id=restaurant.id, week_dates=[d_.isoformat() for d_ in dates],
+                        week_days=[d_.strftime("%A") for d_ in dates])
+        c.week_start_day = wsd
         c.role_floors = json.loads(json.dumps(base))
         c.open_times = _load_json(getattr(restaurant, "open_times_json", None), {})
         try:
@@ -847,121 +853,70 @@ def cut_policy(restaurant, text: str = "") -> dict:
 
 
 # ── time helpers ───────────────────────────────────────────────────────────
+# The one notion of a row's time is schedule_time's (schedule audit 10/10/26
+# ARCH-12, BUGSGEN-8): these names stay because the passes, the routes and
+# the tests import them, and each is that module's rule, never a copy.
 
-def parse_minutes(t: str):
-    """'9:30pm' / '21:30' → minutes past midnight, or None. The parse is
-    remembered per spelling (_parse_clock): the sweep reads the same few
-    dozen times on every trial a pass weighs (schedule audit 10/3/26 P-37)."""
-    raw = (t or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    return _parse_clock(raw)
+import schedule_time as _stime  # noqa: E402
 
-
-@lru_cache(maxsize=4096)
-def _parse_clock(raw: str):
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            d = datetime.strptime(raw, fmt)
-            return d.hour * 60 + d.minute
-        except ValueError:
-            continue
-    return None
-
-
-# A start between these hours with no end to judge by is early prep for the
-# morning (a 4:30am baker), not last night's tail.
-_EARLY_PREP_FROM = 4 * 60
+parse_minutes = _stime.parse_minutes
+_EARLY_PREP_FROM = _stime.NIGHT_TAIL_BEFORE
 
 
 def _night_offset(start_m, end_m=None) -> int:
-    """1440 when a shift is in the small hours of its row's night: a row's
-    date is its BUSINESS date, and a shift that starts before the business
-    day's first hour (time_utils.BUSINESS_DAY_START_HOUR) AND is over by
-    6am is after that night's midnight — a 12:30am–4:00am porter dated
-    Friday works Saturday 00:30, after Friday's close. It was read as the
-    start of Friday, so the porter's own Thursday close looked like an
-    overlap and the row opened a false manager gap at dawn (schedule audit
-    10/3/26 E-32). A shift that starts that early and runs into the morning
-    is the morning's (a 4:30am–12:30pm baker); with no end to judge by, a
-    start from 4am on is too. The same night as the no-show watch
-    (intraday.coverage_gaps, staff_comms._due)."""
-    from time_utils import BUSINESS_DAY_START_HOUR
-    if start_m is None or start_m >= BUSINESS_DAY_START_HOUR * 60:
-        return 0
-    if end_m is None:
-        return 24 * 60 if start_m < _EARLY_PREP_FROM else 0
-    end = end_m if end_m > start_m else end_m + 24 * 60
-    return 24 * 60 if end <= _OVERNIGHT_LATEST_BEFORE else 0
+    """1440 when a shift starting at `start_m` is in the small hours of its
+    row's night (schedule_time.night_offset): the start alone decides, so an
+    hour's difference in the end can never move a shift a day (BUGSGEN-8 —
+    1:00-5:30am sat on the next day and 1:00-6:30am on the same one). A
+    12:30am-4:00am porter dated Friday works Saturday 00:30, after Friday's
+    close (E-32); a 4:30am baker is the morning's. `end_m` is ignored and
+    kept for the callers that pass it."""
+    return _stime.night_offset(start_m)
 
 
 def start_minutes(row):
     """A row's start as minutes past its own (business) date's midnight —
     past 1440 for a start in the small hours of its night (E-32)."""
-    s = parse_minutes(row.get("shift_start", ""))
-    return None if s is None else s + _night_offset(s, parse_minutes(row.get("shift_end", "")))
+    return _stime.start_of(row)
 
 
 def shift_span(row, tz=None) -> tuple:
-    """(start_dt, end_dt) as datetimes on the row's date; an end before the
-    start crosses midnight, and a start before the business day's first hour
-    is that night's small hours (E-32, _night_offset). (None, None) when
-    unreadable.
-
-    With `tz` (the restaurant's IANA zone) both ends are the real instants,
-    as naive UTC: a close and an open either side of a clock change are an
-    hour closer or further apart than the wall clock says, and the rest rule
-    is about hours actually off (SCHED-32). Without it, wall-clock time."""
-    try:
-        base = datetime.strptime(row.get("date", ""), "%Y-%m-%d")
-    except (ValueError, TypeError):
-        return None, None
-    s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
-    if s is None or e is None:
-        return None, None
-    night = _night_offset(s, e)
-    start = base + timedelta(minutes=s + night)
-    end = base + timedelta(minutes=(e if e > s else e + 24 * 60) + night)
-    zone = _zone(tz)
-    if zone is not None:
-        start = start.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
-        end = end.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
-    return start, end
+    """(start_dt, end_dt) of a row (schedule_time.shift_span): wall clock on
+    its business date, or with `tz` (the restaurant's IANA zone) the real
+    instants as naive UTC — the rest rule is about hours actually off
+    (SCHED-32). (None, None) when unreadable."""
+    return _stime.shift_span(row, tz)
 
 
 def span_hours(row, tz=None) -> float:
-    """A row's length in hours as actually worked: with the restaurant's zone
-    the real instants, so a 5pm-2am close on the night the clocks go back
-    (Halloween 10/31/26 at Simple EJ's) is 10 hours, not the 9 the wall
-    clock reads (schedule audit 10/3/26 E-23). 0.0 when unreadable. Every
-    pass that writes a row's times writes its hours from this."""
-    s, e = shift_span(row, tz)
-    return round((e - s).total_seconds() / 3600, 2) if s and e else 0.0
+    """A row's length in hours as actually worked (schedule_time.real_hours):
+    with the restaurant's zone a 5pm-2am close on the night the clocks go
+    back (Halloween 10/31/26 at Simple EJ's) is 10 hours, not 9 (E-23). 0.0
+    when unreadable. Every pass that writes a row's times writes its hours
+    from this (retimed / schedule_time.retime — BUGSGEN-6)."""
+    return _stime.real_hours(row, tz)
 
 
-def hours_text(hours) -> str:
-    """Hours as the rows carry them: "9", "7.5", "6.25"."""
-    return str(round(float(hours or 0), 2)).rstrip("0").rstrip(".") or "0"
+hours_text = _stime.hours_text
+_zone = _stime.zone
 
 
-_ZONES = {}
+def retimed(row, start_m=None, end_m=None, tz=None) -> dict:
+    """`row` re-timed to `start_m`/`end_m` (minutes, any day's) with its
+    scheduled_hours written from its real span in the restaurant's zone —
+    the one way a pass writes a row's times (BUGSGEN-6, BUGSGEN-7). In place;
+    returns the row."""
+    return _stime.retime(row, start_m, end_m, tz)
 
 
-def _zone(tz):
-    if not tz:
-        return None
-    if tz not in _ZONES:
-        try:
-            from zoneinfo import ZoneInfo
-            _ZONES[tz] = ZoneInfo(str(tz))
-        except Exception:
-            _ZONES[tz] = None
-    return _ZONES[tz]
+def tz_of(c) -> str:
+    """The restaurant's IANA zone a Constraints carries (or None)."""
+    return getattr(c, "tz", None) or None
 
 
 # A "latest" this early with no "earliest" after it is the small hours of
 # the next morning ("until 1:00am"), not a one-in-the-morning curfew.
-_OVERNIGHT_LATEST_BEFORE = 6 * 60
+_OVERNIGHT_LATEST_BEFORE = _stime.SMALL_HOURS_BEFORE
 
 
 def window_allows(lo, hi, start_m, end_m) -> tuple:
@@ -1011,6 +966,26 @@ def window_holds(window, day, week_dates=None, today=None) -> bool:
     return not u or u >= (today or _date.today()).isoformat()
 
 
+def hours_on_file(day, open_times=None, close_times=None) -> bool:
+    """Whether the owner set an opening or a closing time for weekday `day`
+    — their word that the restaurant is open that day."""
+    return any(str((t or {}).get(day) or "").strip() for t in (open_times, close_times))
+
+
+def trading_day(day, open_times=None, close_times=None, trading=None) -> bool:
+    """Whether the restaurant trades on weekday `day`: the owner's hours for
+    it are on file, else its own record trades it (`trading`, the weekdays
+    with shifts on at least half the weeks on file; None — too little on
+    file — has no opinion, so every day trades). The ONE rule the generation
+    (which days must carry shifts) and the manager plan (which days to plan)
+    both read (BUGSGEN-5: the generation read the history alone, so a
+    weekday that started opening was never required and an empty one was
+    silently closed). Closures are decided before this."""
+    if hours_on_file(day, open_times, close_times):
+        return True
+    return trading is None or day in trading
+
+
 def _weekday_of(iso) -> str:
     try:
         return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
@@ -1022,24 +997,21 @@ def row_hours(row) -> float:
     try:
         return float(row.get("scheduled_hours") or 0)
     except (TypeError, ValueError):
-        s, e = shift_span(row)
-        return round((e - s).total_seconds() / 3600, 1) if s and e else 0.0
+        return _stime.wall_hours(row)
 
 
 def _fmt_minutes(m: int) -> str:
-    h, mm = divmod(int(m), 60)
-    suffix = "am" if h < 12 or h == 24 else "pm"
-    h12 = h % 12 or 12
-    return f"{h12}:{mm:02d}{suffix}"
+    """Minutes (any day's — 1500 is 1:00am) as "1:00am"."""
+    return _stime.fmt_minutes(m)
 
 
 def daypart_of(shift_start: str) -> str:
-    """Morning or night on a 3pm cutoff — and a start in the small hours is
-    the night it belongs to, never the next morning (E-32, _night_offset)."""
-    m = parse_minutes(shift_start)
-    if m is None:
-        return "unknown"
-    return "night" if m >= 15 * 60 or _night_offset(m) else "morning"
+    """The daypart a start time alone falls in (schedule_time.start_daypart):
+    before the restaurant's daypart boundary (3pm by default) the morning,
+    from it the night, and a start in the small hours the night it belongs
+    to (E-32). For a whole row use schedule_time.primary_daypart /
+    present_dayparts — the one lunch/dinner rule (BUGSGEN-25)."""
+    return _stime.start_daypart(shift_start)
 
 
 # ── the constraint set ─────────────────────────────────────────────────────
@@ -1246,6 +1218,10 @@ class Constraints:
     # read, which the review names.
     role_windows: dict = field(default_factory=dict)
     role_caps: dict = field(default_factory=dict)
+    # The restaurant's own lunch/dinner boundary in minutes (restaurants.
+    # daypart_boundary — schedule_time, ARCH-12), or None for 3:00pm: every
+    # sweep of this week reads its dayparts inside it (violations).
+    daypart_split: int = None
     hours_rules: list = field(default_factory=list)
     hours_rules_unchecked: list = field(default_factory=list)
 
@@ -1764,9 +1740,14 @@ def _expired_certs(restaurant_id, week_dates, db_path=None) -> dict:
     try:
         from datetime import date as _date
         import staff_knowledge
+        from models import _restaurant_today
+        # The restaurant's own date, never the server's UTC one: from about
+        # 7pm Chicago a card expiring today read as expired for the current
+        # week's regeneration (BUGSGEN-16).
+        today = _restaurant_today(restaurant_id)
         days = sorted(str(d)[:10] for d in (week_dates or []) if d)
-        first = _date.fromisoformat(days[0]) if days else _date.today()
-        on = max(first, _date.today())
+        first = _date.fromisoformat(days[0]) if days else today
+        on = max(first, today)
         kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
         raw = staff_knowledge.expired_certs(restaurant_id, today=on, **kw) or {}
         return {k: {cert_key(x) for x in v} for k, v in raw.items()}
@@ -2110,6 +2091,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _input_problem(c, "compliance rules", exc)
     c.week_start_day = int(getattr(restaurant, "week_start_day", 0) or 0)
     c.tz = (getattr(restaurant, "timezone", None) or "").strip()
+    c.daypart_split = _stime.restaurant_split(restaurant)
     c.jurisdiction = (getattr(restaurant, "jurisdiction", None) or "").strip().upper()
     c.section_cap = int(getattr(restaurant, "section_count", 0) or 0)
     c.role_floors = role_floors(restaurant)
@@ -2139,6 +2121,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         c.role_buffers = get_role_close_buffers(restaurant_id, db_path) or {}
     except Exception as exc:
         _input_problem(c, "open and close times", exc)
+    _unreadable_hours(c)
 
     # roster + per-person settings. One person at a time: a single try
     # around the whole loop meant one malformed setting (a time window that
@@ -2771,10 +2754,30 @@ INPUT_PROBLEM_WORDS = {
 }
 
 
+def _unreadable_hours(c: "Constraints") -> None:
+    """An opening or closing time on file that no reader can parse ("9",
+    "nine-ish") is named as an input problem — the close cap, nobody at
+    close, the closer rule and the manager window all silently dropped that
+    day (BUGSGEN-20). The writers normalise every time they save
+    (schedule_time.normalise_clock); this catches what was stored before."""
+    for which, times in (("opening", c.open_times), ("closing", c.close_times)):
+        for day, value in sorted((times or {}).items()):
+            if str(value or "").strip() and parse_minutes(value) is None:
+                c.input_problems.append({"source": "open and close times", "hours": {
+                    "day": str(day), "which": which, "value": str(value)[:20]},
+                    "error": f"unreadable {which} time for {day}"})
+
+
 def input_problem_text(p) -> str:
     """One line for a setting or source the rules could not read
     (Constraints.input_problems): a person's settings name the person and
-    where to fix them."""
+    where to fix them; an unreadable opening or closing time names the day
+    and the value."""
+    h = p.get("hours")
+    if isinstance(h, dict) and h.get("day"):
+        return (f"{h['day']}'s {h.get('which') or 'closing'} time \u201c{h.get('value')}\u201d isn't a time Cavnar AI "
+                f"can read, so the close rules weren't checked on {h['day']}s — set it on Account \u2192 Hours "
+                "(like 9:00pm)")
     if p.get("name"):
         return (f"Settings for {p['name']} couldn't be read — fix them in Team; this week wasn't checked against "
                 "their rules")
@@ -3345,7 +3348,10 @@ _LEAD_DAYS = re.compile(r"^((?:" + _DAY_WORD + r"\s*(?:[-–&/,]|\bthrough\b|\bt
 # something that looks like a rule.
 _HOURS_SIGNAL = re.compile(r"\d|\b(?:cut|stagger\w*|only|never|always|minimum|maximum|at least|at most|no more|"
                            r"no earlier|no later|first|last|close|closes|until|before|after)\b")
-_HOURS_CUTOVER = 15 * 60          # the schedule's own 3pm split (daypart_of)
+def _hours_cutover() -> int:
+    """The schedule's own lunch/dinner split (schedule_time.daypart_split —
+    the restaurant's boundary, 3pm unless set; ARCH-12)."""
+    return _stime.daypart_split()
 
 
 def _hours_minutes(text):
@@ -3473,7 +3479,7 @@ def parse_hours_rules(text, roles, families=None) -> dict:
                 words = re.sub(_HOURS_TIME, " ", re.sub(r"\b(?:from|after|starting|at)\s+" + _HOURS_TIME, " ", after))
                 part = ""
                 if when:
-                    part = " at dinner" if (_hours_minutes(when[0]) or 0) >= _HOURS_CUTOVER else " at lunch"
+                    part = " at dinner" if (_hours_minutes(when[0]) or 0) >= _hours_cutover() else " at lunch"
                 elif re.search(r"\bat open\b|\bwhen (?:we|the doors) open\b", after):
                     part = " at lunch"
                 canon = (f"at least {n} " + (words if own is not None else f"{role.lower()} {words}")
@@ -3506,12 +3512,12 @@ def parse_hours_rules(text, roles, families=None) -> dict:
                     read = True
             if re.search(r"\b(?:evening|evenings|night|nights|dinner)\s+only\b|\bonly\s+(?:at\s+|for\s+)?"
                          r"(?:night|nights|dinner|evenings?)\b", low):
-                out["windows"].append({"role": role, "family": fam, "earliest": _HOURS_CUTOVER, "days": days,
+                out["windows"].append({"role": role, "family": fam, "earliest": _hours_cutover(), "days": days,
                                        "text": label})
                 read = True
             if re.search(r"\b(?:lunch|days|morning|mornings|daytime)\s+only\b|\bonly\s+(?:at\s+|for\s+)?"
                          r"(?:lunch|days|mornings?)\b", low):
-                out["windows"].append({"role": role, "family": fam, "latest": _HOURS_CUTOVER, "days": days,
+                out["windows"].append({"role": role, "family": fam, "latest": _hours_cutover(), "days": days,
                                        "text": label})
                 read = True
             m = re.search(r"\b(?:cut|out|leaves?|gone|off)\s+(\d+)\s*(?:minutes|mins?|min)\s+before\s+close\b", low)
@@ -3540,7 +3546,7 @@ def parse_hours_rules(text, roles, families=None) -> dict:
                 mins = _hours_minutes(m.group(1))
                 if mins is not None:
                     out["starts"].append({"role": role, "family": fam, "start": mins,
-                                          "daypart": "night" if mins >= _HOURS_CUTOVER else "morning",
+                                          "daypart": "night" if mins >= _hours_cutover() else "morning",
                                           "days": days, "text": label})
                     read = True
             if not read:
@@ -3554,10 +3560,9 @@ def _window_allows(w, part) -> bool:
 
 
 def _close_minutes_on(c, day):
-    m = parse_minutes((c.close_times or {}).get(day, "") or "")
-    if m is None:
-        return None
-    return m + 24 * 60 if m < 5 * 60 else m
+    """The day's close on its timeline, read against its open (close_minutes,
+    schedule_time.close_on_timeline — BUGSGEN-22)."""
+    return close_minutes(c, day)
 
 
 def apply_hours_rules(c: "Constraints", restaurant, roles=None) -> dict:
@@ -4105,6 +4110,19 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
 
 def violations(rows: list, c: Constraints, person_only: bool = False, day_only: bool = False,
                context=()) -> list:
+    """The rule sweep (_violations), read inside the restaurant's own
+    lunch/dinner boundary (Constraints.daypart_split — schedule_time.
+    daypart_scope, ARCH-12) wherever it runs: the generation, a Studio save,
+    the publish gate, a swap."""
+    split = getattr(c, "daypart_split", None)
+    if split is not None and split != _stime.daypart_split():
+        with _stime.daypart_scope(split):
+            return _violations(rows, c, person_only=person_only, day_only=day_only, context=context)
+    return _violations(rows, c, person_only=person_only, day_only=day_only, context=context)
+
+
+def _violations(rows: list, c: Constraints, person_only: bool = False, day_only: bool = False,
+                context=()) -> list:
     """Every rule the finished week breaks, one entry per breach, each
     naming the person, the date, the rule and whether it is hard (the row
     cannot stand) or soft (worth a look). `person_only` keeps to the rules
@@ -4594,13 +4612,17 @@ def _tail_note(r: dict) -> str:
 
 def close_minutes(c: Constraints, day: str):
     """The close on `day` as minutes past that day's midnight — a close in
-    the small hours ("12:00am", "1:30am") is the NEXT morning, past 24h. It
-    was read as minute 0, so a midnight close never flagged a bartender
-    leaving at 9pm under "stays an hour after close" (NS5 L14)."""
+    the small hours ("12:00am", "1:30am"), or at or before that day's open,
+    is the NEXT morning, past 24h. It was read as minute 0, so a midnight
+    close never flagged a bartender leaving at 9pm under "stays an hour
+    after close" (NS5 L14)."""
     m = parse_minutes((c.close_times or {}).get(day, ""))
     if m is None:
         return None
-    return m + 24 * 60 if m < _OVERNIGHT_LATEST_BEFORE else m
+    # Read against that day's open (schedule_time.close_on_timeline): a close
+    # at or before the open is the next morning, so a 6am-6am diner or a bar
+    # closing at 6am closes at 6am tomorrow, not before it opened (BUGSGEN-22).
+    return _stime.close_on_timeline(m, parse_minutes((getattr(c, "open_times", None) or {}).get(day, "") or ""))
 
 
 def close_cap_minutes(c, row):
@@ -4645,23 +4667,22 @@ def end_minutes(row):
     """A row's end as minutes past its own date's midnight: an end at or
     before its start crosses midnight, and a row starting in the small hours
     of its night ends in them too (E-32, _night_offset)."""
-    s, e = parse_minutes(row.get("shift_start", "")), parse_minutes(row.get("shift_end", ""))
-    if e is None:
-        return None
-    night = _night_offset(s, e)
-    if s is not None and e <= s:
-        e += 24 * 60
-    return e + night
+    return _stime.end_of(row)
 
 
 def role_time_for(c, row) -> dict:
     """The owner's start/end rule for this row's role on its weekday and
-    daypart (Constraints.role_times, L-33), or {}."""
+    daypart (Constraints.role_times, L-33), or {}. The row's daypart is the
+    one it serves (schedule_time.primary_daypart — the core window it covers
+    most), never its start's side of 3pm: "servers start Friday dinner at
+    2:30pm" retimed a 4pm row to 2:30pm, which then read as lunch, so the
+    rule could never check or keep the row it had just written, and a
+    model's 2:30pm dinner row was never checked at all (BUGSGEN-14)."""
     times = getattr(c, "role_times", None) or {}
     if not times:
         return {}
     role = (row.get("role") or "").strip().lower()
-    return times.get((role, _weekday_of(row.get("date") or ""), daypart_of(row.get("shift_start", "")))) or {}
+    return times.get((role, _weekday_of(row.get("date") or ""), _stime.primary_daypart(row))) or {}
 
 
 def _role_cap_violations(rows: list, c: Constraints) -> list:
@@ -4784,8 +4805,9 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
             left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
                          "reason": f"the rule would leave a {span / 60:g}h shift"})
             continue
-        new = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)),
-                   scheduled_hours=f"{span / 60:g}")
+        new = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
+        # Its hours from the real span in the restaurant's zone (BUGSGEN-6).
+        new["scheduled_hours"] = hours_text(span_hours(new, tz_of(c)))
         trial = out_rows[:i] + [new] + out_rows[i + 1:]
         ok, why = c.can_add(new, trial)
         if ok:
@@ -5249,10 +5271,7 @@ def open_hours(c: "Constraints", day: str):
     from the hours on file — a close in the small hours is the next
     morning's. Either end is None when it is not on file."""
     o = parse_minutes((c.open_times or {}).get(day, "") or "")
-    cl = close_minutes(c, day)
-    if o is not None and cl is not None and cl <= o:
-        cl += 24 * 60
-    return o, cl
+    return o, close_minutes(c, day)
 
 
 def _day_offset(d: str, base: str):
@@ -7175,8 +7194,11 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
                     s0 = parse_minutes(r.get("shift_start", ""))
                     if s0 is None:
                         continue
-                    new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)),
-                               scheduled_hours=str(round((target - s0) / 60.0, 2)).rstrip("0").rstrip("."))
+                    new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)))
+                    # Its hours from the real span in the restaurant's zone: a
+                    # closer run on to a 2am close on 10/31/26 works 10 hours,
+                    # not the wall clock's 9 (BUGSGEN-6).
+                    new["scheduled_hours"] = hours_text(span_hours(new, tz_of(c)))
                     ok, _why = c.can_add(new, [x for j, x in enumerate(rows) if j != i], line=line,
                                          overtime=mode[0], policy=mode[1])
                     sweeps += 1
@@ -7686,8 +7708,13 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                     break
             if done is None:
                 skipped.add((gs, ge))
+                # The stretch's own minutes on the business timeline beside
+                # its words: a stretch after midnight (1470-1560) re-read from
+                # "12:30am"-"2:00am" was 30-120 and never matched the gap
+                # again (BUGSGEN-10, refresh_review).
                 left.append({"date": d, "day": day, "from": _fmt_minutes(gs % (24 * 60)),
                              "to": _fmt_minutes(ge % (24 * 60)), "minutes": ge - gs,
+                             "gap_start": int(gs), "gap_end": int(ge),
                              "reasons": why_not(d, gs, ge),
                              "could_act": sorted({(x.get("employee") or "").strip() for x in rep.rows
                                                   if x.get("date") == d and _low(x.get("employee")) in c.keyholders

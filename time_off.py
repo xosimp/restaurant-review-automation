@@ -282,16 +282,21 @@ def shift_hits_part(row, part) -> bool:
     (shift_quality.touched_dayparts — an hour of presence let a shift run
     55 minutes into an approved dinner off, schedule re-audit 10/4/26
     RULES-11)."""
-    from schedule_rules import parse_minutes
     lo, hi, dp = part_minutes(part)
     if dp:
         from shift_quality import touched_dayparts
         return dp in (touched_dayparts(row) or [])
-    s, e = parse_minutes(row.get("shift_start") or ""), parse_minutes(row.get("shift_end") or "")
-    if s is None or e is None:
+    import schedule_time as _stime
+    sp = _stime.span(row)
+    if sp is None:
         return True
-    if e <= s:
-        e += 24 * 60
+    s, e = sp
+    if s >= 24 * 60 and (lo is None or lo < _SMALL_HOURS) and (hi is None or hi <= _SMALL_HOURS):
+        # A shift in the small hours of the date's night (past 24:00 on the
+        # business timeline, schedule_time — ARCH-12) against an off-part
+        # wholly in the small hours on the date's own clock: the same hours.
+        lo = None if lo is None else lo + 24 * 60
+        hi = None if hi is None else hi + 24 * 60
     return (lo is None or e > lo) and (hi is None or s < hi)
 
 

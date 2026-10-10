@@ -2501,6 +2501,9 @@ def _do_compliance_get(u):
             # (schedule_rules over_section_cap). Moved here from the admin
             # page, its only editor until 9/30/26.
             "section_count": int(getattr(r, "section_count", 0) or 0) or None,
+            # Where lunch ends and dinner starts for a shift covering neither
+            # core window (schedule_time, ARCH-12): "3:00pm" unless set.
+            "daypart_boundary": getattr(r, "daypart_boundary", None) or None,
             # Dayparts whose floors for the section-counted roles add up to
             # more people than there are sections — no draft can hold both,
             # so the rules screen says so (schedule audit 10/3/26 P-29).
@@ -2765,6 +2768,14 @@ def _do_compliance_set(u):
                 return _refuse("Dining sections must be a whole number from 1 to 30, or blank.")
         settings["section_count"] = n
         out["section_count"] = n
+    if "daypart_boundary" in b:
+        import schedule_time as _stime_b
+        v = b.get("daypart_boundary")
+        m = None if v in (None, "") else _stime_b.split_minutes(str(v))
+        if v not in (None, "") and m is None:
+            return _refuse("Where lunch ends must be a time from 12:00pm to 6:00pm, or blank for 3:00pm.")
+        settings["daypart_boundary"] = None if m is None else _stime_b.fmt_minutes(m)
+        out["daypart_boundary"] = settings["daypart_boundary"]
     if "trim_to_budget" in b:
         settings["trim_to_budget"] = 1 if b.get("trim_to_budget") else 0
         out["trim_to_budget"] = bool(b.get("trim_to_budget"))

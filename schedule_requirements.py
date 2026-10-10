@@ -17,6 +17,7 @@ while it builds the prompt; schedule_engine gathers the inputs.
 from datetime import datetime
 
 import shift_quality as _sq
+import schedule_time as _stime
 
 DAYPARTS = ("morning", "night")
 _PART_LABEL = {"morning": "morning", "night": "night", "late": "late night"}
@@ -147,17 +148,9 @@ def _day_name(date_str: str, fallback: str = "") -> str:
 
 
 def _minutes(value):
-    """Minutes past midnight from "4:00pm", "4pm" or "16:00"; None if unreadable."""
-    raw = str(value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour * 60 + t.minute
-        except ValueError:
-            continue
-    return None
+    """Minutes past midnight from "4:00pm", "4pm", "16:00", "noon"
+    (schedule_time.parse_minutes); None if unreadable."""
+    return _stime.parse_minutes(value)
 
 
 def floor_for(spec: dict, day: str, part: str) -> int:
@@ -201,7 +194,7 @@ def closing_part(day: str, close_times: dict = None) -> str:
     """The daypart a date's close falls in: the morning for a close before
     the 3pm changeover (a breakfast-and-lunch place), else the night."""
     close_m = _minutes((close_times or {}).get(day))
-    if close_m is not None and 5 * 60 <= close_m <= _sq.DAYPART_CUTOVER:
+    if close_m is not None and _stime.SMALL_HOURS_BEFORE <= close_m <= _stime.daypart_split():
         return "morning"
     return "night"
 
@@ -430,7 +423,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 lo, hi = _service_window(day, part, open_times, close_times)
                 # Normalised over the daypart's half of the day, as the scorer
                 # does, then kept to the hours the restaurant is open.
-                whole = (0, _sq.DAYPART_CUTOVER) if part == "morning" else (_sq.DAYPART_CUTOVER, 48 * 60)
+                split = _stime.daypart_split()
+                whole = (0, split) if part == "morning" else (split, 48 * 60)
                 needs = {m: n for m, n in _curve.half_hour_needs(curve_here, typical_here, *whole).items()
                          if lo <= m < hi}
                 if section_cap:
@@ -582,7 +576,7 @@ def _close_minutes(day: str, close_times: dict = None):
     m = _minutes((close_times or {}).get(day))
     if m is None:
         return None
-    return m + 24 * 60 if m < 5 * 60 else m
+    return _stime.close_on_timeline(m)
 
 
 def requirements_map(rows: list, firm: bool = True) -> dict:
@@ -613,11 +607,10 @@ def _service_window(day: str, part: str, open_times: dict = None, close_times: d
     """(lo, hi) minutes of one daypart's service: opening to the 3pm
     changeover, or the changeover to close, from the hours on file; the
     whole half of the day when they are not."""
-    split = _sq.DAYPART_CUTOVER
-    open_m = _minutes((open_times or {}).get(day))
-    close_m = _minutes((close_times or {}).get(day))
-    if close_m is not None and close_m < 5 * 60:
-        close_m += 24 * 60                      # a close after midnight
+    split = _stime.daypart_split()
+    # A close at or before the open, or in the small hours, is after
+    # midnight (schedule_time.close_on_timeline, BUGSGEN-22).
+    open_m, close_m = _stime.day_hours((open_times or {}).get(day), (close_times or {}).get(day))
     if part == "morning":
         return (open_m if open_m is not None and open_m < split else 0), split
     return split, (close_m if close_m is not None and close_m > split else 24 * 60)
@@ -722,10 +715,14 @@ def presence_rule() -> str:
     lo_m, hi_m = _sq.CORE_WINDOWS["morning"]
     lo_n, hi_n = _sq.CORE_WINDOWS["night"]
     need = _sq.PRESENCE_MIN_OVERLAP
-    return (f"A shift counts toward the daypart it starts in (morning before 3:00pm, night from 3:00pm), "
-            f"and ALSO toward the other daypart when it covers at least {need} minutes of that daypart's core "
-            f"window (lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}). So an "
-            f"11:30am-7:00pm shift counts at lunch AND at dinner; a 10:00am-5:00pm shift counts at lunch only.")
+    split = _clock(_stime.daypart_split())
+    # schedule_time.present_dayparts in words (BUGSGEN-25): presence decides,
+    # the start only when a shift covers neither core window.
+    return (f"A shift counts toward each daypart whose core window it covers for at least {need} minutes "
+            f"(lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}); one that covers "
+            f"neither counts toward the daypart it starts in (morning before {split}, night from {split}). So an "
+            f"11:30am-7:00pm shift counts at lunch AND at dinner; a 10:00am-5:00pm shift counts at lunch only; "
+            f"a 2:00pm-10:00pm shift counts at dinner only.")
 
 
 def _weekday_span(dates) -> str:
@@ -757,11 +754,9 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
     Friday and Saturday nights count."""
     latest = {}
     for pr in prior_rows or []:
-        s, e = _minutes(pr.get("shift_start")), _minutes(pr.get("shift_end"))
+        e = _stime.end_of(pr)
         if e is None:
             continue
-        if s is not None and e <= s:
-            e += 24 * 60
         d = pr.get("date") or ""
         latest[d] = max(latest.get(d, -1), e)
     weeks = dict(payroll_weeks or {})
@@ -786,10 +781,8 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
         if key > e["_k"]:
             e["_k"] = key
             e["last"] = f"{_day_name(date)[:3] or pr.get('day') or ''} {date} until {pr.get('shift_end')}".strip()
-        s, end = _minutes(pr.get("shift_start")), _minutes(pr.get("shift_end"))
+        end = _stime.end_of(pr)
         if end is not None:
-            if s is not None and end <= s:
-                end += 24 * 60
             if end >= latest.get(date, 10 ** 6) - 30:
                 e["closes"] += 1
         full_day = _day_name(date, pr.get("day") or "")
