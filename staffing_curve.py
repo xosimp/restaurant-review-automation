@@ -89,14 +89,24 @@ def half_hour_shares(curve: dict) -> dict:
     return out
 
 
-def half_hour_needs(curve: dict, typical: dict, lo: int, hi: int) -> dict:
+def half_hour_needs(curve: dict, typical: dict, lo: int, hi: int, peaks: dict = None, offsets: dict = None,
+                    shares: dict = None) -> dict:
     """{minute: {role: people}} for each half hour in [lo, hi) that the
-    curve covers. The daypart's busiest half hour needs PEAK_SHARE of the
-    usual crew (the same bar the single peak-hour check held), and each
-    other half hour that share scaled by its own sales against that peak.
-    A half hour well off the peak (under MIN_SLOT_RATIO) adds nothing —
-    the owner's floors still hold there. {} without a curve or a crew."""
-    shares = {m: v for m, v in half_hour_shares(curve).items() if lo <= m < hi}
+    curve covers. The daypart's busiest half hour needs the role's people
+    ON AT ONCE at its usual peak — `peaks` ({role: people}, the staffing
+    baseline's concurrent `peak`, demand-scaled: scheduler audit 10/10/26
+    LOGIC-11) — and each other half hour that peak scaled by its own sales
+    against the busiest. A role with no concurrent figure falls back to
+    PEAK_SHARE of its usual different people (the old bar). `offsets`
+    ({role: minutes}, staffing_model.lags by family) shifts a role along
+    the curve: a cook (+30) is on half an hour before the sales arrive, a
+    dishwasher (-30) after. `shares` ({minute: share}) is a curve measured
+    at the half hour (schedule_economics.measured_half_hours) used instead
+    of the hourly one interpolated. A half hour well off the peak (under
+    MIN_SLOT_RATIO) adds nothing — the owner's floors still hold there. {}
+    without a curve or a crew."""
+    all_shares = dict(shares) if shares else half_hour_shares(curve)
+    in_win = {m: v for m, v in all_shares.items() if lo <= m < hi}
     crew = {}
     for role, n in (typical or {}).items():
         try:
@@ -105,18 +115,34 @@ def half_hour_needs(curve: dict, typical: dict, lo: int, hi: int) -> dict:
             n = 0
         if n > 0 and (role or "").strip():
             crew[role.strip()] = n
-    if not shares or not crew:
+    if not in_win or not crew:
         return {}
-    peak = max(shares.values())
+    peak = max(in_win.values())
     if peak <= 0:
         return {}
+    low_peaks = {str(k).strip().lower(): v for k, v in (peaks or {}).items()}
+    low_off = {str(k).strip().lower(): int(v or 0) for k, v in (offsets or {}).items()}
+    # Each role read against the busiest half hour of ITS curve (shifted by
+    # its offset), so its own peak is its peak.
+    role_peak = {}
+    for role in crew:
+        off = low_off.get(role.lower(), 0)
+        role_peak[role] = max(all_shares.get(m + off, 0.0) for m in in_win) if off else peak
     out = {}
-    for m in sorted(shares):
-        ratio = shares[m] / peak
-        if ratio < MIN_SLOT_RATIO:
-            continue
-        need = {role: max(1, int(math.ceil(PEAK_SHARE * n * ratio - 1e-9))) for role, n in crew.items()}
-        out[m] = need
+    for m in sorted(in_win):
+        need = {}
+        for role, n in crew.items():
+            off = low_off.get(role.lower(), 0)
+            if role_peak[role] <= 0:
+                continue
+            ratio = (all_shares.get(m + off, 0.0) if off else in_win[m]) / role_peak[role]
+            if ratio < MIN_SLOT_RATIO:
+                continue
+            p = low_peaks.get(role.lower())
+            top = float(p) if p else PEAK_SHARE * n
+            need[role] = max(1, int(math.ceil(top * ratio - 1e-9)))
+        if need:
+            out[m] = need
     return out
 
 

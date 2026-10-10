@@ -1322,7 +1322,23 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
                   "unreliable": rate >= UNRELIABLE_RATE,
                   "short_rate": round(t["short"] / t["shifts"], 2),
                   "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
-                  "half_life_days": RELIABILITY_HALF_LIFE_DAYS}
+                  "half_life_days": RELIABILITY_HALF_LIFE_DAYS,
+                  # Each weekday's own rate, shrunk toward this person's
+                  # (attendance_risk.WEEKDAY_SHRINK shifts): one who misses
+                  # 1 in 3 Saturdays but 10% overall is not reliable on a
+                  # Saturday (scheduler audit 10/10/26 LEARNING-14).
+                  "weekday_rates": _weekday_rates(t, rate)}
+    return out
+
+
+def _weekday_rates(t, person_rate) -> dict:
+    """{weekday: rate} — the notice-weighted miss rate on each weekday the
+    person has watched shifts, shrunk toward their own overall rate."""
+    from attendance_risk import WEEKDAY_SHRINK, shrink
+    out = {}
+    for wd, e in (t.get("days") or {}).items():
+        if e.get("w"):
+            out[wd] = round(shrink(e.get("w_miss") or 0.0, e["w"], person_rate, WEEKDAY_SHRINK), 3)
     return out
 
 

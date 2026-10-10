@@ -5758,6 +5758,14 @@ def scheduler_loop():
                 import schedule_scorecard as _sscard
                 _ops.run_job("schedule_scorecard", _sscard.run_scorecard)
 
+            # Monday 8am — what one more of a role on a meal is worth here and
+            # each person's measured effect (scheduler audit 10/10/26 RM-20,
+            # LEARNING-26): read by the next drafts' requirements and the
+            # owner's ratings screen. Bounded, resumable. Sends nothing.
+            if _due(now, 8) and now.weekday() == 0 and _ops.claim_period("staffing_learning", str(today)):
+                import staffing_elasticity as _sel_job
+                _ops.run_job("staffing_learning", _sel_job.run_elasticity)
+
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the
             # Wednesday run served only the Thursday draft). No provider is

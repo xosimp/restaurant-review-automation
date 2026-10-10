@@ -270,7 +270,10 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: 
         existing = {(r["cohort"], r["metric"]) for r in conn.execute(
             "SELECT cohort, metric FROM intel_benchmarks WHERE week=? AND members_json IS NOT NULL",
             (week,)).fetchall()}
-        staffing = sorted({k for rid in elig for k in (latest[rid]["features"] or {}) if k.startswith("staff_per_1k.")})
+        # The staffing ratios and the scheduling priors (schedule_priors,
+        # LEARNING-27): banded like any metric, read back only server-side.
+        staffing = sorted({k for rid in elig for k in (latest[rid]["features"] or {})
+                           if k.startswith(_reg.SERVER_ONLY_PREFIXES)})
         for metric in tuple(_features.BENCHMARK_KEYS) + tuple(staffing):
             fam = _reg.partition_family(metric)
             for cohort, rids in groups[fam].items():

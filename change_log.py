@@ -147,7 +147,8 @@ RESTAURANT_UNTRACKED = frozenset({
     "contract_signed_at", "converted_at",
     # Caches and fetched public facts (the own-rating history is its own
     # store): refreshed by jobs, never chosen.
-    "competitor_intel", "competitor_updated_at", "weather_cache_json", "weather_cached_at", "geocode_failed_at",
+    "competitor_intel", "competitor_updated_at", "weather_cache_json", "weather_cached_at", "weather_hourly_json",
+    "geocode_failed_at",
     "aivis_city_json",
     "latitude", "longitude", "gbp_rating", "gbp_rating_updated_at", "gbp_review_count", "google_types",
     "google_price_level",
