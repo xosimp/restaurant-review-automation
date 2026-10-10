@@ -4560,11 +4560,12 @@ def _minute_duties():
     """The per-tick work that owes the owner minutes, not hours: scheduled
     posts, delayed actions whose undo window closed, issue escalations and
     held notifications, alerts held through a rush, newsletter and campaign
-    batches, and the push and webhook outboxes. Each is idempotent and
-    claims its own rows, so running it an extra time is harmless.
+    batches, the push and webhook outboxes, and the schedule publish
+    outbox. Each is idempotent and claims its own rows, so running it an
+    extra time is harmless.
 
     Runs as the `minute_duties` job (ops.run_job) — it wrote no job run at
-    all (#31) — and returns the standard counts over its eight duties."""
+    all (#31) — and returns the standard counts over its nine duties."""
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
 
     def _duty(fn, job):
@@ -4592,6 +4593,17 @@ def _minute_duties():
     dl = _duty(_delayed_run, job="delayed_actions")
     if dl and (dl.get("ran") or dl.get("failed")):
         log.info(f"Delayed actions: {dl}")
+
+    # The publish outbox (schedule_publish, schedule audit 10/10/26 ARCH-19,
+    # ARCH-20, BUGSLIFE-9): the people a Send's inline window did not reach,
+    # and failed notices whose retry time came. The week was stamped first;
+    # this is only the telling, bounded, the outbox rows its cursor.
+    def _schedule_notices():
+        import schedule_publish as _sp
+        return _sp.run_schedule_notices(max_seconds=_sp.NOTICE_DUTY_SECONDS)
+    sn = _duty(_schedule_notices, job="schedule_notices")
+    if sn and (sn.get("ok") or sn.get("failed")):
+        log.info(f"Schedule notices: {sn}")
 
     def _issues_tick():
         import issues as _issues

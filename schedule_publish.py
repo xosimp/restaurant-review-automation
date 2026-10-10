@@ -53,8 +53,10 @@ NOTICE_MAX_ATTEMPTS = len(NOTICE_RETRY_MINUTES) + 1
 # A notice claimed for delivery longer ago than this belongs to a delivery
 # that died; it is tried again.
 NOTICE_LEASE_MINUTES = 10
-# The outbox job's own bound per pass.
+# The outbox job's own bound per pass, and the bound when it runs as one of
+# the scheduler's minute duties (scheduler._minute_duties).
 NOTICE_JOB_SECONDS = 45.0
+NOTICE_DUTY_SECONDS = 20.0
 
 NOTICE_KINDS = ("posted", "changed", "removed")
 
@@ -109,6 +111,8 @@ def init_schedule_notices(db_path=None):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_notices_due ON schedule_notices(status, next_attempt_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_notices_week ON schedule_notices(restaurant_id, history_id)")
+        # The retention prune's column (ops._RETENTION_COLUMN).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_notices_created ON schedule_notices(created_at)")
         conn.commit()
     finally:
         conn.close()
@@ -861,6 +865,30 @@ def _claim(restaurant_id, schedule_id, mode):
         return bool(got)
     finally:
         conn.close()
+
+
+def send_in_progress(restaurant_id, week_start=None, history_id=None) -> bool:
+    """Whether a Send holds this week right now (its copy's publishing_at
+    claim is fresh) — `history_id`'s copy, else the week's working copy.
+    Generate waits for it (BUGSLIFE-2). Never raises (False)."""
+    try:
+        conn = get_conn()
+        try:
+            if history_id:
+                row = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=? AND "
+                                   + _models_mod.publish_claim_fresh_sql(), (int(history_id), restaurant_id)).fetchone()
+            elif week_start:
+                draft = _models_mod.week_draft(conn, restaurant_id, str(week_start)[:10])
+                row = None if draft is None else conn.execute(
+                    "SELECT id FROM schedule_history WHERE id=? AND " + _models_mod.publish_claim_fresh_sql(),
+                    (draft["id"],)).fetchone()
+            else:
+                row = None
+        finally:
+            conn.close()
+        return row is not None
+    except Exception:
+        return False
 
 
 def _release(restaurant_id, schedule_id):

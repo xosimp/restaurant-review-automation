@@ -3619,6 +3619,14 @@ def mobile_generate_schedule(current_user):
     base_history_id = body.get("history_id") if dates else None
     if dates and not base_history_id:
         return jsonify(ok=False, error="Regenerating some days needs the draft they belong to (history_id)."), 400
+    # A week being sent to staff right now is not regenerated under the
+    # Send: a draft landing mid-Send used to supersede the very copy being
+    # stamped, and staff were told "posted" about a week no reader could
+    # find (schedule audit 10/10/26 BUGSLIFE-2).
+    import schedule_publish as _sp_gen
+    if _sp_gen.send_in_progress(rid, week_start=week_start, history_id=base_history_id):
+        return jsonify(ok=False, sending=True,
+                       error="This week is being sent to staff right now — generate again once it has gone."), 409
     # What the owner asked for with this draft, in their words — Ask Cavnar's
     # generate_schedule card posts it (schedule audit 10/3/26 PR-19). It
     # reaches every model call of the generation, ranked with the Studio
