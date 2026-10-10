@@ -171,11 +171,12 @@ def test_a_bounded_auto_publish_pass_reports_it_and_the_next_pass_resumes_at_the
 
 def test_a_restaurant_whose_auto_publish_raised_is_tried_again_by_a_later_pass(publishing, monkeypatch):
     import scheduler
-    calls = []
+    calls, raised = [], []
 
     def boom(rid, *a, **k):
         calls.append(rid)
-        if len(calls) == 1:
+        if not raised:
+            raised.append(rid)
             raise RuntimeError("the database was locked")
         return 0
     monkeypatch.setattr(models, "schedule_publish_trust", boom)
@@ -183,7 +184,7 @@ def test_a_restaurant_whose_auto_publish_raised_is_tried_again_by_a_later_pass(p
     assert out["failed"] == 1
     scheduler.run_auto_publish_schedules()
     # The one that raised had its day handed back; the other was done.
-    assert sorted(calls) == sorted(publishing["rids"] + publishing["rids"][:1])
+    assert sorted(calls) == sorted(publishing["rids"] + raised)
 
 
 def test_a_draft_made_on_the_publish_day_itself_is_not_auto_published(db):
