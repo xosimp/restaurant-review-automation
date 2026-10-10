@@ -12731,6 +12731,7 @@ def _publish_schedule_request(current_user):
     if reasons:
         acknowledge = sorted(set(acknowledge if isinstance(acknowledge, list) else []) | set(reasons)) \
             if acknowledge is not True else True
+    _why = {"override_reasons": reasons} if reasons else {}
     # A send nobody read a sheet for — Waiting on you's Send, the drafted
     # push's Send to staff (re-audit 10/8/26 #1). It acknowledges nothing,
     # and goes only when the unattended gate (draft_one_tap_safe: no
@@ -12768,7 +12769,7 @@ def _publish_schedule_request(current_user):
         import schedule_versions as _sv
         changes = (_sv.unsent_changes(rid, row["id"]) or {}).get("people") or []
         if not changes:
-            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, override_reasons=reasons)
+            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
             return jsonify(**out), status
     restaurant = get_restaurant(rid)
     delay = int(getattr(restaurant, "send_delay_minutes", 0) or 0) if restaurant else 0
@@ -12794,7 +12795,7 @@ def _publish_schedule_request(current_user):
             import schedule_versions as _sv_q
             newest = _sv_q.newest_version(rid, row["id"])
             act = delayed.schedule(rid, "schedule_changes_send",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, "override_reasons": reasons,
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     # The version the person saw: an edit in the
                                     # window voids the send (delayed.py).
                                     "version": newest[0]["version"] if newest else None, **_by},
@@ -12803,7 +12804,7 @@ def _publish_schedule_request(current_user):
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
             act = delayed.schedule(rid, "schedule_publish",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, "override_reasons": reasons,
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     # The window's end runs the unattended
                                     # gate again for a one-tap send (#1).
                                     **({"one_tap": True} if one_tap else {}), **_by},
@@ -12812,9 +12813,9 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
     if changes:
-        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge, override_reasons=reasons)
+        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
     else:
-        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, override_reasons=reasons)
+        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
     return jsonify(**out), status
 
 

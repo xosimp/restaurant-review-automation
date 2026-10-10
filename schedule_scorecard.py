@@ -630,6 +630,26 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
         except Exception:
             continue
     out["model_cost_usd"] = round(cost, 4) if cost is not None else None
+    # Did the week run the way the draft said (LEARNING-16: the planned and
+    # as-run scores the outcomes job keeps, sq_planned / sq_as_run, read
+    # here): the mean as-run minus planned Shift Quality over the shifts with
+    # both — a plan-adherence check, never an outcome.
+    try:
+        import schedule_memory as _sm
+        obs = _sm.observations(restaurant_id, kinds=("sq_as_run", "sq_planned"), db_path=db_path)
+        ran, plan = {}, {}
+        for o in obs:
+            if o.get("history_id") != int(history_id) or not o.get("date"):
+                continue
+            sc = (o.get("value") or {}).get("score")
+            if sc is None:
+                continue
+            (ran if o["kind"] == "sq_as_run" else plan)[(o["date"], o.get("daypart"))] = float(sc)
+        both = [ran[k] - plan[k] for k in ran if k in plan]
+        if both:
+            out["plan_adherence"] = {"shifts": len(both), "mean_delta": round(sum(both) / len(both), 2)}
+    except Exception as e:
+        log.warning("scorecard plan adherence unreadable rid=%s: %s", restaurant_id, e)
     # Attribution: the commit and arms, each row's origin and its survival,
     # the owner's rules honoured, and the learning ablation.
     tags = generation_tags(history_id, db_path=db_path)

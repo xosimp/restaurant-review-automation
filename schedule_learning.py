@@ -614,6 +614,27 @@ def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_P
             out.setdefault((s_["day"], s_["daypart"]), {})[s_["role"]] = {"delta": delta,
                                                                          "settled": _settled(levels, slot)}
             live_slots.add(slot)
+    # What the manager kept adding or cutting AFTER the week went out, by
+    # demand (LEARNING-16) — for a slot the pre-publish edits say nothing
+    # about. Its settled level is the week as it ended: the pre-publish
+    # level plus the reaction, so it too applies only while the baseline is
+    # short of it.
+    try:
+        reactions = reaction_headcount(restaurant_id, weeks, min_weeks, db_path)
+    except Exception as e:                 # a read; the edits above still apply
+        log.warning("reaction headcount unavailable for restaurant %s: %s", restaurant_id, e)
+        reactions = {}
+    for (day, part), roles in reactions.items():
+        for role, r in roles.items():
+            slot = (day, part, " ".join(str(role).split()).lower())
+            pk = pattern_key({"kind": "headcount_add" if r["delta"] > 0 else "headcount_cut", "employee": "",
+                              "day": day, "daypart": part, "role": role})
+            if slot in live_slots or pk in dismissed:
+                continue
+            pre = _settled(levels, slot)
+            out.setdefault((day, part), {})[role] = {"delta": r["delta"], "source": "reactions",
+                                                     "settled": (pre + r["delta"]) if pre is not None else None}
+            live_slots.add(slot)
     return out
 
 
@@ -1284,6 +1305,11 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
                 link = _attendance_link(restaurant_id, off, it.get("date"), db_path)
                 if link:
                     value["attendance"] = link
+            # What kind of reaction it is (schedule audit 10/10/26
+            # LEARNING-16): a call-off's replacement, a demand add or cut, a
+            # personal swap, a retime — what reaction_headcount and the
+            # one-tap why read.
+            value["class"] = classify_reaction(ch["kind"], value)
             out["reactions"] += 1
             schedule_memory.observe(restaurant_id, "reaction", week_start=week_start, date=it.get("date"),
                                     daypart=part, role=row.get("role"), person=person, value=value, origin="manager",
@@ -1329,6 +1355,79 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
 
 
 REPEAT_LOOKBACK_DAYS = 168          # schedule_versions.LEARN_DAYS: the edit learners' own window
+
+# ── reactions to a sent week (schedule audit 10/10/26 LEARNING-16) ─────────
+#
+# A change to a week staff already have was stored and never read: the
+# strongest real-world signal of a draft's error — what the manager changed
+# after staff saw the week — fed nothing. Each reaction is now classified as
+# it is observed (capture_save) and read: a demand add or cut feeds the
+# requirement residual (reaction_headcount → learned_headcount), a likely
+# call-off asks the one-tap why at once (its "They called off" answer is the
+# attendance record reliability reads), and a personal swap teaches nothing.
+REACTION_CLASSES = ("call_off_replacement", "demand_add", "demand_cut", "personal_swap", "retime", "role_change")
+
+
+def classify_reaction(kind, value) -> str:
+    """One post-publish change's class: a person taken off (moved or
+    removed) whose absence the attendance record names (a call-out, a
+    no-show) is a call-off's replacement; a shift added is a demand add, one
+    removed with nobody missing a demand cut; a person swapped for another
+    with no absence on record is a personal swap; a retime and a role change
+    are themselves."""
+    att = (value or {}).get("attendance") or {}
+    missed = str(att.get("outcome") or "") in ("called_out", "no_show")
+    if kind in ("moved", "removed") and missed:
+        return "call_off_replacement"
+    if kind == "added":
+        return "demand_add"
+    if kind == "removed":
+        return "demand_cut"
+    if kind == "moved":
+        return "personal_swap"
+    if kind == "retimed":
+        return "retime"
+    return "role_change"
+
+
+def reaction_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_PATH) -> dict:
+    """{(weekday, daypart): {role: {delta, weeks, of}}} — the people of a
+    role the manager kept adding to (or cutting from) a slot AFTER the week
+    went out, by demand (classified demand_add / demand_cut — never a
+    call-off's replacement or a personal swap): the requirement's residual
+    the pre-publish edits never showed. A slot needs `min_weeks` weeks moving
+    the same way and more of them than the other way; its size is the
+    median net change of those weeks (LEARNING-16)."""
+    import schedule_memory
+    from datetime import date as _d, timedelta as _td
+    since = (_d.today() - _td(weeks=int(weeks))).isoformat()
+    rows = schedule_memory.observations(restaurant_id, kinds=("reaction",), since=since, counted_only=True,
+                                        db_path=None if db_path == DB_PATH else db_path)
+    per = {}
+    spell = {}
+    for o in rows:
+        v = o.get("value") or {}
+        cls = v.get("class") or classify_reaction(v.get("change"), v)
+        if cls not in ("demand_add", "demand_cut") or not o.get("role") or not o.get("daypart"):
+            continue
+        day = _weekday(o.get("date"))
+        if not day:
+            continue
+        rl = " ".join(str(o["role"]).split()).lower()
+        spell.setdefault(rl, o["role"])
+        wk = str(o.get("week_start") or o.get("history_id"))
+        e = per.setdefault((day, o["daypart"], rl), {})
+        e[wk] = e.get(wk, 0) + (1 if cls == "demand_add" else -1)
+    out = {}
+    for (day, part, rl), by_week in per.items():
+        ups = sorted(v for v in by_week.values() if v > 0)
+        downs = sorted(v for v in by_week.values() if v < 0)
+        side, other = (ups, downs) if len(ups) >= len(downs) else (downs, ups)
+        if len(side) < min_weeks or len(side) <= len(other):
+            continue
+        out.setdefault((day, part), {})[spell[rl]] = {"delta": int(side[len(side) // 2]), "weeks": len(side),
+                                                      "of": len(by_week)}
+    return out
 
 
 def _earlier_weeks(restaurant_id, history_id, subject, db_path=DB_PATH) -> int:
@@ -1473,7 +1572,15 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
     for _rank, key, subject, _text, _ch, _always in cands:
         repeats[key] = _earlier_weeks(restaurant_id, history_id, subject, db_path=db_path)
     if repeats_only:
-        cands = [c for c in cands if repeats.get(c[1])]
+        # A person taken off a sent week's shift today or tomorrow is most
+        # likely a call-off: asked at once, so the owner's "They called off"
+        # becomes the attendance record reliability reads (LEARNING-16).
+        from datetime import date as _d, timedelta as _td
+        soon = {_d.today().isoformat(), (_d.today() + _td(days=1)).isoformat()}
+
+        def _likely_call_off(c):
+            return phase == _sv.POST_PUBLISH and c[2].get("kind") == "moved_off" and str(c[2].get("date"))[:10] in soon
+        cands = [c for c in cands if repeats.get(c[1]) or _likely_call_off(c)]
         if not cands:
             return []
     conn = get_conn(db_path)
