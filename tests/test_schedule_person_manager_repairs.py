@@ -575,7 +575,7 @@ def test_a_pass_writes_real_hours():
 def test_a_late_porter_is_read_as_the_night_it_works():
     c = _c(managers={"max": "Manager"}, roster_names=["Max", "Pat"], active={"max", "pat"},
            close_times={"Friday": "2:00am"})
-    porter = _row(4, "Pat", "12:30am", "3:00am", "Porter")
+    porter = _row(4, "Pat", "12:30am", "3:30am", "Porter")
     assert sr.shift_span(porter)[0].isoformat() == "2026-10-10T00:30:00"
     assert sr.daypart_of("12:30am") == "night" and sq.daypart_of("12:30am") == "night"
     assert sr.daypart_of("5:00am") == "morning"
@@ -585,8 +585,9 @@ def test_a_late_porter_is_read_as_the_night_it_works():
     kinds = _kinds(rows, c)
     assert "overlap" not in kinds and "rest_gap" not in kinds
     # and the only unmanaged stretch is after the manager leaves at 2am
+    # (90 minutes: past what a closing manager covers by staying)
     gaps = sr.manager_gaps(rows, c)
-    assert gaps[WEEK[4]] and [(gs, ge) for gs, ge, _i in gaps[WEEK[4]]] == [(26 * 60, 27 * 60)]
+    assert gaps[WEEK[4]] and [(gs, ge) for gs, ge, _i in gaps[WEEK[4]]] == [(26 * 60, 27 * 60 + 30)]
     # an overnight close still reads as before
     close = _row(4, "Max", "5:00pm", "2:00am", "Manager")
     s, e = sr.shift_span(close)

@@ -87,11 +87,15 @@ def test_the_budget_trim_never_takes_the_nights_only_closer():
     assert not _kinds(out, c, "keyholder_until_close")
 
 
-def test_the_budget_trim_never_opens_a_manager_gap_and_says_why_it_stopped():
+def test_the_budget_trim_never_opens_a_manager_gap_and_says_why_it_stopped(monkeypatch):
     """The audit's t5: two managers on Friday night; the trim took the one
     who stays to close and left 11pm-2am with no manager. Here Ida (a
     manager) works a bartender row to 2am beside another bartender, so no
-    rule of the trim's own protects her — only the manager rule does."""
+    rule of the trim's own protects her — only the manager rule does. Run
+    with no closing-manager allowance (CLOSING_MANAGER_STAYS_MINUTES, owner
+    10/9/26): with it, an hour off her 2am is a stretch she covers by
+    staying, which the next test holds."""
+    monkeypatch.setattr(sr, "CLOSING_MANAGER_STAYS_MINUTES", 0)
     c = _c(managers={"max": "Manager", "ida": "Manager"}, roster_names=["Max", "Ida", "Bo"],
            active={"max", "ida", "bo"}, close_times={"Friday": "2:00am"})
     rows = [_row(FRI, "Max", "Manager", "3:00pm", "11:00pm"), _row(FRI, "Ida", "Bartender", "5:00pm", "2:00am"),
@@ -109,6 +113,19 @@ def test_the_budget_trim_never_opens_a_manager_gap_and_says_why_it_stopped():
     rows[2] = _row(FRI, "Bo", "Bartender", "10:00pm", "1:00am")
     out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 20, {}, constraints=c)
     assert any(r["employee"] == "Ida" and r["date"] == FRI and r["shift_end"] == "2:00am" for r in out)
+
+
+def test_the_trim_may_take_an_hour_off_the_closing_manager_who_stays_to_close():
+    """Owner, 10/9/26: the closing manager never leaves before anyone else,
+    so their end time is soft - an hour off Ida's 2am with Bo on until 2am
+    is no gap, and nothing past the allowance is ever taken."""
+    c = _c(managers={"max": "Manager", "ida": "Manager"}, roster_names=["Max", "Ida", "Bo"],
+           active={"max", "ida", "bo"}, close_times={"Friday": "2:00am"})
+    rows = [_row(FRI, "Max", "Manager", "3:00pm", "11:00pm"), _row(FRI, "Ida", "Bartender", "5:00pm", "2:00am"),
+            _row(FRI, "Bo", "Bartender", "10:00pm", "2:00am"), _row(THU, "Ida", "Manager", "3:00pm", "11:00pm")]
+    out, trimmed, removed = econ.trim_to_budget([dict(r) for r in rows], 20, {}, constraints=c)
+    ida = next(r for r in out if r["employee"] == "Ida" and r["date"] == FRI)
+    assert ida["shift_end"] in ("1:00am", "2:00am") and not _kinds(out, c, "no_manager")
 
 
 def test_the_trim_never_touches_a_pinned_row():
@@ -382,12 +399,14 @@ def test_a_fill_never_opens_a_manager_gap(no_avail):
     floors = {"Dish": {"morning": 0, "night": 1, "days": {}}}
     c = _c(managers={"max": "Manager"}, roster_names=["Max", "Ana", "Dee"], active={"max", "ana", "dee"},
            roster_roles={"Dee": "Dish"})
-    # the manager is on until 10pm, the floor's only template runs to 11pm
+    # the manager is on until 10pm, the floor's only template runs to
+    # 11:30pm - 90 minutes past, more than a closing manager covers by
+    # staying (CLOSING_MANAGER_STAYS_MINUTES)
     rows = [_row(MON, "Max", "Manager", "3:00pm", "10:00pm"), _row(MON, "Ana", "Server", "4:00pm", "10:00pm"),
-            _row(TUE, "Dee", "Dish", "5:00pm", "11:00pm")]
+            _row(TUE, "Dee", "Dish", "5:00pm", "11:30pm")]
     out, added, dates = se._ensure_role_floors([dict(r) for r in rows], [MON], ["Monday"], 1, {}, {},
                                                floors=floors, constraints=c)
-    assert MON not in dates, "a dish shift to 11pm would leave 10-11pm with no manager"
+    assert MON not in dates, "a dish shift to 11:30pm would leave 10-11:30pm with no manager"
     assert not [v for v in _kinds(out, c, "no_manager") if v["date"] == MON]
     # a template inside the manager's hours is added
     rows[2] = _row(TUE, "Dee", "Dish", "5:00pm", "10:00pm")

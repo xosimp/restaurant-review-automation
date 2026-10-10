@@ -47,9 +47,40 @@ def test_a_day_with_nobody_managing_is_a_hard_breach():
 
 
 def test_even_a_short_stretch_without_a_manager_is_caught():
-    rows = [_row(0, "Ann", "11:00am", "10:00pm", 11), _row(0, "Andrew", "11:00am", "9:30pm", 10.5)]
+    # In the middle of the day: Andrew off at 3:30pm, Erik on at 4pm.
+    rows = [_row(0, "Ann", "11:00am", "10:00pm", 11), _row(0, "Andrew", "11:00am", "3:30pm", 4.5),
+            _row(0, "Erik", "4:00pm", "10:00pm", 6)]
     v = [x for x in sr.violations(rows, _c()) if x["kind"] == "no_manager"]
-    assert len(v) == 1 and "9:30pm" in v[0]["detail"] and "10:00pm" in v[0]["detail"]
+    assert len(v) == 1 and "3:30pm" in v[0]["detail"] and "4:00pm" in v[0]["detail"]
+
+
+def test_the_closing_manager_stays_until_the_last_person_leaves():
+    # Owner, 10/9/26: a manager's end time is soft - "11pm might really mean
+    # 11:30 or 11:45" - and the closing manager never leaves before anyone.
+    rows = [_row(0, "Ann", "4:00pm", "11:45pm", 7.75), _row(0, "Andrew", "4:00pm", "11:00pm", 7)]
+    assert "no_manager" not in _kinds(rows, _c())
+    assert sr.manager_gaps(rows, _c()) == {}
+    # The close on file counts the same way: open until midnight, the
+    # manager scheduled to 11pm.
+    c = _c(open_times={"Monday": "4:00pm"}, close_times={"Monday": "12:00am"})
+    rows = [_row(0, "Ann", "4:00pm", "11:30pm", 7.5), _row(0, "Andrew", "4:00pm", "11:00pm", 7)]
+    assert "no_manager" not in _kinds(rows, c)
+
+
+def test_a_last_manager_off_long_before_the_end_of_the_night_is_still_a_gap():
+    rows = [_row(0, "Ann", "11:00am", "10:00pm", 11), _row(0, "Andrew", "11:00am", "5:00pm", 6)]
+    v = [x for x in sr.violations(rows, _c()) if x["kind"] == "no_manager"]
+    assert len(v) == 1 and "5:00pm" in v[0]["detail"] and "10:00pm" in v[0]["detail"]
+    # Just past the allowance is a gap too.
+    over = sr.CLOSING_MANAGER_STAYS_MINUTES + 15
+    rows = [_row(0, "Ann", "4:00pm", "11:15pm", 7.25), _row(0, "Andrew", "4:00pm", "10:00pm", 6)]
+    assert over == 75 and "no_manager" in _kinds(rows, _c())
+
+
+def test_the_open_is_never_covered_by_a_late_manager():
+    rows = [_row(0, "Ann", "10:00am", "4:00pm", 6), _row(0, "Andrew", "10:30am", "4:00pm", 5.5)]
+    v = [x for x in sr.violations(rows, _c()) if x["kind"] == "no_manager"]
+    assert len(v) == 1 and "10:00am" in v[0]["detail"] and "10:30am" in v[0]["detail"]
 
 
 def test_a_manager_covering_every_minute_clears_it_whatever_role_their_row_is():
@@ -81,7 +112,9 @@ def test_the_backstop_adds_a_manager_to_a_day_with_none_salaried_first():
 
 
 def test_the_backstop_extends_a_manager_already_on_rather_than_adding_one():
-    rows = [_row(2, "Ann", "11:00am", "10:00pm", 11), _row(2, "Andrew", "11:00am", "9:00pm", 10)]
+    # Off at 8pm: two hours before the last person, past what the closing
+    # manager covers by staying (CLOSING_MANAGER_STAYS_MINUTES).
+    rows = [_row(2, "Ann", "11:00am", "10:00pm", 11), _row(2, "Andrew", "11:00am", "8:00pm", 9)]
     out = sr.cover_manager_gaps(rows, _c())
     assert out["extended"] and not out["added"]
     assert out["rows"][1]["shift_end"] == "10:00pm"

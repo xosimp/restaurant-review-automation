@@ -4997,6 +4997,17 @@ def counts_as_manager(c: "Constraints", row: dict) -> bool:
     return bool(c.manages(name, d) and not c.training_row(row) and c.can_work(name, d)[0])
 
 
+# The closing manager stays until the last person leaves (owner, 10/9/26:
+# "the manager obviously isn't going to leave before anyone else - manager
+# schedules END TIMES are subject to change at all times - 11pm end time
+# might really mean 11:30 or 11:45"). So the stretch at the END of a day's
+# staffed block, from the closing manager's scheduled end to when the last
+# person is off (or the close), is covered by that manager - up to this
+# long. A gap in the middle of the day or at the open is still a gap, and a
+# last manager scheduled off hours before the end of the night is still one.
+CLOSING_MANAGER_STAYS_MINUTES = 60
+
+
 def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
     """{date: [(start_min, end_min, row_index)]} — each stretch the
     restaurant is open or somebody is on and no manager is, pinned to the
@@ -5051,7 +5062,13 @@ def manager_gaps(rows: list, c: "Constraints", dates=None, context=()) -> dict:
             off = _day_offset(md, d)
             if off is not None and -1 <= off <= 1:
                 mgr.append((s + off * 24 * 60, e + off * 24 * 60))
-        gaps = [(s, e) for s, e in _uncovered(staffed, _merge(mgr)) if e - s > 0]
+        mgr_cover = _merge(mgr)
+        mgr_ends = {e for _s, e in mgr_cover}
+        block_ends = {e for _s, e in staffed}
+        gaps = [(s, e) for s, e in _uncovered(staffed, mgr_cover) if e - s > 0
+                # The closing manager's end-of-night stretch (above): it opens
+                # where a manager's cover ends and runs to the end of the block.
+                and not (s in mgr_ends and e in block_ends and e - s <= CLOSING_MANAGER_STAYS_MINUTES)]
         if not gaps:
             continue
         pinned = []

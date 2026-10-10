@@ -450,7 +450,7 @@ def test_an_unclear_rule_is_never_a_floor_and_is_said_back(db, monkeypatch):
 
 def test_an_overnight_manager_covers_across_midnight():
     c = C()
-    rows = [R(5, "Andrew", "10:00pm", "6:00am", role="Manager"), R(5, "Ann", "11:00pm", "7:00am"),
+    rows = [R(5, "Andrew", "10:00pm", "6:00am", role="Manager"), R(5, "Ann", "11:00pm", "7:30am"),
             R(6, "Erik", "6:00am", "2:00pm", role="Owner"), R(6, "Ben", "6:00am", "2:00pm", role="Line Cook")]
     assert sr.manager_gaps(rows, c) == {} and "no_manager" not in kinds(rows, c)
     same_as_sweep(rows, c)
@@ -458,8 +458,9 @@ def test_an_overnight_manager_covers_across_midnight():
              R(6, "Erik", "12:00am", "8:00am", role="Owner")]
     assert sr.manager_gaps(rows2, c) == {}
     same_as_sweep(rows2, c)
-    # Without the Sunday owner the hour is a real gap.
-    assert sr.manager_gaps(rows[:2], c)[WEEK[5]][0][:2] == (30 * 60, 31 * 60)
+    # Without the Sunday owner the 90 minutes are a real gap (past what a
+    # closing manager covers by staying).
+    assert sr.manager_gaps(rows[:2], c)[WEEK[5]][0][:2] == (30 * 60, 31 * 60 + 30)
 
 
 # ── RULES-11 ──────────────────────────────────────────────────────────────
