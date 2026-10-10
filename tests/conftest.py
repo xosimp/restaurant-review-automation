@@ -240,10 +240,17 @@ def _reset_studio_cache():
     se = _sys.modules.get("schedule_engine")
     if se is not None:
         se.studio_invalidate()
+    # And the Crew stage's kept matrix (crew_matrix.cached_build, SCALE-27).
+    cm = _sys.modules.get("crew_matrix")
+    if cm is not None:
+        cm.invalidate_cache()
     yield
     se = _sys.modules.get("schedule_engine")
     if se is not None:
         se.studio_invalidate()
+    cm = _sys.modules.get("crew_matrix")
+    if cm is not None:
+        cm.invalidate_cache()
 
 
 @pytest.fixture(autouse=True)

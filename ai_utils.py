@@ -95,13 +95,42 @@ AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", "150"))
 # every client still "under the pool". $30 is real use plus headroom; the
 # $1,500 floor still covers the first fifty clients outright, and the pool
 # only starts growing past that.
+#
+# Scheduler audit 10/10/26 (SCALE-11): the pool was capped at an absolute
+# $10,000 (AI-12), so at ~400-650 paying restaurants normal use reached it
+# mid-month and every client's schedules, replies, Ask and diagnoses were
+# refused until the 1st — a fleet-wide stop for nobody's runaway. It is now
+# an EMERGENCY ceiling that grows with the paying restaurants and never meets
+# normal use: AI_GLOBAL_PER_CLIENT_USD a paying client is each one's own
+# monthly ceiling (AI_MONTHLY_BUDGET_USD), so the pool binds only on spend no
+# tenant ceiling bounds — the platform's own and admin-run calls — or every
+# tenant at its ceiling at once. What a runaway loop used to be caught by is
+# the spend-rate detector below (runaway_refusal): one workflow of one
+# restaurant spending far past its own hourly rate is paused within the hour,
+# and the fleet's rate past its normal pages Will. AI_EMERGENCY_STOP is the
+# manually armed stop for everything.
 AI_GLOBAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MONTHLY_BUDGET_USD", "1500"))
-AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "30"))
-# ...but never above this. A backstop that grows without limit stops being a
-# backstop (AI-12): at a few hundred clients a runaway loop could spend tens
-# of thousands of dollars before the "shared ceiling" noticed. Raising it is
-# a deliberate Railway variable, not a side effect of signing clients.
-AI_GLOBAL_MAX_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", "10000"))
+AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "150"))
+# An absolute ceiling only when one is set deliberately (0 = none, the
+# default since 10/10/26; it was $10,000).
+AI_GLOBAL_MAX_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", "0"))
+# The manually armed stop: "1" refuses every model call for every client
+# until it is cleared. Never set by the code.
+AI_EMERGENCY_STOP = os.getenv("AI_EMERGENCY_STOP", "").strip().lower() in ("1", "true", "yes", "on")
+
+# The spend-rate runaway detector (SCALE-11). A restaurant's workflow whose
+# last hour cost at least the larger of AI_RUNAWAY_MIN_USD, AI_RUNAWAY_RUNS
+# of the workflow's own run cap (ai_workflows caps) and AI_RUNAWAY_FACTOR
+# times its own hourly rate over the last AI_RUNAWAY_BASELINE_DAYS is paused
+# — that workflow, for that restaurant, until its last hour is back under the
+# line — and Will is paged once an hour. The fleet's last hour past
+# AI_RUNAWAY_FACTOR times its own rate (and AI_RUNAWAY_FLEET_MIN_USD) pages
+# too, naming the workflows behind it; it stops nothing by itself.
+AI_RUNAWAY_FACTOR = float(os.getenv("AI_RUNAWAY_FACTOR", "6"))
+AI_RUNAWAY_MIN_USD = float(os.getenv("AI_RUNAWAY_MIN_USD", "5"))
+AI_RUNAWAY_RUNS = float(os.getenv("AI_RUNAWAY_RUNS", "4"))
+AI_RUNAWAY_FLEET_MIN_USD = float(os.getenv("AI_RUNAWAY_FLEET_MIN_USD", "50"))
+AI_RUNAWAY_BASELINE_DAYS = int(os.getenv("AI_RUNAWAY_BASELINE_DAYS", "7"))
 
 
 # _paying_client_count and _budget_tier run before EVERY Claude call, each a
@@ -188,7 +217,8 @@ def global_monthly_budget(db_path=None):
         return 0.0
     scaled = max(AI_GLOBAL_MONTHLY_BUDGET_USD,
                  _paying_client_count(db_path) * AI_GLOBAL_PER_CLIENT_USD)
-    if AI_GLOBAL_MAX_MONTHLY_BUDGET_USD:
+    # An absolute ceiling binds only when one was set on purpose (SCALE-11).
+    if AI_GLOBAL_MAX_MONTHLY_BUDGET_USD and AI_GLOBAL_MAX_MONTHLY_BUDGET_USD > 0:
         scaled = min(scaled, max(AI_GLOBAL_MAX_MONTHLY_BUDGET_USD, AI_GLOBAL_MONTHLY_BUDGET_USD))
     return scaled
 
@@ -730,12 +760,215 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
                    "At 100% every AI call is refused until the month resets."])
 
 
-def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None):
+# ── the spend-rate runaway detector (scheduler audit 10/10/26, SCALE-11) ──
+
+_RATE_CACHE_SECS = 60
+_BASELINE_CACHE_SECS = 3600
+_rate_cache = {}            # (kind, restaurant_id, action) -> (at, value)
+_rate_lock = threading.Lock()
+
+
+def _rate_get(key, ttl):
+    with _rate_lock:
+        hit = _rate_cache.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return True, hit[1]
+    return False, None
+
+
+def _rate_put(key, value):
+    with _rate_lock:
+        if len(_rate_cache) > 20000:
+            _rate_cache.clear()
+        _rate_cache[key] = (time.time(), value)
+
+
+def _hour_spend(restaurant_id, action, db_path=None) -> float:
+    """What `action` cost `restaurant_id` (None: unattributed) in the last
+    hour, not counting an admin's runs — cached a minute, moved on by
+    note_ai_spend between reads."""
+    key = ("hour", _memo_db(db_path), restaurant_id, action)
+    hit, value = _rate_get(key, _RATE_CACHE_SECS)
+    if hit:
+        return value
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        who = "restaurant_id=?" if restaurant_id is not None else "restaurant_id IS NULL"
+        args = ([restaurant_id] if restaurant_id is not None else []) + [action]
+        row = conn.execute(
+            f"SELECT COALESCE(SUM(cost_usd), 0) AS s FROM ai_usage WHERE {who} AND action=? "
+            "AND created_at >= datetime('now', '-60 minutes') AND COALESCE(\"trigger\",'') <> 'admin'",
+            tuple(args)).fetchone()
+        value = float(row["s"] or 0.0)
+    finally:
+        conn.close()
+    _rate_put(key, value)
+    return value
+
+
+def _baseline_hourly(restaurant_id, action, db_path=None) -> float:
+    """`action`'s own hourly rate for `restaurant_id` over the last
+    AI_RUNAWAY_BASELINE_DAYS (the hour just gone left out) — cached an hour.
+    With `action` None, the fleet's."""
+    key = ("base", _memo_db(db_path), restaurant_id, action)
+    hit, value = _rate_get(key, _BASELINE_CACHE_SECS)
+    if hit:
+        return value
+    from models import get_conn, DB_PATH
+    days = max(1, int(AI_RUNAWAY_BASELINE_DAYS))
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        if action is None:
+            # The fleet's week from the nightly daily rollup when it has the
+            # days (a sum over every raw row of a week grows with the fleet).
+            try:
+                got = conn.execute("SELECT COUNT(DISTINCT day) AS d, COALESCE(SUM(cost_usd), 0) AS s "
+                                   "FROM ai_usage_daily WHERE day >= date('now', ?) AND day < date('now')",
+                                   (f"-{days} days",)).fetchone()
+            except sqlite3.Error:
+                got = None
+            if got is not None and int(got["d"] or 0) >= days:
+                value = float(got["s"] or 0.0) / (days * 24.0)
+                _rate_put(key, value)
+                return value
+        where, args = ["created_at >= datetime('now', ?)", "created_at < datetime('now', '-60 minutes')"], \
+            [f"-{days} days"]
+        if action is not None:
+            where.append("action=?")
+            args.append(action)
+            where.append("restaurant_id=?" if restaurant_id is not None else "restaurant_id IS NULL")
+            if restaurant_id is not None:
+                args.append(restaurant_id)
+        row = conn.execute(f"SELECT COALESCE(SUM(cost_usd), 0) AS s FROM ai_usage WHERE {' AND '.join(where)}",
+                           tuple(args)).fetchone()
+        value = float(row["s"] or 0.0) / (days * 24.0)
+    finally:
+        conn.close()
+    _rate_put(key, value)
+    return value
+
+
+def runaway_threshold(restaurant_id, action, db_path=None) -> float:
+    """The last-hour spend that reads as a runaway for this restaurant's
+    workflow: the larger of AI_RUNAWAY_MIN_USD, AI_RUNAWAY_RUNS of the
+    workflow's own run cap, and AI_RUNAWAY_FACTOR times its own hourly rate."""
+    cap = 0.0
+    try:
+        import ai_workflows
+        pol = ai_workflows.POLICIES.get(action)
+        cap = float(getattr(getattr(pol, "caps", None), "usd", 0) or 0)
+    except Exception:
+        cap = 0.0
+    return max(AI_RUNAWAY_MIN_USD, AI_RUNAWAY_RUNS * cap,
+               AI_RUNAWAY_FACTOR * _baseline_hourly(restaurant_id, action, db_path))
+
+
+def runaway_refusal(restaurant_id, action, db_path=None, trigger=None):
+    """Why this call is refused before it is sent — the manually armed
+    AI_EMERGENCY_STOP, or this restaurant's workflow spending past its
+    runaway line in the last hour — as words, or None. An admin's run is
+    never paused by the rate (it answers to the global pool, #148). Fails
+    open, like the budget check."""
+    if AI_EMERGENCY_STOP:
+        return "emergency stop"
+    if not action or not AI_RUNAWAY_FACTOR:
+        return None
+    try:
+        if trigger is None:
+            trigger = _attribution()[0]
+        if trigger == "admin":
+            return None
+        spent = _hour_spend(restaurant_id, action, db_path)
+        if spent < AI_RUNAWAY_MIN_USD:
+            return None
+        line = runaway_threshold(restaurant_id, action, db_path)
+        if spent < line:
+            return None
+        _note_runaway(restaurant_id, action, spent, line)
+        return f"unusual spend on {action} in the last hour"
+    except Exception as e:
+        log.warning("runaway check failed (rid=%s, %s): %s", restaurant_id, action, e)
+        return None
+
+
+def _note_runaway(restaurant_id, action, spent, line):
+    """One health event and one page per restaurant, workflow and hour."""
+    try:
+        import ops
+        from datetime import datetime, timezone
+        period = f"{restaurant_id}:{action}:{datetime.now(timezone.utc):%Y-%m-%dT%H}"
+        if not ops.claim_period("ai_runaway", period):
+            return
+    except Exception:
+        return
+    detail = f"{action} spent ${spent:.2f} in the last hour (line ${line:.2f})"
+    record_health_event("anthropic", "runaway_pause", scope=action, restaurant_id=restaurant_id, detail=detail)
+    _page(f"runaway:{restaurant_id}:{action}", "Cavnar AI: one workflow's AI spend was paused (runaway)",
+          [f"Restaurant {restaurant_id}: {detail}. That workflow is paused for that restaurant until its last "
+           "hour is back under the line; nothing else is affected.",
+           "If the spend is real, raise AI_RUNAWAY_FACTOR / AI_RUNAWAY_RUNS; if not, find the loop. "
+           "Open the admin console → Operations → AI."])
+
+
+def check_fleet_rate(db_path=None) -> dict:
+    """The fleet's last hour against its own hourly rate: {spent, rate,
+    line, over, top}. Past the line, one page an hour naming the workflows
+    and restaurants behind it — it stops nothing (per-restaurant pauses do).
+    Run by the scheduler every tick (cheap: two indexed sums, cached)."""
+    from models import get_conn, DB_PATH
+    key = ("fleet_hour", _memo_db(db_path))
+    hit, spent = _rate_get(key, _RATE_CACHE_SECS)
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        if not hit:
+            row = conn.execute("SELECT COALESCE(SUM(cost_usd), 0) AS s FROM ai_usage "
+                               "WHERE created_at >= datetime('now', '-60 minutes')").fetchone()
+            spent = float(row["s"] or 0.0)
+            _rate_put(key, spent)
+        rate = _baseline_hourly(None, None, db_path)
+        line = max(AI_RUNAWAY_FLEET_MIN_USD, AI_RUNAWAY_FACTOR * rate)
+        out = {"spent": round(spent, 2), "rate": round(rate, 4), "line": round(line, 2),
+               "over": bool(AI_RUNAWAY_FACTOR) and spent >= line, "top": []}
+        if out["over"]:
+            out["top"] = [dict(r) for r in conn.execute(
+                "SELECT restaurant_id, action, ROUND(SUM(cost_usd), 2) AS spent FROM ai_usage "
+                "WHERE created_at >= datetime('now', '-60 minutes') GROUP BY restaurant_id, action "
+                "ORDER BY SUM(cost_usd) DESC LIMIT 5").fetchall()]
+    finally:
+        conn.close()
+    if out["over"]:
+        try:
+            import ops
+            from datetime import datetime, timezone
+            if ops.claim_period("ai_fleet_runaway", f"{datetime.now(timezone.utc):%Y-%m-%dT%H}"):
+                record_health_event("anthropic", "fleet_rate", detail=f"${out['spent']} in the last hour "
+                                    f"(line ${out['line']})")
+                _page("fleet_runaway", "Cavnar AI: the platform's AI spend rate is far past normal",
+                      [f"${out['spent']:.2f} in the last hour, against a usual ${out['rate']:.2f} an hour "
+                       f"(line ${out['line']:.2f}).",
+                       "Biggest: " + "; ".join(f"restaurant {t['restaurant_id']} {t['action']} ${t['spent']}"
+                                               for t in out["top"]),
+                       "Each restaurant's runaway workflow pauses itself; set AI_EMERGENCY_STOP=1 to stop "
+                       "everything."])
+        except Exception as e:
+            log.warning("fleet runaway page failed: %s", e)
+    return out
+
+
+def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None, action=None):
     """Keep the cached totals honest between refreshes, so a burst inside one
     cache window still trips the ceiling. Places spend moves the Places
     totals only; an admin-triggered call moves the global pool only."""
     if not cost_usd:
         return
+    if action and vendor != "google_places" and trigger != "admin":
+        # The runaway detector's last-hour total for this workflow (SCALE-11).
+        with _rate_lock:
+            for key in list(_rate_cache):
+                if key[0] == "hour" and key[2] == restaurant_id and key[3] == action:
+                    at, v = _rate_cache[key]
+                    _rate_cache[key] = (at, v + cost_usd)
     _prune_budget_cache(_current_windows())
     if vendor == "google_places":
         scopes = (_places_key(restaurant_id), "places:all")
@@ -1942,6 +2175,15 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
             f"AI is paused — this account has reached its {over}. "
             "Contact will@cavnar.ai if this looks wrong."
         )
+    # The manually armed emergency stop, and a runaway workflow paused by
+    # its own spend rate (SCALE-11) — never the whole fleet for one loop.
+    paused = runaway_refusal(restaurant_id, action)
+    if paused:
+        log_blocked(restaurant_id, action, model, "budget", detail=paused, **attribution)
+        raise AIBudgetExceeded(
+            "AI is paused for everyone for a moment — try again shortly." if paused == "emergency stop" else
+            "This AI task is paused for now — it has run far more than usual in the last hour. "
+            "Contact will@cavnar.ai if this looks wrong.")
     try:
         _breaker_check("anthropic")
     except AIProviderDown:
@@ -2714,7 +2956,7 @@ def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_p
         conn.close()
     # Fold this call into the cached totals so a burst inside one cache
     # window still trips the ceiling rather than sliding under it.
-    note_ai_spend(cost_usd, restaurant_id, vendor=vendor, trigger=trigger)
+    note_ai_spend(cost_usd, restaurant_id, vendor=vendor, trigger=trigger, action=action)
     return row_id
 
 
@@ -4008,6 +4250,13 @@ def ai_health(db_path=None):
         out["budget"] = {"global_month": g, "places_month": p}
     except Exception:
         out["budget"] = {}
+    # The fleet's spend rate against its own (SCALE-11): read on the
+    # platform monitor's every pass, which pages once an hour past the line.
+    try:
+        out["rate"] = check_fleet_rate(db_path)
+        out["emergency_stop"] = AI_EMERGENCY_STOP
+    except Exception:
+        out["rate"] = {}
     out["status"], out["reason"] = _service_status(out)
     return out
 

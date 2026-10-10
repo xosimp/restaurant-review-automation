@@ -10518,6 +10518,19 @@ def staff_schedule_page(token):
         oc = getattr(_ss_av, "own_conflicts", None)
         if oc is not None:
             saved_conflicts = _ss_av.conflicts_text(oc(share["restaurant_id"], share["employee_name"]))
+    # Days they asked off that wait for a manager or start on a later date
+    # (schedule audit 10/10/26 MARKET-15): ticked as asked, and said.
+    pending_line = ""
+    try:
+        import availability_changes as _avc_pg
+        for ch in _avc_pg.mine(share["restaurant_id"], share["employee_name"]):
+            unavailable = list(unavailable) + [d for d, s in (ch.get("days") or {}).items()
+                                               if s.get("status") == "off" and d not in unavailable]
+            pending_line = ((f"Waiting for your manager: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."
+                             if ch["status"] == "pending" else
+                             f"Approved: {ch.get('summary')}, from {_mdy(ch['effective_from'])}."))
+    except Exception as _pgx:
+        print(f"[schedule link] availability changes unread: {_pgx!r}")
 
     # The availability form below is a plain HTML POST, not a fetch, so it
     # can't use the dashboard's fetch wrapper to supply the CSRF header —
@@ -10547,6 +10560,7 @@ def staff_schedule_page(token):
         note=saved_note,
         saved=request.args.get("saved") == "1",
         saved_conflicts=saved_conflicts,
+        pending_line=pending_line,
         all_days_blocked=request.args.get("error") == "all_days",
         throttled=request.args.get("error") == "throttled",
         stale=request.args.get("error") == "stale",
@@ -10726,18 +10740,31 @@ def _do_account_hours(rid, data, current_user=None):
     if current_user is not None and not is_principal(current_user):
         return {"ok": False, "error": "Only the account owner can change opening hours and closures."}, 403
 
-    def _clean_times(raw):
+    import schedule_time as _stime_h
+    bad = []
+
+    def _clean_times(raw, which):
+        # Each time in the one spelling every reader parses ("9:00pm" — the
+        # web sends "21:00", the phone "9:00pm"); one no reader can parse is
+        # named back, never stored for the close rules to drop silently
+        # (BUGSGEN-20).
         out = {}
         for day in _ACCOUNT_DAYS:
             v = (raw or {}).get(day)
             if isinstance(v, str) and v.strip():
-                out[day] = v.strip()[:12]
+                norm = _stime_h.normalise_clock(v.strip()[:20])
+                if norm is None:
+                    bad.append(f"{day}'s {which} time \u201c{v.strip()[:20]}\u201d")
+                else:
+                    out[day] = norm
         return _json_h.dumps(out) if out else None
 
-    update_restaurant(rid, {
-        "open_times_json": _clean_times((data or {}).get("open")),
-        "close_times_json": _clean_times((data or {}).get("close")),
-    })
+    opens = _clean_times((data or {}).get("open"), "opening")
+    closes = _clean_times((data or {}).get("close"), "closing")
+    if bad:
+        return {"ok": False, "error": "Nothing was saved: " + "; ".join(bad[:3])
+                + (" isn't a time" if len(bad) == 1 else " aren't times") + " we can read — use a time like 9:00pm."}, 400
+    update_restaurant(rid, {"open_times_json": opens, "close_times_json": closes})
     out = {"ok": True}
     # Closures are the scheduler's closed dates (schedule_rules.save_closures,
     # the list Labor -> Scheduling rules edits too). This box said "used when
@@ -11978,6 +12005,14 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=False, error="Reload the schedule before sending — this copy doesn't say which week it is."), 400
     ack = data.get("acknowledge")
     acknowledge = [str(k) for k in ack] if isinstance(ack, (list, tuple)) else bool(ack)
+    # The pre-publish screen's overrides (TRUST-28, the I1 contract):
+    # `overrides: [{key, reason}]` acknowledges each key and keeps its reason.
+    import schedule_overrides as _so_rq
+    reasons = _so_rq.reasons_from(data.get("overrides"))
+    if reasons:
+        acknowledge = sorted(set(acknowledge if isinstance(acknowledge, list) else []) | set(reasons)) \
+            if acknowledge is not True else True
+    _why = {"override_reasons": reasons} if reasons else {}
     # A send nobody read a sheet for — Waiting on you's Send, the drafted
     # push's Send to staff (re-audit 10/8/26 #1). It acknowledges nothing,
     # and goes only when the unattended gate (draft_one_tap_safe: no
@@ -12024,7 +12059,7 @@ def _publish_schedule_request(current_user):
         import schedule_versions as _sv
         changes = (_sv.unsent_changes(rid, row["id"]) or {}).get("people") or []
         if not changes:
-            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge)
+            out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why)
             return jsonify(**out), status
     if version is not None:
         # The rows the sender reviewed are not the rows stored now: their
@@ -12059,14 +12094,14 @@ def _publish_schedule_request(current_user):
         _seen = version if version is not None else (newest[0]["version"] if newest else None)
         if changes:
             act = delayed.schedule(rid, "schedule_changes_send",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     "version": _seen, **_by},
                                    delay, actor=current_user,
                                    label=f"Sending the changes to the week of {_mdy_pub(row['week_start'])} "
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
             act = delayed.schedule(rid, "schedule_publish",
-                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked,
+                                   {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     "version": _seen,
                                     # The window's end runs the unattended
                                     # gate again for a one-tap send (#1).
@@ -12076,10 +12111,10 @@ def _publish_schedule_request(current_user):
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
                        undo_minutes=delay, sent=[], unreachable=[], failed=[])
     if changes:
-        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge,
+        out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge, **_why,
                                             **({"version": version} if version is not None else {}))
     else:
-        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge,
+        out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why,
                                         **({"version": version} if version is not None else {}))
     return jsonify(**out), status
 

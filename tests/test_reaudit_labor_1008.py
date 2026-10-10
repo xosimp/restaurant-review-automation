@@ -265,7 +265,7 @@ def test_a_slot_timeout_releases_the_watchers(db, monkeypatch, pushed):
     rid = _rid(db)
     r = models.get_restaurant(rid)
 
-    def run(job_id, rid_):
+    def run(job_id, rid_, **_kw):
         raise _Timeout()
     _SE, watched = _auto(db, rid, monkeypatch, run)
     strategy_jobs._draft_one(r, db, _SE, lambda k: None)
@@ -276,7 +276,7 @@ def test_an_exception_out_of_the_run_releases_the_watchers_and_closes_the_job(db
     rid = _rid(db)
     r = models.get_restaurant(rid)
 
-    def run(job_id, rid_):
+    def run(job_id, rid_, **_kw):
         raise RuntimeError("the generator fell over")
     _SE, watched = _auto(db, rid, monkeypatch, run)
     with pytest.raises(RuntimeError):
@@ -289,7 +289,7 @@ def test_a_failed_job_releases_the_watchers(db, monkeypatch, pushed):
     rid = _rid(db)
     r = models.get_restaurant(rid)
 
-    def run(job_id, rid_):
+    def run(job_id, rid_, **_kw):
         ops.finish_async_job(job_id, "error", {"ok": False, "error": "No sales."})
     _SE, watched = _auto(db, rid, monkeypatch, run)
     strategy_jobs._draft_one(r, db, _SE, lambda k: None)

@@ -4448,6 +4448,11 @@ svg:hover .hb-xh{opacity:1}
   window.cavBench={card:cardHtml,panel:panel,strip:strip,locations:locations,fill:fillCards,fillPanel:fillPanel,profile:openProfile};
 })();
 </script>
+{# The few server values the large static scripts below read, in one place
+   (scheduler audit 10/10/26, SCALE-28): with no Jinja inside them those
+   scripts are served as content-hashed, immutable files (static_bundles)
+   instead of ~450 KB of inline text on every load. #}
+<script>window.CAV_BOOT={rid:{{ restaurant.id|int }},multi:{{ 'true' if group_locations and group_locations|length > 1 else 'false' }},role:{{ (current_user.role if current_user and current_user.role else "client")|tojson }}};</script>
 <script>
 (function(){
   // ── Home renderer (ES5) ───────────────────────────────────────────────────
@@ -4455,7 +4460,7 @@ svg:hover .hb-xh{opacity:1}
   // the last pick is remembered in this browser.
   var _hbData=null,_hbLoadedAt=0,_hbLoading=false,_hbScope=hbScopeStart(),_hbRange='1M';
   function hbScopeStart(){
-    var multi={{ 'true' if group_locations and group_locations|length > 1 else 'false' }};
+    var multi=window.CAV_BOOT.multi;
     if(!multi)return 'location';
     // Arriving from a group row: this one load shows the location it opened.
     var once=null;try{once=sessionStorage.getItem('cavnar_hb_scope_once');sessionStorage.removeItem('cavnar_hb_scope_once');}catch(e0){once=null;}
@@ -4907,7 +4912,7 @@ svg:hover .hb-xh{opacity:1}
   // switches (switchLocation remembers the pick) - "All locations" is the
   // way back to the group view.
   window.hbSwitchLoc=function(rid){
-    if(+rid==={{ restaurant.id|int }}){hbScope('location');return;}
+    if(+rid===window.CAV_BOOT.rid){hbScope('location');return;}
     if(typeof switchLocation==='function')switchLocation(rid);
   };
   window.hbScope=function(scope){_hbScope=scope;try{localStorage.setItem('cavnar_hb_scope',scope);}catch(e){}_hbLoadedAt=0;hbLoad(false);};
@@ -16742,7 +16747,7 @@ window.askScreen = function() {
 // The chat survives a reload or a location switch (friction #15): the id is
 // kept per restaurant in sessionStorage, and the panel reopens on it. Per
 // viewer convenience only — the transcript itself is on the server.
-var ASK_CONV_KEY = 'cavnar_ask_conv_{{ restaurant.id|int }}';
+var ASK_CONV_KEY = 'cavnar_ask_conv_' + window.CAV_BOOT.rid;
 window.askRememberConversation = function(id) {
   window._askConversationId = id;
   try { sessionStorage.setItem(ASK_CONV_KEY, String(id)); } catch (e) {}
@@ -17707,6 +17712,27 @@ window.sendAskCavnar = function() {
   });
 };
 </script>
+{# The server values the main script below reads (scheduler audit 10/10/26,
+   SCALE-28): set here, read there as window.CAV_BOOT, so the 1 MB script
+   holds no Jinja and is served as a content-hashed, immutable file. One
+   "connected" rule (marketing_publish.channels_of, re-audit OPP-15): the
+   Studio, the Opportunity Feed and Home read the same test each publish
+   route makes - Instagram needs its account id as well as the token. #}
+<script>
+window.CAV_BOOT.ig = {% if social_channels is defined and social_channels.instagram %}true{% else %}false{% endif %};
+window.CAV_BOOT.fb = {% if social_channels is defined and social_channels.facebook %}true{% else %}false{% endif %};
+window.CAV_BOOT.gg = {% if social_channels is defined and social_channels.google %}true{% else %}false{% endif %};
+window.CAV_BOOT.rvTotal = {{ (rstats.total|int) if rstats and rstats.total is not none else 'null' }};
+window.CAV_BOOT.rfilter = {{ (rfilter or '')|tojson }};
+window.CAV_BOOT.dowData = {{labor.dow_summary|tojson}};
+window.CAV_BOOT.laborByDay = {{labor.by_day|tojson if labor.by_day else '{}'}};
+window.CAV_BOOT.laborTarget = {{labor_target|default(30.0)}};
+window.CAV_BOOT.laborDateRange = {{labor.date_range|tojson if labor.date_range else 'null'}};
+window.CAV_BOOT.perfDowPeriod = '{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% endif %}';
+window.CAV_BOOT.mktChannel = { {% for ct in ctypes %}{{ ct.id|tojson }}: {{ (ct.channel or 'social')|tojson }}, {% endfor %}'guest_sms': 'text' };
+window.CAV_BOOT.selCt = {{ (ctypes[0].id if ctypes else '')|tojson }};
+window.CAV_BOOT.bellScope = '{{ 'group' if group_locations and group_locations|length > 1 else '' }}';
+</script>
 
 <script>
 function openEditor(id) {
@@ -17916,12 +17942,11 @@ function saveDraft(id) {
     }).catch(function(){ settle(); toast('Couldn\u2019t confirm that went through \u2014 refresh to check before trying again.','error'); });
   }).catch(function(){ settle(); toast('Network error — try again','error'); });
 }
-{# One "connected" rule (marketing_publish.channels_of, re-audit OPP-15): the
-   Studio, the Opportunity Feed and Home read the same test each publish route
-   makes - Instagram needs its account id as well as the token. #}
-var _igConnected = {% if social_channels is defined and social_channels.instagram %}true{% else %}false{% endif %};
-var _fbConnected = {% if social_channels is defined and social_channels.facebook %}true{% else %}false{% endif %};
-var _ggConnected = {% if social_channels is defined and social_channels.google %}true{% else %}false{% endif %};
+// One "connected" rule (marketing_publish.channels_of, re-audit OPP-15),
+// set before this script (window.CAV_BOOT).
+var _igConnected = window.CAV_BOOT.ig;
+var _fbConnected = window.CAV_BOOT.fb;
+var _ggConnected = window.CAV_BOOT.gg;
 
 var _toastTimer=null;
 function toggleRows(tbodyId, btnId, total) {
@@ -19460,7 +19485,7 @@ function _rvMoreState(hasMore,shown,total){
 // The baseline is the total the page was rendered with (rstats), not the
 // first poll on the Reviews tab: reviews that arrived between loading the
 // dashboard and opening Reviews never appeared (re-audit F1-12).
-var _rvKnownTotal={{ (rstats.total|int) if rstats and rstats.total is not none else 'null' }},_rvNewIds=[];
+var _rvKnownTotal=window.CAV_BOOT.rvTotal,_rvNewIds=[];
 function rvNoteTotal(total){
   total=+total;if(!isFinite(total))return;
   if(_rvKnownTotal===null){_rvKnownTotal=total;return;}
@@ -19748,7 +19773,7 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   }
 });
-var rfilter='{{rfilter}}';
+var rfilter=window.CAV_BOOT.rfilter;
 function setRF(f,btn){
   rfilter=f;
   document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
@@ -20907,11 +20932,11 @@ function skipR(id){
     } else { toast(d.error||'Skip failed — try again','error'); }
   }).catch(function(){ settle(); toast('Network error — check your connection','error'); });
 }
-var dowData={{labor.dow_summary|tojson}};
-var laborByDay={{labor.by_day|tojson if labor.by_day else '{}'}};
-var laborTargetPct={{labor_target|default(30.0)}};
-var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
-var _laborTarget={{labor_target|default(30.0)}};
+var dowData=window.CAV_BOOT.dowData;
+var laborByDay=window.CAV_BOOT.laborByDay;
+var laborTargetPct=window.CAV_BOOT.laborTarget;
+var laborDateRange=window.CAV_BOOT.laborDateRange;
+var _laborTarget=window.CAV_BOOT.laborTarget;
 (function(){
   var elPeriod=document.getElementById('labor-period');
   if(!elPeriod||!laborDateRange||!laborDateRange.start)return;
@@ -20924,7 +20949,7 @@ var _laborTarget={{labor_target|default(30.0)}};
 var _perfTab='daily';
 var _perfTrendData=null;
 var _perfDowData=null;
-var _perfDowPeriod='{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% endif %}';
+var _perfDowPeriod=window.CAV_BOOT.perfDowPeriod;
 var _perfTrendPeriod='';
 
 // Three views of one question (density round #44): Daily, 8 weeks, and By
@@ -21126,7 +21151,7 @@ function _mktBody(){
 // is written and sent from the Campaign Studio (Marketing audit AUX-4 / UX-3:
 // a win-back SMS or a "SUBJECT LINE: ... BODY:" email could be posted to
 // Facebook). guest_sms is the quiet-night job's old guest-text draft.
-var _MKT_CHANNEL = { {% for ct in ctypes %}{{ ct.id|tojson }}: {{ (ct.channel or 'social')|tojson }}, {% endfor %}'guest_sms': 'text' };
+var _MKT_CHANNEL = window.CAV_BOOT.mktChannel;
 function _mktChannelOf(type){ return _MKT_CHANNEL[type] || 'social'; }
 function _mktIsSocial(type){ return _mktChannelOf(type) === 'social'; }
 // A calendar idea's channel: its platform when that names SMS or Email (the
@@ -23082,12 +23107,50 @@ document.addEventListener('click', function (ev) {
     }).catch(function () { _sqRated[name] = prev; renderQualityRatePrompt(); toast('Could not save that rating', 'error'); });
 });
 
+// The re-score answers with only the shift readings that changed since the
+// answer this page holds (scheduler audit 10/10/26, SCALE-29): the whole
+// quality object is 130-440 KB, and a drag moves two or three readings of
+// fourteen. _sqHeld is that answer and its etag; the server sends the whole
+// object whenever it no longer holds the etag.
+var _sqHeld = null;
+function _sqShiftKeys(shifts) {
+  var seen = {}, keys = [], i, k, n;
+  for (i = 0; i < (shifts || []).length; i++) {
+    k = ((shifts[i] || {}).date || '') + '|' + ((shifts[i] || {}).daypart || '');
+    n = seen[k] || 0;
+    seen[k] = n + 1;
+    keys.push(n ? k + '#' + n : k);
+  }
+  return keys;
+}
+function _sqDeltaBody(body) {
+  if (_sqHeld && _sqHeld.etag) { body.delta = true; body.quality_etag = _sqHeld.etag; }
+  return body;
+}
+function _sqTakeQuality(d) {
+  if (!d || !d.ok) return d;
+  var dl = d.quality_delta;
+  if (!d.quality && dl && _sqHeld && _sqHeld.etag === dl.base) {
+    var out = {}, k, i, had = {}, prev = _sqHeld.quality.shifts || [], keys = _sqShiftKeys(prev), shifts = [];
+    for (k in (dl.head || {})) if (dl.head.hasOwnProperty(k)) out[k] = dl.head[k];
+    for (i = 0; i < keys.length; i++) had[keys[i]] = prev[i];
+    for (i = 0; i < (dl.order || []).length; i++) {
+      k = dl.order[i];
+      shifts.push(dl.changed && dl.changed.hasOwnProperty(k) ? dl.changed[k] : had[k]);
+    }
+    out.shifts = shifts;
+    d.quality = out;
+  }
+  _sqHeld = (d.quality && d.quality_etag) ? {etag: d.quality_etag, quality: d.quality} : null;
+  return d;
+}
+
 // Score the rows without storing anything — the what-if, and the
 // re-score after rating somebody. The same endpoint Save uses, save:false.
 function _sqLiveScore(rows, done) {
   fetch('/api/labor/schedule/score', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rows: rows, daily_target_hours: _schedTargets, save: false})})
-    .then(apiJson).then(function (d) { done(d && d.ok ? d : null, d); })
+    body: JSON.stringify(_sqDeltaBody({rows: rows, daily_target_hours: _schedTargets, save: false}))})
+    .then(apiJson).then(function (d) { d = _sqTakeQuality(d); done(d && d.ok ? d : null, d); })
     .catch(function () { done(null, null); });
 }
 function rescoreQualityLive(btn) {
@@ -23695,6 +23758,12 @@ function rescoreSchedule(btn, after) {
   // since are a 409.
   if (_schedHistoryId) body.history_id = _schedHistoryId;
   if (_schedVersion !== null && _schedVersion !== undefined) body.version = _schedVersion;
+  /* Keep my edits: the server re-applies these edits shift by shift onto
+     the newer week (schedule audit 10/10/26 ARCH-8) - never this screen
+     over a staff cover or swap. */
+  var keepMine = window._schedKeepMine || null;
+  window._schedKeepMine = null;
+  if (keepMine) { body.keep_mine = true; if (keepMine.override) body.override_staff = true; }
   // Rows Cavnar AI took out (apply-fixes / Improve's cavnar_removed): kept
   // as its changes, never taught as the manager's habit (schedule audit
   // 10/3/26 L-5, H1-2). Its own rows carry origin / origin_sig already.
@@ -23703,9 +23772,10 @@ function rescoreSchedule(btn, after) {
   fetch('/api/labor/schedule/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
+    body: JSON.stringify(_sqDeltaBody(body))
   }).then(function (r) { status = r.status; return r.json(); }).then(function (d) {
     done();
+    d = _sqTakeQuality(d);
     if (d && d.ok) {
       if (d.saved && _sqOptimizerProposed && window._sqOptimizerKey) {
         _recEvent(window._sqOptimizerKey, 'accepted');
@@ -23726,6 +23796,8 @@ function rescoreSchedule(btn, after) {
         _schedHideConflict();
         toast('Saved — your newest change came in while saving and isn’t saved yet. Save again to keep it.', 'warning');
       } else if (d.saved) {
+        /* Merged onto the newer week: what was saved is the screen now. */
+        if (d.merged_rows && d.merged_rows.length) _schedRows = d.merged_rows;
         _schedSetDirty(false);
         _schedSnapshot();
         _schedHideConflict();
@@ -24441,18 +24513,28 @@ function _schedShowConflict(d) {
   var h = '<b>' + _escHtml(d.saved_by || 'Somebody') + ' changed this week after you opened it.</b> Your edits are still here; nothing was overwritten.', i;
   var lines = d.lines || [];
   if (lines.length) { h += '<div style="margin-top:6px">What they changed:'; for (i = 0; i < lines.length; i++) h += '<div class="ln">' + num(lines[i]) + '</div>'; h += '</div>'; }
+  /* A staff cover or swap on a shift you also changed (BUGSLIFE-16): named,
+     and kept only on purpose - both people are then told. */
+  var sc = d.staff_conflicts || [];
+  if (sc.length) {
+    h += '<div style="margin-top:6px">Staff changed shifts you also edited:';
+    for (i = 0; i < sc.length; i++) h += '<div class="ln">' + _escHtml(sc[i].now || 'Somebody') + ' took ' + _escHtml(sc[i].was || '') + '’s ' + _escHtml(_schedDayOf(sc[i].date).slice(0, 3)) + ' <span class="hb-num">' + mdy(sc[i].date) + '</span> ' + _escHtml(sc[i].shift_start || '') + '</div>';
+    h += '</div>';
+  }
   h += '<div class="sr-actions">'
-    + (window._schedConflictAt !== null ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="schedKeepMine(this)">Keep my edits</button> ' : '')
+    + (window._schedConflictAt !== null ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="schedKeepMine(this' + (sc.length ? ', true' : '') + ')">' + (sc.length ? 'Keep mine on those too' : 'Keep my edits') + '</button> ' : '')
     + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="reloadScheduleFromHistory(this, true)">Reload theirs</button></div>'
-    + '<div class="ln" style="margin-top:6px">Keep my edits saves what is on your screen over their change. Reload theirs drops your edits.</div>';
+    + '<div class="ln" style="margin-top:6px">' + (sc.length ? 'Keeping yours on those shifts undoes what staff agreed, and both people are told. Reload theirs drops your edits.' : 'Keep my edits puts your changes on top of theirs, shift by shift: anything you both changed is yours. Reload theirs drops your edits.') + '</div>';
   c.innerHTML = h; c.style.display = 'block';
 }
 
-// "Keep my edits": the owner saw what the other save changed and chose
-// theirs to go — saved against the version the refusal named.
-function schedKeepMine(btn) {
+// "Keep my edits": the owner saw what the other save changed. The server
+// re-applies these edits onto the newer week shift by shift, against the
+// version this screen came from (ARCH-8); the override flag keeps them over a
+// staff cover or swap it named (BUGSLIFE-16).
+function schedKeepMine(btn, override) {
   if (window._schedConflictAt === null || window._schedConflictAt === undefined) return;
-  _schedVersion = window._schedConflictAt;
+  window._schedKeepMine = {override: !!override};
   rescoreSchedule(btn);
 }
 
@@ -26898,10 +26980,24 @@ function ssLoadAdvanced() {
     var h = '<div class="rul-sw" style="border-top:0"><label class="ac-switch"><input type="checkbox" id="ssa-trim"' + (d.trim_to_budget ? ' checked' : '') + (ro ? ' disabled' : '') + '><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><div class="t">Trim to budget<small>When the draft runs over the PAR hours, Cavnar AI removes the lowest-value shifts until it fits. Off leaves the overage on the draft for you to see.</small></div></div>'
       + '<div class="rul-sw"><div class="t"><label for="ssa-cut">Never cut a role below</label><input type="number" class="ac-input ac-num n" id="ssa-cut" min="1" max="' + cutMax + '" step="1" value="' + _escAttr(String(cutN)) + '"' + (ro ? ' disabled' : '') + '>people<small>For any role without its own floor: no trim or send-home suggestion leaves fewer than this on.</small></div></div>'
       + '<div class="rul-sw"><div class="t"><label for="ssa-sections">Dining sections</label><input type="number" class="ac-input ac-num n" id="ssa-sections" min="1" max="30" step="1" placeholder="—" value="' + (d.section_count ? _escAttr(String(d.section_count)) : '') + '"' + (ro ? ' disabled' : '') + '><small>The most front-of-house people the draft puts on the floor at once. Blank is no cap.</small></div></div>'
+      + '<div class="rul-sw"><div class="t"><label for="ssa-boundary">Lunch ends at</label><select class="ac-select" id="ssa-boundary"' + (ro ? ' disabled' : '') + '>' + _ssaBoundaryOptions(d.daypart_boundary) + '</select><small>A shift that covers neither lunch nor dinner service counts as lunch if it starts before this, dinner from it.</small></div></div>'
       + '<span class="ac-status" id="ssa-status"></span>'
       + (ro ? '<div class="sw-note">Only the account owner can change these.</div>' : '');
     el.innerHTML = h;
   }).catch(function () { el.innerHTML = '<div class="sw-note">These settings could not load.</div>'; });
+}
+// Where lunch ends and dinner starts (restaurants.daypart_boundary,
+// schedule_time - ARCH-12): 12:00pm to 6:00pm on the half hour; the first
+// option is the default, 3:00pm, stored as blank.
+function _ssaBoundaryOptions(value) {
+  var cur = cavTimeValue(value || ''), h = '<option value="">3:00pm (default)</option>', m, hh, mm, v;
+  for (m = 12 * 60; m <= 18 * 60; m += 30) {
+    if (m === 15 * 60) continue;
+    hh = Math.floor(m / 60); mm = m % 60;
+    v = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+    h += '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + cavTimeLabel(v) + '</option>';
+  }
+  return h;
 }
 // One save at a time per field, the latest value last, and the Labor rules
 // card mirrored with what the server stored — so neither screen can carry
@@ -26912,6 +27008,7 @@ function _ssaSend(id) {
   var body = {}, field, mirror;
   if (id === 'ssa-trim') { body.trim_to_budget = !!t.checked; field = 'trim_to_budget'; mirror = 'rul-trim'; }
   else if (id === 'ssa-cut') { if (t.value === '') return; body.cut_floor_default = +t.value; field = 'cut_floor_default'; mirror = 'rul-cut-floor'; }
+  else if (id === 'ssa-boundary') { body.daypart_boundary = t.value || null; field = 'daypart_boundary'; mirror = ''; }
   else { body.section_count = t.value === '' ? null : +t.value; field = 'section_count'; mirror = 'rul-sections'; }
   _ssaBusy[id] = true; _ssaPending[id] = false;
   var st = document.getElementById('ssa-status'); if (st) { st.textContent = 'Saving…'; st.className = 'ac-status'; }
@@ -26927,7 +27024,7 @@ function _ssaSend(id) {
     }).catch(function () { if (st) { st.textContent = 'Could not save'; st.className = 'ac-status err'; } done(); });
 }
 document.addEventListener('change', function (ev) {
-  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections')) return;
+  var t = ev.target; if (!t || (t.id !== 'ssa-trim' && t.id !== 'ssa-cut' && t.id !== 'ssa-sections' && t.id !== 'ssa-boundary')) return;
   _ssaSend(t.id);
 });
 // The Forecast tab: the picked week before anything is drafted — each
@@ -28867,7 +28964,7 @@ function wtDrawObs(d){
   if(fixable.length)h+='<div class="fc2-wt-obcol warn"><div class="fc2-wt-obhd">Fixable</div>'+fixable.map(wtObBullet).join('')+'</div>';
   wtShow('fc2-wt-obs',true);box.innerHTML=h;
 }
-var selCt='{{ctypes[0].id if ctypes}}';
+var selCt=window.CAV_BOOT.selCt;
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');b.setAttribute('aria-checked','false');});el.classList.add('selected');el.setAttribute('aria-checked','true');}
 // A content-type card by keyboard (AUX-11): Enter or Space picks it.
 function mktCtKey(e,el){
@@ -29415,8 +29512,24 @@ function cavTimeLabel(hm) {
   return (h % 12 || 12) + (m ? ':' + (m < 10 ? '0' : '') + m : '') + (h < 12 ? 'am' : 'pm');
 }
 function cavTimeValue(v) {
-  var p = /^(\d{1,2}):(\d{2})/.exec(v || ''); if (!p) return '';
-  return (p[1].length < 2 ? '0' : '') + p[1] + ':' + p[2];
+  // A stored time as the select's 24-hour value. Hours are stored as the
+  // rows write them ("9:00pm"; the phone always did), and reading only
+  // "21:00" put a 9:00pm close in the 9:00am slot (schedule_time, BUGSGEN-20).
+  var s = String(v || '').toLowerCase().replace(/[\s.]/g, '');
+  if (s === 'noon' || s === 'midday') return '12:00';
+  if (s === 'midnight') return '00:00';
+  var p = /^(\d{1,2})(?::(\d{2}))?(?::\d{2})?(am|pm|a|p)?$/.exec(s); if (!p) return '';
+  var h = parseInt(p[1], 10), m = p[2] || '00';
+  if (parseInt(m, 10) > 59) return '';
+  if (p[3]) {
+    if (h < 1 || h > 12) return '';
+    h = h % 12 + (p[3].charAt(0) === 'p' ? 12 : 0);
+  } else {
+    if (!p[2]) return '';
+    if (h === 24 && m === '00') h = 0;
+    if (h > 23) return '';
+  }
+  return (h < 10 ? '0' : '') + h + ':' + m;
 }
 function cavTimeOptions(value) {
   var v = cavTimeValue(value), list = [], t, i, h = '<option value="">\u2014</option>';
@@ -31658,7 +31771,7 @@ function checkTabParam(){
   // can (its header switcher lists it), and land on the item after the
   // reload, as the bell does.
   window._cavLinkOtherLoc=false;
-  if(loc>0&&loc!=={{ restaurant.id|int }}){
+  if(loc>0&&loc!==window.CAV_BOOT.rid){
     var can=document.querySelector('#loc-switcher-panel button[onclick="switchLocation('+loc+')"]');
     if(can&&typeof window.switchLocation==='function'){
       if(path){try{sessionStorage.setItem('cavnar_pending_nav',path);}catch(e){}}
@@ -34046,8 +34159,8 @@ document.addEventListener('click', function(e) {
   // The rows animate in once per open, never on a re-render after an action.
   var _animate    = false;
   // A multi-location login's bell covers every location (friction #24).
-  var _scope      = '{{ 'group' if group_locations and group_locations|length > 1 else '' }}';
-  var _here       = {{ restaurant.id|int }};
+  var _scope      = window.CAV_BOOT.bellScope;
+  var _here       = window.CAV_BOOT.rid;
 
   // "now", "5m", "2h", "3d", then M/D/YY - one quiet time for both
   // popovers. A bare "YYYY-MM-DD HH:MM:SS" is UTC (SQLite datetime('now')):
@@ -35057,7 +35170,7 @@ document.addEventListener('click', function(e) {
   </div>
 </div>
 <script>
-window._cuRole='{{ current_user.role if current_user and current_user.role else "client" }}';
+window._cuRole=window.CAV_BOOT.role;
 // ── iOS parity ─────────────────────────────────────────────────────────────
 // Everything the phone had first, on the web: profile editing, security
 // (checkup, backup codes, trusted devices, recovery email, sign-in history,
@@ -36871,8 +36984,10 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     // a colleague who isn't on the app can say yes in person (LG-12).
     if(wait.length){h+='<div class="sr-k" style="margin:16px 0 4px">Waiting on a colleague</div>';
       for(i=0;i<wait.length;i++){var w=wait[i];
-        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">you approved it · waiting on '+esc(w.target_name||'')+' to accept in the Cavnar AI app</span></div>'
-          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrAgreed('+(+w.id)+',this)">They agreed in person</button></div>';}
+        var wauto=w.decided_how==='auto'&&!w.reversed_at;
+        h+='<div class="shr-row"><div class="who"><span class="shr-kind">swap</span> <b>'+esc(w.employee_name)+'</b> &harr; <b>'+esc(w.target_name||'')+'</b>: '+esc(_dayShort(w.date))+' '+esc(w.shift_start||'')+' for '+esc(_dayShort(w.target_date))+' '+esc(w.target_start||'')+'<span class="sub">'+(wauto?'approved automatically':'you approved it')+' · waiting on '+esc(w.target_name||'')+' to accept in the Cavnar AI app</span></div>'
+          +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrAgreed('+(+w.id)+',this)">They agreed in person</button>'
+          +(wauto?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+w.id)+',this)">Reverse</button>':'')+'</div>';}
     }
     // Offers waiting on one named person (H2): the coverage issue's ask or
     // a manager's pick, answered in the staff app.
@@ -36881,11 +36996,23 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     h+='<div class="sr-k" style="margin:16px 0 4px">Open shifts</div>';
     if(!open.length)h+='<div class="hb-empty">No open shifts. An approved drop without a named replacement, or one you post below, shows here until somebody picks it up in the Cavnar AI app.</div>';
     for(i=0;i<open.length;i++){var o=open[i],who=o.employee_name?'was '+esc(o.employee_name):'extra shift',asked=byReq[o.id]||[];
-      h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+'</span></div>'
+      /* A pickup held for overtime (BUGSLIFE-14) and a drop that approved
+         itself (MARKET-14, reversible) say so on the row. */
+      var held=o.held_claimant?' · '+esc(o.held_claimant)+' asked for it — into overtime, answer it in Waiting on you':'';
+      var auto=o.decided_how==='auto'&&!o.reversed_at?' · approved automatically':'';
+      h+='<div class="shr-row" data-shr-open="'+(+o.id)+'"><div class="who"><span class="shr-open"><i></i>'+(o.offer_only?'offered':'open')+'</span> <b>'+_shrWhen(o)+'</b><span class="sub">'+who+' · '+(asked.length?'offered to '+esc(asked.join(', '))+' · waiting on an answer':'nobody has claimed it yet')+held+auto+'</span></div>'
         +'<input type="text" class="ac-input" data-shr-offer list="lb2-people-names" autocomplete="off" placeholder="Offer it to…" aria-label="Offer it to" style="width:150px">'
         +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrOffer('+(+o.id)+',this)">Offer</button>'
+        +(auto?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+o.id)+',this)">Reverse</button>':'')
         +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrCancelOpen('+(+o.id)+',this)">Take it off</button></div>';
     }
+    /* A swap that approved itself and went through can still be traded back. */
+    var ar=d.auto_recent||[],arHead=false;
+    for(i=0;i<ar.length;i++){var x=ar[i];if(x.status!=='covered')continue;
+      if(!arHead){arHead=true;h+='<div class="sr-k" style="margin:16px 0 4px">Approved automatically</div>';}
+      h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(x.kind||'drop')+'</span> <b>'+_shrWhen(x)+'</b><span class="sub">'+esc(x.employee_name||'')+(x.replacement_name?' → '+esc(x.replacement_name):'')+((x.auto_reasons||[]).length?' · '+esc(x.auto_reasons.join('; ')):'')+'</span></div>'
+        +(d.can_decide?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrReverse('+(+x.id)+',this)">Reverse</button>':'')+'</div>';}
+    h+=_shrAutonomyHtml(d.autonomy,d.can_decide);
     // A manager posts a shift open: somebody's, or an extra one (H2).
     h+='<div class="sr-k" style="margin:18px 0 6px">Post an open shift</div>'
       +'<div class="lb2-form" id="shr-post">'
@@ -36900,6 +37027,38 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       +'<div class="lb2-intro" id="shr-post-status" style="margin-top:6px"></div>';
     el.innerHTML=h;
     _shrNames();
+  };
+  /* Drops and swaps that approve themselves by your rules, once your own
+     approvals have earned it (schedule audit 10/10/26 MARKET-14), and
+     whether an availability cut waits on you (MARKET-15). */
+  function _shrAutonomyHtml(a,canDecide){
+    if(!a||!a.policy)return '';
+    var p=a.policy,t=a.trust||{},h='<div class="sr-k" style="margin:18px 0 6px">Automatic approval</div>',k,kinds=['drop','swap'];
+    h+='<div class="lb2-intro">'+(p.auto_approve?'On: a drop or swap that keeps a manager on every minute and the closers, adds no overtime, is the same role, is more than <span class="hb-num">'+esc(p.notice_hours)+'</span> hours out and costs Shift Quality no more than <span class="hb-num">'+esc(p.max_quality_drop)+'</span> points approves itself — once your own approvals of that kind earn it. Reverse one and that kind comes back to you.':'Off: every drop and swap waits on you.')+'</div>';
+    for(k=0;k<kinds.length;k++){var tr=t[kinds[k]]||{};
+      h+='<div class="lb2-intro">'+(kinds[k]==='drop'?'Drops':'Swaps')+': '+(tr.earned?'earned':'<span class="hb-num">'+esc(tr.approvals||0)+'</span> of the <span class="hb-num">'+esc(tr.needed||0)+'</span> approvals it needs')+(tr.lapse_reason&&!tr.earned?' (back to you: '+esc(tr.lapse_reason)+')':'')+'</div>';}
+    h+='<div class="lb2-intro">Less availability: '+(p.availability_approval?'waits for your approval, from the first week you haven’t built':'starts on its own, from the first week you haven’t built')+'.</div>';
+    if(canDecide)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="shrPolicy({auto_approve:'+(p.auto_approve?'false':'true')+'},this)">'+(p.auto_approve?'Turn automatic approval off':'Turn automatic approval on')+'</button>'
+      +'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="shrPolicy({availability_approval:'+(p.availability_approval?'false':'true')+'},this)">'+(p.availability_approval?'Let less availability start on its own':'Approve less availability first')+'</button></div>';
+    return h;
+  }
+  window.shrPolicy=function(body,btn){
+    var done=busy(btn,'Saving…');
+    jsend('/api/labor/request-policy',body,function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not change that','error');return;}
+      toast('Saved','success');
+      loadShiftRequests();
+    });
+  };
+  window.shrReverse=function(id,btn){
+    var done=busy(btn,'Reversing…');
+    jsend('/api/labor/shift-requests/'+id+'/reverse',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not reverse that','error');return;}
+      toast(d.undone?'Reversed — they are back on it, and automatic approval comes back to you':(d.note||'Automatic approval comes back to you'),'success');
+      loadShiftRequests();if(window.lb2LoadWaiting)lb2LoadWaiting();
+    });
   };
   // The roster's active names for the offer and post boxes.
   function _shrNames(){
@@ -37014,6 +37173,20 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       if(acc.mean_unchanged_share!==null&&acc.mean_unchanged_share!==undefined)line+=(line?' ':'')+'On average '+Math.round(acc.mean_unchanged_share*100)+'% kept'+(acc.mean_changes!==null&&acc.mean_changes!==undefined?', '+acc.mean_changes+' changes a week':'')+'.';
       if(line)h+='<div class="ac-note" style="margin-top:8px">'+num(line)+'</div>';
     }
+    /* The Schedule Learning Scorecard (schedule audit 10/10/26 RM-4): per
+       published week, the edits each draft needed per 100 shifts and what
+       the week did as it ran. A figure the week has no measurement of is
+       left out, never shown as 0. */
+    var sc=d.learning_scorecard||{},scw=sc.weeks||[];
+    h+='<div class="lb2-sub">How the drafts are doing<small>edits each draft needed, and what each week did as it ran</small></div>';
+    if(!sc.available||!scw.length)h+='<div class="hb-empty">Appears the Monday after a published week ends — the edits the draft needed, labor against the hourly target, overtime, minutes with no manager and no-shows nobody covered.</div>';
+    else{
+      var sh='',si,sj;
+      for(si=0;si<scw.length&&si<4;si++){var sw=scw[si];
+        sh+='<div class="int-say"><b>Week of '+esc(sw.week||'')+'</b>'+(sw.status==='open'?' <small>(still settling)</small>':'')+'</div>';
+        for(sj=0;sj<(sw.lines||[]).length;sj++)sh+='<div class="ac-note" style="margin:2px 0 0 10px">'+num(sw.lines[sj])+'</div>';}
+      h+='<div class="int-cal">'+sh+(sc.trend_sentence?'<div class="ac-note" style="margin-top:8px">'+num(sc.trend_sentence)+'</div>':'')+'</div>';
+    }
     /* The edit predictor: ready or why not, and how it did on past drafts. */
     var ep=d.edit_prediction||{};
     h+='<div class="lb2-sub">Predicting your edits<small>from the drafts you have already finished</small></div>';
@@ -37032,6 +37205,16 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
       h+='<div class="lb2-sub">Borrowed starting headcount<small>for a restaurant with no history of its own</small></div><div class="int-cal">'+num(sp.reason)+'</div>';
     }
     h+='<div class="lb2-sub">Quality weights<small>checked against what the published weeks actually did</small></div>';
+    /* What Cavnar AI changed on its own, within the bounded steps, once the
+       newest held-out weeks confirmed it (schedule audit 10/10/26
+       LEARNING-9) - said, with Undo. */
+    var pm=cal.promoted;
+    if(pm&&pm.changes&&pm.changes.length){
+      var pl=[],pi;for(pi=0;pi<pm.changes.length;pi++){var pc=pm.changes[pi];pl.push(esc(pc.label||pc.dimension)+' '+esc(pc.before)+' → '+esc(pc.after));}
+      h+='<div class="int-cal"><div class="ac-note">'+num('Cavnar AI adjusted these on '+(pm.when||'')+': ')+'<span class="hb-num">'+pl.join(' · ')+'</span></div>'
+        +(pm.reason?'<div class="ac-note" style="margin-top:4px">'+num('Why: '+pm.reason+'.')+'</div>':'')
+        +(pm.can_undo?'<button type="button" class="cbtn cbtn-secondary cbtn-sm" style="margin-top:8px" data-sfw2-cal-undo="1">Undo this change</button>':'')+'</div>';
+    }
     if(!cal.ready)h+='<div class="int-cal">'+num(cal.reason||'Not enough published weeks with a stored score to check the weights yet.')+'</div>';
     else{
       var dims=cal.dimensions||{},k,rows='';
@@ -37060,6 +37243,18 @@ window._cuRole='{{ current_user.role if current_user and current_user.role else 
     }
     return h;
   }
+  /* Undo of an automatic weight change (LEARNING-9): the weights before
+     come back and no automatic change is made for eight weeks. */
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest?ev.target.closest('[data-sfw2-cal-undo]'):null;if(!t||t.disabled)return;
+    var done=busy(t,'Undoing…');
+    jsend('/api/labor/quality/calibration/revert',{},function(d){
+      done();
+      if(!d.ok){toast(d.error||'Could not undo it','error');return;}
+      toast('Undone — the score is back to the weights before','success');
+      loadIntel(null,true);
+    });
+  });
   /* Apply writes the weights and, in the same tap, each profile's floors
      and bars (SQ-22) — said back, then the record is read again. */
   document.addEventListener('click',function(ev){
@@ -38255,6 +38450,10 @@ function sfw1RatingLine(s) {
     var h = '';
     if (r && r._pinned === 'manager_plan') h += '<span class="sfw1-pin" title="' + e(r._pin_reason || 'Planned before the draft so every minute has a manager') + '">Manager plan</span>';
     if (r && r.dst_hours) h += '<span class="sfw1-dst" title="Includes the extra hour when the clocks go back">+1h clocks</span>';
+    /* A week staff have: the holder was excused from this shift (an approved
+       drop nobody claimed, approved time off) - it is open, not theirs
+       (schedule audit 10/10/26 BUGSLIFE-12). */
+    if (r && r.release) h += '<span class="sfw1-pin" title="' + e((r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was excused from it') + ' - nobody has picked it up') + '">Open</span>';
     return h;
   };
   /* The shift pane: why a planned row is there, the clocks, and the server's
@@ -38264,6 +38463,7 @@ function sfw1RatingLine(s) {
     if (!r) return '';
     if (r._pinned === 'manager_plan') h += '<div class="sw-flag"><b>Manager plan</b> — ' + n(r._pin_reason || 'planned before the draft so every minute on the floor has a manager') + '. Passes after the draft never move it.</div>';
     if (r.dst_hours) h += '<div class="sw-flag">Includes the extra hour when the clocks go back (<span class="hb-num">' + e(sfw1G(r.dst_hours)) + 'h</span> paid).</div>';
+    if (r.release) h += '<div class="sw-flag"><b>Open</b> - ' + e(r.release.holder || 'They') + (r.release.kind === 'time_off' ? ' is approved off' : ' was excused from this shift') + ' and nobody has picked it up yet. Offer it from Shift requests.</div>';
     return h;
   };
   window.sfw1UsualSection = function (r, usual) {
@@ -38343,7 +38543,8 @@ function sfw1RatingLine(s) {
   /* The forecast's own freshness read for the picked week: its line, and
      when it is blocked the message and why Generate will refuse; the
      budget's assumed wage (E-24) with where to fix it. */
-  var _freshKey = null;
+  var _freshKey = null, _freshHtml = '', _availHtml = '';
+  function freshPaint() { var el = $id('sfw1-gen-fresh'); if (el) el.innerHTML = _freshHtml + _availHtml; }
   window.sfw1LoadFresh = function (force) {
     var el = $id('sfw1-gen-fresh'); if (!el) return;
     var ws = (window._schedWeekStart && _schedWeekStart()) || '';
@@ -38351,14 +38552,43 @@ function sfw1RatingLine(s) {
     _freshKey = ws;
     jget('/api/labor/schedule-forecast' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), function (d) {
       if (_freshKey !== ws) return;
-      if (!d.ok) { _freshKey = null; el.innerHTML = ''; return; }
+      if (!d.ok) { _freshKey = null; _freshHtml = ''; freshPaint(); return; }
       var h = '', dd = d.demand_data_through, bb = d.budget_basis || {};
       if (dd && dd.blocked) h += note('bad', '<b>Generate will refuse this week for now.</b> ' + n(dd.message || dd.line || 'The sales the forecast stands on are too old.'), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/integrations">Check the POS</button>');
       else if (dd && dd.line) h += note(dd.blind || dd.stale ? 'warn' : '', n(dd.line));
       if (bb.caveat) h += note(bb.trim_ok === false ? 'bad' : 'warn', n(bb.caveat), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set pay rates</button>');
-      el.innerHTML = h;
+      _freshHtml = h;
+      freshPaint();
+    });
+    sfw1LoadAvailChanges();
+  };
+  /* Staff availability cuts waiting on a manager (schedule audit 10/10/26
+     MARKET-15): the draft uses one only once it is approved, and only from
+     its date - so they are read here, before Generate. */
+  window.sfw1LoadAvailChanges = function () {
+    jget('/api/labor/availability-changes', function (a) {
+      var h = '', i, ch, cs = (a && a.ok && a.changes) || [];
+      for (i = 0; i < cs.length; i++) {
+        ch = cs[i];
+        if (ch.status !== 'pending') continue;
+        h += note('warn', '<b>' + e(ch.employee_name) + '</b> asked to work less from <span class="hb-num">' + e(sfw1Mdy(ch.effective_from)) + '</span>: ' + e(ch.summary || '') + '. This week’s draft uses it only once you approve.',
+          a.can_decide ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="sfw1AvDecide(' + (+ch.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="sfw1AvDecide(' + (+ch.id) + ',\'approve\',this)">Approve</button>' : '');
+      }
+      _availHtml = h;
+      freshPaint();
     });
   };
+  window.sfw1AvDecide = function (id, decision, btn) {
+    var done = busy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
+    jpost('/api/labor/availability-changes/' + id + '/decide', {decision: decision}, function (d) {
+      done();
+      if (!d.ok) { say(d.error || 'Could not answer that', 'error'); return; }
+      say(d.warning ? 'Approved — ' + d.warning : (decision === 'approve' ? 'Approved — they are told' : 'Denied — they are told'), d.warning ? 'warning' : 'success');
+      sfw1LoadAvailChanges();
+      if (window.lb2LoadWaiting) lb2LoadWaiting();
+    });
+  };
+  function sfw1Mdy(iso) { return (typeof mdy === 'function') ? mdy(iso) : String(iso || ''); }
   document.addEventListener('change', function (ev) {
     var t = ev.target; if (t && (t.id === 'sched-week-pick' || t.id === 'sched-week-date')) sfw1LoadFresh();
   });
@@ -38673,8 +38903,9 @@ function sfw1RatingLine(s) {
      the arrangement search on; nothing is saved. */
   window.sfw1LookBetter = function (btn) {
     var done = busy(btn, 'Looking…');
-    jpost('/api/labor/schedule/score', {rows: rows(), daily_target_hours: window._schedTargets || {}, save: false, what_if: true}, function (d) {
+    jpost('/api/labor/schedule/score', (window._sqDeltaBody || function (b) { return b; })({rows: rows(), daily_target_hours: window._schedTargets || {}, save: false, what_if: true}), function (d) {
       done();
+      if (window._sqTakeQuality) d = _sqTakeQuality(d);
       if (!d.ok) { say(d.error || 'Couldn’t look for a better arrangement', 'error'); return; }
       if (window.renderShiftQuality) renderShiftQuality(d.quality, d.what_if);
       var wi = d.what_if || {};
@@ -39247,6 +39478,29 @@ window.cavPalette = cavPalette;
          + '<div class="c">' + rep + note + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+r.id) + ',\'approve\',this)">Approve</button></div></div>';
       n++;
     }
+    /* A pickup into overtime while a teammate has room waits on you
+       (schedule audit 10/10/26 BUGSLIFE-14): Approve gives it to them. */
+    for (i = 0; i < (_wait.reqs || []).length; i++) {
+      var hc = _wait.reqs[i]; if (hc.status !== 'open' || !hc.held_claimant) continue;
+      h += '<div class="ac-row" data-wait-key="held_claim-' + e(hc.id) + '"><div class="l"><b>' + e(hc.held_claimant) + ' wants ' + e(_schedDayOf(hc.date).slice(0, 3)) + ' <span class="hb-num">' + e(md(hc.date)) + '</span> ' + e(hc.shift_start || '') + ' — into overtime</b><span>' + e(hc.held_claim_note || 'A teammate has room') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="lb2DecideShift(' + (+hc.id) + ',\'deny\',this)">Keep it open</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="lb2DecideShift(' + (+hc.id) + ',\'approve\',this)">Give it to them</button></div></div>';
+      n++;
+    }
+    /* Approved time off still on a published shift (BUGSLIFE-5): here until
+       the shift is covered, posted or moved. */
+    for (i = 0; i < (_wait.follow || []).length; i++) {
+      var fu = _wait.follow[i];
+      h += '<div class="ac-row" data-wait-key="time_off_shift-' + e(fu.request_id) + '-' + e(fu.date) + '"><div class="l"><b>' + e(fu.employee_name) + ' is off ' + e(_schedDayOf(fu.date).slice(0, 3)) + ' <span class="hb-num">' + e(md(fu.date)) + '</span> but still on ' + e(fu.shift_start || '') + '</b><span>Approved time off — cover the shift or post it open</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-fu-date="' + e(fu.date) + '" data-fu-start="' + e(fu.shift_start || '') + '" data-fu-name="' + e(fu.employee_name) + '" onclick="lb2PostFollowUp(this)">Post it open</button></div></div>';
+      n++;
+    }
+    /* Less availability waiting on you, with the date it starts (MARKET-15). */
+    for (i = 0; i < (_wait.avail || []).length; i++) {
+      var av = _wait.avail[i]; if (av.status !== 'pending') continue;
+      h += '<div class="ac-row" data-wait-key="availability_change-' + e(av.id) + '"><div class="l"><b>' + e(av.employee_name) + ' can work less from <span class="hb-num">' + e(md(av.effective_from)) + '</span></b><span>' + e(av.summary || '') + '</span></div>'
+         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="sfw1AvDecide(' + (+av.id) + ',\'deny\',this)">Deny</button><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="sfw1AvDecide(' + (+av.id) + ',\'approve\',this)">Approve</button></div></div>';
+      n++;
+    }
     el.innerHTML = h;
     n += window.memWaitCount ? memWaitCount() : 0;
     box.hidden = !n;
@@ -39263,8 +39517,9 @@ window.cavPalette = cavPalette;
   window.lb2LoadWaiting = function () {
     if (!$id('lb2-wait')) return;
     _wait.offs = null; _wait.reqs = null; _wait.draft = null;
-    getJ('/api/labor/time-off', function (d) { _wait.offs = d.ok ? (d.requests || []) : []; _wait.lastOffs = _wait.offs; waitRender(); });
+    getJ('/api/labor/time-off', function (d) { _wait.offs = d.ok ? (d.requests || []) : []; _wait.follow = d.ok ? (d.follow_ups || []) : []; _wait.lastOffs = _wait.offs; waitRender(); });
     getJ('/api/labor/shift-requests', function (d) { _wait.reqs = d.ok ? (d.requests || []) : []; waitRender(); });
+    getJ('/api/labor/availability-changes', function (d) { _wait.avail = d.ok ? (d.changes || []) : []; waitRender(); });
     getJ('/api/labor/publish-check', function (d) { _wait.draft = d.ok ? d : {}; waitRender(); });
     if (window.memLoadPeopleQs) memLoadPeopleQs();
   };
@@ -39283,6 +39538,19 @@ window.cavPalette = cavPalette;
       }
       if (d.needs_ack) { openScheduleDraft(hid); return; }
       toast(d.error || 'Nothing sent', 'error');
+    });
+  };
+  /* Approved time off over a published shift: put it on the open board
+     (the same post a manager makes in Shift requests, BUGSLIFE-5). */
+  window.lb2PostFollowUp = function (btn) {
+    var body = {date: btn.getAttribute('data-fu-date'), shift_start: btn.getAttribute('data-fu-start'), employee: btn.getAttribute('data-fu-name')};
+    var done = cbtnBusy(btn, 'Posting…');
+    postJ('/api/labor/open-shifts', body, function (d) {
+      done();
+      if (!d.ok) { toast(d.error || 'Could not post that shift', 'error'); return; }
+      toast('Posted — the team can pick it up in the app', 'success');
+      lb2LoadWaiting();
+      if (window.loadShiftRequests) loadShiftRequests();
     });
   };
   window.lb2DecideShift = function (id, decision, btn) {

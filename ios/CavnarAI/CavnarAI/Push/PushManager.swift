@@ -722,6 +722,13 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
             }
             if !response.ok {
                 await postFailure(action.failureTitle, response.error ?? "Tap to open it.", userInfo: userInfo)
+            } else if let warning = response.warning?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !warning.isEmpty, action.decision == "approve" {
+                // An approve from the lock screen that still leaves something
+                // to do — time off over published shifts, a drop that leaves
+                // the floor short — is never swallowed as done (schedule audit
+                // 10/10/26 BUGSLIFE-5); Waiting on you keeps it too.
+                await postNotice("Approved \u{2014} still to cover", warning)
             } else if action.postsReply,
                       let shortfall = approvePostShortfall(response) {
                 await postFailure("Reply approved, not posted", shortfall, userInfo: userInfo)

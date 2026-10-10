@@ -221,6 +221,10 @@ def local_iso_filter(value, tz=None):
 # seeds demo data and starts the scheduler thread).
 import http_layer
 http_layer.register(app)
+# The dashboard's static script and style blocks as content-hashed,
+# immutable files (static_bundles, scheduler audit 10/10/26 SCALE-28).
+import static_bundles
+static_bundles.install(app)
 
 
 @app.after_request

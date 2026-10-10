@@ -59,14 +59,11 @@ def _missing_days(rid, start, end, db_path):
 
 def _labor_rows(rid, db_path):
     """{date: [shift rows]} from the stored shifts file."""
-    from labor import load_shifts
-    from models import get_client_data
-    raw = ((get_client_data(rid, db_path=db_path) if db_path else get_client_data(rid)) or {}).get("shifts_csv") or ""
+    from labor import shift_history
     out = {}
-    if not raw.strip():
-        return out
     try:
-        for r in load_shifts(csv_string=raw):
+        # The one reader (SCALE-5): shift_facts once they are the record.
+        for r in shift_history(rid, db_path=db_path):
             out.setdefault(str(r.get("date") or "")[:10], []).append(r)
     except Exception as e:
         log.warning("dsr backfill: shifts unreadable rid=%s: %s", rid, e)

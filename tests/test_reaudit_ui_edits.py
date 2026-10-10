@@ -419,9 +419,14 @@ def test_web_keeps_the_version_that_came_with_its_rows():
 def test_web_conflict_offers_keep_or_reload_and_never_discards():
     src = _dash()
     sc = _fn(src, "_schedShowConflict")
-    assert "schedKeepMine(this)" in sc and "reloadScheduleFromHistory(this, true)" in sc
+    assert "schedKeepMine(this" in sc and "reloadScheduleFromHistory(this, true)" in sc
     km = _fn(src, "schedKeepMine")
-    assert "_schedVersion = window._schedConflictAt" in km and "rescoreSchedule(btn)" in km
+    # Keep my edits merges onto the newer week against the version the screen
+    # came from (schedule audit 10/10/26 ARCH-8) - it no longer jumps the
+    # version and saves the whole screen over theirs.
+    assert "_schedVersion = window._schedConflictAt" not in km
+    assert "window._schedKeepMine = {override: !!override}" in km and "rescoreSchedule(btn)" in km
+    assert "body.keep_mine = true" in _fn(src, "rescoreSchedule")
     rl = _fn(src, "reloadScheduleFromHistory")
     assert "window.confirm(" in rl and "_schedDirty" in rl
 
@@ -489,7 +494,9 @@ def test_ios_keeps_the_version_that_came_with_its_rows():
 def test_ios_conflict_offers_keep_or_reload():
     vm = _swift("Features/Labor/LaborViewModel.swift")
     keep = _swift_fn(vm, "keepMineAfterConflict")
-    assert "latestVersion = v" in keep and "await rescoreQuality()" in keep
+    # Merged onto the newer week (ARCH-8): the base version is kept, never
+    # jumped to the latest for a whole-screen overwrite.
+    assert "latestVersion = v" not in keep and "keepMinePending" in keep and "await rescoreQuality()" in keep
     notes = _swift("Features/Labor/ScheduleWeekNotes.swift")
     assert "await viewModel.keepMineAfterConflict()" in notes and "await viewModel.reloadAfterConflict()" in notes
 

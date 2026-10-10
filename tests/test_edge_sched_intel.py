@@ -151,7 +151,10 @@ def test_two_approved_sunday_night_drops_are_an_avoid_and_two_claims_a_preferenc
     _request(db, rid, "Cy", "2026-09-20", "5:00pm", "covered", replacement="Ben")
     prefs = si.behaviour_preferences(rid)
     assert prefs["Ana"]["avoids"] == ["Sunday night"]
-    assert prefs["Ben"]["prefers"] == ["Sunday night"]
+    # Schedule audit 10/10/26 LEARNING-15: picking up the only open shifts
+    # there were says Ben wants hours, not Sunday nights (this test used to
+    # expect "prefers Sunday night" — the flaw itself).
+    assert prefs["Ben"]["prefers"] == [] and prefs["Ben"]["wants_hours"] is True
 
 
 # ── SCHED-27: the Monday outcomes job ─────────────────────────────────────

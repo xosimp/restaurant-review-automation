@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS trusted_devices (
     last_used_at    TEXT,
     expires_at      TEXT    NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_trusted_devices_rid ON trusted_devices(restaurant_id, expires_at);
 
 -- One-time "This wasn't me" links minted per sign-in for the login-alert
 -- email. Consuming one revokes every session and forces a password reset.
@@ -257,6 +258,7 @@ CREATE TABLE IF NOT EXISTS permission_grants (
     granted_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, restaurant_id, permission)
 );
+CREATE INDEX IF NOT EXISTS idx_permission_grants_rid ON permission_grants(restaurant_id);
 
 -- Per-login, per-location delivery choices. morning_brief NULL means the
 -- role default (owners and managers receive it); nightly_report NULL means
@@ -270,6 +272,7 @@ CREATE TABLE IF NOT EXISTS login_prefs (
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, restaurant_id)
 );
+CREATE INDEX IF NOT EXISTS idx_login_prefs_rid ON login_prefs(restaurant_id);
 
 -- One emailed/texted 2FA code per sign-in attempt (purpose 'login') or per
 -- login setting 2FA up (purpose 'setup'). This used to be one slot of
@@ -389,6 +392,10 @@ CREATE INDEX IF NOT EXISTS idx_login_history_user
     ON login_history(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_login_history_created
     ON login_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_login_history_rid
+    ON login_history(restaurant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_users_restaurant
+    ON users(restaurant_id, is_active);
 """
 # idx_login_history_created serves the retention prune (created_at < cutoff):
 # idx_login_history_user leads with user_id, so that DELETE scanned the whole

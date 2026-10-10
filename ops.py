@@ -597,6 +597,8 @@ def init_ops(db_path=None):
             "CREATE INDEX IF NOT EXISTS idx_backup_runs_started ON backup_runs(started_at)",
             "CREATE INDEX IF NOT EXISTS idx_operator_alerts_created ON operator_alerts(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_missed_windows_created ON missed_windows(created_at)",
+            # A press joins a pending job of its own restaurant (SCALE-30).
+            "CREATE INDEX IF NOT EXISTS idx_async_jobs_rid ON async_jobs(restaurant_id, kind, status)",
         ):
             conn.execute(sql)
         conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id) VALUES (1)")
@@ -959,7 +961,9 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
     deadline_at   TEXT,
     started_at    TEXT,
     request_json  TEXT,
-    progress_json TEXT
+    progress_json TEXT,
+    stop_requested_at TEXT,
+    saved_ref     INTEGER
 )"""
 # Added after the table shipped; init_ops adds them to an older database.
 # deadline_at is the job's own wall-clock limit (UTC, SQLite datetime text),
@@ -971,8 +975,14 @@ _ASYNC_JOB_SQL = """CREATE TABLE IF NOT EXISTS async_jobs (
 # progress_json is how far a pending job has got, in its own terms — a
 # schedule generation's days drafted so far (AI cost audit 10/7/26 #36,
 # set_async_job_progress) — read back on a pending poll.
+# stop_requested_at is the owner's Stop on a job that had already saved
+# something (stop_async_job); the job reads it and says what happened.
+# saved_ref is the first durable thing the job saved (a schedule's history
+# id, written in the same transaction as the draft — models.
+# save_schedule_history): with it set, Stop never says "nothing was saved"
+# (schedule audit 10/10/26 ARCH-2, BUGSLIFE-26).
 _ASYNC_JOB_COLUMNS = (("deadline_at", "TEXT"), ("started_at", "TEXT"), ("request_json", "TEXT"),
-                      ("progress_json", "TEXT"))
+                      ("progress_json", "TEXT"), ("stop_requested_at", "TEXT"), ("saved_ref", "INTEGER"))
 
 # Long enough for the slowest generation plus a client that backgrounds the
 # app mid-poll; short enough that abandoned results don't accumulate.
@@ -1258,6 +1268,70 @@ def set_async_job_progress(job_id, progress) -> None:
     # (iOS parity audit 10/7/26 #38). Never raises.
     import live_activities
     live_activities.job_progress(job_id, progress)
+
+
+def stop_async_job(job_id, result) -> str:
+    """The owner's Stop (schedule audit 10/10/26 ARCH-2, BUGSLIFE-26): what
+    it did, as one word.
+
+    "stopped" — the job had saved nothing, so its row is finished now with
+    `result` (the restaurant may start another at once). The job's own save
+    checks the row in the same transaction as its write (models.
+    save_schedule_history `job_id`), so nothing can be saved after this.
+    "stopping" — the job had already saved a draft (`saved_ref`): the row
+    stays pending with `stop_requested_at` set and the job, which knows what
+    it saved, finishes it and says what happened — the route never writes
+    "nothing was saved" over a draft that replaced the owner's.
+    "finished" — it had already finished. One UPDATE each: SQLite orders
+    them against the job's save, so the two can never cross."""
+    import json
+    try:
+        payload = json.dumps(result)
+        conn = _async_conn()
+        try:
+            cur = conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                               "AND status='pending' AND saved_ref IS NULL", (payload, str(job_id)))
+            if cur.rowcount == 1:
+                conn.commit()
+                verdict = "stopped"
+            else:
+                cur = conn.execute("UPDATE async_jobs SET stop_requested_at=datetime('now') WHERE job_id=? "
+                                   "AND status='pending'", (str(job_id),))
+                conn.commit()
+                verdict = "stopping" if cur.rowcount == 1 else "finished"
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"stop_async_job({job_id}) failed: {e}")
+        return "finished"
+    if verdict == "stopped":
+        import live_activities
+        live_activities.job_finished(job_id, "error", result)
+    return verdict
+
+
+def job_stop_state(job_id) -> str:
+    """Where a running job stands against a Stop: "running", "stop_requested"
+    (the owner stopped it after it saved — stop_async_job), "stopped" (its
+    row was finished as stopped) or "gone" (finished any other way — a poll
+    past its deadline, the boot sweep). "running" when the row cannot be
+    read (never stop a job over a bookkeeping failure)."""
+    try:
+        conn = _async_conn()
+        try:
+            row = conn.execute("SELECT status, stop_requested_at, result_json FROM async_jobs WHERE job_id=?",
+                               (str(job_id),)).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return "running"
+    if row is None:
+        return "running"
+    if row["status"] == "pending":
+        return "stop_requested" if row["stop_requested_at"] else "running"
+    if row["status"] == "error" and '"stopped": true' in (row["result_json"] or ""):
+        return "stopped"
+    return "gone"
 
 
 def job_still_pending(job_id) -> bool:
@@ -1834,6 +1908,43 @@ def schedule_generation_latency(db_path=None) -> dict:
     return out
 
 
+# Each input a schedule generation can go without, as an SLO (schedule audit
+# 10/10/26 ARCH-25): the share of the last SCHEDULE_INPUT_SAMPLE generations
+# in SCHEDULE_P95_DAYS made without it (the review's inputs_missing, saved
+# with each draft). Past SCHEDULE_INPUT_FAIL_ALERT for any one input — with
+# at least SCHEDULE_P95_MIN generations — the platform check warns once a
+# day: an input that fails that often is a broken read, not bad luck.
+SCHEDULE_INPUT_SAMPLE = 40
+SCHEDULE_INPUT_FAIL_ALERT = 0.10
+
+
+def schedule_input_failures(db_path=None) -> dict:
+    """{"n", "rates": {input: share of generations without it}, "over":
+    [inputs past SCHEDULE_INPUT_FAIL_ALERT], "alert_rate"} over the recent
+    generations; {"n": 0, ...} with none on file."""
+    import json as _json
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute("SELECT review_json FROM schedule_history WHERE total_seconds IS NOT NULL "
+                            "AND generated_at >= datetime('now', ?) ORDER BY id DESC LIMIT ?",
+                            (f"-{int(SCHEDULE_P95_DAYS)} days", int(SCHEDULE_INPUT_SAMPLE))).fetchall()
+    finally:
+        conn.close()
+    counts, n = {}, 0
+    for r in rows:
+        n += 1
+        try:
+            missing = (_json.loads(r[0] or "null") or {}).get("inputs_missing") or []
+        except Exception:
+            missing = []
+        for name in set(str(x) for x in missing if x):
+            counts[name] = counts.get(name, 0) + 1
+    rates = {k: round(v / float(n), 3) for k, v in sorted(counts.items())} if n else {}
+    over = sorted(k for k, v in rates.items() if v > SCHEDULE_INPUT_FAIL_ALERT) if n >= SCHEDULE_P95_MIN else []
+    return {"n": n, "rates": rates, "over": over, "alert_rate": SCHEDULE_INPUT_FAIL_ALERT}
+
+
 def _has_urgent(out, state, write_ok=True) -> bool:
     """Whether check_platform_sla's problems include one that cannot wait a
     day: the scheduler dead or stuck, a job past its SLA, the volume almost
@@ -1875,7 +1986,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "schedule_generation": None, "alerted": False}
+           "schedule_generation": None, "schedule_inputs": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -1957,6 +2068,17 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         f"{gen['p95'] / 60:.1f} minutes (alert past {SCHEDULE_P95_ALERT_SECONDS // 60}), the "
                         f"slowest {gen['max'] / 60:.1f} — the stage timings are on each week "
                         "(schedule_history.stage_seconds_json).")
+    try:
+        out["schedule_inputs"] = schedule_input_failures(db_path)
+    except Exception as e:
+        log.warning(f"schedule input failures unavailable to the platform check: {e}")
+    gin = out["schedule_inputs"] or {}
+    if gin.get("over"):
+        warn_kinds.add("schedule_inputs")
+        problems.append("Schedule generations are being made without inputs they read: "
+                        + ", ".join(f"{k} ({int(round(gin['rates'][k] * 100))}% of the last {gin['n']})"
+                                    for k in gin["over"][:4])
+                        + " — each failure is in the job failures (schedule_inputs).")
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -2460,6 +2582,21 @@ _RETENTION_DAYS = {
     # (schedule_memory, one row per learned fact, kept) is what outlives it,
     # rebuilt every night while the log still holds its evidence.
     "schedule_observations": int(os.getenv("RETAIN_SCHED_OBSERVATIONS_DAYS", "400")),
+    # Each week as the edit learners read it, kept (schedule audit 10/10/26
+    # SCALE-33): a cache rewritten whenever its week changes, so a row older
+    # than the learners' window is a week they no longer read.
+    "schedule_learning_records": int(os.getenv("RETAIN_SCHED_LEARNING_RECORDS_DAYS", "168")),
+    # The publish warnings a send went out past, by key (TRUST-28): the
+    # override rate per kind reads 180 days of them.
+    "schedule_publish_overrides": int(os.getenv("RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS", "400")),
+    # What made each draft (RM-4, AI-29): its commit, arms, row origins and
+    # the learning ablation's two drafts — read until the week's scorecard
+    # row is frozen; the frozen row keeps what was measured from it.
+    "schedule_generation_tags": int(os.getenv("RETAIN_SCHED_GENERATION_TAGS_DAYS", "400")),
+    # The Shift Quality weights' weekly shadow runs and promotions (LEARNING-9):
+    # the newest promotion is what the owner can undo, and an undo holds for
+    # eight weeks.
+    "schedule_calibration_runs": int(os.getenv("RETAIN_SCHED_CALIBRATION_RUNS_DAYS", "400")),
     # claim_period pruned this itself, on every call, with a full scan
     # (DATA-6). A claim older than any period that is still asked about.
     # Once-ever markers live in ops_markers, which is never pruned (#157).
@@ -2603,6 +2740,9 @@ _RETENTION_DAYS = {
     "staff_thread_messages": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
     "staff_running_late":    int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
     "shift_offers":          int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
+    # An employee's availability cut and its answer (availability_changes,
+    # 10/10/26 MARKET-15): what they asked and when it took effect.
+    "staff_availability_changes": int(os.getenv("RETAIN_STAFF_COMMS_DAYS", "730")),
     "staff_shift_pulse":     int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_briefs":          int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
     "staff_calendar_links":  int(os.getenv("RETAIN_STAFF_OPS_DAYS", "365")),
@@ -2618,6 +2758,10 @@ _RETENTION_DAYS = {
     # quarter (the floor), and each row carries a whole compressed request —
     # the second half-year was volume nothing read.
     "schedule_model_calls": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
+    # What each saved week was checked and scored against (schedule_output.
+    # record_check_snapshot, schedule audit 10/10/26 ARCH-35): the other
+    # half of a replay, kept as long as the calls it replays with.
+    "schedule_check_snapshots": int(os.getenv("RETAIN_SCHEDULE_MODEL_CALLS_DAYS", "90")),
     # The Message Batches queue (ai_batches, AI cost audit 10/7/26 #19): a
     # batch answers within 24 hours and every answer is in ai_usage and
     # ai_calls by then — a month is enough to read what a batch did.
@@ -2678,16 +2822,19 @@ _RETENTION_COLUMN = {
     "ask_topics": "created_at", "ask_feedback": "created_at",
     "staff_announcement_recipients": "created_at", "staff_announcements": "created_at",
     "staff_thread_messages": "created_at", "staff_running_late": "business_date", "shift_offers": "created_at",
+    "staff_availability_changes": "created_at",
     "staff_shift_pulse": "business_date", "staff_briefs": "business_date", "staff_calendar_links": "revoked_at",
     "shift_sections": "date", "staff_translations": "created_at",
     "web_analytics_daily": "day",
-    "schedule_model_calls": "created_at",
+    "schedule_model_calls": "created_at", "schedule_check_snapshots": "created_at",
     "ai_batch_jobs": "submitted_at", "ai_batch_items": "created_at",
     "ai_runs": "created_at", "ai_run_requests": "created_at", "ai_route_recommendations": "created_at",
     "ai_gate_verdicts": "created_at",
     "context_sections": "built_at",
     "schedule_rejections": "created_at", "schedule_edit_answers": "asked_at",
     "schedule_observations": "created_at",
+    "schedule_publish_overrides": "shown_at",
+    "schedule_calibration_runs": "run_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -2754,6 +2901,11 @@ _RETENTION_FLOOR_DAYS = {
     # the scheduling memory reads 24 weeks of its log and the weeks scored as
     # they ran for recommendations accepted up to 180 days ago (L-29, L-34).
     "schedule_rejections": 168, "schedule_edit_answers": 168, "schedule_observations": 200,
+    # The kept week records (SCALE-33): the learners' own 24-week window.
+    "schedule_learning_records": 168,
+    "schedule_publish_overrides": 180,
+    "schedule_generation_tags": 120,
+    "schedule_calibration_runs": 90,
     "marketing_link_taps": 1, "notification_opens": 60, "admin_events": 400, "data_health_daily": 30,
     "stripe_events_seen": 7, "sessions": 1, "rec_events": 731, "operator_alerts": 30, "backup_runs": 60,
     "job_run_requests": 7, "missed_windows": 30, "value_figures_daily": 7,
@@ -2792,6 +2944,10 @@ _RETENTION_FLOOR_DAYS = {
     # lookup (a miss re-translates).
     "staff_announcement_recipients": 90, "staff_announcements": 90, "staff_thread_messages": 90,
     "staff_running_late": 30, "shift_offers": 30, "staff_shift_pulse": 90, "staff_briefs": 30,
+    # An availability change is read while pending or approved and not yet
+    # in force (the first week nobody has built, a few weeks ahead) and 30
+    # days after.
+    "staff_availability_changes": 90,
     # Floor sections: the scheduling memory learns each server's usual
     # section from 24 weeks of them (schedule audit 10/3/26 L-22).
     "staff_calendar_links": 30, "shift_sections": 168, "staff_translations": 7,
@@ -2803,7 +2959,7 @@ _RETENTION_FLOOR_DAYS = {
     "ai_reads": 365, "ai_claims": 365,
     # The schedule-call record: the measured tokens a row reads 60 days, and
     # a replay wants a quarter of real weeks at the least.
-    "schedule_model_calls": 90,
+    "schedule_model_calls": 90, "schedule_check_snapshots": 90,
     # Every answer is in ai_usage / ai_calls within a day; a week keeps a
     # batch's own record for the console's "what did the last pass do".
     "ai_batch_jobs": 7, "ai_batch_items": 7,
@@ -2895,6 +3051,10 @@ _RETENTION_READERS = {
                           ("schedule_learning.edited_weeks", "schedule_versions.LEARN_DAYS", None),
                           ("schedule_learning.prediction_weeks", "schedule_versions.LEARN_DAYS", None)),
     "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
+    "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
+    "schedule_generation_tags": (("schedule_scorecard.compute_week", "schedule_scorecard.TAGS_READ_DAYS", None),),
+    "schedule_calibration_runs": (("schedule_calibration._quiet", "schedule_calibration.REVERT_QUIET_DAYS", None),),
     "schedule_edit_answers": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     # The scheduling memory (L-29, L-22, L-34): the owner's redos over its
     # window; each recommendation's week as it ran, for one accepted as far
@@ -2981,7 +3141,10 @@ SUPERSEDED_DRAFTS_KEEP_DAYS = int(os.getenv("RETAIN_SUPERSEDED_DRAFTS_DAYS", "36
 # economics and the row stay. An intermediate version's evaluation is
 # thinned the same way; the generated, published and final ones never are.
 DRAFT_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_DRAFT_DETAIL_DAYS", "30"))
-VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "90"))
+# 30 days (scheduler audit 10/10/26, SCALE-4; it was 90): a version's detail
+# is read by the as-run measurement within days of its week ending, and the
+# generated, published and newest versions are never thinned.
+VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "30"))
 # Removed reviews keep their words this long, then they are erased.
 REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 
@@ -3000,7 +3163,7 @@ def _special_retention():
         "schedule_versions": (SCHEDULE_VERSIONS_KEEP_DAYS, 168),
         "superseded_drafts": (SUPERSEDED_DRAFTS_KEEP_DAYS, 90),
         "draft_detail": (DRAFT_DETAIL_KEEP_DAYS, 14),
-        "version_detail": (VERSION_DETAIL_KEEP_DAYS, 60),
+        "version_detail": (VERSION_DETAIL_KEEP_DAYS, 30),
         # A removed review's words (memory re-audit 9/29/26, FORGET-1): the
         # soft delete is a month's undo window, then the guest text is
         # erased (history_rollups.erase_removed_reviews). Floor 7 days.
@@ -3248,23 +3411,85 @@ def _thin_drafts(conn, deadline):
     version_days = retention_days("version_detail")
     vcols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)")}
     if version_days and time.monotonic() < deadline and "quality_json" in vcols:
+        has_ref = "quality_ref" in vcols
         rows = conn.execute(
-            "SELECT id, quality_json FROM schedule_versions v WHERE created_at < datetime('now', ?) "
+            "SELECT id, quality_json" + (", quality_ref" if has_ref else "") + " FROM schedule_versions v "
+            "WHERE created_at < datetime('now', ?) "
             "AND COALESCE(reason, '') NOT IN ('generated', 'published') AND quality_json IS NOT NULL "
-            "AND quality_json NOT LIKE '%\"thinned_at\"%' "
-            "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 WHERE v2.history_id = v.history_id) "
+            + ("AND (quality_ref IS NOT NULL OR (quality_json NOT LIKE '%\"thinned_at\"%' "
+               "AND quality_json NOT LIKE '%\"headline\": true%')) " if has_ref else
+               "AND quality_json NOT LIKE '%\"thinned_at\"%' ")
+            + "AND version < (SELECT MAX(v2.version) FROM schedule_versions v2 WHERE v2.history_id = v.history_id) "
             "LIMIT ?", (f"-{version_days} days", int(RETENTION_CHUNK_ROWS))).fetchall()
         n = 0
         for r in rows:
             if time.monotonic() > deadline:
                 break
-            conn.execute("UPDATE schedule_versions SET quality_json=? WHERE id=?",
-                         (_thin_quality(r["quality_json"], today), r["id"]))
+            if has_ref and r["quality_ref"]:
+                # The headline stays inline; the pointer to the whole
+                # evaluation goes (the blob goes once nothing points at it).
+                conn.execute("UPDATE schedule_versions SET quality_ref=NULL WHERE id=?", (r["id"],))
+            else:
+                conn.execute("UPDATE schedule_versions SET quality_json=? WHERE id=?",
+                             (_thin_quality(r["quality_json"], today), r["id"]))
             n += 1
         conn.commit()
         if n:
             out["schedule_versions_thinned"] = n
+        if has_ref and time.monotonic() < deadline:
+            moved = _compact_version_quality(conn, deadline)
+            if moved:
+                out["schedule_versions_compacted"] = moved
+        if has_ref and time.monotonic() < deadline:
+            gone = _gc_quality_blobs(conn, deadline)
+            if gone:
+                out["quality_blobs"] = gone
     return out
+
+
+def _compact_version_quality(conn, deadline) -> int:
+    """Versions written before 10/10/26 that still hold their whole
+    evaluation inline (SCALE-4): the whole moved to quality_blobs under its
+    hash, the headline left inline — the same shape a new version is
+    written in. Bounded by RETENTION_CHUNK_ROWS and the pass's deadline;
+    the rest are compacted on the following nights."""
+    import schedule_versions as _sv_c
+    rows = conn.execute(
+        "SELECT id, restaurant_id, quality_json FROM schedule_versions WHERE quality_ref IS NULL "
+        "AND quality_json IS NOT NULL AND quality_json NOT LIKE '%\"thinned_at\"%' "
+        "AND quality_json NOT LIKE '%\"headline\": true%' LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall()
+    n = 0
+    for r in rows:
+        if time.monotonic() > deadline:
+            break
+        try:
+            q = json.loads(r["quality_json"] or "null")
+        except (TypeError, ValueError):
+            q = None
+        if not isinstance(q, dict) or not q:
+            # Not an evaluation at all: marked so it is not read again.
+            conn.execute("UPDATE schedule_versions SET quality_json=? WHERE id=?",
+                         (json.dumps({"headline": True, "unreadable": True}), r["id"]))
+        else:
+            head, ref = _sv_c.store_quality(conn, r["restaurant_id"], q)
+            conn.execute("UPDATE schedule_versions SET quality_json=?, quality_ref=? WHERE id=?", (head, ref, r["id"]))
+        n += 1
+        if n % 200 == 0:
+            conn.commit()
+    conn.commit()
+    return n
+
+
+def _gc_quality_blobs(conn, deadline) -> int:
+    """Stored evaluations no version points at any more (thinned, pruned, or
+    their week deleted), in chunks. An hour's grace: a blob is written in
+    the same transaction as the version that names it, so nothing newer
+    can be waiting on it."""
+    return _chunked_delete(
+        conn, "quality_blobs",
+        "created_at < datetime('now', '-1 hour') AND NOT EXISTS "
+        "(SELECT 1 FROM schedule_versions v WHERE v.quality_ref = quality_blobs.hash)",
+        (), deadline)
 
 
 def _prune_schedules(conn, deadline, refused=None):

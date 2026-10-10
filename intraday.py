@@ -310,7 +310,7 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     import pos
     import staff_settings as _ss
     from models import get_restaurant
-    from time_utils import restaurant_now, business_date, BUSINESS_DAY_START_HOUR
+    from time_utils import restaurant_now, business_date
     restaurant = restaurant or get_restaurant(restaurant_id)
     local = now_local or restaurant_now(restaurant, naive=True)
     # The service the clock is in, not the calendar day: at 12:30am during a
@@ -353,7 +353,7 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     releases = _released(restaurant_id, day, restaurant, db_path)
     released, expected = [], []
     for s in scheduled:
-        hit = _sreq.released_for(releases, s["employee"], s["shift_start"])
+        hit = _sreq.released_for(releases, s["employee"], s["shift_start"], s.get("shift_end"))
         if hit and hit["outcome"] in ("excused", "covered"):
             released.append(dict(s, status=OPEN_DROPPED if hit["outcome"] == "excused" else "covered",
                                  request_id=hit.get("request_id"), covered_by=hit.get("replacement")))
@@ -364,19 +364,14 @@ def coverage_gaps(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=Non
     scheduled_keys = [_ss.name_key(s["employee"]) for s in scheduled]
     missing = []
     for s in scheduled:
-        start = None
-        for fmt in ("%I:%M%p", "%I:%M %p", "%H:%M"):
-            try:
-                start = datetime.strptime(s["shift_start"].strip().lower().replace(" ", ""),
-                                          fmt.replace(" ", ""))
-                break
-            except ValueError:
-                continue
-        if start is None:
+        # Placed on the row's business date by the one rule (schedule_time.
+        # start_of, ARCH-12): a start before 4am is tonight's, after
+        # midnight; a 4:30am baker is that morning, as the rules read it.
+        import schedule_time as _stime
+        start_m = _stime.start_of({"shift_start": s.get("shift_start") or ""})
+        if start_m is None:
             continue
-        due = datetime.combine(day, start.time())
-        if start.hour < BUSINESS_DAY_START_HOUR:
-            due += timedelta(days=1)       # listed for tonight, starts after midnight
+        due = datetime.combine(day, datetime.min.time()) + timedelta(minutes=start_m)
         if local < due + timedelta(minutes=grace_minutes):
             continue                      # not late yet
         if is_here(s["employee"], here, scheduled_keys):

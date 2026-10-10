@@ -386,6 +386,10 @@ class Restaurant:
     section_count: Optional[int]         = None
     foh_sections_json: Optional[str]     = None   # ["Patio","Bar","Section 3"] — names for shift_sections (V12)
     daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
+    # Where lunch ends and dinner starts for a shift that covers neither
+    # core service window ("4:00pm"; NULL = 3:00pm) — schedule_time's
+    # daypart boundary (schedule audit 10/10/26 ARCH-12).
+    daypart_boundary: Optional[str]      = None
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
     # Minimum combined Operational Score per role on a shift, e.g.
@@ -631,6 +635,9 @@ class Restaurant:
     reply_keywords: Optional[str] = None   # reply_keywords: JSON list of search phrases worked into review replies
     reply_programs: Optional[str] = None   # reply_programs: JSON list of memberships pitched in happy guests' replies
     crew_answers_json: Optional[str] = None  # crew_matrix: {"role|Weekday|part": {"answer": "hold"|"lean", ...}} the Studio's Crew answers
+    # request_autonomy (schedule audit 10/10/26 MARKET-14/15): {"auto_approve": bool, "kinds": ["drop","swap"],
+    # "notice_hours": n, "max_quality_drop": n, "availability_approval": bool}. None = the defaults (off; approval on).
+    staff_request_policy_json: Optional[str] = None
 
     def reply_program_in(self, text) -> dict:
         """The membership program a reply names (reply_programs) — its name
@@ -1238,6 +1245,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "reply_keywords", "TEXT"),
         ("restaurants", "reply_programs", "TEXT"),
         ("restaurants", "crew_answers_json", "TEXT"),
+        # Drops and swaps that approve themselves once earned, and whether a
+        # staff availability cut waits on a manager (request_autonomy,
+        # schedule audit 10/10/26 MARKET-14/15).
+        ("restaurants", "staff_request_policy_json", "TEXT"),
         # The fewest people a cut suggestion leaves in a role with no floor
         # of its own (schedule_rules.cut_floor). Cuts only, never a
         # staffing requirement.
@@ -1364,6 +1375,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "role_close_buffer_json", "TEXT"),
         ("restaurants", "section_count", "INTEGER"),
         ("restaurants", "daypart_split", "TEXT"),
+        ("restaurants", "daypart_boundary", "TEXT"),
         ("restaurants", "delivery_pct", "INTEGER"),
         ("restaurants", "role_minimums_json", "TEXT"),
         # Operational Score — see staff_capabilities and shift_strength().
@@ -1909,6 +1921,14 @@ def ensure_columns(db_path: str = DB_PATH):
                                 also_tolerate=("no such table",)):
                 conn.commit()
                 print(f"Added column {table}.{col}")
+        # Indexes on columns this list adds (SCALE-30): a per-restaurant or
+        # per-notification read of a growing ledger must SEARCH, never SCAN
+        # (tests/test_query_plans.py holds every literal restaurant query to
+        # it). Created once the column exists; a table an init_* helper
+        # creates later gets its index when ensure_columns runs again.
+        for sql in ("CREATE INDEX IF NOT EXISTS idx_notification_opens_alert ON notification_opens(alert_log_id, user_id)",):
+            _apply_migration(conn, sql, also_tolerate=("no such table", "no such column"))
+        conn.commit()
     finally:
         conn.close()
 
@@ -2239,6 +2259,12 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN food_cost_json TEXT",
+        # Where the shift history lives (scheduler audit 10/10/26, SCALE-5):
+        # 'facts' once shift_facts holds every row whole (shift_facts.adopt),
+        # and from then on shifts_csv is an export rebuilt on demand
+        # (get_client_data) when a sync or upload left it stale.
+        "ALTER TABLE client_data ADD COLUMN shifts_store TEXT",
+        "ALTER TABLE client_data ADD COLUMN shifts_stale INTEGER NOT NULL DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS labor_daily_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL,
@@ -2398,6 +2424,7 @@ def init_db(db_path: str = DB_PATH):
             restaurant_id INTEGER NOT NULL,
             sent_at       TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_docusign_envelopes_rid ON docusign_envelopes(restaurant_id, sent_at)",
         """CREATE TABLE IF NOT EXISTS stripe_subscriptions (
             restaurant_id   INTEGER PRIMARY KEY,
             subscription_id TEXT NOT NULL,
@@ -2479,6 +2506,7 @@ def init_db(db_path: str = DB_PATH):
             answered_at    TEXT,
             answered_by    INTEGER
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_recipe_drafts_rid ON recipe_drafts(restaurant_id, status)",
         """CREATE TABLE IF NOT EXISTS delayed_actions (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -3424,6 +3452,9 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_shares_schedule ON schedule_shares(schedule_id)",
         "CREATE INDEX IF NOT EXISTS idx_schedule_shares_token ON schedule_shares(token)",
+        # The staff portal's per-restaurant live-link reads (SCALE-30): a
+        # row per person per send, so it grows with every publish.
+        "CREATE INDEX IF NOT EXISTS idx_schedule_shares_rid ON schedule_shares(restaurant_id, expires_at)",
         # Also created lazily by init_email_log(), but a fresh database that
         # logged an email before that ran hit "no such table" — the same
         # lazy-init gap already fixed for schedule_history and
@@ -3666,6 +3697,7 @@ def init_db(db_path: str = DB_PATH):
             outcome       TEXT NOT NULL DEFAULT 'proposed',
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_actions_rid ON ask_cavnar_actions(restaurant_id, id)",
         # event_type: 'recount' (qty = absolute counted amount) |
         # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
         # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
@@ -4255,6 +4287,7 @@ def init_db(db_path: str = DB_PATH):
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_holds_due ON alert_holds(sent_at, release_at)",
         "CREATE INDEX IF NOT EXISTS idx_alert_holds_created ON alert_holds(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_alert_holds_rid ON alert_holds(restaurant_id, id)",
 
         """CREATE TABLE IF NOT EXISTS invoice_imports (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4439,6 +4472,16 @@ def init_db(db_path: str = DB_PATH):
     # The week's generation arm and per-restaurant pins (schedule_experiments, audit #50).
     from schedule_experiments import init_schedule_experiments
     init_schedule_experiments(db_path)
+    # The publish warnings a send went out past, by key (schedule_overrides,
+    # schedule audit 10/10/26 TRUST-28), and the Schedule Learning Scorecard
+    # (schedule_scorecard, RM-4).
+    from schedule_overrides import init_schedule_overrides
+    init_schedule_overrides(db_path)
+    from schedule_scorecard import init_schedule_scorecard
+    init_schedule_scorecard(db_path)
+    # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
+    from schedule_calibration import init_schedule_calibration
+    init_schedule_calibration(db_path)
     # Every schedule call's full input and answer, for replaying real weeks
     # against another model, effort or prompt (schedule_output, schedule
     # audit 10/3/26 PR-31).
@@ -4466,6 +4509,10 @@ def init_db(db_path: str = DB_PATH):
     # 9/29/26, trust_ledger).
     from automation_trust import init_automation_trust
     init_automation_trust(db_path)
+    # A cut in an employee's availability waiting on a manager, with the date
+    # it takes effect (availability_changes, schedule audit 10/10/26 MARKET-15).
+    from availability_changes import init_availability_changes
+    init_availability_changes(db_path)
     # The rec-ROI columns on trackers written before them (module from the
     # recommendation's own rec_instances row, so after the ledger exists).
     from outcomes import init_outcomes
@@ -4983,7 +5030,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "optin_invites_enabled","optin_invites_ack_at","optin_invites_ack_by",
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
-        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default",
+        "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json",
         "jurisdiction","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
@@ -5013,7 +5060,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "learning_since","learning_override","target_setters_json",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
-        "section_count","foh_sections_json","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
+        "section_count","foh_sections_json","daypart_split","daypart_boundary","delivery_pct","role_minimums_json","sched_notes","email_theme",
         "latitude","longitude","weather_cache_json","weather_cached_at",
         "geocode_failed_at", "aivis_city_json",
         "alert_hold_during_service", "preshift_nudge_hour",
@@ -5546,6 +5593,82 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     return deleted
 
 
+import contextvars as _ctxvars_rs
+import contextlib as _ctxlib_rs
+
+# One unit of work's read memo outside a Flask request (scheduler audit
+# 10/10/26, SCALE-6 / SCALE-7): a generation, the Studio's inputs build, one
+# restaurant of the outcomes or memory sweep. The request memo below only
+# worked inside a request, so the generation pool, every scheduler job and the
+# as-run scoring re-read the restaurant row ~20 times, the client_data row (the
+# whole shift-history blob) ~12 times and re-parsed the shift history ~25
+# times per inputs build — 29 s for a 250-person restaurant with three years
+# of history, 1.5-3.5 s of it even inside a request.
+_READ_SCOPE = _ctxvars_rs.ContextVar("cavnar_read_scope", default=None)
+
+
+class _ReadScope(dict):
+    """A read_scope's store; `restaurant_rows` says whether get_restaurant
+    is memoised in it."""
+    __slots__ = ("restaurant_rows",)
+
+
+@_ctxlib_rs.contextmanager
+def read_scope(restaurant_rows=True):
+    """Memoise reads for the length of the block: get_restaurant (unless
+    `restaurant_rows` is False), get_client_data, the parsed shift history
+    (_cached_shifts and labor.load_shifts_for_restaurant) and the reads a
+    caller stores through scope_read. A nested block shares the outer one's
+    store (and its rule). Scoped to ONE unit of work — never a whole job
+    loop, which must see a restaurant's row change under it (the reason the
+    request memo is request-only). A write through update_restaurant /
+    save_client_data drops what it changed. A generation's scope keeps the
+    restaurant row live (restaurant_rows=False): it runs for minutes, and
+    the rules it re-reads after the model call must see a setting the owner
+    changed meanwhile (P-41)."""
+    store = _READ_SCOPE.get()
+    if store is not None:
+        yield store
+        return
+    store = _ReadScope()
+    store.restaurant_rows = bool(restaurant_rows)
+    token = _READ_SCOPE.set(store)
+    try:
+        yield store
+    finally:
+        _READ_SCOPE.reset(token)
+
+
+def read_scope_store():
+    """The active read_scope's store, or None."""
+    return _READ_SCOPE.get()
+
+
+def in_read_scope(fn):
+    """Run `fn` inside a read_scope (sharing an open one): an inputs build —
+    build_constraints, quality_inputs_from_db, _quality_signals — reads the
+    restaurant, its client_data row and its shift history once, wherever it
+    is called from (SCALE-6)."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with read_scope():
+            return fn(*a, **k)
+    return run
+
+
+def scope_read(key, fn):
+    """fn() once per read_scope for `key`; outside one simply fn(). A read
+    that raises is not stored."""
+    store = _READ_SCOPE.get()
+    if store is None:
+        return fn()
+    if key not in store:
+        store[key] = fn()
+    return store[key]
+
+
 def _request_cache():
     """This request's read memo, or None when there is no request.
 
@@ -5563,7 +5686,9 @@ def _request_cache():
     try:
         from flask import g, has_app_context
         if not has_app_context():
-            return None
+            # Outside a request, the unit of work's read_scope (SCALE-6),
+            # when one is open — else uncached, as before.
+            return _restaurant_scope()
         cache = getattr(g, "_cavnar_read_cache", None)
         if cache is None:
             cache = {}
@@ -5571,7 +5696,34 @@ def _request_cache():
         return cache
     except Exception:
         # No Flask, or a context torn down mid-call. Uncached is always correct.
-        return None
+        return _restaurant_scope()
+
+
+def _restaurant_scope():
+    store = _READ_SCOPE.get()
+    return store if store is not None and getattr(store, "restaurant_rows", True) else None
+
+
+def _invalidate_shift_reads(restaurant_id) -> None:
+    """Drop the memoised client_data row and parsed shift history of one
+    restaurant (a write to client_data), in the request and the read_scope."""
+    try:
+        rid = int(restaurant_id)
+    except (TypeError, ValueError):
+        return
+    store = _READ_SCOPE.get()
+    if store is not None:
+        for key in [k for k in store if isinstance(k, tuple) and len(k) > 1
+                    and k[0] in ("client_data", "shifts") and k[1] == rid]:
+            store.pop(key, None)
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            cache = getattr(g, "_shift_cache", None)
+            if cache is not None:
+                cache.pop(rid, None)
+    except Exception:
+        pass
 
 
 def _invalidate_request_cache(restaurant_id=None):
@@ -5585,14 +5737,13 @@ def _invalidate_request_cache(restaurant_id=None):
         _ai_memo.invalidate_budget_memo(int(restaurant_id) if restaurant_id is not None else None)
     except Exception:
         pass
-    cache = _request_cache()
-    if cache is None:
-        return
-    if restaurant_id is None:
-        cache.clear()
-        return
-    for key in [k for k in cache if k[0] == "restaurant" and k[1] == int(restaurant_id)]:
-        cache.pop(key, None)
+    for cache in {id(c): c for c in (_request_cache(), _READ_SCOPE.get()) if c is not None}.values():
+        if restaurant_id is None:
+            cache.clear()
+            continue
+        for key in [k for k in cache if isinstance(k, tuple) and len(k) > 1 and k[0] == "restaurant"
+                    and k[1] == int(restaurant_id)]:
+            cache.pop(key, None)
 
 
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:
@@ -5749,6 +5900,7 @@ def _restaurant_from_row(row) -> Restaurant:
         reply_keywords=row["reply_keywords"] if "reply_keywords" in row.keys() else None,
         reply_programs=row["reply_programs"] if "reply_programs" in row.keys() else None,
         crew_answers_json=row["crew_answers_json"] if "crew_answers_json" in row.keys() else None,
+        staff_request_policy_json=row["staff_request_policy_json"] if "staff_request_policy_json" in row.keys() else None,
         cut_floor_default=(row["cut_floor_default"] if row["cut_floor_default"] is not None else 2) if "cut_floor_default" in row.keys() else 2,
         jurisdiction=row["jurisdiction"] if "jurisdiction" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
@@ -5873,6 +6025,7 @@ def _restaurant_from_row(row) -> Restaurant:
         section_count=row["section_count"]           if "section_count" in row.keys() else None,
         foh_sections_json=row["foh_sections_json"]   if "foh_sections_json" in row.keys() else None,
         daypart_split=row["daypart_split"]            if "daypart_split" in row.keys() else None,
+        daypart_boundary=row["daypart_boundary"]      if "daypart_boundary" in row.keys() else None,
         delivery_pct=row["delivery_pct"]              if "delivery_pct" in row.keys() else None,
         role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
         role_strength_json=row["role_strength_json"] if "role_strength_json" in row.keys() else None,
@@ -6904,6 +7057,7 @@ def init_two_fa_backup_codes(db_path: str = DB_PATH):
         used_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_two_fa_backup_codes_rid ON two_fa_backup_codes(restaurant_id)")
     conn.commit()
     conn.close()
 
@@ -8155,6 +8309,59 @@ def capability_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
+# What the schedule's inputs are read from, for schedule_inputs_version: each
+# (table, the stamp columns it has). A table a test database lacks reads as
+# itself, every time.
+_INPUT_STAMPS = (
+    ("staff_availability", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("staff_time_off", "COUNT(*), MAX(id), TOTAL(id * LENGTH(COALESCE(status, '')))"),
+    ("staff_settings", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("staff_notes", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("people", "COUNT(*), MAX(id), MAX(updated_at)"),
+    ("person_roles", "COUNT(*), MAX(id), MAX(COALESCE(removed_at, ''))"),
+    ("person_aliases", "COUNT(*), MAX(id)"),
+    ("manual_team_members", "COUNT(*), MAX(id)"),
+    ("schedule_note_rules", "COUNT(*), MAX(id)"),
+    ("staff_pairs", "COUNT(*), MAX(id)"),
+    ("demand_signals", "COUNT(*), MAX(id)"),
+    ("labor_daily_history", "COUNT(*), MAX(saved_at)"),
+)
+
+
+def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """A stamp that moves whenever anything a schedule's inputs are built
+    from moves (scheduler audit 10/10/26, SCALE-8): the restaurant's row
+    (every setting, rule, floor and hour), the shift history (client_data's
+    stamp — a POS sync or an upload), the people and their availability,
+    time off, roles, notes, rules, pairs and demand signals, the daily sales
+    and capability_version (ratings, profiles, leader rules, weights). The
+    Studio's kept inputs are keyed on it, so a save re-uses them when
+    nothing they were read from changed and rebuilds the moment anything
+    did — not every save, and not on a two-minute guess."""
+    import hashlib
+    h = hashlib.sha1()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        h.update(repr(tuple(row) if row else ()).encode())
+        try:
+            cd = conn.execute("SELECT updated_at, shifts_source, LENGTH(shifts_csv) FROM client_data "
+                              "WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        except sqlite3.OperationalError:
+            cd = None
+        h.update(repr(tuple(cd) if cd else ()).encode())
+        for table, cols in _INPUT_STAMPS:
+            try:
+                got = conn.execute(f"SELECT {cols} FROM {table} WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+                h.update(f"{table}:{tuple(got)!r}".encode())
+            except sqlite3.OperationalError:
+                h.update(f"{table}:-".encode())
+    finally:
+        conn.close()
+    h.update(capability_version(restaurant_id, db_path=db_path).encode())
+    return h.hexdigest()[:20]
+
+
 def rename_capability_holder(restaurant_id: int, old_name: str, new_name: str, db_path: str = DB_PATH):
     """Move every capability row (ratings, closer flag) from one name to
     another. Returns rows moved, or None when the new name already holds a
@@ -8408,6 +8615,12 @@ def init_schedule_versions(db_path: str = DB_PATH):
         UNIQUE(history_id, version)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_hist ON schedule_versions(history_id)")
+    # Every learner reads a restaurant's versions by time (_WeekData,
+    # learning_weeks, acceptance, the admin-saves count): with only the
+    # history_id and created_at indexes each call scanned every restaurant's
+    # versions (SCALE-14, measured 2-3 ms per 2,400 rows vs 0.05 ms).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_rid_created "
+                 "ON schedule_versions(restaurant_id, created_at)")
     # Whose save each version is (permissions.answer_authority — memory
     # audit 9/29/26): a support login's edits through view-as are stored
     # under the owner's name, and must never teach the draft.
@@ -8424,13 +8637,32 @@ def init_schedule_versions(db_path: str = DB_PATH):
     # adopted_by / adopted_at mark an admin's (view-as) save the account
     # holder adopted — the learners then read it as the owner's.
     _sv_cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)").fetchall()}
-    for _col in ("row_origins_json", "adopted_by", "adopted_at"):
+    for _col in ("row_origins_json", "adopted_by", "adopted_at", "quality_ref"):
         if _col not in _sv_cols:
             try:
                 conn.execute(f"ALTER TABLE schedule_versions ADD COLUMN {_col} TEXT")
             except Exception as e:
                 if "duplicate column" not in str(e).lower():
                     raise
+    # A version's Shift Quality detail (scheduler audit 10/10/26, SCALE-4):
+    # stored once, zlib-compressed and keyed by its content's hash, so the
+    # identical evaluation on consecutive versions is one row; the version
+    # keeps the headline in quality_json and the hash in quality_ref
+    # (schedule_versions.store_quality / version_quality). The evaluation
+    # was 100-440 KB of uncompressed JSON on every version, kept forever —
+    # 86% of the table. A blob no version points at any more is removed by
+    # the nightly prune (ops._gc_quality_blobs).
+    conn.execute("""CREATE TABLE IF NOT EXISTS quality_blobs (
+        hash           TEXT    PRIMARY KEY,
+        restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+        body           BLOB    NOT NULL,
+        raw_bytes      INTEGER NOT NULL,
+        created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_quality_blobs_rid ON quality_blobs(restaurant_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_quality_blobs_created ON quality_blobs(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_qref ON schedule_versions(quality_ref) "
+                 "WHERE quality_ref IS NOT NULL")
     conn.commit()
     conn.close()
 
@@ -8468,7 +8700,17 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # people (H2); the decider who recorded a colleague's
                        # in-person yes (LG-12).
                        ("decision_note", "TEXT"), ("escalated_at", "TEXT"), ("told_json", "TEXT"),
-                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT")):
+                       ("offer_only", "INTEGER NOT NULL DEFAULT 0"), ("target_agreed_by", "TEXT"),
+                       # schedule audit 10/10/26: a claim held for a decider
+                       # because it creates overtime while a teammate has
+                       # room (BUGSLIFE-14); who decided — a manager or the
+                       # earned auto-approval — with its reasons, and a
+                       # manager's reversal of an automatic one (MARKET-14);
+                       # a notice owed after the week moved under a live
+                       # request, sent after the write commits (ARCH-9).
+                       ("held_claimant", "TEXT"), ("held_claim_at", "TEXT"), ("held_claim_note", "TEXT"),
+                       ("decided_how", "TEXT"), ("auto_reasons_json", "TEXT"),
+                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):
@@ -9560,6 +9802,8 @@ def _cached_shifts(restaurant_id: int) -> list:
     try:
         from flask import g, has_request_context
         if not has_request_context():
+            # A generation, a job's restaurant, an inputs build: its
+            # read_scope's one parse (SCALE-6), else a plain load.
             return load_shifts_for_restaurant(restaurant_id) or []
         cache = getattr(g, "_shift_cache", None)
         if cache is None:
@@ -10368,6 +10612,11 @@ def save_client_data(restaurant_id: int, data_type: str,
             SET {data_type}_csv=?, {data_type}_source=?, updated_at=datetime('now')
             WHERE restaurant_id=?
         """, (csv_content, source, restaurant_id))
+        if data_type == "shifts":
+            # The file just written is current (SCALE-5); a restaurant on
+            # shift_facts keeps reading its facts, which its callers keep
+            # in step (shift_facts.ingest, rewrite_window_from_csv, replace_all).
+            conn.execute("UPDATE client_data SET shifts_stale=0 WHERE restaurant_id=?", (restaurant_id,))
     else:
         conn.execute(f"""
             INSERT INTO client_data (restaurant_id, {data_type}_csv, {data_type}_source)
@@ -10375,6 +10624,7 @@ def save_client_data(restaurant_id: int, data_type: str,
         """, (restaurant_id, csv_content, source))
     conn.commit()
     conn.close()
+    _invalidate_shift_reads(restaurant_id)
 
     # A shifts upload is a rolling window; remember each name's first date
     # and most shifts ever counted so tenure survives the window rolling on.
@@ -10399,15 +10649,61 @@ def save_client_data(restaurant_id: int, data_type: str,
 
 
 def get_client_data(restaurant_id: int,
-                    db_path: str = DB_PATH) -> Optional[dict]:
-    """Get client's CSV data. Returns None if not set."""
+                    db_path: str = DB_PATH, with_shifts: bool = True) -> Optional[dict]:
+    """Get client's CSV data. Returns None if not set.
+
+    Read once per read_scope (SCALE-7): the row carries the whole shift
+    history, and one inputs build read it a dozen times. Each caller gets
+    its own dict (the values are shared, and strings). Never memoised in a
+    request: several routes write client_data with their own SQL.
+
+    `with_shifts=False` leaves the shift history out of the read (the row's
+    other columns, and `has_shifts`) — what a caller that only needs the
+    inventory or the store wants. With it, a restaurant whose shift record
+    is shift_facts (SCALE-5) gets `shifts_csv` as the export of its facts,
+    rebuilt here when a sync or upload left it stale, and stored."""
+    store = _READ_SCOPE.get()
+    key = ("client_data", int(restaurant_id), db_path, bool(with_shifts)) if store is not None else None
+    if key is not None and key in store:
+        hit = store[key]
+        return dict(hit) if hit is not None else None
     conn = get_conn(db_path)
-    row = conn.execute(
-        "SELECT * FROM client_data WHERE restaurant_id=?",
-        (restaurant_id,)
-    ).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        if with_shifts:
+            row = conn.execute("SELECT * FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        else:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(client_data)").fetchall() if r[1] != "shifts_csv"]
+            row = conn.execute(f"SELECT {', '.join(cols)}, (shifts_csv IS NOT NULL AND shifts_csv != '') "
+                               "AS has_shift_file FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    out = dict(row) if row else None
+    if out is not None and not with_shifts:
+        out["has_shifts"] = bool(out.pop("has_shift_file", 0)) or out.get("shifts_store") == "facts"
+    if out is not None and with_shifts and out.get("shifts_store") == "facts" and out.get("shifts_stale"):
+        out["shifts_csv"] = _refresh_shift_export(restaurant_id, db_path)
+        out["shifts_stale"] = 0
+    if out is not None and with_shifts:
+        out["has_shifts"] = bool(out.get("shifts_csv")) or out.get("shifts_store") == "facts"
+    if key is not None:
+        store[key] = out
+        return dict(out) if out is not None else None
+    return out
+
+
+def _refresh_shift_export(restaurant_id, db_path=DB_PATH) -> str:
+    """The shift history export rebuilt from shift_facts and stored (SCALE-5):
+    only when something reads the whole file, never by a sync."""
+    import shift_facts as _sf_exp
+    text = _sf_exp.export_csv(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_stale=0 WHERE restaurant_id=?",
+                     (text, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return text
 
 
 def reset_user_password(user_id: int, new_password: str,
@@ -11225,6 +11521,17 @@ def backfill_history_hours(db_path: str = DB_PATH, max_seconds: float = 10.0) ->
     return done
 
 
+class JobNotPending(Exception):
+    """A generation's draft was not written because its async job is no
+    longer pending — stopped by the owner, or called dead by a poll — or a
+    Stop was pressed on it after an earlier save (save_schedule_history
+    `job_id`). `stop` says whether a Stop was asked."""
+
+    def __init__(self, job_id, status=None, stop=False):
+        super().__init__(f"job {job_id} is {status or 'gone'}")
+        self.job_id, self.status, self.stop = job_id, status, stop
+
+
 class DraftChanged(Exception):
     """The draft a redo was built from changed (or went) while it ran, so
     the redo is not saved over it (re-audit 10/4/26 PIPE-2). `current_csv`
@@ -11243,7 +11550,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
                            economics: dict = None, stage_seconds: dict = None, base: tuple = None,
-                           in_transaction=None) -> int:
+                           job_id: str = None, in_transaction=None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -11275,6 +11582,13 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     experiment arm and its model-call links there, so the week never exists
     without its draft baseline (ARCH-29, BUGSLIFE-25); whatever it raises
     rolls the whole save back.
+    `job_id` is the generation's async job: the draft is written only while
+    that job is still pending and nobody pressed Stop on it — checked inside
+    this same transaction, so a Stop or a poll that called the job dead can
+    never cross the write (JobNotPending; schedule audit 10/10/26
+    BUGSLIFE-26) — and the job is marked as having saved (async_jobs.
+    saved_ref, its first draft's id) in the same commit, so a later Stop
+    knows a draft was saved (ops.stop_async_job, ARCH-2).
     """
     import json as _json_sh
     import schedule_rows as _srows
@@ -11302,6 +11616,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
         q = quality or {}
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if job_id:
+                job = conn.execute("SELECT status, stop_requested_at FROM async_jobs WHERE job_id=?",
+                                   (str(job_id),)).fetchone()
+                if job is not None and (job["status"] != "pending" or job["stop_requested_at"]):
+                    raise JobNotPending(str(job_id), job["status"], bool(job["stop_requested_at"]))
             prior_text = None
             if base is not None:
                 now = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
@@ -11340,6 +11659,9 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                 conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
                              "AND id<>? AND published_at IS NULL AND superseded_by IS NULL AND NOT "
                              + publish_claim_fresh_sql(), (new_id, restaurant_id, week_start, new_id))
+            if job_id:
+                conn.execute("UPDATE async_jobs SET saved_ref=COALESCE(saved_ref, ?) WHERE job_id=?",
+                             (new_id, str(job_id)))
             if in_transaction is not None:
                 in_transaction(conn, new_id)
             conn.commit()

@@ -199,9 +199,15 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 
 Bounds, budgets, thresholds and pool sizes, each with a safe default. Change one only to answer a measured problem, and say which in the commit.
 
+Changed or added by the scheduler audit (10/10/26, SCALE-11 — the fleet-wide AI stop):
+
+- `AI_GLOBAL_PER_CLIENT_USD` — **150** (was 30) and `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` — **0**, none (was 10,000): the shared pool is now an EMERGENCY ceiling that grows by each paying client's own monthly ceiling (`AI_MONTHLY_BUDGET_USD`), so it binds only on spend no tenant ceiling bounds (the platform's own and admin-run calls) or every tenant at its ceiling at once. The absolute $10,000 refused every client's AI mid-month at ~400-650 paying restaurants. Set `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` above 0 only on purpose.
+- `AI_EMERGENCY_STOP` — unset: `1` refuses every model call for every client (create_with_retry and the batch gate) until it is cleared — the manually armed stop. Never set by the code.
+- `AI_RUNAWAY_FACTOR` (**6**), `AI_RUNAWAY_MIN_USD` (**5**), `AI_RUNAWAY_RUNS` (**4**), `AI_RUNAWAY_BASELINE_DAYS` (**7**), `AI_RUNAWAY_FLEET_MIN_USD` (**50**): the spend-rate runaway detector (`ai_utils.runaway_refusal`, `check_fleet_rate`). One restaurant's workflow whose last hour cost at least the larger of $5, four of the workflow's own run caps (`ai_workflows` caps) and six times its own hourly rate over the last seven days is paused — that workflow, for that restaurant — until its last hour is back under the line, with one health event and one page an hour. The fleet's last hour past six times its own rate (and $50) pages, naming the biggest spenders; it stops nothing. `AI_RUNAWAY_FACTOR=0` turns the detector off.
+
 Changed or added by the AI cost audit (10/7/26):
 
-- `AI_GLOBAL_PER_CLIENT_USD` — **30** (was 200): the shared AI pool is the larger of `AI_GLOBAL_MONTHLY_BUDGET_USD` ($1,500) and $30 a paying client, capped at `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` ($10,000). A full-tier restaurant spends $15–25 a month, so $200 each let the pool reach ~8x real use before it noticed a runaway; at $30 the floor covers the first fifty clients and the pool grows with real use after that.
+- `AI_GLOBAL_PER_CLIENT_USD` — **30** (was 200; **150** since 10/10/26, above): the shared AI pool is the larger of `AI_GLOBAL_MONTHLY_BUDGET_USD` ($1,500) and $30 a paying client, capped at `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` ($10,000). A full-tier restaurant spends $15–25 a month, so $200 each let the pool reach ~8x real use before it noticed a runaway; at $30 the floor covers the first fifty clients and the pool grows with real use after that.
 - `AI_PLACES_GLOBAL_MONTHLY_USD` — **300**: the floor of the platform's Google Places ceiling — every restaurant and every unattributed request, a month. The per-restaurant ceilings (`AI_PLACES_DAILY_BUDGET_USD` $3, `AI_PLACES_MONTHLY_BUDGET_USD` $30) bound one restaurant and nothing bounded the fleet. Since the platform re-audit (10/7/26 #9) the ceiling grows like the AI pool: the larger of this floor and `AI_PLACES_GLOBAL_PER_CLIENT_USD` (**15**) a paying client (active, past due, internal), never above `AI_PLACES_GLOBAL_MAX_MONTHLY_USD` (**3000**) — a fixed $300 met normal use at ~30-60 restaurants and then refused every Places call but the review fetch, platform-wide (`ai_utils.places_global_monthly_budget`). About three times expected spend (a few dollars a restaurant a month); 80% pages Will; the review fetch is still never refused; 0 disables it.
 - `INTERACTIVE_AI_SLOTS` — **2**: model calls made on a request thread at once, process-wide (`ai_utils`, the interactive guard). gunicorn has four request threads; two always stay free for logins, pages, webhooks and `/health`. An Ask turn holds one for the whole turn. `INTERACTIVE_AI_WAIT_SECONDS` (**3**) is how long a call waits for one before the owner is told "busy, try again in a moment"; `INTERACTIVE_AI_TIMEOUT` (**40**) is the per-try timeout such a call gets (with one retry) when its caller names none — the invoice read (120s) and the recipe-card read (90s) name their own (platform re-audit 10/7/26 #4). A workflow run (`ai_orchestrator.generate`) holds one slot for its attempts and its reviewer gate (#6). Scheduler and background calls take no slot — a background pool (the shadow reviews, the learner's scoring) runs through `ai_utils.background_runner`, never "on a request" (#3). Per process, like `ASK_MAX_CONCURRENT`.
 - `DIGEST_WORKERS` (**2**) and `DIGEST_MAX_SECONDS` (**1200**): the weekly digest pass's pool and wall-clock bound (cursor `weekly_digest_cursor`); a restaurant not reached gives its day back to the next hourly pass.
@@ -231,9 +237,10 @@ Changed or added by the AI cost audit (10/7/26):
 | `AI_BUDGET_WARN_PCT` | `"80"` | ai_utils.py |
 | `AI_CALLS_RETAIN_DAYS` | `"120"` | ai_utils.py |
 | `AI_DAILY_BUDGET_USD` | `"10"` | ai_utils.py |
-| `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` | `"10000"` | ai_utils.py |
+| `AI_EMERGENCY_STOP` | `""` | ai_utils.py |
+| `AI_GLOBAL_MAX_MONTHLY_BUDGET_USD` | `"0"` | ai_utils.py — none unless set (10/10/26, SCALE-11; was 10000) |
 | `AI_GLOBAL_MONTHLY_BUDGET_USD` | `"1500"` | ai_utils.py |
-| `AI_GLOBAL_PER_CLIENT_USD` | `"30"` | ai_utils.py |
+| `AI_GLOBAL_PER_CLIENT_USD` | `"150"` | ai_utils.py (10/10/26, SCALE-11; was 30) |
 | `AI_HEALTH_RETAIN_DAYS` | `"365"` | ai_utils.py |
 | `AI_MEMORY_SIZES_RETAIN_DAYS` | `"400"` | ai_utils.py |
 | `AI_MONTHLY_BUDGET_USD` | `"150"` | ai_utils.py |
@@ -244,6 +251,11 @@ Changed or added by the AI cost audit (10/7/26):
 | `AI_PLACES_GLOBAL_PER_CLIENT_USD` | `"15"` | ai_utils.py |
 | `AI_PLACES_GLOBAL_MAX_MONTHLY_USD` | `"3000"` | ai_utils.py |
 | `AI_QUALITY_RETAIN_DAYS` | `"180"` | ai_utils.py |
+| `AI_RUNAWAY_BASELINE_DAYS` | `"7"` | ai_utils.py |
+| `AI_RUNAWAY_FACTOR` | `"6"` | ai_utils.py |
+| `AI_RUNAWAY_FLEET_MIN_USD` | `"50"` | ai_utils.py |
+| `AI_RUNAWAY_MIN_USD` | `"5"` | ai_utils.py |
+| `AI_RUNAWAY_RUNS` | `"4"` | ai_utils.py |
 | `AI_STATUS_DEGRADED_PCT` | `"20"` | ai_utils.py |
 | `AI_STATUS_MIN_CALLS` | `"5"` | ai_utils.py |
 | `AI_STATUS_OUTAGE_PCT` | `"50"` | ai_utils.py |
@@ -267,6 +279,8 @@ Changed or added by the AI cost audit (10/7/26):
 | `ASK_LOOP_MAX_SECONDS` | `"60"` | ask_cavnar.py |
 | `ASK_STREAM_SENTENCES` | `"1"` | ask_cavnar.py — `0` turns off the Ask stream's validated sentence preview (no `sentence` events, no streamed model call; AI cost audit 10/7/26 #68) |
 | `ASK_MAX_CONCURRENT` | `"2"` | client_api.py |
+| `AUTO_PUBLISH_MAX_SECONDS` | `str(15 * 60)` (900) | scheduler.py — the auto-publish pass's wall-clock bound (scheduler audit 10/10/26, ARCH-23) |
+| `AUTO_PUBLISH_WORKERS` | `"2"` | scheduler.py |
 | `BACKUP_EMAIL_MAX_BYTES` | `str(25 * 1024 * 1024` | scheduler.py |
 | `BACKUP_EMAIL_MODE` | `"always"` | scheduler.py |
 | `BACKUP_OFFSITE_MAX_DAYS` | `"35"` | scheduler.py |
@@ -329,6 +343,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
 | `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
+| `STUDIO_CACHE_BUDGET_ROWS` | `"20000"` | schedule_engine.py |
+| `STUDIO_CACHE_PER_RESTAURANT` | `"3"` | schedule_engine.py |
+| `STUDIO_CACHE_SECONDS` | `"900"` | schedule_engine.py |
 | `SWEEP_MAX_SECONDS` | `str(45 * 60` | scheduler.py |
 | `SWEEP_WORKERS` | `"1"` | scheduler.py |
 | `TOKEN_REFRESH_MAX_SECONDS` | `str(10 * 60` | scheduler.py |
@@ -341,4 +358,4 @@ Changed or added by the AI cost audit (10/7/26):
 
 `RETAIN_<TABLE>_DAYS` overrides one ledger's retention window (68 of them; `ops._RETENTION_DAYS` is the registry and its defaults, `DATABASE_SCHEMA.md` → retention). 0 keeps a table's rows forever.
 
-`RETAIN_ACTIVITY_LOG_DAYS`, `RETAIN_ADMIN_EVENTS_DAYS`, `RETAIN_AIVIS_QUERIES_DAYS`, `RETAIN_AIVIS_RUNS_DAYS`, `RETAIN_AI_BATCHES_DAYS`, `RETAIN_AI_CLAIMS_DAYS`, `RETAIN_AI_GATE_VERDICTS_DAYS`, `RETAIN_AI_READS_DAYS`, `RETAIN_AI_ROUTE_RECS_DAYS`, `RETAIN_AI_RUNS_DAYS`, `RETAIN_AI_RUN_REQUESTS_DAYS`, `RETAIN_AI_USAGE_DAYS`, `RETAIN_AI_VALIDATION_DAYS`, `RETAIN_ALERT_HOLDS_DAYS`, `RETAIN_ALERT_LOG_DAYS`, `RETAIN_ALERT_STORM_CAPS_DAYS`, `RETAIN_ASK_FEEDBACK_DAYS`, `RETAIN_ASK_MEMORY_ARCHIVE_DAYS`, `RETAIN_ASK_TOPICS_DAYS`, `RETAIN_ATTENDANCE_DAYS`, `RETAIN_BACKUP_RUNS_DAYS`, `RETAIN_BOOT_EVENTS_DAYS`, `RETAIN_BRIEF_DELIVERIES_DAYS`, `RETAIN_COMPETITOR_SNAPSHOTS_DAYS`, `RETAIN_CONTEXT_SECTIONS_DAYS`, `RETAIN_DATA_HEALTH_DAILY_DAYS`, `RETAIN_DRAFT_DETAIL_DAYS`, `RETAIN_EMAIL_LOG_DAYS`, `RETAIN_EXPIRED_SESSIONS_DAYS`, `RETAIN_HTTP_5XX_DAYS`, `RETAIN_INVENTORY_DAILY_DAYS`, `RETAIN_INVENTORY_HISTORY_DAYS`, `RETAIN_JOB_CLAIMS_DAYS`, `RETAIN_JOB_FAILURES_DAYS`, `RETAIN_JOB_RUNS_DAYS`, `RETAIN_JOB_RUN_REQUESTS_DAYS`, `RETAIN_LINK_TAPS_DAYS`, `RETAIN_LIVE_ACTIVITY_RUNS_DAYS`, `RETAIN_LIVE_ACTIVITY_TOKENS_DAYS`, `RETAIN_LOGIN_HISTORY_DAYS`, `RETAIN_MISSED_WINDOWS_DAYS`, `RETAIN_MKT_MODEL_DRAFTS_DAYS`, `RETAIN_NOTIFICATION_OPENS_DAYS`, `RETAIN_OPERATOR_ALERTS_DAYS`, `RETAIN_PERSON_SIGNALS_DAYS`, `RETAIN_PLACES_CACHE_DAYS`, `RETAIN_POS_ARCHIVE_DAYS`, `RETAIN_PROVIDER_HEALTH_DAYS`, `RETAIN_PUSH_DELIVERIES_DAYS`, `RETAIN_PUSH_OUTBOX_DAYS`, `RETAIN_REC_EVENTS_DAYS`, `RETAIN_REC_RANK_BUILDS_DAYS`, `RETAIN_REC_SILENCES_DAYS`, `RETAIN_REPLY_REJECTIONS_DAYS`, `RETAIN_REQUEST_ROLLUPS_DAYS`, `RETAIN_RESOLUTION_HISTORY_DAYS`, `RETAIN_REVIEW_ERASE_DAYS`, `RETAIN_SCHEDULE_MODEL_CALLS_DAYS`, `RETAIN_SCHEDULE_NOTICES_DAYS`, `RETAIN_SCHEDULE_VERSIONS_DAYS`, `RETAIN_SCHED_EDIT_ANSWERS_DAYS`, `RETAIN_SCHED_OBSERVATIONS_DAYS`, `RETAIN_SCHED_RECS_DAYS`, `RETAIN_SCHED_REJECTIONS_DAYS`, `RETAIN_SHIFT_FACTS_DAYS`, `RETAIN_SHIFT_SECTIONS_DAYS`, `RETAIN_SMS_LOG_DAYS`, `RETAIN_STAFF_COMMS_DAYS`, `RETAIN_STAFF_OPS_DAYS`, `RETAIN_STAFF_TRANSLATIONS_DAYS`, `RETAIN_STRIPE_EVENTS_SEEN_DAYS`, `RETAIN_SUPERSEDED_DRAFTS_DAYS`, `RETAIN_TASK_PHOTO_DAYS`, `RETAIN_TASK_SHEET_DAYS`, `RETAIN_VALUE_FIGURES_DAYS`, `RETAIN_VERSION_DETAIL_DAYS`, `RETAIN_WEBHOOK_DELIVERIES_DAYS`, `RETAIN_WEBHOOK_OUTBOX_DAYS`
+`RETAIN_ACTIVITY_LOG_DAYS`, `RETAIN_ADMIN_EVENTS_DAYS`, `RETAIN_AIVIS_QUERIES_DAYS`, `RETAIN_AIVIS_RUNS_DAYS`, `RETAIN_AI_BATCHES_DAYS`, `RETAIN_AI_CLAIMS_DAYS`, `RETAIN_AI_GATE_VERDICTS_DAYS`, `RETAIN_AI_READS_DAYS`, `RETAIN_AI_ROUTE_RECS_DAYS`, `RETAIN_AI_RUNS_DAYS`, `RETAIN_AI_RUN_REQUESTS_DAYS`, `RETAIN_AI_USAGE_DAYS`, `RETAIN_AI_VALIDATION_DAYS`, `RETAIN_ALERT_HOLDS_DAYS`, `RETAIN_ALERT_LOG_DAYS`, `RETAIN_ALERT_STORM_CAPS_DAYS`, `RETAIN_ASK_FEEDBACK_DAYS`, `RETAIN_ASK_MEMORY_ARCHIVE_DAYS`, `RETAIN_ASK_TOPICS_DAYS`, `RETAIN_ATTENDANCE_DAYS`, `RETAIN_BACKUP_RUNS_DAYS`, `RETAIN_BOOT_EVENTS_DAYS`, `RETAIN_BRIEF_DELIVERIES_DAYS`, `RETAIN_COMPETITOR_SNAPSHOTS_DAYS`, `RETAIN_CONTEXT_SECTIONS_DAYS`, `RETAIN_DATA_HEALTH_DAILY_DAYS`, `RETAIN_DRAFT_DETAIL_DAYS`, `RETAIN_EMAIL_LOG_DAYS`, `RETAIN_EXPIRED_SESSIONS_DAYS`, `RETAIN_HTTP_5XX_DAYS`, `RETAIN_INVENTORY_DAILY_DAYS`, `RETAIN_INVENTORY_HISTORY_DAYS`, `RETAIN_JOB_CLAIMS_DAYS`, `RETAIN_JOB_FAILURES_DAYS`, `RETAIN_JOB_RUNS_DAYS`, `RETAIN_JOB_RUN_REQUESTS_DAYS`, `RETAIN_LINK_TAPS_DAYS`, `RETAIN_LIVE_ACTIVITY_RUNS_DAYS`, `RETAIN_LIVE_ACTIVITY_TOKENS_DAYS`, `RETAIN_LOGIN_HISTORY_DAYS`, `RETAIN_MISSED_WINDOWS_DAYS`, `RETAIN_MKT_MODEL_DRAFTS_DAYS`, `RETAIN_NOTIFICATION_OPENS_DAYS`, `RETAIN_OPERATOR_ALERTS_DAYS`, `RETAIN_PERSON_SIGNALS_DAYS`, `RETAIN_PLACES_CACHE_DAYS`, `RETAIN_POS_ARCHIVE_DAYS`, `RETAIN_PROVIDER_HEALTH_DAYS`, `RETAIN_PUSH_DELIVERIES_DAYS`, `RETAIN_PUSH_OUTBOX_DAYS`, `RETAIN_REC_EVENTS_DAYS`, `RETAIN_REC_RANK_BUILDS_DAYS`, `RETAIN_REC_SILENCES_DAYS`, `RETAIN_REPLY_REJECTIONS_DAYS`, `RETAIN_REQUEST_ROLLUPS_DAYS`, `RETAIN_RESOLUTION_HISTORY_DAYS`, `RETAIN_REVIEW_ERASE_DAYS`, `RETAIN_SCHEDULE_MODEL_CALLS_DAYS`, `RETAIN_SCHEDULE_NOTICES_DAYS`, `RETAIN_SCHEDULE_VERSIONS_DAYS`, `RETAIN_SCHED_CALIBRATION_RUNS_DAYS`, `RETAIN_SCHED_EDIT_ANSWERS_DAYS`, `RETAIN_SCHED_GENERATION_TAGS_DAYS`, `RETAIN_SCHED_LEARNING_RECORDS_DAYS`, `RETAIN_SCHED_OBSERVATIONS_DAYS`, `RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS`, `RETAIN_SCHED_RECS_DAYS`, `RETAIN_SCHED_REJECTIONS_DAYS`, `RETAIN_SHIFT_FACTS_DAYS`, `RETAIN_SHIFT_SECTIONS_DAYS`, `RETAIN_SMS_LOG_DAYS`, `RETAIN_STAFF_COMMS_DAYS`, `RETAIN_STAFF_OPS_DAYS`, `RETAIN_STAFF_TRANSLATIONS_DAYS`, `RETAIN_STRIPE_EVENTS_SEEN_DAYS`, `RETAIN_SUPERSEDED_DRAFTS_DAYS`, `RETAIN_TASK_PHOTO_DAYS`, `RETAIN_TASK_SHEET_DAYS`, `RETAIN_VALUE_FIGURES_DAYS`, `RETAIN_VERSION_DETAIL_DAYS`, `RETAIN_WEBHOOK_DELIVERIES_DAYS`, `RETAIN_WEBHOOK_OUTBOX_DAYS`

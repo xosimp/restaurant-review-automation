@@ -67,6 +67,7 @@ import time as _time
 from datetime import datetime as _dt
 
 import shift_quality as sq
+import schedule_time as _stime
 
 # Stop once the week reaches this, or when no candidate improves it.
 DEFAULT_TARGET = 92
@@ -129,16 +130,21 @@ def _fmt(minutes: int) -> str:
 
 
 def _span(row):
-    s, e = _m(row.get("shift_start")), _m(row.get("shift_end"))
-    if s is None or e is None:
-        return None, None
-    if e <= s:
-        e += 24 * 60
-    return s, e
+    """(start, end) minutes of a row on its business date's timeline
+    (schedule_time.span — the one placement, ARCH-12): a 12:30am-4:00am
+    porter is 1470-1680 of the night it works, as the rules read it, never
+    30-240 at the start of its date (the "nobody at close" move ranked such
+    a porter as ending at dawn and proposed retimes _judge then refused).
+    (None, None) when unreadable."""
+    sp = _stime.span(row)
+    return sp if sp is not None else (None, None)
 
 
-def _hours_between(s, e) -> float:
-    return round((e - s) / 60.0, 2)
+def _hours_text(row, constraints=None) -> str:
+    """A row's scheduled_hours from its real span in the restaurant's zone
+    (BUGSGEN-6): a retime or an added shift across the night the clocks
+    change is an hour more or less than the wall clock."""
+    return _stime.row_hours_text(row, getattr(constraints, "tz", None) if constraints is not None else None)
 
 
 def _day(date: str) -> str:
@@ -677,15 +683,14 @@ class _State:
         return True
 
 
-def _new_row(date, name, role, start, end, why):
-    s, e = _m(start), _m(end)
-    hours = _hours_between(s, e if e > s else e + 24 * 60) if s is not None and e is not None else 0
+def _new_row(date, name, role, start, end, why, constraints=None):
     # A string, like every row the engine writes: the iOS ScheduleRow
     # decodes scheduled_hours as String and a bare number failed the whole
-    # response.
-    return {"date": date, "day": _day(date), "employee": name, "role": role,
-            "shift_start": start, "shift_end": end, "scheduled_hours": str(hours),
-            "notes": f"{NOTE_TAG} {why}"}
+    # response. From the real span (BUGSGEN-6).
+    row = {"date": date, "day": _day(date), "employee": name, "role": role,
+           "shift_start": start, "shift_end": end, "notes": f"{NOTE_TAG} {why}"}
+    row["scheduled_hours"] = _hours_text(row, constraints)
+    return row
 
 
 def _tag(row, why):
@@ -733,7 +738,7 @@ def _moves_for(problem, state: _State) -> list:
         pool = sorted(people, key=lambda n: (-(prefer(n) if prefer else 0), state.rate(n, role),
                                              state.index.total_hours(n.lower()), n))
         for name in pool:
-            row = _new_row(date, name, role, start, end, why)
+            row = _new_row(date, name, role, start, end, why, getattr(state, "constraints", None))
             if state.can_add(name, row):
                 moves.append((("add", date, name, role, start),
                               f"Added {name} as {role} on {where} ({start}–{end}) — {why}.",
@@ -1411,8 +1416,9 @@ def _retime_move(state, i, new_s, new_e, why):
     # not offered.
     c = getattr(state, "constraints", None)
     if c is not None:
-        new = dict(row, shift_start=start, shift_end=end, scheduled_hours=str(_hours_between(new_s, new_e)))
-        grows = _hours_between(new_s, new_e) > sq._row_hours(row) + 0.01
+        new = dict(row, shift_start=start, shift_end=end)
+        new["scheduled_hours"] = _hours_text(new, c)
+        grows = float(new["scheduled_hours"]) > sq._row_hours(row) + 0.01
         if not c.can_add(new, state._others({i}), overtime=grows)[0]:
             return None
         try:
@@ -1424,11 +1430,11 @@ def _retime_move(state, i, new_s, new_e, why):
                      or (spec.get("end") is not None and new_e % (24 * 60) != spec["end"] % (24 * 60))):
             return None
 
-    def apply(rows, i=i, start=start, end=end, new_s=new_s, new_e=new_e, why=why):
+    def apply(rows, i=i, start=start, end=end, new_s=new_s, new_e=new_e, why=why, c=c):
         out = [dict(r) for r in rows]
         was = f"{out[i].get('shift_start')}–{out[i].get('shift_end')}"
         out[i]["shift_start"], out[i]["shift_end"] = start, end
-        out[i]["scheduled_hours"] = str(_hours_between(new_s, new_e))
+        out[i]["scheduled_hours"] = _hours_text(out[i], c)
         _tag(out[i], f"{why} (was {was})")
         return out
     return (("retime", i, start, end),
@@ -1705,10 +1711,17 @@ def overtime_created(before_rows, after_rows, c, headroom: dict = None) -> list:
     return out
 
 
+# The moves that change WHO works a shift (schedule audit 10/10/26
+# LOGIC-27): the experiment's "model assignment" arm turns them off with the
+# solver, so its weeks are the model's assignment, not partly the
+# optimizer's.
+REASSIGN_KINDS = ("replace", "swap", "trade")
+
+
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
              constraints=None, target: int = DEFAULT_TARGET, max_seconds: float = DEFAULT_SECONDS,
              max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None,
-             max_server_overlap: int = None, only_dates=None, what_if: bool = True) -> dict:
+             max_server_overlap: int = None, only_dates=None, what_if: bool = True, reassign: bool = True) -> dict:
     """Improve the week's Shift Quality with legal moves, and say what moved.
 
     Returns {rows, changes: [{kind, reason, gain, score_after, dollars}],
@@ -1716,7 +1729,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     labor: {before, after} | None}. `rows` is a new list; the input is not
     modified. A week that is already at `target`, or that has nothing
     configured to score, comes back unchanged with the reason. `what_if`
-    False keeps to the weak dimensions' own moves.
+    False keeps to the weak dimensions' own moves. `reassign` False leaves
+    out every move that changes who works a shift (REASSIGN_KINDS: replace,
+    swap, trade — LOGIC-27); adds, stretches, retimes, trims and a hard
+    rule's own repair still run.
     """
     t0 = _time.monotonic()
     inputs = inputs or {}
@@ -1889,7 +1905,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 problems = _learned_problems(current) + _problems(current)[:8]
                 for problem in problems:
                     for mv in _moves_for(problem, state):
-                        if mv[0] in seen or mv[0] in tabu:
+                        if mv[0] in seen or mv[0] in tabu or (not reassign and mv[0][0] in REASSIGN_KINDS):
                             continue
                         seen.add(mv[0])
                         candidates.append(mv)
@@ -1897,7 +1913,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                         break
                 candidates = candidates[:MOVES_PER_ROUND]
             else:
-                candidates = [mv for mv in _what_if_moves(state, current) if mv[0] not in tabu]
+                candidates = [mv for mv in _what_if_moves(state, current) if mv[0] not in tabu
+                              and (reassign or mv[0][0] not in REASSIGN_KINDS)]
             if not candidates:
                 continue
             ranked = []

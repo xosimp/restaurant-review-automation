@@ -11,7 +11,7 @@ posted yet.
 from datetime import date, datetime, timedelta
 
 from labor import employee_shifts_from_csv
-from models import get_schedule_history, get_published_week_csv
+from models import get_schedule_history, get_schedule_history_detail, get_published_week_csv
 
 
 def restaurant_today(restaurant_id: int, now_local=None):
@@ -132,11 +132,22 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
     import inspect as _inspect
     _section_kw = ({"restaurant_id": restaurant_id}
                    if "restaurant_id" in _inspect.signature(employee_shifts_from_csv).parameters else {})
+    # Every spelling of this person (people's identity): a week written
+    # before a rename still shows them their shifts (BUGSLIFE-4).
+    if "spellings" in _inspect.signature(employee_shifts_from_csv).parameters:
+        try:
+            import people as _people
+            _section_kw["spellings"] = sorted(_people.spellings(restaurant_id, [employee_name]).get(employee_name) or ())
+        except Exception as _px:
+            print(f"[staff_schedule] spellings unread rid={restaurant_id}: {_px!r}")
     mine, week_of = [], None
     for w in weeks:
         # The PUBLISHED copy — what staff were sent and the covers they
         # were told about; a manager's unsent edit never reaches the portal
         # before Send (schedule audit 10/10/26 ARCH-1, BUGSLIFE-3).
+        # The CSV and the stations only (scheduler audit 10/10/26, SCALE-19):
+        # every staff request read each live week with SELECT * and four
+        # JSON parses (the 130-440 KB quality among them) to use two fields.
         detail = get_published_week_csv(w["id"], restaurant_id, with_stations=True)
         if not detail:
             continue

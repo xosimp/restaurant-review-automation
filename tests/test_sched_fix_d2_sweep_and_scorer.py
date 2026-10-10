@@ -213,11 +213,13 @@ def test_the_exact_scorer_is_score_rows_exactly_over_a_session_of_edits():
 
 
 def test_clock_and_date_strings_are_parsed_once_per_spelling():
-    """The scorer's hot spot was strptime on the same few dozen strings."""
-    sq._clock.cache_clear()
+    """The scorer's hot spot was strptime on the same few dozen strings. The
+    one parse is schedule_time's now (ARCH-12), remembered per spelling there."""
+    import schedule_time as st
+    st._parse.cache_clear()
     rows, _c, sig = big_week()
     sq.score_rows(rows, **sig)
-    info = sq._clock.cache_info()
+    info = st._parse.cache_info()
     assert info.misses < 60 and info.hits > 10 * info.misses
     assert sr.parse_minutes("4:30pm") == 16 * 60 + 30 and sr.parse_minutes("16:30") == 990
     assert sq._slot_minutes(" 4:30 PM ") == 990 and sq._slot_minutes("") is None and sq._slot_minutes("x") is None

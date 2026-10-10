@@ -440,7 +440,9 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
         acknowledge = True if ack else []      # a person's publish, queued before keys were stored
     else:
         acknowledge = False                    # auto-publish: nothing acknowledged, unattended
-    out, _status = _sp.publish(restaurant_id, sid, queued_actor(payload), acknowledge=acknowledge)
+    # The reasons given with the keys (TRUST-28), when there are any.
+    _why = {"override_reasons": payload["override_reasons"]} if payload.get("override_reasons") else {}
+    out, _status = _sp.publish(restaurant_id, sid, queued_actor(payload), acknowledge=acknowledge, **_why)
     if out.get("needs_ack"):
         _tell_owner_schedule_held(restaurant_id, payload, out.get("new_blockers") or out.get("blockers") or [], db_path,
                                   keys=_send_now_keys(payload, out))
@@ -469,8 +471,9 @@ def _run_schedule_changes_send(restaurant_id, payload, db_path):
                     "error": "The week was changed again after it was queued, so the changes were "
                              "not sent. Send them from the Labor tab when it's ready."}
     ack = payload.get("acknowledge")
+    _why = {"override_reasons": payload["override_reasons"]} if payload.get("override_reasons") else {}
     out, _status = _sp.send_changes(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
-                                    acknowledge=ack if isinstance(ack, list) else [])
+                                    acknowledge=ack if isinstance(ack, list) else [], **_why)
     if out.get("needs_ack"):
         held = out.get("new_blockers") or out.get("blockers") or []
         _tell_owner_schedule_held(restaurant_id, payload, held, db_path,

@@ -71,6 +71,14 @@ def init_shift_facts(db_path=None):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_facts_key ON shift_facts(restaurant_id, employee_key, business_date)")
         # ops.prune_ledgers deletes by business_date (the retention registry).
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_facts_date ON shift_facts(business_date)")
+        # A restaurant's window by date (history_rows, SCALE-5).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_facts_rid_date ON shift_facts(restaurant_id, business_date)")
+        # The rest of the row as the file carried it (scheduler audit
+        # 10/10/26, SCALE-5): every field but the date and the name, as
+        # strings, so a stored shift reads back exactly as its file row did
+        # — sales, notes, the day, pay, the POS's own fields.
+        if "row_json" not in {r[1] for r in conn.execute("PRAGMA table_info(shift_facts)").fetchall()}:
+            conn.execute("ALTER TABLE shift_facts ADD COLUMN row_json TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -84,6 +92,17 @@ def _num(v):
         return n if n == n else None
     except (TypeError, ValueError):
         return None
+
+
+# The row fields the typed columns hold; every other field of a normalised
+# shift row is kept, as its string, in row_json (SCALE-5).
+_TYPED_FIELDS = ("date", "employee", "person_id")
+
+
+def _row_json(row) -> str:
+    import json
+    return json.dumps({str(k): ("" if v is None else str(v)) for k, v in (row or {}).items()
+                       if k is not None and k not in _TYPED_FIELDS}, separators=(",", ":"), ensure_ascii=False)
 
 
 def _fact(row, source):
@@ -104,7 +123,8 @@ def _fact(row, source):
             "shift_start": str(row.get("shift_start") or "").strip(), "shift_end": (str(row.get("shift_end") or "").strip() or None),
             "scheduled_hours": sched, "actual_hours": _num(row.get("actual_hours")),
             "pay_rate": _num(row.get("pay_rate")), "source": source,
-            "external_id": (str(row.get("employee_ext_id") or "").strip() or None)}
+            "external_id": (str(row.get("employee_ext_id") or "").strip() or None),
+            "row_json": _row_json(row)}
 
 
 def _write_facts(conn, restaurant_id, facts, lo, hi):
@@ -113,11 +133,11 @@ def _write_facts(conn, restaurant_id, facts, lo, hi):
                  (restaurant_id, lo, hi))
     conn.executemany(
         "INSERT OR REPLACE INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, role, "
-        "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [(restaurant_id, f["business_date"], f["person_id"], f["employee_name"], f["employee_key"], f["role"],
           f["shift_start"], f["shift_end"], f["scheduled_hours"], f["actual_hours"], f["pay_rate"], f["source"],
-          f["external_id"]) for f in facts])
+          f["external_id"], f.get("row_json")) for f in facts])
 
 
 def ingest(restaurant_id, rows, source, db_path=None) -> dict:
@@ -152,6 +172,16 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
         ops.capture(e, job="people_resolve", context=f"restaurant_id={restaurant_id}")
         who = {"error": str(e)[:200]}
     dates = sorted({r["date"] for r in new_rows if r.get("date")})
+    if store_of(restaurant_id, db_path) == "facts":
+        if _fits(new_rows):
+            # The record is shift_facts (SCALE-5): the window replaced there,
+            # the export marked stale — never the whole three-year file
+            # rewritten and re-parsed under the POS write lock.
+            return _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path)
+        # Rows a fact cannot hold (a row with no person, one shift sent
+        # twice): the file is the record again, exactly as sent — it is
+        # rebuilt from the facts first, then merged below as it always was.
+        _release(restaurant_id, db_path)
     merged = list(new_rows)
     conn = get_conn(db_path)
     try:
@@ -197,8 +227,282 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
             raise
         finally:
             conn.close()
+    # The whole file just written is the history: kept in shift_facts row by
+    # row from now on, when every row fits there (SCALE-5).
+    try:
+        adopt(restaurant_id, rows_=merged, source=src, db_path=db_path)
+    except Exception as e:
+        log.warning("[shift_facts] adoption skipped for restaurant %s: %s", restaurant_id, e)
     return {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
             "resolved": new_rows}
+
+
+def _fits(rows_) -> bool:
+    """Whether every row is one fact of its own (a person, a date, and no
+    other row of the same date, person and start)."""
+    import staff_settings
+    seen = set()
+    for r in rows_ or []:
+        name = " ".join(str(r.get("employee") or "").split())
+        day = str(r.get("date") or "")[:10]
+        if len(day) != 10 or not name:
+            return False
+        k = (day, staff_settings.name_key(name), str(r.get("shift_start") or "").strip())
+        if k in seen:
+            return False
+        seen.add(k)
+    return True
+
+
+def _release(restaurant_id, db_path=None) -> None:
+    """Back on the stored file: the file rebuilt from the facts and the store
+    cleared, so the next ingest merges into the file as before."""
+    text = export_csv(restaurant_id, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_store=NULL, shifts_stale=0 WHERE restaurant_id=?",
+                     (text, restaurant_id))
+        conn.commit()
+    finally:
+        conn.close()
+    _models_mod._invalidate_shift_reads(restaurant_id)
+
+
+def store_of(restaurant_id, db_path=None):
+    """'facts' when shift_facts is this restaurant's shift record, else None
+    (the stored file is)."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT shifts_store FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        return (row["shifts_store"] if row else None) or None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path):
+    """ingest() for a restaurant whose record is shift_facts: the window's
+    rows replace the window, kept rows are respelled to their person, and
+    the file export is marked stale (models.get_client_data rebuilds it when
+    something reads it)."""
+    if dates:
+        facts = [f for f in (_fact(r, src) for r in new_rows) if f]
+        conn = get_conn(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            _write_facts(conn, restaurant_id, facts, dates[0], dates[-1])
+            _respell_facts(conn, restaurant_id, new_rows, dates[0], dates[-1])
+            cur = conn.execute("UPDATE client_data SET shifts_stale=1, shifts_source=?, updated_at=datetime('now') "
+                               "WHERE restaurant_id=?", (src, restaurant_id))
+            if not cur.rowcount:
+                conn.execute("INSERT INTO client_data (restaurant_id, shifts_source, shifts_store, shifts_stale) "
+                             "VALUES (?, ?, 'facts', 1)", (restaurant_id, src))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    _models_mod._invalidate_shift_reads(restaurant_id)
+    try:
+        import schedule_intel as _si
+        _si.remember_tenure(restaurant_id, new_rows, db_path=db_path or _models_mod.DB_PATH)
+    except Exception:
+        pass
+    return {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
+            "resolved": new_rows}
+
+
+def _respell_facts(conn, restaurant_id, new_rows, lo, hi):
+    """The kept facts (outside [lo, hi]) spelled the way their person is now
+    — what _respell does to the kept rows of the file: a fact carrying a POS
+    id this sync resolved takes that person's name; any other takes the
+    display name of the one person its spelling means. A rename that would
+    collide with a fact already under the new spelling is left."""
+    import people
+    import staff_settings
+    by_ext = {}
+    for r in new_rows:
+        ext = str(r.get("employee_ext_id") or "").strip()
+        if ext and r.get("person_id") and r.get("employee"):
+            by_ext[ext] = r.get("employee")
+    for ext, name in by_ext.items():
+        conn.execute("UPDATE OR IGNORE shift_facts SET employee_name=?, employee_key=? WHERE restaurant_id=? "
+                     "AND external_id=? AND employee_name<>? AND (business_date < ? OR business_date > ?)",
+                     (name, staff_settings.name_key(name), restaurant_id, ext, name, lo, hi))
+    names = [r[0] for r in conn.execute("SELECT DISTINCT employee_name FROM shift_facts WHERE restaurant_id=? "
+                                        "AND (business_date < ? OR business_date > ?)", (restaurant_id, lo, hi))]
+    try:
+        canon = people.canonical_names(restaurant_id, names) if names else {}
+    except Exception:
+        canon = {}
+    for old, new in canon.items():
+        if new and new != old:
+            conn.execute("UPDATE OR IGNORE shift_facts SET employee_name=?, employee_key=? WHERE restaurant_id=? "
+                         "AND employee_name=? AND (business_date < ? OR business_date > ?)",
+                         (new, staff_settings.name_key(new), restaurant_id, old, lo, hi))
+
+
+def adopt(restaurant_id, rows_=None, source="upload", db_path=None) -> dict:
+    """Make shift_facts this restaurant's shift record (SCALE-5): every row
+    of its stored file (or `rows_`, the file just written) upserted whole
+    — row_json carrying every field — keeping each fact's person, and the
+    store marked 'facts'. Only when every row fits: a row with no person, or
+    two rows one fact would hold (same date, person and start), keeps the
+    restaurant on its file. {adopted, rows, reason}."""
+    import staff_settings
+    from labor import load_shifts
+    if store_of(restaurant_id, db_path) == "facts":
+        return {"adopted": True, "rows": 0, "reason": "already"}
+    if rows_ is None:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute("SELECT shifts_csv, shifts_source FROM client_data WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        text = (row["shifts_csv"] if row else "") or ""
+        source = str((row["shifts_source"] if row else "") or source or "upload").lower() or "upload"
+        rows_ = load_shifts(csv_string=text) if text.strip() else []
+    if not rows_:
+        return {"adopted": False, "rows": 0, "reason": "no shifts"}
+    if not _fits(rows_):
+        return {"adopted": False, "rows": 0, "reason": "a row with no person, or two rows of one shift"}
+    conn = get_conn(db_path)
+    try:
+        try:
+            pid_of = {p["name_key"]: p["id"] for p in conn.execute(
+                "SELECT id, name_key FROM people WHERE restaurant_id=? AND merged_into IS NULL", (restaurant_id,))}
+        except Exception:
+            pid_of = {}
+        facts = []
+        for r in rows_:
+            f = _fact(r, str(source or "upload").lower())
+            if f:
+                f["person_id"] = f["person_id"] or pid_of.get(f["employee_key"])
+                facts.append(f)
+        conn.execute("BEGIN IMMEDIATE")
+        conn.executemany(
+            "INSERT INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, role, "
+            "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, business_date, employee_key, shift_start) "
+            "DO UPDATE SET row_json=excluded.row_json, employee_name=excluded.employee_name, role=excluded.role, "
+            "shift_end=excluded.shift_end, scheduled_hours=excluded.scheduled_hours, "
+            "actual_hours=excluded.actual_hours, pay_rate=COALESCE(excluded.pay_rate, pay_rate), "
+            "person_id=COALESCE(person_id, excluded.person_id), "
+            "external_id=COALESCE(excluded.external_id, external_id)",
+            [(restaurant_id, f["business_date"], f["person_id"], f["employee_name"], f["employee_key"], f["role"],
+              f["shift_start"], f["shift_end"], f["scheduled_hours"], f["actual_hours"], f["pay_rate"], f["source"],
+              f["external_id"], f["row_json"]) for f in facts])
+        cur = conn.execute("UPDATE client_data SET shifts_store='facts', shifts_stale=0 WHERE restaurant_id=?",
+                           (restaurant_id,))
+        if not cur.rowcount:
+            conn.execute("INSERT INTO client_data (restaurant_id, shifts_store, shifts_stale, shifts_source) "
+                         "VALUES (?, 'facts', 0, ?)", (restaurant_id, source))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    _models_mod._invalidate_shift_reads(restaurant_id)
+    return {"adopted": True, "rows": len(facts), "reason": None}
+
+
+def adopt_pending(db_path=None, max_seconds=30.0) -> dict:
+    """The restaurants still on their file (no sync or upload since
+    10/10/26) adopted, bounded — the nightly people job reaches the rest.
+    {adopted, refused, left}."""
+    import time as _t
+    conn = get_conn(db_path)
+    try:
+        rids = [r[0] for r in conn.execute(
+            "SELECT restaurant_id FROM client_data WHERE COALESCE(shifts_store, '') <> 'facts' "
+            "AND shifts_csv IS NOT NULL AND shifts_csv != '' ORDER BY restaurant_id").fetchall()]
+    except Exception:
+        return {"adopted": 0, "refused": 0, "left": 0}
+    finally:
+        conn.close()
+    stop = _t.monotonic() + float(max_seconds)
+    out = {"adopted": 0, "refused": 0, "left": 0}
+    for i, rid in enumerate(rids):
+        if _t.monotonic() > stop:
+            out["left"] = len(rids) - i
+            break
+        try:
+            got = adopt(rid, db_path=db_path)
+        except Exception as e:
+            log.warning("[shift_facts] adoption failed for restaurant %s: %s", rid, e)
+            got = {"adopted": False}
+        out["adopted" if got.get("adopted") else "refused"] += 1
+    return out
+
+
+def history_rows(restaurant_id, since=None, until=None, db_path=None) -> list:
+    """The restaurant's shift history inside [since, until] as the stored
+    file's rows read (labor.load_shifts' shape: every field a string), from
+    shift_facts — the record once adopted (SCALE-5) — oldest first. A fact
+    written before row_json existed reads from its typed columns."""
+    import json
+    sql = ("SELECT business_date, employee_name, row_json, role, shift_start, shift_end, scheduled_hours, "
+           "actual_hours FROM shift_facts WHERE restaurant_id=?")
+    args = [restaurant_id]
+    if since:
+        sql += " AND business_date >= ?"
+        args.append(str(since)[:10])
+    if until:
+        sql += " AND business_date <= ?"
+        args.append(str(until)[:10])
+    conn = get_conn(db_path)
+    try:
+        got = conn.execute(sql + " ORDER BY business_date, shift_start, id", args).fetchall()
+    finally:
+        conn.close()
+
+    def _s(v):
+        if v is None:
+            return ""
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v)
+    out = []
+    for r in got:
+        row = {"date": r["business_date"], "employee": r["employee_name"]}
+        if r["row_json"]:
+            try:
+                row.update(json.loads(r["row_json"]))
+            except ValueError:
+                pass
+        else:
+            row.update({"role": r["role"] or "", "shift_start": r["shift_start"] or "",
+                        "shift_end": r["shift_end"] or "", "scheduled_hours": _s(r["scheduled_hours"]),
+                        "actual_hours": _s(r["actual_hours"])})
+        out.append(row)
+    return out
+
+
+def export_csv(restaurant_id, db_path=None) -> str:
+    """The whole history as the stored file (date, day, employee, role, …),
+    built from shift_facts on demand — what models.get_client_data hands a
+    reader of client_data.shifts_csv once the restaurant is on facts."""
+    import csv as _csv
+    import io as _io
+    rows_ = history_rows(restaurant_id, db_path=db_path)
+    if not rows_:
+        return ""
+    lead = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "actual_hours",
+            "sales", "notes"]
+    fields = [f for f in lead if any(f in r for r in rows_[:200])]
+    for r in rows_:
+        for k in r:
+            if k not in fields:
+                fields.append(k)
+    buf = _io.StringIO()
+    w = _csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore", lineterminator="\n")
+    w.writeheader()
+    w.writerows(rows_)
+    return buf.getvalue()
 
 
 def blob_edge(today=None) -> str:

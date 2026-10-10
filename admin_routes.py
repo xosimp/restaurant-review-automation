@@ -1112,7 +1112,7 @@ SETTINGS_FIELDS = (
     "timezone", "module_reviews", "module_labor", "module_inventory", "module_marketing",
     "google_place_id", "yelp_business_id", "reviews_live", "digest_day", "digest_enabled",
     "hourly_rate", *_SETTINGS_TARGETS, "week_start_day", "monthly_revenue_target", "weekly_revenue_target",
-    "hours_notes", "sched_notes", "section_count", "delivery_pct", "daypart_split", "role_minimums_json",
+    "hours_notes", "sched_notes", "section_count", "delivery_pct", "daypart_split", "daypart_boundary", "role_minimums_json",
     "cut_floor_default", "role_rates_json", "close_times_json", "role_close_buffer_json",
     "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "skip_holidays", "custom_competitors",
     "menu_notes", "menu_url", "pos_system", "inventory_frequency", "delivery_days", "inventory_notes",
@@ -1133,7 +1133,8 @@ _SETTINGS_NAMES = {
     "week_start_day": "Payroll week start", "monthly_revenue_target": "Monthly revenue target",
     "weekly_revenue_target": "Weekly revenue target", "hours_notes": "Hours & shift rules",
     "sched_notes": "Scheduling notes", "section_count": "Dining sections", "delivery_pct": "Delivery %",
-    "daypart_split": "Daypart split", "role_minimums_json": "Role minimums",
+    "daypart_split": "Daypart split", "daypart_boundary": "Lunch/dinner boundary",
+    "role_minimums_json": "Role minimums",
     "cut_floor_default": "Never cut below", "role_rates_json": "Per-role hourly rates",
     "close_times_json": "Close time per day", "role_close_buffer_json": "Role after-close allowance",
     "neighborhood": "Neighborhood", "vibe": "Vibe", "known_for": "Known for", "voice_notes": "Brand voice notes",
@@ -1263,10 +1264,28 @@ def _settings_close_times(data, key):
         if not name:
             raise _SettingsError(f"{_label(key)}: “{day}” isn't a day name. Use Sunday to Saturday.")
         text = str(value or "").strip()
-        if not _re.match(r"^\d{1,2}(:\d{2})?\s*([ap]\.?m\.?)?$", text, _re.I):
+        # Stored in the one spelling every reader parses (schedule_time,
+        # BUGSGEN-20); a bare "9" (morning or night?) is refused, not guessed.
+        import schedule_time as _stime_s
+        norm = _stime_s.normalise_clock(text) if len(text) <= 20 else None
+        if norm is None:
             raise _SettingsError(f"{_label(key)}: “{text}” for {name} isn't a time like 9:00pm or 21:00.")
-        out[name] = text
+        out[name] = norm
     return _json.dumps(out) if out else None
+
+
+def _settings_daypart_boundary(data, key):
+    """Where lunch ends and dinner starts (schedule_time.daypart_scope,
+    ARCH-12): blank is 3:00pm; a time from 12:00pm to 6:00pm, stored in the
+    rows' own spelling."""
+    import schedule_time as _stime_b
+    text = _settings_str(data, key)
+    if not text:
+        return None
+    m = _stime_b.split_minutes(text)
+    if m is None:
+        raise _SettingsError(f"{_label(key)}: “{text}” isn't a time from 12:00pm to 6:00pm (blank is 3:00pm).")
+    return _stime_b.fmt_minutes(m)
 
 
 def _settings_email(data, key):
@@ -1351,6 +1370,7 @@ _SETTINGS_PARSERS = {
     # 0% is a real answer ("no delivery"); the page used to send it as null.
     "delivery_pct": lambda d, k: _settings_number(d, k, 0, 100, blank=None, integer=True),
     "daypart_split": lambda d, k: _settings_str(d, k)[:200] or None,
+    "daypart_boundary": _settings_daypart_boundary,
     "role_minimums_json": lambda d, k: _settings_role_numbers(d, k, 0, 50, integer=True),
     "role_rates_json": lambda d, k: _settings_role_numbers(d, k, 2.0, 250.0, integer=False),
     "close_times_json": _settings_close_times,
@@ -3769,6 +3789,48 @@ def admin_api_schedule_experiments(current_user):
     acceptance with a 90% interval, outcomes, and the verdict."""
     import admin_ops
     return jsonify(**admin_ops.schedule_experiments())
+
+
+@admin_bp.route("/admin/api/schedule-why")
+@admin_required
+def admin_api_schedule_why(current_user):
+    """Why the draft did X, for one row of a generated week (internal,
+    read-only; schedule audit 10/10/26 ARCH-28 — schedule_memory.why_row):
+    ?restaurant_id=&history_id=&date=&employee=[&shift_start=]."""
+    import schedule_memory
+    import schedule_versions
+    from models import get_conn as _gc
+    try:
+        rid = int(request.args.get("restaurant_id") or 0)
+        hid = int(request.args.get("history_id") or 0)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="restaurant_id and history_id are numbers"), 400
+    conn = _gc()
+    try:
+        h = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                         (hid, rid)).fetchone()
+    finally:
+        conn.close()
+    if h is None:
+        return jsonify(ok=False, error="No such week"), 404
+    d = str(request.args.get("date") or "")[:10]
+    who = " ".join(str(request.args.get("employee") or "").split()).lower()
+    start = str(request.args.get("shift_start") or "").strip().lower()
+    row = next((r for r in schedule_versions.rows_from_csv(h["schedule_csv"] or "")
+                if r.get("date") == d and " ".join(str(r.get("employee") or "").split()).lower() == who
+                and (not start or str(r.get("shift_start") or "").strip().lower() == start)), None)
+    if row is None:
+        return jsonify(ok=False, error="No such row in that week"), 404
+    return jsonify(ok=True, **schedule_memory.why_row(rid, hid, row))
+
+
+@admin_bp.route("/admin/api/schedule-learning-scorecard")
+@admin_required
+def admin_api_schedule_learning_scorecard(current_user):
+    """The Schedule Learning Scorecard across restaurants (internal only,
+    read-only; schedule audit 10/10/26 RM-4)."""
+    import admin_ops
+    return jsonify(**admin_ops.schedule_learning_scorecard())
 
 
 @admin_bp.route("/admin/api/schedule-generations")

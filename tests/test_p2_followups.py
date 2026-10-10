@@ -184,17 +184,20 @@ def test_the_shift_request_list_says_whether_this_login_may_decide(db_path, monk
     monkeypatch.setattr(shift_requests, "open_shifts", lambda rid: [])
     monkeypatch.setattr(shift_requests, "live_offers", lambda rid: [])
     monkeypatch.setattr(strategy_routes, "_sees_labor", lambda u: True)
-    monkeypatch.setattr(strategy_routes, "_may_draft", lambda u: u.get("draft") is True)
-    ok, _ = strategy_routes._do_shift_requests_list({"restaurant_id": 1, "draft": True})
-    no, _ = strategy_routes._do_shift_requests_list({"restaurant_id": 1, "draft": False})
+    # Deciding rewrites the week staff have and messages them: SCHEDULE_PUBLISH
+    # (schedule audit 10/10/26 BUGSLIFE-15), no longer SCHEDULE_DRAFT.
+    monkeypatch.setattr(strategy_routes, "_may_publish", lambda u: u.get("publish") is True)
+    ok, _ = strategy_routes._do_shift_requests_list({"restaurant_id": 1, "publish": True})
+    no, _ = strategy_routes._do_shift_requests_list({"restaurant_id": 1, "publish": False})
     assert ok["can_decide"] is True and no["can_decide"] is False
     # The same helper every write route under it holds.
     src = open(os.path.join(ROOT, "strategy_routes.py"), encoding="utf-8").read()
     for fn in ("_do_shift_request_decide", "_do_open_shift_post", "_do_shift_request_offer",
-               "_do_shift_request_colleague_agreed", "_do_shift_request_cancel"):
+               "_do_shift_request_colleague_agreed", "_do_shift_request_cancel", "_do_shift_request_reverse",
+               "_do_time_off_decide"):
         body = src[src.index(f"def {fn}("):]
         body = body[:body.index("\ndef ", 1)]
-        assert "if not _may_draft(u):" in body, fn
+        assert "if not _may_decide_requests(u):" in body, fn
 
 
 # ── 5. tonight's lineup brief: a push, never an email ──────────────────────

@@ -254,6 +254,72 @@ def published_conflicts(restaurant_id, employee_name, start, end, db_path=None, 
     return sorted(out, key=lambda x: (x["date"], x["shift_start"]))
 
 
+def follow_ups(restaurant_id, today=None, db_path=None, limit=20) -> list:
+    """Approved time off that still has its person on a live published
+    shift — the persistent item a manager sees until the shift is covered,
+    posted open or moved (schedule audit 10/10/26 BUGSLIFE-5). Approving used
+    to answer with a one-time `warning`, and the lock-screen Approve threw
+    even that away: nothing stayed to say Ana, approved off Saturday, was
+    still on Saturday's 5pm. Derived from the state each time, so it lasts
+    exactly as long as the shift is still hers and nobody has asked to drop
+    or post it (a live drop or open shift on it is its own item). From
+    today on, at most `limit`: [{request_id, employee_name, date, day,
+    shift_start, shift_end, role, span_label}], soonest first."""
+    today = _today(restaurant_id, today)
+    conn = get_conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM staff_time_off WHERE restaurant_id=? AND status='approved' AND end_date >= ? "
+            "ORDER BY start_date LIMIT 60", (restaurant_id, today.isoformat())).fetchall()]
+        live = {(" ".join(str(r["employee_name"] or "").split()).casefold(), r["date"], r["shift_start"])
+                for r in conn.execute("SELECT employee_name, date, shift_start FROM shift_change_requests "
+                                      "WHERE restaurant_id=? AND status IN ('pending','approved','open') "
+                                      "AND date >= ?", (restaurant_id, today.isoformat())).fetchall()}
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            shifts = published_conflicts(restaurant_id, r["employee_name"], max(_as_date(r["start_date"]), today),
+                                         r["end_date"], db_path=db_path, part=r)
+        except Exception as e:
+            print(f"[time_off] follow-up unread rid={restaurant_id}: {e!r}")
+            continue
+        for s in shifts:
+            if (" ".join(str(r["employee_name"]).split()).casefold(), s["date"], s["shift_start"]) in live:
+                continue
+            out.append({"request_id": r["id"], "employee_name": r["employee_name"], "date": s["date"],
+                        "day": s.get("day"), "shift_start": s["shift_start"], "shift_end": s.get("shift_end"),
+                        "role": s.get("role"), "span_label": span_label(r)})
+    out.sort(key=lambda x: (x["date"], x["shift_start"] or ""))
+    return out[:limit]
+
+
+def excused_on(restaurant_id, name, day, row=None, db_path=None) -> bool:
+    """Whether approved time off covers `name`'s shift on `day` (the whole
+    day, or the part of it the shift reaches into) — the attendance join
+    reads a miss there as excused, never a no-show against their reliability
+    (BUGSLIFE-5). Never raises: False when it can't be read."""
+    key = " ".join(str(name or "").split()).casefold()
+    iso = str(day)[:10]
+    try:
+        conn = get_conn(db_path)
+        try:
+            got = [dict(r) for r in conn.execute(
+                "SELECT * FROM staff_time_off WHERE restaurant_id=? AND status='approved' AND start_date <= ? "
+                "AND end_date >= ?", (restaurant_id, iso, iso)).fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    for r in got:
+        if " ".join(str(r.get("employee_name") or "").split()).casefold() != key:
+            continue
+        if not is_partial(r) or row is None or shift_hits_part(row, r):
+            return True
+    return False
+
+
 def part_minutes(part):
     """(from_min, until_min, daypart) for part of a day off: minutes past
     the date's midnight (an until in the small hours is the next morning);
@@ -276,16 +342,21 @@ def shift_hits_part(row, part) -> bool:
     (shift_quality.touched_dayparts — an hour of presence let a shift run
     55 minutes into an approved dinner off, schedule re-audit 10/4/26
     RULES-11)."""
-    from schedule_rules import parse_minutes
     lo, hi, dp = part_minutes(part)
     if dp:
         from shift_quality import touched_dayparts
         return dp in (touched_dayparts(row) or [])
-    s, e = parse_minutes(row.get("shift_start") or ""), parse_minutes(row.get("shift_end") or "")
-    if s is None or e is None:
+    import schedule_time as _stime
+    sp = _stime.span(row)
+    if sp is None:
         return True
-    if e <= s:
-        e += 24 * 60
+    s, e = sp
+    if s >= 24 * 60 and (lo is None or lo < _SMALL_HOURS) and (hi is None or hi <= _SMALL_HOURS):
+        # A shift in the small hours of the date's night (past 24:00 on the
+        # business timeline, schedule_time — ARCH-12) against an off-part
+        # wholly in the small hours on the date's own clock: the same hours.
+        lo = None if lo is None else lo + 24 * 60
+        hi = None if hi is None else hi + 24 * 60
     return (lo is None or e > lo) and (hi is None or s < hi)
 
 
@@ -367,6 +438,16 @@ def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_pa
         conn.close()
     row = dict(row)
     _tell_requester(restaurant_id, row, db_path)
+    if row["status"] == "approved":
+        # Off today's shift now: today's sheets re-resolve without them
+        # (shift_requests.release_marks reads approved time off, BUGSLIFE-12).
+        try:
+            import shift_requests
+            today = _today(restaurant_id)
+            if _as_date(row["start_date"]) <= today <= _as_date(row["end_date"]):
+                shift_requests._refresh_task_sheets(restaurant_id, [today.isoformat()])
+        except Exception as e:
+            print(f"[time_off] task sheets not refreshed rid={restaurant_id}: {e!r}")
     # The same shape as recent(): the decided row replaces the listed one on
     # the phone, and without its label a part-day request ("10/7/26, until
     # 4:00pm") read as the whole day off once answered (schedule re-audit

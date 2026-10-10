@@ -439,7 +439,7 @@ def test_the_drafted_push_goes_to_nobody_when_no_publisher_gets_the_brief(db, mo
 
     class _SE:
         @staticmethod
-        def _run_schedule_job(job_id, rid_):
+        def _run_schedule_job(job_id, rid_, **_kw):
             return None
     strategy_jobs._draft_one(r, db, _SE, lambda k: None)
     assert fired == []

@@ -941,7 +941,7 @@ def _coworkers_on(weeks, details, rows_by_week, on, me):
     if owner is None:
         return [], False
     stations = {}
-    for a in (((details[owner].get("review") or {}).get("stations") or {}).get("assigned") or []):
+    for a in ((details[owner].get("stations") or {}).get("assigned") or []):
         parts = [p for p in (a.get("morning"), a.get("night")) if p]
         if parts:
             stations[(" ".join(str(a.get("employee") or "").lower().split()), a.get("date"), a.get("shift_start"))] = \
@@ -997,8 +997,9 @@ def api_colleagues(current_user):
     # owns it — the same reading the portal's own shifts use.
     weeks = staff_schedule._published_weeks(rid, min(today, on))
     me = name.strip().lower()
-    # Each week's PUBLISHED copy (ARCH-1): what staff were sent.
-    details = {w["id"]: (get_published_week_csv(w["id"], rid) or {}) for w in weeks}
+    # Each week's PUBLISHED copy (ARCH-1) — the CSV and the stations only
+    # (SCALE-19), never SELECT * and its JSON.
+    details = {w["id"]: (get_published_week_csv(w["id"], rid, with_stations=True) or {}) for w in weeks}
     rows_by_week = {wid: rows_from_csv(d.get("schedule_csv") or "") for wid, d in details.items()}
     coworkers, posted = _coworkers_on(weeks, details, rows_by_week, on, me)
 

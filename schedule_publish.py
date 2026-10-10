@@ -184,6 +184,19 @@ def _live_week(restaurant_id, week_start, not_id):
     return live
 
 
+def _in_restaurant_dayparts(fn):
+    """schedule_engine.in_restaurant_dayparts, read at call time (the gate
+    runs inside the restaurant's own lunch/dinner boundary, ARCH-12)."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        import schedule_engine as _se_dp
+        return _se_dp.in_restaurant_dayparts(fn)(*a, **k)
+    return wrapper
+
+
+@_in_restaurant_dayparts
 def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None) -> dict:
     """{"blockers": [{"key", "text"}], "soft": [text], "notes": [{"key",
     "text"}], "hours": {"hourly", "salaried", "total"}, "schedule_id"} — the
@@ -415,7 +428,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         if below:
             note("below_profile",
                  f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
-    return {"blockers": out, "soft": soft, "notes": notes, "hours": hours, "schedule_id": row["id"]}
+    # What the owner has sent past before, by key (schedule audit 10/10/26
+    # TRUST-28): each blocker's record beside it, the ones they always send
+    # past ranked last, a demotable one they always override (the hourly
+    # budget, the draft's own review lines — never a rule) moved to a note,
+    # and the review of the warnings they always override.
+    import schedule_overrides as _so_pr
+    return _so_pr.annotate(restaurant_id, {"blockers": out, "soft": soft, "notes": notes, "hours": hours,
+                                           "schedule_id": row["id"]}, unattended=unattended)
 
 
 def _drop_share(token, schedule_id):
@@ -866,6 +886,16 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
             except Exception as e:
                 if "no such table" not in str(e).lower():
                     raise
+        # The live requests on the week's dates follow the copy staff now
+        # have, in this same transaction — a retimed shift carries its
+        # request, a removed or reassigned one closes it (ARCH-9); the
+        # requesters are told after the commit (_after_send).
+        try:
+            import shift_requests as _srq_f
+            _srq_f.follow_week(conn, restaurant_id, rows,
+                               dates=_sv._week_dates(row["week_start"], row["week_end"] or row["week_start"]))
+        except Exception as e:
+            log.warning("requests not followed for week %s: %s", schedule_id, e)
         items = _recipients(old_live, rows)
         if mode == "changes" and not items:
             raise _Refused({"ok": True, "already_published": True, "schedule_id": schedule_id}, 200)
@@ -1020,6 +1050,27 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
         print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
 
 
+def _after_send(rid, schedule_id, version, review, acked, override_reasons, actor, authority):
+    """What every stamped Send records — none of it can hold the send:
+    the warnings it went out past, by key, with the published version and
+    any reason (schedule audit 10/10/26 TRUST-28 — what lets the list learn
+    which ones this owner always overrides); and the live requests on the
+    week's dates follow the copy staff now have — a retimed shift carries
+    its request, a removed one closes it and its requester is told (ARCH-9)."""
+    try:
+        import schedule_overrides as _so_pub
+        _so_pub.record_overridden(rid, schedule_id, version, review.get("blockers") or [], acked or [],
+                                  reasons=override_reasons, actor=actor if isinstance(actor, dict) else None,
+                                  authority=authority)
+    except Exception as _ox:
+        _ops.capture(_ox, job="schedule_overrides", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+    try:
+        import shift_requests as _srq_follow
+        _srq_follow.reconcile(rid)
+    except Exception as _fx:
+        _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
+
+
 def _actor_name(actor) -> str:
     return (actor.get("username") or actor.get("email") or "automation") if isinstance(actor, dict) else "automation"
 
@@ -1033,12 +1084,14 @@ def _delivered_payload(rid, schedule_id, got) -> dict:
             "delivery": notice_status(rid, schedule_id)}
 
 
-def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, version=None):
+def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, version=None, override_reasons=None):
     """Send a week to staff for the first time — the route, the mobile twin,
     the delayed run and auto-publish. Returns (payload, http_status).
     `actor` is the user dict acting, or delayed.AUTOMATION_ACTOR;
     `version` the version of the rows the sender reviewed (a Send of rows
     somebody changed since is refused with their changes, BUGSLIFE-11).
+    `override_reasons` ({key: reason}) are kept with the keys the send went
+    out past (schedule_overrides, TRUST-28).
 
     A schedule with blockers (publish_blockers) is refused with
     needs_ack=True until the caller says acknowledge — a human reading the
@@ -1155,6 +1208,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
 
     log_account_event(rid, "schedule_published", actor,
                       detail=f"{len(stamped['queued'])} to tell" + (" — acknowledged blockers" if blockers else ""))
+    _after_send(rid, schedule_id, stamped["version"], review, _acked, override_reasons, actor, authority)
     import schedule_rows as _srows
     _after_publish(rid, schedule_id, dict(row, schedule_csv=_srows.to_csv(stamped["rows"])), actor, actor_name,
                    authority)
@@ -1174,7 +1228,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                 version=stamped["version"], error=None, **_delivered_payload(rid, schedule_id, got)), 200
 
 
-def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, version=None):
+def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, version=None, override_reasons=None):
     """Tell the people whose shifts changed on a week staff already have —
     the explicit second step after a save (F2-2). Returns (payload, status).
 
@@ -1255,6 +1309,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
                 return r.payload, r.status
     finally:
         _release(rid, row["id"])
+    _after_send(rid, row["id"], stamped["version"], review, _acked, override_reasons, actor, _sv.authority_of(actor))
     got = deliver_notices(restaurant_id=rid, batch=stamped["batch"], budget_seconds=INLINE_SECONDS)
     log_account_event(rid, "schedule_changes_sent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
@@ -1393,6 +1448,21 @@ def _ack_gate(review, acknowledge):
 
 
 def _needs_ack(review, unacked, schedule_id):
+    # Every blocker a person is shown is kept by key (TRUST-28): the
+    # denominator of "you sent past this 9 of 9 times".
+    try:
+        import schedule_overrides as _so_na
+        _rid_na = None
+        conn = get_conn()
+        try:
+            r_ = conn.execute("SELECT restaurant_id FROM schedule_history WHERE id=?", (schedule_id,)).fetchone()
+            _rid_na = r_["restaurant_id"] if r_ else None
+        finally:
+            conn.close()
+        if _rid_na:
+            _so_na.record_shown(_rid_na, schedule_id, review.get("blockers") or [])
+    except Exception as _nax:
+        print(f"[publish] shown blockers not recorded for {schedule_id}: {_nax}")
     return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
             # The keys, parallel to `blockers` (and as {key, text} items):
             # the client sends back `acknowledge: [the keys it showed]` (F2-9).
@@ -1401,5 +1471,7 @@ def _needs_ack(review, unacked, schedule_id):
             # Worth a look, never holding the send (the quality verdict,
             # SQ-29): shown beside the blockers, nothing to acknowledge.
             "notes": review.get("notes") or [],
+            # The warnings this owner always sends past (TRUST-28).
+            "always_overridden": review.get("always_overridden") or [],
             "schedule_id": schedule_id,
             "error": "This week has things to look at before it goes to staff."}, 409

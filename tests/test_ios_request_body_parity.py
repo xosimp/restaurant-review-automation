@@ -1826,6 +1826,16 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # schedule audit 10/10/26 BUGSGEN-23: a name somebody already goes by is
+    # a 409 same_name the owner answers with a name that tells them apart
+    # (or by turning a former employee back on in Team); `same_person` is the
+    # deliberate "it is them" for a caller that asks it.
+    ("/mobile/api/labor/team/add", "same_person"): _WEB_TOO + " (the 409 same_name answer says what to do instead)",
+    # MARKET-15: Waiting on you answers an availability cut for the date it
+    # was filed with; moving the date or adding a note is the web's Studio.
+    ("/mobile/api/labor/availability-changes/<int:change_id>/decide", "effective_from"):
+        _WEB_TOO + " (the filed date stands unless a manager moves it)",
+    ("/mobile/api/labor/availability-changes/<int:change_id>/decide", "note"): _WEB_TOO,
     # optional, and the web leaves it out too
     ("/mobile/api/account/alert-settings", "alert_max_per_day"): _WEB_TOO + " (the web stopped sending it; kept as stored)",
     ("/mobile/api/account/alert-settings", "expected_version"): _WEB_TOO + " (models' optional row_version check)",
@@ -1867,6 +1877,10 @@ NOT_SENT_BY_IOS = {
     ("/mobile/api/labor/staff-settings", "desired_hours"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",
     ("/mobile/api/labor/staff-settings", "preferred_dayparts"): _WEB_TOO + " (the employee's own, /staff/api/preferences)",
     ("/mobile/api/labor/staff-settings", "work_days"): _WEB_ONLY + " (the web's manager-hours card: a day with no times is any time, 10/9/26)",
+    # The re-score's delta answer (scheduler audit 10/10/26, SCALE-29): the
+    # web Studio merges it; iOS reads the whole quality until it does.
+    ("/mobile/api/labor/schedule/score", "delta"): _WEB_ONLY + " (the re-score's delta answer, SCALE-29)",
+    ("/mobile/api/labor/schedule/score", "quality_etag"): _WEB_ONLY + " (the re-score's delta answer, SCALE-29)",
     ("/mobile/api/labor/rules", "closed_dates"): _WEB_TOO + " (each date saves on its own, /account/closures)",
     ("/mobile/api/people/identity/<int:question_id>", "keep"): _WEB_TOO + " (both send same)",
     ("/mobile/api/templates", "category"): _WEB_TOO + " ('general')",

@@ -383,6 +383,12 @@ def _gate(restaurant_id, action, model, readiness, attribution):
         ai_utils._record_budget_stop(over, restaurant_id)
         ai_utils.log_blocked(restaurant_id, action, model, "budget", detail=over, **attribution)
         return ai_utils.AIBudgetExceeded(_BUDGET_MESSAGE.format(over=over))
+    # The emergency stop and a runaway workflow (scheduler audit 10/10/26,
+    # SCALE-11), as create_with_retry refuses them.
+    paused = ai_utils.runaway_refusal(restaurant_id, action)
+    if paused:
+        ai_utils.log_blocked(restaurant_id, action, model, "budget", detail=paused, **attribution)
+        return ai_utils.AIBudgetExceeded(_BUDGET_MESSAGE.format(over=paused))
     if ai_utils.breaker_open("anthropic"):
         ai_utils.log_blocked(restaurant_id, action, model, "breaker", detail="the provider breaker is open",
                              **attribution)
