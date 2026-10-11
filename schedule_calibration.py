@@ -32,7 +32,7 @@ Now, weekly (strategy_jobs.run_quality_calibration):
 The owner is told what changed (the labor intel payload's
 weight_calibration.promoted, with Undo) — never a silent change. A
 restaurant that does not learn for itself (a demo, an admin's exclusion)
-is never promoted. SCHEDULE_CALIBRATION_AUTOPROMOTE=0 keeps every run a
+is never promoted. Auto-promotion is OFF unless SCHEDULE_CALIBRATION_AUTOPROMOTE=1 (10/11/26); off, every run is a
 shadow.
 """
 import json
@@ -95,7 +95,10 @@ def init_schedule_calibration(db_path=None):
 
 
 def _autopromote() -> bool:
-    return (os.environ.get(AUTOPROMOTE_ENV) or "1").strip().lower() not in ("0", "off", "false", "no")
+    # OFF unless set (blind re-audit 10/11/26: the shadow run's hold-out
+    # reused weeks it was fitted on, so noise promoted; held off until the
+    # split is honest). Set SCHEDULE_CALIBRATION_AUTOPROMOTE=1 to turn it on.
+    return (os.environ.get(AUTOPROMOTE_ENV) or "0").strip().lower() in ("1", "on", "true", "yes")
 
 
 def _evidence(samples, keys, usd) -> dict:

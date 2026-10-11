@@ -488,9 +488,22 @@ def reason(fam, part, e) -> str:
     return ""
 
 
+def applies() -> bool:
+    """Whether the measured value of one more person may move a requirement
+    or price the solver's objective: OFF unless STAFFING_ELASTICITY_APPLY=1
+    (blind re-audit 10/11/26: with no multiple-comparison control and a
+    reverse-causal panel term it added a person in ~40% of cells with no
+    true effect). The weekly job still measures and stores the estimates."""
+    import os
+    return (os.environ.get("STAFFING_ELASTICITY_APPLY") or "0").strip().lower() in ("1", "on", "true", "yes")
+
+
 def moves(restaurant_id, db_path=DB_PATH) -> dict:
     """{(family, part): {"move", "reason"}} — the stored estimates whose
-    interval cleared zero (schedule_requirements' `elasticity`)."""
+    interval cleared zero (schedule_requirements' `elasticity`). Empty
+    unless applies()."""
+    if not applies():
+        return {}
     return {k: {"move": int(e.get("move") or 0), "reason": reason(k[0], k[1], e)}
             for k, e in stored(restaurant_id, db_path=db_path).items() if int(e.get("move") or 0)}
 
@@ -498,8 +511,11 @@ def moves(restaurant_id, db_path=DB_PATH) -> dict:
 def marginal_values(restaurant_id, db_path=DB_PATH) -> dict:
     """{(family, part): {"per_hour", "lo", "hi"}} — one more person's net
     sales value per hour of their shift (the solver objective's price of an
-    hour there; contract for workstream F). Only estimates behind the floors."""
+    hour there; contract for workstream F). Only estimates behind the floors.
+    Empty unless applies()."""
     out = {}
+    if not applies():
+        return out
     for k, e in stored(restaurant_id, db_path=db_path).items():
         net = e.get("net") or {}
         if net and e.get("shift_cost"):

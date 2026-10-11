@@ -131,6 +131,9 @@ def test_a_floor_line_found_by_chance_does_not_move():
 
 
 def test_the_weights_move_on_their_own_within_the_step_and_the_owner_can_undo(monkeypatch):
+    # Auto-promotion is OFF by default since the blind re-audit (10/11/26);
+    # this test is about what it does when switched on.
+    monkeypatch.setenv(scal.AUTOPROMOTE_ENV, "1")
     rid = _rid()
     _world(rid, 12, _helps)
     out = scal.shadow_run(rid)
