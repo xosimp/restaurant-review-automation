@@ -906,9 +906,30 @@ def generation_request(restaurant_id, week_start=None, dates=None, history_id=No
         today = restaurant_now_by_id(restaurant_id, naive=True)
     days = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]}) or None
     from labor import get_week_start_day
-    if week_start or days:
-        monday = _week_monday(today, week_start or days[0],
-                              start_day=get_week_start_day(restaurant_id)).strftime("%Y-%m-%d")
+    try:
+        hid = int(history_id) if (days and history_id not in (None, "")) else None
+    except (TypeError, ValueError):
+        hid = None
+    base_week = None
+    if hid is not None:
+        # A redo belongs to its draft's own week, whatever the restaurant's
+        # week start is now (blind re-audit 10/11/26).
+        try:
+            from models import get_conn as _gc_req
+            conn = _gc_req()
+            try:
+                row = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                                   (hid, restaurant_id)).fetchone()
+            finally:
+                conn.close()
+            base_week = (row[0] if row else None) or None
+        except Exception:
+            base_week = None
+    if base_week:
+        monday = str(base_week)[:10]
+    elif week_start or days:
+        anchor = week_start_day_for(restaurant_id, week_start) if week_start else get_week_start_day(restaurant_id)
+        monday = _week_monday(today, week_start or days[0], start_day=anchor).strftime("%Y-%m-%d")
     else:
         from models import get_restaurant as _gr_req
         monday = default_week_start(_gr_req(restaurant_id), today, publish_lag_days).strftime("%Y-%m-%d")
@@ -1525,9 +1546,35 @@ def default_week_start(restaurant, today, publish_lag_days=0):
     return base + _tw(days=(first - base.date()).days)
 
 
+def week_start_day_for(restaurant, week_start=None) -> int:
+    """The weekday a week starts on when a date in it is named: a draft
+    already saved under `week_start` keeps the week it was built on (a
+    restaurant that moved its week start — Simple EJ's, Monday to Wednesday
+    on 10/10/26 — still redoes and reopens its older drafts on their own
+    dates; blind re-audit 10/11/26), else the restaurant's own week start."""
+    if week_start:
+        try:
+            from models import get_conn as _gc_anchor
+            conn = _gc_anchor()
+            try:
+                hit = conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start=? LIMIT 1",
+                                   (getattr(restaurant, "id", restaurant), str(week_start)[:10])).fetchone()
+            finally:
+                conn.close()
+            if hit:
+                return _date_of(week_start).weekday()
+        except Exception:
+            pass
+    return week_start_day_of(restaurant)
+
+
 def week_start_day_of(restaurant) -> int:
     """The weekday a restaurant's schedule week starts on (0 = Monday) —
-    restaurants.week_start_day, its payroll week (_week_monday)."""
+    restaurants.week_start_day, its payroll week (_week_monday). Takes the
+    restaurant or its id."""
+    if isinstance(restaurant, int):
+        from labor import get_week_start_day
+        return get_week_start_day(restaurant) % 7
     try:
         return int(getattr(restaurant, "week_start_day", 0) or 0) % 7
     except (TypeError, ValueError):
@@ -1587,7 +1634,7 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
     tgt = _thr.target_for(restaurant, "labor")
     target = tgt["pct"]
     _now_fp = restaurant_now(restaurant, naive=True)
-    monday = (_week_monday(_now_fp, week_start, start_day=week_start_day_of(restaurant)) if week_start
+    monday = (_week_monday(_now_fp, week_start, start_day=week_start_day_for(restaurant, week_start)) if week_start
               else default_week_start(restaurant, _now_fp))
     dates = week_dates_from(monday)
     monthly = float(getattr(restaurant, "monthly_revenue_target", 0) or 0)
@@ -2089,7 +2136,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # Compute next week dates — the restaurant's week, not the server's
     from time_utils import restaurant_now
     today = restaurant_now(restaurant, naive=True)
-    _start_day = week_start_day_of(restaurant)
+    _start_day = week_start_day_for(restaurant, week_start)
     # No week named: the first one that can still be published on time
     # under the notice rule in force (MARKET-1) — next week without one.
     monday = (_week_monday(today, week_start, start_day=_start_day) if week_start
@@ -3025,7 +3072,8 @@ def _redo_reads_as_rules(restaurant_id, instruction, week_start=None) -> bool:
         if week_start:
             try:
                 week = week_dates_from(_week_monday(_date_of(week_start), week_start,
-                                                    start_day=week_start_day_of(get_restaurant(restaurant_id))))
+                                                    start_day=week_start_day_for(get_restaurant(restaurant_id),
+                                                                                 week_start)))
             except Exception:
                 week = None
         todo = []
@@ -9092,7 +9140,7 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates, extra_rows=None,
     # the person it chose — the loop then judges them like any row.
     for r in extra_rows or []:
         if r.get("date") in want and (r.get("employee") or "").strip():
-            body.append(_rows_to_csv_text([r]).split("\n", 1)[-1].strip())
+            body.append(dict(r))                 # rows, like the draft's (a CSV line here raised)
     out = copy.deepcopy(answer)
     # The stored text is quoted and carries ids; the answer parser reads its
     # own eight-column lines (schedule_rows.answer_csv).

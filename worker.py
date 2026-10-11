@@ -154,4 +154,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # The entry point loads the .env beside it (hosted_dashboard does the
+    # same); modules never do it on import.
+    try:
+        import pathlib as _pl
+        from dotenv import load_dotenv as _ld
+        _ld(_pl.Path(__file__).parent / ".env")
+    except Exception:
+        pass
     main()

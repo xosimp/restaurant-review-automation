@@ -23,13 +23,14 @@ from zoneinfo import ZoneInfo as _ZI_sch
 from time_utils import parse_stored_dt, mdy
 def _chi_now():
     return datetime.now(_ZI_sch('America/Chicago')).replace(tzinfo=None)
-from dotenv import load_dotenv
 import pathlib
 
 
 from emails import html_document as _html_doc  # one definition; emails reads its env lazily
 
-load_dotenv(pathlib.Path(__file__).parent / ".env")
+# The .env is loaded by the process entry points (hosted_dashboard, worker),
+# never on import: importing this module from a generation stage pulled
+# production keys into a keyless throwaway process (blind re-audit 10/11/26).
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [scheduler] %(message)s")
 log = logging.getLogger("scheduler")
 
