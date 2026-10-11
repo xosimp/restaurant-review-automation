@@ -4243,9 +4243,9 @@ def _plan_tasks(rows: float, dates: list, roster_pairs, managers=(), per_call: i
 
 # How many of one generation's calls run at once (scheduler audit 10/10/26
 # AI-4, AI-18, SCALE-23): a 250-person week's department calls ran one after
-# another, ~5 x 450 s against a 36-minute model deadline. Per generation,
-# and the generation pool (SCHEDULE_GEN_WORKERS) bounds the generations —
-# so at most SCHEDULE_GEN_WORKERS x this many streams per process.
+# another, ~5 x 450 s against a 36-minute model deadline. Per generation;
+# the process's one call pool (_call_pool, below) bounds every generation's
+# calls together.
 PARALLEL_CALLS = 3
 
 
@@ -4255,6 +4255,37 @@ def parallel_calls() -> int:
         return max(1, int(os.getenv("SCHEDULE_PARALLEL_CALLS", str(PARALLEL_CALLS)) or 1))
     except ValueError:
         return PARALLEL_CALLS
+
+
+# One bounded pool for every generation's parallel calls in this process
+# (scheduler fix round 10/10/26, C2 — it was a new ThreadPoolExecutor per
+# batch, so the bound was per generation and multiplied with the generations
+# running): at most call_pool_workers() model streams at once in the process,
+# a batch's calls queueing behind another generation's when it is full. Its
+# size: SCHEDULE_CALL_POOL_WORKERS, else the generations a process runs
+# (SCHEDULE_GEN_WORKERS) x a generation's own parallel calls. Process-local,
+# like the other bounded pools (CLAUDE.md, gunicorn workers): a second worker
+# gets its own. A call never submits to this pool, so it cannot deadlock.
+_CALL_POOL = None
+_CALL_POOL_LOCK = threading.Lock()
+
+
+def call_pool_workers() -> int:
+    try:
+        n = int(os.getenv("SCHEDULE_CALL_POOL_WORKERS", "") or 0)
+    except ValueError:
+        n = 0
+    return max(1, n or SCHEDULE_GEN_WORKERS * parallel_calls())
+
+
+def _call_pool():
+    """The process's one pool for schedule model calls sent together."""
+    global _CALL_POOL
+    with _CALL_POOL_LOCK:
+        if _CALL_POOL is None:
+            from concurrent.futures import ThreadPoolExecutor
+            _CALL_POOL = ThreadPoolExecutor(max_workers=call_pool_workers(), thread_name_prefix="sched-call")
+        return _CALL_POOL
 
 
 def _lane(t) -> tuple:
@@ -4336,10 +4367,11 @@ def _dispatch_calls(ready, analysis, shifts, kept, written_rows, generate):
             return None, e
     if len(ready) <= 1:
         return [safe(t, dk, whole) for t, dk, whole, _e in ready]
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=len(ready), thread_name_prefix="sched-call") as pool:
-        futures = [pool.submit(_cv.copy_context().run, safe, t, dk, whole) for t, dk, whole, _e in ready]
-        return [f.result() for f in futures]
+    # The process's one bounded pool (_call_pool): a batch's calls wait
+    # their turn behind another generation's when it is full.
+    pool = _call_pool()
+    futures = [pool.submit(_cv.copy_context().run, safe, t, dk, whole) for t, dk, whole, _e in ready]
+    return [f.result() for f in futures]
 
 
 def _room_lines(c, people, dates, week_dates) -> list:

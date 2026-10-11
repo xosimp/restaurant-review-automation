@@ -209,3 +209,39 @@ def test_a_poll_that_called_the_job_dead_mid_pipeline_saves_nothing_and_is_out_o
         se._run_schedule_job("c2-dead", rid)
     assert _history(db, rid) == []
     assert str(raised[0]) == se._TIMED_OUT_MESSAGE and not isinstance(raised[0], se.ScheduleStopped)
+
+
+# ── one bounded pool for every generation's parallel calls ───────────────
+
+def test_parallel_calls_of_every_generation_share_one_bounded_pool(monkeypatch):
+    import threading
+    import time as _t
+    monkeypatch.setenv("SCHEDULE_CALL_POOL_WORKERS", "2")
+    monkeypatch.setattr(se, "_CALL_POOL", None)
+    active, peak, lock = [0], [0], threading.Lock()
+
+    def generate(analysis, shifts, **kw):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        _t.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return {"ok": True}
+    ready = [({"dates": [WEEK[i]]}, {}, True, None) for i in range(3)]
+    out = []
+
+    def one_generation():
+        out.append(se._dispatch_calls(ready, {}, [], [], [], generate))
+    threads = [threading.Thread(target=one_generation) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join(10) for t in threads]
+    pool = se._call_pool()
+    try:
+        assert len(out) == 2 and all(len(o) == 3 and all(e is None for _r, e in o) for o in out)
+        # Two generations of three calls each: never more than the pool's two
+        # streams at once (each batch used to open a pool of its own).
+        assert peak[0] == 2
+        assert se._call_pool() is pool and pool._max_workers == 2
+    finally:
+        pool.shutdown(wait=True)

@@ -229,8 +229,9 @@ A deletion is only "verified" when the trace is written down alongside it.
   pools, the owner AI job pool `ai_async`,
   the interactive AI slots `ai_utils._INTERACTIVE_SLOTS` and the AI
   background pools — Ask's read and summary pools, the shadow-review and
-  scoring pools), the per-generation model-call pool
-  (`SCHEDULE_PARALLEL_CALLS`) and the schedule Studio's kept inputs
+  scoring pools), the schedule model-call pool — one per process,
+  `schedule_engine._call_pool`, `SCHEDULE_CALL_POOL_WORKERS` (default
+  `SCHEDULE_GEN_WORKERS` x `SCHEDULE_PARALLEL_CALLS`) — and the schedule Studio's kept inputs
   (`schedule_engine._studio_cache` / `_studio_live`) and the requirement
   model cache (`_REQUIREMENT_MODEL_CACHE`) — caches, safe to keep per
   worker; the inventory and order are in
