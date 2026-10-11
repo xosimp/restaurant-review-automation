@@ -9227,12 +9227,36 @@ def sq_demand_rank(shift: dict) -> int:
 # the publish (P-3, P-17). Rows carry a stable id ("_rid") from the parse to
 # the save, so every "Fixed by Cavnar AI" line points at the row it changed,
 # whatever ran after it (P-15).
+#
+# What bounds the loop, and what does not (scheduler audit 10/10/26 ARCH-26).
+# The loop's output is a function of its inputs: REPAIR_MAX_CYCLES cycles at
+# most, and each search on a deterministic WORK budget with a fixed seed —
+# the solver on CP-SAT's deterministic time (schedule_cpsat.DEFAULT_SECONDS)
+# or the backtracking solver's work clock (schedule_solver.WorkClock), the
+# optimizer on evaluations (REPAIR_OPTIMIZER_EVALUATIONS across the
+# generation's cycles). The wall clock is only the EMERGENCY cap:
+# REPAIR_MAX_SECONDS for the loop and the job's own clock less
+# REPAIR_RESERVE_SECONDS (RepairContext.search_seconds) for each search. When
+# it fires — a search skipped (`repair.skipped`), a search cut short or the
+# loop stopped (`repair.emergency`) — the review says so
+# (repair_emergency_line): the same week generated under load used to skip the
+# solver or the optimizer, or hand them less time, and ship a different week
+# with nothing said.
+#
+# Stage order effects, deliberate and pinned (tests/test_sf10_c2_budget.py):
+# a stage ranked lower never undoes a higher one's gain (_judge); within the
+# quality rank the order is stagger -> solver -> optimizer -> role_times, so
+# the owner's start/end-time rules (role_times) are applied after the searches
+# and re-time what they chose — a search never re-times against the owner's
+# rule, the rule wins; the budget's trim runs before the top-up only inside the
+# requirement floor (top_up outranks budget), and the budget is reconciled
+# once after the loop (E-18).
 REPAIR_MAX_CYCLES = 4
 REPAIR_MAX_SECONDS = 120.0
 # What the job's clock keeps back for the score, the what-if and the save.
 REPAIR_RESERVE_SECONDS = 75.0
-# Below this much loop time the solver and the optimizer sit a cycle out
-# (said in `repair.skipped`); the hard-rule stages always run.
+# Below this much emergency headroom the solver and the optimizer sit a cycle
+# out (said in `repair.skipped`); the hard-rule stages always run.
 REPAIR_MIN_SEARCH_SECONDS = 3.0
 
 # (key, rank, what it is, what is left to check when it does not run). The
@@ -9364,10 +9388,13 @@ class RepairContext:
         self.scorer_for = _pass_scorer(restaurant_id, result, self.signals, self.weights) \
             if signals is not None else None
         self.started = time.monotonic()
-        # Seconds each search has spent across the loop's cycles: the
-        # optimizer gets its own budget once per generation, however many
-        # cycles it runs in (the old single pass's latency, P-24).
+        # What each search has spent across the loop's cycles: the optimizer
+        # gets its own budget once per generation, however many cycles it
+        # runs in — evaluations, its deterministic budget (ARCH-26); seconds
+        # kept for the timings (P-24).
         self.search_spent = {}
+        # The searches the wall clock (the emergency cap) cut short (ARCH-26).
+        self.wall_capped = []
         # Why a row nobody could take was left (apply_fixes), by person,
         # date and kind — the final review's `unfixed` reads it.
         self.unfixed_why = {}
@@ -9815,20 +9842,32 @@ def _stage_solver(rows, x):
     sig = dict(x.signals, flagged=x.result["flagged_rows"])
     # The budget the loop judges this stage by (RepairContext.over_budget):
     # each candidate is held to it, so one over it never costs the others.
+    # A deterministic work budget, the same whatever the wall clock left
+    # (ARCH-26); what the loop has left on the wall clock is only the
+    # emergency cap, and a solve it cut short is reported.
     if assign_engine() == "cpsat":
         res = _cps.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
-                           max_seconds=max(0.5, min(_cps.DEFAULT_SECONDS, x.search_seconds())),
+                           max_seconds=_cps.DEFAULT_SECONDS, wall_cap=max(0.5, x.search_seconds()),
                            hours_budget=x.budget or None)
         summary = _cps.summary(res)
     else:
         res = _solver.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
-                              max_seconds=max(0.5, min(_solver.DEFAULT_SECONDS, x.search_seconds())),
+                              max_seconds=_solver.DEFAULT_SECONDS, wall_cap=max(0.5, x.search_seconds()),
                               hours_budget=x.budget or None)
         summary = _solver.summary(res)
         summary["engine"] = "backtracking"
+    if (res.get("stats") or {}).get("wall_capped"):
+        summary["wall_capped"] = True
+        if "solver" not in x.wall_capped:
+            x.wall_capped.append("solver")
     print(f"[schedule] solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
           f"{res.get('after_score')} kept={summary['kept']} ({summary['seconds']}s)")
     return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
+
+
+# The optimizer's deterministic budget for one generation (ARCH-26): its own
+# designed evaluation budget (schedule_optimizer.DEFAULT_EVALUATIONS).
+REPAIR_OPTIMIZER_EVALUATIONS = 1500
 
 
 def assign_engine() -> str:
@@ -9847,10 +9886,13 @@ def _stage_optimizer(rows, x):
         return {"rows": rows}
     import schedule_optimizer as _opt
     # One search budget for the generation, spread over the cycles it runs
-    # in: a later cycle continues the search where the first stopped.
-    budget = _opt.DEFAULT_SECONDS - x.search_spent.get("optimizer", 0.0)
-    if budget < REPAIR_MIN_SEARCH_SECONDS:
+    # in: a later cycle continues the search where the first stopped. The
+    # budget is evaluations — deterministic (ARCH-26) — never the seconds
+    # the wall clock left; those are only the emergency cap.
+    evals = REPAIR_OPTIMIZER_EVALUATIONS - int(x.search_spent.get("optimizer_evaluations", 0))
+    if evals <= 0:
         return {"rows": rows}
+    cap = max(0.5, x.search_seconds())
     viols = _rules.violations(rows, x.c)
     x.result["flagged_rows"] = _flagged_rows(viols)
     x.result["pending_time_off"] = x.result.get("pending_time_off") or {
@@ -9860,11 +9902,16 @@ def _stage_optimizer(rows, x):
     res = _opt.optimize(rows, x.result, signals=sig, weights=x.weights, constraints=x.c,
                         hours_budget=(x.budget or 0) if x.trim_on else None,
                         max_server_overlap=x.section_count, only_dates=x.editable,
-                        max_seconds=max(0.5, min(budget, x.search_seconds())),
+                        max_seconds=cap, max_evaluations=evals,
                         # The experiment's model arm: nobody reassigned by the
                         # optimizer either (schedule audit 10/10/26 LOGIC-27).
                         reassign=bool(getattr(x, "reassign_on", True)))
     x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
+    used = int(res.get("evaluations") or 0)
+    x.search_spent["optimizer_evaluations"] = int(x.search_spent.get("optimizer_evaluations", 0)) + max(1, used)
+    if res.get("stopped") == "budget spent" and used < evals and "optimizer" not in x.wall_capped:
+        # The wall clock, not the evaluations, ended it: the emergency cap.
+        x.wall_capped.append("optimizer")
     if res.get("changes"):
         print(f"[schedule] optimizer {res['before_score']} -> {res['after_score']} "
               f"({len(res['changes'])} changes, {res['seconds']}s)")
@@ -9993,6 +10040,8 @@ def repair_week(rows, x: RepairContext) -> dict:
             break               # back where an earlier cycle ended: stages are trading the same change
         seen.add(sig)
         if x.loop_seconds() > x.max_seconds:
+            # The emergency cap (ARCH-26): reported, never silent.
+            ledger["emergency_loop"] = True
             break
     # The manager and hard ranks are never left worse than the best state
     # the loop saw (P-47). Every kept stage already passed that test, so
@@ -10192,7 +10241,19 @@ def _net_repair(state, prof, x, ledger, converged, restored) -> dict:
             "failures": ledger["failures"], "refused": ledger["refused"], "skipped": ledger["skipped"],
             "seconds": ledger["seconds"], "cycles": ledger["cycles"], "converged": converged, "restored": restored,
             "budget": budget, "rows_added": rows_added, "hours_added": hours_added, "hourly_delta": delta,
-            "section_cap_dates": cap_dates, "searches": ledger["runs"]}
+            "section_cap_dates": cap_dates, "searches": ledger["runs"], "emergency": _emergency_of(ledger, x)}
+
+
+def _emergency_of(ledger, x) -> dict:
+    """What the wall clock — the loop's emergency cap, never its budget
+    (ARCH-26) — cut short: {} on an ordinary run."""
+    out = {}
+    if ledger.get("emergency_loop"):
+        out.update(loop=True, cycles=ledger.get("cycles"))
+    capped = list(getattr(x, "wall_capped", None) or [])
+    if capped:
+        out["searches"] = capped
+    return out
 
 
 def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
@@ -10354,6 +10415,7 @@ def _apply_repair_reports(result, loop) -> None:
                         "restored_best": bool(loop.get("restored")), "refused": list(loop.get("refused") or []),
                         "skipped": list(loop.get("skipped") or []), "budget": loop.get("budget") or {},
                         "hours_by_stage": loop.get("hourly_delta") or {},
+                        "emergency": dict(loop.get("emergency") or {}),
                         "seconds": loop.get("seconds") or {}}
 
 

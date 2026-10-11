@@ -361,6 +361,7 @@ class _Chain:
         self.g, self.lb, self.best = 0, sum(self.minc), float("inf")
         self.stop = self.cut = False
         self.nodes, self.log = 0, []
+        self.clock = __import__("schedule_solver").WorkClock()     # the work clock _enter ticks (ARCH-26)
         self.prob = types.SimpleNamespace(units=list(range(n)), leaf_penalty=lambda persons, st: 0,
                                           dynamic=lambda unit, p, st: 0)
         self.st = None
