@@ -2603,6 +2603,11 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     hours_rule_reads += [{"unchecked": t} for t in (getattr(constraints, "hours_rules_unchecked", None) or [])]
     _contract_now = _sched_out.schedule_contract()
     _availability = None
+    # A model redo is told the redone dates and the seam only (scheduler
+    # audit 10/10/26 AI-28): the availability, the usual shifts and the
+    # dated demand signals of those dates, never the whole week's.
+    _avail_dates = (_sp.redo_scope(dates, next_week_dates)
+                    if _sp.slim_redo(("gate" if focus else "redo") if dates else None, dates) else next_week_dates)
     if _contract_now == "shape":
         # The shape contract's slim input (scheduler audit 10/10/26 AI-14,
         # AI-20): how many of each role can work each date and daypart in
@@ -2611,7 +2616,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # and no pairings — people are code's to choose.
         try:
             _availability = _sp.availability_table(
-                shape_availability(constraints, roster_pairs, next_week_dates), next_week_dates) or None
+                shape_availability(constraints, roster_pairs, _avail_dates), _avail_dates) or None
         except Exception as _sfx:
             _soft_fail("availability table", _sfx, restaurant_id)
         _usual = ""
@@ -2619,16 +2624,17 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
             import shift_templates as _stpl
             from labor import published_rows_for_baseline as _prb
             _usual = _stpl.prompt_table(_stpl.templates(_prb(restaurant_id, before=next_week_dates[0])),
-                                        days=week_days)
+                                        days=week_day_names(_avail_dates) if _avail_dates is not next_week_dates
+                                        else week_days)
         except Exception as _sfx:
             _soft_fail("usual shifts", _sfx, restaurant_id)
-        extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
+        extra_rest = (_signals.prompt_block(signals_by_date, _avail_dates)
                       + _usual
                       + last_nights_blk
                       + _stsig.soft_block(soft_reqs)
                       + memory_blk)
     else:
-        extra_rest = (_signals.prompt_block(signals_by_date, next_week_dates)
+        extra_rest = (_signals.prompt_block(signals_by_date, _avail_dates)
                       + _pairs_block(pairs, roster_pairs)
                       + learned_blk
                       + last_nights_blk

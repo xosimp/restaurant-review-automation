@@ -481,6 +481,46 @@ SHAPE_JUDGEMENT = ("Your part is the judgement of the shape: which shifts each d
                    "slot, from the roster, against the same rules.")
 
 
+# ── a redo's day-only context (scheduler audit 10/10/26 AI-28) ──────────────
+# A model redo of a few days (an owner's redo the code could not draft, the
+# quality gate's rewrite) used to be sent the whole week's context — every
+# date's availability, weather, year-over-year line, the typical crew of
+# every weekday, last week per day — to write one or two days. It is sent
+# the redone dates and the seam (the day before and after each, inside the
+# week: rest, closes and runs cross it); the kept days' people arrive as the
+# seam facts (seam_lines) and every rule is still code's to check.
+# SCHEDULE_SLIM_REDO=0 sends the full week context again.
+SLIM_REDO_KINDS = ("redo", "gate")
+
+
+def slim_redo(call_kind, week_slice) -> bool:
+    """Whether this call is a redo written with the day-only context."""
+    import os
+    return (call_kind in SLIM_REDO_KINDS and bool(week_slice)
+            and str(os.getenv("SCHEDULE_SLIM_REDO", "1")).strip() != "0")
+
+
+def redo_scope(dates, week_dates) -> list:
+    """The redone `dates` and the seam — each one's day before and after
+    that is in `week_dates` — sorted. [] for no dates."""
+    week = [str(d)[:10] for d in (week_dates or [])]
+    want = {str(d)[:10] for d in (dates or [])}
+    out = set()
+    for i, d in enumerate(week):
+        if d in want:
+            out.update(week[max(0, i - 1):i + 2])
+    return sorted(out | (want - set(week)))
+
+
+def slim_redo_line(dates, scope) -> str:
+    """Said at the head of a slim redo's week context."""
+    if not dates:
+        return ""
+    return ("\nTHIS CALL REDOES " + ", ".join(day_date(d) for d in sorted(dates)) + ": the week's context below "
+            "covers only those dates and the days either side of them (" + ", ".join(day_date(d) for d in scope)
+            + "); the rest of the week is kept as it is.")
+
+
 # ── the shape contract's slim input (scheduler audit 10/10/26 AI-14) ────────
 
 def availability_table(counts, dates) -> str:

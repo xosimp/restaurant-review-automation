@@ -403,6 +403,7 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
 | `SCHEDULE_PARALLEL_CALLS` | `"3"` | schedule_engine.py |
 | `SCHEDULE_CALL_POOL_WORKERS` | `SCHEDULE_GEN_WORKERS x SCHEDULE_PARALLEL_CALLS` | schedule_engine.py |
+| `SCHEDULE_SLIM_REDO` | `"1"` | schedule_prompt.py — a model redo (an owner's redo the code could not draft, the quality gate's rewrite) is sent the redone dates and the seam only (AI-28); `0` sends the whole week's context again |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
 | `STUDIO_CACHE_BUDGET_ROWS` | `"20000"` | schedule_engine.py |
 | `STUDIO_CACHE_PER_RESTAURANT` | `"3"` | schedule_engine.py |

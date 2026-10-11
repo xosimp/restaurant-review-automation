@@ -5098,8 +5098,21 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _role, _emp = (s.get("role") or "").strip(), (s.get("employee") or "").strip()
         if _role and _emp and _daypart_of(s.get("shift_start", "")) == "unknown":
             _unknown[_dn][_role][_date].add(_emp)
+    # A redo's day-only context (scheduler audit 10/10/26 AI-28): the dates
+    # it writes and the seam (schedule_prompt.redo_scope) — never the whole
+    # week's context for one or two days.
+    _slim = _sp.slim_redo(call_kind, week_slice)
+    _slim_dates, _slim_days = None, None
+    if _slim:
+        from time_utils import restaurant_now as _rn_slim
+        from schedule_engine import _week_monday as _wm_slim, week_dates_from as _wdf_slim
+        _slim_week = _wdf_slim(_wm_slim(_rn_slim(tz_name, naive=True), week_start, start_day=week_start_day))
+        _slim_dates = _sp.redo_scope(week_slice, _slim_week)
+        _slim_days = {_dt2.strptime(d, "%Y-%m-%d").strftime("%A") for d in _slim_dates}
     _hc_lines = []
     for _dn in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]:
+        if _slim_days is not None and _dn not in _slim_days:
+            continue
         _m = _typical.get((_dn, "morning")) or {}
         _n = _typical.get((_dn, "night")) or {}
         _u = {}
@@ -5269,6 +5282,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _trend = next((r.get("yoy_trend") for r in yoy_context if r.get("yoy_trend")), None) or {}
         for row in yoy_context:
             nw_date  = row.get("next_week_date", "")
+            if _slim_dates is not None and str(nw_date)[:10] not in _slim_dates:
+                continue
             if row.get("yoy_sales"):
                 # Last year's sales may come from an imported DSR workbook,
                 # which carries no labor or hours (models.
@@ -5326,7 +5341,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                 _hd = (today.date() if hasattr(today, "date") else today) + timedelta(days=int(ev.get("days_away") or 0))
             except (TypeError, ValueError):
                 continue
-            if _hd.isoformat() in week_dates:
+            if _hd.isoformat() in (_slim_dates if _slim_dates is not None else week_dates):
                 _hol.append(f"{str(ev.get('name') or '').split(' — ', 1)[0].strip()} ({_sp.day_date(_hd.isoformat())})")
         if _hol:
             holidays_block = ("\nHolidays this week: " + "; ".join(_hol) + " — what each did here last time, when "
@@ -5338,6 +5353,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # A stale copy of the forecast (weather.py's fallback, up to 72 hours
     # old) is labelled as such, and when every row is stale there is no
     # forecast to plan on (DH3-16).
+    if _slim_dates is not None and weather_forecast:
+        weather_forecast = [w for w in weather_forecast if str((w or {}).get("date") or "")[:10] in _slim_dates]
     _w_lines, _w_all_stale = weather_prompt_rows(weather_forecast)
     if _w_all_stale:
         weather_forecast = []
@@ -5362,12 +5379,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # sales per weekday (see build_demand_forecast). Silently omitted when
     # there isn't enough history to say anything honest.
     _demand_block = ""
-    if restaurant_id:
+    if restaurant_id and not _slim:
         try:
             _demand_block = format_demand_block(build_demand_forecast(restaurant_id))
         except Exception:
             _demand_block = ""
-    if not _demand_block:
+    if not _demand_block and not _slim:
         # The missing input is stated (NS4 M8): the note must not claim a
         # demand pattern nothing measured.
         _demand_block = ("\n\n" + NO_DEMAND_MARKER + " — there is not enough sales history to say which days "
@@ -5384,6 +5401,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     if prior_schedule_summary:
         _prior_lines = []
         for _day in week_days:
+            if _slim_days is not None and _day not in _slim_days:
+                continue
             _roles = prior_schedule_summary.get(_day)
             if not _roles:
                 continue
@@ -5581,7 +5600,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # The profile each shift is scored against, so "Saturday dinner" and
     # "Monday lunch" stop being the same problem with different dates — and
     # every dimension it is scored on, named (SQ-30).
-    _profile_block = format_profile_block(shift_profiles)
+    _profile_block = format_profile_block(
+        [p for p in (shift_profiles or []) if not getattr(p, "days", None) or set(p.days) & _slim_days]
+        if _slim_days is not None else shift_profiles)
     if _profile_block and not _strength_block:
         _profile_block += _quality_rules_block()
 
@@ -5855,7 +5876,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     _week_head = (f"{_sp.WEEK_HEAD} — {restaurant_name}: {_sp.day_date(week_dates[0])} to {_sp.day_date(week_dates[-1])}."
                   + (f"\nClosed: {_sp.days_text(_closed_week)} — write no shifts on "
                      f"{'that date' if len(_closed_week) == 1 else 'those dates'}." if _closed_week else "")
-                  + holidays_block)
+                  + holidays_block
+                  + (_sp.slim_redo_line(week_slice, _slim_dates) if _slim_dates is not None else ""))
     _context = (f"\n\nCONTEXT: this restaurant's record and the week's figures — facts to plan with. None of it asks "
                 f"for more or fewer people (SHIFT REQUIREMENTS already carry every number).\n{_history_lines}"
                 + _demand_block + yoy_block + _weather_block + _prior_schedule_block + par_block + role_rates_block

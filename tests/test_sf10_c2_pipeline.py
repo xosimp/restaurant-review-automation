@@ -245,3 +245,47 @@ def test_parallel_calls_of_every_generation_share_one_bounded_pool(monkeypatch):
         assert se._call_pool() is pool and pool._max_workers == 2
     finally:
         pool.shutdown(wait=True)
+
+
+# ── AI-28: a model redo is sent the redone dates and the seam only ───────
+
+def test_redo_scope_is_the_dates_and_the_days_either_side():
+    import schedule_prompt as sp
+    assert sp.redo_scope([WEEK[3]], WEEK) == WEEK[2:5]
+    assert sp.redo_scope([WEEK[0]], WEEK) == WEEK[:2]
+    assert sp.redo_scope([WEEK[5], WEEK[6]], WEEK) == WEEK[4:]
+    assert sp.redo_scope([], WEEK) == []
+
+
+def _redo_prompt(monkeypatch, call_kind):
+    import time as _t
+    from test_schedule_b2_calls import _prompt_harness, _ANALYSIS
+    prompts = _prompt_harness(monkeypatch)
+    weather = [{"date": d, "high_f": 60 + i, "short_forecast": f"Sky{i}"} for i, d in enumerate(WEEK)]
+    kept = [{"date": d, "employee": "Ana", "role": "Server", "shift_start": "4:00pm", "shift_end": "10:00pm",
+             "day": sq_day(d), "scheduled_hours": "6"} for d in WEEK if d != WEEK[5]]
+    labor.generate_optimized_schedule(_ANALYSIS, [], roster=[("Ana", "Server")], week_start=WEEK[0],
+                                      week_slice=[WEEK[5]], prior_rows=kept, weather_forecast=weather,
+                                      call_kind=call_kind, deadline=_t.time() + 600)
+    return prompts[-1]["prompt"]
+
+
+def sq_day(d):
+    return se._date_of(d).strftime("%A")
+
+
+def test_a_model_redo_is_sent_its_days_and_the_seam_not_the_whole_week(monkeypatch):
+    p = _redo_prompt(monkeypatch, "redo")
+    assert "THIS CALL REDOES Sat 2026-10-10" in p
+    # Friday, Saturday and Sunday's weather; never Monday's.
+    assert "Sky4" in p and "Sky5" in p and "Sky6" in p and "Sky0" not in p and "Sky2" not in p
+    # The kept days still reach it, as the seam's facts about each person.
+    assert "ALREADY WRITTEN FOR THE OTHER DAYS" in p
+
+
+def test_a_week_slice_and_the_switch_keep_the_whole_weeks_context(monkeypatch):
+    p = _redo_prompt(monkeypatch, None)                 # a big week's slice, not a redo
+    assert "Sky0" in p and "THIS CALL REDOES" not in p
+    monkeypatch.setenv("SCHEDULE_SLIM_REDO", "0")
+    p = _redo_prompt(monkeypatch, "gate")
+    assert "Sky0" in p and "THIS CALL REDOES" not in p
