@@ -9,7 +9,7 @@ Credentials stored per restaurant:
   clover_api_token    — API token from Clover developer dashboard
 """
 import csv, io, requests
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
 CLOVER_BASE = "https://api.clover.com/v3"

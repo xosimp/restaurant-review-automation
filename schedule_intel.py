@@ -1612,14 +1612,21 @@ def slot_readings(restaurant_id, since, until, db_path=DB_PATH) -> dict:
         if o["sales"]:
             med.setdefault((_weekday(d), part), []).append(float(o["sales"]))
     med = {k: sorted(v)[len(v) // 2] for k, v in med.items() if len(v) >= READING_MIN_MEDIAN}
-    # Comps and turns per date and meal from the ticket archive.
+    # Comps and turns per date and meal from the ticket archive, split at the
+    # restaurant's own lunch/dinner boundary (schedule_time).
+    import schedule_time as _st_split
+    try:
+        from models import get_restaurant as _gr_split
+        _split = _st_split.restaurant_split(_gr_split(restaurant_id)) or _st_split.DAYPART_SPLIT
+    except Exception:
+        _split = _st_split.DAYPART_SPLIT
     tk = {}
     for t in tickets:
         try:
             hour = int(str(t["opened_at"] or "")[11:13])
         except (TypeError, ValueError):
             continue
-        part = "night" if hour >= MORNING_SPLIT_HOUR else "morning"
+        part = "night" if hour * 60 >= _split else "morning"
         e_ = tk.setdefault((str(t["business_date"])[:10], part), {"net": 0.0, "comps": 0.0, "turns": []})
         e_["net"] += float(t["net_sales"] or 0)
         e_["comps"] += comps.get(t["ticket_id"], 0.0)

@@ -344,8 +344,14 @@ def settle(ticket, message=None, db_path=None) -> None:
             conn.commit()
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # Accounting only — a lost write never fails the model call, but it
+        # is recorded, never swallowed (silent-handler lint).
+        try:
+            import ops
+            ops.capture(e, job="model_gateway", context="gateway accounting write")
+        except Exception:
+            print(f"[model_gateway] accounting write lost: {e!r}")
 
 
 def max_concurrent_generations():
@@ -471,5 +477,11 @@ def write_breaker(provider, open_until, opened_at=None, reason=None, failures=0,
             conn.commit()
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        # Accounting only — a lost write never fails the model call, but it
+        # is recorded, never swallowed (silent-handler lint).
+        try:
+            import ops
+            ops.capture(e, job="model_gateway", context="gateway accounting write")
+        except Exception:
+            print(f"[model_gateway] accounting write lost: {e!r}")

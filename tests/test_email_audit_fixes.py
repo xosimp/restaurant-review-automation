@@ -74,7 +74,9 @@ def test_every_from_header_goes_through_sender():
         if path in allowed_literals:
             continue
         for lineno, line in enumerate(open(path, encoding="utf-8"), 1):
-            m = re.search(r'"from":\s*f?"', line)
+            # A From header carries an address or a display name in <…>:
+            # a "from" key holding a date, a person or a place is data.
+            m = re.search(r'"from":\s*f?"[^"]*[@<]', line)
             if m:
                 offenders.append(f"{path}:{lineno} {line.strip()[:70]}")
     assert not offenders, ("literal From header — use emails.sender(): "
