@@ -14,8 +14,11 @@ again. This module is what that next try does differently:
   * THE SAVED STAGE. Once the draft is saved its job row's checkpoint holds
     the finished answer (checkpoint_saved: the payload the owner's poll
     reads, compressed). A try that finds it finishes the job with that
-    payload — nothing is generated again — after putting that draft back in
-    force if the earlier try's quality-gate rewrite had replaced it unjudged.
+    payload — nothing is generated again — the draft it names kept in force.
+    Since scheduler fix round 10/10/26 (C2, ARCH-17) the quality gate's
+    passes are held in memory and only the winner is saved, once, so the
+    saved checkpoint is the job's last stage before its finish; a try that
+    died before it saved nothing and runs again (below).
   * EACH MODEL ANSWER. Every schedule call is recorded with its queue job
     and call key (schedule_output.record_call: model, dates, output schema —
     schedule_batch.call_key). Under resuming() the call site
