@@ -51,3 +51,4 @@ def test_a_redo_of_a_draft_saved_on_the_old_week_start_keeps_its_own_week():
 def test_scheduler_never_loads_the_env_file_on_import():
     src = (pathlib.Path(__file__).resolve().parents[1] / "scheduler.py").read_text()
     assert "load_dotenv(" not in src
+

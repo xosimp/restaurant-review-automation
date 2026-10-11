@@ -1148,6 +1148,11 @@ class _HandleFinal:
 
 
 def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
+    # None is the platform's own database (blind re-audit 10/11/26: callers
+    # thread an optional db_path=None through — owner_rules did, and
+    # sqlite3.connect(None) failed every generation's staff-note read).
+    if db_path is None:
+        db_path = DB_PATH
     # Postgres behind the same door when DATABASE_URL names one (db_dialect —
     # scheduler audit 10/10/26 RM-13): the platform's own database only; an
     # explicit other path (a test's file, a restore, a script's copy) stays
