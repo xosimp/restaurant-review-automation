@@ -352,7 +352,7 @@ final class DailyReportWeekTests: XCTestCase {
         // The web's three budget columns (D3-13).
         XCTAssertEqual(table.columns.map(\.title),
                        ["Food", "Liquor", "Gross", "Net", "Budget gross", "Budget net", "vs budget",
-                        "Last year", "vs last yr", "Labor %", "Notes"])
+                        "Last year", "vs last yr", "Hourly %", "Notes"])   // labor says what it counts (10/9/26)
         let tuesday = try XCTUnwrap(table.rows.first { $0.id == "2026-09-22" })
         XCTAssertEqual(tuesday.cells.map(\.text)[5], "$7,300")
         XCTAssertEqual(tuesday.cells.map(\.text)[6], "\u{2212}4.5%")
