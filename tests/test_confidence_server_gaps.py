@@ -30,7 +30,7 @@ def test_admin_fleet_integrations_carry_the_pos_sync_state():
 
 
 def test_demand_accuracy_reaches_the_schedule_review_and_labor_intel():
-    src = inspect.getsource(schedule_engine)
+    src = inspect.getsource(schedule_engine) + inspect.getsource(__import__("schedule_job"))
     assert 'result["demand_accuracy"]' in src and "demand_accuracy=result.get(\"demand_accuracy\")" in src
     assert "week_projection_accuracy=result.get(\"week_projection_accuracy\")" in src
     src = inspect.getsource(strategy_routes._do_schedule_intel)
@@ -62,5 +62,5 @@ def test_schedule_quality_items_each_carry_k1(monkeypatch):
 def test_the_item_builder_attaches_the_confidence():
     import inspect
     import schedule_engine
-    src = inspect.getsource(schedule_engine)
+    src = inspect.getsource(schedule_engine) + inspect.getsource(__import__("schedule_job"))
     assert "attach_schedule_confidence(restaurant_id, quality, quality[\"recommendation_items\"])" in src

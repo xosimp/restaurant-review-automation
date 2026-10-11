@@ -707,7 +707,7 @@ def test_the_week_and_its_generated_version_are_one_write(db):
         box["v"] = sv._insert_version(conn, rid, new_id, "generated", text, None, "Cavnar AI", "system")[1]
     hid = models.save_schedule_history(rid, W1[0], W1[-1], 0, 0, 30, _csv(), [], db_path=db, in_transaction=writes)
     assert box["v"] == 1 and sv.list_versions(rid, hid)[0]["reason"] == "generated"
-    src = inspect.getsource(sys.modules["schedule_engine"]._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     assert "in_transaction=_with_the_week" in src and '_versions.append(restaurant_id, _history_id, "generated"' not in src
 
 

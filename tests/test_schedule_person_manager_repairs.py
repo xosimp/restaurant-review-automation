@@ -531,7 +531,7 @@ def test_a_day_level_breach_is_never_needs_review_on_an_innocent_row():
     s = sr.summarize(sr.violations(rows, c))
     assert s["hard_rows"] == [] and s["hard_days"][0]["date"] == WEEK[2]
     assert s["lines"][0] == "⚠ 10/7/26 — no manager on Wednesday from 9:00am to 10:00am"
-    src = inspect.getsource(schedule_engine._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     assert 'if not _v["hard"] or _v.get("day_level"):' in src
     import mobile_api
     marked = [dict(r, notes="NEEDS REVIEW") for r in rows]
@@ -556,8 +556,8 @@ def test_halloween_close_counts_its_extra_hour():
     assert sr.span_hours({"date": "2026-10-31", "shift_start": "5:00pm", "shift_end": "2:00am"},
                          "America/Chicago") == 10.0
     import schedule_engine
-    src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert "_reconcile_scheduled_hours(\n                    _row, tz=" in src
+    src = inspect.getsource(__import__("schedule_job"))
+    assert "se._reconcile_scheduled_hours(\n            _row, tz=" in src
 
 
 def test_a_pass_writes_real_hours():
@@ -648,13 +648,13 @@ def test_the_rebalance_keeps_the_reserve_where_a_teammate_has_room():
 
 def test_generation_keeps_day_level_breaches_off_rows_and_says_why_once():
     import schedule_engine
-    src = inspect.getsource(schedule_engine._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     # The replacement stages (the person's, the policy limits') hand
     # apply_fixes no day-level breach (E-13).
     assert "_replace_tier(" in inspect.getsource(schedule_engine._stage_replace)
     assert "_replace_tier(" in inspect.getsource(schedule_engine._stage_policy)
     assert 'v.get("hard") and not v.get("day_level")' in inspect.getsource(schedule_engine._replace_tier)
-    assert 'result["review"]["lines"].append(_short)' in src
+    assert 'review["lines"].append(_short)' in src
     assert "manager_coverage=result.get(\"manager_coverage\")" in src and "min_hours=result.get(\"min_hours\")" in src
 
 

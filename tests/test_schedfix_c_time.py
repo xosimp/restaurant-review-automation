@@ -125,7 +125,7 @@ def test_a_manager_may_stay_as_long_as_any_role_at_the_parse():
     se._enforce_close_time(server, "Friday", c.close_times, c.role_buffers, constraints=c)
     assert server["shift_end"] == "11:00pm" and server["scheduled_hours"] == "7"
     # the job's parse passes the week's rules to it
-    src = inspect.getsource(se._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     assert 'constraints=result.get("constraints"))' in src
 
 

@@ -265,13 +265,13 @@ def test_sibling_collisions_read_only_published_weeks():
 
 
 def test_overtime_is_priced_at_forty_whatever_the_owners_ceiling():
-    src = open(se.__file__).read()
+    src = open(se.__file__).read() + open(se.__file__.replace("schedule_engine.py", "schedule_job.py")).read()
     # the overtime line is labor.OVERTIME_THRESHOLD_HOURS whatever the owner's
     # ceiling — above 40 or below it (NS3 H5)
     # The generation prices through schedule_economics.week_pricing — the
     # inputs the reopened week and the edit line share (schedule re-audit
     # 10/4/26 SQ-6) — whose line is the 40h one.
-    assert "_econ.week_pricing(restaurant_id, _constraints" in src and se._labor_ot_line() == 40.0
+    assert "_econ.week_pricing(ctx.rid, ctx.constraints" in src and se._labor_ot_line() == 40.0
     esrc = open(econ.__file__).read()
     assert '"ceiling": float(_lab.OVERTIME_THRESHOLD_HOURS)' in esrc
     rows = [_row(d, "Ana", "9:00am", "5:00pm", hours=8) for d in WEEK[:6]]

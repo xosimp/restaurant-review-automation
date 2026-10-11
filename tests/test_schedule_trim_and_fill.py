@@ -158,7 +158,7 @@ def test_the_post_fix_trim_has_its_scorer_rain_requirement_and_lessons():
                "learned_worse=x.result.get(\"learned_worse\")", "outcomes=x.result.get(\"outcomes_by_daypart\")",
                "constraints=x.c"):
         assert kw in body, kw
-    assert "_econ.trim_to_budget(" not in inspect.getsource(se._run_schedule_job)
+    assert "_econ.trim_to_budget(" not in inspect.getsource(__import__("schedule_job"))
 
 
 # ── P-27: tails first, the close stagger ─────────────────────────────────
@@ -249,12 +249,12 @@ def test_the_half_hour_ramp_is_held_through_a_tail_cut():
 
 
 def test_the_engine_says_the_budget_conflict_once_beside_the_over_budget_line():
-    src = inspect.getsource(se._run_schedule_job)
-    block = src.split("over the ceiling\")", 1)[1].split("result[\"review\"][\"trimmed\"]", 1)[0]
+    src = inspect.getsource(__import__("schedule_job"))
+    block = src.split("over the ceiling\")", 1)[1].split("review[\"trimmed\"]", 1)[0]
     # The over-budget line, then its conflict line, lead the review together.
     assert "budget_conflict_line(" in block and "_budget_lines.append(_bcl)" in block
-    assert "result[\"review\"][\"lines\"][0:0] = _budget_lines" in block
-    assert "result[\"review\"][\"budget_conflict\"] = _bc" in block
+    assert "review[\"lines\"][0:0] = _budget_lines" in block
+    assert "review[\"budget_conflict\"] = _bc" in block
 
 
 # ── L-24: what was learned is protected ──────────────────────────────────
@@ -342,10 +342,10 @@ def test_the_top_up_covers_the_half_hours_the_ramp_is_short(no_avail):
 
 
 def test_the_engine_builds_the_requirements_once_and_hands_them_on():
-    src = inspect.getsource(se._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     assert src.count("week_requirements(") == 1
-    assert "_reqs = week_requirements(restaurant_id, result, _constraints, curve=_curve)" in src
-    assert "requirements=_reqs" in src.split("RepairContext(", 1)[1].split(")", 1)[0] + \
+    assert "ctx.reqs = se.week_requirements(rid, result, ctx.constraints, curve=ctx.curve)" in src
+    assert "requirements=ctx.reqs" in src.split("RepairContext(", 1)[1].split(")", 1)[0] + \
         src.split("RepairContext(", 1)[1].split("curve=", 1)[0]
     for stage in (se._stage_top_up, se._stage_stagger, se._stage_budget, se._stage_section_cap):
         assert "requirements=x.requirements" in inspect.getsource(stage), stage.__name__
@@ -611,7 +611,7 @@ def test_the_rules_screen_carries_the_floor_cap_conflict(db_path, monkeypatch):
 
 
 def test_the_engine_names_the_cap_conflict_once():
-    src = inspect.getsource(se._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     assert "cap_floor_conflict_line(" in src
     cap = inspect.getsource(se._stage_section_cap)
     assert "report=rep" in cap and "\"conflicts\": rep.get(\"conflicts\")" in cap
@@ -671,9 +671,9 @@ def test_the_engine_threads_the_redo_days_through_every_early_pass():
         assert "editable=x.editable" in inspect.getsource(stage), stage.__name__
     # the passes' editable days: the redo's, less an open day the model left
     # empty (BUGSGEN-5 — open to the sweep, closed to the passes)
-    job_src = inspect.getsource(se._run_schedule_job)
-    assert "editable=_pass_editable" in job_src.split("RepairContext(", 1)[1]
-    assert "_pass_editable = _editable" in job_src
+    job_src = inspect.getsource(__import__("schedule_job"))
+    assert "editable=ctx.pass_editable" in job_src.split("RepairContext(", 1)[1]
+    assert "ctx.pass_editable = editable" in job_src
 
 
 def test_a_pinned_row_is_never_staggered_or_cut_at_the_cap():

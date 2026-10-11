@@ -67,5 +67,5 @@ def test_the_web_renders_the_note_as_a_list_and_the_instruction_as_chips():
 def test_the_job_replaces_the_models_note_with_the_final_weeks():
     import inspect
     import schedule_engine as se
-    src = inspect.getsource(se._run_schedule_job)
-    assert "_snar.write(restaurant_id, preview_rows" in src and 'result["narrative"] = _note["bullets"]' in src
+    src = inspect.getsource(__import__("schedule_job"))
+    assert "_snar.write(rid, preview_rows" in src and 'result["narrative"] = _note["bullets"]' in src

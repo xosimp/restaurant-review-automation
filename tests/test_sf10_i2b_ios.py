@@ -199,7 +199,7 @@ def test_the_closing_stay_and_the_full_time_line_are_one_tap_on_the_phone():
     vm = _swift("LaborViewModel.swift")
     assert 'case assumedStays = "assumed_stays"' in vm
     assert '"extend_shift"' in vm
-    assert 'result["review"]["assumed_stays"] = _stays' in _py("schedule_engine.py")
+    assert 'review["assumed_stays"] = _stays' in _py("schedule_job.py")
     assert 'item.kind == "full_time_unconfirmed"' in _swift("ScheduleFixViews.swift")
     assert '"kind": "full_time_unconfirmed"' in _py("schedule_setup.py")
 

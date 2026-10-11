@@ -98,7 +98,7 @@ def test_each_route_the_phone_calls_is_served(path, server):
 
 def test_the_server_still_sends_what_the_phone_reads():
     """The payload keys the new elements read, on the server side."""
-    engine = _py("schedule_engine.py")
+    engine = _py("schedule_engine.py") + _py("schedule_job.py")
     for key in ("manager_plan=", "manager_coverage=", "min_hours=", "unwritten_dates=", "unstaffable_dates=",
                 "starting_point=", "requirements=", "hours_hourly=", "calls="):
         assert key in engine, key
@@ -118,7 +118,7 @@ def test_the_redo_chips_are_the_servers_reasons():
     server knows (a chip off the list would be kept only as a label)."""
     src = _swift(LABOR + "ScheduleFixViews.swift")
     sent = re.findall(r'\("([a-z_]+)", "[^"]+"\)', src)
-    engine = _py("schedule_engine.py")
+    engine = _py("schedule_engine.py") + _py("schedule_job.py")
     block = engine[engine.index("REDO_REASONS = {"):engine.index("}", engine.index("REDO_REASONS = {"))]
     assert sent and all(f'"{k}"' in block for k in sent), sent
 

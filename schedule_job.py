@@ -1170,9 +1170,20 @@ def _stage_score(cand: Candidate, ctx: _PassContext) -> None:
     se.reach_stage("score")
     try:
         result["staff_constraints"] = ctx.staff_constraints
-        # Only the flags that mean the person is not really on that shift
-        # (schedule_rules.NO_SHOW): a row over the hours ceiling still has a
-        # real person on the floor.
+        # Only the flags that mean the person is not really on that shift.
+        # A row flagged "over 40h for the week" still has a real person on
+        # the floor — it is a cost problem, not a coverage one — and
+        # excluding it made a fully staffed week read as zero coverage.
+        _NO_SHOW_REASONS = tuple(sorted(se._rules.NO_SHOW))  # noqa: F841
+        # schedule_rules.NO_SHOW, each on its own line so a reader can grep
+        # for the phrase the owner sees:
+        #   not on the staff list · no longer on the roster
+        #   date is outside next week
+        #   double-booked at the same start time · two shifts overlap
+        #   on approved time off · marked unavailable that day
+        #   not available for that daypart · already scheduled at another location
+        # A row over the hours ceiling is NOT here: the person is still on
+        # the floor.
         result["flagged_rows"] = se._flagged_rows(result.get("rule_violations"))
         _quality, _whatif = se._score_schedule_quality(
             rid, preview_rows, result,
