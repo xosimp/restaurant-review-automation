@@ -911,8 +911,11 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 if hp:
                     occasion = 1.0 + float(hp["pct"]) / 100.0
                     entry["sources"].append("cohort_prior")
+                    own_n = int(hp.get("own_n") or 0)
                     entry["reasons"].append(f"{hp['name']}: similar restaurants' holidays ran a median "
-                                            f"{float(hp['pct']):+.0f}% (no {hp['name']} of your own measured yet)")
+                                            f"{float(hp['pct']):+.0f}% "
+                                            + (f"(no {hp['name']} of your own measured yet)" if not own_n else
+                                               f"({own_n} of your own measured; it counts from {hp.get('min_n') or 3})"))
                     entry["labels"].append(f"{hp['name']} ({float(hp['pct']):+.0f}% at similar restaurants)")
         # The forecast's trend and season (demand_model): how far a typical
         # night of this weekday is moving — never on the owner's own budget.
@@ -1050,9 +1053,13 @@ class _DemandContext:
             return []
 
     def holiday_prior(self, d):
-        """{"pct", "name"} for a holiday on `d` with no measured night of its
-        own here, from the cohort (intelligence.schedule_priors.event_prior,
-        behind MIN_COHORT), or None."""
+        """{"pct", "name", "own_n"} for a holiday on `d` whose own measured
+        effect here does not yet apply (fewer than event_memory.EFFECT_MIN_N
+        nights), from the cohort (intelligence.schedule_priors.event_prior,
+        behind MIN_COHORT), or None. A holiday comes once a year: stopping
+        the prior at the first measured night left the second and third
+        planned as a typical night, the own effect still below its floor
+        (scheduler fix round integration, 10/10/26)."""
         try:
             import event_memory as _em
             fl = (_em.flags_for(self.rid, [d], db_path=None if self.db == DB_PATH else self.db,
@@ -1061,13 +1068,14 @@ class _DemandContext:
             if not hol:
                 return None
             own = _em.measured_effect(self.rid, hol["label"], db_path=None if self.db == DB_PATH else self.db)
-            if own and own.get("n"):
+            if own and own.get("applies"):
                 return None
             from intelligence import schedule_priors as _sp
             pct = self._once(("holiday_prior",), lambda: _sp.event_prior(self.rid, "holiday", db_path=self.db))
             if pct is None or abs(float(pct)) < 5.0:
                 return None
-            return {"pct": float(pct), "name": str(hol.get("raw") or hol["label"])}
+            return {"pct": float(pct), "name": str(hol.get("raw") or hol["label"]),
+                    "own_n": int((own or {}).get("n") or 0), "min_n": int(_em.EFFECT_MIN_N)}
         except Exception:
             return None
 

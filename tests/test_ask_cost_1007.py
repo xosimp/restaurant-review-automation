@@ -205,13 +205,20 @@ def test_no_tool_definition_carries_its_own_breakpoint():
 # ── #17: the schema budget ──────────────────────────────────────────────────
 
 # 45,866 characters (~11,400 tokens) before the audit; 25,7xx after.
-TOOL_SCHEMA_CEILING_CHARS = 26500
+# Raised to 28,000 by the scheduler fix round (10/10/26): four tools joined -
+# edit_shift (J2), propose_resolve (F), find_cover and offer_cover (J3), about
+# 2,700 characters as written. Trimmed to ~2,140 (which fields each op takes
+# said once in the description, no per-property descriptions the TOOL
+# CONVENTIONS already cover, dates and times included), they sit near their
+# floor: the property lists the handlers read are ~1,600 characters alone, so
+# the old 770 of headroom could not hold them without removing a tool.
+TOOL_SCHEMA_CEILING_CHARS = 28000
 
 
 def test_the_tool_schemas_stay_under_their_ceiling_with_every_tool_offered():
     specs = tools.tool_specs()
     assert len(json.dumps(specs)) < TOOL_SCHEMA_CEILING_CHARS
-    assert len(specs) == len(tools.TOOLS) >= 81, "trimmed, never removed"
+    assert len(specs) == len(tools.TOOLS) >= 85, "trimmed, never removed"
     for s in specs:
         assert s["description"].strip()
 

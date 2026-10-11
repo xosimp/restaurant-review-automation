@@ -27716,7 +27716,7 @@ function ssBenchDraw(part, d) {
   var h = '', i, j;
   if (part === 'what_if') {
     var days = (typeof _schedWeekDates !== 'undefined' && _schedWeekDates && _schedWeekDates.length === 7)
-      ? _schedWeekDates.map(function (x) { return new Date(x + 'T12:00:00').toLocaleDateString('en-US', {weekday: 'long'}); })
+      ? _schedWeekDates.map(function (x) { return _schedDayOf(x); })
       : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     h += '<div class="row"><select id="ss-wi-day" aria-label="Weekday">';
     for (i = 0; i < days.length; i++) h += '<option' + (days[i] === 'Saturday' ? ' selected' : '') + '>' + days[i] + '</option>';

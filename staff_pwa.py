@@ -77,6 +77,9 @@ def init_staff_pwa(db_path=None):
             answered_at     TEXT    NOT NULL DEFAULT (datetime('now')),
             seconds         REAL
         )""")
+        # The retention prune and response_times() both read by answered_at.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_offer_resp_platforms_answered "
+                     "ON offer_response_platforms(answered_at)")
         conn.commit()
     finally:
         conn.close()

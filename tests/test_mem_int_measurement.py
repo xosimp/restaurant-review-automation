@@ -100,6 +100,14 @@ CALLERS = {
     # Schedule audit 10/3/26 D-30: a near-term rainy date's demand moves by
     # the restaurant's own measured rain effect, only once it `applies`.
     ("schedule_economics.py", "_rain_effect"): "checks",
+    # Scheduler audit 10/10/26 (G2): a label's nights split by daypart and per
+    # role only once its effect applies; a holiday's cohort prior stands in
+    # until its own effect does (a holiday comes once a year); J3's
+    # event-driven change reads effects_for_day's floored figure.
+    ("schedule_economics.py", "label_split"): "checks",
+    ("schedule_economics.py", "holiday_prior"): "checks",
+    ("demand_drivers.py", "role_event_lifts"): "checks",
+    ("event_reactive.py", "_effect_pct"): "floor inside",
 }
 
 
@@ -142,7 +150,11 @@ def test_every_caller_of_a_measured_effect_is_classified_and_honours_the_floor()
     import importlib
     for (path, fn), how in CALLERS.items():
         mod = importlib.import_module(path[:-3].replace("/", "."))
-        src = inspect.getsource(getattr(mod, fn))
+        # A method (schedule_economics._DemandContext's) is found on its class.
+        obj = getattr(mod, fn, None) or next(getattr(c, fn) for c in vars(mod).values()
+                                              if isinstance(c, type) and c.__module__ == mod.__name__
+                                              and fn in vars(c))
+        src = inspect.getsource(obj)
         if how == "checks":
             assert "applies" in src or "EFFECT_MIN_N" in src, (path, fn)
         elif how.startswith("via "):

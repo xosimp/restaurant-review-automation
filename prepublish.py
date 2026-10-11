@@ -698,9 +698,18 @@ def _numbers(rid, row, rows, c, dates) -> dict:
 
 
 def _labor_target(rid):
+    """The ONE read of the labor target (thresholds.target_for: the owner's
+    goal first, else the set or starting target) - never the bare column
+    (tests/test_targets_published_figures ratchet)."""
     from models import get_restaurant
     r = get_restaurant(rid)
-    return getattr(r, "labor_target_pct", None) if r is not None else None
+    if r is None:
+        return None
+    try:
+        import thresholds
+        return thresholds.target_for(r, "labor")["pct"]
+    except Exception:
+        return None
 
 
 # ── the quality score, graded against the restaurant's own weeks ───────────
