@@ -53,10 +53,16 @@ def main(argv=None) -> int:
                                                                                          "source", "fixed")}
                                                            for p, pe in (e.get("parts") or {}).items()}}
                         for f, e in (model.get("families") or {}).items()}
-    today = date.today()
-    week = [(today + timedelta(days=7 + k)).isoformat() for k in range(7)]
+    # The week a Generate press drafts (the restaurant's own week start and
+    # today), with the owner's floors — the requirement the draft is held to.
+    import schedule_engine as _engine
+    import schedule_rules as sr
+    from models import get_restaurant
+    first = date.fromisoformat(_engine.generation_request(rid)["week_start"])
+    week = [(first + timedelta(days=k)).isoformat() for k in range(7)]
     rows = req.shift_requirements(week, typical_headcount=now.get("typical_headcount") or {}, staffing_model=model,
-                                  concurrent=now.get("concurrent") or {})
+                                  concurrent=now.get("concurrent") or {},
+                                  role_floors=sr.role_floors(get_restaurant(rid)))
     out["next_week"] = [{"date": r["date"], "daypart": r["daypart"], "driven": r.get("driven") or [],
                          "roles": {x["role"]: {"required": x["required"], "typical": x["typical"]}
                                    for x in r["roles"]}} for r in rows]
