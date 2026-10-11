@@ -195,5 +195,26 @@ def review(restaurant_id, rows, constraints, unmet=None, last_week_rows=None, ow
         print(f"[schedule_critic] no review: {e!r}")
         return out
     got = validate(rows, edits, constraints, score=score)
+    # Each kept edit's one-line reason is model prose that can reach the
+    # owner's review: it runs the Response Validation Layer (surface
+    # schedule_note, the schedule's own note). A reason the engine drops is
+    # blanked and recorded; the edit itself stands — code validated it.
+    try:
+        import response_validation as rv
+        import labor
+        prompt = json.dumps(req.get("messages") or [], default=str)
+        ctx = labor.schedule_note_context(prompt, restaurant_id, None)
+        for e in got["kept"]:
+            reason = str(e.get("reason") or "").strip()
+            if reason and not rv.validate_lines([reason], ctx).lines:
+                e["reason"] = ""
+                import ai_utils as _ai_q
+                _ai_q.record_quality_event("schedule_critic", "line_dropped", restaurant_id=restaurant_id,
+                                           action="schedule_critic", detail="critic reason dropped by validation")
+    except Exception as e:
+        # Unvalidated prose is never shown: blank every reason.
+        for k in got["kept"]:
+            k["reason"] = ""
+        print(f"[schedule_critic] reasons not validated, blanked: {e!r}")
     out.update(rows=got["rows"], kept=got["kept"], refused=got["refused"])
     return out
