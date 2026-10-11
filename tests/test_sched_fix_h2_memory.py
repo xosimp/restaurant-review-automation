@@ -676,8 +676,8 @@ def test_the_job_pads_the_draft_from_the_memory_before_the_solver_and_the_pricin
     assert order.index("min_hours") < order.index("pad_overruns") < order.index("budget") \
         < order.index("solver") < order.index("optimizer")
     assert "_smem_pad.pad_overruns(" in inspect.getsource(schedule_engine._stage_pad_overruns)
-    src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert src.index("repair_week(") < src.index("_price_week(preview_rows)")
+    src = inspect.getsource(__import__("schedule_job"))
+    assert src.index("repair_week(") < src.index("_price_week(cand, ctx, preview_rows)")
 
 
 # ══ L-21: teams ═══════════════════════════════════════════════════════════

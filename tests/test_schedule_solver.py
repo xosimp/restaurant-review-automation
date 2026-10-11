@@ -243,14 +243,18 @@ def test_the_time_limit_is_respected_on_a_big_week():
                 rows.append(row(d, pool[(j + WEEK.index(d)) % len(pool)], role,
                                 *(("10:30am", "3:00pm") if j % 2 else ("4:30pm", "10:30pm"))))
     sig = {"roster": names, "roster_roles": roles, "scores": {n: rng.randint(1, 5) for n in names}}
-    # CPU time, not wall time: under `-n auto` the other workers' load
-    # stretched wall time past the bound while the solver itself had
-    # stopped on time. A solver that ignored its limit would still burn CPU
-    # past it and fail here.
+    # The budget is WORK, not the wall clock (scheduler audit 10/10/26
+    # ARCH-26): the search stops at its work budget whatever the box's load,
+    # and the wall clock is only its emergency cap. CPU time, not wall time:
+    # under `-n auto` the other workers' load stretches wall time. A solver
+    # that ignored its emergency cap would still burn CPU past it.
     t0 = time.process_time()
-    res = ss.solve(rows, cons(names), signals=sig, max_seconds=1.0)
+    res = ss.solve(rows, cons(names), signals=sig, max_seconds=60.0, wall_cap=1.0)
     took = time.process_time() - t0
     assert len(rows) == 210 and took < 1.0 + 0.75, took
+    assert res["wall_capped"] is True                 # the emergency cap ended it, and says so
+    small = ss.solve(rows, cons(names), signals=sig, max_seconds=0.05)
+    assert small["work"] < 2 * 0.05 * ss.SOLVER_WORK_PER_SECOND + 10 ** 5 and small["wall_capped"] is False
     # How far a one-second search gets depends on the machine: it may not
     # reach a first complete legal week, and says so (no_solution_in_time)
     # rather than returning a worse one — the integration then keeps the

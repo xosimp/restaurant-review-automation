@@ -1737,7 +1737,7 @@ def test_an_over_hours_row_still_counts_as_somebody_on_the_floor():
     zero coverage on every shift, because every row was flagged "over 40h
     for the week" and flagged rows had been excluded wholesale. Being over
     hours is a cost problem; the person is still there."""
-    job = _source("schedule_engine.py")
+    job = _source("schedule_engine.py") + _source("schedule_job.py")
     block = job[job.index("_NO_SHOW_REASONS"):]
     block = block[:block.index("_score_schedule_quality(")]
     assert "over 40h" not in block

@@ -102,6 +102,7 @@ named with why, and the rest of the week is solved around it.
 Nothing here calls a model, reads the database or writes anything.
 """
 import math
+import os
 import time as _time
 from datetime import datetime
 
@@ -133,6 +134,52 @@ RELAX_SHARE = 0.35          # of the budget, at most, spent finding what to set 
 LNS_MAX_UNITS = 14
 LNS_NODES = 4000
 _CHECK_EVERY = 64
+
+# A deterministic work budget (scheduler audit 10/10/26 ARCH-26): the
+# search's clock counts WORK — a node of the search, a large-neighbourhood
+# round — at SOLVER_WORK_PER_SECOND units to one budget "second", never the
+# wall clock, so the same draft gives the same week on an idle box and on one
+# where two generations share the GIL. The wall clock is only an emergency
+# cap (`wall_cap`, else WALL_CAP_FACTOR x the budget): when it cuts a search
+# short the result says so (`wall_capped`) and the repair loop reports it.
+# SCHEDULE_SOLVER_DETERMINISTIC=0 puts the budget back on the wall clock.
+SOLVER_WORK_PER_SECOND = float(os.getenv("SCHEDULE_SOLVER_WORK_PER_SECOND", "") or 8000000.0)
+DETERMINISTIC = str(os.getenv("SCHEDULE_SOLVER_DETERMINISTIC", "1")).strip() != "0"
+WALL_CAP_FACTOR = 4.0
+LNS_ROUND_WORK = 50
+DYNAMIC_WORK = 8
+
+
+class WorkClock:
+    """The search's clock: work done, read as budget seconds (deterministic),
+    or wall seconds since it started (SCHEDULE_SOLVER_DETERMINISTIC=0); with
+    a wall-clock emergency cap either way."""
+
+    def __init__(self, wall_cap=None, deterministic=None):
+        self.det = DETERMINISTIC if deterministic is None else bool(deterministic)
+        self.t0 = _time.monotonic()
+        self.units = 0
+        self.wall_until = (self.t0 + max(0.05, float(wall_cap))) if wall_cap else None
+        self.wall_capped = False
+
+    def tick(self, n=1) -> None:
+        self.units += n
+
+    def now(self) -> float:
+        if self.det:
+            return self.units / SOLVER_WORK_PER_SECOND
+        return _time.monotonic() - self.t0
+
+    def out_of_wall(self) -> bool:
+        if self.wall_until is not None and _time.monotonic() > self.wall_until:
+            self.wall_capped = True
+        return self.wall_capped
+
+    def past(self, deadline) -> bool:
+        return self.now() > deadline or self.out_of_wall()
+
+    def wall_seconds(self) -> float:
+        return _time.monotonic() - self.t0
 
 # ── the cost model: the scorer's own units ─────────────────────────────────
 # A cost of 1 is one point of one shift's score on a shift of demand weight
@@ -2072,9 +2119,10 @@ class _Search:
     """Backtracking with forward checking, most-constrained unit first, and
     branch-and-bound on an admissible bound, one component at a time."""
 
-    def __init__(self, prob, deadline):
+    def __init__(self, prob, deadline, clock=None):
         self.prob = prob
         self.deadline = deadline
+        self.clock = clock if clock is not None else WorkClock()
         self.static = prob.static()
         U = len(prob.units)
         self.assign = [None] * U
@@ -2111,7 +2159,8 @@ class _Search:
 
     def _tick(self):
         self.nodes += 1
-        if self.nodes % _CHECK_EVERY == 0 and _time.monotonic() > self.deadline:
+        self.clock.tick()
+        if self.nodes % _CHECK_EVERY == 0 and self.clock.past(self.deadline):
             self.stop = self.timed_out = True
         if self.node_cap is not None and self.nodes >= self.node_cap:
             self.stop = True
@@ -2141,6 +2190,9 @@ class _Search:
         prob = self.prob
         unit = prob.units[u]
         rec = [len(self.trail), marginal, []]
+        # The work this placement costs (WorkClock, ARCH-26): the conflicts,
+        # the person's other units and the dates' open units it checks.
+        self.clock.tick(len(prob.conf.get(u, ())) + len(self.p_units.get(p, ())))
         self.assign[u] = p
         self.lb -= self.minc[u]
         self.g += marginal
@@ -2210,6 +2262,7 @@ class _Search:
             for k in range(rec[0], len(self.trail)):
                 dates.add(prob.units[self.trail[k][0]].dgroup)
             for key in dates:
+                self.clock.tick(len(prob.dgroups.get(key, ())))
                 open_ = [v for v in prob.dgroups.get(key, ()) if self.assign[v] is None]
                 if len(open_) > 1:
                     pool = set()
@@ -2279,6 +2332,9 @@ class _Search:
         self._tick()
         if self.stop:
             return None
+        # The work of choosing (WorkClock, ARCH-26): every open unit scanned,
+        # and each candidate person priced below.
+        self.clock.tick(len(free))
         u = self._select(free)
         if u is None:
             total = self.g + self.prob.leaf_penalty(persons, self.st)
@@ -2287,6 +2343,7 @@ class _Search:
             return None
         unit = self.prob.units[u]
         vals = sorted(((self.static[u][p] + self.prob.dynamic(unit, p, self.st), p) for p in self.dom[u]))
+        self.clock.tick(DYNAMIC_WORK * len(vals))
         # [unit, values, next value, bound of the rest, values taken, discrepancies left, branch open]
         return [u, vals, 0, self.lb - self.minc[u], 0, disc, None]
 
@@ -2407,9 +2464,10 @@ class _Search:
             self._by_role.setdefault(tuple(sorted(self.prob.units[i].roles)), []).append(i)
         self._roles = sorted(self._by_role)
         self._dords = sorted({self.prob.units[i].dord for i in comp})
-        while _time.monotonic() < until and self.best_assign is not None:
+        while self.clock.now() < until and not self.clock.out_of_wall() and self.best_assign is not None:
             free = self._neighbourhood(rng)
             self.lns_rounds += 1
+            self.clock.tick(LNS_ROUND_WORK)
             if not free:
                 continue
             held = set(free)
@@ -2447,18 +2505,18 @@ class _Search:
         proved = self._pass(comp, persons, 0, deadline)
         if not proved and not self.timed_out:
             # 2. a short complete pass, which is where small parts get proved
-            span = deadline - _time.monotonic()
-            proved = self._pass(comp, persons, None, _time.monotonic() + max(0.05, 0.2 * span))
+            span = deadline - self.clock.now()
+            proved = self._pass(comp, persons, None, self.clock.now() + max(0.05, 0.2 * span))
             if not proved and self.best_assign is None:
                 # nothing legal found yet: widen the dive before anything else
                 for disc in LDS_SCHEDULE[1:]:
                     proved = self._pass(comp, persons, disc, deadline)
                     if proved or self.timed_out or self.best_assign is not None:
                         break
-            if not proved and self.best_assign is not None and _time.monotonic() < deadline:
+            if not proved and self.best_assign is not None and not self.clock.past(deadline):
                 # 3. improve the week, 4. then try to prove it with what is left
-                span = deadline - _time.monotonic()
-                self._lns(comp, persons, _time.monotonic() + 0.8 * span)
+                span = deadline - self.clock.now()
+                self._lns(comp, persons, self.clock.now() + 0.8 * span)
                 proved = self._pass(comp, persons, None, deadline)
         return {"units": len(comp), "proved": proved, "timed_out": not proved,
                 "feasible": self.best_assign is not None, "cost": self.best if self.best_assign else None,
@@ -2482,7 +2540,7 @@ class _Search:
 
 
 def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dates=None,
-          max_seconds=DEFAULT_SECONDS, roster_roles=None, pending=None) -> dict:
+          max_seconds=DEFAULT_SECONDS, roster_roles=None, pending=None, wall_cap=None, deterministic=None) -> dict:
     """Re-solve who works each of the draft's shifts.
 
     Returns {status, proved_optimal, seconds, slots, rows_in, people,
@@ -2494,7 +2552,11 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
     week, not proved best), 'infeasible' (some unit nobody may legally
     work, or a component with no legal arrangement), or 'nothing_to_solve'.
     """
-    t0 = _time.monotonic()
+    # The budget is work (WorkClock, ARCH-26): `max_seconds` of it, the wall
+    # clock only as the emergency cap.
+    clock = WorkClock(wall_cap=wall_cap if wall_cap else WALL_CAP_FACTOR * max(0.05, float(max_seconds)),
+                      deterministic=deterministic)
+    t0 = clock.now()
     deadline = t0 + max(0.05, float(max_seconds))
     out = {"status": "nothing_to_solve", "proved_optimal": False, "seconds": 0.0, "slots": 0,
            "rows_in": len(rows or []), "people": 0, "components": 0, "components_proved": 0, "nodes": 0,
@@ -2508,9 +2570,9 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
     for attempt in range(RELAX_ATTEMPTS):
         prob = Problem(rows, constraints, signals=signals, weights=weights, profiles=profiles,
                        only_dates=only_dates, roster_roles=roster_roles, pending=pending, relax=relax)
-        if attempt == RELAX_ATTEMPTS - 1 or _time.monotonic() > probe_until:
+        if attempt == RELAX_ATTEMPTS - 1 or clock.past(probe_until):
             break
-        culprits = _first_failures(prob, probe_until, attempt)
+        culprits = _first_failures(prob, probe_until, attempt, clock=clock)
         if not culprits:
             break
         # Keep what no legal week can staff as drafted, named, and solve
@@ -2526,7 +2588,7 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
         out["notes"].append(f"{kept_for_note} shift{'s' if kept_for_note != 1 else ''} kept with people who have a "
                             "written note the solver cannot read.")
     out["infeasible"] = list(prob.infeasible)
-    search = _Search(prob, deadline)
+    search = _Search(prob, deadline, clock)
     comps = prob.components
     out["components"] = len(comps)
     final = [u.draft for u in prob.units]
@@ -2535,7 +2597,7 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
     unsolved = []
     remaining_units = sum(len(c) for c in comps) or 1
     for comp in comps:
-        now = _time.monotonic()
+        now = clock.now()
         share = (deadline - now) * (len(comp) / float(remaining_units))
         remaining_units -= len(comp)
         res = search.solve_component(comp, min(deadline, now + max(0.02, share)))
@@ -2572,7 +2634,10 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
             for i in comp:
                 search.assign[i] = prob.units[i].draft
     out["nodes"] = search.nodes
-    out["seconds"] = round(_time.monotonic() - t0, 2)
+    out["seconds"] = round(clock.wall_seconds(), 2)
+    out["work"] = clock.units
+    out["deterministic"] = clock.det
+    out["wall_capped"] = clock.wall_capped
     # every row left exactly as drafted because nothing legal could replace
     # it: set aside as infeasible, or in a part with no legal week found
     kept = {i for e in out["infeasible"] for i in e["rows"]}
@@ -2619,7 +2684,7 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
     return out
 
 
-def _first_failures(prob, deadline, attempt) -> dict:
+def _first_failures(prob, deadline, attempt, clock=None) -> dict:
     """{unit id: why} to keep as drafted so the rest of the week can be
     solved. For each component a quick look cannot staff: when the draft
     already overcommits somebody there (their hours, rest or days in a row
@@ -2628,9 +2693,10 @@ def _first_failures(prob, deadline, attempt) -> dict:
     nothing legal exists, the units it emptied most often. {} when every
     component has a legal week or nothing more can be said."""
     out = {}
-    search = _Search(prob, deadline)
+    search = _Search(prob, deadline, clock)
+    clock = search.clock
     for comp in prob.components:
-        now = _time.monotonic()
+        now = clock.now()
         budget = min(deadline - now, RELAX_PROBE_SECONDS)
         if budget <= 0:
             break
@@ -2735,7 +2801,7 @@ def _soft_repaired(rows, constraints, viols=None) -> set:
 
 
 def improve(rows, inputs=None, signals=None, weights=None, constraints=None, only_dates=None,
-            max_seconds=DEFAULT_SECONDS, min_gain=MIN_GAIN, hours_budget=None) -> dict:
+            max_seconds=DEFAULT_SECONDS, min_gain=MIN_GAIN, hours_budget=None, wall_cap=None) -> dict:
     """Solve the draft's assignment and keep the answer only when it is
     worth more to the owner: Shift Quality higher (each candidate scored
     with the rows that will not stand and the hard breaches of ITS rows;
@@ -2813,16 +2879,19 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     def value(q, rs):
         return _opt.week_value(q, rs, pricing, base_dollars, likely)
     # The judge needs about a second per candidate on a big week; the search
-    # gets what is left of the budget.
+    # gets the rest of the budget — a work budget, fixed by the inputs, never
+    # what the wall clock left of it (ARCH-26); `wall_cap` is the emergency.
     judge_reserve = min(max_seconds * 0.25, 0.25 + 0.004 * len(base) * JUDGE_CANDIDATES)
     solved = solve(base, constraints, signals=signals, weights=weights, profiles=profiles, only_dates=only_dates,
-                   max_seconds=max(0.1, max_seconds - (_time.monotonic() - t0) - judge_reserve),
+                   max_seconds=max(0.1, max_seconds - judge_reserve),
+                   wall_cap=(max(0.1, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None),
                    roster_roles=inputs.get("roster_roles") or signals.get("roster_roles"),
                    pending=inputs.get("pending_time_off") or getattr(constraints, "pending_off", None))
     prob = solved.pop("problem", None)
-    stats = {k: solved[k] for k in ("status", "proved_optimal", "seconds", "slots", "rows_in", "people",
-                                    "components", "components_proved", "nodes", "cost", "draft_cost",
-                                    "infeasible", "notes", "optimal_for")}
+    stats = {k: solved.get(k) for k in ("status", "proved_optimal", "seconds", "slots", "rows_in", "people",
+                                        "components", "components_proved", "nodes", "cost", "draft_cost",
+                                        "infeasible", "notes", "optimal_for", "work", "deterministic",
+                                        "wall_capped")}
     out["stats"] = stats
     before_soft = _soft_repaired(base, constraints, before_viols)
     base_val = value(before_q, base)

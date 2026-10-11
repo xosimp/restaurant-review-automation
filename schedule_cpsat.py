@@ -1001,7 +1001,7 @@ class _Model:
                 self.m.add_hint(self.x[(u.id, p)], 1 if p == want else 0)
 
 
-def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None):
+def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None, wall_cap=None):
     s = _cp.CpSolver()
     det = DETERMINISTIC if deterministic is None else deterministic
     secs = max(0.2, float(max_seconds))
@@ -1009,19 +1009,37 @@ def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None):
     s.parameters.num_workers = int(workers or WORKERS)
     if det:
         # Same inputs, same week: a deterministic work budget instead of the
-        # wall clock, workers interleaved in a fixed order (the wall-clock
-        # bound stays as a backstop for a slow box).
+        # wall clock, workers interleaved in a fixed order. The wall clock is
+        # only the emergency cap — 4x the budget, or `wall_cap` (what the
+        # repair loop has left) when that is less (scheduler audit 10/10/26
+        # ARCH-26); _wall_capped says when it, not the budget, ended a solve.
         s.parameters.interleave_search = s.parameters.num_workers > 1
         s.parameters.max_deterministic_time = secs
-        s.parameters.max_time_in_seconds = secs * 4
+        cap = secs * 4
+        if wall_cap:
+            cap = min(cap, max(0.2, float(wall_cap)))
+        s.parameters.max_time_in_seconds = cap
     else:
         s.parameters.max_time_in_seconds = secs
     return s
 
 
+def _wall_capped(solver, status) -> bool:
+    """Whether the wall clock (the emergency cap), not the deterministic work
+    budget, ended a solve that did not prove its answer optimal."""
+    if status == _cp.OPTIMAL or not solver.parameters.max_deterministic_time:
+        return False
+    try:
+        det = float(solver.response_proto.deterministic_time)
+    except Exception:
+        return False
+    return det < 0.95 * float(solver.parameters.max_deterministic_time) and \
+        float(solver.wall_time) >= 0.95 * float(solver.parameters.max_time_in_seconds)
+
+
 def assign(rows, constraints, signals=None, weights=None, profiles=None, only_dates=None, last_week=None,
            max_seconds=None, seed=SEED, workers=None, mode="draft", budget_dollars=None, roster_roles=None,
-           pending=None, deterministic=None, reasons=True, explain=True) -> dict:
+           pending=None, deterministic=None, reasons=True, explain=True, wall_cap=None) -> dict:
     """Solve who works each of `rows` (a row with no employee is a slot to
     staff; a pinned or locked row is kept; with `only_dates` every other
     date is kept) — the whole week as one model.
@@ -1077,9 +1095,13 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
         for i in range(len(mdl.m.proto.variables)):
             v = mdl.m.get_int_var_from_proto_index(i)
             mdl.m.add_hint(v, first.value(v))
-    solver = _solver_for(max(0.2, max_seconds - (_time.monotonic() - t0)), seed=seed, workers=workers,
-                         deterministic=deterministic)
+    # The whole deterministic budget, whatever building the model took on the
+    # wall clock (ARCH-26: the same inputs, the same week); what the wall
+    # clock has left is only the emergency cap.
+    solver = _solver_for(max_seconds, seed=seed, workers=workers, deterministic=deterministic,
+                         wall_cap=(max(0.2, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None))
     st = solver.solve(mdl.m)
+    out["wall_capped"] = _wall_capped(solver, st)
     name = solver.status_name(st)
     out["seconds"] = round(_time.monotonic() - t0, 3)
     out["solve_seconds"] = round(solver.wall_time, 3)
@@ -1707,7 +1729,7 @@ def _stime_hours(row, c):
 # ── the repair loop's stage (replaces schedule_solver.improve when it can) ──
 
 def improve(rows, inputs=None, signals=None, weights=None, constraints=None, only_dates=None,
-            max_seconds=None, min_gain=0.0, hours_budget=None, last_week=None) -> dict:
+            max_seconds=None, min_gain=0.0, hours_budget=None, last_week=None, wall_cap=None) -> dict:
     """schedule_solver.improve's contract, solved with CP-SAT over the joint
     objective (LOGIC-19: the objective is the model's separable costs, never
     the Shift Quality score — the score is computed for the owner's report
@@ -1724,7 +1746,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     if not available() or constraints is None:
         res = _solver.improve(rows, inputs, signals=signals, weights=weights, constraints=constraints,
                               only_dates=only_dates, max_seconds=max_seconds or _solver.DEFAULT_SECONDS,
-                              hours_budget=hours_budget)
+                              hours_budget=hours_budget, wall_cap=wall_cap)
         res.setdefault("stats", {})["engine"] = "backtracking"
         return res
     secs = float(max_seconds or DEFAULT_SECONDS)
@@ -1733,17 +1755,20 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
                     max_seconds=secs, mode="improve", budget_dollars=inputs.get("labor_budget_dollars"),
                     roster_roles=inputs.get("roster_roles") or signals.get("roster_roles"),
                     pending=inputs.get("pending_time_off") or getattr(constraints, "pending_off", None),
-                    explain=False)
+                    explain=False, wall_cap=wall_cap)
     if solved["status"] not in ("optimal", "time_limit"):
-        left = max(0.5, secs - (_time.monotonic() - t0))
+        # The backtracking fallback on its own work budget (WorkClock); the
+        # wall clock still left is its emergency cap (ARCH-26).
         res = _solver.improve(rows, inputs, signals=signals, weights=weights, constraints=constraints,
-                              only_dates=only_dates, max_seconds=left, hours_budget=hours_budget)
+                              only_dates=only_dates, max_seconds=_solver.DEFAULT_SECONDS, hours_budget=hours_budget,
+                              wall_cap=(max(0.5, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None))
         res.setdefault("stats", {})["engine"] = "backtracking"
         res["stats"]["cpsat_status"] = solved["status"]
         return res
     prob, mdl = solved.get("problem"), solved.get("model")
     draft_cost = _draft_objective(mdl, prob)
     stats = {"engine": "cp-sat", "status": solved["status"], "proved_optimal": solved["proved_optimal"],
+             "wall_capped": bool(solved.get("wall_capped")),
              "seconds": solved["seconds"], "slots": solved.get("slots"), "people": solved.get("people"),
              "cost": solved["objective"], "draft_cost": draft_cost, "bound": solved["bound"],
              "terms": solved["terms"], "infeasible": solved["kept_as_drafted"][:10], "notes": solved["notes"],

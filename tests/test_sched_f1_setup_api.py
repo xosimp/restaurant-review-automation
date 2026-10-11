@@ -298,4 +298,4 @@ def test_the_review_names_the_setup_a_week_was_drafted_against():
     assert "No close time for Monday, Tuesday, Wednesday, Thursday and Sunday" in " ".join(out["lines"])
     assert "Erik is scheduled as an owner — no overtime line, up to 55h a week" in " ".join(out["lines"])
     import inspect
-    assert "setup_review(" in inspect.getsource(schedule_engine._run_schedule_job)
+    assert "setup_review(" in inspect.getsource(__import__("schedule_job"))

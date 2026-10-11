@@ -784,7 +784,7 @@ def test_a_redo_plans_its_days_against_the_kept_ones_and_keeps_their_rows(db, mo
     seen = {}
     c = _c(roster_names=["Erik", "Ana"], active={"erik", "ana"}, managers={"erik": "Owner"})
 
-    def build(r, week_start=None, focus=None, dates=None, prior_rows=None):
+    def build(r, week_start=None, focus=None, dates=None, prior_rows=None, **_kw):
         seen.update(dates=dates, prior_rows=prior_rows)
         plan = sk.plan_manager_coverage(c, dates, prior_rows=prior_rows)
         lines, _ = sk.merge_pinned_lines(["2026-10-06,Tuesday,Ana,Server,4:00pm,10:00pm,6,"], plan["rows"])
@@ -792,6 +792,7 @@ def test_a_redo_plans_its_days_against_the_kept_ones_and_keeps_their_rows(db, mo
                 "week_days": DAYS, "summary": [], "hours_budget": 0, "daily_target_hours": {}, "labor_target": 30,
                 "blended_rate": 20.0, "roster": ["Erik", "Ana"], "manager_plan": plan}
     monkeypatch.setattr(se, "_build_schedule_result", build)
+    monkeypatch.setattr(se, "_redo_reads_as_rules", lambda *a, **k: False)      # the model's redo path
     done = {}
     monkeypatch.setattr(se._ops, "finish_async_job", lambda j, status, result: done.update(status=status, result=result))
     se._run_schedule_job("skeleton-redo", rid, dates=["2026-10-06"], base_history_id=base)

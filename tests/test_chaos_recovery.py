@@ -208,7 +208,7 @@ def test_dropped_schedule_rows_are_counted_and_surfaced():
     """A garbled response produced a SHORT schedule that looked complete."""
     import inspect
     import client_api
-    src = inspect.getsource(client_api._run_schedule_job)
+    src = inspect.getsource(__import__("schedule_job"))
     assert "_dropped_rows.append" in src, "malformed rows are silently skipped again"
     assert "dropped_rows=len(_dropped_rows)" in src, "the count never reaches the client"
     assert 'job="schedule_generate"' in src, "the count never reaches engineering"

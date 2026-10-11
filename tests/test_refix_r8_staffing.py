@@ -232,7 +232,7 @@ def test_publish_and_the_draft_wire_the_loop():
     import schedule_publish
     import schedule_engine
     assert "_stsig_pub.record_published(rid, schedule_id" in inspect.getsource(schedule_publish)
-    assert "_stsig_ap.present_requirements(restaurant_id" in inspect.getsource(schedule_engine)
+    assert "_stsig_ap.present_requirements(rid" in inspect.getsource(__import__("schedule_job"))
     import rec_learning
     assert rec_learning.SURFACE_EXTRA_KINDS["review_diagnosis"] == ("staff_add",)
     assert rec_ledger.KIND_TOPIC["staff_add"] == "staffing"

@@ -217,6 +217,8 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `SCHEDULE_CPSAT_SECONDS` | `20` | The CP-SAT assignment's budget per solve (`schedule_cpsat`, scheduler audit 10/10/26 RM-11) — a deterministic work budget when `SCHEDULE_CPSAT_DETERMINISTIC` is on, with four times it as the wall-clock backstop. | schedule_cpsat.py |
 | `SCHEDULE_CPSAT_WORKERS` | `4` | CP-SAT's search workers (its C++ search releases the GIL; Railway runs 1 gunicorn worker × 4 threads). | schedule_cpsat.py |
 | `SCHEDULE_CPSAT_DETERMINISTIC` | `1` | `1`: a fixed seed, interleaved workers and a deterministic budget — same inputs, same week. `0`: the wall clock bounds the search (faster to a first answer, not reproducible). | schedule_cpsat.py |
+| `SCHEDULE_SOLVER_WORK_PER_SECOND` | `8000000` | The backtracking solver's work budget rate (`schedule_solver.WorkClock`, scheduler fix round 10/10/26 ARCH-26): search nodes, placements, scans and LNS rounds counted as work, this many to one budget second — the same draft gives the same week whatever the box's load. Calibrated on synthetic weeks (8–9M units/s of search on this hardware). | schedule_solver.py |
+| `SCHEDULE_SOLVER_DETERMINISTIC` | `1` | `1`: the backtracking solver's budget is work (above), the wall clock only its emergency cap (`wall_capped` reported). `0`: the wall clock is its budget again (not reproducible under load). | schedule_solver.py |
 | `SCHEDULE_ASSIGN_ENGINE` | `cpsat` | Who re-solves the assignment in the repair loop's solver stage: `cpsat` (`schedule_cpsat.improve`) or `backtracking` (`schedule_solver.improve`, also the fallback). | schedule_engine.py |
 | `SCHEDULE_SOLVER_DRAFT_SECONDS` | `25` | The solver-first draft's budget inside a generation (shapes then people), held to the job's clock. | schedule_engine.py |
 | `SCHEDULE_RESOLVE_SECONDS` | `6` | The Studio's and Ask's re-solve of chosen days (MARKET-13). | schedule_cpsat.py |
@@ -400,6 +402,8 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
 | `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
 | `SCHEDULE_PARALLEL_CALLS` | `"3"` | schedule_engine.py |
+| `SCHEDULE_CALL_POOL_WORKERS` | `SCHEDULE_GEN_WORKERS x SCHEDULE_PARALLEL_CALLS` | schedule_engine.py |
+| `SCHEDULE_SLIM_REDO` | `"1"` | schedule_prompt.py — a model redo (an owner's redo the code could not draft, the quality gate's rewrite) is sent the redone dates and the seam only (AI-28); `0` sends the whole week's context again |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
 | `STUDIO_CACHE_BUDGET_ROWS` | `"20000"` | schedule_engine.py |
 | `STUDIO_CACHE_PER_RESTAURANT` | `"3"` | schedule_engine.py |

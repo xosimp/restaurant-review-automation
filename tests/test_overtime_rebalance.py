@@ -91,7 +91,7 @@ def test_the_engine_runs_it_in_its_rank_and_reports_each_move():
     assert schedule_engine._STAGE_TIER["overtime"] == sr.TIER_OVERTIME
     src = inspect.getsource(schedule_engine._stage_overtime)
     assert "\"kind\": m.get(\"kind\") or \"overtime\"" in src and "out[\"trims\"]" in src
-    assert "_fixes = list(_loop[\"fixes\"])" in inspect.getsource(schedule_engine._run_schedule_job)
+    assert "_fixes = list(_loop[\"fixes\"])" in inspect.getsource(__import__("schedule_job"))
 
 
 def test_the_prompt_says_overtime_is_a_cost_the_owner_does_not_want():
@@ -108,10 +108,10 @@ def test_the_week_is_priced_on_its_final_rows_before_the_review():
     import schedule_engine
     # Priced once, on the rows that are saved: after the repair loop (no row
     # changes after the sweep, P-11) and before the review states its cost.
-    src = inspect.getsource(schedule_engine._run_schedule_job)
-    assert src.count("_price_week(preview_rows)") == 1
-    assert src.index("repair_week(") < src.index("_price_week(preview_rows)") < \
-        src.index("result[\"review\"] = _rules.summarize(_viols)")
+    src = inspect.getsource(__import__("schedule_job"))
+    assert src.count("_price_week(cand, ctx, preview_rows)") == 1
+    assert src.index("repair_week(") < src.index("_price_week(cand, ctx, preview_rows)") < \
+        src.index("result[\"review\"] = se._rules.summarize(_viols)")
 
 
 def test_a_night_nobody_closes_keeps_a_keyholder_on_to_close():

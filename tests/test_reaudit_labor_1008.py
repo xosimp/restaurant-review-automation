@@ -346,23 +346,109 @@ def test_another_restaurants_run_cannot_be_stopped(db, monkeypatch):
     assert ops.job_still_pending("their-run")
 
 
-def test_a_stopped_run_starts_no_further_model_call(monkeypatch):
+def test_a_stopped_run_starts_no_further_model_call(db, monkeypatch):
+    """Behavioural (scheduler fix round 10/10/26, C2): the owner presses Stop
+    while the first model call of a run is out. No further paid call starts
+    — not the week's next slice, not the quality gate's rewrite, not the
+    finished week's note — nothing is saved, and the job says "Stopped"."""
+    import labor
+    import schedule_job
+    import schedule_narrative
+    import owner_rules
+    # The clock reads the owner's Stop and a poll's verdict from the job row.
     clock = se.GenerationClock(job_id="x")
-    monkeypatch.setattr(ops, "job_still_pending", lambda j: False)
-    assert clock.stopped() is True
-    monkeypatch.setattr(ops, "job_still_pending", lambda j: True)
-    assert clock.stopped() is False
+    with monkeypatch.context() as m:
+        m.setattr(ops, "job_still_pending", lambda j: False)
+        assert clock.stopped() is True
+        m.setattr(ops, "job_still_pending", lambda j: True)
+        assert clock.stopped() is False
     assert se.GenerationClock(job_id=None).stopped() is False
-    src = open(se.__file__).read()
-    loop = src[src.index("        # Stopped by the owner (10/9/26)"):]
-    # The calls go out through _dispatch_calls (scheduler audit 10/10/26
-    # AI-4: a batch's independent calls in parallel); every planned call of
-    # the batch is checked against the stop before any is dispatched.
-    assert loop.index("raise ScheduleStopped(STOPPED_MESSAGE)") < loop.index("_dispatch_calls(ready")
-    # The model calls made outside the loop are checked too (integration
-    # round 10/10/26): the owner's words read into typed rules at the start,
-    # and the finished week's note at the end.
-    build = src[src.index("def _build_schedule_result("):]
-    assert build.index("_raise_if_stopped(current_clock())") < build.index("_owr.prepare(")
-    job = src[src.index("def _run_schedule_job("):]
-    assert job.index("_raise_if_stopped(clock, owner_only=True)") < job.index("_snar.write(")
+
+    WEEK = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"]
+
+    class _Clock(se.GenerationClock):
+        def __init__(self):
+            super().__init__(job_id=None)
+            self.stop = False
+
+        def stopped(self):
+            return self.stop
+
+        def stop_requested(self):
+            return self.stop
+
+    def _rows(dates):
+        return [{"date": d, "day": se._date_of(d).strftime("%A"), "employee": "Ana", "role": "Server",
+                 "shift_start": "11:00am", "shift_end": "3:00pm", "scheduled_hours": "4", "notes": ""}
+                for d in dates]
+
+    # 1. Inside one draft: a week planned as two calls, one at a time. The
+    #    Stop lands during the first; the second is never sent.
+    monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
+    monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)
+    c1, sent = _Clock(), []
+
+    def gen(analysis, shifts, week_slice=None, prior_rows=None, **kw):
+        sent.append(list(week_slice or WEEK))
+        c1.stop = True                                   # the owner presses Stop while this call is out
+        dates = list(week_slice or WEEK)
+        return {"schedule_csv": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+                + "\n".join(",".join(r[k] for k in se._ANSWER_COLS) for r in _rows(dates)),
+                "narrative": [], "complete_dates": dates, "generation_seconds": 0.1}
+    monkeypatch.setattr(labor, "generate_optimized_schedule", gen)
+    token = se._CLOCK.set(c1)
+    try:
+        with pytest.raises(se.ScheduleStopped):
+            se._generate_in_parts({}, [], [("Ana", "Server")], {"week_start": WEEK[0], "restaurant_id": None,
+                                                                "roster": [("Ana", "Server")]})
+    finally:
+        se._CLOCK.reset(token)
+    assert len(sent) == 1, "a slice was sent after the Stop"
+
+    # 2. Before the draft: the owner's words are a model call (owner_rules),
+    #    and a run already stopped never makes it.
+    read = []
+    monkeypatch.setattr(owner_rules, "prepare", lambda *a, **k: read.append(1) or {"instruction": []})
+    c2 = _Clock()
+    c2.stop = True
+    token = se._CLOCK.set(c2)
+    try:
+        with pytest.raises(se.ScheduleStopped):
+            se._build_schedule_result(_rid(db), week_start=WEEK[0], instruction="Maria closes Friday")
+    finally:
+        se._CLOCK.reset(token)
+    assert read == []
+
+    # 3. The whole job: the Stop lands during the week's model call, with the
+    #    quality gate wanting a rewrite. Neither the rewrite nor the note is
+    #    paid for, and nothing is saved.
+    c3 = _Clock()
+    calls, notes = [], []
+
+    def week(r, **kw):
+        calls.append(kw)
+        c3.stop = True                                   # pressed while the week's call was out
+        return {"ok": True, "rows": _rows(WEEK), "week_dates": WEEK,
+                "schedule_csv": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+                + "\n".join(",".join(x[k] for k in se._ANSWER_COLS) for x in _rows(WEEK)),
+                "week_days": [se._date_of(d).strftime("%A") for d in WEEK], "summary": [], "hours_budget": 0,
+                "daily_target_hours": {}, "labor_target": 30, "unwritten_dates": [], "closed_dates": [],
+                "narrative": []}
+    monkeypatch.setattr(se, "_build_schedule_result", week)
+    monkeypatch.setattr(se, "_quality_gate", lambda result: {"dates": [WEEK[5]], "focus": ["short"],
+                                                             "reason": "a hole", "kinds": ["coverage"]})
+    monkeypatch.setattr(schedule_narrative, "write", lambda *a, **k: notes.append(1))
+    saved, finished = [], {}
+    monkeypatch.setattr(se, "_save_durably", lambda *a, **k: saved.append(1) or 1)
+    monkeypatch.setattr(se._ops, "finish_async_job", lambda j, s, r: finished.update(status=s, result=r))
+    monkeypatch.setattr(se._ops, "job_still_pending", lambda j: True)
+    monkeypatch.setattr(se._ops, "job_stop_state", lambda j: "stopped" if c3.stop else "running")
+    token = se._CLOCK.set(c3)
+    try:
+        se._run_schedule_job("stop-job", _rid(db))
+    finally:
+        se._CLOCK.reset(token)
+    assert len(calls) == 1 and notes == [] and saved == []
+    assert finished["status"] == "error" and finished["result"]["error"] == se.STOPPED_MESSAGE
+    # And the job never re-enters itself to get there (ARCH-16).
+    assert schedule_job.GATE_ATTEMPTS == ("fill", "rewrite")

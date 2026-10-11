@@ -1314,8 +1314,24 @@ def test_a_gate_the_fill_settles_makes_no_second_model_call(db, monkeypatch):
     assert res["redo"]["by"] == "gate" and res["redo"]["dates"] == [WEEK[5]]
     assert res["slices"] == []                   # nothing the model wrote in this pass
     assert events == [("gate_filled_in_code", 1)]
-    # The filled draft is the one in force, saved over the draft it read.
-    assert len(_rid_of(None, db)) == 2 and res["history_id"] == _rid_of(None, db)[-1]
+    # The filled draft is the one in force — and the only one saved: the
+    # gate's passes are held in memory and the winner saved once (scheduler
+    # audit 10/10/26 ARCH-17); the draft it filled was never a saved draft.
+    assert _rid_of(None, db) == [res["history_id"]]
+    assert res["redo"]["base_history_id"] is None
+
+
+def _rewrites_from(monkeypatch):
+    """Which pass each gate rewrite was written over (schedule_job's
+    candidate in force: the week's first draft, or the gate's fill)."""
+    import schedule_job
+    real, seen = schedule_job._gate_rewrite, []
+
+    def spy(job, gate, in_force, **k):
+        seen.append(in_force.cand.spec.kind)
+        return real(job, gate, in_force, **k)
+    monkeypatch.setattr(schedule_job, "_gate_rewrite", spy)
+    return seen
 
 
 def test_a_fill_that_is_no_better_goes_to_the_model_from_the_draft(db, monkeypatch):
@@ -1324,13 +1340,15 @@ def test_a_fill_that_is_no_better_goes_to_the_model_from_the_draft(db, monkeypat
     _searches_skipped_for_time(monkeypatch)
     monkeypatch.setattr(se, "_gate_local", lambda quality, dates: 50.0 if "Bo" in json.dumps(quality) else 10.0)
     events = _gate_events(monkeypatch)
+    over = _rewrites_from(monkeypatch)
     se._run_schedule_job("gate-fill-model", rid)
     assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
-    first = _rid_of(None, db)[0]
     res = finished["result"]
     assert res["gate"]["kept"] == "regenerated"
-    # The rewrite was written over the original draft (the fill was set aside).
-    assert res["redo"]["base_history_id"] == first
+    # The rewrite was written over the original draft (the fill was set
+    # aside), and only the winner was ever saved (ARCH-17).
+    assert over == ["week"]
+    assert _rid_of(None, db) == [res["history_id"]]
     assert events == [("gate_model_rewrite", 1)]
 
 
@@ -1345,12 +1363,13 @@ def test_a_fill_that_helps_but_leaves_the_breach_is_rewritten_from_the_fill(db, 
     monkeypatch.setattr(se, "_gate_keeps", lambda *a: (True, "score"))
     finished = {}
     monkeypatch.setattr(se._ops, "finish_async_job", lambda j, st, r: finished.update(status=st, result=r))
+    over = _rewrites_from(monkeypatch)
     se._run_schedule_job("gate-fill-then-model", rid)
     assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
-    ids = _rid_of(None, db)
-    assert len(ids) == 3
-    # The model's rewrite read the filled draft, not the first one.
-    assert finished["result"]["redo"]["base_history_id"] == ids[1]
+    # The model's rewrite read the filled draft, not the first one — held in
+    # memory, and one draft saved for the three passes (ARCH-17).
+    assert over == ["gate_fill"]
+    assert _rid_of(None, db) == [finished["result"]["history_id"]]
 
 
 # ── re-audit 10/7/26 #3: the fill only when it can help, and never at the rewrite's cost ──
@@ -1378,7 +1397,7 @@ def test_after_a_repair_that_converged_the_gate_goes_straight_to_the_rewrite(db,
     assert [c["slice"] for c in calls] == [None, [WEEK[5]]]
     assert events == [("gate_model_rewrite", 1)]                             # no fill in code was run
     ids = _rid_of(None, db)
-    assert len(ids) == 2                                                     # the draft and the rewrite only
+    assert len(ids) == 1                                                     # the winner only (ARCH-17)
     assert finished["status"] == "done"
 
 
