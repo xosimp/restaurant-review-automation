@@ -328,6 +328,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `AI_TRACE_SCHEDULE_PROMPT_CHARS` | `"400000"` | ai_utils.py |
 | `AI_TRIAL_DAILY_BUDGET_USD` | `"5"` | ai_utils.py |
 | `AI_TRIAL_MONTHLY_BUDGET_USD` | `"50"` | ai_utils.py |
+| `AI_TRIAL_SCHEDULE_DAILY_USD` | `"0"` (then the runs floor below) | ai_utils.py — a trial's own daily allowance for the schedule's calls (`SCHEDULE_ACTIONS`), apart from its $5 day (re-audit 10/11/26 AI-20) |
+| `AI_TRIAL_SCHEDULE_RUNS` | `"2"` | ai_utils.py — the trial schedule allowance is never below this many `labor_schedule` run caps ($6 each); 0: the schedule shares the trial's day |
+| `AI_BUDGET_FORECAST_MIN_DAYS` | `"3"` | ai_utils.py — days into the month before its spend is projected; the platform pool pages once a month when the projection passes its ceiling (AI-19) |
 | `AI_TRIAL_POOL_DAILY_USD` | `"50"` | ai_utils.py |
 | `AI_TRIAL_POOL_MONTHLY_USD` | `"500"` | ai_utils.py |
 | `AI_UNPAID_DAILY_BUDGET_USD` | `"2"` | ai_utils.py |
@@ -404,6 +407,8 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
 | `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
 | `SCHEDULE_PARALLEL_CALLS` | `"3"` | schedule_engine.py |
+| `SCHEDULE_PARALLEL_SPLIT_ROWS` | `"600"` | schedule_engine.py — a week an owner waits for past this many rows is written in parallel department parts (AI-21); `0` off |
+| `SCHEDULE_REFUSAL_FALLBACK` | — (off) | labor.py — `1` sends the synchronous schedule call with the server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`; never in a batch). Turn on only after one live call confirms the beta is accepted on the account (AI-30) |
 | `SCHEDULE_CALL_POOL_WORKERS` | `SCHEDULE_GEN_WORKERS x SCHEDULE_PARALLEL_CALLS` | schedule_engine.py |
 | `SCHEDULE_SLIM_REDO` | `"1"` | schedule_prompt.py — a model redo (an owner's redo the code could not draft, the quality gate's rewrite) is sent the redone dates and the seam only (AI-28); `0` sends the whole week's context again |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |

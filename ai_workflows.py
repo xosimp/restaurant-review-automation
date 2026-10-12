@@ -50,7 +50,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-10.1"
+POLICY_VERSION = "2026-10-11.1"   # schedule_critic caps (re-audit 10/11/26 AI-18)
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
