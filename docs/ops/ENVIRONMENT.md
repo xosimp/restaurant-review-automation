@@ -160,10 +160,16 @@ Defaults change nothing in production: the queue is consumed in the web process,
 
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
-| `JOB_QUEUE` | `"1"` | `0` turns the durable job queue off: generations run on the old in-process pool, the auto-draft and the learners inline in the scheduler thread (the rollback switch). | job_queue.py |
-| `QUEUE_WORKER` | — | `1`: `worker.py` (a second process in the same service) consumes the queue and the web process only enqueues — unless no worker has beaten its heartbeat for `QUEUE_WORKER_STALE_SECONDS`. Unset: the web process consumes its own queue. | job_queue.py, worker.py |
+| `JOB_QUEUE` | — | Retired (blind re-audit 10/11/26 ARCH-10): the queue is the one path; the in-process generation pool and the inline learners it switched back to are gone. Ignored if set. | — |
+| `QUEUE_WORKER` | `"1"` | Unset or `1` (the default since blind re-audit 10/11/26 SCALE-17): the queue worker process (`worker.py --queue`, started beside gunicorn by `gunicorn.conf.py`) consumes the queue and the web process only enqueues — unless no worker has beaten its heartbeat for `QUEUE_WORKER_STALE_SECONDS`, when it consumes after all. `0`: the web process consumes its own queue and no worker is started (the rollback). | job_queue.py, worker.py, gunicorn.conf.py |
+| `QUEUE_WORKER_PROCESS` | `"1"` | `0`: gunicorn's master starts no queue worker even in worker mode (a `worker.py` run some other way — the documented `sh -c` command — is the consumer). | job_queue.py, gunicorn.conf.py |
+| `QUEUE_WORKER_MAX_JOBS` | `"20"` | The queue worker process exits (and is started fresh) after this many rows — max-jobs-per-child, so a large generation's memory is returned. `0`: never. | worker.py |
+| `QUEUE_WORKER_MAX_RSS_MB` | `"1500"` | …or once its resident memory passes this. `0`: never. | worker.py |
+| `QUEUE_GENERATION_MAX_RUNNING`, `QUEUE_BULK_MAX_RUNNING` | 3× / 2× the group's CPU slots | Rows of the group in flight at once across every process — CPU work and model waits together (a row waiting on a model answer gives its CPU slot back: `job_queue.model_wait`); also a consumer's thread count for the group. Under `GATEWAY_ORG_OTPM`, never more streams than it carries. | job_queue.py |
+| `QUEUE_INTERACTIVE_RESERVED`, `QUEUE_SCHEDULED_RESERVED` | `"1"`, `"1"` | CPU slots of the generation group kept for owners' presses (always) and for the auto-draft (while drafts wait); each at most the slots less one. | job_queue.py |
+| `AUTO_DRAFT_SPREAD_MINUTES` | `"120"` | A restaurant's auto-draft row starts at its fixed place (a hash of its id) in this many minutes after the pass that queued it, so a timezone's drafts do not all become claimable at 6am. | strategy_jobs.py |
 | `QUEUE_WORKER_STALE_SECONDS` | `"90"` | A worker silent this long is gone: the web process consumes again. | job_queue.py |
-| `QUEUE_GENERATION_CONCURRENCY` | `SCHEDULE_GEN_WORKERS` (2) | Generations running at once across EVERY process (a count of claimed rows), held under what `GATEWAY_ORG_OTPM` can stream. | job_queue.py |
+| `QUEUE_GENERATION_CONCURRENCY` | `SCHEDULE_GEN_WORKERS` (2) | Generations doing CODE work at once across EVERY process (CPU slots, a count of claimed rows), held under what `GATEWAY_ORG_OTPM` can stream; a generation waiting on the model holds none (`QUEUE_GENERATION_MAX_RUNNING` bounds those). | job_queue.py |
 | `QUEUE_BULK_CONCURRENCY` | `"2"` | Learner rows running at once across every process. | job_queue.py |
 | `QUEUE_LEASE_SECONDS` | `"120"` | A claimed row's lease, renewed every quarter of it; a row whose lease ran out (its process died) is claimed again and resumed. | job_queue.py |
 | `QUEUE_POLL_SECONDS` | `"2"` | How often an idle worker looks for rows. | job_queue.py |

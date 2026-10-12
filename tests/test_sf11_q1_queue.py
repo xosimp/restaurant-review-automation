@@ -410,6 +410,58 @@ def _ok_handler(job):
     return {"ok": True}
 
 
+# ── SCALE-27: people_nightly reads once and writes only what moved ─────────
+
+def test_a_nightly_quarter_rollup_rewrites_nothing_that_did_not_move(db):
+    from datetime import date, timedelta
+    import shift_facts
+    (rid,) = _restaurants(None, 1)
+    rows = [{"date": (date(2026, 7, 1) + timedelta(days=i)).isoformat(), "day": "Monday", "employee": p,
+             "role": "Server", "shift_start": "16:00", "shift_end": "22:00", "scheduled_hours": "6",
+             "actual_hours": "6", "sales": "1000"} for i in range(20) for p in ("Ana B.", "Ben C.")]
+    shift_facts.ingest(rid, rows, "upload")
+    assert shift_facts.rollup_quarters(rid, today=date(2026, 9, 29)) == 2
+    _sql("UPDATE person_quarters SET updated_at='2000-01-01 00:00:00' WHERE restaurant_id=?", (rid,))
+    assert shift_facts.rollup_quarters(rid, today=date(2026, 9, 29)) == 2
+    stamps = {r[0] for r in _sql("SELECT updated_at FROM person_quarters WHERE restaurant_id=?", (rid,))}
+    assert stamps == {"2000-01-01 00:00:00"}, "unchanged quarters are not rewritten every night"
+    # A quarter that moved is.
+    shift_facts.ingest(rid, rows + [dict(rows[0], date="2026-08-30")], "upload")
+    shift_facts.rollup_quarters(rid, today=date(2026, 9, 29))
+    moved = _sql("SELECT employee_name FROM person_quarters WHERE restaurant_id=? "
+                 "AND updated_at<>'2000-01-01 00:00:00'", (rid,))
+    assert [r[0] for r in moved] == ["Ana B."]
+
+
+def test_identity_reads_the_restaurants_questions_and_organization_once(db):
+    import people
+    (rid,) = _restaurants(None, 1)
+    conn = people._conn()
+    reads = []
+
+    class Spy:
+        def execute(self, sql, *a):
+            if "FROM person_questions" in sql or "SELECT organization_id" in sql:
+                reads.append(sql)
+            return conn.execute(sql, *a)
+
+        def __getattr__(self, k):
+            return getattr(conn, k)
+    try:
+        spy = Spy()
+        idx = people._Index(spy, rid)
+        pids = [people._create_person(spy, idx, f"Kim Tran {c}", "test") for c in "ABCD"]
+        for a in pids:
+            for b in pids:
+                people._ask(spy, idx, a, b, "same_person", "a close spelling")
+        conn.commit()
+    finally:
+        conn.close()
+    assert sum("person_questions" in s for s in reads) == 1
+    assert sum("organization_id" in s for s in reads) == 1
+    assert len(_sql("SELECT id FROM person_questions WHERE restaurant_id=?", (rid,))) == 6
+
+
 def test_gunicorns_master_runs_the_queue_worker_beside_the_web_process():
     import importlib.util
     import os
