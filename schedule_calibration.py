@@ -392,6 +392,18 @@ def _anchor(stored, runs):
     return anchor
 
 
+def weights_without_promotions(restaurant_id, stored=None, db_path=None) -> dict:
+    """The weights in force with the automatic promotions taken back — the
+    owner's own (learning_v2's off week reads these, LEARNING-14)."""
+    import models
+    if stored is None:
+        stored = models.get_quality_weights(restaurant_id) or {}
+    try:
+        return dict(_anchor(stored, _runs(restaurant_id, db_path)))
+    except Exception:
+        return dict(stored or {})
+
+
 def shadow_run(restaurant_id, cohort=None, db_path=None) -> dict:
     """One restaurant's weekly calibration run (module doc). Returns {status
     (not_ready | no_new_data | shadow | pending | refuted | held |

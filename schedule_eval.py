@@ -435,6 +435,39 @@ def score_arm(rows, item, gate=True) -> dict:
     return out
 
 
+# ── the replay with nothing learned (blind re-audit 10/11/26 LEARNING-14) ──
+#
+# The same stored model answer through the production post-model path with
+# every learned input of the frozen context taken out (the memory's
+# enforced signals, reliability, learned preferences, retention, the edit
+# predictor's flags; the weights back to the defaults): what the learners
+# change in the week a manager is handed, on every frozen item, with no
+# customer exposure. Scored against the published week like every arm —
+# which was edited FROM the learning-on draft, so a closeness "gain" is
+# anchored toward learning (the ablation's flaw, LEARNING-13); read it as
+# influence and as hard breaches, quality and manager minutes. Whether
+# learning makes weeks better is the learning_v2 switchback's question,
+# judged on outcomes.
+
+NO_LEARNING_ARM = "production_no_learning"
+LEARNED_SIGNALS = ("learned", "reliability", "learned_preferences", "retention", "likely_edits")
+
+
+def without_learning(item) -> dict:
+    """A frozen item whose context carries no learned input (above)."""
+    import copy as _copy
+    out = dict(item)
+    ctx = dict(item.get("context") or {})
+    sig = dict(ctx.get("signals") or {})
+    for k in LEARNED_SIGNALS:
+        if k in sig:
+            sig[k] = [] if isinstance(sig[k], list) else {}
+    ctx["signals"] = sig
+    ctx["weights"] = None
+    out["context"] = _copy.copy(ctx)
+    return out
+
+
 # ── the code arms (AI-8): no model at all ──────────────────────────────────
 
 CODE_ARMS = ("carry_forward", "solver", "solver_v0")

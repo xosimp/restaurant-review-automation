@@ -3403,6 +3403,9 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
     the manager keeps ending up rather than being marked short against it.
     Never below zero; a role the history never ran is added only when the
     adjustment is positive."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return typical  # learning_v2's off week (LEARNING-14)
     out = {k: dict(v) for k, v in (typical or {}).items()}
     try:
         from schedule_learning import learned_headcount, headcount_to_apply

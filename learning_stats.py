@@ -40,9 +40,16 @@ Pure: no I/O, no app imports (L0).
                                     be peeked at every week (LEARNING-15)
   fleet_sample(ids, k, key)         a stratified sample across the fleet,
                                     rotated by `key` (LEARNING-23)
+  learning_off() / learning_scope() / switch_learning_off()
+                                    the generation-wide "no learned inputs"
+                                    switch the learning_v2 switchback's off
+                                    week sets (LEARNING-14): every learner's
+                                    read returns its neutral value under it
   ols(...)                          a small ridge-penalised least squares
                                     (calibration v2, LEARNING-8)
 """
+import contextlib
+import contextvars
 import hashlib
 import math
 
@@ -477,3 +484,39 @@ def ols(xs, ys, ridge=0.0, penalise=None) -> list:
         if penalise is None or i in penalise:
             a[i][i] += ridge
     return _solve(a, b)
+
+
+# ── the "no learned inputs" switch (blind re-audit 10/11/26 LEARNING-14) ──
+#
+# The learning ablation and learning_v1 switch off only the learned memory
+# (signals["learned"]); the prompt's learned lines, learned headcount,
+# measured staffing moves, driver standards, automatically promoted weights,
+# reliability, learned preferences, retention and the edit predictor stayed
+# on — nothing measured whether learning AS A WHOLE makes weeks better. A
+# generation whose learning_v2 arm is "off" runs inside learning_scope() with
+# switch_learning_off(): each learner's read checks learning_off() and
+# returns what it returns for a restaurant with no history.
+
+_LEARNING_OFF = contextvars.ContextVar("cavnar_learning_off", default=False)
+
+
+def learning_off() -> bool:
+    """Whether the current generation runs with every learned input off."""
+    return bool(_LEARNING_OFF.get())
+
+
+def switch_learning_off(off=True) -> None:
+    """Turn the learned inputs off (or on) for the rest of the current
+    learning_scope() — set where the week's arm is first known."""
+    _LEARNING_OFF.set(bool(off))
+
+
+@contextlib.contextmanager
+def learning_scope():
+    """One generation's extent: whatever switch_learning_off() set inside is
+    undone when it ends (a worker thread runs many generations)."""
+    token = _LEARNING_OFF.set(False)
+    try:
+        yield
+    finally:
+        _LEARNING_OFF.reset(token)

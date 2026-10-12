@@ -716,6 +716,9 @@ def moves(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     level they were measured above (schedule_requirements' `elasticity`
     applies the move only up to `target` and only on `weekdays`). Empty
     unless applies()."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     if not applies():
         return {}
     return {k: {"move": int(e.get("move") or 0), "target": int(e["target"]), "weekdays": list(e.get("weekdays") or []),
@@ -729,6 +732,9 @@ def marginal_values(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     sales value per hour of their shift, from the natural experiment (the
     solver objective's price of an hour there; contract for workstream F).
     Only fresh estimates whose sales net was read. Empty unless applies()."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     out = {}
     if not applies():
         return out

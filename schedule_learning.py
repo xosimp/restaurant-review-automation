@@ -1040,6 +1040,9 @@ def predict_edits(model: dict, rows: list, threshold=PREDICT_THRESHOLD, limit=PR
 
 def edit_predictor(restaurant_id, db_path=DB_PATH, weeks=None) -> dict:
     """The fitted model for this restaurant, or {ready: False, reason}."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {"ready": False, "reason": "nothing learned is used this week"}  # learning_v2's off week (LEARNING-14)
     weeks = prediction_weeks(restaurant_id, db_path=db_path) if weeks is None else weeks
     return fit_edit_model(weeks)
 

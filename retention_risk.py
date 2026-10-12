@@ -408,6 +408,9 @@ def protect_signal(restaurant_id, today=None, db_path=None) -> dict:
     """{name: {"protect": True, "avoid": [(weekday, daypart)]}} — the solver's
     'retention' signal: the people to protect and the slots they keep
     dropping."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     got = assess(restaurant_id, today=today, db_path=db_path)
     data_avoid = {}
     try:

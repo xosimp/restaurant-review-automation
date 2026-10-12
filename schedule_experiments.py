@@ -136,6 +136,25 @@ EXPERIMENTS = (
      "until_powered": "memory_on",
      "arms": ({"key": "memory_off", "label": "Learned memory off", "weight": 1, "flags": {"learned": False}},
               {"key": "memory_on", "label": "Learned memory on", "weight": 3, "flags": {"learned": True}})},
+    # Whether LEARNING AS A WHOLE makes weeks better (blind re-audit
+    # 10/11/26 LEARNING-14: learning_v1 and the ablation switch off only the
+    # learned memory). A small within-restaurant switchback: one week in
+    # eight with EVERY learned input off (learning_stats.learning_off — the
+    # prompt's learned lines, learned headcount, measured staffing moves,
+    # driver standards, promoted weights, reliability, learned preferences,
+    # retention, the edit predictor and the memory), judged on the outcome
+    # primaries. Until it can conclude every week keeps learning on (pinned,
+    # not counted).
+    {"key": "learning_v2",
+     "active": True,
+     "started": "2026-10-12",
+     "design": "switchback",
+     "question": "Do the learners, all of them together, make weeks better than drafting with nothing learned? "
+                 "(control: learning on, as every week runs today; the treatment switches every learned input off)",
+     "control": "learning_on",
+     "until_powered": "learning_on",
+     "arms": ({"key": "learning_off", "label": "Every learned input off", "weight": 1, "flags": {"learning": False}},
+              {"key": "learning_on", "label": "Learning on", "weight": 7, "flags": {"learning": True}})},
     # Where the draft comes from (scheduler audit 10/10/26 AI-1, AI-8,
     # AI-11; cross-workstream contract #7 — schedule_fallback): the model's
     # week, the last published week carried forward and repaired, or the
@@ -166,7 +185,7 @@ EXPERIMENTS = (
                "flags": {"draft_source": "solver", "critic": True}})},
 )
 # What a week gets from a flag no active experiment sets.
-DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model"}
+DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model", "learning": True}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
 
