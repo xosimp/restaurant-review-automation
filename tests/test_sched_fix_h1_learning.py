@@ -403,7 +403,10 @@ def test_a_standing_row_carries_its_evidence_and_a_confidence():
     _week(rid, mon, _crew(mon, WITHOUT_BOB), _crew(mon, WITHOUT_BOB))      # kept: an unedited week is a keep
     sv.refresh_standing_patterns(rid)
     row = next(s for s in sv.standing_patterns(rid) if s["kind"] == "moved_off")
-    assert row["opportunities"] == 3 and row["hits"] == 3 and 0 < row["confidence"] < 1
+    # A kept week is used (times_applied) but is not evidence: only the
+    # manager's hand counts (re-audit 10/11/26 LEARNING-9).
+    assert row["opportunities"] == 2 and row["hits"] == 2 and 0 < row["confidence"] < 1
+    assert row["times_applied"] >= 1
     assert row["last_hand_iso"] == (_monday(2) + timedelta(days=0)).isoformat()
 
 
@@ -968,7 +971,7 @@ def test_a_big_edit_in_the_first_weeks_asks_why(observed):
     assert _save(rid, hid, _crew(mon, WITHOUT_BOB) + [_row(mon, "Zed")])["why_questions"][0]["kind"] == "headcount_add"
 
 
-def test_no_why_after_the_first_four_weeks():
+def test_the_why_is_asked_on_the_first_change_after_the_first_four_weeks_too():
     rid = _rid()
     for w in (5, 4, 3, 2):
         mon = _monday(w)
@@ -976,7 +979,10 @@ def test_no_why_after_the_first_four_weeks():
     mon = _monday(-1)
     hid = _hist(rid, mon, _crew(mon, EVERYONE))
     _v(rid, hid, "generated", _crew(mon, EVERYONE), by="Cavnar AI", auth="system")
-    assert _save(rid, hid, _crew(mon, WITHOUT_BOB))["why_questions"] == []
+    # Asked from the first occurrence at any age (re-audit 10/11/26
+    # LEARNING-10): it used to wait for a repeat past the first four weeks.
+    q = _save(rid, hid, _crew(mon, WITHOUT_BOB))["why_questions"]
+    assert len(q) == 1 and q[0]["kind"] == "moved_off" and q[0]["repeat"] == 0
 
 
 def test_always_makes_a_standing_pattern_now_with_the_owners_authority(observed):
