@@ -1,0 +1,671 @@
+"""
+schedule_objective.py — one objective for a schedule week, in dollars
+(scheduler re-audit 10/11/26, cross-workstream contract #1; LOGIC-1,
+LOGIC-3, LOGIC-24, STRESS-1, LOGIC-5, STRESS-15, LOGIC-10).
+
+The solver's two stages (schedule_shapes: which shifts; schedule_cpsat: who
+works them) price a week from here, and the optimizer, the quality gate and
+Shift Quality's "cost" read the same function (P, wave 2), so a week is
+judged by ONE currency, not five objectives that disagree:
+
+  slot_value(ctx, date, minute, role)
+        what one person short for that half hour costs: the stated value of a
+        person-hour short at an average half hour (SHORT_PERSON_HOUR_USD)
+        x that half hour's demand weight (its share of the week's demand:
+        a busy Friday dinner far above a quiet Monday 3pm) x the role's
+        criticality (ROLE_CRITICALITY: a dishwasher or line cook at the rush
+        is not as droppable as a second host; the owner's own weights win,
+        then what the restaurant's history shows — a role it never runs
+        without is critical). The budget is priced against it: a dollar past
+        the hourly budget costs BUDGET_OVER_FACTOR dollars on top of the wage,
+        so where the budget binds the LOWEST-value half hours are cut first.
+  price_week(rows, ctx)
+        {"total", "parts": {labor, overtime, unfilled, budget_over,
+        stability, shape, fairness}, "by_slot": {...}, "rates": {...}} —
+        every figure in dollars at the rates stated in `rates`, never summed
+        with a measured or a projected value (CLAUDE.md "Value delivered").
+
+Hard rules — the law, the manager on the floor, locked rows, confirmed typed
+owner rules, the floors — are CONSTRAINTS in the solver, never prices here:
+nothing in this module lets money buy a breach of one.
+
+Every rate is stated inline below (the owner can be shown each). Pure: no
+database, no model, no clock; module-scope imports are stdlib and L0 only.
+"""
+from __future__ import annotations
+
+import math
+from collections import Counter, defaultdict
+from datetime import datetime
+
+import schedule_time as _stime
+
+SLOT = 30
+
+# ── the stated rates (dollars) ───────────────────────────────────────────
+# One person-hour short at the week's average half hour, for a role of
+# criticality 1.0: the sales and service lost (slower tables, a longer
+# ticket time, a walk-out) — about two-thirds of an average restaurant's
+# sales per labor hour. A half hour is half of it.
+SHORT_PERSON_HOUR_USD = 45.0
+# A dollar past the hourly labor budget costs this many dollars on top of
+# the wage itself (schedule_cpsat's BUDGET_OVER_FACTOR — one number).
+BUDGET_OVER_FACTOR = 3.0
+# One more shift: a handover, a clock-in, a trip in for somebody.
+SHIFT_OVERHEAD_USD = 12.0
+# A day in beyond somebody's usual days a week (their history, else
+# DEFAULT_DAYS_A_WEEK): 6 x 4h is not a part-timer's 4 x 6h.
+EXTRA_DAY_USD = 20.0
+DEFAULT_DAYS_A_WEEK = 5
+# Past the role's usual shift length (the restaurant's own median, else
+# DEFAULT_SHIFT_HOURS + 2): this x the hours past it, squared.
+LONG_SHIFT_USD = 6.0
+DEFAULT_SHIFT_HOURS = 6.0
+# A lunch-to-close double (a shift on the floor for both core windows)
+# where the restaurant's own history works almost none (DOUBLES_USUAL_SHARE).
+DOUBLE_USD = 60.0
+DOUBLES_USUAL_SHARE = 0.10
+# A person on a weekday and daypart they usually work (credit), and on a
+# weekday they almost never work (cost) — their own punches and published
+# weeks, USUAL_MIN_WEEKS of them at least.
+USUAL_SLOT_USD = 12.0
+OFF_USUAL_DAY_USD = 20.0
+USUAL_MIN_WEEKS = 3
+USUAL_SHARE = 0.5          # worked on at least this share of the weeks: usual
+RARE_SHARE = 0.15          # at most this share: a day they almost never work
+# Each hour under somebody's usual week past USUAL_HOURS_BAND of it.
+USUAL_HOURS_USD = 3.0
+USUAL_HOURS_BAND = 0.2
+# One shift kept as last published week had it (the same person on the same
+# weekday, role family, daypart and start within 30 minutes).
+STABILITY_USD = 15.0
+STABILITY_START_MINUTES = 30
+# A shift shape the restaurant's own history works on that weekday.
+HISTORY_PATTERN_USD = 6.0
+# Each close or weekend shift a person carries past an even share.
+FAIRNESS_USD = 4.0
+# Overtime pay over the line (shift_quality.OVERTIME_PREMIUM).
+OVERTIME_PREMIUM = 0.5
+# A half hour of demand nobody measured (prep before the doors, the close
+# after them): this demand weight.
+UNMEASURED_DEMAND_WEIGHT = 0.6
+DEMAND_WEIGHT_BOUNDS = (0.15, 5.0)
+
+# How hard a role is to run without, by family words (a family matches the
+# first entry whose word it contains). Owner weights (restaurants.
+# role_criticality_json) and the restaurant's own history move these.
+ROLE_CRITICALITY = (
+    ("manager", 2.0), ("chef", 1.5), ("cook", 1.5), ("kitchen", 1.5), ("line", 1.5), ("grill", 1.5),
+    ("fry", 1.5), ("saute", 1.5), ("prep", 1.2), ("dish", 1.4), ("porter", 1.2), ("steward", 1.2),
+    ("barista", 1.2), ("bar", 1.2), ("server", 1.1), ("waiter", 1.1), ("waitress", 1.1), ("cashier", 1.1),
+    ("counter", 1.1), ("expo", 1.0), ("host", 0.8), ("greeter", 0.8), ("bus", 0.8), ("runner", 0.8),
+)
+CRITICALITY_BOUNDS = (0.3, 3.0)
+# How far the restaurant's own record moves a role's default (0: not at all).
+LEARNED_CRITICALITY_SHARE = 0.5
+# Typical lead before the doors and stay after the close by family words,
+# where the restaurant's punches say nothing (LOGIC-11): cooks in an hour
+# before open, servers half an hour, the dish pit and the closers 45
+# minutes after the close.
+DEFAULT_LEAD_MINUTES = (("cook", 60), ("chef", 60), ("kitchen", 60), ("line", 60), ("prep", 90),
+                        ("barista", 30), ("server", 30), ("bar", 30))
+DEFAULT_STAY_MINUTES = (("dish", 45), ("porter", 45), ("steward", 45))
+CLOSER_STAY_MINUTES = 45
+MIN_SHIFT_MINUTES_DEFAULT = 180
+
+
+def _low(s) -> str:
+    return " ".join(str(s or "").strip().lower().split())
+
+
+def _family(role, families=None) -> str:
+    from shift_quality import role_family
+    return role_family(role, families)
+
+
+def _weekday(d) -> str:
+    try:
+        return datetime.strptime(str(d)[:10], "%Y-%m-%d").strftime("%A")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _by_words(table, fam, default=None):
+    f = _low(fam)
+    for word, v in table:
+        if word in f:
+            return v
+    return default
+
+
+def default_criticality(role) -> float:
+    """The stated weight of a role family (ROLE_CRITICALITY), 1.0 when its
+    words match none."""
+    return float(_by_words(ROLE_CRITICALITY, _family(role), 1.0))
+
+
+def default_lead(role) -> int:
+    """Minutes a role is typically in before the doors (DEFAULT_LEAD_MINUTES)."""
+    return int(_by_words(DEFAULT_LEAD_MINUTES, _family(role), 0) or 0)
+
+
+def default_stay(role, closer=False) -> int:
+    """Minutes a role typically stays after the close: the dish pit, and
+    any role's closer (CLOSER_STAY_MINUTES)."""
+    v = int(_by_words(DEFAULT_STAY_MINUTES, _family(role), 0) or 0)
+    return max(v, CLOSER_STAY_MINUTES if closer else 0)
+
+
+def min_shift_minutes(restaurant_or_constraints) -> int:
+    """The one minimum shift (contract #2, R): schedule_rules.min_shift_minutes
+    where it exists, else the restaurant's own min_shift_hours, else
+    MIN_SHIFT_MINUTES_DEFAULT."""
+    try:
+        import schedule_rules as _r
+        fn = getattr(_r, "min_shift_minutes", None)
+        if fn is not None:
+            return int(fn(restaurant_or_constraints))
+    except Exception:
+        pass
+    comp = getattr(restaurant_or_constraints, "compliance", None) or {}
+    try:
+        v = float(comp.get("min_shift_hours") or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    return int(round(v * 60)) if v > 0 else MIN_SHIFT_MINUTES_DEFAULT
+
+
+# ── what the history says ─────────────────────────────────────────────────
+
+def _span(row):
+    sp = _stime.span(row)
+    if not sp or sp[1] <= sp[0]:
+        return None
+    return sp
+
+
+def history_profile(rows, key=None, family=None, open_times=None, close_times=None) -> dict:
+    """What the restaurant's own shifts (punches and published weeks) say,
+    as the objective reads it:
+      people   {person key: {"weeks", "days": {weekday: share of weeks},
+                "parts": {(weekday, daypart): share}, "hours" (median week),
+                "days_per_week" (median), "doubles" (share of days worked as
+                a double)}}
+      families {family: {"median_minutes", "doubles_share", "present":
+                {(weekday, daypart): share of the weeks the family was on},
+                "lead" (median minutes in before the open, measured),
+                "stay" (median minutes the last of the role stays past the
+                close, measured)}}
+    `key` names a person (Constraints.key), `family` a role."""
+    key = key or _low
+    fam_of = family or _family
+    by_person_week = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    weeks_seen = set()
+    fam_len = defaultdict(list)
+    fam_days = defaultdict(lambda: defaultdict(list))       # fam -> date -> spans
+    for r in rows or []:
+        name = (r.get("employee") or "").strip()
+        sp = _span(r)
+        d = str(r.get("date") or "")[:10]
+        role = (r.get("role") or "").strip()
+        if not sp or not d or not role:
+            continue
+        try:
+            dt = datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            continue
+        wk = dt.isocalendar()[:2]
+        weeks_seen.add(wk)
+        fam = fam_of(role)
+        fam_len[fam].append(sp[1] - sp[0])
+        fam_days[fam][d].append(sp)
+        if name:
+            by_person_week[key(name)][wk][d].append((sp, fam))
+    n_weeks = max(1, len(weeks_seen))
+    people = {}
+    for k, weeks in by_person_week.items():
+        days, parts, hours, dpw, doubles, worked_days = Counter(), Counter(), [], [], 0, 0
+        for wk, ds in weeks.items():
+            wd_seen, part_seen = set(), set()
+            h = 0.0
+            for d, items in ds.items():
+                wd = _weekday(d)
+                wd_seen.add(wd)
+                spans = sorted(sp for sp, _f in items)
+                h += sum(e - s for s, e in spans) / 60.0
+                pres = set()
+                for s, e in spans:
+                    for p in _stime.span_dayparts((s, e)):
+                        pres.add(p)
+                for p in pres:
+                    part_seen.add((wd, p))
+                worked_days += 1
+                if len(spans) > 1 or {"morning", "night"} <= pres:
+                    doubles += 1
+            for wd in wd_seen:
+                days[wd] += 1
+            for x in part_seen:
+                parts[x] += 1
+            hours.append(h)
+            dpw.append(len(wd_seen))
+        w = max(1, len(weeks))
+        hours.sort()
+        dpw.sort()
+        people[k] = {"weeks": len(weeks), "days": {d: n / float(n_weeks) for d, n in days.items()},
+                     "parts": {x: n / float(n_weeks) for x, n in parts.items()},
+                     "hours": hours[len(hours) // 2] if hours else 0.0,
+                     "days_per_week": dpw[len(dpw) // 2] if dpw else 0,
+                     "doubles": doubles / float(max(1, worked_days)), "seen_weeks": w, "history_weeks": n_weeks}
+    families = {}
+    for fam, lens in fam_len.items():
+        lens.sort()
+        dbl = 0
+        tot = 0
+        present = Counter()
+        leads, stays = [], []
+        for d, spans in fam_days[fam].items():
+            wd = _weekday(d)
+            for s, e in spans:
+                tot += 1
+                if {"morning", "night"} <= set(_stime.span_dayparts((s, e))):
+                    dbl += 1
+            parts_here = {p for s, e in spans for p in _stime.span_dayparts((s, e))}
+            for p in parts_here:
+                present[(wd, p)] += 1
+            o = _stime.parse_minutes((open_times or {}).get(wd) or "")
+            cl = _stime.close_on_timeline(_stime.parse_minutes((close_times or {}).get(wd) or ""), o)
+            if o is not None:
+                leads.append(o - min(s for s, _e in spans))
+            if cl is not None:
+                stays.append(max(e for _s, e in spans) - cl)
+        leads.sort()
+        stays.sort()
+        families[fam] = {"median_minutes": lens[len(lens) // 2], "doubles_share": dbl / float(max(1, tot)),
+                         "present": {x: n / float(n_weeks) for x, n in present.items()},
+                         "lead": leads[len(leads) // 2] if len(leads) >= 3 else None,
+                         "stay": stays[len(stays) // 2] if len(stays) >= 3 else None,
+                         "days": len(fam_days[fam])}
+    return {"people": people, "families": families, "weeks": len(weeks_seen)}
+
+
+# ── the context ───────────────────────────────────────────────────────────
+
+class ObjectiveContext:
+    """Everything a week is priced against. Build with `build`; read with
+    slot_value / price_week and the helpers below."""
+
+    def __init__(self):
+        self.restaurant_id = None
+        self.week_dates = []
+        self.budget = None
+        self.last_week_rows = []
+        self.profile = {"people": {}, "families": {}, "weeks": 0}
+        self.dw = {}                       # (date, minute) -> demand weight
+        self.need = {}                     # (date, role lower) -> {minute: people}
+        self.crit_override = {}            # family -> weight (the owner's)
+        self.crit_cache = {}
+        self.rates = {}
+        self.person_rates = {}
+        self.blended = 15.0
+        self.ot_line = 40.0
+        self.salaried = set()
+        self.families = None
+        self.key = _low
+        self.value_per_hour = SHORT_PERSON_HOUR_USD
+
+    # ── building ──
+    @classmethod
+    def build(cls, restaurant_id, week_dates, *, budget=None, last_week_rows=None, usual=None,
+              requirements=None, demand_curve=None, history_rows=None, criticality=None, rates=None,
+              person_rates=None, blended_rate=None, ot_line=None, salaried=None, families=None,
+              constraints=None, value_per_hour=None, key=None, need=None):
+        """The week's pricing context. `requirements` (schedule_requirements
+        rows, their `half_need` and `factor`) give the need and — with
+        `demand_curve` ({weekday: {hour: share}}) when there is one — the
+        demand weights; `history_rows` the usual patterns (or `usual`, a
+        history_profile already read); `criticality` the owner's role weights
+        ({role or family: weight}); `constraints` fills what is not passed
+        (families, key, salaried, the owner's weights)."""
+        x = cls()
+        c = constraints
+        x.restaurant_id = restaurant_id
+        x.week_dates = sorted(week_dates or [])
+        try:
+            x.budget = float(budget) if budget else None
+        except (TypeError, ValueError):
+            x.budget = None
+        x.last_week_rows = list(last_week_rows or [])
+        x.families = families if families is not None else (getattr(c, "role_families", None) if c is not None else None)
+        x.key = key or (c.key if c is not None and hasattr(c, "key") else _low)
+        x.salaried = set(salaried if salaried is not None else (getattr(c, "salaried", None) or ()))
+        x.rates = {_low(k): float(v) for k, v in (rates or {}).items() if k and k != "_default" and _num(v)}
+        x.person_rates = {_low(k): float(v) for k, v in (person_rates or {}).items() if _num(v)}
+        if _num(blended_rate) and float(blended_rate) > 0:
+            x.blended = float(blended_rate)
+        elif x.rates:
+            x.blended = sum(x.rates.values()) / len(x.rates)
+        x.ot_line = float(ot_line) if _num(ot_line) and float(ot_line) > 0 else 40.0
+        x.value_per_hour = float(value_per_hour) if _num(value_per_hour) and float(value_per_hour) > 0 \
+            else SHORT_PERSON_HOUR_USD
+        owner = dict(criticality or {})
+        if not owner and c is not None:
+            owner = dict(getattr(c, "role_criticality", None) or {})
+        for k, v in owner.items():
+            if _num(v):
+                x.crit_override[x.fam(k)] = float(v)
+        open_times = getattr(c, "open_times", None) if c is not None else None
+        close_times = getattr(c, "close_times", None) if c is not None else None
+        x.profile = usual if usual is not None else history_profile(history_rows, key=x.key, family=x.fam,
+                                                                    open_times=open_times,
+                                                                    close_times=close_times)
+        x.need = dict(need or {})
+        if not x.need:
+            for row in requirements or []:
+                for m, rn in (row.get("half_need") or {}).items():
+                    for role, n in (rn or {}).items():
+                        cur = x.need.setdefault((row.get("date"), _low(role)), {})
+                        cur[int(m)] = max(cur.get(int(m), 0), int(n or 0))
+        x.dw = _demand_weights(x.week_dates, requirements, demand_curve, x.need)
+        return x
+
+    def fam(self, role) -> str:
+        return _family(role, self.families)
+
+    # ── reading ──
+    def demand_weight(self, date, minute) -> float:
+        """The half hour's share of the week's demand (1.0 = an average
+        half hour); UNMEASURED_DEMAND_WEIGHT where nothing measured it."""
+        t = int(minute) - int(minute) % SLOT
+        v = self.dw.get((date, t))
+        if v is None:
+            return UNMEASURED_DEMAND_WEIGHT
+        return v
+
+    def criticality(self, role) -> float:
+        """The owner's weight for the role's family, else the stated default
+        moved by the restaurant's record (how often the family is on at
+        all where it ever is — a role it never runs without is critical)."""
+        fam = self.fam(role)
+        if fam in self.crit_cache:
+            return self.crit_cache[fam]
+        if fam in self.crit_override:
+            v = self.crit_override[fam]
+        else:
+            v = float(_by_words(ROLE_CRITICALITY, fam, 1.0))
+            fp = (self.profile.get("families") or {}).get(fam) or {}
+            pres = [s for s in (fp.get("present") or {}).values() if s > 0]
+            if len(pres) >= 4 and (self.profile.get("weeks") or 0) >= USUAL_MIN_WEEKS:
+                learned = 0.6 + 0.9 * (sum(min(1.0, s) for s in pres) / len(pres))
+                v = (1 - LEARNED_CRITICALITY_SHARE) * v + LEARNED_CRITICALITY_SHARE * learned
+        v = max(CRITICALITY_BOUNDS[0], min(CRITICALITY_BOUNDS[1], v))
+        self.crit_cache[fam] = v
+        return v
+
+    def rate(self, person=None, role=None) -> float:
+        if person and self.key(person) in self.salaried:
+            return 0.0
+        if person:
+            v = self.person_rates.get(_low(person))
+            if v:
+                return v
+        r = _low(role)
+        return self.rates.get(r) or self.rates.get(self.fam(role)) or self.blended
+
+    def usual_minutes(self, role) -> int:
+        """The role family's usual shift length (its history's median), else
+        DEFAULT_SHIFT_HOURS."""
+        fp = (self.profile.get("families") or {}).get(self.fam(role)) or {}
+        m = fp.get("median_minutes")
+        return int(m) if m else int(DEFAULT_SHIFT_HOURS * 60)
+
+    def doubles_usual(self, role) -> bool:
+        fp = (self.profile.get("families") or {}).get(self.fam(role)) or {}
+        return float(fp.get("doubles_share") or 0) >= DOUBLES_USUAL_SHARE
+
+    def length_usd(self, role, start, end) -> float:
+        """The shape cost of one shift (STRESS-1, LOGIC-5): its overhead,
+        past the role's usual length squared, a double where the history
+        works none."""
+        mins = max(0, int(end) - int(start))
+        fp = (self.profile.get("families") or {}).get(self.fam(role)) or {}
+        top = int(fp["median_minutes"]) if fp.get("median_minutes") else int(DEFAULT_SHIFT_HOURS * 60) + 120
+        over = max(0.0, (mins - top) / 60.0)
+        cost = SHIFT_OVERHEAD_USD + LONG_SHIFT_USD * over * over
+        if {"morning", "night"} <= set(_stime.span_dayparts((int(start), int(end)))) and not self.doubles_usual(role):
+            cost += DOUBLE_USD
+        return cost
+
+    def person_usual(self, person) -> dict:
+        return (self.profile.get("people") or {}).get(self.key(person)) or {}
+
+    def usual_slot_usd(self, person, date, parts) -> float:
+        """Negative: a credit for a weekday and daypart they usually work;
+        positive: a weekday they almost never work (STRESS-15). 0 without
+        USUAL_MIN_WEEKS of their history."""
+        pu = self.person_usual(person)
+        if (pu.get("seen_weeks") or 0) < USUAL_MIN_WEEKS:
+            return 0.0
+        wd = _weekday(date)
+        day_share = float((pu.get("days") or {}).get(wd) or 0.0)
+        if day_share <= RARE_SHARE:
+            return OFF_USUAL_DAY_USD
+        best = max((float((pu.get("parts") or {}).get((wd, p)) or 0.0) for p in parts or ()), default=0.0)
+        return -USUAL_SLOT_USD if best >= USUAL_SHARE else 0.0
+
+    def days_target(self, person) -> int:
+        pu = self.person_usual(person)
+        if (pu.get("seen_weeks") or 0) >= USUAL_MIN_WEEKS and pu.get("days_per_week"):
+            return int(pu["days_per_week"])
+        return DEFAULT_DAYS_A_WEEK
+
+    def usual_hours(self, person) -> float:
+        pu = self.person_usual(person)
+        return float(pu.get("hours") or 0.0) if (pu.get("seen_weeks") or 0) >= USUAL_MIN_WEEKS else 0.0
+
+    def doubles_ok(self, person, constraints=None) -> bool:
+        """Whether a person works doubles: the owner's word (Constraints.
+        doubles_ok, {key: bool}) first, else their own history (a double on
+        at least a quarter of the days they worked)."""
+        k = self.key(person)
+        said = (getattr(constraints, "doubles_ok", None) or {}) if constraints is not None else {}
+        if k in said:
+            return bool(said[k])
+        return float(self.person_usual(person).get("doubles") or 0.0) >= 0.25
+
+
+def _num(v) -> bool:
+    try:
+        float(v)
+        return not isinstance(v, bool) and v is not None
+    except (TypeError, ValueError):
+        return False
+
+
+def _demand_weights(dates, requirements, demand_curve, need) -> dict:
+    """{(date, minute): weight} with the week's average half hour 1.0: the
+    measured sales curve x the date's demand factor where there is a curve,
+    else the people the requirement needs on at once (a busy half hour needs
+    more of them), else the daypart's required count spread over it."""
+    raw = {}
+    by_part = {}
+    for row in requirements or []:
+        if row.get("daypart") in ("morning", "night"):
+            by_part[(row.get("date"), row["daypart"])] = row
+    split = _stime.daypart_split()
+    for d in dates or []:
+        wd = _weekday(d)
+        curve = (demand_curve or {}).get(wd) or {}
+        shares = {}
+        if curve:
+            import staffing_curve as _curve
+            shares = _curve.half_hour_shares(curve)
+        if shares:
+            for m, v in shares.items():
+                part = "morning" if m < split else "night"
+                row = by_part.get((d, part)) or {}
+                try:
+                    f = float(row.get("factor") or 1.0)
+                except (TypeError, ValueError):
+                    f = 1.0
+                if v > 0:
+                    raw[(d, int(m))] = float(v) * f
+            continue
+        tot = defaultdict(float)
+        for (dd, _role), curve_n in (need or {}).items():
+            if dd != d:
+                continue
+            for m, n in curve_n.items():
+                tot[int(m)] += float(n or 0)
+        if tot:
+            for m, v in tot.items():
+                if v > 0:
+                    raw[(d, m)] = v
+            continue
+        for part in ("morning", "night"):
+            row = by_part.get((d, part))
+            if not row:
+                continue
+            n = sum(int(e.get("required") or 0) for e in row.get("roles") or [])
+            if n <= 0:
+                continue
+            lo, hi = _stime.CORE_WINDOWS[part]
+            for m in range(lo - lo % SLOT, hi, SLOT):
+                raw[(d, m)] = float(n)
+    if not raw:
+        return {}
+    mean = sum(raw.values()) / len(raw)
+    lo, hi = DEMAND_WEIGHT_BOUNDS
+    return {k: max(lo, min(hi, v / mean)) for k, v in raw.items()}
+
+
+def slot_value(ctx, date, slot_min, role) -> float:
+    """Dollars one person short of `role` for the half hour at `slot_min`
+    on `date` costs (contract #1): SHORT_PERSON_HOUR_USD / 2 x the half
+    hour's demand weight x the role's criticality."""
+    return ctx.value_per_hour / 2.0 * ctx.demand_weight(date, slot_min) * ctx.criticality(role)
+
+
+# ── pricing a whole week ──────────────────────────────────────────────────
+
+def price_week(rows, ctx) -> dict:
+    """The week priced in dollars, part by part (contract #1):
+      labor        hours x each person's rate (salaried: their pay is not
+                   moved by a shift);
+      overtime     the premium past each person's overtime line;
+      unfilled     each person-half-hour short of the need x slot_value;
+      budget_over  dollars past the hourly budget x BUDGET_OVER_FACTOR;
+      stability    STABILITY_USD for each shift not kept from last
+                   published week (where there is one);
+      shape        each shift's overhead and length, a day past somebody's
+                   usual days, a weekday they never work less one they do;
+      fairness     closes and weekend shifts past an even share.
+    {"total", "parts", "by_slot": {(date, minute): {"need", "on",
+    "short_usd"}}, "rates": the stated rates used}."""
+    parts = {"labor": 0.0, "overtime": 0.0, "unfilled": 0.0, "budget_over": 0.0, "stability": 0.0, "shape": 0.0,
+             "fairness": 0.0}
+    hours_by = defaultdict(float)
+    days_by = defaultdict(set)
+    on = defaultdict(lambda: defaultdict(int))        # (date, family) -> minute -> people
+    closes = defaultdict(int)
+    weekends = defaultdict(int)
+    last_close = {}
+    for r in rows or []:
+        sp = _span(r)
+        name = (r.get("employee") or "").strip()
+        d = r.get("date")
+        if not sp or not d:
+            continue
+        fam = ctx.fam(r.get("role"))
+        last_close[d] = max(last_close.get(d, 0), sp[1])
+        for t in range(sp[0] - sp[0] % SLOT, sp[1], SLOT):
+            if sp[0] <= t and t + SLOT <= sp[1]:
+                on[(d, fam)][t] += 1
+        if not name:
+            continue
+        h = (sp[1] - sp[0]) / 60.0
+        parts["labor"] += h * ctx.rate(name, r.get("role"))
+        hours_by[ctx.key(name)] += h
+        days_by[ctx.key(name)].add(d)
+        parts["shape"] += ctx.length_usd(r.get("role"), sp[0], sp[1])
+        parts["shape"] += ctx.usual_slot_usd(name, d, _stime.span_dayparts(sp))
+        if _weekday(d) in ("Friday", "Saturday", "Sunday"):
+            weekends[ctx.key(name)] += 1
+    for r in rows or []:
+        sp = _span(r)
+        name = (r.get("employee") or "").strip()
+        if sp and name and r.get("date") in last_close and sp[1] >= last_close[r["date"]] - 15:
+            closes[ctx.key(name)] += 1
+    for k, h in hours_by.items():
+        if k in ctx.salaried:
+            continue
+        over = max(0.0, h - ctx.ot_line)
+        if over > 0:
+            rate = ctx.person_rates.get(k) or ctx.blended
+            parts["overtime"] += over * rate * OVERTIME_PREMIUM
+    for k, ds in days_by.items():
+        extra = len(ds) - ctx.days_target(k)
+        if extra > 0:
+            parts["shape"] += extra * EXTRA_DAY_USD
+        uh = ctx.usual_hours(k)
+        if uh:
+            under = uh * (1 - USUAL_HOURS_BAND) - hours_by.get(k, 0.0)
+            if under > 0:
+                parts["shape"] += under * USUAL_HOURS_USD
+    by_slot = {}
+    for (d, role), curve in (ctx.need or {}).items():
+        fam = ctx.fam(role)
+        for m, n in curve.items():
+            have = on[(d, fam)].get(int(m), 0)
+            short = max(0, int(n) - have)
+            cell = by_slot.setdefault((d, int(m)), {"need": 0, "on": 0, "short_usd": 0.0})
+            cell["need"] += int(n)
+            cell["on"] += min(have, int(n))
+            if short:
+                usd = short * slot_value(ctx, d, int(m), role)
+                cell["short_usd"] += usd
+                parts["unfilled"] += usd
+    if ctx.budget:
+        over = parts["labor"] + parts["overtime"] - ctx.budget
+        if over > 0:
+            parts["budget_over"] = over * BUDGET_OVER_FACTOR
+    if ctx.last_week_rows:
+        kept = _kept_from_last(rows, ctx)
+        named = sum(1 for r in rows or [] if (r.get("employee") or "").strip())
+        parts["stability"] = max(0, named - kept) * STABILITY_USD
+    for counts in (closes, weekends):
+        if counts:
+            even = sum(counts.values()) / float(max(1, len(counts)))
+            parts["fairness"] += sum(max(0.0, n - math.ceil(even)) for n in counts.values()) * FAIRNESS_USD
+    parts = {k: round(v, 2) for k, v in parts.items()}
+    return {"total": round(sum(parts.values()), 2), "parts": parts, "by_slot": by_slot, "rates": stated_rates(ctx)}
+
+
+def _kept_from_last(rows, ctx) -> int:
+    last = defaultdict(list)
+    for r in ctx.last_week_rows or []:
+        sp = _span(r)
+        name = (r.get("employee") or "").strip()
+        if sp and name:
+            last[(ctx.key(name), _weekday(r.get("date")), ctx.fam(r.get("role")))].append(sp[0])
+    kept = 0
+    for r in rows or []:
+        sp = _span(r)
+        name = (r.get("employee") or "").strip()
+        if not sp or not name:
+            continue
+        starts = last.get((ctx.key(name), _weekday(r.get("date")), ctx.fam(r.get("role")))) or ()
+        if any(abs(s - sp[0]) <= STABILITY_START_MINUTES for s in starts):
+            kept += 1
+    return kept
+
+
+def stated_rates(ctx=None) -> dict:
+    """Every rate the objective prices with, as stated (the owner can be
+    shown each)."""
+    return {"short_person_hour_usd": (ctx.value_per_hour if ctx is not None else SHORT_PERSON_HOUR_USD),
+            "budget_over_factor": BUDGET_OVER_FACTOR, "shift_overhead_usd": SHIFT_OVERHEAD_USD,
+            "extra_day_usd": EXTRA_DAY_USD, "long_shift_usd_per_hour_sq": LONG_SHIFT_USD, "double_usd": DOUBLE_USD,
+            "usual_slot_usd": USUAL_SLOT_USD, "off_usual_day_usd": OFF_USUAL_DAY_USD,
+            "usual_hours_usd": USUAL_HOURS_USD, "stability_usd": STABILITY_USD,
+            "history_pattern_usd": HISTORY_PATTERN_USD, "fairness_usd": FAIRNESS_USD,
+            "overtime_premium": OVERTIME_PREMIUM}
