@@ -1665,7 +1665,14 @@ def apply_weights(daily_targets, c) -> dict:
             if now > 0:
                 for d in nums:
                     out[d] = out[d] * total / now
-    return {d: (round(v, 1) if isinstance(v, float) else v) for d, v in out.items()}
+    out = {d: (round(v, 1) if isinstance(v, float) else v) for d, v in out.items()}
+    if moved and total > 0:
+        # The rounding's tenth of an hour lands on the largest day no weight
+        # named, so the week sums to exactly what it did.
+        rest = [d for d in nums if d not in moved] or sorted(nums)
+        top = max(rest, key=lambda d: (out[d], d))
+        out[top] = round(out[top] + round(total, 1) - round(sum(out[d] for d in nums), 1), 1)
+    return out
 
 
 # ── what the drafting model is told (ARCH-16, AI-10) ───────────────────────
