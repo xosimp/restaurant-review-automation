@@ -3724,6 +3724,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
                                 if t["people"] is not None else "") + f"{_dates_label(done)}: {b}"
                                for t, done, bullets in notes_by_part for b in bullets[:2]][:6]
     merged["summary"] = list(merged["narrative"])
+    # The model's reasons as data from every part it kept (re-audit 10/11/26
+    # AI-16), for the note writer — checked there against the final week.
+    merged["decisions"] = [dict(d) for p, _done in parts_kept for d in (p.get("decisions") or [])
+                           if isinstance(d, dict)][:9]
     merged["generation_seconds"] = round(seconds, 1)
     merged["truncated"] = False
     merged["chunked"] = calls

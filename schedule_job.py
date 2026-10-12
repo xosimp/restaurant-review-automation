@@ -1324,7 +1324,12 @@ def _stage_note(job: GenerationRun, cand: Candidate) -> None:
                             chips=(result.get("review") or {}).get("instruction_rules") or [],
                             model_bullets=list(result.get("narrative") or []),
                             roster=result.get("roster") or [],
-                            role_floors=getattr(result.get("constraints"), "role_floors", None))
+                            role_floors=getattr(result.get("constraints"), "role_floors", None),
+                            # Why the week looks as it does (re-audit 10/11/26
+                            # AI-16, AI-17): the model's decisions still in the
+                            # final rows, requirement reasons, solver picks,
+                            # the repair's changes.
+                            reasons=_snar.reasons_for_note(result, preview_rows))
         result["narrative"] = _note["bullets"]
         if isinstance(result.get("review"), dict):
             result["review"]["note"] = {"source": _note["source"], "dropped": _note["dropped"][:6]}

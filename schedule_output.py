@@ -243,6 +243,35 @@ def _enum(values) -> dict:
     return {"type": "string", "enum": vals} if vals else {"type": "string"}
 
 
+# The model's reasons, as data (scheduler re-audit 10/11/26 AI-16): at most
+# this many of the week's biggest choices, each tied to a date and a role of
+# the request, the reason in a few words. The free-text `summary` bullets
+# (and ~120 words of rules for them) were written on every call and then
+# replaced by the note the finished week gets (schedule_narrative); the note
+# writer now reads these, checked against the final rows.
+MAX_DECISIONS = 3
+DECISION_WHY_CHARS = 160
+
+
+def decisions_schema(roles=None, dates=None) -> dict:
+    """The `decisions` array of every structured contract: {date, role,
+    why} items, the date and role from the request's own enums."""
+    item = {"type": "object",
+            "properties": {"date": _enum(dates), "role": _enum(roles), "why": {"type": "string"}},
+            "required": ["date", "role", "why"], "additionalProperties": False}
+    return {"type": "array", "items": item}
+
+
+def decision_text(d) -> str:
+    """One decision as a short line: "Friday Server: why"."""
+    from datetime import date as _dt
+    try:
+        day = _dt.fromisoformat(str(d.get("date"))[:10]).strftime("%A")
+    except (TypeError, ValueError):
+        day = str(d.get("date") or "")
+    return f"{day} {d.get('role') or ''}: {d.get('why') or ''}".strip()
+
+
 _ISO_IN = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
 
 
@@ -299,9 +328,9 @@ def schedule_schema(employees=None, roles=None, dates=None, times=None) -> dict:
         "type": "object",
         "properties": {
             "days": {"type": "array", "items": day},
-            "summary": {"type": "array", "items": {"type": "string"}},
+            "decisions": decisions_schema(roles=roles, dates=dates),
         },
-        "required": ["days", "summary"],
+        "required": ["days", "decisions"],
         "additionalProperties": False,
     }
 
@@ -341,9 +370,9 @@ def contract_schema(contract="schema", employees=None, roles=None, dates=None, t
         "type": "object",
         "properties": {
             "days": {"type": "array", "items": day},
-            "summary": {"type": "array", "items": {"type": "string"}},
+            "decisions": decisions_schema(roles=roles, dates=dates),
         },
-        "required": ["days", "summary"],
+        "required": ["days", "decisions"],
         "additionalProperties": False,
     }
 
@@ -477,7 +506,7 @@ def parse_answer(raw, dates=None, contract=None) -> dict:
     base = contract_base(contract)
     rows_key = DAY_ROWS_KEY[base]
     text = (raw or "").strip()
-    out = {"rows": [], "summary": [], "complete_dates": [], "partial_dates": [], "salvaged": False,
+    out = {"rows": [], "summary": [], "decisions": [], "complete_dates": [], "partial_dates": [], "salvaged": False,
            "recovered": False, "parsed": False, "problems": [], "dropped": [], "answer_chars": len(text),
            "contract": base}
     obj, open_ = None, ()
@@ -552,6 +581,22 @@ def parse_answer(raw, dates=None, contract=None) -> dict:
                 out["rows"].append(row)
     out["summary"] = [" ".join(str(b).split()) for b in (obj.get("summary") or [])
                       if isinstance(b, str) and str(b).strip()]
+    # The model's reasons as data (AI-16): kept only for a date of this call,
+    # each said as a short line in `summary` too (what the note falls back
+    # on when its own call fails). An answer from before 10/11/26 carries
+    # `summary` strings and no decisions.
+    asked = set(dates or ())
+    for d in (obj.get("decisions") or [])[:MAX_DECISIONS * 2]:
+        if not isinstance(d, dict):
+            continue
+        dd = {"date": str(d.get("date") or "")[:10], "role": " ".join(str(d.get("role") or "").split()),
+              "why": " ".join(str(d.get("why") or "").split())[:DECISION_WHY_CHARS]}
+        if not dd["why"] or not dd["date"] or (asked and dd["date"] not in asked):
+            continue
+        out["decisions"].append(dd)
+    out["decisions"] = out["decisions"][:MAX_DECISIONS]
+    if out["decisions"] and not out["summary"]:
+        out["summary"] = [decision_text(d) for d in out["decisions"]]
     return out
 
 
