@@ -92,7 +92,7 @@ def resuming(job_id):
         return
     import schedule_output
     answers = schedule_output.stored_answers(job_id)
-    state = {"job_id": job_id, "lock": threading.Lock(), "by_key": {}, "used": []}
+    state = {"job_id": job_id, "lock": threading.Lock(), "by_key": {}, "used": [], "moved": []}
     for a in answers:
         state["by_key"].setdefault(a["call_key"], []).append(a)
     token = _STATE.set(state)
@@ -119,6 +119,17 @@ def stored_answer(request):
             return None
         a = queue.pop(0)
         state["used"].append(a["id"])
+    # The answer was written for the prompt the dead try built; the prompt
+    # this try builds is read from the database as it is NOW. When they
+    # differ the inputs moved meanwhile (time off approved, a person gone,
+    # a week published): said on the draft (inputs_moved, ARCH-25).
+    try:
+        import schedule_output
+        if a.get("prompt_sig") and schedule_output.prompt_sig(request) != a["prompt_sig"]:
+            with state["lock"]:
+                state["moved"].append(a["id"])
+    except Exception as e:
+        print(f"[schedule] resumed: prompt not compared ({e!r})")
     print(f"[schedule] resumed: call {a['id']}'s stored answer read again, not paid for")
     return StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
 
@@ -126,6 +137,33 @@ def stored_answer(request):
 def answers_reused() -> list:
     state = _STATE.get()
     return list(state["used"]) if state else []
+
+
+def inputs_moved() -> list:
+    """The stored answers this resumed try reused whose prompt differs from
+    the one it built now: written from inputs that have since moved."""
+    state = _STATE.get()
+    return list(state.get("moved") or []) if state else []
+
+
+# What a resumed draft says when the answers it reused were written from
+# inputs that moved while the job restarted (blind re-audit 10/11/26
+# ARCH-25): the rows are re-checked against the inputs as they are now —
+# every rule, the repair loop and the score read the live tables — but the
+# model wrote them from the earlier ones.
+INPUTS_MOVED_LINE = ("⚠ Cavnar AI restarted while writing this draft and reused the AI model's answer it had "
+                     "already paid for — but your team's details changed in between, so that answer was written "
+                     "from the earlier details. Every rule was checked again against them as they are now; read "
+                     "the week through before you publish.")
+
+
+def resume_facts() -> dict:
+    """{"resumed", "answers_reused", "inputs_moved"} for the draft's payload
+    and review — {"resumed": False} outside a resumed try."""
+    state = _STATE.get()
+    if not state:
+        return {"resumed": False}
+    return {"resumed": True, "answers_reused": len(state["used"]), "inputs_moved": bool(state.get("moved"))}
 
 
 # ── the saved stage ─────────────────────────────────────────────────────────

@@ -1445,6 +1445,17 @@ def _stage_inputs(cand: Candidate) -> None:
     line, so the publish gate and the auto-publish hold the week; the rest
     are one line at the end (ARCH-25)."""
     result = cand.result
+    # A resumed try that reused answers written from inputs that have since
+    # moved says so, held at publish (blind re-audit 10/11/26 ARCH-25).
+    import schedule_resume as _sres_in
+    _rf = _sres_in.resume_facts()
+    result["resumed_inputs"] = _rf
+    if _rf.get("inputs_moved") and isinstance(result.get("review"), dict):
+        review = result["review"]
+        if _sres_in.INPUTS_MOVED_LINE not in review.get("lines", []):
+            review["lines"].insert(0, _sres_in.INPUTS_MOVED_LINE)
+            review["lead_lines"] = [_sres_in.INPUTS_MOVED_LINE] + list(review.get("lead_lines") or [])
+        review["resumed_inputs"] = _rf
     _failed_inputs = se._inputs_failed()
     _required_gone = [w for w in _failed_inputs if se.input_class(w) == "required"]
     if _required_gone:
@@ -1604,6 +1615,10 @@ def _stage_payload(cand: Candidate, ctx: _PassContext) -> None:
         repair=se._json_safe(result.get("repair") or {}),
         stage_failures=se._json_safe(result.get("stage_failures") or []),
         stage_seconds=cand.timer.as_dict(),
+        # Whether this draft was finished by a resumed try and whether the
+        # model answers it reused were written from inputs since moved
+        # (ARCH-25).
+        resumed_inputs=result.get("resumed_inputs") or {"resumed": False},
     )
     if cand.spec.focus:
         cand.payload["gate"] = {"ran": True, "kept": "regenerated", "focus": list(cand.spec.focus)[:12],

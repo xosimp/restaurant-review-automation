@@ -414,3 +414,32 @@ def test_a_started_week_gate_never_reworks_a_day_already_worked(db, monkeypatch)
     finished = _finished(monkeypatch)
     se._run_schedule_job("j-begun-gate", rid, week_start=WEEK[0])
     assert len(calls) == 1 and finished["result"]["gate"]["why"] == "past"
+
+
+# ── ARCH-25: a resumed draft whose inputs moved says so ──────────────────
+
+def _req(content, ttl="5m"):
+    return {"model": "m", "system": [{"type": "text", "text": "rules", "cache_control": {"type": "ephemeral",
+                                                                                        "ttl": ttl}}],
+            "messages": [{"role": "user", "content": content}]}
+
+
+def test_a_resumed_answer_written_from_inputs_that_moved_is_said(db):
+    import schedule_output
+    import schedule_resume
+    schedule_output.record_call(1, _req("ROSTER: Ana, Bo"), answer="a1", job_id="job-mv", outcome="ok")
+    schedule_output.record_call(1, _req("ROSTER: Ana, Bo"), answer="a2", job_id="job-mv", outcome="ok")
+    with schedule_resume.resuming("job-mv"):
+        # The same prompt (only a cache TTL differs): nothing moved.
+        assert schedule_resume.stored_answer(_req("ROSTER: Ana, Bo", ttl="1h")) is not None
+        assert schedule_resume.resume_facts() == {"resumed": True, "answers_reused": 1, "inputs_moved": False}
+        # Bo left while the job restarted: the prompt built now differs.
+        assert schedule_resume.stored_answer(_req("ROSTER: Ana")) is not None
+        assert schedule_resume.resume_facts()["inputs_moved"] is True
+        cand = sj.Candidate(spec=sj.PassSpec(kind="week"), rows=[], payload={}, timer=None,
+                            result={"review": {"lines": ["x"], "lead_lines": []}})
+        sj._stage_inputs(cand)
+    review = cand.result["review"]
+    assert review["lines"][0] == schedule_resume.INPUTS_MOVED_LINE and review["lead_lines"][0].startswith("⚠")
+    assert cand.result["resumed_inputs"]["inputs_moved"] is True
+    assert schedule_resume.resume_facts() == {"resumed": False}
