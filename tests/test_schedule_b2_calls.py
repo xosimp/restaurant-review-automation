@@ -761,33 +761,15 @@ def test_the_generate_route_queues_on_the_pool_and_starts_no_thread_of_its_own(d
     # clock; the pool is the group's concurrency, a count of claimed rows.
     import job_queue
     assert name.startswith("queue-generation") and clocked
-    assert job_queue._pools["generation"]._max_workers == job_queue.group_concurrency("generation")
+    # Threads for every row in flight; the CPU slots are the group's
+    # concurrency (a row waiting on the model holds no slot — SCALE-1).
+    assert job_queue._pools["generation"]._max_workers == job_queue.max_running("generation")
     assert job_queue.group_concurrency("generation") == se.SCHEDULE_GEN_WORKERS
     assert job_queue.row_for(body["job_id"])["kind"] == "schedule_generate"
     assert "threading.Thread(" not in inspect.getsource(mobile_api.mobile_generate_schedule)
 
 
-def test_no_more_generations_run_at_once_than_the_pool_has_slots(monkeypatch):
-    # The slots are se.GenerationSlots now, not a BoundedSemaphore: an
-    # owner's press goes ahead of a queued auto-draft (AI cost audit 10/7/26
-    # #5). The bound is the same.
-    monkeypatch.setattr(se, "_GEN_SLOTS", se.GenerationSlots(2))
-    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
-    inside, peak, gate = [0], [0], threading.Event()
-    lock = threading.Lock()
-
-    def job(n):
-        with se.generation_scope(f"slot-{n}"):
-            with lock:
-                inside[0] += 1
-                peak[0] = max(peak[0], inside[0])
-            gate.wait(0.3)
-            with lock:
-                inside[0] -= 1
-    threads = [threading.Thread(target=job, args=(i,)) for i in range(4)]
-    [t.start() for t in threads]
-    [t.join(10) for t in threads]
-    assert peak[0] == 2
+# test_no_more_generations_run_at_once_than_the_pool_has_slots: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
 def _slot_order(monkeypatch, slots, announce=()):
@@ -824,129 +806,31 @@ def _slot_order(monkeypatch, slots, announce=()):
     return gate, order, release, holders, waiters
 
 
-def test_an_owners_press_takes_the_next_slot_ahead_of_queued_auto_drafts(monkeypatch):
-    gate, order, release, holders, waiters = _slot_order(monkeypatch, 1)
-    release.set()
-    [t.join(10) for t in holders + waiters]
-    # Queued last, served first; the drafts keep their own order.
-    assert order == ["press-1", "draft-1", "draft-2"]
-    assert gate.busy == 0 and gate.waiting() == 0
+# test_an_owners_press_takes_the_next_slot_ahead_of_queued_auto_drafts: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
-def test_a_press_on_its_way_to_the_gate_holds_a_freed_slot_from_the_drafts(monkeypatch):
-    # A press queued on the owner pool is announced (submit_generation): a
-    # slot freed before its thread reaches the gate is not taken by a draft.
-    gate, order, release, holders, waiters = _slot_order(monkeypatch, 1, announce=("press-late",))
-    release.set()
-    [t.join(10) for t in holders]
-    time.sleep(0.3)
-    assert order == ["press-1"], order                    # the drafts wait for the announced press
-    with se.generation_scope("press-late"):
-        order.append("press-late")
-    [t.join(10) for t in waiters]
-    assert order == ["press-1", "press-late", "draft-1", "draft-2"]
+# test_a_press_on_its_way_to_the_gate_holds_a_freed_slot_from_the_drafts: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
-def test_a_press_joining_a_queued_auto_draft_promotes_it_and_an_unjoined_draft_still_gives_up(monkeypatch):
-    # Re-audit 10/7/26 #1: the owner who joined auto-A waits on it - it goes
-    # on as a press (its place in line kept, no give-up); auto-B, which
-    # nobody joined, still gives up after the background wait.
-    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
-    monkeypatch.setattr(se, "GEN_BACKGROUND_WAIT_SECONDS", 0.4)
-    gate = se.GenerationSlots(1)
-    monkeypatch.setattr(se, "_GEN_SLOTS", gate)
-    order, gave_up, lock, release = [], [], threading.Lock(), threading.Event()
-
-    def hold():
-        with se.generation_scope("holder"):
-            release.wait(10)
-
-    def wait(name, prio):
-        try:
-            with se.generation_scope(name, priority=prio):
-                with lock:
-                    order.append(name)
-        except se.GenerationSlotTimeout:
-            gave_up.append(name)
-    holder = threading.Thread(target=hold)
-    holder.start()
-    deadline = time.time() + 5
-    while gate.busy < 1 and time.time() < deadline:
-        time.sleep(0.01)
-    threads = []
-    for name in ("auto-A", "auto-B"):
-        t = threading.Thread(target=wait, args=(name, se.GEN_PRIORITY_BACKGROUND))
-        t.start()
-        threads.append(t)
-        while gate.waiting() < len(threads) and time.time() < deadline:
-            time.sleep(0.01)
-    assert se.promote_generation("auto-A") == "waiting"
-    press = threading.Thread(target=wait, args=("press-1", se.GEN_PRIORITY_PRESS))
-    press.start()
-    threads.append(press)
-    time.sleep(1.5)                                   # well past the background wait
-    assert gave_up == ["auto-B"]                      # nobody joined it: it gave up
-    release.set()
-    [t.join(10) for t in [holder] + threads]
-    # The promoted draft kept its place ahead of the press queued after it.
-    assert order == ["auto-A", "press-1"] and gave_up == ["auto-B"]
-    assert gate.busy == 0 and gate.waiting() == 0
+# test_a_press_joining_a_queued_auto_draft_promotes_it_and_an_unjoined_draft_still_gives_up: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
-def test_a_press_that_joins_before_the_draft_reaches_the_gate_is_kept_for_it(monkeypatch):
-    gate = se.GenerationSlots(1)
-    gate.acquire(se.GEN_PRIORITY_PRESS, job_id="holder")
-    assert gate.promote("holder") == "running"        # already holding a slot: nothing to do
-    assert gate.promote("auto-C") == "pending"        # claimed, not at the gate yet
-    got = []
-
-    def draft():
-        gate.acquire(se.GEN_PRIORITY_BACKGROUND, job_id="auto-C", timeout=0.1)
-        got.append("auto-C")
-    t = threading.Thread(target=draft)
-    t.start()
-    time.sleep(0.4)
-    assert t.is_alive() and got == []                  # promoted on arrival: no 0.1s give-up
-    gate.release("holder")
-    t.join(5)
-    assert got == ["auto-C"] and gate.busy == 1
-    gate.release("auto-C")
-    assert gate.busy == 0 and gate.promote("auto-C") == "pending"
+# test_a_press_that_joins_before_the_draft_reaches_the_gate_is_kept_for_it: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
-def test_promotions_never_take_more_slots_than_there_are(monkeypatch):
-    monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
-    gate = se.GenerationSlots(2)
-    monkeypatch.setattr(se, "_GEN_SLOTS", gate)
-    inside, peak, lock, done = [0], [0], threading.Lock(), []
-
-    def job(n):
-        with se.generation_scope(f"auto-{n}", priority=se.GEN_PRIORITY_BACKGROUND):
-            with lock:
-                inside[0] += 1
-                peak[0] = max(peak[0], inside[0])
-            time.sleep(0.05)
-            with lock:
-                inside[0] -= 1
-                done.append(n)
-    threads = [threading.Thread(target=job, args=(i,)) for i in range(8)]
-    [t.start() for t in threads]
-    for i in range(0, 8, 2):
-        se.promote_generation(f"auto-{i}")
-    [t.join(10) for t in threads]
-    assert peak[0] == 2 and sorted(done) == list(range(8))
-    assert gate.busy == 0 and gate.waiting() == 0
+# test_promotions_never_take_more_slots_than_there_are: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
 def test_the_auto_draft_takes_its_slot_behind_presses():
     import inspect
     import strategy_jobs
+    import job_queue
     src = inspect.getsource(strategy_jobs._draft_one)
-    assert "generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND, restaurant_id=r.id)" in src
-    sub = inspect.getsource(se.submit_generation)
-    assert "_GEN_SLOTS.announce(job_id)" in sub and "with generation_scope(job_id, restaurant_id=restaurant_id)" in sub
-    # The number of generations at once is unchanged.
-    assert se._GEN_SLOTS.slots == se.SCHEDULE_GEN_WORKERS
+    assert "generation_scope(job_id, restaurant_id=r.id)" in src
+    # The auto-draft's slot is its scheduled-class queue row, behind presses
+    # (blind re-audit 10/11/26 ARCH-10); the CPU slots are unchanged.
+    assert job_queue.KINDS["auto_draft"][:2] == ("generation", "scheduled")
+    assert job_queue.group_concurrency("generation") == se.SCHEDULE_GEN_WORKERS
 
 
 def test_the_auto_draft_joins_an_owners_running_generation_instead_of_starting_a_second(db, monkeypatch):
@@ -1586,37 +1470,8 @@ def test_the_finished_payload_says_chunked_as_the_bool_both_clients_read(db, mon
     assert finished["result"]["chunked"] is False and finished["result"]["calls"] == 1
 
 
-def test_a_background_generation_never_waits_without_end(monkeypatch):
-    # The suite's intermittent hang (10/7/26): a press announced but never run
-    # held an auto-draft at the gate for up to two hours, on the AI lane.
-    import concurrent.futures
-    gate = se.GenerationSlots(1)
-    gate.announce("press-1")
-    with pytest.raises(se.GenerationSlotTimeout):
-        gate.acquire(se.GEN_PRIORITY_BACKGROUND, job_id="auto-1", timeout=0.2)
-    assert gate.waiting() == 0 and gate.busy == 0
-    # A press whose pool future is finished (it will never reach the gate)
-    # stops being waited for.
-    done = concurrent.futures.Future()
-    done.set_result(None)
-    gate.attach("press-1", done)
-    gate.acquire(se.GEN_PRIORITY_BACKGROUND, job_id="auto-2", timeout=1)
-    assert gate.busy == 1
-    gate.release()
+# test_a_background_generation_never_waits_without_end: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
 
-def test_an_auto_draft_with_no_free_slot_hands_its_day_back(db, monkeypatch):
-    import contextlib
-    import strategy_jobs, ops
-    released, bumps = [], []
-    monkeypatch.setattr(ops, "release_period", lambda name, period: released.append((name, period)))
+# test_an_auto_draft_with_no_free_slot_hands_its_day_back: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the queue's order, promotion and expiry are held by tests/test_sf10_h2_queue.py).
 
-    @contextlib.contextmanager
-    def busy(job_id, priority=se.GEN_PRIORITY_PRESS, restaurant_id=None):
-        raise se.GenerationSlotTimeout("no slot")
-        yield
-    monkeypatch.setattr(se, "generation_scope", busy)
-    rid = _restaurant(db, module_labor=1)
-    r = models.get_restaurant(rid, db_path=db)
-    strategy_jobs._draft_one(r, db, se, bumps.append, period="2026-10-01")
-    assert bumps == ["skipped"] and released == [(f"auto_draft:{rid}", "2026-10-01")]

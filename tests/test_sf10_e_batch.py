@@ -130,13 +130,11 @@ def test_with_the_queue_on_the_answer_rides_a_queue_row(monkeypatch):
     tests/test_sf10_h2_queue.py runs such a row to the call site."""
     import models
     import job_queue
-    monkeypatch.delenv("JOB_QUEUE", raising=False)
     r = types.SimpleNamespace(id=3, auto_draft_schedule=1, module_labor=1)
     monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: r)
     monkeypatch.setattr(sj, "_draft_one", lambda *a, **k: pytest.fail("not on the callback thread"))
     rows = []
     monkeypatch.setattr(sj, "enqueue_auto_draft", lambda rr, **k: rows.append(k))
-    assert job_queue.enabled()
     sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1", "period": "p", "target": "t", "attempt": 0}},
                      message=_msg(WEEK))
     sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1"}}, error=ai_batches.BatchItemFailed("cutoff"))
@@ -145,22 +143,7 @@ def test_with_the_queue_on_the_answer_rides_a_queue_row(monkeypatch):
     assert rows[0]["answer"]["text"] and rows[1]["answer"] is None
 
 
-def test_the_answer_runs_the_ordinary_auto_draft_with_the_answer_in_hand(monkeypatch):
-    import models
-    # The old path, with the job queue off (JOB_QUEUE=0).
-    monkeypatch.setenv("JOB_QUEUE", "0")
-    r = types.SimpleNamespace(id=3, auto_draft_schedule=1, module_labor=1)
-    monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: r)
-    seen = []
-
-    def draft(rr, db_path, se_, bump, period=None, target=None, attempt=None, batch=True):
-        h = sb._HOOK.get()
-        seen.append((batch, h and h["mode"], h and h["key"]))
-    monkeypatch.setattr(sj, "_draft_one", draft)
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1", "period": None}}, message=_msg(WEEK))
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1"}}, error=ai_batches.BatchItemFailed("cutoff"))
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1"}}, error=RuntimeError("budget"))
-    assert seen == [(False, "answer", "k1"), (False, None, None)]
+# test_the_answer_runs_the_ordinary_auto_draft_with_the_answer_in_hand: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — the JOB_QUEUE=0 answer path is gone; tests/test_sf10_h2_queue.py runs the answered row).
 
 
 def test_labor_schedule_may_batch():

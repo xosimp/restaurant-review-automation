@@ -2155,16 +2155,15 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # worker and add slots — no request-latency figure sees it.
     try:
         import job_queue as _jq_sla
-        if _jq_sla.enabled():
-            out["queue"] = _jq_sla.stats()
+        out["queue"] = _jq_sla.stats()
     except Exception as e:
         log.warning(f"the job queue's stats unavailable to the platform check: {e}")
     q = out["queue"] or {}
     if (q.get("wait_p95_seconds") or 0) > QUEUE_WAIT_ALERT_SECONDS and (q.get("wait_samples") or 0) >= 5:
         warn_kinds.add("queue_wait")
         problems.append(f"Owners' schedule generations wait {q['wait_p95_seconds'] / 60:.1f} minutes to start "
-                        f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — move the queue to "
-                        "worker.py (QUEUE_WORKER=1) or raise QUEUE_GENERATION_CONCURRENCY "
+                        f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — check the queue worker "
+                        "process is running (QUEUE_WORKER=1, the default) or raise QUEUE_GENERATION_CONCURRENCY "
                         "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
     out["problems"] = problems
     if not problems or not send:

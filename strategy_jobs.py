@@ -1251,7 +1251,8 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     whose draft day it is is read from it, so the pass and the loop agree on
     the clock. Without it, each restaurant's own wall clock now.
 
-    `enqueue` (the scheduler passes job_queue.enabled() — scheduler audit
+    `enqueue` (the scheduler passes True — the queue is the one path since
+    blind re-audit 10/11/26 ARCH-10; scheduler audit
     10/10/26 SCALE-13, RM-7): each restaurant's draft is a `scheduled` row
     on the job queue (enqueue_auto_draft), run by the queue's consumers
     under its fairness and the generation group's slots, never inside this
