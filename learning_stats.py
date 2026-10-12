@@ -31,9 +31,10 @@ Pure: no I/O, no app imports (L0).
                                     restaurant-cluster 90% interval, t on
                                     G - 1 degrees of freedom (RM-4;
                                     LEARNING-5)
-  trend_slope_ci(values)            ONE series' slope over its weeks with a
-                                    Newey-West (HAC) interval, t on n - 2
-                                    (the owner's own trend - LEARNING-17)
+  trend_slope_ci(values)            ONE series' slope over its weeks with an
+                                    AR(1)-widened interval, t on the
+                                    effective n - 2 (the owner's own trend
+                                    - LEARNING-17)
   t_cdf / t_ppf / t_pvalue          Student's t, pure
   always_valid_p(est, se, tau)      the mixture-SPRT p-value a readout may
                                     be peeked at every week (LEARNING-15)
@@ -372,19 +373,25 @@ def fe_slope_ci(rows, z=None) -> dict:
             "df": df, "n": n, "restaurants": g}
 
 
+AR1_MAX = 0.9
+
+
 def trend_slope_ci(values, min_n=8) -> dict:
     """ONE series' trend over its index (weeks, oldest first; None values
-    are skipped but keep their place): the OLS slope with a Newey-West
-    (HAC) standard error - Bartlett weights to lag floor(4 (n/100)^(2/9)) + 1,
-    so a run of good or bad weeks (weekly noise is serially correlated) is
-    not read as a trend - and Student's t on n - 2 (blind re-audit 10/11/26
-    LEARNING-17: a plain OLS error with z from 4 weeks told 11-17% of owners
-    with no trend at all that their drafts were improving). No slope below
-    `min_n` values. {slope, lo, hi, se, df, n, lags}."""
+    are skipped but keep their place): the OLS slope with its standard error
+    widened for serially correlated weeks — the residuals' lag-1
+    autocorrelation rho (bias-corrected for the series' length, Kendall's
+    + (1 + 3 rho) / n, held to [0, AR1_MAX]) inflates the variance by
+    (1 + rho) / (1 - rho) and shrinks the degrees of freedom to the
+    effective n_eff - 2, n_eff = n (1 - rho) / (1 + rho) — and Student's t
+    (blind re-audit 10/11/26 LEARNING-17: a plain OLS error with z from 4
+    weeks told 11-17% of owners with no trend at all that their drafts were
+    improving; a Newey-West error is worse still at 8-20 weeks). No slope
+    below `min_n` values. {slope, lo, hi, se, df, n, rho}."""
     pts = [(float(i), float(v)) for i, v in enumerate(values or []) if v is not None]
     n = len(pts)
-    out = {"slope": None, "lo": None, "hi": None, "se": None, "df": None, "n": n, "lags": None}
-    if n < max(3, int(min_n)):
+    out = {"slope": None, "lo": None, "hi": None, "se": None, "df": None, "n": n, "rho": None}
+    if n < max(4, int(min_n)):
         return out
     mx = sum(x for x, _y in pts) / n
     my = sum(y for _x, y in pts) / n
@@ -393,18 +400,18 @@ def trend_slope_ci(values, min_n=8) -> dict:
         return out
     b = sum((x - mx) * (y - my) for x, y in pts) / sxx
     a = my - b * mx
-    g = [(x - mx) * (y - a - b * x) for x, y in pts]
-    lags = int(4 * (n / 100.0) ** (2.0 / 9.0)) + 1
-    s = sum(v * v for v in g)
-    for L in range(1, min(lags, n - 1) + 1):
-        w = 1.0 - L / float(lags + 1)
-        s += 2.0 * w * sum(g[t] * g[t - L] for t in range(L, n))
-    # The small-sample correction (n / (n - 2)) the plain OLS error has too.
-    var = max(0.0, s) * n / max(1.0, n - 2.0) / (sxx * sxx)
-    se = math.sqrt(var)
-    q = t90(n - 2)
+    e = [y - a - b * x for x, y in pts]
+    see = sum(v * v for v in e)
+    rho = 0.0
+    if see > 0:
+        r = sum(e[t] * e[t - 1] for t in range(1, n)) / see
+        rho = max(0.0, min(AR1_MAX, r + (1.0 + 3.0 * r) / n))
+    infl = (1.0 + rho) / (1.0 - rho)
+    se = math.sqrt(see / (n - 2.0) / sxx * infl)
+    df = max(1.0, n / infl - 2.0)
+    q = t_ppf(0.95, df)
     out.update(slope=round(b, 4), lo=round(b - q * se, 4), hi=round(b + q * se, 4), se=round(se, 6),
-               df=n - 2, lags=lags)
+               df=round(df, 2), rho=round(rho, 3))
     return out
 
 

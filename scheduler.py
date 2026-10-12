@@ -5752,12 +5752,16 @@ def scheduler_loop():
 
             # Sunday 5am — what each restaurant's own shift outcomes suggest
             # for its Shift Quality weights, floors and bars, recorded as a
-            # suggestion the owner applies — never applied here; a strong one
-            # waits in the action queue (strategy_jobs.run_quality_calibration,
-            # schedule audit 10/3/26 L-14).
+            # suggestion the owner applies (a strong one waits in the action
+            # queue — schedule audit 10/3/26 L-14) — and the automatic
+            # calibration, which writes the weights only when
+            # SCHEDULE_CALIBRATION_AUTOPROMOTE=1 (strategy_jobs.
+            # run_quality_calibration; blind re-audit 10/11/26 LEARNING-2).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):
-                from strategy_jobs import run_quality_calibration
-                _ops.run_job("quality_calibration", run_quality_calibration)
+                from strategy_jobs import quality_calibration_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (blind re-audit 10/11/26), the cohort read first.
+                _ops.run_job("quality_calibration", quality_calibration_pass())
 
             # 4am daily — what each published week actually did, by daypart,
             # each ended week read when its numbers are in and again only
@@ -5800,7 +5804,11 @@ def scheduler_loop():
             # 10/10/26 RM-4). Sends nothing.
             if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("schedule_scorecard", str(today)):
                 import schedule_scorecard as _sscard
-                _ops.run_job("schedule_scorecard", _sscard.run_scorecard)
+                from strategy_jobs import learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (blind re-audit 10/11/26 SCALE-26): a serial
+                # 15-minute pass rotated coverage over weeks at fleet scale.
+                _ops.run_job("schedule_scorecard", learner_pass("schedule_scorecard", _sscard.run_scorecard))
 
             # 7am daily, after event_sync (5am) and the memory (6am) - the
             # Studio's Bench: on-call slots settled, published weeks'
@@ -5816,7 +5824,10 @@ def scheduler_loop():
             # owner's ratings screen. Bounded, resumable. Sends nothing.
             if _due(now, 8) and now.weekday() == 0 and _ops.claim_period("staffing_learning", str(today)):
                 import staffing_elasticity as _sel_job
-                _ops.run_job("staffing_learning", _sel_job.run_elasticity)
+                from strategy_jobs import learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (blind re-audit 10/11/26 LEARNING-24).
+                _ops.run_job("staffing_learning", learner_pass("staffing_learning", _sel_job.run_elasticity))
 
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the

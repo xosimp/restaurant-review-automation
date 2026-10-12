@@ -7225,6 +7225,10 @@ def _do_publish_review(u):
     out = prepublish.review(rid, sid, rows=rows, user=u, today=_local_today(u), can_publish=can)
     if not out.get("ok"):
         return out, 404
+    # The pre-publish review opened by a person of the restaurant (blind
+    # re-audit 10/11/26 LEARNING-16): engagement the scorecard reads.
+    import schedule_scorecard as _ssc_view
+    _ssc_view.record_view(rid, sid, user=u, surface="review")
     return out, 200
 
 
