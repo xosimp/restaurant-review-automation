@@ -109,11 +109,11 @@ def test_round_three_layout_calls():
     assert "&larr; Dashboard" not in SRC and "ss-back" not in SRC
     brand = SRC[_at(".ss-brand{"):]
     assert "box-shadow" not in brand[:brand.index("}")]
-    # Reports load on the Ember Core at page scale (10/12/26: the orb and
-    # its sentence bigger, Cavnar AI's own core rather than the particle orb).
+    # Reports load on Ask Cavnar AI's orb ('searching') at page scale
+    # (10/12/26: the orb and its sentence bigger, not the 'working' cloud).
     rep = SRC[_at("  function loading(label){return '<div class=\"hb-load dr-page-load\""):]
-    assert 'data-core="dr-loading"' in rep[:rep.index("\n")] and "hb-orb" not in rep[:rep.index("\n")]
-    assert ".dr-load-core{width:120px;height:120px}" in SRC
+    line = rep[:rep.index("\n")]
+    assert 'data-orb-state="searching"' in line and 'width="120"' in line
     assert ".dr-page-load span{font-family:'Clash Display',sans-serif;font-size:21px;" in SRC
     # The recovery email's check, address and Remove sit on one centred line.
     assert '<span class="rec-line"><i class="cv-ok" aria-hidden="true"></i><span>' in SRC
