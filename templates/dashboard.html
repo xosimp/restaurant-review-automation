@@ -7973,6 +7973,10 @@ svg:hover .hb-xh{opacity:1}
       BUD=d;st.date=d.start;b.innerHTML=budgetHtml(d);
     }).catch(function(){if(tk===st.token)loadFailed(b,null);});
   }
+  function budMode(m){
+    var b=body();if(!b||!BUD)return;BUD.mode=m;
+    var y=window.pageYOffset;b.innerHTML=budgetHtml(BUD);window.scrollTo(0,y);
+  }
   function budSplit(total,days,mix){
     var out={},s=0,i,w,run=0,last=null;if(!isNum(total))return out;
     for(i=0;i<days.length;i++)s+=mix[days[i].weekday]||0;
@@ -8058,9 +8062,15 @@ svg:hover .hb-xh{opacity:1}
       if(wn&&isNum(sg.net))wn.value=sg.net;if(wg&&isNum(sg.gross))wg.value=sg.gross;
       var sp=el('drb-split');if(sp)sp.innerHTML=budSplitHtml(BUD,isNum(sg.net)?sg.net:null);}
     else if(a==='mode'){var m=t.getAttribute('data-mode');if(m===BUD.mode)return;
+      // Day and Week read the same week (budget_plan.week_view): switch in
+      // place from what is loaded, no loading screen or refetch, and save
+      // the choice behind it; a refused save switches back (owner, 10/12/26:
+      // the toggle flashed the whole screen).
+      var prev=BUD.mode;budMode(m);
       post('/api/dsr/settings',{dsr_budget_mode:m}).then(function(r){
-        if(!r||!r.ok){var s2=el('drb-status');if(s2)s2.textContent=(r&&r.error)||'Couldn’t change how you budget.';return;}
-        loadBudget(BUD.start);});}
+        if(r&&r.ok)return;budMode(prev);
+        var s2=el('drb-status');if(s2)s2.textContent=(r&&r.error)||'Couldn’t change how you budget.';
+      }).catch(function(){budMode(prev);var s3=el('drb-status');if(s3)s3.textContent='Couldn’t change how you budget.';});}
     else if(a==='save')budSave(t);
   });
   document.addEventListener('input',function(e){

@@ -84,3 +84,13 @@ def test_the_mode_reads_day_until_the_owner_picks_week(rid, db_path):
     assert bp.mode_of(rid, db_path) == "day"
     update_restaurant(rid, {"dsr_budget_mode": "week"}, db_path=db_path)
     assert bp.mode_of(rid, db_path) == "week"
+
+
+def test_mode_switch_redraws_in_place_without_a_reload():
+    """Day/Week read the same week: the toggle redraws from the loaded data
+    and saves behind it, never a loading screen (owner, 10/12/26)."""
+    html = open("templates/dashboard.html").read()
+    branch = html[html.index("else if(a==='mode')"):]
+    branch = branch[:branch.index("else if(a==='save')")]
+    assert "budMode(m)" in branch and "loadBudget(" not in branch
+    assert "budMode(prev)" in branch
