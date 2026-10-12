@@ -7991,6 +7991,11 @@ svg:hover .hb-xh{opacity:1}
     return isNum(sg.confidence_pct)?'<span class="drb-conf" title="'+esc(sg.confidence_basis||'')+'">'+hn(sg.confidence_pct+'%')+' confidence</span>'
       :'<span class="drb-conf off" title="'+esc(sg.confidence_basis||'')+'">— confidence</span>';
   }
+  function budSumHtml(d){
+    var sg=d.suggest||{},bd=d.budget||{};
+    return '<div><div class="k">Your budget</div><div class="v">'+hn(esc(money(bd.net)))+' <small>net</small></div><div class="s">'+(isNum(bd.gross)?hn(esc(money(bd.gross)))+' gross':'No gross set')+'</div></div>'
+      +'<div><div class="k">Cavnar AI suggests</div><div class="v">'+hn(esc(money(sg.net)))+' <small>net</small></div><div class="s">'+(isNum(sg.gross)?hn(esc(money(sg.gross)))+' gross':esc(sg.gross_basis||''))+'</div>'+budConf(sg)+'</div>';
+  }
   function budgetHtml(d){
     var days=d.days||[],sg=d.suggest||{},bd=d.budget||{},wk=d.mode==='week',i,x,h;
     h='<div class="dr-head"><div><div class="hb-kicker">Budget</div><h1 class="hb-h1">Week of '+hn(esc(md(d.start)))+' – '+hn(esc(md(d.end)))+'</h1>'
@@ -8000,8 +8005,7 @@ svg:hover .hb-xh{opacity:1}
     h+='<section class="hb-card drb-top"><div class="drb-mode" role="group" aria-label="Budget by">'
       +'<span class="k">Budget by</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="day" aria-pressed="'+(wk?'false':'true')+'">Day</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="week" aria-pressed="'+(wk?'true':'false')+'">Week</button></div>'
-      +'<div class="drb-sum"><div><div class="k">Your budget</div><div class="v">'+hn(esc(money(bd.net)))+' <small>net</small></div><div class="s">'+(isNum(bd.gross)?hn(esc(money(bd.gross)))+' gross':'No gross set')+'</div></div>'
-      +'<div><div class="k">Cavnar AI suggests</div><div class="v">'+hn(esc(money(sg.net)))+' <small>net</small></div><div class="s">'+(isNum(sg.gross)?hn(esc(money(sg.gross)))+' gross':esc(sg.gross_basis||''))+'</div>'+budConf(sg)+'</div></div></section>';
+      +'<div class="drb-sum" id="drb-sum">'+budSumHtml(d)+'</div></section>';
     if(wk){
       var tn=isNum(bd.net)?bd.net:'',tg=isNum(bd.gross)?bd.gross:'';
       h+='<section class="hb-card drb-week"><div class="hb-h3"><span>The week’s figure</span></div>'
@@ -8059,7 +8063,15 @@ svg:hover .hb-xh{opacity:1}
       req=post('/api/dsr/budget',{days:days});}
     req.then(function(r){done();
       if(!r||!r.ok){if(s)s.textContent=(r&&r.error)||'Couldn’t save the budget.';return;}
-      if(typeof toast==='function')toast('Budget saved','success');loadBudget(BUD.start);
+      // Saved: the toast, and the totals refreshed quietly in place - the
+      // inputs already hold what was saved, so nothing reloads (owner,
+      // 10/12/26). Weekly mode's split comes back from the server too.
+      if(typeof toast==='function')toast('Budget saved','success');if(s)s.textContent='';
+      var tk=st.token;
+      get('/api/dsr/budget/week?start='+encodeURIComponent(BUD.start)).then(function(d){
+        if(tk!==st.token||!d||!d.ok||!BUD)return;
+        d.mode=BUD.mode;BUD=d;var sm=el('drb-sum');if(sm)sm.innerHTML=budSumHtml(d);
+      }).catch(function(){});
     }).catch(function(){done();if(s)s.textContent='The answer didn’t arrive — reload to see what saved.';});
   }
   document.addEventListener('click',function(e){

@@ -103,3 +103,11 @@ def test_budget_inputs_show_thousands_commas():
     assert 'type="number" min="0" step="10" inputmode="decimal" id="drb-wnet"' not in html
     assert "data-drb-net=\"'+esc(x.date)+'\" value=\"'+esc(budFmt(x.budget_net))+'\"" in html
     assert "function budLive(inp)" in html and "replace(/[$,\\s]/g,'')" in html
+
+
+def test_save_budget_toasts_without_reloading_the_page():
+    html = open("templates/dashboard.html").read()
+    body = html[html.index("function budSave(btn){"):]
+    body = body[:body.index("\n  document.addEventListener('click'")]
+    assert "toast('Budget saved','success')" in body
+    assert "loadBudget(" not in body and "budSumHtml(d)" in body
