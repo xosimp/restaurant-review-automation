@@ -8863,7 +8863,10 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # claimant's written yes to a short rest, kept for
                        # the decider's answer (BUGSLIFE-7).
                        ("shift_id", "TEXT"), ("target_shift_id", "TEXT"), ("target_person_id", "INTEGER"),
-                       ("held_consent_rest", "INTEGER")):
+                       ("held_consent_rest", "INTEGER"),
+                       # schedule re-audit 10/11/26 STRESS-16: who runs the
+                       # floor when an approved drop leaves no manager on.
+                       ("floor_covered_by", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):
