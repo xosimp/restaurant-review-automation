@@ -47,6 +47,7 @@ from datetime import datetime
 
 import models as _models_mod
 from models import DB_PATH
+import schedule_time as _stime_scope
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ def _display(counter: dict) -> str:
 
 # ── the weeks the manager edited ──────────────────────────────────────────
 
+@_stime_scope.scoped
 def learning_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
     """Every week a person of the restaurant finished with in the last
     `weeks` weeks — schedule_versions.learning_weeks: the ORIGINAL draft
@@ -204,6 +206,13 @@ def _min_rate():
     return PATTERN_MIN_RATE
 
 
+def _candidate(n, of, hits_w, opp_w, min_repeats, min_rate) -> bool:
+    """schedule_versions.candidate_ok — the one candidacy rule every edit
+    learner reads (re-audit 10/11/26 LEARNING-10)."""
+    from schedule_versions import candidate_ok
+    return candidate_ok(n, of, hits_w, opp_w, min_repeats, min_rate)
+
+
 def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """Per role × weekday × daypart, the start or end the manager keeps
     moving shifts to — counted once per week, so three servers retimed on
@@ -256,11 +265,11 @@ def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
             return bool(slot) and times != {when}
         hits_w, opp_w, ids, of, _seg = _since_onset([w for w, _at in drafted], kind, set(e["weeks"]), _opp)
         n = len(ids)
-        if n < min_repeats:
+        # A minimum of opportunities and a Wilson lower bound (re-audit
+        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
-            continue
         role = _display(e["role"])
         verb = "starting" if kind == "retime_start" else "ending"
         out.append({"kind": kind, "employee": "", "role": role, "day": day, "daypart": part, "time": when, "times": n,
@@ -361,9 +370,9 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         side = sorted(d_ for d_, h, _w, _s in pairs if h in ids)
         delta = side[len(side) // 2]
         hits = [p for p in pairs if p[1] in ids]
-        rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
+        if not _candidate(len(ids), of, hits_w, opp_w, min_repeats, min_rate):
             continue
+        rate, conf = _strength(hits_w, opp_w)
         role = _display(spellings.get(rl, {})) or rl.title()
         n = len(side)
         if delta > 0:
@@ -412,11 +421,11 @@ def role_change_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list
                        for r in w.get("base") or [])
         hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "role_change", set(e["weeks"]), _there)
         n = len(ids)
-        if n < min_repeats:
+        # A minimum of opportunities and a Wilson lower bound (re-audit
+        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
-            continue
         name, old, new = _display(e["name"]), _display(e["old"]), _display(e["new"])
         out.append({"kind": "role_change", "employee": name, "role": new, "was_role": old, "day": day, "daypart": part,
                     "times": n, "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
@@ -478,11 +487,11 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
                        and _part(r.get("shift_start")) == part for r in w.get("base") or [])
         hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "leader_swap", set(e["weeks"]), _there)
         n = len(ids)
-        if n < min_repeats:
+        # A minimum of opportunities and a Wilson lower bound (re-audit
+        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
-            continue
         role = _display(e["role"])
         names = [k for k, _v in sorted(e["names"].items(), key=lambda kv: (-kv[1], kv[0]))][:3]
         out.append({"kind": "leader_swap", "employee": "", "role": role, "day": day, "daypart": part, "times": n,
@@ -494,6 +503,7 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
     return out
 
 
+@_stime_scope.scoped
 def edit_patterns(restaurant_id, weeks=EDIT_WEEKS, min_repeats=2, db_path=DB_PATH, week_edits=None,
                   min_rate=None) -> list:
     """Every new pattern kind, strongest first, capped at NEW_PATTERN_CAP.
@@ -569,6 +579,7 @@ def _settled(levels, key, since=""):
     return vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
 
 
+@_stime_scope.scoped
 def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_PATH) -> dict:
     """{(weekday, daypart): {role: {delta, settled}}} — learned_headcount_
     adjustments with, beside each delta, the level the manager settled on
@@ -1344,15 +1355,16 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         except Exception as e:
             import ops
             ops.capture(e, job="schedule_cavnar_credit", context=f"restaurant_id={restaurant_id} history={history_id}")
-    # The one-tap why (L-35): every big change in the first weeks, and from
-    # then on the SECOND time any change repeats, at any age (schedule audit
-    # 10/10/26 LEARNING-2 — it used to be asked only in the first four
-    # published weeks, so a habit a new manager started in month six took
-    # ten weeks to reach the prompt and eighteen to bind).
+    # The one-tap why (L-35): every big change, from its FIRST occurrence, at
+    # any age (schedule re-audit 10/11/26 LEARNING-10 — past the first four
+    # weeks it was asked only from the second repeat, so two one-off edits
+    # were already a habit candidate before anyone could say "just this
+    # week"; LEARNING-2 before that asked only in the first weeks). A repeat
+    # is still asked first; at most WHY_MAX_QUESTIONS a save. "Always" binds
+    # it at once (the owner's word), a one-off keeps it out of the habits.
     try:
-        cold = in_cold_start(restaurant_id, db_path)
         out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path,
-                                             repeats_only=not cold)
+                                             repeats_only=False)
     except Exception as e:
         import ops
         ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")

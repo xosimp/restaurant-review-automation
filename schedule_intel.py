@@ -33,6 +33,7 @@ import models as _models_mod
 from models import DB_PATH
 from models import live_where as _live_where, live_csv_sql as _live_csv
 from canonical_facts import FINAL_SQL
+import schedule_time as _stime_scope
 
 
 def get_conn(db_path=None):
@@ -115,6 +116,7 @@ def _mark_week_read(restaurant_id, history_id, step, fingerprint, db_path=DB_PAT
         conn.close()
 
 
+@_stime_scope.scoped
 def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=False) -> dict:
     """For every published week that has ended, one row per date and
     daypart: scheduled hours and people (from the published CSV — the PLAN),
@@ -1561,6 +1563,7 @@ READING_GOOD_REVIEW = 4.0
 READING_MIN_MEDIAN = 3          # same weekday and daypart readings before a median is a baseline
 
 
+@_stime_scope.scoped
 def slot_readings(restaurant_id, since, until, db_path=DB_PATH) -> dict:
     """{(date, daypart): {sales_resid, comps_rate, turn_minutes, issues,
     review}} for the recorded shifts of published weeks in [since, until]
@@ -2026,6 +2029,7 @@ def _pos_week_final(conn, restaurant_id, week_end, today) -> bool:
     return (today - ended).days >= AS_RUN_FINAL_AFTER_DAYS
 
 
+@_stime_scope.scoped
 def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_RUN_WEEKS, only_changed=False) -> int:
     """Each published week that has ended (the newest `weeks`), scored as it
     ran, beside its planned score — per shift into the observation log
@@ -2778,13 +2782,22 @@ def init_schedule_intel(db_path: str = DB_PATH):
                        # then on it binds until its lifecycle ends it (a failed
                        # re-test, two reversals, dormant, the owner's let-go),
                        # never because a confidence decayed.
-                       ("last_kept_week", "TEXT"), ("last_kept", "TEXT"), ("enforced_since", "TEXT")):
+                       ("last_kept_week", "TEXT"), ("last_kept", "TEXT"), ("enforced_since", "TEXT"),
+                       # evidence_basis 'hand' (schedule re-audit 10/11/26
+                       # LEARNING-9): hits and opportunities count the
+                       # manager's own hand only. A row from before it counted
+                       # every week the draft carried it as a hit; boot takes
+                       # those weeks back out once (schedule_versions.
+                       # migrate_hand_evidence).
+                       ("evidence_basis", "TEXT")):
         if _col not in _sp2:
             try:
                 conn.execute(f"ALTER TABLE schedule_standing_patterns ADD COLUMN {_col} {_typ}")
             except Exception as _e:
                 if "duplicate column" not in str(_e).lower():
                     raise
+    import schedule_versions as _sv_ev
+    _sv_ev.migrate_hand_evidence(conn)
     # Whose pattern a dismissal is (INVENTORY-2): the key carries the name,
     # so a rename re-keys it (people._repoint_patterns) and a merge folds it.
     # Whose word the dismissal is (schedule audit 10/3/26 L-10): authority

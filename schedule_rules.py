@@ -110,7 +110,10 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
                   "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max",
                   # the same words read from the notes, not yet confirmed
-                  "owner_ask_on", "owner_ask_close"})
+                  "owner_ask_on", "owner_ask_close",
+                  # a habit the manager taught by hand, broken (re-audit
+                  # 10/11/26 LEARNING-12): listed in the review, never held
+                  "habit_broken"})
 # Soft flags about the roster, not the week, that still hold every publish:
 # with nobody counted as a floor manager the highest rule is unmet on every
 # shift and no draft can mend it, so the week waits until the owner names
@@ -178,6 +181,7 @@ LABELS = {
     "owner_word_close": "not closing or opening when your own words say they do",
     "owner_ask_on": "not on when your notes ask for them",
     "owner_ask_close": "not closing or opening when your notes ask for it",
+    "habit_broken": "against a habit the manager taught the draft by hand",
 }
 
 
@@ -1432,6 +1436,11 @@ class Constraints:
     owner_person_close: list = field(default_factory=list)
     owner_weights: list = field(default_factory=list)
     typed_rules: list = field(default_factory=list)
+    # The manager's habits the memory binds (schedule_memory.enforced_signals
+    # entries of tier "bound", re-audit 10/11/26 LEARNING-12, contract #6):
+    # a week that breaks one carries a soft "habit_broken" breach naming it;
+    # each is also in typed_rules with source "habit".
+    habits: list = field(default_factory=list)
 
     # ── lookups ────────────────────────────────────────────────────────
     def key(self, name) -> str:
@@ -2630,6 +2639,21 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _floors_on_job_codes(c)
     except Exception as exc:
         _input_problem(c, "role floors", exc)
+    # The habits the manager taught by hand and the memory now binds
+    # (schedule_memory tier "bound" — re-audit 10/11/26 LEARNING-12,
+    # contract #6): typed rules with source "habit" beside the owner's (the
+    # review lists them), and the signals the sweep reads for a soft
+    # "habit_broken" breach — the solvers price them in their own tier.
+    # A read; a memory that cannot be read binds nothing and blocks nothing.
+    try:
+        import schedule_memory as _smem_h
+        _sig = _smem_h.enforced_signals(restaurant_id, list(week_dates or []), roster_names=list(c.roster_names or []),
+                                        db_path=None if db_path == DB_PATH else db_path)
+        for _h in _smem_h.habit_rules(_sig):
+            c.habits.append(_h["signal"])
+            c.typed_rules.append({k: v for k, v in _h.items() if k != "signal"})
+    except Exception as exc:
+        print(f"[rules] habits unreadable for {restaurant_id}: {exc!r}")
     # Who has stopped working (schedule audit 10/3/26 E-3, D-17): no shift in
     # staff_settings.DORMANT_WEEKS weeks, not hand-added since, nothing on
     # file saying they are still here. Still on the roster — a row the owner
@@ -4563,6 +4587,12 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         import owner_rules as _owr
         out.extend(_owr.violations(rows, c, only_dates=({r.get("date") for r in rows or []} if day_only else None)))
 
+    # The manager's habits the memory binds, broken (re-audit 10/11/26
+    # LEARNING-12): soft, one breach per habit missed, named so the review
+    # lists it ("the draft forgot my correction" is seen, not discovered).
+    if getattr(c, "habits", None) and not person_only:
+        out.extend(_habit_violations(rows, c))
+
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
     # whenever the roster has one, and somebody is on at close.
@@ -6040,6 +6070,9 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "owner_word_off": TIER_COVERAGE, "owner_word_on": TIER_COVERAGE,
                "owner_word_close": TIER_COVERAGE,
                "owner_ask_on": TIER_QUALITY, "owner_ask_close": TIER_QUALITY,
+               # A broken habit (LEARNING-12): the review names it; the
+               # solvers price it in its own tier above quality.
+               "habit_broken": TIER_QUALITY,
                # More servers on at once than there are sections — the
                # owner's own "most on at once", ranked with over_role_max:
                # with no tier no stage's judge saw a pass push a night past
@@ -6472,6 +6505,29 @@ def hours_split(rows: list, c: "Constraints" = None, salaried=None) -> dict:
     total = sum(row_hours(r) for r in (rows or []))
     hourly = hourly_hours(rows, c=c, salaried=salaried)
     return {"hourly": round(hourly, 1), "salaried": round(max(0.0, total - hourly), 1), "total": round(total, 1)}
+
+
+def _habit_violations(rows, c) -> list:
+    """`habit_broken` (SOFT) for every bound habit (Constraints.habits —
+    schedule_memory.enforced_signals' tier "bound") the rows break, read by
+    schedule_memory.misses — the one meaning of each kind. Pinned to the
+    first row it names, else the day's first row of that weekday."""
+    import schedule_memory as _smem
+    fams = getattr(c, "role_families", None) or None
+    out = []
+    for miss in _smem.misses(rows, c.habits, families=fams):
+        if miss.get("tier") != "bound":
+            continue
+        idx = (miss.get("indexes") or [None])[0]
+        sig = next((h for h in c.habits if h.get("key") == miss.get("key")), {})
+        if idx is None:
+            idx = next((i for i, r in enumerate(rows or [])
+                        if _weekday_of(r.get("date") or "") == sig.get("day")), 0)
+        row = (rows or [{}])[idx] if rows else {}
+        out.append(_v("habit_broken", idx, row,
+                      f"the manager's habit: {miss.get('text') or sig.get('text') or ''}"[:160],
+                      habit_key=miss.get("key"), day_level=not miss.get("indexes")))
+    return out
 
 
 def _v(kind, index, row, detail, **extra):

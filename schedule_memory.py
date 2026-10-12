@@ -98,6 +98,7 @@ import logging
 import math
 import re
 from datetime import date, datetime, timedelta
+import schedule_time as _stime_scope
 
 log = logging.getLogger(__name__)
 
@@ -182,6 +183,28 @@ BOUND_ELSEWHERE = {
 }
 # The kinds enforced_signals hands the passes.
 SIGNAL_KINDS = tuple(k for k, e in KIND_ENFORCEMENT.items() if e == "soft" and k not in BOUND_ELSEWHERE)
+# The manager's habits as the passes bind them (schedule re-audit 10/11/26
+# LEARNING-9..12), each signal's `tier`:
+#   bound     an ACTIVE habit — earned by ENFORCE_MIN_HAND hand corrections
+#             (schedule_versions.habit_enforceable) or the owner's word: a
+#             miss costs HABIT_MISS_WEIGHT, never its confidence, and the
+#             solvers price it in its own tier above every soft quality term
+#             (schedule_solver.K_HABIT, schedule_cpsat.W_HABIT); a break is
+#             a soft "habit_broken" breach the review lists (Constraints.
+#             habits — the typed-rule path, source "habit", contract #6);
+#   learning  a CANDIDATE habit the manager's hand made at least twice, for
+#             CANDIDATE_BIND_DAYS from the last hand edit: a low-weight soft
+#             cost (its confidence x CANDIDATE_WEIGHT_SHARE) so the draft
+#             leans toward it at once without binding on noise — it used to
+#             be prompt-only, so a code-shaped draft ignored it for the five
+#             corrections it took to bind;
+#   soft      everything else the memory holds (openers, teams, overtime,
+#             late closes): its confidence, as before.
+HABIT_KINDS = tuple(k for k in PATTERN_KINDS if k not in BOUND_ELSEWHERE)
+CANDIDATE_BIND_DAYS = 28
+CANDIDATE_WEIGHT_SHARE = 0.5
+HABIT_MISS_WEIGHT = 1.0
+TIERS = ("bound", "learning", "soft")
 # Kinds a learner rebuilds each run, and the learner that owns them — a
 # learner that failed tonight leaves its kinds as they were.
 _MIRROR_KINDS = ("staff_avoid", "staff_prefer", "reliability", "daypart_outcome", "could_hold")
@@ -1054,9 +1077,14 @@ def _learn_patterns(ctx, patterns=None) -> list:
         # reversals, dormancy or the owner end it — it used to fall back to a
         # prompt line 9 to 15 weeks into being carried by the draft, so the
         # solver could undo it until the manager taught it again.
-        if status == "active" and m["confidence"] < ACTIVE_CONFIDENCE and not owner_word \
-                and not row.get("enforced_since"):
+        # Binding is earned by the manager's hand (re-audit 10/11/26
+        # LEARNING-9/11): enforced_since is set only once the hand hits clear
+        # schedule_versions.habit_enforceable, never by weeks the draft
+        # carried it, and a confidence alone never makes a habit bind.
+        if status == "active" and not owner_word and not row.get("enforced_since"):
             status = "candidate"
+        if status == "candidate":
+            m["value"]["needs_more"] = sv.hand_still_needed(s)
         reason = s.get("retired_reason") if status == "retired" else None
         if s["key"] in dismissed:
             status, reason = "retired", "dismissed"
@@ -1097,7 +1125,10 @@ def _learn_patterns(ctx, patterns=None) -> list:
             m["confidence"] = round(float(p["confidence"]), 3)
         if p.get("rate") is not None:
             m["rate"] = round(float(p["rate"]), 3)
-        status = "active" if m["confidence"] >= ACTIVE_CONFIDENCE else "candidate"
+        ev = {"hits": int(p.get("times") or 0), "opportunities": int(p.get("opportunities") or p.get("times") or 0)}
+        status = "active" if sv.habit_enforceable(ev) else "candidate"
+        if status == "candidate":
+            m["value"]["needs_more"] = sv.hand_still_needed(ev)
         m["status"], m["retired_reason"] = status, None
         out.append(m)
         keys.add(k)
@@ -2139,6 +2170,7 @@ _LEARNERS = (
 )
 
 
+@_stime_scope.scoped
 def consolidate(restaurant_id, db_path=None, today=None, patterns=None, only=None) -> dict:
     """Rebuild one restaurant's memory from its sources (see the module
     doc). Each learner runs on its own: one that fails is captured and its
@@ -2246,6 +2278,7 @@ def _pair_binds(r, value) -> bool:
     return False
 
 
+@_stime_scope.scoped
 def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None, closers=None) -> list:
     """The active memories that bind this week's passes: [{kind, key, person,
     day, daypart, role, value, confidence, enforcement, source}], most
@@ -2287,6 +2320,21 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None,
     if not restaurant_id or not _learns(restaurant_id, db_path):
         return []
     rows = _rows(restaurant_id, ("active",), db_path, kinds=SIGNAL_KINDS + ("retime_end",))
+    # A habit the manager's hand made at least twice and is still learning
+    # (LEARNING-11): a low-weight lean, for CANDIDATE_BIND_DAYS from the last
+    # hand edit — then the draft stops leaning and the manager's next
+    # correction (or none) decides it.
+    today = _today(restaurant_id)
+    learning = set()
+    for r in _rows(restaurant_id, ("candidate",), db_path, kinds=HABIT_KINDS):
+        hand = str(r.get("last_confirmed_by_hand") or "")[:10]
+        try:
+            fresh = bool(hand) and (today - date.fromisoformat(hand)).days <= CANDIDATE_BIND_DAYS
+        except ValueError:
+            fresh = False
+        if fresh and float(r.get("hits") or 0) >= CANDIDATE_MIN_HITS:
+            rows.append(r)
+            learning.add(r["memory_key"])
     weekdays = {_weekday(d) for d in (week_dates or []) if _weekday(d)}
     roster = {_nk(n) for n in roster_names} if roster_names else None
     families = _families(restaurant_id, db_path)
@@ -2297,7 +2345,8 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None,
         closers = chosen_closers_of(restaurant_id, db_path=db_path)
     out = []
     for r in rows:
-        if r["enforcement"] not in ("soft", "hard") or r["kind"] not in SIGNAL_KINDS:
+        is_learning = r["memory_key"] in learning
+        if (r["enforcement"] not in ("soft", "hard") and not is_learning) or r["kind"] not in SIGNAL_KINDS:
             continue
         value = _loads(r.get("value_json")) or {}
         if value.get("conflict"):
@@ -2315,10 +2364,44 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None,
         # The role as its family ("Server PM" is a server), one vocabulary
         # for every pass; a role change's exact role is in its value.
         role = _fam(r.get("role"), families) if r.get("role") else None
+        conf = float(r["confidence"]) if r.get("confidence") is not None else None
+        tier = "learning" if is_learning else ("bound" if r["kind"] in HABIT_KINDS else "soft")
         out.append({"kind": r["kind"], "key": r["memory_key"], "person": r.get("person"), "day": r.get("day"),
                     "daypart": r.get("daypart"), "role": role, "value": value,
-                    "confidence": float(r["confidence"]) if r.get("confidence") is not None else None,
-                    "enforcement": r["enforcement"], "source": r.get("source")})
+                    # What a miss weighs in every pass (misses / slot_cost):
+                    # a bound habit its own tier, a learning one a lean.
+                    "confidence": (round(conf * CANDIDATE_WEIGHT_SHARE, 3) if is_learning and conf is not None
+                                   else conf),
+                    "learned_confidence": conf, "tier": tier,
+                    "enforcement": "soft" if is_learning else r["enforcement"], "source": r.get("source"),
+                    "origin": "habit" if r["kind"] in HABIT_KINDS else "memory",
+                    "text": r.get("text") or ""})
+    return out
+
+
+def habit_rules(signals) -> list:
+    """The bound habits among enforced_signals' entries as the typed rules
+    the Constraints carry (cross-workstream contract #6: learned habits enter
+    the owner's typed-rule path with source "habit"): [{kind, person, role,
+    days, daypart, time, value, quote, words, confirmed: False, scope:
+    "every", source: "habit", key, signal}] — `kind` in owner_rules'
+    vocabulary (person_off / person_on / start / end) or the habit's own
+    (role_change, leader_swap). Never confirmed: a habit is the manager's
+    hand, not the owner's word, so it is a priced tier, never a hard rule;
+    the owner's "make it a rule" turns it into one. Pure."""
+    vocab = {"moved_off": "person_off", "moved_on": "person_on", "retime_start": "start", "retime_end": "end"}
+    out = []
+    for s in signals or []:
+        if s.get("tier") != "bound" or s.get("kind") not in HABIT_KINDS:
+            continue
+        v = s.get("value") or {}
+        out.append({"kind": vocab.get(s["kind"], s["kind"]), "person": s.get("person") or "",
+                    "role": s.get("role") or (v.get("role") if s["kind"] == "role_change" else "") or "",
+                    "days": [s["day"]] if s.get("day") else [], "dates": [], "daypart": s.get("daypart") or "",
+                    "time": v.get("time"), "value": v.get("names") or v.get("role"),
+                    "quote": s.get("text") or "", "words": _short(s),
+                    "confirmed": False, "scope": "every", "source": "habit", "key": s.get("key"),
+                    "signal": s})
     return out
 
 
@@ -2332,6 +2415,20 @@ def _fam(role, families=None) -> str:
 def _row_part(r) -> str:
     from shift_quality import present_dayparts
     return (present_dayparts(r) or ["unknown"])[0]
+
+
+def _miss_weight(m) -> float:
+    """What breaking one learned signal weighs (re-audit 10/11/26
+    LEARNING-12): a bound habit HABIT_MISS_WEIGHT whatever its confidence —
+    the manager taught it by hand, and a habit at 0.6 used to be half as
+    expensive to break as one at 0.9 — anything else its confidence (a
+    learning habit's lean is already scaled in enforced_signals)."""
+    if m.get("tier") == "bound":
+        return HABIT_MISS_WEIGHT
+    try:
+        return float(m.get("confidence") or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def misses(rows, learned, families=None, line=None, bucket=None) -> list:
@@ -2352,7 +2449,7 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
         return _nk((rows[i] or {}).get("employee"))
 
     for m in learned or []:
-        kind, conf = m.get("kind"), float(m.get("confidence") or 0)
+        kind, conf = m.get("kind"), _miss_weight(m)
         v = m.get("value") or {}
         day, part, who = m.get("day"), m.get("daypart"), _nk(m.get("person"))
         slot = by_slot.get((day, part), [])
@@ -2451,7 +2548,8 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
                         want_adj = want + (1440 if want < 12 * 60 and last >= 1440 else 0)
                         hit += [i for e, i in ends if e == last and e < want_adj]
         if hit:
-            out.append({"key": m.get("key"), "kind": kind, "indexes": [i for i in hit if i >= 0],
+            out.append({"key": m.get("key"), "kind": kind, "tier": m.get("tier") or "soft",
+                        "indexes": [i for i in hit if i >= 0],
                         "weight": round(conf * (len(hit) if kind in ("retime_start", "retime_end", "end_overrun")
                                                 else 1), 3),
                         "text": _short(m)})
@@ -2472,7 +2570,7 @@ def slot_cost(person, date_str, daypart, role, learned, families=None) -> float:
     for m in learned or []:
         if _nk(m.get("person")) != who or m.get("day") != wd or m.get("daypart") != daypart:
             continue
-        conf = float(m.get("confidence") or 0)
+        conf = _miss_weight(m)
         if m.get("kind") == "moved_off":
             cost += conf
         elif m.get("kind") == "moved_on":
@@ -2986,7 +3084,8 @@ def memory_view(restaurant_id, db_path=None, include_retired=True, principal=Tru
             "class_label": CLASS_LABELS.get(r["fact_class"], r["fact_class"]),
             "person": r.get("person"), "role": r.get("role"), "day": r.get("day"), "daypart": r.get("daypart"),
             "text": r.get("text"), "value": value, "status": r["status"],
-            "status_label": STATUS_LABELS.get(r["status"], r["status"]), "enforcement": r["enforcement"],
+            "status_label": _status_label(r, value), "enforcement": r["enforcement"],
+            "needs_more": value.get("needs_more") if r["status"] == "candidate" else None,
             "held_in_code": held or r["status"] == "rule",
             "bound_by": BOUND_ELSEWHERE.get(r["kind"]) if r["status"] == "active" else None,
             "confidence": round(float(conf), 3) if conf is not None else None,
@@ -3024,6 +3123,17 @@ def memory_view(restaurant_id, db_path=None, include_retired=True, principal=Tru
             "classes": CLASS_LABELS,
             "ladder": {"candidate_min_weeks": CANDIDATE_MIN_HITS, "candidate_min_rate": CANDIDATE_MIN_RATE,
                        "active_confidence": ACTIVE_CONFIDENCE, "retire_confidence": RETIRE_CONFIDENCE}}
+
+
+def _status_label(r, value) -> str:
+    """The owner's word for a fact's status — a habit still learning says
+    how many more of the manager's own corrections make it bind (re-audit
+    10/11/26 LEARNING-11: "learning, applied after N more")."""
+    label = STATUS_LABELS.get(r["status"], r["status"])
+    more = value.get("needs_more") if r["status"] == "candidate" and r["kind"] in HABIT_KINDS else None
+    if more:
+        return f"{label} — applied after {more} more correction{'' if more == 1 else 's'} by hand"
+    return label
 
 
 def _rule_refusal(r, value):

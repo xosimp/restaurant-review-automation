@@ -591,8 +591,9 @@ def generation_scope(job_id, priority=GEN_PRIORITY_PRESS, restaurant_id=None):
         try:
             # The restaurant's own lunch/dinner boundary (restaurants.
             # daypart_boundary — schedule_time.daypart_scope, ARCH-12) for
-            # every daypart question the generation asks.
-            with _stime.daypart_scope(_restaurant_split(restaurant_id)):
+            # every daypart question the generation asks — the same scope
+            # the nightly learners enter (restaurant_scope, re-audit ARCH-11).
+            with _stime.restaurant_scope(restaurant_id):
                 yield clock
         finally:
             _CLOCK.reset(token)
@@ -8359,10 +8360,7 @@ def in_restaurant_dayparts(fn):
 
     @functools.wraps(fn)
     def wrapper(restaurant_id, *a, **k):
-        split = _restaurant_split(restaurant_id)
-        if split is None or split == _stime.daypart_split():
-            return fn(restaurant_id, *a, **k)
-        with _stime.daypart_scope(split):
+        with _stime.restaurant_scope(restaurant_id):
             return fn(restaurant_id, *a, **k)
     return wrapper
 

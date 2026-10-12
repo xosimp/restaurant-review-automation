@@ -16,6 +16,18 @@ from models import Restaurant, create_restaurant
 
 
 @pytest.fixture(autouse=True)
+def _two_edit_candidates(monkeypatch):
+    """These tests are about their own subject, built on two-edit fixtures
+    from before the candidacy floor (schedule re-audit 10/11/26
+    LEARNING-10: three opportunities and a Wilson lower bound of 0.3 —
+    tests/test_sf11_g2_habits.py holds it). The old floor keeps each test
+    about its subject; enforcement is still earned by hand
+    (schedule_versions.habit_enforceable)."""
+    monkeypatch.setattr(schedule_versions, "CANDIDATE_MIN_OPPORTUNITIES", 2)
+    monkeypatch.setattr(schedule_versions, "CANDIDATE_MIN_LOWER", 0.0)
+
+
+@pytest.fixture(autouse=True)
 def _db(db_path, monkeypatch):
     real = models.get_conn
     fake = lambda *a, **k: real(db_path)  # noqa: E731
@@ -87,9 +99,11 @@ def _memory_status(rid):
 
 
 def _taught_then_kept(rid, kept_weeks=10):
-    # The manager takes Bob off Tuesday dinner twice by hand, twelve weeks
-    # ago; from then on every draft keeps him off and every week goes out
-    # (and is worked) that way.
+    # The manager takes Bob off Tuesday dinner three times by hand, about
+    # twelve weeks ago (what binds since re-audit 10/11/26 LEARNING-9/11:
+    # schedule_versions.ENFORCE_MIN_HAND); from then on every draft keeps him
+    # off and every week goes out (and is worked) that way.
+    _week(rid, _tuesday(13), EVERYONE, WITHOUT_BOB, age_days=91)
     _week(rid, _tuesday(12), EVERYONE, WITHOUT_BOB, age_days=84)
     _week(rid, _tuesday(11), EVERYONE, WITHOUT_BOB, age_days=77)
     schedule_versions.refresh_standing_patterns(rid)
@@ -104,10 +118,9 @@ def test_a_habit_the_draft_keeps_every_week_does_not_fade_out_of_force():
     row = _bob_off(rid)
     assert stats["renewed"] >= 1
     assert row["last_kept_iso"] == _tuesday(1).isoformat()
-    # Before: the decay ran from the last hand edit only, 0.62 x Wilson(12/12)
-    # = 0.50 — under ACTIVE_CONFIDENCE, so the memory dropped it to a prompt
-    # line while the draft was still carrying it every week.
-    assert row["confidence"] >= schedule_memory.ACTIVE_CONFIDENCE
+    # The kept weeks renew its decay (LEARNING-1) but are not evidence
+    # (re-audit 10/11/26 LEARNING-9): the hand's 3 of 3 alone.
+    assert (row["hits"], row["opportunities"]) == (3, 3)
     assert row["enforced_since"]
     assert _memory_status(rid) == "active"
 
@@ -133,7 +146,9 @@ def test_a_born_pattern_is_not_bound_until_it_clears_the_line():
     _week(rid, _tuesday(1), EVERYONE, WITHOUT_BOB, age_days=7)
     schedule_versions.refresh_standing_patterns(rid)
     row = _bob_off(rid)
-    assert row["confidence"] < schedule_memory.ACTIVE_CONFIDENCE and not row["enforced_since"]
+    # Two hand edits (under this module's two-edit floor): a candidate, not
+    # bound — binding takes ENFORCE_MIN_HAND (LEARNING-9/11).
+    assert not row["enforced_since"]
     assert _memory_status(rid) == "candidate"
 
 
@@ -175,7 +190,7 @@ def test_two_reversals_still_retire_a_bound_habit_and_unbind_it():
 
 # ── LEARNING-2: a new habit is read from its onset ──────────────────────────
 
-def test_a_new_habit_in_a_mature_restaurant_is_a_pattern_after_two_weeks_and_binds_after_five():
+def test_a_new_habit_in_a_mature_restaurant_is_a_pattern_after_two_weeks_and_binds_after_three():
     rid = _rid()
     # 19 weeks the draft had Bob on Tuesday dinner and nobody touched it.
     for w in range(23, 4, -1):
@@ -187,11 +202,13 @@ def test_a_new_habit_in_a_mature_restaurant_is_a_pattern_after_two_weeks_and_bin
     # Before: 2 hits over 21 opportunities, a rate of ~0.1 — not a pattern
     # for another ten weeks.
     assert pats and pats[0]["times"] == 2 and pats[0]["opportunities"] == 2 and pats[0]["onset"]
-    assert pats[0]["confidence"] < schedule_memory.ACTIVE_CONFIDENCE
-    for w in (2, 1, 0):
-        _week(rid, _tuesday(w), EVERYONE, WITHOUT_BOB, age_days=7 * w)
+    assert not schedule_versions.habit_enforceable({"hits": 2, "opportunities": 2})
+    _week(rid, _tuesday(2), EVERYONE, WITHOUT_BOB, age_days=14)
     pats = [p for p in schedule_versions.learned_patterns(rid) if p["kind"] == "moved_off" and p["employee"] == "Bob"]
-    assert pats[0]["times"] == 5 and pats[0]["confidence"] >= schedule_memory.ACTIVE_CONFIDENCE
+    # The third hand edit in a row binds (re-audit 10/11/26 LEARNING-11: it
+    # took five).
+    assert pats[0]["times"] == 3
+    assert schedule_versions.habit_enforceable({"hits": pats[0]["times"], "opportunities": pats[0]["opportunities"]})
 
 
 def _edit_save(rid, hid, rows_csv, published=False):
@@ -228,9 +245,11 @@ def test_the_second_time_a_change_repeats_it_is_asked_about_at_any_age():
     rid = _rid()
     for w in range(9, 4, -1):                      # well past the first four weeks
         _week(rid, _tuesday(w), EVERYONE, EVERYONE, age_days=7 * w)
-    # The first time: nothing asked (not a repeat).
+    # The first time: asked too, at any age (re-audit 10/11/26 LEARNING-10 —
+    # a one-off is named before it can count toward a habit), not a repeat.
     hid = _draft(rid, _tuesday(1))
-    assert _edit_save(rid, hid, _csv(_tuesday(1), WITHOUT_BOB))["why_questions"] == []
+    first = _edit_save(rid, hid, _csv(_tuesday(1), WITHOUT_BOB))["why_questions"]
+    assert len(first) == 1 and first[0]["repeat"] == 0
     schedule_versions.append(rid, hid, "published", _csv(_tuesday(1), WITHOUT_BOB), saved_by="erik",
                              saved_authority="principal")
     schedule_versions.observe_publish(rid, hid, authority="principal", editor="erik")

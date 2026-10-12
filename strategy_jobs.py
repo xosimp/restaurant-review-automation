@@ -30,6 +30,7 @@ import config
 import uuid
 
 from models import get_conn, DB_PATH
+import schedule_time as _stime_scope
 
 log = logging.getLogger(__name__)
 
@@ -1940,6 +1941,8 @@ def run_schedule_outcomes(db_path=DB_PATH):
                    hit_bound=ran_out, rows=written["n"])
 
 
+# The restaurant's own lunch/dinner boundary for every daypart it files (re-audit 10/11/26 ARCH-11).
+@_stime_scope.scoped
 def schedule_outcomes_one(rid, db_path=DB_PATH) -> dict:
     """One restaurant's outcomes pass (run_schedule_outcomes' body, and the
     `learner` queue job's — fan_out_learner): {written, broke}. Raises when
@@ -2021,6 +2024,8 @@ def run_schedule_memory(db_path=DB_PATH):
                    hit_bound=ran_out, memories=tally["memories"])
 
 
+# The restaurant's own lunch/dinner boundary for every daypart it files (re-audit 10/11/26 ARCH-11).
+@_stime_scope.scoped
 def schedule_memory_one(rid, db_path=DB_PATH) -> dict:
     """One restaurant's scheduling memory rebuilt (run_schedule_memory's
     body, and the `learner` queue job's): schedule_memory.consolidate's
@@ -2099,6 +2104,8 @@ def people_nightly_backfill(db_path=DB_PATH) -> dict:
         return {"ok": False}
 
 
+# The restaurant's own lunch/dinner boundary for every daypart it files (re-audit 10/11/26 ARCH-11).
+@_stime_scope.scoped
 def people_nightly_one(rid, db_path=DB_PATH, today=None) -> dict:
     """One restaurant's people pass (run_people_nightly's body, and the
     `learner` queue job's): {attendance, signals}. Raises on a failure

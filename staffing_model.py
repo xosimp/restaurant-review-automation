@@ -62,6 +62,7 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+import schedule_time as _stime_scope
 
 SLOT = 30
 MODEL_WEEKS = 8
@@ -229,6 +230,7 @@ def _core_slots(part, open_m=None, close_m=None):
     return list(floor_slots(part, open_m, close_m) or [])
 
 
+@_stime_scope.scoped
 def measure(restaurant_id, shifts=None, db_path=DB_PATH, today=None, weeks=MODEL_WEEKS, prior=None,
             work=None, people=None, live=None, ok_pairs=None, overrides=None) -> dict:
     """The model (see the module note): {"families": {family: {"lag",
