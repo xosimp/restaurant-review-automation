@@ -6264,15 +6264,20 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     the exact reported bug (Monday: 6 correct night closers + 2 uncounted
     doubles = 8) plus worse cases found in verification (10 on one night).
 
-    Only ever shortens a row's shift_end (never shift_start) — "cut early
-    when overstaffed" is already this restaurant's own stated convention
-    for servers (see hours_notes' SHIFT END / CLOSER RULES), not something
-    invented here. Priority for which row absorbs the cut, most to least
-    preferred: a row this file's own top-up/extension passes added (most
-    discretionary), then the later leg of a double shift (the specific
-    reported pattern), then whichever active row started latest (a
-    "last in, first cut" tiebreak). Removes a row outright if trimming it
-    below ~30min would leave a token sliver shift.
+    Ends a shift early at the peak — "cut early when overstaffed" is this
+    restaurant's own stated convention for servers (see hours_notes' SHIFT
+    END / CLOSER RULES) — or, for a shift that started too close to the
+    peak to keep the shortest shift before it, starts it once the first
+    other shift at the peak has gone (_overlap_cut). Priority for which row
+    absorbs the cut, most to least preferred: a row this file's own
+    top-up/extension passes added (most discretionary), then the later leg
+    of a double shift (the specific reported pattern), then the shift
+    ending SOONEST — the lunch tails at a lunch-to-dinner handover, never
+    the dinner server who just arrived (sched re-audit 10/11/26 BUGSGEN-7).
+    A cut never leaves a shift under the one shortest shift
+    (schedule_rules.shortest_for, contract #2); where nothing workable is
+    left the row goes, and a cut that keeps a shift is taken before one
+    that removes it.
 
     Returns (preview_rows, rows_trimmed, trimmed_dates).
 
@@ -6382,10 +6387,15 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
         def _priority(r):
             # The top-up tags its rows "coverage top-up" (the older
             # "PAR hours top-up" wording too): the pipeline's own additions.
+            # Then the shift ending SOONEST — at a lunch-to-dinner handover
+            # the lunch tails that make the overlap, never the dinner server
+            # who just arrived for the rush (sched re-audit 10/11/26
+            # BUGSGEN-7: ranking the latest starter first cut a 4pm dinner
+            # server to 4:00-4:30pm while the lunch tails stayed).
             is_topup = "top-up" in (r.get("notes") or "").lower()
             is_second_leg = id(r) in double_shift_second_legs
-            start = _rules.parse_minutes(r.get("shift_start", "")) or 0
-            return (0 if is_topup else 1, 0 if is_second_leg else 1, -start)
+            sp_ = _span_minutes(r) or (0, 0)
+            return (0 if is_topup else 1, 0 if is_second_leg else 1, sp_[1], sp_[0])
 
         for _pass in range(20):  # bounded — one trim per pass, per day
             peak, peak_time = _peak_server_overlap(day_rows)
@@ -6403,11 +6413,17 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                 return not requirement_regressions(preview_rows, after, index, date, c)
             ranked = sorted((r for r in active if not _pinned(r)), key=_priority)
             want = FILL_SCORE_CANDIDATES if scorer is not None else 1
-            legal, spare, held = [], [], []
+            # A cut that leaves a workable shift (at least the one shortest
+            # shift, contract #2) before a whole shift removed; a cut that
+            # leaves a role short of its requirement only when nothing else
+            # can go (BUGSGEN-7).
+            legal, removals, spare, held = [], [], [], []
             for r in ranked:
-                if legal and (_priority(r)[:2] != _priority(legal[0][0])[:2] or len(legal) >= want):
+                first = (legal or removals or [None])[0]
+                if first is not None and (_priority(r)[:2] != _priority(first[0])[:2] or len(legal) >= want):
                     break
-                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap, constraints=c)
+                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap, constraints=c,
+                                   day_rows=active)
                 if cut is False:
                     continue
                 ok, why = _cut_ok(r, cut, date, day_name)
@@ -6416,9 +6432,11 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                         held.append(why)
                 elif index and not _keeps_requirement(r, cut):
                     spare.append((r, cut))     # legal, but leaves a role short: only if nothing else is
+                elif cut is None:
+                    removals.append((r, cut))
                 else:
                     legal.append((r, cut))
-            legal = legal or spare[:want]
+            legal = legal or removals[:want] or spare[:want]
             if not legal:
                 # Nothing at the peak may be cut: the night stays over the
                 # cap, and the owner is told what holds it there.
@@ -6450,22 +6468,38 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
 
 
 def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int,
-                 constraints=None):
-    """The row cut to end at `peak_time` (a new dict), None when that would
-    leave under half an hour (the row goes), False when it cannot be read.
-    `peak_time` past midnight (24:30) is the next morning's 12:30am."""
-    start_min = _rules.parse_minutes(row.get("shift_start", ""))
-    if start_min is None:
+                 constraints=None, day_rows=None):
+    """The row cut out of the peak (a new dict): ended at `peak_time` when
+    what is left before it is at least the one shortest shift (a lunch tail,
+    schedule_rules.shortest_for — contract #2), else started later, once the
+    first other shift on at the peak has gone (a late starter keeps a
+    workable shift after the handover); None when neither leaves a workable
+    shift (the row goes); False when it cannot be read. Never a 30-minute
+    shift (sched re-audit 10/11/26 BUGSGEN-6, BUGSGEN-7). `peak_time` past
+    midnight (24:30) is the next morning's 12:30am."""
+    sp0 = _span_minutes(row)
+    if sp0 is None:
         return False
-    if peak_time - start_min < 30:
-        return None
+    start_min, end_min = sp0
+    shortest = (_rules.shortest_for(constraints, row.get("employee"), row.get("date") or "")
+                if constraints is not None else _rules.DEFAULT_MIN_SHIFT_MINUTES)
     out = dict(row)
-    out["shift_end"] = _format_minutes_to_time(peak_time)
+    if peak_time - start_min >= shortest:
+        out["shift_end"] = _format_minutes_to_time(peak_time)
+    else:
+        ends = sorted(sp[1] for sp in (_span_minutes(x) for x in (day_rows or []) if x is not row)
+                      if sp and sp[0] <= peak_time < sp[1])
+        new_start = ends[0] if ends else None
+        if new_start is None or end_min - new_start < shortest:
+            return None
+        out["shift_start"] = _format_minutes_to_time(new_start)
     if day_name:
         _enforce_close_time(out, day_name, close_times, role_buffers, constraints=constraints)
     sp = _span_minutes(out)
     if not sp:
         return False
+    if sp[1] - sp[0] < shortest:
+        return None
     out["scheduled_hours"] = _stime.row_hours_text(out, _rules.tz_of(constraints) if constraints is not None
                                                    else None)
     note = (out.get("notes") or "").strip()
@@ -9362,6 +9396,14 @@ REPAIR_STAGES = (
      "check the people your instruction or rules name"),
     ("stations", _rules.TIER_COVERAGE, "The kitchen-station fill", "check each kitchen station has a trained cook"),
     ("close_out", _rules.TIER_COVERAGE, "The closer repair", "check each role's closer stays until close"),
+    # The hours your RESTAURANT HOURS & SHIFT RULES give each role — a hard
+    # staffing rule — held here, at the coverage rank, BEFORE the trims: a
+    # row outside them moves inside, its length kept (sched re-audit
+    # 10/11/26 BUGSGEN-5: applied last, after the budget trim, it left
+    # 2:00-4:00pm line cooks). role_times (quality) still applies the
+    # owner's start/end-time preferences last.
+    ("role_windows", _rules.TIER_COVERAGE, "The pass that keeps each role inside your hours & shift rules",
+     "check each role starts and ends inside your hours & shift rules"),
     # The restaurant's own limits — rest between shifts, the longest shift
     # — where they are not law: ranked below the manager rule and coverage,
     # so their repair runs after those and may cost neither (LOGIC-1).
@@ -10004,6 +10046,14 @@ def _stage_optimizer(rows, x):
     return {"rows": res["rows"] if res.get("changes") else rows, "report": {"summary": _opt.summary(res, sig)}}
 
 
+def _stage_role_windows(rows, x):
+    out = _rules.apply_role_windows(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "role_window",
+              "reason": e["reason"]} for e in out["retimed"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"retimed": len(out["retimed"]), "left": out.get("left") or []}}
+
+
 def _stage_role_times(rows, x):
     out = _rules.apply_role_times(rows, x.c, editable=x.editable)
     fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "role_time",
@@ -10018,7 +10068,8 @@ _STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _st
               "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
               "section_cap": _stage_section_cap,
               "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
-              "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times}
+              "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times,
+              "role_windows": _stage_role_windows}
 
 
 def _stage_failure(key, exc, x) -> dict:
@@ -10482,6 +10533,9 @@ def _apply_repair_reports(result, loop) -> None:
     result["min_hours"] = {"moved": n("min_hours", "moved"), "added": n("min_hours", "added"),
                            "left": (rep.get("min_hours") or {}).get("left") or []}
     result["role_times"] = {"retimed": n("role_times", "retimed"), "left": (rep.get("role_times") or {}).get("left") or []}
+    # The role-window hold at the coverage rank (BUGSGEN-5) — additive.
+    result["role_windows"] = {"retimed": n("role_windows", "retimed"),
+                              "left": (rep.get("role_windows") or {}).get("left") or []}
     result["end_overruns"] = {"padded": n("pad_overruns", "padded"),
                               "left": (rep.get("pad_overruns") or {}).get("left") or []}
     result["cap_floor_conflicts"] = (rep.get("section_cap") or {}).get("conflicts") or []

@@ -55,7 +55,6 @@ TRIM_SCORE_SECONDS = 8.0        # past this the score stops choosing; the order 
 # never leaving it shorter than a four-hour shift (the overtime trim's floor).
 TRIM_TAIL_MAX_HOURS = 2.0
 TRIM_TAIL_STEP_MIN = 30
-TRIM_MIN_SHIFT_HOURS = 4.0
 TRIM_MAX_TAIL_CUTS = 120
 TRIM_MAX_SECONDS = 20.0         # past this the trim stops where it is and says what is left over
 # Somebody's only shift of the week is a cost to cut, not a refusal (sched
@@ -2166,7 +2165,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
        person in the role stays on through it, the end of a shift goes first
        — the first in is the first cut, on the day furthest over its own
        target — at most TRIM_TAIL_MAX_HOURS off one shift, never leaving it
-       under TRIM_MIN_SHIFT_HOURS, never under a role floor through the hours
+       under the one shortest shift (schedule_rules.shortest_for, contract #2 —
+       a minor's lower legal cap that day included), never under a role floor through the hours
        cut. A 2h overage costs 2h, not a 7h shift.
     2. Whole shifts: rows the top-up added, then the later leg of a double,
        then the latest starter of a role on the day furthest over its own
@@ -2444,7 +2444,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         if not sp:
             return None
         s, e = sp
-        room = min(TRIM_TAIL_MAX_HOURS, (e - s) / 60.0 - TRIM_MIN_SHIFT_HOURS)
+        import schedule_rules as _rules
+        shortest_h = (_rules.shortest_for(c, r.get("employee"), r.get("date") or "") if c is not None
+                      else _rules.DEFAULT_MIN_SHIFT_MINUTES) / 60.0
+        room = min(TRIM_TAIL_MAX_HOURS, (e - s) / 60.0 - shortest_h)
         steps = int(math.floor(room * 60 / TRIM_TAIL_STEP_MIN + 1e-9))
         if steps <= 0:
             return None

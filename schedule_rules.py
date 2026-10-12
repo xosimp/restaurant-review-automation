@@ -85,6 +85,45 @@ _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hou
            "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30),
            "full_time_min_hours": (0, 60)}
 
+# The shortest shift, when the owner set none (contract #2 of the 10/11/26
+# fix round, sched re-audit BUGSGEN-6): every pass that cuts or adds — the
+# section-cap trim, the budget and overtime trims, the role-time retime, the
+# manager plan and its gap filler, the shapes and the solver — read their own
+# minimum (none, 30 minutes, 2h, 4h) and left 30-minute servers and a 7:00-
+# 7:30am manager stub. Three hours: below it a shift costs more to staff than
+# it covers, and reporting-time-pay states (CA, NY, ...) pay several hours for
+# a short one anyway. The owner's min_shift_hours replaces it.
+DEFAULT_MIN_SHIFT_MINUTES = 180
+
+
+def min_shift_minutes(restaurant) -> int:
+    """THE shortest shift, in minutes: the owner's min_shift_hours (their
+    rules, compliance_json) where set, else DEFAULT_MIN_SHIFT_MINUTES.
+    `restaurant` is a Restaurant, a Constraints (its compliance), a
+    compliance dict, a restaurant id, or None (the default). A shift a pass
+    makes or leaves is never shorter; a cut that would go under it removes or
+    hands over the shift instead (contract #2). A minor's legal cap that day
+    may lower it for them (shortest_for)."""
+    comp = None
+    if restaurant is None:
+        comp = {}
+    elif isinstance(restaurant, dict):
+        comp = restaurant
+    elif hasattr(restaurant, "compliance") and isinstance(getattr(restaurant, "compliance"), dict):
+        comp = restaurant.compliance
+    else:
+        try:
+            comp = compliance(restaurant) if hasattr(restaurant, "compliance_json") else \
+                compliance(__import__("models").get_restaurant(int(restaurant)))
+        except Exception:
+            comp = {}
+    try:
+        v = float((comp or {}).get("min_shift_hours") or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    return int(round(v * 60)) if v > 0 else DEFAULT_MIN_SHIFT_MINUTES
+
+
 # Reasons that mean the person is not really on that shift, so the row must
 # not count as coverage. Everything else in HARD is a cost or a rule breach
 # with a real person still on the floor.
@@ -4534,9 +4573,14 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         if mx and hrs > float(mx) + 0.01 and max_shift_applies(c, key):
             out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h",
                           severity=round(hrs - float(mx), 2), **_law_tier(c, "max_shift_hours")))
-        shortest = c.compliance.get("min_shift_hours")
-        if shortest and 0 < hrs < float(shortest) - 0.01:
-            out.append(_v("shift_too_short", i, r, f"{hrs:g}h shift, your shortest is {float(shortest):g}h"))
+        # The one shortest shift (min_shift_minutes, contract #2 — BUGSGEN-6),
+        # lowered for a minor to what the law lets them work that day.
+        shortest = shortest_for(c, key, r.get("date", "")) / 60.0
+        if shortest and 0 < hrs < shortest - 0.01:
+            out.append(_v("shift_too_short", i, r,
+                          f"{hrs:g}h shift, your shortest is {shortest:g}h" if c.compliance.get("min_shift_hours")
+                          else f"{hrs:g}h shift — shorter than the {shortest:g}h shortest shift (the default; set "
+                               "your own in your scheduling rules)", severity=round(shortest - hrs, 2)))
         if key in c.minors:
             # Read on the row's business date (E-32): a 12:30am start is the
             # night's, past any latest end, never a morning start. Late,
@@ -5194,12 +5238,44 @@ def _role_time_violations(rows: list, c: Constraints) -> list:
     return out
 
 
-# A rule never makes a shift shorter than this (a 4:30pm start on a shift
-# the draft ended at 5pm is the draft's problem to fix, not a 30-minute row).
-ROLE_TIME_MIN_MINUTES = 120
+# A rule never makes a shift shorter than the one shortest shift (contract
+# #2, min_shift_minutes — it was its own 2h here, BUGSGEN-6): a 4:30pm start
+# on a shift the draft ended at 5pm is the draft's problem, not a 30-minute row.
 
 
-def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
+def _into_window(sa, ea, win) -> tuple:
+    """(start, end) business minutes of a sa..ea shift moved INSIDE a role's
+    window ({earliest, latest}), keeping its length where the window is long
+    enough — a 10am-6pm line cook under "no earlier than 2pm" becomes
+    2pm-10pm, never 2pm-6pm (and never, after a trim, 2pm-4pm: sched
+    re-audit 10/11/26 BUGSGEN-5); clamped to the window only when the shift
+    is longer than it."""
+    length = ea - sa
+    lo, hi = win.get("earliest"), win.get("latest")
+    if lo is not None and sa < lo:
+        sa, ea = lo, lo + length
+    if hi is not None and ea > hi:
+        sa, ea = hi - length, hi
+        if lo is not None and sa < lo:
+            sa = lo
+    return sa, ea
+
+
+def apply_role_windows(rows: list, c: Constraints, editable=None) -> dict:
+    """The hours the owner's RESTAURANT HOURS & SHIFT RULES give each role
+    ("Line cooks: first arrives 2:00pm", "Bartenders: evening only") held at
+    the COVERAGE rank — they are the owner's hard staffing rule
+    (BREACH_TIER["role_window"]) — BEFORE the overtime, minimum-hours,
+    top-up and budget passes run, by moving each row outside them inside,
+    its length kept (_into_window). They used to be applied last, at the
+    quality rank, after the budget trim had cut a 10am-6pm cook to 10-4: the
+    retime then left a 2:00-4:00pm line cook who leaves before dinner, and 4
+    hard breaches where it could not (sched re-audit 10/11/26 BUGSGEN-5).
+    {rows, retimed, left} as apply_role_times."""
+    return apply_role_times(rows, c, editable=editable, windows_only=True)
+
+
+def apply_role_times(rows: list, c: Constraints, editable=None, windows_only: bool = False) -> dict:
     """Retime each row of a role to the owner's start/end rule for its
     weekday and daypart (schedule audit 10/3/26 L-33 — a retime the manager
     kept making, made a rule) where that is legal: never a row the owner or
@@ -5212,7 +5288,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
     reason}], left: [{index, employee, date, reason}]}."""
     out_rows = [dict(r) for r in rows or []]
     retimed, left = [], []
-    if not getattr(c, "role_times", None) and not getattr(c, "role_windows", None):
+    if not getattr(c, "role_windows", None) and (windows_only or not getattr(c, "role_times", None)):
         return {"rows": out_rows, "retimed": retimed, "left": left}
     sweep = IncrementalSweep(c)          # each retime re-sweeps its person and date only (P-37)
     for i in range(len(out_rows)):
@@ -5221,32 +5297,37 @@ def apply_role_times(rows: list, c: Constraints, editable=None) -> dict:
             continue
         if editable is not None and r.get("date") not in editable:
             continue
-        spec = role_time_for(c, r)
+        spec = {} if windows_only else role_time_for(c, r)
         # The hours the owner's RESTAURANT HOURS & SHIFT RULES give the
-        # role (PROMPT-1): a row starting before them starts when they do,
-        # one ending after them ends then.
+        # role (PROMPT-1): a row outside them is moved inside, its length
+        # kept (_into_window, BUGSGEN-5).
         win = c.role_window_for(r.get("role"), r.get("date")) if getattr(c, "role_windows", None) else {}
         if not spec and not win:
             continue
         s0, e0 = parse_minutes(r.get("shift_start", "")), parse_minutes(r.get("shift_end", ""))
         if s0 is None or e0 is None:
             continue
+        shortest = shortest_for(c, r.get("employee"), r.get("date") or "")
         s1 = spec["start"] if spec.get("start") is not None else s0
         e1 = spec["end"] if spec.get("end") is not None else e0
+        # A start rule alone keeps the row's end — unless that leaves less
+        # than the shortest shift: then the shift moves, its length kept
+        # (an 11am-3pm row under "starts 2pm" is 2pm-6pm, not 2pm-3pm).
+        if spec.get("start") is not None and spec.get("end") is None and (e1 - s1) % (24 * 60) < shortest:
+            e1 = (s1 + (e0 - s0) % (24 * 60)) % (24 * 60)
         why_win = None
         if win:
             probe = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
             sa, ea = start_minutes(probe), end_minutes(probe)
             if sa is not None and ea is not None:
-                if win.get("earliest") is not None and sa < win["earliest"]:
-                    sa, why_win = win["earliest"], win.get("source")
-                if win.get("latest") is not None and ea > win["latest"]:
-                    ea, why_win = win["latest"], win.get("source")
-                s1, e1 = sa % (24 * 60), ea % (24 * 60)
+                na, nb = _into_window(sa, ea, win)
+                if (na, nb) != (sa, ea):
+                    why_win = win.get("source")
+                s1, e1 = na % (24 * 60), nb % (24 * 60)
         if s1 % (24 * 60) == s0 % (24 * 60) and e1 % (24 * 60) == e0 % (24 * 60):
             continue
         span = (e1 - s1) % (24 * 60)
-        if span < ROLE_TIME_MIN_MINUTES:
+        if span < shortest:
             left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
                          "reason": f"the rule would leave a {span / 60:g}h shift"})
             continue
@@ -6139,6 +6220,8 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                # a short turnaround with no rest rule set (STRESS-19): a look,
                # never a reason a pass may not cover a floor
                "short_turnaround": TIER_QUALITY,
+               # shorter than the one shortest shift (contract #2): soft, a look
+               "shift_too_short": TIER_QUALITY,
                # the hours a role works and the most of it on at once, by the
                # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1): the
                # owner's staffing rules, ranked with the floors
@@ -6914,8 +6997,12 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     if comp.get("max_shift_hours"):
         lines.append(_rule("shift_too_long", f"No shift longer than {float(comp['max_shift_hours']):g} hours, "
                            "except an owner's or a manager's: how long they stay is their own call"))
-    if comp.get("min_shift_hours"):
-        lines.append(_rule("shift_too_short", f"No shift shorter than {float(comp['min_shift_hours']):g} hours."))
+    # The one shortest shift every pass holds (contract #2, BUGSGEN-6): said
+    # whether the owner set it or it is the default — a minor may be given
+    # less where the law caps their day lower (STRESS-6).
+    lines.append(_rule("shift_too_short", f"No shift shorter than {min_shift_minutes(comp) / 60.0:g} hours"
+                       + ("" if comp.get("min_shift_hours") else " (the default; the owner has set none)")
+                       + (", except a minor whose legal hours that day are fewer" if c.minors else "") + "."))
     # One weekly limit per person — their MAX, which is the code's
     # max_hours (P-12, D-18): the ceiling, or their own maximum when the
     # owner set it — above the overtime line a ceiling, not their overtime
@@ -7207,7 +7294,6 @@ def person_facts(c: Constraints, names=None) -> dict:
 # overtime. A minor's age-band weekly cap is a line too (E-27).
 
 OT_TRIM_MAX_HOURS = 2.5
-OT_MIN_SHIFT_HOURS = 4.0
 OT_MAX_SWEEPS = 300
 # Running a teammate's shift on, or starting it earlier, to take over a
 # stretch: their shift has to end (or start) within this of it.
@@ -7263,15 +7349,25 @@ def _is_pinned(row) -> bool:
 
 
 def shortest_shift_hours(c: "Constraints", default=None) -> float:
-    """The shortest shift a pass may leave or make: the owner's
-    min_shift_hours when set, else `default` (0.0 when none)."""
-    v = (c.compliance or {}).get("min_shift_hours")
-    try:
-        if v:
-            return float(v)
-    except (TypeError, ValueError):
-        pass
-    return float(default or 0.0)
+    """The shortest shift a pass may leave or make, in hours — the one rule
+    (min_shift_minutes). `default` is ignored: every pass used to bring its
+    own (0, 30 minutes, 2h, 4h — sched re-audit 10/11/26 BUGSGEN-6)."""
+    return min_shift_minutes(c) / 60.0
+
+
+def shortest_for(c: "Constraints", name_or_key, date_str) -> int:
+    """The shortest shift `name_or_key` may be given on `date_str`, in
+    minutes: the one rule (min_shift_minutes), lowered to what the law lets
+    a minor work that day — a 14-15 year old's 3h school-day cap is a legal
+    after-school shift under a 4h rule, never no shift at all (sched
+    re-audit 10/11/26 STRESS-6)."""
+    m = min_shift_minutes(c)
+    key = c.key(name_or_key) if c is not None else None
+    if key and key in (getattr(c, "minors", None) or ()):
+        cap, _t = minor_daily_cap(c, key, date_str)
+        if cap:
+            m = min(m, int(round(float(cap) * 60)))
+    return m
 
 
 class _Repair:
@@ -7493,7 +7589,7 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
     moves, trims, left = [], [], []
     display = _display(c, rep.rows, roster_roles)
     fam = _role_families(c, roster_roles)
-    shortest = shortest_shift_hours(c, OT_MIN_SHIFT_HOURS)
+    shortest = shortest_shift_hours(c)          # the one shortest shift (contract #2)
     max_shift = float(c.compliance.get("max_shift_hours") or DEFAULTS["max_shift_hours"])
 
     def name_of(low):
@@ -7822,9 +7918,9 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
     return {"rows": rows, "extended": extended}
 
 
-# A minor's shift is cut to their limits only when this much of it is left;
-# a shorter remainder goes to a legal teammate instead.
-MINOR_MIN_LEFT_HOURS = 2.0
+# A minor's shift is cut to their limits only when at least their shortest
+# shift that day is left (shortest_for — the one rule, lowered to the law's
+# cap); a shorter remainder goes to a legal teammate instead.
 PERSON_FIX_MAX_SWEEPS = 300
 _MINOR_KINDS = ("minor_late", "minor_early", "minor_school_hours", "minor_hours", "minor_week_hours")
 
@@ -7955,7 +8051,7 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
             m = int(math.ceil(float(v.get("severity") or 0) * 4) / 4.0 * 60)
             keep = (s, en - m) if 0 < m < en - s else None
             stretch, tail = (en - m, en), True
-        if keep and keep[1] - keep[0] < MINOR_MIN_LEFT_HOURS * 60:
+        if keep and keep[1] - keep[0] < shortest_for(c, low, d):
             keep = None
         cut = _retimed(r, keep[0], keep[1], c) if keep else None
         why = v.get("detail") or LABELS.get(kind, kind)
@@ -8126,11 +8222,9 @@ MANAGER_FILL_MAX_SWEEPS = 120
 # the manager on the floor and the staffing rules outrank them, never the
 # law or a person's own maximum (schedule audit 10/10/26 LOGIC-1, LOGIC-3).
 FILL_ROUNDS = ((True, True), (False, True), (False, False))
-# Four hours: the gap filler sized every added manager shift to at least
-# this, so a 1h gap bought 4h (E-16) — it now sizes to the stretch or the
-# owner's min_shift_hours. Kept because the manager plan
-# (schedule_skeleton.MIN_SHIFT_MIN) reads it as its planned-shift minimum.
-MANAGER_MIN_SHIFT_MIN = 4 * 60
+# The gap filler's and the manager plan's shortest shift is the one rule
+# (min_shift_minutes, contract #2): the plan held 4h and the filler 0, so a
+# 7:00-7:30am manager stub was written beside a pinned plan row (BUGSGEN-6).
 
 
 def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float = None,

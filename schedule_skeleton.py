@@ -72,7 +72,6 @@ KEPT_SOURCE = "kept"
 LOCKED_SOURCE = "locked"
 HANDOFF_MIN = 30                        # two managers overlap this long at a handover
 SINGLE_SHIFT_MAX_MIN = 10 * 60          # a day this long or shorter is one manager's shift
-MIN_SHIFT_MIN = _rules.MANAGER_MIN_SHIFT_MIN   # no planned manager shift is shorter (4h)
 # A salaried manager with no weekly cap of their own, when the restaurant
 # set none either (E-17: SALARIED_HOURS_CAP is seven 12-hour days).
 SALARIED_WEEK_CAP = _rules.SALARIED_HOURS_CAP   # the one default (Constraints.salaried_limit)
@@ -521,7 +520,9 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     acting = {k: set(v or ()) for k, v in (getattr(c, "acting_managers", None) or {}).items()
               if k not in (c.managers or {})}
     max_shift = int(float(c.compliance.get("max_shift_hours") or _rules.DEFAULTS["max_shift_hours"]) * 60)
-    min_len = min(MIN_SHIFT_MIN, max_shift)
+    # No planned manager shift is shorter than the one shortest shift
+    # (contract #2, BUGSGEN-6: the plan held its own 4h).
+    min_len = min(_rules.min_shift_minutes(c), max_shift)
     # Rounding a split to the half hour can add up to an hour to a middle
     # leg: the target stays that far under the shift-length rule.
     single_max = max(min_len, min(SINGLE_SHIFT_MAX_MIN, max_shift - 60))
