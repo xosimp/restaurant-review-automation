@@ -2764,6 +2764,49 @@ def _conflict(total, budget, refusals, timed_out=False) -> dict:
     return out
 
 
+def binding_budget(cost, dollar_budget, hours, hours_budget, overtime_premium=0.0) -> dict:
+    """Which budget binds when the dollar budget is over (blind re-audit
+    10/11/26 BUGSGEN-22). The dollar budget prices each person at their own
+    rate; the hours budget is the same dollars at the blended rate. So a week
+    can be dollars over with its hours exactly at budget, and "$298 over
+    (988h scheduled against 988h)" read as a contradiction. Pure.
+
+    {"binds": "both" | "dollars" | None, "over_dollars", "paid_rate",
+    "assumed_rate", "overtime_premium", "note"} — `note` the words that go in
+    brackets after "$X over": the hours beside it when they are over too,
+    else that the hours are within budget and why the dollars are over all
+    the same (the crew is paid above the blended rate the hours budget
+    assumes, and/or the overtime premium) — the dollar budget binds."""
+    try:
+        cost, lbd = float(cost or 0), float(dollar_budget or 0)
+        hrs, hb = float(hours or 0), float(hours_budget or 0)
+        prem = max(0.0, float(overtime_premium or 0))
+    except (TypeError, ValueError):
+        return {"binds": None, "note": ""}
+    out = {"binds": None, "over_dollars": round(cost - lbd, 0) if lbd > 0 else None, "paid_rate": None,
+           "assumed_rate": round(lbd / hb, 2) if (lbd > 0 and hb > 0) else None,
+           "overtime_premium": round(prem, 0), "note": ""}
+    if lbd <= 0 or cost <= lbd:
+        return out
+    if hb > 0 and hrs > hb + 0.5:
+        out["binds"] = "both"
+        out["note"] = f"{hrs:,.0f}h scheduled against {hb:,.0f}h"
+        return out
+    out["binds"] = "dollars"
+    straight = cost - prem
+    out["paid_rate"] = round(straight / hrs, 2) if hrs > 0 else None
+    why = []
+    if out["paid_rate"] and out["assumed_rate"] and out["paid_rate"] > out["assumed_rate"] + 0.005:
+        why.append(f"this crew is paid ${out['paid_rate']:,.2f}/h on average against the "
+                   f"${out['assumed_rate']:,.2f}/h blended rate the hours budget assumes")
+    if prem >= 1:
+        why.append(f"${prem:,.0f} of it is overtime premium")
+    hours_words = f"{hrs:,.0f}h of a {hb:,.0f}h hours budget" if hb > 0 else f"{hrs:,.0f}h scheduled"
+    out["note"] = (f"the hours are within budget, {hours_words}; the dollar budget is the one that binds"
+                   + (" — " + " and ".join(why) if why else ""))
+    return out
+
+
 def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = None) -> str:
     """One sentence for the review when the trim stopped above the budget:
     what holds the remaining hours — the shifts' own requirement, days and
@@ -2816,9 +2859,14 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
     if conflict.get("over_by_dollars") is not None and conflict.get("budget_dollars"):
         # The budget is held in dollars (LOGIC-13): said that way, the
         # hours beside it.
+        # Which budget binds, never "(988h against 988h)" beside a dollar
+        # overrun (BUGSGEN-22).
+        _bd = float(conflict["budget_dollars"])
+        _bb = binding_budget(_bd + float(conflict["over_by_dollars"]), _bd, conflict.get("scheduled"),
+                             conflict.get("budget"), conflict.get("overtime_premium"))
         return (f"The trim stopped ${float(conflict['over_by_dollars']):,.0f} over the "
-                f"${float(conflict['budget_dollars']):,.0f} hourly budget ({float(conflict.get('scheduled') or 0):,.0f}h "
-                f"against {float(conflict.get('budget') or 0):,.0f}h): the rest is held by "
+                f"${_bd:,.0f} hourly budget" + (f" ({_bb['note']})" if _bb.get("note") else "")
+                + ": the rest is held by "
                 + "; ".join(bits[:3]) + ". Raise the budget, or lower the floors or staffing you set, to close it.")
     return (f"The trim stopped {over:,.0f}h over the {b:,.0f}h budget: the rest is held by "
             + "; ".join(bits[:3]) + ". Raise the hours budget, or lower the floors or staffing you set, to close it.")
