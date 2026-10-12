@@ -1827,7 +1827,9 @@ def override_problem(b, reasons, actor=None):
         who = _reader(actor)
         ok = {" ".join(str(n).split()).casefold() for n in (b.get("cover_candidates") or [])}
         if who["authority"] in LEGAL_ACK_AUTHORITIES:
-            ok |= who["names"]
+            # The account owner sending it runs the floor themselves — by
+            # their name, or "Owner"/"me" (the override row keeps the actor).
+            ok |= who["names"] | {"owner", "the owner", "me", "myself"}
         if covered.casefold() not in ok:
             return (f"{covered} isn't a manager or owner on the roster who can work that day — pick one, or add "
                     "a manager's shift that covers it.")

@@ -23846,7 +23846,7 @@ function _fetchReplacements(index, done) {
   fetch('/api/labor/schedule/replacements', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rows: _schedRows, index: index})
+    body: JSON.stringify({rows: _schedRows, index: index, schedule_id: _schedHistoryId || null})
   }).then(apiJson).then(function (d) {
     done(d && d.ok ? (d.replacements || []) : null, d);
   }).catch(function () { done(null, null); });
@@ -27555,6 +27555,18 @@ function ssRenderSummary() {
   var pq = pd ? (pd.quality || {}) : {}, cnt = pd ? (pd.counts || {}) : null;
   var cov = null; for (i = 0; i < (q.dimensions || []).length; i++) if (q.dimensions[i].key === 'coverage') cov = q.dimensions[i].score;
   var lv = d.labor_view || null, lp = _ssLaborPct(), tgt = lv && lv.target_pct != null ? +lv.target_pct : 0;
+  // One computation per figure (schedule re-audit 10/11/26 TRUST-28, TRUST-34):
+  // once the pre-publish review is here, the Labor and Overtime tiles read
+  // ITS numbers - the rows as they stand, priced the way Send is checked -
+  // never the generation's figures beside a different one on Publish.
+  var pnum = pd ? (pd.numbers || {}) : null, plab = pnum && pnum.labor_pct && pnum.labor_pct.value != null ? pnum.labor_pct : null;
+  if (plab) {
+    lp = plab.value;
+    lv = {label: plab.label, grade: plab.grade, basis: plab.basis, target_pct: plab.target, target_basis: plab.target_basis,
+          text: plab.text, savings: lv ? lv.savings : null, recent_pct: lv ? lv.recent_pct : null, recent_days: lv ? lv.recent_days : null};
+    tgt = plab.target != null ? +plab.target : 0;
+  }
+  if (pnum && pnum.overtime) pc = {overtime_hours: pnum.overtime.priced ? pnum.overtime.hours : null, overtime_premium: pnum.overtime.premium};
   var ds = _schedWeekDates || [], people = {}, hrs = 0;
   for (i = 0; i < _schedRows.length; i++) { people[String(_schedRows[i].employee || '').toLowerCase()] = 1; hrs += _swRowHrs(_schedRows[i]); }
   var np = 0, k; for (k in people) if (people.hasOwnProperty(k) && k) np++;
@@ -27597,10 +27609,13 @@ function ssRenderSummary() {
             ot === null ? (pc ? 'Not priced for this week' : 'Priced once the draft is saved') : (ot > 0 ? '<span class="hb-num">' + _schedMoney(pc.overtime_premium || 0) + '</span> in premium pay' : 'No overtime'));
   // Decisions, not raw breaches (TRUST-22): what must be fixed and what to
   // decide, from the review; the reminders ride its "worth a look".
-  var nW = cnt ? (+cnt.must_fix || 0) + (+cnt.decide_holding || 0) : null, nM = cnt ? +cnt.must_fix || 0 : 0;
+  // The same count the Publish step's headers use (TRUST-16): what holds Send.
+  var nW = cnt ? (cnt.to_fix_or_decide != null ? +cnt.to_fix_or_decide : (+cnt.must_fix || 0) + (+cnt.decide_holding || 0)) : null, nM = cnt ? +cnt.must_fix || 0 : 0;
+  var nLook = pd && pd.verdict && pd.verdict.worth_a_look ? pd.verdict.worth_a_look.length : 0;
   h += tile(nW === null ? '' : ((nM ? 'bad' : (nW ? 'warn' : 'good')) + ' go'), 'To fix or decide', nW === null ? '—' : '<span class="hb-num">' + nW + '</span>',
-            nW === null ? 'Checking against today\u2019s data' : (nM ? '<span class="hb-num">' + nM + '</span> must be fixed before sending' : (nW ? 'Decisions only · everything else checks out' : 'Nothing to fix or decide'))
-              + (cnt && +cnt.fyi ? ' · <span class="hb-num">' + cnt.fyi + '</span> worth a look' : ''),
+            nW === null ? 'Checking against today\u2019s data' : (nM ? '<span class="hb-num">' + nM + '</span> must be fixed before sending' : (nW ? 'Decisions only' : 'Nothing to fix or decide'))
+              + (cnt && +cnt.suggestions ? ' · <span class="hb-num">' + cnt.suggestions + '</span> ' + (+cnt.suggestions === 1 ? 'suggestion' : 'suggestions') : '')
+              + (nLook ? ' · <span class="hb-num">' + nLook + '</span> worth a look' : (cnt && +cnt.fyi ? ' · <span class="hb-num">' + cnt.fyi + '</span> to read' : '')),
             '<span class="ss-go">Review &amp; send <i aria-hidden="true">\u2192</i></span>',
             ' role="button" tabindex="0" data-ss-go="publish" aria-label="Review the week before sending"');
   h += tile('hero', 'Estimated savings', sav === null ? '—' : '<span class="hb-num">' + _schedMoney(sav) + '</span>',
@@ -28103,7 +28118,13 @@ function ssRenderShift() {
     var w = document.getElementById('ss-sd-why');
     if (!w || _swSel !== i) return;
     var x = d && d.weighed;
-    w.innerHTML = x && x.text ? _numText(x.text) : (opts === null ? 'Who else could take it couldn\u2019t be checked just now.' : 'Nothing on file to weigh this assignment against.');
+    // The engine's own reason, or a comparison made after the draft -
+    // labelled (TRUST-2); a stronger runner-up comes with its swap (TRUST-1).
+    w.innerHTML = x && x.text ? (_numText(x.text) + (x.basis_label ? ' <span class="tag">' + _escHtml(x.basis_label) + '</span>' : '')
+        + (x.swap && x.swap.payload && window.prApplyEdit ? ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" id="ss-sd-swap">' + _escHtml(x.swap.label) + '</button>' : ''))
+      : (opts === null ? 'Who else could take it couldn\u2019t be checked just now.' : 'Nothing on file to weigh this assignment against.');
+    var sb = document.getElementById('ss-sd-swap');
+    if (sb) sb.onclick = function () { if (prApplyEdit(x.swap.payload)) ssRenderShift(); };
   });
 }
 // Pin or unpin one shift (TRUST-17): sent with the next save as the row's
@@ -40732,14 +40753,26 @@ window.cavPalette = cavPalette;
 .pr-verdict .w{font-size:13.5px;color:var(--ink3)}
 .pr-sec{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:16px 20px;box-shadow:var(--elev-card);min-width:0}
 .pr-k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2);margin-bottom:4px}
-.pr-it{padding:10px 0;border-top:1px solid var(--hb-line2);font-size:14.5px;line-height:1.5;color:var(--ink2)}
+/* Trust text is body text (schedule re-audit 10/11/26 TRUST-33): the basis,
+   the track record and "sent past before" at 14px, items at the Studio's
+   15.5px body - never the smallest text on the page. */
+.pr-it{padding:10px 0;border-top:1px solid var(--hb-line2);font-size:15.5px;line-height:1.5;color:var(--ink2)}
 .pr-it:first-of-type{border-top:none}
 .pr-it.bad,.pr-it.warn{padding-left:12px}
 .pr-it.bad{box-shadow:inset 3px 0 0 var(--hb-bad)}.pr-it.bad .t{color:var(--ink)}
 .pr-it.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}
 .pr-it.done{opacity:.72}
 .pr-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.pr-meta{font-size:12.5px;color:var(--ink3);margin-top:4px}
+.pr-meta{font-size:14px;line-height:1.5;color:var(--ink3);margin-top:4px}
+.pr-tag{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--sf-recess);color:var(--ink3);font-size:12px;font-weight:600;vertical-align:middle}
+.pr-tag.law{background:var(--red-bg);color:var(--hb-bad)}
+.pr-grp{padding:12px 0;border-top:1px solid var(--hb-line2)}
+.pr-grp:first-of-type{border-top:none}
+.pr-grp>.t{font-size:15.5px;font-weight:600;color:var(--ink)}
+.pr-grp details>summary{cursor:pointer;font-size:14px;color:var(--ink3);margin-top:8px;list-style:none}
+.pr-grp details>summary::-webkit-details-marker{display:none}
+.pr-grp .pr-it{padding-left:12px}
+.pr-check{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.5;color:var(--ink2)}
 .pr-ok{font-size:13.5px;color:var(--hb-good);margin-top:6px}
 .pr-form{display:flex;flex-direction:column;gap:8px;margin-top:8px;max-width:520px}
 .pr-form textarea{min-height:60px}
@@ -40747,7 +40780,7 @@ window.cavPalette = cavPalette;
 .pr-kv:first-of-type{border-top:none}
 .pr-kv b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;text-align:right}
 .pr-kv b.bad{color:var(--hb-bad)}.pr-kv b.good{color:var(--hb-good)}
-.pr-sub{font-size:12.5px;color:var(--ink3);margin:2px 0 6px}
+.pr-sub{font-size:14px;line-height:1.5;color:var(--ink3);margin:2px 0 6px}
 .pr-fyi>summary{cursor:pointer;font-size:13.5px;color:var(--ink3);list-style:none}
 .pr-fyi>summary::-webkit-details-marker{display:none}
 .pr-err{font-size:14px;color:var(--hb-bad)}
@@ -40764,18 +40797,32 @@ window.cavPalette = cavPalette;
    on its own with a reason - a manager gap by naming who runs the floor -
    and every decision that holds the send is answered (TRUST-2, TRUST-3,
    ARCH-30). Every line carries its action; the actions are the payload's
-   (edit_rows, override, acknowledge, dismiss, post, optimize, apply_fixes,
-   open). */
+   (edit_rows, override, acknowledge, acknowledge_all, dismiss, post,
+   optimize, apply_fixes, open).
+   Schedule re-audit 10/11/26 (workstream T): must-fix and decisions come as
+   one card per rule kind with one fix for the group (TRUST-15); the law is
+   fixed or not sent, the posting-notice law only with the owner's legal
+   acknowledgement, a manager gap only by a real manager or owner, a reason
+   of a few words (TRUST-4, 5, 8); "Decide before sending" and
+   "Suggestions" are counted apart (TRUST-16); answers to suggestions are
+   kept server-side (TRUST-17); a one-tap fix marks the other fixes stale
+   until the re-check (TRUST-14); the warnings always sent past are shown
+   with a rule change (TRUST-10); the "why" says whose reason it is
+   (TRUST-1, 2); the re-check after an edit asks for what Send needs first
+   and the explanations after (TRUST-26); and when the review cannot run,
+   the gate's own list from publish-check stands in, so Send never waits on
+   a check that failed (TRUST-19). */
 (function () {
   var S = {hid: null, data: null, busy: false, err: null, overrides: {}, answers: {}, dismissed: {}, form: null,
-           timer: null, seq: 0};
+           timer: null, seq: 0, stale: false, fallback: false};
   window._prState = S;
   var POST_PATHS = {'labor/crew-matrix': 1, 'labor/standby/ask': 1, 'labor/rules': 1};
   function $id(id) { return document.getElementById(id); }
   function e(s) { return _escHtml(s == null ? '' : String(s)); }
   function nt(s) { return _numText(s == null ? '' : String(s)); }
   function pl(n, one, many) { return n === 1 ? one : (many || one + 's'); }
-  function reset(hid) { S.hid = hid; S.data = null; S.err = null; S.overrides = {}; S.answers = {}; S.dismissed = {}; S.form = null; }
+  function trim(s) { return String(s || '').replace(/^\s+|\s+$/g, ''); }
+  function reset(hid) { S.hid = hid; S.data = null; S.err = null; S.overrides = {}; S.answers = {}; S.dismissed = {}; S.form = null; S.stale = false; S.fallback = false; }
   function compat(d) {
     var sd = d.send || {}, r = sd.reach || {};
     return {ok: true, schedule_id: d.schedule_id, week_start: d.week_start, week_end: d.week_end,
@@ -40794,51 +40841,133 @@ window.cavPalette = cavPalette;
     for (k in S.overrides) if (S.overrides.hasOwnProperty(k) && !keep[k]) delete S.overrides[k];
     for (k in S.answers) if (S.answers.hasOwnProperty(k) && !keep[k]) delete S.answers[k];
   }
+  // The gate's own list (publish-check), shaped as a review, when the review
+  // itself could not run (TRUST-19): the same tiers, the same overrides, the
+  // server checks again at Send. The explanations are simply absent.
+  function fromCheck(c) {
+    var d = {ok: true, schedule_id: c.schedule_id, week_start: c.week_start, week_end: c.week_end,
+             published_at: c.published_at, can_publish: c.can_publish, replaced_reason: c.replaced_reason,
+             must_fix: [], decide: [], fyi: [], fallback: true, counts: {}, must_fix_groups: [], decide_groups: [],
+             suggestions: [], send: {reach: {total: (c.reach || {}).total || 0, reachable: (c.reach || {}).reachable || 0,
+             app: (c.reach || {}).by_app || 0, text: (c.reach || {}).by_text || 0, email: (c.reach || {}).by_email || 0,
+             unreachable: (c.reach || {}).unreachable || []}, unsent_changes: c.unsent_changes, delivery: c.delivery}}, i;
+    var items = c.blocker_items || [];
+    for (i = 0; i < items.length; i++) {
+      var b = items[i], must = (b.tier || 'must_fix') === 'must_fix';
+      if (must) {
+        var law = !!b.law, fix = b.fixable !== false;
+        var needs = law ? (fix ? null : 'legal_ack') : (/^(rule:no_manager|roster:no_manager_roster)/.test(b.key) ? 'covered_by' : 'reason');
+        d.must_fix.push({key: b.key, kind: b.kind, text: b.text, law: law, cls: b.cls, fixes: [],
+                         override_allowed: !(law && fix),
+                         override: {needs: needs, candidates: b.cover_candidates || [], legal: b.legal || null,
+                                    min_reason: {chars: 8, words: 2},
+                                    why: law && fix ? 'This breaks the law - fix it, or the week can’t go to staff.' : null,
+                                    prompt: needs === 'legal_ack' ? (b.legal || {}).text : null}});
+      } else {
+        d.decide.push({key: b.key, kind: b.kind, text: b.text, holds: true,
+                       options: [{label: 'Send it as it is', scope: 'week', action: 'acknowledge', payload: {key: b.key}}]});
+      }
+    }
+    var n = d.must_fix.length, m = d.decide.length;
+    d.counts = {must_fix: n, decide: m, decide_holding: m, suggestions: 0, to_fix_or_decide: n + m, fyi: 0};
+    d.verdict = {tone: n ? 'red' : (m ? 'amber' : 'green'),
+                 sentence: 'The full check couldn’t run just now. ' + (n ? n + ' ' + pl(n, 'thing') + ' to fix' + (m ? ' and ' + m + ' to decide' : '') + ' - the publish gate’s own list.' : (m ? m + ' ' + pl(m, 'decision') + ' - the publish gate’s own list.' : 'The publish gate finds nothing to hold the send.')),
+                 subline: 'Send checks the week again on the server before anything goes.'};
+    return d;
+  }
+  function merge(d) {
+    // The explanations, from the second call (TRUST-26), into the payload
+    // Send already reads.
+    var cur = S.data, k, keys = ['changed', 'narrative', 'fragile', 'why', 'sure', 'likely_to_change'];
+    if (!cur || cur.schedule_id !== d.schedule_id) return;
+    for (k = 0; k < keys.length; k++) if (d[keys[k]] !== undefined) cur[keys[k]] = d[keys[k]];
+    cur.explain_pending = false;
+  }
   window.prRefresh = function (cb) {
     if (!_schedHistoryId) return;
     var hid = _schedHistoryId, seq = ++S.seq;
     if (hid !== S.hid) reset(hid);
     S.busy = true; prRender();
-    var done = function (d) {
-      if (seq !== S.seq || _schedHistoryId !== hid) return;
-      S.busy = false;
-      if (!d || !d.ok) { S.err = (d && d.error) || 'The check couldn’t run just now.'; }
-      else if (d.schedule_id) { S.err = null; S.data = d; prune(d); window._psCheck = compat(d); }
+    var after = function () {
       prRender();
       if (window.psReachRender) psReachRender();
       if (window.psLabel) psLabel();
       if (_ssOpen && _ssStage === 'summary' && window.ssRenderSummary) ssRenderSummary();
+    };
+    var done = function (d) {
+      if (seq !== S.seq || _schedHistoryId !== hid) return;
+      S.busy = false; S.stale = false;
+      if (!d || !d.ok) { fallback(d); return; }
+      if (d.schedule_id) { S.err = null; S.fallback = false; S.data = d; prune(d); window._psCheck = compat(d); }
+      after();
+      if (d.explain_pending) explain(seq, hid);
       if (cb) cb(d);
     };
-    var fail = function () { done({ok: false, error: 'The check couldn’t run — check your connection.'}); };
+    // The review failed (an error, a timeout on a big week): the gate's own
+    // list stands in and Send stays possible - the phone already did this.
+    var fallback = function (d) {
+      S.err = (d && d.error) || 'The full check couldn’t run just now.';
+      fetch('/api/labor/publish-check?schedule_id=' + hid, {credentials: 'same-origin'}).then(apiJson).then(function (c) {
+        if (seq !== S.seq || _schedHistoryId !== hid) return;
+        if (c && c.ok && c.schedule_id) { var fd = fromCheck(c); S.fallback = true; S.data = fd; prune(fd); window._psCheck = compat(fd); }
+        after();
+        if (cb) cb(d);
+      }).catch(function () { after(); if (cb) cb(d); });
+    };
+    var fail = function () { done({ok: false, error: 'The check couldn’t run - check your connection.'}); };
     if (_schedDirty) {
       fetch('/api/labor/publish-review', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({schedule_id: hid, rows: _schedRows})}).then(apiJson).then(done).catch(fail);
+        body: JSON.stringify({schedule_id: hid, rows: _schedRows, sections: 'core'})}).then(apiJson).then(done).catch(fail);
     } else {
       fetch('/api/labor/publish-review?schedule_id=' + hid, {credentials: 'same-origin'}).then(apiJson).then(done).catch(fail);
     }
   };
-  // The rows on screen moved: the review follows them, once things settle.
+  function explain(seq, hid) {
+    fetch('/api/labor/publish-review', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({schedule_id: hid, rows: _schedRows, sections: 'explain'})}).then(apiJson).then(function (d) {
+      if (seq !== S.seq || _schedHistoryId !== hid || !d || !d.ok) return;
+      merge(d); prRender();
+    }).catch(function () { });
+  }
+  // The rows on screen moved: the review follows them, once things settle;
+  // the one-tap fixes on screen are stale until it does (TRUST-14).
   window.prStale = function () {
+    S.stale = true;
     if (S.timer) clearTimeout(S.timer);
     S.timer = setTimeout(function () { S.timer = null; if (_schedHistoryId) prRefresh(); }, 700);
   };
   window.prFor = function () { return (S.data && S.hid === _schedHistoryId) ? S.data : null; };
-  function resolved(m) {
-    var o = S.overrides[m.key];
-    if (!o) return false;
-    return (m.override || {}).needs === 'covered_by' ? !!o.covered_by : !!o.reason;
+  function minOk(m, reason) {
+    var mr = (m.override || {}).min_reason || {chars: 8, words: 2}, w = trim(reason).match(/[A-Za-z][A-Za-z'’-]+/g) || [];
+    return trim(reason).length >= (mr.chars || 8) && w.length >= (mr.words || 2);
   }
-  // {loaded, busy, must, decide, overriding, ready}: what Send waits for.
+  function resolved(m) {
+    var o = S.overrides[m.key], needs = (m.override || {}).needs;
+    if (!o || !m.override_allowed) return false;
+    if (needs === 'covered_by') return !!o.covered_by;
+    if (needs === 'legal_ack') return !!o.legal_ack && minOk(m, o.reason);
+    return minOk(m, o.reason);
+  }
+  function answered(x) { return !!(S.answers[x.key] || S.dismissed[x.key]); }
+  // {loaded, busy, must, decide, overriding, ready}: what Send waits for. A
+  // group of one rule's decisions is one decision (TRUST-15, TRUST-16).
   window.prGate = function () {
-    var d = prFor(), i, must = 0, dec = 0, over = 0;
+    var d = prFor(), i, j, must = 0, dec = 0, over = 0, inGroup = {};
     if (!d) return {loaded: false, busy: S.busy, must: 0, decide: 0, overriding: 0, ready: false};
     for (i = 0; i < (d.must_fix || []).length; i++) { if (resolved(d.must_fix[i])) over++; else must++; }
+    var byKey = {};
+    for (i = 0; i < (d.decide || []).length; i++) byKey[d.decide[i].key] = d.decide[i];
+    for (i = 0; i < (d.decide_groups || []).length; i++) {
+      var g = d.decide_groups[i], open = false;
+      for (j = 0; j < (g.keys || []).length; j++) { inGroup[g.keys[j]] = 1; if (byKey[g.keys[j]] && !answered(byKey[g.keys[j]])) open = true; }
+      if (open) dec++;
+    }
     for (i = 0; i < (d.decide || []).length; i++) {
       var x = d.decide[i];
-      if (x.holds && !S.answers[x.key] && !S.dismissed[x.key]) dec++;
+      if (x.holds && !inGroup[x.key] && !answered(x)) dec++;
     }
-    return {loaded: true, busy: S.busy, must: must, decide: dec, overriding: over, ready: !S.busy && !must && !dec};
+    return {loaded: true, busy: S.busy, must: must, decide: dec, overriding: over, ready: !S.busy && !must && !dec,
+            fallback: !!d.fallback};
   };
   // The Send body's acknowledgement and overrides: exactly what was read.
   window.prSendBody = function () {
@@ -40846,7 +40975,7 @@ window.cavPalette = cavPalette;
     for (i = 0; i < (d.decide || []).length; i++) if (d.decide[i].holds && S.answers[d.decide[i].key]) ack.push(d.decide[i].key);
     for (i = 0; i < (d.must_fix || []).length; i++) {
       var m = d.must_fix[i], o = S.overrides[m.key];
-      if (o && resolved(m)) ovs.push({key: m.key, reason: o.reason || '', covered_by: o.covered_by || ''});
+      if (o && resolved(m)) ovs.push({key: m.key, reason: o.reason || '', covered_by: o.covered_by || '', legal_ack: !!o.legal_ack});
     }
     return {acknowledge: ack, overrides: ovs};
   };
@@ -40862,63 +40991,119 @@ window.cavPalette = cavPalette;
   function btn(label, sec, n, j, cls) {
     return '<button type="button" class="cbtn ' + (cls || 'cbtn-secondary') + ' cbtn-sm" data-pr="' + sec + '" data-n="' + n + '" data-j="' + j + '">' + nt(label) + '</button>';
   }
+  function idxOf(list, key) { var i; for (i = 0; i < list.length; i++) if (list[i].key === key) return i; return -1; }
+  function itemHtml(d, i) {
+    var m = d.must_fix[i], o = S.overrides[m.key], ok = resolved(m), ob = m.overridden_before, h = '', j;
+    h += '<div class="pr-it bad' + (ok ? ' done' : '') + '"><div class="t">' + nt(m.text)
+      + (m.law ? '<span class="pr-tag law">The law</span>' : '') + '</div>';
+    if (ob && ob.weeks) h += '<div class="pr-meta">You sent past this in <span class="hb-num">' + ob.weeks + '</span> of <span class="hb-num">' + ob.of + '</span> weeks' + (ob.last ? ', last on <span class="hb-num">' + e(ob.last) + '</span>' : '') + '.</div>';
+    if (ok) {
+      return h + '<div class="pr-ok">Overridden' + (o.covered_by ? ': ' + e(o.covered_by) + ' runs the floor' : '') + (o.legal_ack ? ' - the law acknowledged' : '') + (o.reason ? ' - “' + e(o.reason) + '”' : '') + '. '
+        + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="ov-undo" data-n="' + i + '" data-j="0">Undo</button></div></div>';
+    }
+    if (!m.override_allowed && (m.override || {}).why) h += '<div class="pr-meta">' + nt(m.override.why) + '</div>';
+    h += '<div class="pr-acts">';
+    for (j = 0; j < (m.fixes || []).length; j++) {
+      var f = m.fixes[j], st = S.stale && f.action === 'edit_rows';
+      h += st ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" disabled>Re-checking…</button>' : btn(f.label, 'fix', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+    }
+    if (m.override_allowed) h += '<button type="button" class="cbtn cbtn-text cbtn-sm" data-pr="ov-open" data-n="' + i + '" data-j="0">' + ((m.override || {}).needs === 'legal_ack' ? 'Send it late - I accept the law’s consequence' : 'Send anyway - I’ll handle it') + '</button>';
+    h += '</div>';
+    if (S.form === m.key) h += formHtml(m, i);
+    return h + '</div>';
+  }
   function mustHtml(d) {
-    var list = d.must_fix || [], h = '', i, j;
+    var list = d.must_fix || [], groups = d.must_fix_groups || [], h = '', i, j, done = {};
     if (!list.length) return '';
     h += '<section class="pr-sec"><div class="pr-k">Must fix before sending · <span class="hb-num">' + list.length + '</span></div>'
-      + '<div class="pr-sub">Each one breaks the law or your own non-negotiable. Send stays off until each is fixed or overridden on its own.</div>';
-    for (i = 0; i < list.length; i++) {
-      var m = list[i], o = S.overrides[m.key], ok = resolved(m), ob = m.overridden_before;
-      h += '<div class="pr-it bad' + (ok ? ' done' : '') + '"><div class="t">' + nt(m.text) + '</div>';
-      if (ob && ob.weeks) h += '<div class="pr-meta">You sent past this in <span class="hb-num">' + ob.weeks + '</span> of <span class="hb-num">' + ob.of + '</span> weeks' + (ob.last ? ', last on <span class="hb-num">' + e(ob.last) + '</span>' : '') + '.</div>';
-      if (ok) {
-        h += '<div class="pr-ok">Overridden' + (o.covered_by ? ': ' + e(o.covered_by) + ' runs the floor' : '') + (o.reason ? ' — “' + e(o.reason) + '”' : '') + '. '
-          + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="ov-undo" data-n="' + i + '" data-j="0">Undo</button></div></div>';
-        continue;
+      + '<div class="pr-sub">The law is fixed or the week doesn’t go. A manager gap is covered by a manager or owner on your roster. Anything else is fixed, or sent past on its own with a reason.</div>';
+    for (i = 0; i < groups.length; i++) {
+      var g = groups[i];
+      if (g.count <= 1) continue;
+      h += '<div class="pr-grp"><div class="t">' + nt(g.text) + (g.law ? '<span class="pr-tag law">The law</span>' : '') + '</div>';
+      if (g.fixes && g.fixes.length) {
+        h += '<div class="pr-acts">';
+        for (j = 0; j < g.fixes.length; j++) h += btn(g.fixes[j].label, 'gfix', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+        h += '</div>';
       }
-      h += '<div class="pr-acts">';
-      for (j = 0; j < (m.fixes || []).length; j++) h += btn(m.fixes[j].label, 'fix', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
-      if (m.override_allowed) h += '<button type="button" class="cbtn cbtn-text cbtn-sm" data-pr="ov-open" data-n="' + i + '" data-j="0">Send anyway — I’ll handle it</button>';
-      h += '</div>';
-      if (S.form === m.key) h += formHtml(m, i);
-      h += '</div>';
+      h += '<details' + (S.form && g.keys.indexOf(S.form) > -1 ? ' open' : '') + '><summary>Each one, with its own fix or override</summary>';
+      for (j = 0; j < g.keys.length; j++) { var ix = idxOf(list, g.keys[j]); if (ix > -1) { done[ix] = 1; h += itemHtml(d, ix); } }
+      h += '</details></div>';
     }
+    for (i = 0; i < list.length; i++) if (!done[i]) h += itemHtml(d, i);
     return h + '</section>';
   }
   function formHtml(m, i) {
     var ov = m.override || {}, h = '<div class="pr-form">', k, c = ov.candidates || [];
     if (ov.needs === 'covered_by') {
-      h += '<label class="pr-meta" for="pr-cov">' + e(ov.prompt || 'Who runs the floor through it?') + '</label>'
-        + '<select id="pr-cov" class="ac-select"><option value="">Pick who runs the floor</option>';
-      for (k = 0; k < c.length; k++) h += '<option value="' + _escAttr(c[k]) + '">' + e(c[k]) + '</option>';
-      h += '<option value="__other">Someone else…</option></select>'
-        + '<input id="pr-cov-other" class="ac-input" maxlength="120" placeholder="Their name" hidden>'
-        + '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Anything to note (optional)"></textarea>';
+      // Only a manager or owner who can work that day (TRUST-5): somebody
+      // else is put on the week, or named a manager in Team, never typed.
+      h += '<label class="pr-meta" for="pr-cov">' + e(ov.prompt || 'Which manager or owner runs the floor through it?') + '</label>';
+      if (c.length) {
+        h += '<select id="pr-cov" class="ac-select"><option value="">Pick who runs the floor</option>';
+        for (k = 0; k < c.length; k++) h += '<option value="' + _escAttr(c[k]) + '">' + e(c[k]) + '</option>';
+        h += '</select>';
+      } else {
+        h += '<div class="pr-meta">Nobody on your roster who can work that day is a manager or owner - add a manager’s shift, or name a manager in Team.</div>';
+      }
+      h += '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Anything to note (optional)"></textarea>';
+    } else if (ov.needs === 'legal_ack') {
+      h += '<label class="pr-check"><input type="checkbox" id="pr-legal"> <span>' + nt((ov.legal || {}).text || ov.prompt || 'I understand this breaks the law.') + '</span></label>'
+        + '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Why it has to go out now - kept with this week"></textarea>';
     } else {
       h += '<label class="pr-meta" for="pr-why">' + e(ov.prompt || 'Why is it fine to send it anyway?') + '</label>'
-        + '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Your reason — kept with this week"></textarea>';
+        + '<textarea id="pr-why" class="ac-input" maxlength="300" placeholder="Your reason, in a few words - kept with this week"></textarea>';
     }
     return h + '<div class="pr-acts"><button type="button" class="cbtn cbtn-danger cbtn-sm" data-pr="ov-save" data-n="' + i + '" data-j="0">Override this one</button>'
       + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-pr="ov-cancel" data-n="' + i + '" data-j="0">Cancel</button></div></div>';
   }
+  function decideItemHtml(x, i) {
+    var ans = S.answers[x.key], h = '', j;
+    h += '<div class="pr-it' + (x.holds && !ans ? ' warn' : '') + (ans ? ' done' : '') + '"><div class="t">' + nt(x.text) + '</div>';
+    if (x.overridden_before && x.overridden_before.weeks) h += '<div class="pr-meta">You sent past this in <span class="hb-num">' + x.overridden_before.weeks + '</span> of <span class="hb-num">' + x.overridden_before.of + '</span> weeks.</div>';
+    if (ans) return h + '<div class="pr-ok">' + nt(ans) + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="ans-undo" data-n="' + i + '" data-j="0">Change</button></div></div>';
+    h += '<div class="pr-acts">';
+    for (j = 0; j < (x.options || []).length; j++) {
+      var op = x.options[j], sc = op.scope === 'every' ? ' · standing' : '';
+      h += (S.stale && op.action === 'edit_rows') ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" disabled>Re-checking…</button>' : btn(op.label + sc, 'opt', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+    }
+    return h + '</div></div>';
+  }
   function decideHtml(d) {
-    var list = d.decide || [], h = '', i, j, shown = 0;
-    for (i = 0; i < list.length; i++) if (!S.dismissed[list[i].key]) shown++;
-    if (!shown) return '';
-    h += '<section class="pr-sec"><div class="pr-k">Decide · <span class="hb-num">' + shown + '</span></div>'
-      + '<div class="pr-sub">One tap each; the button says whether it is for this week or every week.</div>';
-    for (i = 0; i < list.length; i++) {
-      var x = list[i];
-      if (S.dismissed[x.key]) continue;
-      var ans = S.answers[x.key];
-      h += '<div class="pr-it' + (x.holds && !ans ? ' warn' : '') + (ans ? ' done' : '') + '"><div class="t">' + nt(x.text) + '</div>';
-      if (!x.holds) h += '<div class="pr-meta">Doesn’t hold the send.</div>';
-      if (ans) { h += '<div class="pr-ok">' + nt(ans) + '. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="ans-undo" data-n="' + i + '" data-j="0">Change</button></div></div>'; continue; }
-      h += '<div class="pr-acts">';
-      for (j = 0; j < (x.options || []).length; j++) {
-        var op = x.options[j], sc = op.scope === 'every' ? ' · standing' : '';
-        h += btn(op.label + sc, 'opt', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+    var list = d.decide || [], groups = d.decide_groups || [], h = '', i, j, done = {}, hold = 0, sug = 0;
+    for (i = 0; i < list.length; i++) { if (S.dismissed[list[i].key]) continue; if (list[i].holds) hold++; else sug++; }
+    if (hold) {
+      var gnum = window.prGate ? prGate().decide : hold;
+      h += '<section class="pr-sec"><div class="pr-k">Decide before sending · <span class="hb-num">' + gnum + '</span></div>'
+        + '<div class="pr-sub">These hold the send. One tap each; the button says whether it is for this week or every week.</div>';
+      for (i = 0; i < groups.length; i++) {
+        var g = groups[i];
+        if (g.count <= 1) continue;
+        h += '<div class="pr-grp"><div class="t">' + nt(g.text) + '</div><div class="pr-acts">';
+        for (j = 0; j < (g.fixes || []).length; j++) h += btn(g.fixes[j].label, 'gdec', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
+        h += '</div><details><summary>Each one</summary>';
+        for (j = 0; j < g.keys.length; j++) { var ix = idxOf(list, g.keys[j]); if (ix > -1) { done[ix] = 1; h += decideItemHtml(list[ix], ix); } }
+        h += '</details></div>';
       }
+      for (i = 0; i < list.length; i++) if (list[i].holds && !done[i] && !S.dismissed[list[i].key]) h += decideItemHtml(list[i], i);
+      h += '</section>';
+    }
+    if (sug) {
+      h += '<section class="pr-sec"><div class="pr-k">Suggestions · <span class="hb-num">' + sug + '</span></div>'
+        + '<div class="pr-sub">None of these hold the send. An answer is kept, so it isn’t asked again while it holds.</div>';
+      for (i = 0; i < list.length; i++) if (!list[i].holds && !S.dismissed[list[i].key]) h += decideItemHtml(list[i], i);
+      h += '</section>';
+    }
+    return h;
+  }
+  function alwaysHtml(d) {
+    var list = d.always_overridden || [], h = '', i, j;
+    if (!list.length) return '';
+    h += '<section class="pr-sec"><div class="pr-k">Rules you always send past</div>'
+      + '<div class="pr-sub">A rule you overrule every week is a rule worth changing - or keeping on purpose.</div>';
+    for (i = 0; i < list.length; i++) {
+      h += '<div class="pr-it"><div class="t">' + nt(list[i].text) + '</div><div class="pr-acts">';
+      for (j = 0; j < (list[i].actions || []).length; j++) h += btn(list[i].actions[j].label + (list[i].actions[j].scope === 'every' && list[i].actions[j].action === 'post' ? ' · standing' : ''), 'aov', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
       h += '</div></div>';
     }
     return h + '</section>';
@@ -40965,19 +41150,28 @@ window.cavPalette = cavPalette;
   }
   function whyHtml(d) {
     var w = d.why || {}, h = '', i, a = w.assignments || [], l = w.left_off || [];
+    if (w.draft && w.draft.text) h += '<div class="pr-meta">' + nt(w.draft.text) + '</div>';
     if (a.length) {
-      h += '<div class="pr-sub"><b>What Cavnar AI weighed</b></div>';
-      for (i = 0; i < a.length; i++) h += '<div class="pr-it">' + nt(a[i].text) + '</div>';
+      h += '<div class="pr-sub" style="margin-top:8px"><b>What Cavnar AI weighed</b></div>';
+      if (w.engine && w.engine.text) h += '<div class="pr-meta">' + nt(w.engine.text) + '</div>';
+      for (i = 0; i < a.length; i++) {
+        h += '<div class="pr-it">' + nt(a[i].text) + (a[i].basis_label ? '<span class="pr-tag">' + e(a[i].basis_label) + '</span>' : '');
+        if (a[i].swap) h += '<div class="pr-acts">' + ((S.stale) ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" disabled>Re-checking…</button>' : btn(a[i].swap.label, 'swap', i, 0)) + '</div>';
+        h += '</div>';
+      }
     }
     if (l.length) {
       h += '<div class="pr-sub" style="margin-top:8px"><b>Left off this week</b></div>';
       for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> — ' + nt(l[i].reason) + '</div>';
     }
+    if (!h && d.explain_pending) h = '<div class="dr-pulse wide" role="status" aria-label="Weighing who else could take each shift"><i></i></div>';
     return h ? '<section class="pr-sec"><div class="pr-k">Why these people</div>' + h + '</section>' : '';
   }
   function sureHtml(d) {
     var s = d.sure || {}, q = d.quality || {}, h = '', i, cf = s.confidence || {};
-    h += kv('How sure', cf.pct != null ? cf.pct + '%' : '—', '', cf.pct != null ? nt((cf.basis || []).join(' · ')) : nt((cf.basis || [])[0] || 'Nothing measured yet'));
+    // "How sure" is how well SUPPORTED, over how the published weeks ran -
+    // "—" until enough of them are measured (TRUST-6).
+    h += kv('How sure', cf.pct != null ? cf.pct + '%' : '—', '', nt((cf.basis || []).join(' · ') || 'Nothing measured yet') + (cf.meaning ? '<br>' + e(cf.meaning) + '.' : ''));
     if (q.score != null) h += kv('Shift quality', q.score + '<small>/100</small>', q.grade === 'good' ? 'good' : (q.grade === 'weak' ? 'bad' : ''), nt((q.lead ? q.lead + '. ' : '') + (q.text || '')));
     for (i = 0; i < (s.lines || []).length; i++) h += '<div class="pr-meta">' + nt(s.lines[i]) + '</div>';
     return '<section class="pr-sec"><div class="pr-k">How sure we are</div>' + h + '</section>';
@@ -41001,8 +41195,8 @@ window.cavPalette = cavPalette;
       return;
     }
     el.innerHTML = prVerdictHtml(d, 'h2') + (S.busy ? '<div class="dr-pulse wide" role="status" aria-label="Checking again"><i></i></div>' : '')
-      + (S.err ? '<div class="pr-err">' + e(S.err) + '</div>' : '')
-      + mustHtml(d) + decideHtml(d) + numbersHtml(d) + changedHtml(d) + fragileHtml(d) + whyHtml(d) + sureHtml(d) + fyiHtml(d) + sendHtml(d);
+      + (S.err ? '<div class="pr-err">' + e(S.err) + (S.fallback ? ' The publish gate’s own list is below; Send is checked again on the server.' : '') + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="retry" data-n="0" data-j="0">Check again</button></div>' : '')
+      + mustHtml(d) + decideHtml(d) + alwaysHtml(d) + numbersHtml(d) + changedHtml(d) + fragileHtml(d) + whyHtml(d) + (d.fallback ? '' : sureHtml(d)) + fyiHtml(d) + sendHtml(d);
     prChangedBlock(d);
     prTeamRender(false);
   };
@@ -41014,7 +41208,7 @@ window.cavPalette = cavPalette;
     var l = (d.why || {}).left_off || [];
     if (!l.length) { el.innerHTML = ''; return; }
     h += '<section class="pr-sec" style="margin:14px 0 6px"><div class="pr-k">Left off the week of <span class="hb-num">' + e(mdy(d.week_start)) + '</span></div>';
-    for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> \u2014 ' + nt(l[i].reason) + '</div>';
+    for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> — ' + nt(l[i].reason) + '</div>';
     el.innerHTML = h + '</section>';
   };
   // "What changed vs last published week" in the week view follows the rows
@@ -41060,7 +41254,10 @@ window.cavPalette = cavPalette;
       _schedPendRecheck(a);
       _schedRows.push(a); _schedOverrides[_schedRows.length - 1] = true; n++;
     }
-    if (n) { _schedSortRows(); schedAfterEdit(); }
+    // Every other one-tap fix was computed against the week before this
+    // edit: stale until the re-check (TRUST-14), never two fixes stacking
+    // the same person.
+    if (n) { S.stale = true; prRender(); _schedSortRows(); schedAfterEdit(); }
     if (miss) { toast('That shift changed on screen — checking the week again', 'warning'); prRefresh(); }
     else if (n) toast('Changed on the week — save to keep it', 'success');
     return n > 0;
@@ -41083,12 +41280,24 @@ window.cavPalette = cavPalette;
       else toast((d && d.error) || 'That didn’t go through', 'error');
     }).catch(function () { done(); toast('That didn’t go through — check your connection', 'error'); });
   }
+  // An answer to a suggestion is kept on the server (TRUST-17): it was
+  // forgotten on reload and came back on every check of every week.
+  function dismiss(p, key, label) {
+    var k = p.key || key, d = prFor() || {};
+    S.dismissed[k] = 1; prRender(); psLabel();
+    fetch('/api/labor/publish-review/dismiss', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: k, scope: p.scope || 'week', until: p.until || d.week_end || null, evidence: p.evidence || null,
+                            schedule_id: d.schedule_id || null, answer: label || null})}).then(apiJson).then(function (r) {
+      if (!r || !r.ok) toast((r && r.error) || 'Kept for now - it may be asked again', 'warning');
+    }).catch(function () { toast('Kept for now - it may be asked again', 'warning'); });
+  }
   window.prDo = function (act, b, key) {
     if (!act) return;
-    var p = act.payload || {};
+    var p = act.payload || {}, i;
     if (act.action === 'edit_rows') prApplyEdit(p);
     else if (act.action === 'acknowledge') { S.answers[p.key || key] = act.label; prRender(); psLabel(); }
-    else if (act.action === 'dismiss') { S.dismissed[p.key || key] = 1; prRender(); psLabel(); }
+    else if (act.action === 'acknowledge_all') { for (i = 0; i < (p.keys || []).length; i++) S.answers[p.keys[i]] = act.label; prRender(); psLabel(); }
+    else if (act.action === 'dismiss') dismiss(p, key, act.label);
     else if (act.action === 'override') { S.form = p.key || key; prRender(); }
     else if (act.action === 'post') post(p, b);
     else if (act.action === 'optimize') { if (window.ssOptimize) ssOptimize(b); }
@@ -41102,24 +41311,24 @@ window.cavPalette = cavPalette;
     var m = (d.must_fix || [])[n], x = (d.decide || [])[n];
     if (what === 'retry') { prRefresh(); return; }
     if (what === 'fix' && m) { prDo((m.fixes || [])[j], t, m.key); return; }
+    if (what === 'gfix') { var g = (d.must_fix_groups || [])[n]; if (g) prDo((g.fixes || [])[j], t, g.kind); return; }
+    if (what === 'gdec') { var gd = (d.decide_groups || [])[n]; if (gd) prDo((gd.fixes || [])[j], t, gd.kind); return; }
+    if (what === 'aov') { var ao = (d.always_overridden || [])[n]; if (ao) prDo((ao.actions || [])[j], t, ao.kind); return; }
+    if (what === 'swap') { var wa = ((d.why || {}).assignments || [])[n]; if (wa && wa.swap) prDo(wa.swap, t, null); return; }
     if (what === 'opt' && x) { var op = (x.options || [])[j]; if (op && op.action === 'acknowledge') op = {label: op.label, action: 'acknowledge', payload: {key: x.key}}; prDo(op, t, x.key); return; }
     if (what === 'frag') { var f = (d.fragile || [])[n]; if (f) prDo(f.action, t, f.key); return; }
     if (what === 'ans-undo' && x) { delete S.answers[x.key]; prRender(); psLabel(); return; }
-    if (what === 'ov-open' && m) { S.form = m.key; prRender(); var w = $id('pr-cov') || $id('pr-why'); if (w) w.focus(); return; }
+    if (what === 'ov-open' && m) { S.form = m.key; prRender(); var w = $id('pr-cov') || $id('pr-legal') || $id('pr-why'); if (w) w.focus(); return; }
     if (what === 'ov-cancel') { S.form = null; prRender(); return; }
     if (what === 'ov-undo' && m) { delete S.overrides[m.key]; prRender(); psLabel(); return; }
     if (what === 'ov-save' && m) {
-      var why = $id('pr-why'), cov = $id('pr-cov'), other = $id('pr-cov-other');
-      var reason = why ? String(why.value || '').replace(/^\s+|\s+$/g, '') : '', who = '';
-      if (cov) who = cov.value === '__other' ? String((other && other.value) || '').replace(/^\s+|\s+$/g, '') : cov.value;
-      if ((m.override || {}).needs === 'covered_by' && !who) { toast('Name who runs the floor through it', 'error'); return; }
-      if ((m.override || {}).needs !== 'covered_by' && !reason) { toast('Say why it can go out anyway', 'error'); return; }
-      S.overrides[m.key] = {reason: reason, covered_by: who}; S.form = null; prRender(); psLabel(); return;
+      var why = $id('pr-why'), cov = $id('pr-cov'), lg = $id('pr-legal'), needs = (m.override || {}).needs;
+      var reason = why ? trim(why.value) : '', who = cov ? cov.value : '';
+      if (needs === 'covered_by' && !who) { toast('Pick the manager or owner who runs the floor', 'error'); return; }
+      if (needs === 'legal_ack' && !(lg && lg.checked)) { toast('Tick the box to acknowledge the law', 'error'); return; }
+      if (needs !== 'covered_by' && !minOk(m, reason)) { toast('Say why in a few words - it is kept with this week', 'error'); return; }
+      S.overrides[m.key] = {reason: reason, covered_by: who, legal_ack: needs === 'legal_ack' && !!(lg && lg.checked)}; S.form = null; prRender(); psLabel(); return;
     }
-  });
-  document.addEventListener('change', function (ev) {
-    var t = ev.target;
-    if (t && t.id === 'pr-cov') { var o = $id('pr-cov-other'); if (o) { o.hidden = t.value !== '__other'; if (!o.hidden) o.focus(); } }
   });
 })();
 </script>

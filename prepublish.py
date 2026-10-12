@@ -1488,31 +1488,54 @@ def _fragile(rid, rows, c, dates, quality) -> list:
         _capture(e, "standby", rid)
     if c is not None:
         try:
-            for s in _sr.assumed_stays(rows, c):
-                act = s.get("action") or {}
-                p = act.get("payload") or {}
-                match = {"shift_id": p.get("shift_id"), "employee": p.get("employee") or s.get("employee"),
-                         "date": p.get("date") or s.get("date"), "shift_start": p.get("shift_start")}
-                until = p.get("shift_end") or p.get("until") or s.get("until")
-                out.append({"key": f"stay:{s.get('date')}:{_low(s.get('employee'))}", "kind": "assumed_stay",
-                            "text": s.get("text"), "rank": 0.5,
-                            "action": ({"label": act.get("label") or f"Schedule {s.get('employee')} to {until}",
-                                        "action": "edit_rows",
-                                        "payload": {"change": [{"match": match, "set": {"shift_end": until}}]}}
-                                       if until else None)})
+            # The closing stays the verdict assumes, FOLDED into one line
+            # (TRUST-18: seven near-identical "assumed to stay until
+            # 11:30pm" lines filled the capped list and pushed real risks —
+            # 11h of overtime — off it). One action writes every stay; the
+            # stay's NEW end (the old code wrote the scheduled end back).
+            stays = _sr.assumed_stays(rows, c)
+            if stays:
+                who = {}
+                for s in stays:
+                    who[s.get("employee")] = who.get(s.get("employee"), 0) + 1
+                mins = sorted({int(s.get("minutes") or 0) for s in stays})
+                paid = sum(float(s.get("hours") or 0) for s in stays if s.get("hourly"))
+                names = ", ".join(f"{n} ×{k}" if k > 1 else str(n) for n, k in who.items())
+                span = f"{mins[0]} min" if len(mins) == 1 else f"{mins[0]}–{mins[-1]} min"
+                text = (f"The closing manager is assumed to stay {span} past their scheduled end on {len(stays)} "
+                        f"{_plural(len(stays), 'night')} ({names}) — until the last person leaves"
+                        + (f"; {paid:g}h of it is counted in the labor cost." if paid else "."))
+                change = []
+                for s in stays:
+                    p = (s.get("action") or {}).get("payload") or {}
+                    until = p.get("new_end") or s.get("until")
+                    if until:
+                        change.append({"match": {"shift_id": None, "employee": s.get("employee"), "date": s.get("date"),
+                                                 "shift_start": s.get("shift_start") or p.get("shift_start")},
+                                       "set": {"shift_end": until}})
+                out.append({"key": "stays", "kind": "assumed_stay", "text": text, "count": len(stays),
+                            "rank": 0.65,
+                            "action": ({"label": f"Schedule {_plural(len(change), 'the stay', 'each stay')} "
+                                                 "(shows each change)", "action": "edit_rows",
+                                        "payload": {"change": change}} if change else None)})
         except Exception as e:
             _capture(e, "assumed stays", rid)
         try:
             import schedule_learning as _sl2
-            for f in _sl2.overtime_forecast(rows, c)[:2]:
+            for f in _sl2.overtime_forecast(rows, c)[:3]:
                 cand = f.get("candidate") or {}
                 act = None
                 if cand.get("employee") and cand.get("index") is not None and cand["index"] < len(rows):
                     act = {"label": f"Move a shift to {cand['employee']}", "action": "edit_rows",
                            "payload": {"change": [{"match": _match(rows[cand["index"]]),
                                                    "set": {"employee": cand["employee"]}}]}}
+                try:
+                    over = float(f.get("over") or f.get("over_hours") or f.get("hours_over") or 0)
+                except (TypeError, ValueError):
+                    over = 0.0
+                # Ranked by its cost: more hours past the line, higher.
                 out.append({"key": f"ot:{_low(f.get('employee'))}", "kind": "overtime", "text": f.get("text"),
-                            "rank": 0.6, "action": act})
+                            "rank": 0.3 - min(over, 40.0) / 1000.0, "action": act})
         except Exception as e:
             _capture(e, "overtime forecast", rid)
     try:
@@ -1854,6 +1877,7 @@ def weighed_assignments(rid, rows, c, scores, quality, limit=WHY_LIMIT, saved_re
     usual = _safe(lambda: __import__("models").get_prior_shift_pattern(rid), {}, "usual pattern", rid) or {}
     reasons = engine_reasons(saved_review)
     prepared = None
+    memo = {}
     out = []
     for i, why in _why_targets(rid, rows, c, econ, likely, limit):
         r = rows[i]
@@ -1870,42 +1894,55 @@ def weighed_assignments(rid, rows, c, scores, quality, limit=WHY_LIMIT, saved_re
             continue
         if prepared is None:
             prepared = _se.prepare_replacements(rid, rows, constraints=c)
-        got = weigh_one(rid, rows, i, c, scores, usual, prepared)
+        got = weigh_one(rid, rows, i, c, scores, usual, prepared, memo=memo)
         if got:
             out.append(dict(got, date=d, shift_start=r.get("shift_start"), shift_id=r.get("shift_id"), role=role,
                             why_this=why, text=where + got["text"]))
     return out
 
 
+def shift_why(rid, rows, index, c, scores, usual, runner=None, schedule_id=None) -> dict:
+    """The Shift pane's "What Cavnar AI weighed" for rows[index] (the
+    replacements route, both clients): the engine's own reason when the
+    saved draft `schedule_id` recorded one for this row with this person
+    (`basis` "engine", contract #4 / TRUST-2), else weigh_one against the
+    best legal alternative (`basis` "after")."""
+    if schedule_id and 0 <= index < len(rows):
+        row = _safe(lambda: _row(rid, schedule_id), None, "shift why row", rid)
+        if row:
+            try:
+                saved = json.loads(row.get("review_json") or "null") or {}
+            except Exception:
+                saved = {}
+            r = rows[index]
+            eng = engine_reasons(saved).get(_rkey(r.get("date"), r.get("shift_start"), r.get("employee")))
+            if eng:
+                return {"employee": r.get("employee"), "runner_up": eng.get("runner_up"), "basis": "engine",
+                        "basis_label": "The solver's reason", "favours_pick": True, "swap": None,
+                        "facts": eng.get("facts") or [], "text": eng["text"]}
+    return weigh_one(rid, rows, index, c, scores, usual, runner=runner)
+
+
 _SEARCH = object()
 
 
-def weigh_one(rid, rows, index, c, scores, usual, prepared=None, runner=_SEARCH) -> dict:
-    """{employee, runner_up, text} — rows[index]'s person against the best
-    legal alternative (the replacements ranking), contrasted on rating, room
-    in their week and whether they usually work that weekday. None when
-    nobody else could legally take it ("the only legal choice"). `runner`
-    — the best legal alternative when the caller already ranked them (the
-    replacements picker, which checked every one); None means nobody."""
+def weigh_one(rid, rows, index, c, scores, usual, prepared=None, runner=_SEARCH, memo=None) -> dict:
+    """{employee, runner_up, text, basis, basis_label, favours_pick, swap} —
+    rows[index]'s person against the best legal alternative (the
+    replacements ranking), contrasted on rating, room in their week and
+    whether they usually work that weekday — a comparison made AFTER the
+    draft (`basis` "after"). None when nobody else could legally take it
+    ("the only legal choice"). `runner` — the best legal alternative when
+    the caller already ranked them (the replacements picker, which checked
+    every one); None means nobody. `memo` — the review's roles, read once."""
     import schedule_engine as _se
-    import staff_settings as _ss
     r = rows[index]
     name = (r.get("employee") or "").strip()
     if not name:
         return None
     role_low = (r.get("role") or "").strip().lower()
     if runner is _SEARCH:
-        pool = []
-        for e in _ss.roster(rid):
-            n = (e.get("name") or "").strip()
-            if not n or _low(n) == _low(name):
-                continue
-            known = set(_ss.roles_for(rid, n)) | {(x.get("role") or "").strip().lower() for x in rows
-                                                  if _low(x.get("employee")) == _low(n)}
-            known.discard("")
-            if role_low and known and role_low not in known:
-                continue
-            pool.append(n)
+        pool = _role_pool(rid, rows, role_low, _low(name), memo if memo is not None else {})
         pool.sort(key=lambda n: (-(scores.get(n) or 0), n))
         runner = None
         for n in pool[:REPLACEMENT_CHECKS]:
@@ -1961,7 +1998,7 @@ def weigh_one(rid, rows, index, c, scores, usual, prepared=None, runner=_SEARCH)
         # Nothing on file favoured the pick: said so, never dressed up.
         more = (f", with more room in their week ({max(0, rv['room']):g}h against {max(0, me['room']):g}h)"
                 if me["room"] is not None and rv["room"] is not None and rv["room"] - me["room"] >= 2 else "")
-        return dict(base, employee=name, runner_up=runner, favours_pick=False, swap=swap,
+        return dict(base, employee=name, runner_up=runner, favours_pick=False, swap=None,
                     text=(f"{runner} could legally have taken it too{more}; nothing on file — rating, usual days, "
                           f"hours — made {name} the stronger pick."))
     return dict(base, employee=name, runner_up=runner, favours_pick=True, swap=None,
@@ -2027,15 +2064,105 @@ def _sure(rid, quality, likely, numbers) -> dict:
         top = conf.get("top_reason")
         out["lines"].append(f"Shift quality {quality.get('score')}/100, scored on {int(conf['score'])}% of what it needs"
                             + (f" ({top})" if top else "") + ".")
-        parts.append((int(conf["score"]), f"quality inputs complete: {int(conf['score'])}%"))
-    if len(parts) >= CONFIDENCE_MIN_PARTS and (looked or rec):
-        pct = int(round(sum(p for p, _b in parts) / len(parts)))
-        out["confidence"] = {"pct": pct, "basis": [b for _p, b in parts],
-                             "level": "high" if pct >= 85 else ("medium" if pct >= 65 else "low")}
-    else:
-        out["confidence"] = {"pct": None, "basis": [b for _p, b in parts] or
-                             ["no published week has been measured against how it ran yet"], "level": None}
+    # The week-level confidence (re-audit 10/11/26 TRUST-6): the K1
+    # confidence engine over how this restaurant's PUBLISHED weeks RAN —
+    # never the share of drafts sent unchanged (it rose when owners stopped
+    # reading), never averaged with the forecast's error or the scorer's
+    # input completeness. "—" below SURE_MIN_WEEKS measured weeks; the
+    # engine's own caps hold it under 70 without a track record of
+    # MIN_MEASURED weeks. The lines above stay as context, not as the %.
+    out["confidence"] = week_confidence(rid)
+    if out["confidence"].get("line"):
+        out["lines"].insert(0, out["confidence"]["line"])
     return out
+
+
+def weeks_ran(rid, weeks=SURE_WEEKS) -> list:
+    """[{week_start, week_end, ok, failed: [test]}] — each published week
+    the Schedule Learning Scorecard measured as it RAN (schedule_learning_
+    scores), newest first, judged by the tests it has a measurement for
+    (module constants: no minute without a manager, no uncovered no-show,
+    staffing within RAN_SHORTFALL_HOURS of what was asked, labor within
+    RAN_LABOR_OVER_PTS of target, overtime within RAN_OT_OVER_HOURS of the
+    plan). A week with none of them measured is not counted."""
+    import schedule_scorecard as _ssc
+    out = []
+    for r in _ssc._rows("restaurant_id=?", (rid,), limit=weeks):
+        tests, failed = 0, []
+        if r.get("unmanaged_minutes") is not None:
+            tests += 1
+            if float(r["unmanaged_minutes"]) > 0:
+                failed.append("minutes with no manager")
+        if r.get("uncovered_no_shows") is not None:
+            tests += 1
+            if int(r["uncovered_no_shows"]) > 0:
+                failed.append("a no-show nobody covered")
+        if r.get("shortfall_hours") is not None:
+            tests += 1
+            if float(r["shortfall_hours"]) > RAN_SHORTFALL_HOURS:
+                failed.append("short of the staffing asked")
+        if r.get("labor_vs_target") is not None:
+            tests += 1
+            if float(r["labor_vs_target"]) > RAN_LABOR_OVER_PTS:
+                failed.append("labor over target")
+        if r.get("ot_hours") is not None:
+            tests += 1
+            if float(r["ot_hours"]) > float(r.get("ot_hours_planned") or 0) + RAN_OT_OVER_HOURS:
+                failed.append("more overtime than planned")
+        if tests:
+            out.append({"week_start": r.get("week_start"), "week_end": r.get("week_end"), "ok": not failed,
+                        "failed": failed})
+    return out
+
+
+def week_confidence(rid, today=None) -> dict:
+    """{pct, level, basis: [..], line, weeks_measured, weeks_ran_ok, k1} —
+    the K1 object (confidence_engine.assemble) over weeks_ran: Evidence the
+    measured weeks against a full sample ("weeks"), Historical Accuracy the
+    90% Wilson lower bound of the weeks that ran as planned (only at the
+    engine's MIN_MEASURED weeks; below it the no-track-record cap binds),
+    Data Freshness the age of the newest measured week. pct None below
+    SURE_MIN_WEEKS — "—" on screen, never a guess (TRUST-6)."""
+    import confidence_engine as ce
+    ran = _safe(lambda: weeks_ran(rid), [], "weeks ran", rid)
+    n, ok = len(ran), sum(1 for w in ran if w["ok"])
+    if n < SURE_MIN_WEEKS:
+        return {"pct": None, "level": None, "weeks_measured": n, "weeks_ran_ok": ok, "k1": None, "line": None,
+                "basis": [f"{n} of the {SURE_MIN_WEEKS} published weeks it needs have been measured as they ran"
+                          if n else "no published week has been measured against how it ran yet"],
+                "meaning": ce.MEANING}
+    ev = ce.evidence(n=n, kind="weeks", basis=f"{n} published {_plural(n, 'week')} measured as they ran")
+    if n >= ce.MIN_MEASURED:
+        lo, _hi = ce.wilson(ok, n)
+        lo_b, hi_b = ce.ACCURACY_BOUNDS
+        acc = {"pct": int(max(lo_b, min(hi_b, round(100 * (lo or 0.0))))), "n": n, "improved": ok,
+               "basis": f"ran as planned {ok} of {n} weeks", "source": "weeks_ran", "low": lo, "high": _hi,
+               "lift": None, "prior": None}
+    else:
+        acc = {"pct": None, "n": n, "improved": ok, "basis": f"ran as planned {ok} of {n} weeks — too few to rate",
+               "source": "weeks_ran", "low": None, "high": None, "lift": None, "prior": None}
+    newest = max((str(w.get("week_end") or w.get("week_start") or "")[:10] for w in ran), default="")
+    try:
+        t = today or date.today()
+        lag = (t - date.fromisoformat(newest)).days
+    except (TypeError, ValueError):
+        lag = None
+    fr_pct = None if lag is None else int(round(100 * ce.recency(lag, 14, 42)))
+    fr = {"pct": fr_pct, "basis": (f"the newest measured week ended {_mdy(newest)}" if newest else "undated"),
+          "as_of": _mdy(newest) or None, "as_of_iso": newest or None, "stalest": "scorecard",
+          "stalest_basis": None, "errors": []}
+    k1 = ce.assemble(ev, acc, fr)
+    pct = k1.get("pct")
+    fails = {}
+    for w in ran:
+        for f in w["failed"]:
+            fails[f] = fails.get(f, 0) + 1
+    worst = max(fails.items(), key=lambda kv: kv[1])[0] if fails else None
+    line = (f"{ok} of your last {n} published {_plural(n, 'week')} ran as planned"
+            + (f" (most often missed: {worst})" if worst else "") + ".")
+    return {"pct": pct, "level": ce.band(pct) if pct is not None else None, "weeks_measured": n, "weeks_ran_ok": ok,
+            "k1": k1, "line": line, "meaning": ce.MEANING,
+            "basis": [b for b in (ev.get("basis"), acc.get("basis"), fr.get("basis"), k1.get("reason")) if b]}
 
 
 # ── 8. send ────────────────────────────────────────────────────────────────
