@@ -3037,7 +3037,12 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-chip .v .stat-n{font-size:14px}
 .hb-chip .l{font-size:13px;font-weight:600;color:var(--ink2)}
 .hb-chip{position:relative}
-.hb-chip .hb-tip{position:absolute;right:0;top:calc(100% + 10px);z-index:40;width:300px;display:flex;flex-direction:column;gap:6px;padding:13px 15px 14px;border-radius:16px;background:var(--hp-bg);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;line-height:1.45;text-align:left;white-space:normal;opacity:0;visibility:hidden;transform:translateY(-3px);transition:opacity .12s ease,transform .12s ease,visibility 0s linear .14s;pointer-events:none}
+/* The card paints over the DNA card beside it: the row lifts above its
+   later siblings, and the card is opaque (owner, 10/12/26). */
+.hb-side{position:relative;z-index:30}
+.hb-side .hb-pulse{position:relative;z-index:2}
+.hb-chip:hover,.hb-chip:focus-visible{z-index:2}
+.hb-chip .hb-tip{position:absolute;right:0;top:calc(100% + 10px);z-index:40;width:300px;display:flex;flex-direction:column;gap:6px;padding:13px 15px 14px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;line-height:1.45;text-align:left;white-space:normal;opacity:0;visibility:hidden;transform:translateY(-3px);transition:opacity .12s ease,transform .12s ease,visibility 0s linear .14s;pointer-events:none}
 .hb-chip .hb-tip .t{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
 .hb-chip .hb-tip .ln{display:block}
 .hb-chip .hb-tip .hb-num{font-family:'Space Grotesk',sans-serif;color:var(--ink)}
