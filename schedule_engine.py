@@ -2833,6 +2833,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     try:
         import schedule_critic as _scr
         _fallback["critic"] = bool(not code_redo and _scr.enabled(_arms))
+        if _fallback["critic"]:
+            # The owner's own words for the critic (AI-18): this draft's
+            # request, then the standing notes, sentence by sentence.
+            _words = [str(instruction).strip()] if instruction and str(instruction).strip() else []
+            import schedule_note_rules as _snr_w
+            _words += [s for s in _snr_w._sentences(getattr(restaurant, "sched_notes", "") or "") if s.strip()]
+            _fallback["owner_words"] = _words[:6]
     except Exception as _crx:
         _soft_fail("solver-first draft", _crx, restaurant_id)
     # Handed in the kwargs and popped there, like the rules (the call's own
@@ -3829,6 +3836,28 @@ def _prepared_week(analysis, shifts, kwargs, rules_c, extra_rest, managers, kept
                 "rows": [], "generation_seconds": 0.0}
 
 
+def _critic_scorer(facts, signals, weights):
+    """Shift Quality of a week as the critic's guard reads it (schedule_
+    critic.validate: an edit that lowers it is refused) — the generation's
+    own signals, weights and shift profiles; None when there are no signals
+    (the guard then holds the rules alone), and a week it cannot score
+    reads as None (never a refusal on a scorer error)."""
+    if not signals:
+        return None
+    import shift_quality as _sq_c
+    profiles = (facts or {}).get("shift_profiles") or None
+
+    def score(rows):
+        try:
+            q = _sq_c.score_rows([{k: v for k, v in r.items() if k != "_pinned"} for r in rows],
+                                 profiles=profiles, weights=weights, **signals)
+            return q.get("score") if q.get("checked") else None
+        except Exception as e:
+            print(f"[schedule] critic guard could not score: {e!r}")
+            return None
+    return score
+
+
 def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
     """The days `dates` drafted without the model (schedule_fallback): the
     last published week carried forward, else — or when the "solver"
@@ -3884,9 +3913,13 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
                 # edits validated by code against the week with the plan.
                 import schedule_critic as _scr
                 whole = [dict(r, _pinned=True) for r in plan] + rows
+                # Held to Shift Quality not falling, shown the owner's words
+                # and the people facts its judgement needs (re-audit
+                # 10/11/26 AI-18: production passed neither score nor words).
                 rev = _scr.review(rid, whole, c, unmet=(solver_first or {}).get("unassigned"),
                                   last_week_rows=(base or {}).get("rows") if (base or {}).get("source") == "published"
-                                  else None)
+                                  else None, owner_words=fallback.get("owner_words") or None,
+                                  score=_critic_scorer(facts, signals, weights), signals=signals)
                 rows = [{k: v for k, v in r.items() if k != "_pinned"} for r in rev["rows"] if not r.get("_pinned")]
                 if solver_first is not None:
                     solver_first.setdefault("stats", {})["critic"] = {

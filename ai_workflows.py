@@ -240,10 +240,14 @@ POLICIES = {p.workflow: p for p in (
        caps=Caps(calls=1, usd=0.02, seconds=60), delivery="background",
        note="schedule_narrative: written from the final week, every bullet checked against its rows"),
     # The critic of a week the solver built (schedule_critic — AI-8): at
-    # most six typed edits, each kept only when code finds it breaks nothing.
+    # most six typed edits a call, each kept only when code finds it breaks
+    # nothing. Since 10/11/26 (re-audit AI-18) it thinks at medium effort and
+    # reviews a big week a few whole days a call (schedule_critic.chunks, at
+    # most MAX_CRITIC_CALLS) instead of a table cut at 600 rows.
     _p("schedule_critic", "scheduling", "schedule_critic", ladder=(DEFAULT,), reviewer="rules",
-       caps=Caps(calls=1, usd=0.20, seconds=120), delivery="background",
-       note="schedule_critic: Sonnet 5.5, structured edits; code validates each (can_add, regressions, the score)"),
+       caps=Caps(calls=7, usd=1.00, seconds=600), delivery="background",
+       note="schedule_critic: Sonnet 5.5 at medium effort, structured edits, a few whole days a call; code "
+            "validates each (can_add, regressions, the Shift Quality score)"),
     # ── cfo ─────────────────────────────────────────────────────────────
     _p("ask_cavnar", "cfo", "ask_cavnar", ladder=("T2",), reviewer="rules",
        caps=Caps(calls=8, usd=0.60, seconds=90),
