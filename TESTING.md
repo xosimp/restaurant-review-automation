@@ -175,6 +175,20 @@ From the staff app audit. One file per server workstream; each test is named for
 
 iOS: `ios/CavnarAI/CavnarAITests/StaffSignInTests.swift`, `StaffTodayTests.swift`, `StaffRequestsMeInboxTests.swift` and `StaffTasksTests.swift` — the staff app's decoding (lenient: an odd or missing field never fails a screen), its sign-in and session rules, and the pure logic of each tab.
 
+## The schedule suite by behaviour, and the benchmark (blind re-audit 10/11/26, ARCH-19, ARCH-22)
+
+Most schedule test files are named after the audit round that wrote them. Read by behaviour, the suite is this map (a file under one heading may touch others):
+
+| Behaviour | Files |
+|---|---|
+| Rules — legality, the rule sweep, the tiers, who is held to what | `test_schedule_rules.py`, `test_schedule_rules_reaudit_1004.py`, `test_manager_every_minute.py`, `test_max_shift_owners_exempt.py`, `test_owner_hours_exempt_1007.py`, `test_salaried_on_the_schedule.py`, `test_schedule_time.py`, `test_schedule_time_off_parts.py`, `test_schedule_closures.py`, `test_sf10_j1_compliance.py`, `test_edge_sched_rules.py`, `test_schedule_breach_identity.py`, `test_sched_f1_rules.py` |
+| The drafting engine — shapes, CP-SAT, the manager plan, the code drafts | `test_solver_behaviour.py` (the behaviour spec: random weeks, legality, determinism, locks, tiers, reasons, `_solver_first_rows`), `test_sf10_f_cpsat.py`, `test_schedule_solver.py`, `test_sched_fix_d2_solver.py`, `test_schedule_skeleton.py`, `test_schedule_dedicated.py`, `test_overtime_rebalance.py`, `test_schedule_requirements.py`, `test_sf10_g2_requirements.py`, `test_schedule_trim_and_fill.py`, `test_sf10_e_fallback.py`, `test_sf10_e_templates.py` |
+| The pipeline — the generation job, the repair loop, the gate, the score | `test_schedule_benchmark.py` (archetypes end to end), `test_sf10_f_pipeline.py`, `test_schedule_a2_generation.py`, `test_schedule_b1_loop.py`, `test_schedule_b2_calls.py`, `test_schedfix_c_pipeline.py`, `test_sf10_c2_pipeline.py`, `test_schedule_output_contract.py`, `test_sf10_e_typed_rows.py`, `test_sf10_e_redo.py`, `test_schedule_row_repair.py`, `test_schedule_optimizer.py`, `test_shift_quality.py` |
+| Lifecycle — versions, locks, publish, requests | `test_schedule_publish_gate.py`, `test_sf_g_publish_gate.py`, `test_publish_claim.py`, `test_sf10_i1_locks.py`, `test_sf10_i1_prepublish.py`, `test_sf10_d2_requests.py`, `test_sf10_h2_versions.py`, `test_schedule_history_and_tail.py`, `test_staff_schedule_publish.py`, `test_sf10_i2a_save_idempotency.py` |
+| Learning — memory, habits, calibration, experiments | `test_schedule_learning.py`, `test_sf10_g1_*.py`, `test_sched_fix_h1_learning.py`, `test_sched_fix_h2_memory.py`, `test_schedule_experiments.py` |
+
+**The benchmark.** `tests/test_schedule_benchmark.py` runs `schedule_benchmark.FAST_PLAN` (about a minute) once, in a child process with its own throwaway database, no provider key and no network, and makes each (archetype, arm, invariant) its own test. What the code breaks today is a strict xfail naming the finding that fixes it (`KNOWN`): when a fix makes one pass, the xfail fails until its entry is removed — the gate only tightens. The full run, every archetype at full size on both arms with three presses, is `scripts/schedule_benchmark.py` (about 25 minutes; `--heavy` adds the 500-person one, ~8 GB). The week drafted is the restaurant's next one on today's clock (sales are judged against today), moved past a holiday week, so a run in late November still measures an ordinary week.
+
 ## Test file naming
 
 Files read as sentences, not identifiers — `test_a_new_share_gets_an_expiry_about_sixty_days_out`, not `test_share_expiry`. This is deliberate: a failing test's name should tell you what broke without opening the file.
