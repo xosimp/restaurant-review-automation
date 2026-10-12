@@ -408,7 +408,7 @@ class Problem:
         self.no_show, self.late_risk, self.rel_known = [], [], []
         # Each person's rate by weekday (staff_settings' weekday_rates,
         # shrunk toward their own) — the scorer's own reading (LEARNING-14).
-        self.no_show_day, self.late_rate = [], []
+        self.no_show_day, self.late_rate, self.rel_explore = [], [], []
         for n in self.names:
             r = lrel.get(self.key(n)) or {}
             try:
@@ -423,6 +423,9 @@ class Problem:
             except (TypeError, ValueError):
                 self.late_rate.append(0.0)
             self.rel_known.append(self.key(n) in lrel)
+            # Exploring (staff_settings, LEARNING-21): too few recent shifts
+            # to clear a risky label — not steered off shared busy shifts.
+            self.rel_explore.append(bool(r.get("explore")))
         tenure = {self.key(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
         marked = {self.key(n) for n in (s.get("experienced") or ()) if n}
         # Managers, acting managers and salaried people are experienced by
@@ -1550,9 +1553,10 @@ class Problem:
                 # Graded on the shift's own weekday (attendance_risk.exposure),
                 # as the scorer weighs it — never the 20% cliff (LEARNING-14).
                 from attendance_risk import exposure as _exposure
+                alone = len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
+                             if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1
                 w = _exposure(self.no_show_day[p].get(u.day, self.no_show[p])) if (
-                    u.hard or len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
-                                   if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1) else 0.0
+                    alone or (u.hard and not self.rel_explore[p])) else 0.0
                 from attendance_risk import late_exposure as _late_exposure
                 lw = (1.0 if self.late_risk[p] else _late_exposure(self.late_rate[p])) if u.edges else 0.0
                 if w > 0 or lw > 0:

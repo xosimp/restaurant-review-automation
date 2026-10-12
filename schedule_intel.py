@@ -1255,6 +1255,18 @@ BEHAVIOUR_MIN_EVENTS = 2
 AVOID_MIN_CONFIDENCE = 0.2          # Wilson lower bound of drops / times scheduled on the slot
 PREFER_MIN_CONFIDENCE = 0.2         # Wilson lower bound of claims / open shifts offered on the slot
 PREFER_MIN_OTHER_OFFERS = 2         # open shifts elsewhere they could have taken, before a slot is "preferred"
+# "Avoids this slot" binds the solver (signals["learned_preferences"]), so it
+# is held to more than a pattern (schedule re-audit 10/11/26 LEARNING-22: 2
+# drops of 3 scheduled in 12 weeks qualified — two swaps for personal reasons
+# became a learned "avoid"): AVOID_MIN_EVENTS drops — three of the same slot
+# is what two personal swaps cannot reach by chance across a person's 14
+# weekday x daypart slots — the drop rate's 90% Wilson lower bound of
+# AVOID_MIN_CONFIDENCE or more, and the drops weighted by a faster half-life
+# (a drop is about a season of someone's life, not a standing fact); the
+# person and the manager are told it with its denominator.
+AVOID_MIN_EVENTS = 3
+AVOID_Z = 1.645
+AVOID_HALF_LIFE_DAYS = 45
 
 
 def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> dict:
@@ -1305,12 +1317,12 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
             return None
         return f"{wd} {'night' if daypart_of(start or '') == 'night' else 'day'}"
 
-    def wt(d):
+    def wt(d, half_life=learning_stats.PERSON_HALF_LIFE_DAYS):
         try:
             age = (date.today() - date.fromisoformat(str(d)[:10])).days
         except (TypeError, ValueError):
             age = 0
-        return learning_stats.recency_weight(age, learning_stats.PERSON_HALF_LIFE_DAYS)
+        return learning_stats.recency_weight(age, half_life)
 
     def key(n):
         return " ".join(str(n or "").split()).casefold()
@@ -1344,12 +1356,18 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
         evidence, avoids, prefers = {}, [], []
         for s_, ds in (drops.get(k) or {}).items():
             exp = scheduled.get(k, {}).get(s_) or set()
-            hw, ow = sum(wt(d) for d in ds), sum(wt(d) for d in exp)
-            conf = learning_stats.wilson_lower(hw, ow)
+            hw = sum(wt(d, AVOID_HALF_LIFE_DAYS) for d in ds)
+            ow = sum(wt(d, AVOID_HALF_LIFE_DAYS) for d in exp)
+            conf = learning_stats.wilson_lower(hw, ow, AVOID_Z)
             evidence[s_] = {"dropped": len(ds), "scheduled": len(exp), "drop_rate": round(hw / ow, 3) if ow else None,
                             "drop_confidence": round(conf, 3)}
-            if len(ds) >= BEHAVIOUR_MIN_EVENTS and conf >= AVOID_MIN_CONFIDENCE:
+            if len(ds) >= AVOID_MIN_EVENTS and conf >= AVOID_MIN_CONFIDENCE:
                 avoids.append(s_)
+                # Said with its denominator, to the person and the manager
+                # (staff_routes.api_preferences, the memory's staff_avoid).
+                evidence[s_]["said"] = (f"dropped {len(ds)} of the {len(exp)} {s_.replace(' night', ' dinner')
+                                        .replace(' day', ' lunch')} shifts they were scheduled on in the last "
+                                        f"{int(weeks)} weeks")
         mine = claims.get(k) or {}
         offered = {s_: [d for d, who in offers.get(s_, []) if who != k] for s_ in set(offers) | set(mine)}
         rates = {}

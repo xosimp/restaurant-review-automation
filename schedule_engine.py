@@ -3968,6 +3968,47 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
         return None
 
 
+def _standby_prices(rid, dates, c, sig) -> tuple:
+    """(value_of, cost_of) for attendance_risk.standby_needed (schedule
+    re-audit 10/11/26 LEARNING-19): what one person short costs a shift — the
+    one objective's slot value summed over the daypart's core window
+    (schedule_objective.slot_value, cross-workstream contract #1) — and what
+    the standby costs (the role's rate x the window's hours, the overtime
+    inputs' rates). (None, None) while either cannot be read: the crew-scaled
+    threshold alone decides."""
+    try:
+        import schedule_objective as _obj
+    except ImportError:
+        return None, None
+    try:
+        ctx = _obj.ObjectiveContext.build(rid, sorted(dates))
+    except Exception as e:
+        _soft_fail("standby prices", e, rid)
+        return None, None
+    ot = (sig or {}).get("overtime") or {}
+    rates = {str(k).strip().lower(): v for k, v in (ot.get("rates") or {}).items()}
+    default = ot.get("default_rate") or rates.get("_default")
+    sq_ = __import__("shift_quality")
+
+    def window(x):
+        o, cl = _rules.open_hours(c, _weekday_name(x["date"]))
+        return sq_.floor_window(x["daypart"], o, cl)
+
+    def value_of(x):
+        w = window(x)
+        if not w:
+            return None
+        return sum(float(_obj.slot_value(ctx, x["date"], m, x["role"]) or 0) for m in range(w[0], w[1], 30))
+
+    def cost_of(x):
+        w = window(x)
+        rate = rates.get(str(x.get("role") or "").lower(), default)
+        if not w or not rate:
+            return None
+        return float(rate) * (w[1] - w[0]) / 60.0
+    return value_of, cost_of
+
+
 def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     """A standby on each busy shift the drafted week is likely to come up
     short on (scheduler audit 10/10/26 RM-18 — attendance_risk.standby_
@@ -3982,7 +4023,8 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
         busy = _req_sb.busy_shifts(sorted(dates), facts.get("shift_profiles") or None,
                                    facts.get("demand_by_day") or {}, facts.get("demand_by_date") or {})
         risks = _ar.shift_risks(list(plan) + got["rows"], reqs, _ar.rates(rid), busy=busy)
-        need = _ar.standby_needed(risks)
+        value_of, cost_of = _standby_prices(rid, dates, c, sig)
+        need = _ar.standby_needed(risks, value_of=value_of, cost_of=cost_of)
     except Exception as e:
         _soft_fail("solver-first draft", e, rid)
         return
