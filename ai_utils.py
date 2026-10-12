@@ -2197,6 +2197,12 @@ def classify_error(exc):
         return "rate_limit"
     if isinstance(exc, anthropic.AuthenticationError) or status == 401:
         return "auth"
+    # The SDK's own refusal to send without a credential (a TypeError, no
+    # status): the key is missing, an auth problem (re-audit 10/11/26
+    # STRESS-23 — it read as "unknown", and the owner as "failed partway").
+    if isinstance(exc, (AINotConfigured, TypeError)) and ("authentication method" in text
+                                                            or isinstance(exc, AINotConfigured)):
+        return "auth"
     if isinstance(exc, anthropic.PermissionDeniedError) or status == 403:
         return "permission"
     if "credit balance" in text or ("billing" in text and status == 400):

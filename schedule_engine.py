@@ -4893,6 +4893,10 @@ def _failure_kind(exc) -> str:
     import ai_utils as _ai
     if isinstance(exc, _ai.AIBudgetExceeded):
         return "budget"
+    # No key on this server is configuration, never "the provider stopped
+    # responding" or "the model failed partway" (re-audit 10/11/26 STRESS-23).
+    if isinstance(exc, getattr(_ai, "AINotConfigured", ())):
+        return "config"
     if isinstance(exc, _ai.AIProviderDown):
         return "provider_down"
     if isinstance(exc, _ai.DataNotReady):
