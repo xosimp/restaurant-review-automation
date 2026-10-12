@@ -10284,6 +10284,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
         <button class="fpill {{ 'active' if rfilter=='pending' }}" id="fpill-pending" onclick="setRF('pending',this)">To approve</button>
         <button class="fpill {{ 'active' if rfilter=='negative' }}" onclick="setRF('negative',this)">Negative</button>
         <button class="fpill {{ 'active' if rfilter=='positive' }}" onclick="setRF('positive',this)">Positive</button>
+        <button class="fpill {{ 'active' if rfilter=='recent' }}" onclick="setRF('recent',this)">Most recent</button>
+        <button class="fpill {{ 'active' if rfilter=='month' }}" onclick="setRF('month',this)">This month</button>
       </div>
       <label class="rv2-selall" title="Select every review shown; Shift-click a box to select a run"><input type="checkbox" id="rv-sel-all" aria-label="Select every review shown"> Select shown</label>
     </div>
@@ -19589,8 +19591,11 @@ function rvServerSync(){
   var want=_rvKey(),have=list.getAttribute('data-list-key')||'all||';
   if(want===have)return false;
   var loaded=list.querySelectorAll('.rv2-row').length,total=+list.getAttribute('data-total')||0;
-  /* Everything is here and unfiltered: the page itself is the answer. */
-  if(have==='all||'&&total<=loaded)return false;
+  /* Everything is here and unfiltered: the page itself is the answer -
+     except Most recent and This month, which the server orders newest
+     first (10/12/26). */
+  var ordered=/^(recent|month)\|/.test(want);
+  if(have==='all||'&&total<=loaded&&!ordered)return false;
   if(_rvSyncing===want)return true;
   _rvSyncing=want;
   var parts=want.split('|'),q='offset=0&filter='+encodeURIComponent(parts[0]);
@@ -20209,6 +20214,8 @@ document.addEventListener('click',function(e){
 function rvAnsweredDivider(){
   var list=document.querySelector('#rv-inbox-reviews .rv2-list');if(!list)return;
   var old=list.querySelector('.rv2-answered-div');if(old)old.parentNode.removeChild(old);
+  // Newest first mixes answered and waiting reviews: no divider there.
+  if(rfilter==='recent'||rfilter==='month')return;
   var cards=list.querySelectorAll('.rv2-row'),vis=[],i;
   for(i=0;i<cards.length;i++)if(cards[i].style.display!=='none')vis.push(cards[i]);
   function done(c){var st=c.getAttribute('data-status')||'';return st==='posted'||st==='approved'||st==='skipped';}

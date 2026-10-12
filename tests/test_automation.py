@@ -845,3 +845,29 @@ def test_auto_publish_does_queue_the_same_week_unedited(db_path, monkeypatch):
     out = scheduler.run_auto_publish_schedules()
     assert out["queued"] == 1
 
+
+
+def test_a_rolling_week_updates_one_loss_issue_and_a_resolve_stays_quiet(db_path, monkeypatch):
+    """Owner, 10/12/26: four 'One manager (Andrew Marola) approved 7x% of this
+    week's void dollars' rows. The signal's week rolls forward daily; the
+    issue must not be filed again each night - the open one takes the night's
+    numbers, and a resolved one stays quiet for LOSS_RESOLVED_QUIET_DAYS."""
+    import strategy_jobs, loss_detection, issues
+    rid = _rid(db_path)
+    r = models.get_restaurant(rid, db_path=db_path)
+    nights = [("2026-10-01", "72%"), ("2026-10-02", "73%"), ("2026-10-03", "79%")]
+
+    def night(start, pct):
+        monkeypatch.setattr(loss_detection, "signals", lambda *a, **k: {
+            "available": True, "week": [start, start], "note": "check tickets",
+            "kinds": [{"kind": "void", "flags": [{"type": "concentration", "approver": "99",
+                                                  "headline": f"One manager approved {pct}", "alternative": "x"}]}]})
+        strategy_jobs._loss_flags_to_issues(r, db_path)
+    for start, pct in nights:
+        night(start, pct)
+    rows = issues.list_issues(rid, db_path=db_path)
+    loss = [i for i in rows if i.get("kind") == "loss"]
+    assert len(loss) == 1 and loss[0]["title"] == "One manager approved 79%"
+    issues.resolve(rid, loss[0]["id"], db_path=db_path)
+    night("2026-10-04", "80%")
+    assert [i for i in issues.list_issues(rid, status="open", db_path=db_path) if i.get("kind") == "loss"] == []

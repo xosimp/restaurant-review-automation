@@ -14399,6 +14399,10 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         # meant only 'drafted' here while the web's own client-side filter
         # meant something else again and iOS a third thing.
         where.append("response_status IN ('pending','drafted')")
+    elif filter_by == "month":
+        # This month's reviews (owner, 10/12/26), on the same axis and the
+        # same month start as the stats' "new this month".
+        where.append("COALESCE(NULLIF(review_date,''), fetched_at) >= date('now','start of month')")
     if search:
         where.append("(author LIKE ? OR text LIKE ?)")
         params.extend([f"%{search}%", f"%{search}%"])
@@ -14427,7 +14431,13 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
     # urgency - an old answered complaint no longer outranks today's
     # unanswered review. The web draws an "Answered (N)" divider where the
     # answered ones begin.
+    # "Most recent" and "This month" read newest first (owner, 10/12/26: no
+    # way to see the latest reviews); every other view puts what needs you
+    # first.
+    newest_first = filter_by in ("recent", "month")
     sql = f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
+        ORDER BY COALESCE(NULLIF(review_date,''), fetched_at) DESC""" if newest_first else \
+        f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE WHEN COALESCE(response_status,'') IN ('posted','approved','skipped') THEN 1 ELSE 0 END,
         CASE WHEN {urgent_review_sql()} THEN 0 ELSE 1 END,
         CASE COALESCE(severity,'service')

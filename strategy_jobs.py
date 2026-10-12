@@ -435,11 +435,25 @@ def _record_loss(restaurant_id, ok, error, provider, db_path):
         pass
 
 
+# A resolved concentration stays resolved this long: the signal's "week" is
+# the 7 days ending yesterday, so it rolls forward a day at a time and would
+# otherwise be filed again the morning after the owner resolved it.
+LOSS_RESOLVED_QUIET_DAYS = 7
+
+
 def _loss_flags_to_issues(r, db_path):
     """A comp/void concentration on one approver becomes an owner-facing
     issue — filed, not texted (notify=False): it names a manager, so it
     goes to the person who can review the tickets, never to the routed
-    manager who may be its subject. One per approver per week (source_key)."""
+    manager who may be its subject.
+
+    ONE issue per approver and kind while it is open (owner, 10/12/26: four
+    "One manager (Andrew Marola) approved 7x% of this week's void dollars"
+    rows on Home and in Still open). The signal's week rolls forward daily,
+    and the issue was keyed by that week's start, so every night filed a new
+    one (and a new bell row). Now an open one takes the night's numbers in
+    place; a resolved one stays quiet for LOSS_RESOLVED_QUIET_DAYS; only
+    then does a new week's pattern open a new issue."""
     try:
         import loss_detection, issues
         sig = loss_detection.signals(r.id, db_path=db_path)
@@ -454,17 +468,44 @@ def _loss_flags_to_issues(r, db_path):
                 headline = f["headline"]
                 if who:
                     headline = headline.replace(f"One manager (POS id {f.get('approver')})", f"{who} (POS id {f.get('approver')})")
+                detail = ((f"POS approver id {f.get('approver')} is {who} on your staff list. " if who else
+                           f"POS approver id {f.get('approver')} is not on your staff list — add the POS id under "
+                           f"Labor → Staff contacts to name them next time. ")
+                          + f"{f.get('alternative', '')} {sig.get('note', '')}").strip()
+                if _loss_issue_current(r.id, entry["kind"], f.get("approver"), headline[:120], detail, db_path):
+                    continue
                 issues.create_issue(
-                    r.id, "loss", headline[:120],
-                    detail=((f"POS approver id {f.get('approver')} is {who} on your staff list. " if who else
-                             f"POS approver id {f.get('approver')} is not on your staff list — add the POS id under "
-                             f"Labor → Staff contacts to name them next time. ")
-                            + f"{f.get('alternative', '')} {sig.get('note', '')}").strip(),
+                    r.id, "loss", headline[:120], detail=detail,
                     severity="normal", source_key=f"loss:{week}:{entry['kind']}:{f.get('approver')}",
                     notify=False, db_path=db_path)
     except Exception as e:
         import ops
         ops.capture(e, job="loss_issues", context=f"restaurant_id={r.id}")
+
+
+def _loss_issue_current(restaurant_id, kind, approver, title, detail, db_path) -> bool:
+    """True when this approver's concentration already has its issue: an
+    open one (its title and detail take tonight's numbers, no new row, no
+    new bell entry) or one resolved within LOSS_RESOLVED_QUIET_DAYS."""
+    from models import get_conn
+    like = f"loss:%:{kind}:{approver}"
+    conn = get_conn(db_path)
+    try:
+        open_row = conn.execute(
+            "SELECT id FROM ops_issues WHERE restaurant_id=? AND kind='loss' AND status!='resolved' "
+            "AND source_key LIKE ? ORDER BY id DESC LIMIT 1", (restaurant_id, like)).fetchone()
+        if open_row:
+            conn.execute("UPDATE ops_issues SET title=?, detail=? WHERE id=?",
+                         (title[:200], (detail or "")[:2000] or None, open_row["id"]))
+            conn.commit()
+            return True
+        quiet = conn.execute(
+            "SELECT 1 FROM ops_issues WHERE restaurant_id=? AND kind='loss' AND status='resolved' "
+            "AND source_key LIKE ? AND resolved_at >= datetime('now', ?) LIMIT 1",
+            (restaurant_id, like, f"-{LOSS_RESOLVED_QUIET_DAYS} days")).fetchone()
+        return bool(quiet)
+    finally:
+        conn.close()
 
 
 def _approver_name(restaurant_id, pos_id, db_path):
