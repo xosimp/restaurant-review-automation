@@ -410,6 +410,14 @@ def test_ask_to_cover_offers_the_gap_the_suggestion_was_for(db_path, monkeypatch
     conn.execute("INSERT INTO staff_contacts (restaurant_id, employee_name, phone) VALUES (?,?,?)",
                  (rid, pick["name"], "+15555550177"))
     conn.commit(); conn.close()
+    # Texted on the staff campaign under their own request consent, never the
+    # owner-alert one (re-audit 10/11/26 BUGSLIFE-20).
+    import people
+    monkeypatch.setattr(people, "staff_sms_ready", lambda: True)
+    real_reach = people.reach
+    monkeypatch.setattr(people, "reach", lambda r, names, purpose=None, db_path=None: {
+        n: dict((real_reach(r, [n], purpose=purpose, db_path=db_path) or {}).get(n) or {}, sms="+15555550177",
+                sms_scope=["schedule", "request"]) for n in names})
     out = intraday.ask_to_cover(rid, cov["id"], pick["name"], db_path=db_path)
     assert out["ok"], out
     assert "Bo Chen can't make today's Server shift (5:00pm)" in texts[-1][1]
