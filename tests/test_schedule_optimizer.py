@@ -172,7 +172,10 @@ def test_the_budget_trim_spares_the_row_the_score_needs_most():
     rows = [row(SAT, n, "Server", start="5:00pm", end="9:00pm", hours=4) for n in ("Keep", "Drop", "Third")]
     rows += [row(FRI, n, "Server", start="5:00pm", end="9:00pm", hours=4) for n in ("Keep", "Drop", "Third")]
     score = lambda rs: 1.0 if any(r["employee"] == "Keep" and r["date"] == SAT for r in rs) else 0.0
-    out, trimmed, _h = econ.trim_to_budget([dict(r) for r in rows], 20, {}, score_fn=score)
+    import schedule_rules as sr
+    c = sr.Constraints(restaurant_id=1, week_dates=[FRI, SAT], week_days=["Friday", "Saturday"])
+    c.compliance = dict(sr.DEFAULTS, min_shift_hours=4.0)     # the 4h shifts are the shortest (contract #2)
+    out, trimmed, _h = econ.trim_to_budget([dict(r) for r in rows], 20, {}, constraints=c, score_fn=score)
     assert trimmed and all(not (t["employee"] == "Keep" and t["date"] == SAT) for t in trimmed)
 
 

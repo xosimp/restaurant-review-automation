@@ -6436,6 +6436,10 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                     removals.append((r, cut))
                 else:
                     legal.append((r, cut))
+            # Where only a whole shift can go, the latest starter goes — the
+            # "delay the latest start" of a handover taken all the way, when
+            # nobody leaves soon enough for it to keep a workable shift.
+            removals.sort(key=lambda rc: -((_span_minutes(rc[0]) or (0, 0))[0]))
             legal = legal or removals[:want] or spare[:want]
             if not legal:
                 # Nothing at the peak may be cut: the night stays over the

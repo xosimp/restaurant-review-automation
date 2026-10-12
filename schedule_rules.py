@@ -5332,34 +5332,50 @@ def apply_role_times(rows: list, c: Constraints, editable=None, windows_only: bo
         if spec.get("start") is not None and spec.get("end") is None and (e1 - s1) % (24 * 60) < shortest:
             e1 = (s1 + (e0 - s0) % (24 * 60)) % (24 * 60)
         why_win = None
+        # Candidates, best first: the row moved inside the role's window with
+        # its length kept (_into_window, BUGSGEN-5); where that is not legal
+        # (past close, the person's hours), the row cut to the window instead.
+        cands = [(s1, e1)]
         if win:
             probe = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
             sa, ea = start_minutes(probe), end_minutes(probe)
             if sa is not None and ea is not None:
                 na, nb = _into_window(sa, ea, win)
+                ca = max(sa, win["earliest"]) if win.get("earliest") is not None else sa
+                cb = min(ea, win["latest"]) if win.get("latest") is not None else ea
                 if (na, nb) != (sa, ea):
                     why_win = win.get("source")
-                s1, e1 = na % (24 * 60), nb % (24 * 60)
-        if s1 % (24 * 60) == s0 % (24 * 60) and e1 % (24 * 60) == e0 % (24 * 60):
+                cands = [(na % (24 * 60), nb % (24 * 60))]
+                if (ca, cb) != (na, nb) and cb > ca:
+                    cands.append((ca % (24 * 60), cb % (24 * 60)))
+        new, why, tried = None, None, False
+        for s1, e1 in cands:
+            if s1 % (24 * 60) == s0 % (24 * 60) and e1 % (24 * 60) == e0 % (24 * 60):
+                continue
+            tried = True
+            span = (e1 - s1) % (24 * 60)
+            if span < shortest:
+                why = f"the rule would leave a {span / 60:g}h shift"
+                continue
+            cand = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
+            # Its hours from the real span in the restaurant's zone (BUGSGEN-6).
+            cand["scheduled_hours"] = hours_text(span_hours(cand, tz_of(c)))
+            trial = out_rows[:i] + [cand] + out_rows[i + 1:]
+            ok, why = c.can_add(cand, trial)
+            if ok:
+                worse = regressions(sweep.profile(out_rows), sweep.profile(trial), upto=TIER_BUDGET,
+                                    hard_only=False)
+                if worse:
+                    ok, why = False, worse[0]["label"]
+            if ok:
+                new = cand
+                break
+        if not tried:
             continue
-        span = (e1 - s1) % (24 * 60)
-        if span < shortest:
-            left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
-                         "reason": f"the rule would leave a {span / 60:g}h shift"})
-            continue
-        new = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
-        # Its hours from the real span in the restaurant's zone (BUGSGEN-6).
-        new["scheduled_hours"] = hours_text(span_hours(new, tz_of(c)))
-        trial = out_rows[:i] + [new] + out_rows[i + 1:]
-        ok, why = c.can_add(new, trial)
-        if ok:
-            worse = regressions(sweep.profile(out_rows), sweep.profile(trial), upto=TIER_BUDGET,
-                                hard_only=False)
-            if worse:
-                ok, why = False, worse[0]["label"]
-        if not ok:
+        if new is None:
             left.append({"index": i, "employee": r.get("employee"), "date": r.get("date"), "reason": why})
             continue
+        trial = out_rows[:i] + [new] + out_rows[i + 1:]
         src = why_win or (spec.get("source") or {}).get("start" if spec.get("start") is not None else "end")
         retimed.append({"index": i, "employee": r.get("employee"), "date": r.get("date"),
                         "from": hours_label(r),

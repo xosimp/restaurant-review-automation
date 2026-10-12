@@ -214,7 +214,7 @@ def test_every_solver_domain_reads_the_one_minor_rule():
 
 def test_the_repair_keeps_the_after_school_part_and_covers_the_rest():
     c = _minor_c()
-    rows = [_row(1, "Kid", "1:00pm", "6:00pm", "Host"), _row(1, "Ana", "9:00am", "1:00pm", "Host")]
+    rows = [_row(1, "Kid", "1:00pm", "6:30pm", "Host"), _row(1, "Ana", "9:00am", "1:00pm", "Host")]
     out = sr.fix_person_breaches(rows, c, roster_roles={"Kid": "Host", "Ana": "Host"})
     kid = next(r for r in out["rows"] if r["employee"] == "Kid")
     assert sr.parse_minutes(kid["shift_start"]) >= 15 * 60 + 30

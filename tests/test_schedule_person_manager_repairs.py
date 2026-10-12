@@ -448,10 +448,12 @@ def test_an_owner_operator_week_is_covered_to_the_cap_and_the_rest_explained():
 
 # ── E-16: a second leg for a manager on the day, shifts sized to the gap ──
 
-def test_a_one_hour_gap_buys_a_one_hour_shift_not_four():
+def test_a_one_hour_gap_buys_the_shortest_shift_not_four_hours():
     # 10-11pm with nobody managing; Andrew (9am-7pm) can't run on that far
     # inside the 12h shift rule, and Erik is off. The 4h minimum made it
-    # Erik 7-11pm; now it is one hour (Andrew's second leg or Erik's).
+    # Erik 7-11pm; a one-hour stub is no shift either (sched re-audit
+    # 10/11/26 BUGSGEN-6, contract #2): the one shortest shift, 3h by
+    # default, ending with the day.
     c = _c(roster_names=["Erik", "Andrew", "Ann", "Sam"], active={"erik", "andrew", "ann", "sam"},
            managers={"erik": "Owner", "andrew": "Manager FOH"})
     rows = [_row(2, "Andrew", "9:00am", "7:00pm", "Manager FOH"), _row(2, "Sam", "9:00am", "7:00pm"),
@@ -460,7 +462,7 @@ def test_a_one_hour_gap_buys_a_one_hour_shift_not_four():
     assert "no_manager" not in _kinds(out["rows"], c)
     assert out["added"] and not out["extended"]
     new = out["rows"][out["added"][0]["index"]]
-    assert (new["shift_start"], new["shift_end"], new["scheduled_hours"]) == ("10:00pm", "11:00pm", "1")
+    assert (new["shift_start"], new["shift_end"], new["scheduled_hours"]) == ("8:00pm", "11:00pm", "3")
 
 
 def test_the_owners_shortest_shift_sizes_an_added_shift():
