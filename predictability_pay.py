@@ -568,10 +568,14 @@ def record_request_change(restaurant_id, history_id, before_rows, after_rows, ki
         return {"recorded": 0, "error": True}
 
 
-def record_rest_premiums(restaurant_id, history_id, violations, rows, sent_by=None, now=None, db_path=None) -> dict:
+def record_rest_premiums(restaurant_id, history_id, violations, rows, sent_by=None, now=None, db_path=None,
+                         version=None) -> dict:
     """The rest premium each consented short turnaround owes (the sweep's
     rest_premium flags), written when the week is sent. One row per
-    instance; a second send of the same week does not record it twice."""
+    instance; a second send of the same week does not record it twice.
+    `version` is the published version the Send stamped, kept on each row so
+    a premium is tied to the copy that caused it (schedule re-audit 10/11/26
+    BUGSLIFE-19)."""
     try:
         from time_utils import restaurant_now_by_id
         import schedule_rules as _sr
@@ -620,7 +624,7 @@ def record_rest_premiums(restaurant_id, history_id, violations, rows, sent_by=No
                        "status": "owed" if amount is not None else "owed"}
                 if amount is None:
                     rec["exempt_reason"] = "no hourly rate on file — hours owed, dollars to be set"
-                _insert(conn, restaurant_id, history_id, None, rec, now, sent_by)
+                _insert(conn, restaurant_id, history_id, version, rec, now, sent_by)
                 n += 1
             conn.commit()
         finally:
