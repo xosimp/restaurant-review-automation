@@ -11317,7 +11317,9 @@ def _rules_for_swaps(c) -> dict:
         # under a consent rule, who agreed in writing to a short turnaround
         # (MARKET-3) — the swap index allows theirs, as the sweep does.
         "min_rest_hours": (c.compliance.get("min_rest_hours") if _rules.rest_mode(c.compliance) != "off" else None),
-        "rest_waived": ({k: {"standing": bool(v.get("standing")), "dates": sorted(v.get("dates") or ())}
+        "rest_waived": ({k: {"standing": bool(v.get("standing")), "dates": sorted(v.get("dates") or ()),
+                             # a waiver given for one shift allows that shift only (BUGSLIFE-7)
+                             "shifts": {d: sorted(s) for d, s in (v.get("shifts") or {}).items()}}
                          for k, v in (getattr(c, "rest_waivers", None) or {}).items()}
                         if _rules.rest_mode(c.compliance) == "consent_premium" else {}),
         # Owners and managers keep their own turnaround (rest_rule_applies):

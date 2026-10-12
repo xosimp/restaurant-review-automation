@@ -1934,20 +1934,21 @@ class Constraints:
                 continue
             if need and gap < need:
                 later = r if rs >= e else candidate      # the shift that starts inside the rest window
-                if mode == "consent_premium" and self.rest_waived(name, later.get("date")):
+                if mode == "consent_premium" and self.rest_waived(name, later.get("date"), later.get("shift_start")):
                     continue
                 return False, (f"{LABELS['rest_gap']} ({gap:.1f}h, needs {need:g}h"
                                + (" unless they agree to it in writing" if mode == "consent_premium" else "") + ")")
         return True, ""
 
-    def rest_waived(self, name_or_key, date_str) -> bool:
-        """Whether this person agreed in writing to a shorter rest before a
-        shift on `date_str` — a standing agreement, or one for that date
-        (staff_consent; MARKET-3)."""
-        w = (self.rest_waivers or {}).get(self.key(name_or_key))
-        if not w:
-            return False
-        return bool(w.get("standing")) or str(date_str or "")[:10] in (w.get("dates") or ())
+    def rest_waived(self, name_or_key, date_str, start=None) -> bool:
+        """Whether this person agreed in writing to a shorter rest before the
+        shift on `date_str` starting at `start` — a standing agreement, or
+        one for that very shift (staff_consent; MARKET-3). A waiver is bound
+        to the shift it was given for (schedule re-audit 10/11/26
+        BUGSLIFE-7): one for Tuesday's 7am never makes another Tuesday
+        turnaround read as consented."""
+        from staff_consent import waiver_allows
+        return waiver_allows((self.rest_waivers or {}).get(self.key(name_or_key)), date_str, start)
 
 
 def cert_key(cert) -> str:
@@ -4835,7 +4836,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                         # for the hours of the later shift inside the rest
                         # window (MARKET-3, LOGIC-21): a priced soft flag.
                         if _rmode == "consent_premium" and c.rest_waived(r_cur.get("employee") or name,
-                                                                         r_cur.get("date")):
+                                                                         r_cur.get("date"), r_cur.get("shift_start")):
                             inside = round(max(0.0, min(need - gap, (e_cur - s_cur).total_seconds() / 3600)), 2)
                             out.append(_v("rest_premium", own_i, own_r,
                                           f"{gap:.1f}h {said}{_tail_note(other)}, under the {need:g}h rule — "
