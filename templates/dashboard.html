@@ -7677,9 +7677,14 @@ svg:hover .hb-xh{opacity:1}
 /* The summary and the nights (or the week's figure) are two cards: a gap
    between them, never touching (owner, 10/12/26). */
 .drb-top+.hb-card{margin-top:20px}
-.drb-mode{display:flex;align-items:center;gap:8px}.drb-mode .k,.drb-sum .k{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.drb-mode{display:flex;flex-direction:column;align-items:flex-start}.drb-mode .k,.drb-sum .k{display:block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;line-height:18px;color:var(--ember2)}
+/* Day / Week sit under their kicker on the figure's own line: the same
+   4px drop and 40px line box as .drb-sum .v, buttons centred in it, so the
+   kickers share one baseline and the buttons sit level with the figures
+   (owner, 10/12/26). */
+.drb-mode .opts{display:flex;align-items:center;gap:8px;height:40px;margin-top:4px}
 .drb-mode [aria-pressed="true"]{border-color:var(--ember);color:var(--ink)}
-.drb-sum{display:flex;flex-wrap:wrap;gap:16px 40px}.drb-sum .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--ink);margin-top:4px}
+.drb-sum{display:flex;flex-wrap:wrap;gap:16px 40px}.drb-sum .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;line-height:40px;color:var(--ink);margin-top:4px}
 .drb-sum .v small{font-size:13px;color:var(--ink3);font-weight:500}.drb-sum .s{font-size:14px;color:var(--ink2);margin-top:2px}
 .drb-conf{display:inline-block;margin-top:6px;font-size:13px;color:var(--ink2)}.drb-conf.off{color:var(--ink3)}
 .drb-grid{display:grid;grid-template-columns:minmax(110px,.9fr) minmax(90px,.8fr) minmax(90px,.8fr) minmax(0,2fr) auto;gap:10px 14px;align-items:center}
@@ -8003,8 +8008,8 @@ svg:hover .hb-xh{opacity:1}
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(addDays(d.start,-7))+'">&larr; Week before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(addDays(d.start,7))+'">Week after &rarr;</button></div></div>';
     h+='<section class="hb-card drb-top"><div class="drb-mode" role="group" aria-label="Budget by">'
-      +'<span class="k">Budget by</span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="day" aria-pressed="'+(wk?'false':'true')+'">Day</button>'
-      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="week" aria-pressed="'+(wk?'true':'false')+'">Week</button></div>'
+      +'<span class="k">Budget by</span><div class="opts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="day" aria-pressed="'+(wk?'false':'true')+'">Day</button>'
+      +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-drb="mode" data-mode="week" aria-pressed="'+(wk?'true':'false')+'">Week</button></div></div>'
       +'<div class="drb-sum" id="drb-sum">'+budSumHtml(d)+'</div></section>';
     if(wk){
       var tn=isNum(bd.net)?bd.net:'',tg=isNum(bd.gross)?bd.gross:'';
