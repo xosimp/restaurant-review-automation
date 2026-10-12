@@ -3251,9 +3251,11 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-sub .chg .hb-num{font-size:15px;font-weight:700;color:var(--ember)}
 .hb-load{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:13px;min-height:28px}
 .mkt-load{flex-direction:column;justify-content:center;gap:12px;min-height:150px;padding:18px 0;text-align:center;font-size:13.5px}
-.dr-page-load{height:300px;justify-content:center;flex-direction:column;gap:18px;margin-top:30px}
-/* Owner, 10/6/26: the reports' orb and its sentence, big enough to notice. */
-.dr-page-load span{font-size:16px;color:var(--ink2)}
+.dr-page-load{height:380px;justify-content:center;flex-direction:column;gap:44px;margin-top:30px}
+/* Owner, 10/6/26 and again 10/12/26: the reports' orb (the Ember Core) and
+   its sentence, big enough to notice. */
+.dr-load-core{width:120px;height:120px}
+.dr-page-load span{font-family:'Clash Display',sans-serif;font-size:21px;font-weight:500;letter-spacing:-.005em;color:var(--ink2)}
 .hb-load canvas{display:block;flex-shrink:0}
 @media (max-width:1000px){.hb-sig{grid-template-columns:1fr}.hb-sg{border-right:none;margin-right:0;padding:0 0 18px;border-bottom:1px solid var(--hb-line2);margin-bottom:18px}.hb-sg:last-child{border-bottom:none;margin-bottom:0}.hb-act{grid-template-columns:1fr;gap:24px}.hb-act>div+div{border-left:none;padding-left:0;padding-top:20px;border-top:1px solid var(--hb-line)}.hb-pulse{justify-content:flex-start}.hb-tbl .hide-m{display:none}}
 @media (max-width:680px){.hb-wrap{padding:20px 18px 44px}.hb-hero svg{height:140px}.hb-row .t{white-space:normal}}
@@ -7833,7 +7835,10 @@ svg:hover .hb-xh{opacity:1}
   // A whole report (or the list of them) loading is the Cavnar orb at page
   // scale, as Home's brief loads - not the thin pulse bar, which is for a
   // quick refresh inside a card (owner, 10/5/26).
-  function loading(label){return '<div class="hb-load dr-page-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="96" height="96" style="width:96px;height:96px"></canvas><span>'+esc(label||'Loading the report')+'</span></div>';}
+  // Every Reports page (All reports, Night, Week, Period, Budget) loads on
+  // the Ember Core, Cavnar AI's own orb, running warm while it reads, at a
+  // size and sentence you notice (owner, 10/12/26).
+  function loading(label){return '<div class="hb-load dr-page-load" role="status"><div class="ec-anchor dr-load-core" data-core="dr-loading" data-core-energy=".8" aria-hidden="true"></div><span>'+esc(label||'Loading the report')+'</span></div>';}
   function pill(status){if(!status)return '';if(TERMINAL[status])return '<span class="dr-pill '+status+'">'+esc(STATUS[status])+'</span>';
     return '<span class="dr-pill running"><i></i>Running</span>';}
   function tile(k,v,s,cls){return '<div class="hb-stat'+(cls?' '+cls:'')+'"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div>'+(s?'<div class="s">'+s+'</div>':'')+'</div>';}
