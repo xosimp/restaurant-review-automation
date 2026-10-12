@@ -307,3 +307,36 @@ def test_home_has_no_ask_card_and_one_attention_card_holding_open_issues():
     attn = panel[panel.index("function renderAttention"):][:6000]
     assert 'id="hb-attn-issues"' in attn and "hbIssueRows(" in attn
     assert "hbAttnSetIssues(iss)" in panel
+
+
+def test_hero_chips_say_what_their_figure_is(db_path):
+    """Each top chip carries a hover card (owner, 10/12/26: "is 4.6 my
+    all-time rating or just last month?"): Google's all-time rating is
+    named as such, beside the 30-day average."""
+    rid = _seed(db_path)
+    c = get_conn(db_path)
+    c.execute("UPDATE restaurants SET gbp_rating=4.6, gbp_review_count=229 WHERE id=?", (rid,))
+    for i in range(5):
+        _review(c, rid, 4, status="posted")
+    c.commit(); c.close()
+    p, _ = home_brief.build_home_brief(_user(rid), fresh=True)
+    tip = {s["key"]: s for s in p["snapshot"]}["reviews"]["tip"]
+    assert "all time" in tip["title"].lower()
+    assert "4.6★ is your all-time Google rating, across all 229 reviews on Google." in tip["lines"]
+    assert any(l.startswith("Last 30 days: 4.0★ across 5 reviews") for l in tip["lines"])
+    html = open("templates/dashboard.html").read()
+    assert "function hbChipTip(s)" in html and "+hbChipTip(s)+" in html
+
+
+def test_labor_tip_splits_salaries_for_the_owner_only():
+    labor = {"includes_salaries": True, "hourly_labor_pct": 18.5,
+             "date_range": {"start": "2026-09-14", "end": "2026-10-11"}}
+    own = home_brief._labor_tip(labor, 25.6, 30, "set", 1.2, 24.1, 25.3, False, 28, 7, True)
+    assert own["lines"][0] == "25.6% all-in: hourly shifts plus salaried pay, as a share of sales (9/14/26–10/11/26)."
+    assert "Hourly staff only: 18.5%. Salaries add 7.1 pts." in own["lines"]
+    assert "Target: 30% (your target, salaries included)." in own["lines"]
+    mgr = home_brief._labor_tip(labor, 25.6, 30, "set", None, None, None, False, 28, 7, False)
+    assert not any("Hourly staff only" in l for l in mgr["lines"])
+    none = home_brief._labor_tip({"includes_salaries": False}, 22.0, 30, None, None, None, None, False, 28, 7, True)
+    assert "No salaried staff are on file" in none["lines"][0]
+    assert "Cavnar AI's starting target" in none["lines"][1]

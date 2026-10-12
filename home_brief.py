@@ -394,6 +394,78 @@ def _pct_delta(cur, prev):
     return round(cur - prev, 1)
 
 
+# ── Hero chip hover cards ───────────────────────────────────────────────────
+# Each top chip says what its figure IS: which window, what is counted, and
+# the figure beside it an owner might confuse it with (owner, 10/12/26: "is
+# 4.6 my all-time rating or just last month?"). {"title", "lines"}; plain
+# text, the renderer sets the numbers in Space Grotesk.
+
+def _reviews_tip(r, rstats, avg30, n30, total, rate, urgent, awaiting, rating_delta):
+    g = r.get("gbp_rating")
+    lines = []
+    if g:
+        cnt = r.get("gbp_review_count")
+        lines.append(f"{float(g):.1f}★ is your all-time Google rating"
+                     + (f", across all {int(cnt):,} reviews on Google." if cnt else ", across every review ever left there."))
+        title = "Google rating · all time"
+    elif n30:
+        title = "Rating · last 30 days"
+    else:
+        title = "Rating · all time"
+    if n30:
+        lines.append(f"Last 30 days: {avg30:.1f}★ across {_plural(n30, 'review')}"
+                     + (f" ({rating_delta:+.1f} vs the 30 days before)." if rating_delta is not None else "."))
+    if total:
+        if not g and not n30:
+            lines.append(f"{float(rstats.get('avg_rating') or 0):.1f}★ across all {_plural(total, 'review')} Cavnar AI holds.")
+        lines.append(f"{rate:.0f}% answered · {awaiting} waiting to publish · {urgent} urgent.")
+    else:
+        lines.append("No reviews yet.")
+    return {"title": title, "lines": lines}
+
+
+def _food_cost_tip(fc_pct, fc_target, recoverable, waste_rate, inv, crit, reorder):
+    lines = []
+    if fc_pct is not None:
+        title = "Food cost · last 28 days"
+        lines.append(f"{fc_pct}% of sales went to food over the last 28 days.")
+        if fc_target is not None:
+            lines.append(f"Target: {fc_target}% ({float(fc_pct) - float(fc_target):+.1f} pts).")
+    else:
+        title = "Food cost · estimate"
+        lines.append(f"${recoverable:,.0f}/mo is an estimate, not money saved: one week's waste above "
+                     "tolerance, projected to a month.")
+    if waste_rate is not None:
+        lines.append(f"Waste: {waste_rate}% of purchases this week.")
+    lines.append(f"{len(crit)} critical low · {len(reorder)} to reorder soon · "
+                 f"${float(inv.get('total_stock_value') or 0):,.0f} in stock.")
+    return {"title": title, "lines": lines}
+
+
+def _labor_tip(labor, pct, labor_target, tgt_source, delta, prev_pct, wk_cur, short, period_days, min_days, see_pay):
+    rng = labor.get("date_range") or {}
+    span = (f"{_mdy(rng.get('start'))}–{_mdy(rng.get('end'))}" if rng.get("start") and rng.get("end") else "")
+    if short:
+        return {"title": "Labor · % of sales",
+                "lines": [f"{_plural(period_days, 'day')} of shifts so far. Labor % reads against your target "
+                          f"once there are {min_days}."]}
+    lines = []
+    if labor.get("includes_salaries"):
+        lines.append(f"{pct:.1f}% all-in: hourly shifts plus salaried pay, as a share of sales"
+                     + (f" ({span})." if span else "."))
+        if see_pay and labor.get("hourly_labor_pct") is not None:
+            hp = float(labor.get("hourly_labor_pct") or 0)
+            lines.append(f"Hourly staff only: {hp:.1f}%. Salaries add {pct - hp:.1f} pts.")
+    else:
+        lines.append(f"{pct:.1f}% of sales: hourly shifts" + (f" ({span})." if span else ".")
+                     + " No salaried staff are on file, so there are no salaries in it.")
+    who = {"set": "your target", "goal": "your goal"}.get(tgt_source, "Cavnar AI's starting target")
+    lines.append(f"Target: {labor_target:.0f}% ({who}, salaries included).")
+    if delta is not None and wk_cur is not None and prev_pct is not None:
+        lines.append(f"Last full week {wk_cur:.1f}%, {delta:+.1f} pts on the week before ({prev_pct:.1f}%).")
+    return {"title": "Labor · % of sales", "lines": lines}
+
+
 def pos_health_label(state) -> str:
     """The provider's name as an owner reads it ("Toast", "RPOWER")."""
     p = (state or {}).get("provider") or "POS"
@@ -1609,6 +1681,7 @@ def _build(current_user, present=True, reads=None):
                          # days"): the chip read 4.4 while Google said 4.6
                          # (Simple EJ's, owner, 9/28/26).
                          "google_rating": (round(float(r["gbp_rating"]), 1) if r.get("gbp_rating") else None)})
+        snapshot[-1]["tip"] = _reviews_tip(r, rstats, avg30, n30, total, rate, urgent, awaiting, rating_delta)
 
         # recommendations
         if awaiting >= 3:
@@ -1936,6 +2009,13 @@ def _build(current_user, present=True, reads=None):
                              # was written (CA3 F2).
                              "last_data": (labor.get("date_range") or {}).get("end") or client_data.get("updated_at"),
                              "coverage_note": _cover_note or None})
+            try:
+                from permissions import is_principal as _is_principal_hb
+                _see_pay = bool(_is_principal_hb(current_user))
+            except Exception:
+                _see_pay = False
+            snapshot[-1]["tip"] = _labor_tip(labor, pct, labor_target, _labor_tgt_for.get("source"), delta, prev_pct,
+                                             _wk_cur, _lab_short, period_days, _MIN_DAYS, _see_pay)
             if _lab_short:
                 brief_lines.append({"text": f"Labor: {_plural(period_days, 'day')} of shifts so far — a read "
                                             f"against your target needs {_MIN_DAYS}.", "tone": "neutral", "module": "labor"})
@@ -2190,6 +2270,7 @@ def _build(current_user, present=True, reads=None):
                              "spark": [], "spark_label": None,
                              "attention": bool(crit) or recoverable >= 200 or bool(fc_target and fc_pct and fc_pct > fc_target),
                              "sample": False, "last_data": _inv_state.get("as_of_iso")})
+            snapshot[-1]["tip"] = _food_cost_tip(fc_pct, fc_target, recoverable, waste_rate, inv, crit, reorder)
             ask.append("Where are my biggest food cost opportunities?")
 
     # ── Marketing ───────────────────────────────────────────────────────────
@@ -2251,6 +2332,11 @@ def _build(current_user, present=True, reads=None):
                          "interpretation": (f"Next post {_mdy(mkt['scheduled'][0].get('scheduled_for', ''))} on {(mkt['scheduled'][0].get('platform') or '').title()}." if mkt.get("scheduled") else ("Nothing scheduled — draft something for this week." if mkt.get("ig_connected") or mkt.get("fb_connected") else "Connect Instagram to publish and track posts from here.")),
                          "state": "bad" if mkt.get("failed") else ("warn" if (posted_age is not None and posted_age > 10) or not (mkt.get("ig_connected") or mkt.get("fb_connected")) else "good"),
                          "spark": [], "spark_label": None, "attention": bool(mkt.get("failed")), "sample": False, "last_data": mkt.get("last_at")})
+        snapshot[-1]["tip"] = {"title": "Marketing · this month", "lines": [
+            f"{_plural(int(mkt.get('month') or 0), 'piece')} of marketing written or published since the 1st ({mkt.get('week') or 0} this week).",
+            f"{len(mkt.get('scheduled') or [])} scheduled · "
+            + (f"last post went live {int(posted_age)} days ago." if posted_age is not None else "nothing posted yet."),
+            "Channels: " + (", ".join(x for x, on in (("Instagram", mkt.get("ig_connected")), ("Facebook", mkt.get("fb_connected"))) if on) or "none connected") + "."]}
         ask.append("What should I post about this week?")
 
     # ── Intel ───────────────────────────────────────────────────────────────
@@ -2267,6 +2353,11 @@ def _build(current_user, present=True, reads=None):
                                                         if intel.get("withheld")
                                                         else "Nothing open from this week's competitor read."))),
                          "state": "good" if intel["recs"] else "neutral", "spark": [], "spark_label": None, "attention": False, "sample": False, "last_data": intel.get("updated_at")})
+        snapshot[-1]["tip"] = {"title": "Intel · competitor read", "lines": (
+            [f"{_plural(int(intel['recs']), 'open recommendation')} from the weekly competitor read.",
+             f"Tracking {_plural(int(intel['competitors']), 'competitor')}"
+             + (f", updated {int(age)} days ago." if age is not None else ".")]
+            if intel["competitors"] else ["No competitors tracked yet. Add them on the Intel tab for a weekly comparison."])}
         if intel["recs"] and age is not None and age <= 8:
             # Say only what the data shows (#46): the read is a model-written
             # comparison, not a finding that neighbours do things "you aren't".

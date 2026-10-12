@@ -203,10 +203,10 @@ html{background:var(--bg-base);min-height:100%}
 #notif-badge{position:absolute;top:2px;right:0;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:var(--red);color:var(--paper);font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;line-height:17px;text-align:center;box-shadow:0 0 0 2px var(--hdr-bg)}
 #notif-badge.dot{top:8px;right:8px;min-width:0;width:8px;height:8px;padding:0;background:var(--ink3)}
 .hdr-dot{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 0 2px var(--hdr-bg),0 0 8px var(--ember)}
-.hdr-pop{--hp-bg:rgba(255,255,255,.96);--hp-ring:rgba(14,12,10,.06);--hp-hover:rgba(14,12,10,.035);--hp-act-bg:#f7f6f5;--hp-tile:rgba(14,12,10,.045);--hp-tile-on:color-mix(in srgb,var(--ember) 10%,transparent);--hp-field:rgba(14,12,10,.045);--hp-bubble:rgba(14,12,10,.055);--hp-av:linear-gradient(160deg,#ece7df,#d9d2c6);
+.hdr-pop,.hb-tip{--hp-bg:rgba(255,255,255,.96);--hp-ring:rgba(14,12,10,.06);--hp-hover:rgba(14,12,10,.035);--hp-act-bg:#f7f6f5;--hp-tile:rgba(14,12,10,.045);--hp-tile-on:color-mix(in srgb,var(--ember) 10%,transparent);--hp-field:rgba(14,12,10,.045);--hp-bubble:rgba(14,12,10,.055);--hp-av:linear-gradient(160deg,#ece7df,#d9d2c6);
   --hp-shadow:0 1px 2px rgba(14,12,10,.04),0 14px 34px -14px rgba(14,12,10,.20),0 36px 70px -34px rgba(14,12,10,.26);--hp-lift:0 1px 2px rgba(14,12,10,.04),0 8px 20px -14px rgba(14,12,10,.28);
   position:absolute;right:-2px;top:calc(100% + 12px);width:min(400px,calc(100vw - 24px));z-index:999;border-radius:22px;background:var(--hp-bg);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);overflow:hidden;color:var(--ink);font-family:'Apfel Grotezk',sans-serif}
-[data-theme="dark"] .hdr-pop{--hp-bg:rgba(30,27,23,.96);--hp-ring:rgba(255,255,255,.07);--hp-hover:rgba(255,255,255,.045);--hp-act-bg:#282521;--hp-tile:rgba(255,255,255,.055);--hp-tile-on:rgba(212,88,58,.16);--hp-field:rgba(255,255,255,.06);--hp-bubble:rgba(255,255,255,.075);--hp-av:linear-gradient(160deg,#3d362f,#2a2520);
+[data-theme="dark"] .hdr-pop,[data-theme="dark"] .hb-tip{--hp-bg:rgba(30,27,23,.96);--hp-ring:rgba(255,255,255,.07);--hp-hover:rgba(255,255,255,.045);--hp-act-bg:#282521;--hp-tile:rgba(255,255,255,.055);--hp-tile-on:rgba(212,88,58,.16);--hp-field:rgba(255,255,255,.06);--hp-bubble:rgba(255,255,255,.075);--hp-av:linear-gradient(160deg,#3d362f,#2a2520);
   --hp-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 18px 44px -14px rgba(0,0,0,.62),0 44px 90px -36px rgba(0,0,0,.62);--hp-lift:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px -14px rgba(0,0,0,.62)}
 .hdr-pop.hp-msg{width:min(380px,calc(100vw - 24px))}
 @keyframes hdrPanelDrop{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
@@ -3008,6 +3008,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 @media (max-width:1000px){
   #hb-root>.hb-top{grid-template-columns:minmax(0,1fr);grid-template-areas:"lead" "side" "quick"}
   .hb-side .hb-pulse{justify-content:flex-start}
+  .hb-side .hb-chip .hb-tip{right:auto;left:0}
   .hb-dna-slot{padding-top:22px}
 }
 /* pulse chips (iOS HomePulseStrip) */
@@ -3035,6 +3036,13 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-chip .v{font-family:'Space Grotesk',sans-serif;font-size:15.5px;font-weight:700;letter-spacing:-.01em}
 .hb-chip .v .stat-n{font-size:14px}
 .hb-chip .l{font-size:13px;font-weight:600;color:var(--ink2)}
+.hb-chip{position:relative}
+.hb-chip .hb-tip{position:absolute;right:0;top:calc(100% + 10px);z-index:40;width:300px;display:flex;flex-direction:column;gap:6px;padding:13px 15px 14px;border-radius:16px;background:var(--hp-bg);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;line-height:1.45;text-align:left;white-space:normal;opacity:0;visibility:hidden;transform:translateY(-3px);transition:opacity .12s ease,transform .12s ease,visibility 0s linear .14s;pointer-events:none}
+.hb-chip .hb-tip .t{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
+.hb-chip .hb-tip .ln{display:block}
+.hb-chip .hb-tip .hb-num{font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.hb-chip:hover .hb-tip,.hb-chip:focus-visible .hb-tip{opacity:1;visibility:visible;transform:none;transition-delay:.12s,.12s,0s}
+@media (hover:none){.hb-chip .hb-tip{display:none}}
 .hb-chip .dot{position:relative;width:8px;height:8px;flex-shrink:0}
 .hb-chip .dot i{position:absolute;inset:0;border-radius:50%;background:var(--ember);box-shadow:0 0 6px var(--ember)}
 .hb-chip .dot b{position:absolute;inset:-4px;border-radius:50%;background:var(--ember);opacity:.35;animation:hbBreath 2.2s ease-in-out infinite}
@@ -5064,6 +5072,19 @@ svg:hover .hb-xh{opacity:1}
       if(typeof toast==='function')toast(line,'success');
     }).catch(function(){if(btn){btn.disabled=false;btn.textContent='Track this';}if(typeof toast==='function')toast('Network error','error');});
   };
+  // The chip's hover card: what its figure is - the window, what it
+  // counts, the number beside it (home_brief tip). A sample chip says so.
+  function hbChipTip(s){
+    var t=s.tip||{title:s.label+(s.sample?' · sample':''),lines:[s.interpretation||'']};
+    var ls=t.lines||[];var h='';
+    for(var i=0;i<ls.length;i++){if(ls[i])h+='<span class="ln">'+hbTipNums(String(ls[i]))+'</span>';}
+    return '<span class="hb-tip" role="tooltip" id="hb-tip-'+esc(s.key)+'"><span class="t">'+esc(t.title||s.label)+'</span>'+h+'</span>';
+  }
+  // Numbers in Space Grotesk inside mixed text (typography rule).
+  // Escapes each piece itself: wrapping after esc() split entities (&#39;).
+  function hbTipNums(x){var re=/[+\u2212-]?\$?\d[\d,]*(?:\.\d+)?(?:%|\u2605| pts)?/g,out='',last=0,m;
+    while((m=re.exec(x))!==null){out+=esc(x.slice(last,m.index))+'<span class="hb-num">'+esc(m[0])+'</span>';last=re.lastIndex;}
+    return out+esc(x.slice(last));}
   function renderTop(d){
     var c=d.context||{};
     var k=document.getElementById('hb-kicker');
@@ -5081,7 +5102,7 @@ svg:hover .hb-xh{opacity:1}
       /* The rating chip says Google's own rating when it is on file, as the
          Reviews tab does; the 30-day average is the Results tile's. */
       var g=(s.key==='reviews'&&!s.sample&&s.google_rating!=null)?s.google_rating:null;
-      chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(g!=null?g:s.value)+(s.key==='reviews'&&(g!=null||s.value!=='—')?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(g!=null?'Google rating':(s.key==='inventory'&&String(s.value||'').charAt(0)==='$'?'opportunity / mo':(PULSE[s.key]||s.label))))+'</span></button>';}
+      chips+='<button class="hb-chip '+esc(tone)+'" onclick="hbOpen(\''+esc(s.key)+'\')" aria-label="'+esc(s.label)+'" aria-describedby="hb-tip-'+esc(s.key)+'"><span class="dot"><b></b><i></i></span><span class="v hb-num">'+(s.sample?'—':esc(g!=null?g:s.value)+(s.key==='reviews'&&(g!=null||s.value!=='—')?'★':s.key==='labor'?'%':''))+'</span><span class="l">'+esc(s.sample?s.label+' · sample':(g!=null?'Google rating':(s.key==='inventory'&&String(s.value||'').charAt(0)==='$'?'opportunity / mo':(PULSE[s.key]||s.label))))+'</span>'+hbChipTip(s)+'</button>';}
     p.innerHTML=chips;
     renderQuick(hbQuickUnsaid(d.quick_actions||[],d));
     window._hbQuick=d.quick_actions||[];   // the palette's One tap keeps them all
