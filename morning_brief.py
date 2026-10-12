@@ -71,9 +71,11 @@ def _reviews_waiting(restaurant_id, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
         row = conn.execute(
-            "SELECT SUM(recent) AS waiting, SUM(recent AND rating <= 2) AS urgent, "
-            "SUM(NOT recent) AS older FROM (SELECT rating, "
-            "COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?) AS recent FROM reviews "
+            # recent is 1 / 0 / NULL on both databases (a boolean on
+            # Postgres would not SUM).
+            "SELECT SUM(recent) AS waiting, SUM(CASE WHEN rating <= 2 THEN recent END) AS urgent, "
+            "SUM(1 - recent) AS older FROM (SELECT rating, "
+            "CAST((COALESCE(NULLIF(review_date,''), fetched_at) >= date('now', ?)) AS INTEGER) AS recent FROM reviews "
             "WHERE restaurant_id=? AND deleted_at IS NULL "
             "AND response_status IN ('pending','drafted'))",
             (f"-{int(REPLY_OWED_MAX_AGE_DAYS)} days", restaurant_id)).fetchone()

@@ -5,6 +5,18 @@ docs/ops/POSTGRES_CUTOVER.md step 1). The remaining port is this list.
 
     python scripts/pg_sql_audit.py            # summary + every finding
     python scripts/pg_sql_audit.py --json     # machine-readable
+    python scripts/pg_sql_audit.py --database-url postgresql://…/scratch
+                                              # + every statement PREPAREd
+                                              #   on a real Postgres
+
+Reading the text is not running it (blind re-audit 10/11/26, SCALE-10: the
+text-level "0 untranslatable" missed SUM(<boolean>), COLLATE NOCASE, a
+HAVING alias, UPDATE OR IGNORE, the boot's own DDL). With --database-url
+(a SCRATCH database — never production's) the app's boot builds the schema
+there (models.init_db and the init chain, through db_dialect) and every
+statement with no run-time hole is translated against that catalog and
+PREPAREd — Postgres's parser, name resolution and type checks, without
+running it. `prepare_failed` is then the list that would fail at run time.
 
 It reads each `.execute(...)` / `.executemany(...)` call's SQL from the
 source (string literals, f-strings with their holes as X, `+` joins),
@@ -41,7 +53,9 @@ _SQLITE_ONLY = [(re.compile(p, re.I), what) for p, what in (
     (r"\btypeof\s*\(", "typeof()"), (r"\bprintf\s*\(", "printf()"),
     (r"\blast_insert_rowid\s*\(", "last_insert_rowid()"), (r"^\s*(ATTACH|DETACH)\b", "ATTACH/DETACH"),
     (r"^\s*VACUUM\b", "VACUUM"), (r"\bCREATE\s+TRIGGER\b", "CREATE TRIGGER"),
-    (r"\bINSERT\s+OR\s+(ROLLBACK|ABORT|FAIL)\b", "INSERT OR ROLLBACK/ABORT/FAIL"))]
+    (r"\bINSERT\s+OR\s+(ROLLBACK|ABORT|FAIL)\b", "INSERT OR ROLLBACK/ABORT/FAIL"),
+    (r"\bUPDATE\s+OR\s+(REPLACE|ROLLBACK|ABORT|FAIL)\b", "UPDATE OR REPLACE (db_dialect runs only OR IGNORE)"),
+    (r"\bCOLLATE\s+(?!NOCASE\b)\w+", "a collation other than NOCASE"))]
 _PRAGMA_OK = re.compile(r"^\s*PRAGMA\s+(table_info|index_list|integrity_check|quick_check|journal_mode|"
                         r"foreign_keys|busy_timeout|synchronous|foreign_key_check|optimize|wal_checkpoint|"
                         r"cache_size|temp_store|database_list|schema_version|analysis_limit)\b", re.I)
@@ -84,6 +98,134 @@ def statements(root=ROOT):
                     sql = _text(node.args[0])
                     if sql and _SQL_START.match(sql):
                         yield os.path.relpath(path, root), node.lineno, sql
+
+
+def static_statements(root=ROOT):
+    """(path, line, sql) of every statement whose SQL is fully known in the
+    source — no f-string hole, no variable — the ones PREPARE can check."""
+    for path, line, sql, node in _nodes(root):
+        if _static(node):
+            yield path, line, sql
+
+
+def _nodes(root=ROOT):
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in (".git", "tests", ".venv", "node_modules", "ios", ".claude",
+                                                "__pycache__", "scratch_scale")]
+        for f in files:
+            if not f.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, f)
+            try:
+                tree = ast.parse(open(path, encoding="utf-8").read())
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                        and node.func.attr in ("execute", "executemany") and node.args:
+                    sql = _text(node.args[0])
+                    if sql and _SQL_START.match(sql):
+                        yield os.path.relpath(path, root), node.lineno, sql, node.args[0]
+
+
+def _static(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _static(node.left) and _static(node.right)
+    if isinstance(node, ast.JoinedStr):
+        return all(isinstance(v, ast.Constant) for v in node.values)
+    return False
+
+
+# Tables a statement meets only where they exist: a migration's own
+# scratch copy (created and dropped by that migration) and the shadow's
+# schedule model (SHADOW_DATABASE_URL, not the platform database).
+RUNTIME_TABLES = re.compile(r"\b(reviews_rekeyed|ask_memory_rekeyed|sched\.\w+)\b")
+
+_SKIP_PREPARE = re.compile(r"^\s*(PRAGMA|BEGIN|COMMIT|ROLLBACK|END|SAVEPOINT|RELEASE|CREATE|ALTER|DROP|VACUUM|"
+                           r"ATTACH|DETACH|REINDEX|ANALYZE)\b", re.I)
+
+
+def prepare_check(url, root=ROOT, build=True) -> dict:
+    """Every static DML statement translated against the Postgres at `url`
+    (its catalog — the app's own boot builds it when `build`) and PREPAREd
+    there. {"prepared": n, "prepare_failed": [{at, error, sql}], "skipped": n}.
+    `url` must be a scratch database: the boot writes its schema there."""
+    import contextlib
+    import io
+    import db_dialect
+    import psycopg
+    if build:
+        _boot_on(url)
+    conn = db_dialect.connect(url)
+    raw = psycopg.connect(url, autocommit=True, connect_timeout=10)
+    out = {"prepared": 0, "prepare_failed": [], "skipped": 0, "runtime_tables": 0}
+    try:
+        for path, line, sql in static_statements(root):
+            if _SKIP_PREPARE.match(sql):
+                out["skipped"] += 1
+                continue
+            if RUNTIME_TABLES.search(sql):
+                out["runtime_tables"] += 1
+                continue
+            m = db_dialect._UPDATE_OR.match(sql)
+            if m:
+                # Run row by row (db_dialect): the SET and WHERE are checked.
+                sql = re.sub(r"^\s*UPDATE\s+OR\s+\w+", "UPDATE", sql, flags=re.I)
+            try:
+                text, _ret = conn._final_text(sql)
+            except Exception as e:
+                out["prepare_failed"].append({"at": f"{path}:{line}", "error": f"translate: {e}"[:200],
+                                              "sql": sql[:160]})
+                continue
+            n = [0]
+
+            def _dollar(_m):
+                n[0] += 1
+                return f"${n[0]}"
+            text = re.sub(r"%s", _dollar, text).replace("%%", "%")
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    raw.execute(f"PREPARE cavnar_audit AS {text}", prepare=False)
+                raw.execute("DEALLOCATE cavnar_audit", prepare=False)
+                out["prepared"] += 1
+            except Exception as e:
+                out["prepare_failed"].append({"at": f"{path}:{line}", "error": str(e).split("\n")[0][:200],
+                                              "sql": sql[:160]})
+    finally:
+        raw.close()
+        conn.close()
+    return out
+
+
+def _boot_on(url):
+    """The app's boot (models.init_db and the init chain hosted_dashboard
+    runs) against `url`, through db_dialect."""
+    import contextlib
+    import io
+    old = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = url
+    try:
+        import models
+        with contextlib.redirect_stdout(io.StringIO()):
+            models.init_db()
+            for mod, fn in (("auth", "init_auth"), ("platform_monitor", "init_platform_tables"),
+                            ("provider_health", "init_provider_health"), ("webhooks", "init_webhooks"),
+                            ("guest_marketing", "init_guest_marketing"), ("push", "init_push"),
+                            ("sales_audits", "init_sales_audits")):
+                import importlib
+                getattr(importlib.import_module(mod), fn)()
+            for fn in ("init_staff_notes", "init_staff_availability", "ensure_columns", "init_email_log",
+                       "init_onboarding_emails", "init_two_fa_backup_codes", "init_competitor_snapshots",
+                       "init_ai_visibility_queries", "init_staff_capabilities", "init_shift_profiles",
+                       "init_capability_changes", "init_ask_memory"):
+                getattr(models, fn)()
+    finally:
+        if old is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = old
 
 
 def _schema():
@@ -160,16 +302,25 @@ def audit():
 
 
 def main(argv=None):
+    argv = list(argv or [])
     rep = audit()
-    if argv and "--json" in argv:
+    url = None
+    if "--database-url" in argv:
+        url = argv[argv.index("--database-url") + 1]
+        rep.update(prepare_check(url))
+    if "--json" in argv:
         print(json.dumps(rep, indent=2))
-        return 0
+        return 1 if rep.get("prepare_failed") else 0
     print(f"{rep['statements']} SQL statements read")
-    for k in ("untranslatable", "dynamic", "ported", "double_quoted", "sqlite_only", "reserved_columns"):
+    keys = ["untranslatable", "dynamic", "ported", "double_quoted", "sqlite_only", "reserved_columns"]
+    if url:
+        print(f"{rep['prepared']} PREPAREd on Postgres, {rep['skipped']} DDL / control skipped")
+        keys.append("prepare_failed")
+    for k in keys:
         print(f"\n{k}: {len(rep[k])}")
         for item in rep[k]:
             print("  ", item if isinstance(item, str) else " — ".join(str(v) for v in item.values()))
-    return 0
+    return 1 if rep.get("prepare_failed") else 0
 
 
 if __name__ == "__main__":

@@ -39,3 +39,10 @@ CREATE OR REPLACE FUNCTION cav_name_key(v text) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT lower(regexp_replace(btrim(coalesce(v, ''), E' \t\n\r\f\v'), E'[\\s]+', ' ', 'g'))
 $$;
+
+-- cavnar_json_array: the array a json_each reads, or none — db_dialect
+-- turns json_each(doc, '$.path') into jsonb_array_elements_text over this.
+CREATE OR REPLACE FUNCTION cavnar_json_array(v jsonb) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN jsonb_typeof(v) = 'array' THEN v ELSE '[]'::jsonb END
+$$;

@@ -454,6 +454,87 @@ class Translator:
             i += 1
         return toks
 
+    def _is_distinct(self, toks) -> list:
+        """`x IS y` / `x IS NOT y` with y a value (a parameter, a column, an
+        expression) is SQLite's NULL-safe comparison: IS NOT DISTINCT FROM /
+        IS DISTINCT FROM on Postgres, whose IS takes only NULL, TRUE, FALSE.
+        And a bare parameter tested for NULL (`? IS NULL`) is given a type —
+        Postgres cannot infer one ("could not determine data type of
+        parameter")."""
+        out, i = [], 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == "word" and t.upper == "IS":
+                n = _sig_index(toks, i, 1)
+                neg = n is not None and toks[n].kind == "word" and toks[n].upper == "NOT"
+                v = _sig_index(toks, n, 1) if neg else n
+                val = toks[v] if v is not None else None
+                if val is not None and not (val.kind == "word" and val.upper in ("NULL", "TRUE", "FALSE",
+                                                                                  "DISTINCT", "JSON")):
+                    out.extend([Tok("word", "IS DISTINCT FROM" if neg else "IS NOT DISTINCT FROM"), Tok("ws", " ")])
+                    i = v
+                    continue
+                if val is not None and val.kind == "word" and val.upper == "NULL":
+                    # `? IS [NOT] NULL`: the parameter typed.
+                    k = len(out) - 1
+                    while k >= 0 and out[k].kind in ("ws", "comment"):
+                        k -= 1
+                    if k >= 0 and out[k].kind == "param":
+                        out[k:k + 1] = [Tok("word", "CAST"), Tok("op", "("), out[k], Tok("ws", " "),
+                                        Tok("word", "AS"), Tok("ws", " "), Tok("word", "text"), Tok("op", ")")]
+            out.append(t)
+            i += 1
+        return out
+
+    def _qualify_upsert(self, toks) -> list:
+        """In ON CONFLICT … DO UPDATE SET a = a + excluded.a, SQLite reads a
+        bare `a` as the existing row's; Postgres calls it ambiguous (the row
+        or EXCLUDED). Each bare column of the table there is qualified with
+        the table's name — the assignment targets aside."""
+        sig = _significant(toks)
+        table = _main_table(sig)
+        if not table or not any(t.kind == "word" and t.upper == "CONFLICT" for t in sig):
+            return toks
+        cols = {c.lower() for c in (self.columns_lookup(table) or [])}
+        if not cols:
+            return toks
+        out, i, active, target, depth, in_where = [], 0, False, False, 0, False
+        while i < len(toks):
+            t = toks[i]
+            if not active and t.kind == "word" and t.upper == "SET":
+                prev = next((x for x in reversed(out) if x.kind not in ("ws", "comment")), None)
+                if prev is not None and prev.kind == "word" and prev.upper == "UPDATE":
+                    active, target, depth, in_where = True, True, 0, False
+                out.append(t)
+                i += 1
+                continue
+            if active:
+                if t.kind == "op" and t.text == "(":
+                    depth += 1
+                elif t.kind == "op" and t.text == ")":
+                    depth -= 1
+                    if depth < 0:
+                        active = False
+                elif depth == 0 and t.kind == "word" and t.upper == "RETURNING":
+                    active = False
+                elif depth == 0 and t.kind == "word" and t.upper == "WHERE":
+                    in_where, target = True, False
+                elif depth == 0 and t.kind == "op" and t.text == "," and not in_where:
+                    target = True
+                elif t.kind == "word" and t.text.lower() in cols:
+                    p = _sig_index(toks, i, -1)
+                    n = _sig_index(toks, i, 1)
+                    dotted = (p is not None and toks[p].text == ".") or (n is not None and toks[n].text in (".", "("))
+                    if target:
+                        target = False
+                    elif not dotted:
+                        out.extend([Tok("word", table), Tok("op", "."), t])
+                        i += 1
+                        continue
+            out.append(t)
+            i += 1
+        return out
+
     def _like_escape(self, toks) -> list:
         """LIKE -> ILIKE (SQLite's LIKE ignores case) with `ESCAPE ''`:
         Postgres's LIKE treats a backslash in the pattern as an escape,
@@ -563,7 +644,8 @@ class Translator:
             is_call = t.kind == "word" and nxt is not None and toks[nxt].kind == "op" and toks[nxt].text == "("
             up = t.upper if t.kind == "word" else ""
             if is_call and up in ("DATETIME", "DATE", "TIME", "JULIANDAY", "STRFTIME", "IFNULL", "INSTR",
-                                  "GROUP_CONCAT", "MAX", "MIN", "JSON_EXTRACT", "TOTAL", "SUM", "AVG"):
+                                  "GROUP_CONCAT", "MAX", "MIN", "JSON_EXTRACT", "TOTAL", "SUM", "AVG", "ROUND",
+                                  "JSON_VALID", "JSON", "JSON_SET", "JSON_EACH"):
                 end = _call_end(toks, nxt)
                 inner = toks[nxt + 1:end]
                 args = _split_args(inner)
@@ -608,6 +690,19 @@ class Translator:
                                f"FROM (VALUES {vals}) AS _m(_v))")
                 elif up == "JSON_EXTRACT":
                     rep = self._json_extract(args, tr, out, toks, end)
+                elif up == "ROUND" and len(args) == 2:
+                    # Postgres rounds to places only a numeric (round(double
+                    # precision, integer) does not exist); answered as a
+                    # float by the numeric loader, as SQLite's ROUND is.
+                    rep = f"ROUND(CAST(({tr(args[0]).strip()}) AS numeric), {tr(args[1]).strip()})"
+                elif up == "JSON_VALID" and len(args) == 1:
+                    rep = f"(CAST({tr(args[0]).strip()} AS text) IS JSON)"
+                elif up == "JSON" and len(args) == 1:
+                    rep = f"CAST(CAST({tr(args[0]).strip()} AS jsonb) AS text)"
+                elif up == "JSON_SET" and len(args) >= 3 and len(args) % 2 == 1:
+                    rep = self._json_set(args, tr)
+                elif up == "JSON_EACH":
+                    rep, end = self._json_each(args, tr, toks, end)
                 if rep is not None:
                     out.append(Tok("other", rep))
                     i = end + 1
@@ -645,6 +740,50 @@ class Translator:
             out.append(t)
             i += 1
         return out
+
+    def _json_set(self, args, tr) -> str:
+        """json_set(doc, '$.a.b', v, …) -> nested jsonb_set, as text (the
+        column is TEXT). A json(x) value is inserted as JSON, anything else
+        as its text (SQLite would insert a bound integer as a number). The
+        parent object of each path must exist (jsonb_set creates only the
+        last key)."""
+        doc = f"CAST({tr(args[0]).strip()} AS jsonb)"
+        for k in range(1, len(args), 2):
+            path = _literal(args[k])
+            if path is None or not path.startswith("$"):
+                raise TranslationError("json_set with a path that is not a literal")
+            keys = [x for x in re.split(r"[.\[\]]+", path[1:]) if x]
+            vsig = _significant(args[k + 1])
+            if vsig and vsig[0].kind == "word" and vsig[0].upper == "JSON" and len(vsig) > 1 and vsig[1].text == "(":
+                arg = args[k + 1]
+                o = next(j for j, x in enumerate(arg) if x is vsig[1])
+                inner = arg[o + 1:_call_end(arg, o)]
+                val = f"CAST({tr(inner).strip()} AS jsonb)"
+            elif vsig and vsig[0].kind == "num" and len(vsig) == 1:
+                val = f"to_jsonb({vsig[0].text})"
+            else:
+                val = f"to_jsonb(CAST({tr(args[k + 1]).strip()} AS text))"
+            doc = f"jsonb_set({doc}, '{{{','.join(keys)}}}', {val}, true)"
+        return f"CAST({doc} AS text)"
+
+    def _json_each(self, args, tr, toks, end):
+        """json_each(doc[, '$.path']) alias -> the array's elements as text
+        rows (column `value`) — an object or a non-array is no rows, as the
+        app reads only arrays."""
+        doc = f"CAST({tr(args[0]).strip()} AS jsonb)"
+        if len(args) > 1:
+            path = _literal(args[1])
+            if path is None or not path.startswith("$"):
+                raise TranslationError("json_each with a path that is not a literal")
+            keys = [x for x in re.split(r"[.\[\]]+", path[1:]) if x]
+            doc = f"({doc} #> '{{{','.join(keys)}}}')"
+        n = _sig_index(toks, end, 1)
+        alias = "j"
+        if n is not None and toks[n].kind == "word" and toks[n].upper == "AS":
+            n = _sig_index(toks, n, 1)
+        if n is not None and toks[n].kind == "word" and toks[n].upper not in _SQL_KEYWORDS:
+            alias, end = toks[n].text, n
+        return f"jsonb_array_elements_text(cavnar_json_array({doc})) AS {alias}(value)", end
 
     def _agg_arg(self, arg, tr) -> str:
         """An aggregate's argument; a predicate counted as SQLite does —
@@ -720,6 +859,8 @@ class Translator:
             return self.translate_ddl(sql).replace("%", "%%")
         is_index = head[:1] == ["CREATE"] and "INDEX" in head
         toks = self._collate_nocase(toks)
+        toks = self._is_distinct(toks)
+        toks = self._qualify_upsert(toks)
         toks = self._like_escape(toks)
         toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
         toks = self._rewrite(toks, ddl=is_index)

@@ -3410,14 +3410,16 @@ def _prune_inventory_history(conn, deadline=None, refused=None):
     daily_days = retention_days("inventory_daily_detail")
     if daily_days:
         # The week's figure is its latest snapshot (waste_trend.load_waste_history).
+        # An old row goes when a later snapshot of its week exists (the
+        # same rows the per-week "latest id" subquery kept, in SQL Postgres
+        # takes too — it refused that GROUP BY's ungrouped week_end).
         cur = conn.execute(
-            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND id NOT IN ("
-            "  SELECT (SELECT h2.id FROM inventory_history h2 WHERE h2.restaurant_id = h.restaurant_id"
-            "          AND date(h2.week_end, 'weekday 0', '-6 days') = date(h.week_end, 'weekday 0', '-6 days')"
-            "          ORDER BY h2.week_end DESC, h2.id DESC LIMIT 1)"
-            "  FROM inventory_history h WHERE h.week_end < date('now', ?)"
-            "  GROUP BY h.restaurant_id, date(h.week_end, 'weekday 0', '-6 days'))",
-            (f"-{daily_days} days", f"-{daily_days} days"))
+            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND EXISTS ("
+            "  SELECT 1 FROM inventory_history h2 WHERE h2.restaurant_id = inventory_history.restaurant_id"
+            "  AND date(h2.week_end, 'weekday 0', '-6 days') = date(inventory_history.week_end, 'weekday 0', '-6 days')"
+            "  AND (h2.week_end > inventory_history.week_end OR (h2.week_end = inventory_history.week_end"
+            "       AND h2.id > inventory_history.id)))",
+            (f"-{daily_days} days",))
         n += max(0, cur.rowcount or 0)
     elif refused is not None and retention_state("inventory_daily_detail")["state"] == "below_floor":
         refused.append(retention_state("inventory_daily_detail"))

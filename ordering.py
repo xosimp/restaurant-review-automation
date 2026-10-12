@@ -146,8 +146,10 @@ def count_freshness(restaurant_id, ingredient_ids=None, db_path=DB_PATH, today=N
             rows = conn.execute(f"SELECT name, last_recount_at FROM ingredients WHERE restaurant_id=? "
                                 f"AND id IN ({marks})", (restaurant_id, *ids)).fetchall() if ids else []
         else:
-            rows = conn.execute("SELECT name, MAX(last_recount_at) AS last_recount_at FROM ingredients "
-                                "WHERE restaurant_id=? AND is_active=1", (restaurant_id,)).fetchall()
+            # The latest count and its item (the row, not a bare column
+            # beside MAX(): Postgres refuses that).
+            rows = conn.execute("SELECT name, last_recount_at FROM ingredients WHERE restaurant_id=? "
+                                "AND is_active=1 ORDER BY last_recount_at DESC LIMIT 1", (restaurant_id,)).fetchall()
     finally:
         conn.close()
     if not rows:
