@@ -159,15 +159,41 @@ def _input_problem_text(p) -> str:
     return _sr_ipt.input_problem_text(p)
 
 
-def _notice_text(short, week_start) -> str:
+def _notice_text(short, week_start, law=None) -> str:
     """The notice-rule blocker. A week already under way said "starts in -2
-    days" (schedule audit 10/3/26 E-22): it says when it started."""
+    days" (schedule audit 10/3/26 E-22): it says when it started. Where the
+    notice is a jurisdiction's law (`law`, its place) the line says so
+    (TRUST-8: "your N-day schedule notice rule" hid that it was a law)."""
     from time_utils import mdy as _mdy_n
     given = int(short["days_given"])
     when = (f"starts in {given} day{'s' if given != 1 else ''}" if given > 0 else "starts today" if given == 0
             else f"started {-given} day{'s' if given != -1 else ''} ago")
-    return (f"Less notice than your {short['notice_days']}-day schedule notice rule: the week of "
+    if law:
+        return (f"Less notice than {law} law requires — it says a schedule is posted {short['notice_days']} days "
+                f"ahead, and the week of {_mdy_n(week_start)} {when}")
+    return (f"Less notice than your own {short['notice_days']}-day schedule notice rule: the week of "
             f"{_mdy_n(week_start)} {when}")
+
+
+def _law_label(c) -> str:
+    """The place whose law the restaurant's rules come from ("Chicago"),
+    from the compliance pack — or "your local"."""
+    pack = (getattr(c, "compliance", None) or {}).get("_pack") or {}
+    labels = [str(x) for x in (pack.get("labels") or []) if x]
+    return " and ".join(labels) if labels else (str(pack.get("label") or "").strip() or "your local")
+
+
+def _notice_legal(short, law) -> dict:
+    """What the owner acknowledges to send a week past a posting-notice law
+    (TRUST-4, TRUST-8): the law, what it asks and what is known about the
+    cost. A late posting's fine is set by the city and not priced here —
+    said so, never a made-up figure; changes after posting are priced by
+    predictability pay where the law has it."""
+    return {"law": law, "notice_days": int(short["notice_days"]), "days_given": int(short["days_given"]),
+            "cost": None,
+            "text": (f"I understand {law} law requires posting {int(short['notice_days'])} days ahead, that this "
+                     "week goes out late, and that the restaurant may be fined for it. Cavnar AI can't price "
+                     "the fine; changes after it's posted owe predictability pay where the law has it.")}
 
 
 def _live_week(restaurant_id, week_start, not_id):
@@ -210,6 +236,70 @@ MUST_FIX, DECIDE = "must_fix", "decide"
 _RANK = {"roster": -3, "unwritten": -2, "sweep_failed": -1, "input": 0, "stage": 0, "needs_review": 3}
 # The keys whose override must name who runs the floor (ARCH-30).
 COVER_KINDS = ("rule:no_manager", "roster:no_manager_roster")
+# What each blocker is, by where its rule comes from (schedule re-audit
+# 10/11/26 TRUST-4, TRUST-8) — the tier and how it may be sent past follow:
+#   law      a jurisdiction's law or a minor's legal limits: never typed past
+#            — fixed, or the week is not sent. The one law no edit can fix
+#            (a jurisdiction's posting notice: time has passed) is sent past
+#            only by the account owner with an explicit acknowledgement of
+#            the law (`legal_ack`) and a reason — never a delegated login,
+#            never automation.
+#   manager  a manager on the floor every minute: sent past only by naming a
+#            real manager or owner on the roster who can work that day, or
+#            the account owner reading it — never a free-text name (TRUST-5).
+#   person   the person can't work it (time off, availability, their own
+#            maximum, an overlap): a reason of MIN_REASON words.
+#   coverage the floors and closers: a reason.
+#   policy   the restaurant's own limits that are not law (days in a row,
+#            the longest shift, rest the law doesn't require): a DECISION,
+#            one tap — the owner's own number (TRUST-8).
+#   check    a check that could not vouch for the week: a reason.
+LAW, MANAGER, PERSON, COVERAGE, POLICY, CHECK = "law", "manager", "person", "coverage", "policy", "check"
+MINOR_KINDS = frozenset({"minor_late", "minor_hours", "minor_early", "minor_week_hours"})
+# Who may send past the one law no edit can fix (TRUST-4).
+LEGAL_ACK_AUTHORITIES = ("principal", "admin")
+
+
+def breach_class(v) -> str:
+    """The class (above) of one hard breach from the sweep."""
+    import schedule_rules as _sr_c
+    kind = (v or {}).get("kind")
+    if (v or {}).get("law") or kind in MINOR_KINDS:
+        return LAW
+    if kind in ("no_manager",) or kind in _sr_c.ROSTER_BLOCKERS:
+        return MANAGER
+    t = _sr_c.tier_of(v)
+    if t == _sr_c.TIER_POLICY:
+        return POLICY
+    if t == _sr_c.TIER_COVERAGE:
+        return COVERAGE
+    return PERSON
+
+
+def cover_candidates(c, rows, date=None) -> list:
+    """Who may be named as running the floor through a manager gap on
+    `date` (TRUST-5): the roster's managers and owners (Constraints.manages
+    — an acting manager that day included), active, and not on time off
+    that date. The reader counts too when they are the account owner — added
+    at the gate (_override_ok), never here. Display names."""
+    if c is None:
+        return []
+    names, seen = [], set()
+    pool = list(getattr(c, "roster_names", None) or []) + list((getattr(c, "display", None) or {}).values())
+    for n in pool:
+        k = c.key(n) if hasattr(c, "key") else str(n).strip().lower()
+        if not n or k in seen or k in (getattr(c, "inactive", None) or set()):
+            continue
+        seen.add(k)
+        try:
+            if not c.manages(n, date):
+                continue
+        except Exception:
+            continue
+        if date and date in ((getattr(c, "blocked_dates", None) or {}).get(k) or {}):
+            continue
+        names.append(n)
+    return names
 
 
 def tier_of_key(key) -> str:
@@ -305,7 +395,10 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         if text and text not in seen:
             seen.add(text)
             b = {"key": key, "text": text, "tier": tier,
-                 "rank": _RANK.get(str(key).split(":", 1)[0], 5) if rank is None else rank, "date": date}
+                 "rank": _RANK.get(str(key).split(":", 1)[0], 5) if rank is None else rank, "date": date,
+                 # A check that could not vouch for the week, unless the
+                 # caller says what it is (TRUST-4).
+                 "cls": CHECK if tier == MUST_FIX else POLICY, "law": False}
             b.update(meta)
             out.append(b)
 
@@ -416,16 +509,24 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             # (schedule_rules.tier_of), never by date (TRUST-3).
             t = _sr.tier_of(v)
             rank = 10 + (t if t is not None else 9)
+            # Tiered by where the rule comes from (TRUST-4, TRUST-8): the
+            # law is never typed past, the restaurant's own limits that are
+            # not law are a decision — not the other way round.
+            cls = breach_class(v)
+            tier = DECIDE if cls == POLICY else MUST_FIX
+            meta = {"cls": cls, "law": cls == LAW, "fixable": True}
             # A breach about a day is named on the day, never charged to
             # whoever's row it is pinned to (schedule_rules.breach_text, E-13).
             if v.get("day_level"):
                 k = f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}"
-                add(k, _sr.breach_text(v), rank=rank, date=v.get("date"))
+                if cls == MANAGER:
+                    meta["cover_candidates"] = cover_candidates(c, rows, v.get("date"))
+                add(k, _sr.breach_text(v), tier=tier, rank=rank, date=v.get("date"), **meta)
                 breaches.setdefault(k, v)
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             k = f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}"
-            add(k, f"{v['employee']} — {where}: {v['detail']}", rank=rank, date=v.get("date"))
+            add(k, f"{v['employee']} — {where}: {v['detail']}", tier=tier, rank=rank, date=v.get("date"), **meta)
             breaches.setdefault(k, v)
         if keep is not None:
             keep["breaches"] = breaches
@@ -445,7 +546,8 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 # Nobody counted as a floor manager: the highest rule is
                 # unmet on every shift, so the week waits for the owner to
                 # name who runs the floor (schedule re-audit 10/4/26 RULES-13).
-                add(f"roster:{v['kind']}", v["detail"][:1].upper() + v["detail"][1:])
+                add(f"roster:{v['kind']}", v["detail"][:1].upper() + v["detail"][1:], cls=MANAGER, law=False,
+                    fixable=True, cover_candidates=[])
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             text = f"{v['employee']} — {where}: {v['detail']}"
@@ -486,7 +588,18 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         elif not row["published_at"]:
             short = _sr.notice_shortfall(c.compliance, row["week_start"], now)
             if short:
-                add("notice_short", _notice_text(short, row["week_start"]), tier=DECIDE, rank=20)
+                # Tiered by where the notice rule comes from (TRUST-8): a
+                # jurisdiction's posting notice is the law — must-fix, said
+                # as the law, sent past only with the owner's legal
+                # acknowledgement (no edit can give back the days); the
+                # owner's own notice rule is their decision, one tap.
+                if _sr.law_backed(c, "notice_days"):
+                    add("notice_short", _notice_text(short, row["week_start"], law=_law_label(c)),
+                        tier=MUST_FIX, rank=1, cls=LAW, law=True, fixable=False,
+                        legal=_notice_legal(short, _law_label(c)))
+                else:
+                    add("notice_short", _notice_text(short, row["week_start"]), tier=DECIDE, rank=20,
+                        cls=POLICY, law=False)
         else:
             # Saved changes to a week staff have, about to be sent.
             pending = _sv_pb.unsent_changes(restaurant_id, row["id"]) or {}
@@ -1351,7 +1464,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     gate_sig = _sv._rows_sig(row["schedule_csv"])
     review = publish_review(rid, schedule_id, unattended=unattended)
     blockers = [b["text"] for b in review["blockers"]]
-    _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
+    _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
     if unacked:
         # Each blocker with its key, so the client acknowledges exactly the
         # list it showed (F2-9).
@@ -1403,7 +1516,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                 gate_sig = _rows_sig_now(rid, schedule_id)
                 review = publish_review(rid, schedule_id, unattended=unattended)
                 blockers = [b["text"] for b in review["blockers"]]
-                _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
+                _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
                 if unacked:
                     _release(rid, schedule_id)
                     return _needs_ack(review, unacked, schedule_id)
@@ -1490,7 +1603,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
             return stale, 409
     gate_sig = _sv._rows_sig(row["schedule_csv"])
     review = publish_review(rid, row["id"])
-    _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
+    _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
     if unacked:
         return _needs_ack(review, unacked, row["id"])
     # One sender at a time: a double tap must not tell the same people twice.
@@ -1514,7 +1627,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
                     regates += 1
                     gate_sig = _rows_sig_now(rid, row["id"])
                     review = publish_review(rid, row["id"])
-                    _acked, unacked = _ack_gate(review, acknowledge, override_reasons)
+                    _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
                     if unacked:
                         return _needs_ack(review, unacked, row["id"])
                     continue
@@ -1655,21 +1768,85 @@ _publish_schedule = publish
 send_schedule_changes = send_changes
 
 
-def _override_ok(b, reasons) -> bool:
-    """Whether a MUST-FIX blocker carries the override of its own the gate
-    asks for (schedule audit 10/10/26 TRUST-3, ARCH-30): a non-empty reason,
-    and for a manager gap the person who runs the floor (`covered_by`)."""
+def override_policy(b) -> dict:
+    """How one MUST-FIX blocker may be sent past (TRUST-4, TRUST-5, TRUST-8):
+    {allowed, needs ("reason" | "covered_by" | "legal_ack" | None), why} —
+    a law that an edit can fix never (fix it, or the week does not go); the
+    posting-notice law only with the owner's legal acknowledgement and a
+    reason; a manager gap by naming a real manager or owner; anything else
+    with a reason."""
+    if b.get("law"):
+        if b.get("fixable", True):
+            return {"allowed": False, "needs": None,
+                    "why": "This breaks the law — fix it, or the week can't go to staff."}
+        return {"allowed": True, "needs": "legal_ack",
+                "why": "Only the account owner can send this, acknowledging the law."}
+    if override_needs(b["key"]) == "covered_by":
+        return {"allowed": True, "needs": "covered_by", "why": None}
+    return {"allowed": True, "needs": "reason", "why": None}
+
+
+def _reader(actor) -> dict:
+    """{names (casefolded), authority} of whoever is sending — the person
+    behind a queued Send included (delayed.AUTOMATION_ACTOR's on_behalf_of)."""
+    import schedule_versions as _sv_r
+    a = actor if isinstance(actor, dict) else {}
+    names = set()
+    for src in (a, a.get("on_behalf_of") if isinstance(a.get("on_behalf_of"), dict) else {}):
+        for k in ("name", "username", "email", "display_name"):
+            v = " ".join(str(src.get(k) or "").split()).casefold()
+            if v:
+                names.add(v)
+    return {"names": names, "authority": _sv_r.authority_of(a) if a else "system"}
+
+
+def override_problem(b, reasons, actor=None):
+    """Why a MUST-FIX blocker's override is not enough, in the owner's
+    words — None when it carries the override of its own the gate asks for
+    (schedule audit 10/10/26 TRUST-3, ARCH-30; re-audit 10/11/26 TRUST-4/5/8):
+    a reason of a few words (schedule_overrides.reason_problem, never "x");
+    a manager gap names a real manager or owner on the roster who can work
+    that day (`cover_candidates`), or the account owner sending it; the
+    posting-notice law the owner's explicit `legal_ack`; a law an edit can
+    fix, nothing."""
+    import schedule_overrides as _so_ok
+    pol = override_policy(b)
+    if not pol["allowed"]:
+        return pol["why"]
     o = (reasons or {}).get(b["key"])
     if isinstance(o, dict):
-        reason, covered = str(o.get("reason") or "").strip(), str(o.get("covered_by") or "").strip()
+        reason, covered = str(o.get("reason") or "").strip(), " ".join(str(o.get("covered_by") or "").split())
+        legal = o.get("legal_ack") is True
     else:
-        reason, covered = str(o or "").strip(), ""
-    if override_needs(b["key"]) == "covered_by":
-        return bool(covered)
-    return bool(reason)
+        reason, covered, legal = str(o or "").strip(), "", False
+    if o is None:
+        return "Fix it, or override it on its own."
+    if pol["needs"] == "covered_by":
+        if not covered:
+            return "Name who runs the floor through it."
+        who = _reader(actor)
+        ok = {" ".join(str(n).split()).casefold() for n in (b.get("cover_candidates") or [])}
+        if who["authority"] in LEGAL_ACK_AUTHORITIES:
+            ok |= who["names"]
+        if covered.casefold() not in ok:
+            return (f"{covered} isn't a manager or owner on the roster who can work that day — pick one, or add "
+                    "a manager's shift that covers it.")
+        return None
+    if pol["needs"] == "legal_ack":
+        if _reader(actor)["authority"] not in LEGAL_ACK_AUTHORITIES:
+            return "Only the account owner can send a week past the law."
+        if not legal:
+            return "Acknowledge the law to send it anyway."
+    return _so_ok.reason_problem(reason)
 
 
-def _ack_gate(review, acknowledge, reasons=None):
+def _override_ok(b, reasons, actor=None) -> bool:
+    """Whether a MUST-FIX blocker carries the override of its own the gate
+    asks for (override_problem is None)."""
+    return override_problem(b, reasons, actor) is None
+
+
+def _ack_gate(review, acknowledge, reasons=None, actor=None):
     """(acked_keys, unacked_blockers) for one publish_review. `acknowledge`
     is a list of blocker keys (what the person was shown) or a bool (an
     older client's "yes to whatever the gate finds now").
@@ -1679,7 +1856,13 @@ def _ack_gate(review, acknowledge, reasons=None):
     override of its own in `reasons` ({key: reason | {reason, covered_by}})
     — never by a bare `true` or a key list alone, so a manager gap and "2%
     over budget" no longer share one acknowledgement. A blocker from before
-    the tiers (no `tier`) is read as must-fix."""
+    the tiers (no `tier`) is read as must-fix.
+
+    Since the re-audit (10/11/26 TRUST-4/5/8) a must-fix override is
+    checked, not just present (override_problem): `actor` is who is
+    sending — a manager gap may name them when they are the account owner,
+    and only they may send past the posting-notice law. Each refused
+    override's reason rides on its blocker as `override_problem`."""
     items = review["blockers"]
     reasons = reasons or {}
     if isinstance(acknowledge, (list, tuple, set)):
@@ -1692,9 +1875,15 @@ def _ack_gate(review, acknowledge, reasons=None):
     acked, unacked = [], []
     for b in items:
         must = blocker_tier(b) == MUST_FIX
-        if listed(b) and (not must or _override_ok(b, reasons)):
+        if not listed(b):
+            unacked.append(b)
+            continue
+        why = override_problem(b, reasons, actor) if must else None
+        if why is None:
             acked.append(b["key"])
         else:
+            if b["key"] in reasons:
+                b["override_problem"] = why
             unacked.append(b)
     return acked, unacked
 
@@ -1730,6 +1919,14 @@ def _needs_ack(review, unacked, schedule_id):
             # floor — and is never covered by a key list or `true`.
             "must_fix_keys": [b["key"] for b in review["blockers"] if blocker_tier(b) == MUST_FIX],
             "needs_reason": [{"key": b["key"], "needs": override_needs(b["key"])} for b in unacked
-                             if blocker_tier(b) == MUST_FIX],
+                             if blocker_tier(b) == MUST_FIX and override_policy(b)["allowed"]],
+            # The re-audit's gate (10/11/26 TRUST-4/5/8): the must-fix keys
+            # no override sends past (a law an edit can fix), and each
+            # override given that was refused, with why ("x" is not a
+            # reason; a name that is not a manager on the roster).
+            "not_overridable": [b["key"] for b in unacked
+                                if blocker_tier(b) == MUST_FIX and not override_policy(b)["allowed"]],
+            "override_refused": [{"key": b["key"], "why": b["override_problem"]} for b in unacked
+                                 if b.get("override_problem")],
             "schedule_id": schedule_id,
             "error": "This week has things to look at before it goes to staff."}, 409
