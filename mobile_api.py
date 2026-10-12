@@ -2174,25 +2174,18 @@ def mobile_notifications_unread_count(current_user):
 @mobile_bp.route("/changelog")
 @mobile_login_required
 def mobile_changelog(current_user):
-    from models import get_changelog
-    import datetime as _dt
-    entries = get_changelog()
-    # Mark as seen — same stamp-on-read behavior as the web route, so the
-    # unread badge clears once the owner has actually opened the list.
-    update_restaurant(current_user["restaurant_id"], {
-        "changelog_seen_at": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-    })
-    return jsonify(ok=True, entries=entries)
+    """The one body for /api/changelog and /mobile/api/changelog: entries
+    flagged is_new against this login's last open, which this read marks
+    (never under an admin's view-as) — whats_new.open_list."""
+    import whats_new
+    return jsonify(ok=True, entries=whats_new.open_list(current_user))
 
 
 @mobile_bp.route("/changelog/unread-count")
 @mobile_login_required
 def mobile_changelog_unread_count(current_user):
-    from models import get_changelog
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    since = restaurant.changelog_seen_at if restaurant else None
-    unread = get_changelog(since=since) if since else get_changelog()
-    return jsonify(ok=True, count=len(unread))
+    import whats_new
+    return jsonify(ok=True, count=whats_new.unread_count(current_user))
 
 
 # ── Ask Cavnar ────────────────────────────────────────────────────────────

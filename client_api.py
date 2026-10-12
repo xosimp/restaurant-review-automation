@@ -1534,11 +1534,8 @@ def changelog_api(current_user):
 @client_bp.route("/api/changelog/unread-count")
 @login_required
 def changelog_unread_count(current_user):
-    from models import get_changelog, get_restaurant
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    since = restaurant.changelog_seen_at if restaurant else None
-    unread = get_changelog(since=since) if since else get_changelog()
-    return jsonify(ok=True, count=len(unread))
+    import whats_new
+    return jsonify(ok=True, count=whats_new.unread_count(current_user))
 
 @client_bp.route("/api/theme", methods=["POST"])
 @login_required

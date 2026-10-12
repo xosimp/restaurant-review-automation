@@ -1657,10 +1657,34 @@ def test_changelog_returns_entries_and_marks_seen(client, db_path):
     assert data["ok"] is True
     assert len(data["entries"]) == 1
 
+    assert data["entries"][0]["is_new"] is True
+    # Seen per login (whats_new): the stamp is this login's, in the one
+    # 'YYYY-MM-DD HH:MM:SS' form the entries use.
     conn = get_conn(db_path)
-    row = conn.execute("SELECT changelog_seen_at FROM restaurants WHERE id=?", (rid,)).fetchone()
+    row = conn.execute("SELECT seen_at FROM changelog_seen").fetchone()
     conn.close()
-    assert row["changelog_seen_at"] is not None
+    assert row is not None and "T" not in row["seen_at"]
+    again = client.get("/mobile/api/changelog", headers=_auth_headers(token)).get_json()
+    assert again["entries"][0]["is_new"] is False
+
+
+def test_changelog_entry_later_the_same_day_reads_as_new(client, db_path):
+    """The old seen stamp had a 'T' and entries a space: ' ' sorts before
+    'T', so an entry published later that same day never read as new."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    update_restaurant(rid, {"changelog_seen_at": "2026-10-12T09:00:00"}, db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO changelog_entries (title, body, tag, published_at) VALUES ('Later', '', 'fix', '2026-10-12 15:00:00')")
+    conn.commit(); conn.close()
+    assert client.get("/mobile/api/changelog/unread-count", headers=_auth_headers(token)).get_json()["count"] == 1
+
+
+def test_whats_new_entries_sync_once():
+    import whats_new
+    titles = [e[2] for e in whats_new.ENTRIES]
+    assert len(titles) == len(set(titles))
+    assert all(e[1] in ("feature", "improvement", "fix") for e in whats_new.ENTRIES)
 
 
 def test_changelog_unread_count_requires_auth(client):
@@ -4891,3 +4915,14 @@ def test_home_runs_the_labor_and_food_analyses_once_per_request(client, db_path,
     # The tile's read and the brief's are one; the brief's stock-key helper
     # (answering a critically-low card) is not on this path.
     assert counts["inventory"] == 1
+
+
+def test_whats_new_sync_adds_missing_entries_once(db_path):
+    import whats_new
+    n = whats_new.sync(db_path=db_path)
+    assert n == len(whats_new.ENTRIES)
+    assert whats_new.sync(db_path=db_path) == 0
+    conn = get_conn(db_path)
+    stamps = [r[0] for r in conn.execute("SELECT published_at FROM changelog_entries").fetchall()]
+    conn.close()
+    assert all("T" not in s and len(s) == 19 for s in stamps)

@@ -295,6 +295,13 @@ CREATE TABLE IF NOT EXISTS changelog_entries (
     is_published INTEGER DEFAULT 1
 );
 
+-- What's new, seen per login (whats_new.py): one opener never clears
+-- another's dot, and an admin's view-as never marks it.
+CREATE TABLE IF NOT EXISTS changelog_seen (
+    user_id INTEGER PRIMARY KEY,
+    seen_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_reviews_restaurant   ON reviews(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_rest_date    ON reviews(restaurant_id, review_date);
 CREATE INDEX IF NOT EXISTS idx_reviews_rest_status  ON reviews(restaurant_id, response_status);

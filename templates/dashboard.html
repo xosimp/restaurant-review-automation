@@ -209,6 +209,20 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] .hdr-pop,[data-theme="dark"] .hb-tip{--hp-bg:rgba(30,27,23,.96);--hp-ring:rgba(255,255,255,.07);--hp-hover:rgba(255,255,255,.045);--hp-act-bg:#282521;--hp-tile:rgba(255,255,255,.055);--hp-tile-on:rgba(212,88,58,.16);--hp-field:rgba(255,255,255,.06);--hp-bubble:rgba(255,255,255,.075);--hp-av:linear-gradient(160deg,#3d362f,#2a2520);
   --hp-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 18px 44px -14px rgba(0,0,0,.62),0 44px 90px -36px rgba(0,0,0,.62);--hp-lift:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px -14px rgba(0,0,0,.62)}
 .hdr-pop.hp-msg{width:min(380px,calc(100vw - 24px))}
+/* What's new rows (the bell's row language): tag tile | tag, date, title,
+   the note in full. A row published since this login last looked is lit. */
+.cl-row{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:14px;align-items:start;padding:12px;margin:0 0 2px;border-radius:16px}
+.cl-row .nb-ic{margin-top:2px}
+.cl-row.is-new .nb-ic{background:var(--hp-tile-on);color:var(--ember)}
+.cl-tx{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cl-top{display:flex;align-items:center;gap:8px}
+.cl-tag{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.cl-tag.feature{color:var(--ember)}.cl-tag.improvement{color:var(--amber)}.cl-tag.fix{color:var(--green)}
+.cl-d{font-family:'Space Grotesk',sans-serif;font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink3)}
+.cl-new{width:7px;height:7px;border-radius:50%;background:var(--ember);margin-left:auto}
+.cl-t{font-size:14.5px;font-weight:600;letter-spacing:-.005em;color:var(--ink)}
+.cl-row:not(.is-new) .cl-t{font-weight:500;color:var(--ink2)}
+.cl-b{font-size:13px;line-height:1.5;color:var(--ink3)}
 @keyframes hdrPanelDrop{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
 .hdr-panel-in{transform-origin:top right;animation:hdrPanelDrop .24s cubic-bezier(.2,.8,.2,1) both}
 @keyframes hpRowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -350,7 +364,6 @@ html{background:var(--bg-base);min-height:100%}
 [data-theme="dark"] label[style*="background:#c84b2f"]{background:#923020!important}
 [data-theme="dark"] .hm-days-btn[style*="background:var(--ember)"]{background:#923020!important;border-color:#923020!important}
 /* Popovers — all built with inline background:white */
-[data-theme="dark"] #changelog-panel,
 [data-theme="dark"] #tmpl-picker,
 [data-theme="dark"] #loc-switcher-panel{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* Location switcher rows (density fix #19): a status dot, then the name,
@@ -361,7 +374,6 @@ html{background:var(--bg-base);min-height:100%}
 #loc-switcher-panel .ls-d.important{background:var(--amber)}#loc-switcher-panel .ls-d.critical{background:var(--red)}
 #loc-switcher-panel .ls-m{display:block;margin:2px 0 0 15px;font-size:11.5px;font-weight:400;color:var(--ink3)}
 #loc-switcher-panel .ls-m:empty{display:none}
-[data-theme="dark"] #changelog-panel *[style*="background:white"]{background:var(--surface)!important}
 /* Review card components */
 [data-theme="dark"] .cat{background:var(--paper3)!important;color:var(--ink3)!important}
 [data-theme="dark"] .rtext{border-left-color:var(--paper3)!important;color:var(--ink2)!important}
@@ -2322,13 +2334,10 @@ function loadFailed(el, d){
         <button type="button" id="changelog-btn" role="menuitem" class="cbtn cbtn-text cbtn-sm" onclick="toggleUserMenu(false);openChangelog()">What's new<span id="changelog-menu-dot" class="um-dot" style="display:none"></span></button>
         <form method="post" action="/logout" class="logout-form"><button type="submit" role="menuitem" class="cbtn cbtn-text cbtn-sm">Sign out</button></form>
       </div>
-      <div id="changelog-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1001;overflow:hidden">
-        <div style="padding:12px 16px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
-          <div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">What's new</div>
-          <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" aria-label="Close" onclick="document.getElementById('changelog-panel').style.display='none'">✕</button>
-        </div>
-        <div id="changelog-list" style="max-height:340px;overflow-y:auto;padding:8px 0">
-          <div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="24" height="24" style="width:24px;height:24px"></canvas><span>Loading updates…</span></div>
+      <div id="changelog-panel" class="hdr-pop" role="dialog" aria-label="What's new" style="display:none">
+        <div class="hp-head"><h2 class="hp-title">What's new</h2><span class="hp-tools"><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm hp-tool" aria-label="Close" onclick="document.getElementById('changelog-panel').style.display='none'"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button></span></div>
+        <div id="changelog-list" class="hp-list">
+          <div class="hp-load"><div class="dr-pulse wide" role="status" aria-label="Loading updates"><i></i></div></div>
         </div>
       </div>
     </div>
@@ -20036,13 +20045,6 @@ function openChangelog() {
   var panel = document.getElementById('changelog-panel');
   var isOpen = panel.style.display !== 'none';
   if (isOpen) { panel.style.display = 'none'; } else { window._openHdrPanel(panel); }
-  // The panel's own drop-in animation finishes instantly; what actually
-  // read as lag was the first-ever /api/changelog fetch landing on a
-  // static "Loading…" line with nothing moving. The orb canvas sits in
-  // the DOM hidden (display:none) until now, so it never got mounted at
-  // page load — mount it the same way switchTab() does for a newly
-  // visible panel, one tick after the display flip takes effect.
-  if (!isOpen && window.cavnarMountOrbs) { setTimeout(function(){ cavnarMountOrbs(panel); }, 0); }
   if (!isOpen && !_changelogLoaded) { _loadChangelog(); }
 }
 function _loadChangelog() {
@@ -20052,29 +20054,32 @@ function _loadChangelog() {
     var _cmd = document.getElementById('changelog-menu-dot'); if (_cmd) _cmd.style.display = 'none';
     var list = document.getElementById('changelog-list');
     if (!d.ok || !d.entries || !d.entries.length) {
-      list.innerHTML = '<div style="padding:14px 16px;font-size:12px;color:var(--ink3)">No updates yet.</div>';
+      list.innerHTML = '<div class="hp-calm">No updates yet.</div>';
       return;
     }
-    var tagColors = {feature:'var(--blue)',fix:'var(--green)',improvement:'var(--amber)'};
-    var tagBg = {feature:'var(--blue-bg)',fix:'var(--green-bg)',improvement:'var(--amber-bg)'};
+    var ICON = {
+      feature: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>',
+      improvement: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+      fix: '<path d="M20 6 9 17l-5-5"/>'
+    };
+    var LABEL = {feature: 'New', improvement: 'Improved', fix: 'Fixed'};
     var html = '';
     for (var i=0; i<d.entries.length; i++) {
       var e = d.entries[i];
-      var tag = e.tag || 'feature';
-      var dm = /^(\d{4})-(\d{2})-(\d{2})/.exec(e.published_at || '');
-      var date = dm ? (parseInt(dm[2],10) + '/' + parseInt(dm[3],10) + '/' + dm[1].slice(2)) : '';
-      html += '<div style="padding:12px 16px;border-bottom:1px solid var(--paper3)">';
-      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">';
-      html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||'#e8f0fe')+';color:'+(tagColors[tag]||'#1a56cc')+';padding:2px 7px;border-radius:4px">'+tag+'</span>';
-      html += '<span style="font-size:11px;color:var(--ink3)">'+date+'</span>';
-      html += '</div>';
-      html += '<div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:3px">'+_escHtml(e.title)+'</div>';
-      if (e.body) html += '<div style="font-size:12px;color:var(--ink2);line-height:1.5">'+_escHtml(e.body)+'</div>';
-      html += '</div>';
+      var tag = ICON[e.tag] ? e.tag : 'feature';
+      var date = e.published_at ? mdy(String(e.published_at).slice(0, 10)) : '';
+      html += '<div class="cl-row'+(e.is_new ? ' is-new' : '')+'" style="--i:'+i+'">'
+        + '<span class="nb-ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+ICON[tag]+'</svg></span>'
+        + '<span class="cl-tx"><span class="cl-top"><span class="cl-tag '+tag+'">'+LABEL[tag]+'</span><span class="cl-d">'+_escHtml(date)+'</span>'
+        + (e.is_new ? '<span class="cl-new" aria-label="New since you last looked"></span>' : '')+'</span>'
+        + '<span class="cl-t">'+_escHtml(e.title)+'</span>'
+        + (e.body ? '<span class="cl-b">'+_escHtml(e.body)+'</span>' : '')
+        + '</span></div>';
     }
+    list.className = 'hp-list hp-enter';
     list.innerHTML = html;
   }).catch(function(){
-    document.getElementById('changelog-list').innerHTML = '<div style="padding:14px 16px;font-size:12px;color:var(--ink3)">Could not load updates.</div>';
+    document.getElementById('changelog-list').innerHTML = '<div class="hp-calm">Couldn\'t load updates. Try again in a moment.</div>';
   });
 }
 function _escHtml(s) {
