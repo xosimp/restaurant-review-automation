@@ -626,7 +626,7 @@ def _mark_floor(rows, floor_codes, family, open_times, close_times, fixed_on):
         if want <= 0:
             continue
         scored = []
-        for r in rows:
+        for i, r in enumerate(rows):
             if r["date"] != d or family(r["role"]) != fam:
                 continue
             sp = _rules._span(r)
@@ -634,7 +634,12 @@ def _mark_floor(rows, floor_codes, family, open_times, close_times, fixed_on):
                 continue
             k = sum(1 for t in slots if _covers(sp[0], sp[1], t))
             if k:
-                scored.append((-k, id(r), r))
+                # Ties by the row's place in the (sorted) week, never by
+                # id(): a memory address chose which of two equal shifts
+                # was the floor's, so the same inputs priced a different
+                # shift at the coverage tier and drafted a different week
+                # (blind re-audit 10/11/26 ARCH-19's property test).
+                scored.append((-k, i, r))
         scored.sort(key=lambda t: (t[0], t[1]))
         for _k, _i, r in scored[:want]:
             r["_floor"] = True

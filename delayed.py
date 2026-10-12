@@ -69,6 +69,110 @@ def schedule(restaurant_id, kind, payload, delay_minutes, label=None, actor=None
     return out
 
 
+# The sends of a week to staff. One may be pending per week and scope at a
+# time (schedule re-audit 10/11/26 BUGSLIFE-9): a second press — the web
+# after the phone, the 9am auto-publish after a manual Send — used to queue a
+# second row, and Undo on the countdown the owner saw stopped only one of
+# them.
+SCHEDULE_SEND_KINDS = ("schedule_publish", "schedule_changes_send")
+
+
+def _send_scope(kind, payload) -> tuple:
+    """What a queued schedule send would tell: a whole first send of the
+    week (any copy of it — a newer draft's Send replaces an older one's), the
+    changes to one sent copy, or one live change's shifts on it."""
+    p = payload or {}
+    if kind == "schedule_publish":
+        return ("publish",)
+    only = tuple(sorted(str(x).lower() for x in (p.get("only_shift_ids") or [])))
+    return ("changes", int(p.get("schedule_id") or 0), only)
+
+
+def _week_of(conn, restaurant_id, schedule_id):
+    try:
+        r = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                         (int(schedule_id or 0), restaurant_id)).fetchone()
+    except (TypeError, ValueError):
+        return None
+    return str(r["week_start"])[:10] if r and r["week_start"] else None
+
+
+def _pending_week_sends(conn, restaurant_id, week_start) -> list:
+    """The pending schedule sends of one week, as (row id, kind, payload)."""
+    if not week_start:
+        return []
+    out = []
+    marks = ",".join("?" * len(SCHEDULE_SEND_KINDS))
+    for r in conn.execute(f"SELECT id, kind, payload_json FROM delayed_actions WHERE restaurant_id=? "
+                          f"AND status='pending' AND kind IN ({marks}) ORDER BY id", (restaurant_id, *SCHEDULE_SEND_KINDS)
+                          ).fetchall():
+        try:
+            p = json.loads(r["payload_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            p = {}
+        if _week_of(conn, restaurant_id, p.get("schedule_id")) == week_start:
+            out.append((r["id"], r["kind"], p))
+    return out
+
+
+def queue_schedule_send(restaurant_id, kind, payload, delay_minutes, label=None, actor=None, replace=True,
+                        db_path=DB_PATH):
+    """Queue a week's send to staff, one pending row per week and scope
+    (BUGSLIFE-9). A row already waiting to tell the same thing is re-pointed
+    at this one — its payload (the version and the keys the person read),
+    label and send time — and keeps its id, so the Undo every device shows
+    stops it; `replace` False (the auto-publish) leaves a waiting row as it
+    is and queues nothing. Returns the row, with `existing` True when one was
+    already waiting and `replaced` True when it was re-pointed."""
+    if kind not in SCHEDULE_SEND_KINDS:
+        raise ValueError(f"not a schedule send: {kind!r}")
+    execute_at = _utc(datetime.now(timezone.utc) + timedelta(minutes=max(1, int(delay_minutes))))
+    scope = _send_scope(kind, payload)
+    conn = _conn_now(db_path)
+    replaced = existing = False
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        week = _week_of(conn, restaurant_id, (payload or {}).get("schedule_id"))
+        same = [aid for aid, k, p in _pending_week_sends(conn, restaurant_id, week)
+                if k == kind and _send_scope(k, p) == scope]
+        if same and not replace:
+            existing = True
+            aid = same[0]
+        elif same:
+            aid = same[0]
+            conn.execute("UPDATE delayed_actions SET payload_json=?, label=?, execute_at=?, created_by=?, "
+                         "created_at=datetime('now') WHERE id=? AND status='pending'",
+                         (json.dumps(payload or {}), (label or "")[:200] or None, execute_at,
+                          ((actor or AUTOMATION_ACTOR).get("username") or "")[:80], aid))
+            # A second waiting row of the same thing (queued before this rule)
+            # goes with it, so one Undo is the whole of it.
+            for other in same[1:]:
+                conn.execute("UPDATE delayed_actions SET status='cancelled', executed_at=?, result_json=? "
+                             "WHERE id=? AND status='pending'",
+                             (_utc(), json.dumps({"superseded_by": aid}), other))
+            replaced = True
+        else:
+            aid = conn.execute(
+                "INSERT INTO delayed_actions (restaurant_id, kind, label, payload_json, execute_at, created_by) "
+                "VALUES (?,?,?,?,?,?)",
+                (restaurant_id, kind, (label or "")[:200] or None, json.dumps(payload or {}), execute_at,
+                 ((actor or AUTOMATION_ACTOR).get("username") or "")[:80])).lastrowid
+        conn.commit()
+        out = _row(conn.execute("SELECT * FROM delayed_actions WHERE id=?", (aid,)).fetchone())
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    out["existing"], out["replaced"] = existing, replaced
+    import live_activities
+    if replaced:
+        live_activities.pending_send_moved(out, db_path=db_path)
+    elif not existing:
+        live_activities.pending_send_queued(out, db_path=db_path)
+    return out
+
+
 def pending(restaurant_id, db_path=DB_PATH, sees_food=True):
     """The queued actions, soonest first. `sees_food=False` (a login
     without FOOD_COST_VIEW) reads a supplier order's label without its
@@ -124,24 +228,48 @@ def cancel(restaurant_id, action_id, actor=None, db_path=DB_PATH, reason_code=No
     are needed after one. `reason_code` (UNDO_REASONS) and a free `reason`
     ride on the row when given (or later, record_undo_reason)."""
     conn = get_conn(db_path)
+    siblings = []
     try:
         result = {"cancelled_by": (actor or {}).get("username")}
         if reason_code in UNDO_REASONS:
             result["reason_code"] = reason_code
         if isinstance(reason, str) and reason.strip():
             result["reason"] = reason.strip()[:200]
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT kind, payload_json FROM delayed_actions WHERE id=? AND restaurant_id=? "
+                           "AND status='pending'", (action_id, restaurant_id)).fetchone()
         cur = conn.execute(
             "UPDATE delayed_actions SET status='cancelled', executed_at=?, result_json=? "
             "WHERE id=? AND restaurant_id=? AND status='pending'",
             (_utc(), json.dumps(result), action_id, restaurant_id))
-        conn.commit()
         cancelled = cur.rowcount == 1
+        if cancelled and row is not None and row["kind"] in SCHEDULE_SEND_KINDS:
+            # Undo stops every send of that week still waiting — the
+            # auto-publish, a second device's press (schedule re-audit
+            # 10/11/26 BUGSLIFE-9): the owner pressed Undo on the countdown
+            # they saw, and a second queued row sent the week anyway.
+            try:
+                p = json.loads(row["payload_json"] or "{}") or {}
+            except (TypeError, ValueError):
+                p = {}
+            week = _week_of(conn, restaurant_id, p.get("schedule_id"))
+            for aid, _k, _p in _pending_week_sends(conn, restaurant_id, week):
+                if conn.execute("UPDATE delayed_actions SET status='cancelled', executed_at=?, result_json=? "
+                                "WHERE id=? AND status='pending'",
+                                (_utc(), json.dumps(dict(result, with_action=int(action_id))), aid)).rowcount:
+                    siblings.append(aid)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     if cancelled:
         # Every phone showing its countdown says "Stopped" (#61).
         import live_activities
         live_activities.pending_send_finished(restaurant_id, action_id, "stopped", db_path=db_path)
+        for aid in siblings:
+            live_activities.pending_send_finished(restaurant_id, aid, "stopped", db_path=db_path)
     return cancelled
 
 
@@ -185,8 +313,8 @@ def last_undo(restaurant_id, kind, supplier_email=None, db_path=DB_PATH):
     this supplier) — the stamp every trust count restarts from — or None."""
     conn = _conn_now(db_path)
     try:
-        rows = conn.execute("SELECT payload_json, executed_at FROM delayed_actions WHERE restaurant_id=? AND kind=? "
-                            "AND status='cancelled' ORDER BY id DESC LIMIT 50", (restaurant_id, kind)).fetchall()
+        rows = conn.execute("SELECT payload_json, result_json, executed_at FROM delayed_actions WHERE restaurant_id=? "
+                            "AND kind=? AND status='cancelled' ORDER BY id DESC LIMIT 50", (restaurant_id, kind)).fetchall()
     except Exception:
         return None
     finally:
@@ -198,6 +326,12 @@ def last_undo(restaurant_id, kind, supplier_email=None, db_path=DB_PATH):
             payload = {}
         if not payload.get("automatic"):
             continue
+        try:
+            res = json.loads(r["result_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            res = {}
+        if res.get("superseded_by"):
+            continue                 # replaced by a newer queue of the same send, never undone (BUGSLIFE-9)
         if supplier_email and (payload.get("supplier_email") or "").strip().lower() != supplier_email.strip().lower():
             continue
         stamp = str(r["executed_at"] or "").replace("T", " ").replace("Z", "")[:19]
@@ -452,6 +586,13 @@ def _run_schedule_publish(restaurant_id, payload, db_path):
         # A save landed while the queued send was being checked: what
         # would have gone out is not what was checked. Said, with Send now.
         _tell_owner_send_voided(restaurant_id, payload, db_path)
+    elif out.get("replaced"):
+        # A newer draft of the week was saved in the window (schedule
+        # re-audit 10/11/26 BUGSLIFE-14): it used to end as a failed row and
+        # a Live Activity only, so the owner told "goes to staff at 11am"
+        # learned nothing went out by looking. Said like a void, with the
+        # newer draft to open and send.
+        _tell_owner_send_voided(restaurant_id, payload, db_path, replaced_by=out.get("superseded_by"))
     return out
 
 
@@ -470,6 +611,20 @@ def _run_schedule_changes_send(restaurant_id, payload, db_path):
             return {"ok": False, "voided": True,
                     "error": "The week was changed again after it was queued, so the changes were "
                              "not sent. Send them from the Labor tab when it's ready."}
+    if payload.get("only_shift_ids"):
+        # One live change (a live labor cut) — its own shifts only, never
+        # the week's other unsent edits (schedule re-audit 10/11/26
+        # BUGSLIFE-4, -5).
+        out, _status = _sp.send_live_change(restaurant_id, payload.get("schedule_id"), payload["only_shift_ids"],
+                                            actor=queued_actor(payload), version=payload.get("version"),
+                                            why="live labor cut" if payload.get("live") == "cut" else "live")
+        if not out.get("ok") and not out.get("replaced"):
+            _tell_owner_schedule_held(restaurant_id, payload, [out.get("error") or "it could not be sent"], db_path,
+                                      title="A change for tonight didn't reach staff", keys=None)
+        elif out.get("replaced"):
+            _tell_owner_send_voided(restaurant_id, payload, db_path, changes=True,
+                                    replaced_by=out.get("superseded_by"))
+        return out
     ack = payload.get("acknowledge")
     _why = {"override_reasons": payload["override_reasons"]} if payload.get("override_reasons") else {}
     out, _status = _sp.send_changes(restaurant_id, payload.get("schedule_id"), queued_actor(payload),
@@ -481,17 +636,23 @@ def _run_schedule_changes_send(restaurant_id, payload, db_path):
         out = dict(out, ok=False, error="The changes were not sent: " + "; ".join(held[:3]) + ".")
     elif out.get("changed") or out.get("stale"):
         _tell_owner_send_voided(restaurant_id, payload, db_path, changes=True)
+    elif out.get("replaced"):
+        _tell_owner_send_voided(restaurant_id, payload, db_path, changes=True, replaced_by=out.get("superseded_by"))
     return out
 
 
-def _tell_owner_send_voided(restaurant_id, payload, db_path, changes=False):
+def _tell_owner_send_voided(restaurant_id, payload, db_path, changes=False, replaced_by=None):
     """A queued Send a person's edit voided (BUGSLIFE-8). The owner was
     told "goes to staff at 11am"; the void used to reach only a Live
     Activity, so a typo fixed in the undo window meant the week never went
     out. Told the way a held week is (strategy_jobs._reach), with a Send now
     of the week as it stands when its gate allows one from the lock screen
-    (_send_now_keys: no hard rule, at most three blockers)."""
-    sid = payload.get("schedule_id")
+    (_send_now_keys: no hard rule, at most three blockers).
+
+    `replaced_by`: a newer draft of the week replaced the queued copy in the
+    window (schedule re-audit 10/11/26 BUGSLIFE-14) — said so, and the Send
+    now (and the link) are the newer draft's."""
+    sid = replaced_by or payload.get("schedule_id")
     keys = None
     try:
         import schedule_publish as _sp
@@ -505,9 +666,15 @@ def _tell_owner_send_voided(restaurant_id, payload, db_path, changes=False):
         ops.capture(e, job="schedule_send_voided", context=f"restaurant_id={restaurant_id}")
         keys = None
     title = "Your schedule changes were not sent" if changes else "Next week's schedule was not sent"
-    body = ("The week was changed after Send was pressed, so nothing went to staff — what would have gone is not "
-            "what you saw. Look at the week and send it again" + (", or Send now." if keys is not None else "."))
+    if replaced_by:
+        body = ("A newer draft of the week was saved after Send was pressed, so nothing went to staff. Look at the "
+                "newer draft and send it" + (", or Send now." if keys is not None else "."))
+    else:
+        body = ("The week was changed after Send was pressed, so nothing went to staff — what would have gone is "
+                "not what you saw. Look at the week and send it again" + (", or Send now." if keys is not None else "."))
     data = {"schedule_id": sid, "voided": True}
+    if replaced_by:
+        data["replaced"] = payload.get("schedule_id")
     if keys is not None:
         data["blocker_keys"] = list(keys)
     try:

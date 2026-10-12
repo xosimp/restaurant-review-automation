@@ -68,6 +68,18 @@ DEFAULTS = {
     # on until close every trading day — enforced whenever anyone on the
     # roster is a keyholder (NS5 M8). The owner can switch it off.
     "keyholder_until_close": True,
+    # Whether owners and managers set their own hours (blind re-audit
+    # 10/11/26 ARCH-22: a per-restaurant setting, never a rule compiled in
+    # for one client). On (the default): the shift-length maximum holds
+    # neither an owner nor a manager, and the hours rules (the weekly
+    # ceiling, days in a row, rest, daily overtime, minimums) hold neither an
+    # owner nor a salaried manager — the people who run the floor choose how
+    # long they stay, and a salaried leader owes no overtime. Off: they are
+    # held to the restaurant's limits like everyone (a group whose managers
+    # are hourly shift leads, a fine-dining room with a strict 10-hour day).
+    # Overlaps, time off, availability, roles and the minor rules hold
+    # everyone either way.
+    "leaders_set_own_hours": True,
     # What "full-time" means when the owner set no minimum for the person
     # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
     # the field said nothing): at least this many hours a week. 30 is the
@@ -525,6 +537,8 @@ def compliance(restaurant) -> dict:
     out["manager_on_duty"] = False
     if "keyholder_until_close" in data:
         out["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    if "leaders_set_own_hours" in data and data["leaders_set_own_hours"] not in (None, ""):
+        out["leaders_set_own_hours"] = bool(data["leaders_set_own_hours"])
     out["full_time_min_confirmed"] = bool(data.get("full_time_min_confirmed"))
     if data.get("rest_mode") in REST_MODES:
         out["rest_mode"] = data["rest_mode"]
@@ -754,6 +768,8 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
         clean["manager_on_duty"] = bool(data["manager_on_duty"])
     if "keyholder_until_close" in data:
         clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    if "leaders_set_own_hours" in data:
+        clean["leaders_set_own_hours"] = bool(data["leaders_set_own_hours"])
     if "full_time_min_confirmed" in data:
         clean["full_time_min_confirmed"] = bool(data["full_time_min_confirmed"])
     if "rest_mode" in data:
@@ -5526,8 +5542,19 @@ def max_shift_applies(c, name_or_key) -> bool:
     """Whether the shift-length maximum holds this person: everyone but an
     owner or a manager (Constraints.managers - a manager or owner role, or
     the floor-manager certificate). Someone only standing in as a manager
-    on a date is still held to it."""
+    on a date is still held to it. Only where the restaurant lets its
+    leaders set their own hours (compliance leaders_set_own_hours, on by
+    default — ARCH-22); off, it holds everyone."""
+    if not leaders_set_own_hours(c):
+        return True
     return c.key(name_or_key) not in (c.managers or {})
+
+
+def leaders_set_own_hours(c) -> bool:
+    """The restaurant's leaders_set_own_hours setting (DEFAULTS: on)."""
+    comp = getattr(c, "compliance", None) or {}
+    v = comp.get("leaders_set_own_hours", DEFAULTS["leaders_set_own_hours"])
+    return True if v is None else bool(v)
 
 
 def hours_rules_apply(c, name_or_key) -> bool:
@@ -5535,9 +5562,11 @@ def hours_rules_apply(c, name_or_key) -> bool:
     payroll-week ceiling, days in a row, consecutive days off, rest between
     shifts, daily overtime, the overtime-line reserve and their minimum hours.
     The owners and salaried managers max_shift_applies sets free are at the
-    store as long as they choose (Simple EJ's, 10/7/26: "erik is
-    always at the store and most managers work over 40 hours anyways since
-    they are salaried"). Overlaps, time off, availability, roles and the
+    store as long as they choose — where the restaurant's
+    leaders_set_own_hours setting is on, the default (it came from Simple
+    EJ's, 10/7/26: "erik is always at the store and most managers work over
+    40 hours anyways since they are salaried"; since ARCH-22 a setting, not
+    a rule for every restaurant). Overlaps, time off, availability, roles and the
     minor rules still hold them. An hourly manager stays held - their
     overtime is real money - and a cap the owner set is still theirs
     (violations keeps it)."""
