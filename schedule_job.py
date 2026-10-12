@@ -838,25 +838,16 @@ def _stage_repair(job: GenerationRun, cand: Candidate, ctx: _PassContext, editab
         import schedule_scorecard as _ssc
         cand.gen_attr["info"] = _ssc.loop_info(_pre_repair, loop.get("rows"), loop, x.origin)
         # The learning ablation (schedule audit 10/10/26 RM-4, LEARNING-7,
-        # LEARNING-25): the same loop over the same rows with the learned
-        # memory switched off, kept beside the draft. No customer sees it;
-        # bounded, and off with SCHEDULE_LEARNING_ABLATION=0.
+        # LEARNING-25) — the same loop over the same rows with the learned
+        # memory off — is research no customer sees: it runs OFF the owner's
+        # wait, as a bulk queue row after the save with this pass's frozen
+        # context (schedule_scorecard.enqueue_ablation; blind re-audit
+        # 10/11/26 ARCH-14 — it was a second repair loop, up to 20s a pass,
+        # inline before the owner saw the draft). Here only whether it is
+        # wanted. Off with SCHEDULE_LEARNING_ABLATION=0.
         _learned_now = (cand.pass_sig or {}).get("learned") or []
-        if _ssc.ablation_wanted(_learned_now, clock):
-            _t_ab = time.monotonic()
-            _ab_ctx = se.RepairContext(rid, dict(result), ctx.constraints, editable=editable,
-                                       restaurant=ctx.restaurant, close_times=ctx.close_times,
-                                       role_buffers=ctx.role_buffers,
-                                       signals=dict(cand.pass_sig or {}, learned=[]), weights=cand.pass_w,
-                                       requirements=ctx.reqs, curve=ctx.curve, clock=clock,
-                                       solver_on=ctx.solver_on, max_seconds=_ssc.ABLATION_MAX_SECONDS)
-            _ab_ctx.reassign_on = ctx.reassign_on
-            _ab_ctx.shadow = True
-            _ab_loop = se.repair_week([dict(r) for r in _pre_repair], _ab_ctx)
-            cand.gen_attr["ablation"] = {"ran": True, "learned": len(_learned_now),
-                                         "rows_on": _ssc.compact(loop.get("rows")),
-                                         "rows_off": _ssc.compact(_ab_loop.get("rows")),
-                                         "seconds": round(time.monotonic() - _t_ab, 2)}
+        if _ssc.ablation_wanted(_learned_now):
+            cand.gen_attr["ablation_wanted"] = {"learned": len(_learned_now), "reassign_on": bool(ctx.reassign_on)}
     except Exception as _abx:
         # Not an input the draft went without — the draft is whole — so it
         # is recorded for us, never said in the owner's review.
@@ -2163,13 +2154,25 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
         # AI-29, LEARNING-7). Never blocks the save.
         import schedule_scorecard as _ssc_tag
         _ga = winner.gen_attr or {}
+        _want = _ga.get("ablation_wanted")
         _ssc_tag.tag_generation(
             rid, history_id, generation_id=result.get("generation_id"),
             arms=result.get("experiment_arms") or [],
             origins=_ssc_tag.classify_rows(_ga.get("pre") or [], preview_rows, _ga.get("info"))
             if _ga.get("pre") else {},
-            ablation=_ga.get("ablation"),
+            ablation={"ran": False, "queued": True, "learned": _want["learned"]} if _want else None,
             rules=_ssc_tag.rules_honoured(result.get("constraints"), result.get("rule_violations")))
+        if _want:
+            # Off the owner's wait (ARCH-14): queued after the tags exist, with
+            # the pass's rows; the bulk worker re-runs the loop in the context
+            # stored with this week's metrics and writes its result over the
+            # placeholder.
+            _ab = _ssc_tag.enqueue_ablation(
+                rid, history_id, kind=_metrics_kind(winner.spec), pre_rows=_ga.get("pre") or [],
+                rows_on=((winner.metrics_in or {}).get("loop") or {}).get("rows") or preview_rows,
+                learned=_want["learned"], reassign_on=_want["reassign_on"])
+            if not _ab.get("queued"):
+                _ssc_tag.record_ablation(history_id, _ab)
     except Exception as _tgx:
         print(f"[schedule] generation tags not kept: {_tgx}")
     try:
