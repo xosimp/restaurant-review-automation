@@ -2136,23 +2136,29 @@ def _repoint_all(conn, rid, from_keys, from_pid, into_name, into_pid) -> dict:
     # showing every day off, and drops, swaps, reminders and task sheets
     # aimed at a name no login held any more.
     weeks = []
-    n = _rewrite_schedule_weeks(conn, rid, set(keys), into_name, record=weeks)
+    n = _rewrite_schedule_weeks(conn, rid, set(keys), into_name, record=weeks, into_pid=into_pid)
     if n:
         moved["schedule_weeks"] = {"moved": n, "folded": [], "rows": weeks}
     return moved
 
 
-def _rewrite_schedule_weeks(conn, rid, keys, into_name, record=None) -> int:
+def _rewrite_schedule_weeks(conn, rid, keys, into_name, record=None, into_pid=None) -> int:
     """Rows under one of `keys` on every week that is not over and not
-    replaced — a published copy staff read and the drafts — renamed to
-    `into_name`, each week stored with a `rename` version (the conflict check
-    and unsent_changes read a rename as no change: schedule_versions). Not
-    an edit: edited_at is left alone, so an unedited draft still auto-
-    publishes. Past weeks keep their spelling (the learners read them through
-    canonical_rows). Returns rows renamed; `record` collects [history_id,
-    date, start, end, role, the name before] for an undo."""
-    import csv as _csv
-    import io as _io
+    replaced — BOTH its copies: the working copy (the draft, or a sent
+    week's unsent edits) and the published copy staff read — renamed to
+    `into_name`, each week stored with a `rename` version through the one
+    week write (schedule_versions.store_week). The conflict check and
+    unsent_changes read a rename as no change. Not an edit: edited_at is
+    left alone, so an unedited draft still auto-publishes. Past weeks keep
+    their spelling (the learners read them through canonical_rows).
+
+    The published copy follows too (schedule re-audit 10/11/26 BUGSLIFE-6):
+    renaming only the working copy left staff's copy under the old
+    spelling, and the next Send told the person both "you have no shifts
+    that week now" (old spelling) and "is posted" (new). Every row keeps
+    its shift id and carries the person's id (the plain-text rewrite here
+    used to drop both). Returns rows renamed; `record` collects
+    [history_id, date, start, end, role, the name before] for an undo."""
     from datetime import date as _date
     try:
         from time_utils import restaurant_now_by_id
@@ -2160,45 +2166,71 @@ def _rewrite_schedule_weeks(conn, rid, keys, into_name, record=None) -> int:
     except Exception:
         today = _date.today().isoformat()
     try:
-        weeks = conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? "
+        weeks = conn.execute("SELECT id, schedule_csv, published_csv FROM schedule_history WHERE restaurant_id=? "
                              "AND superseded_by IS NULL AND substr(COALESCE(week_end, ''),1,10) >= ?",
                              (rid, today)).fetchall()
     except Exception as e:
         if "no such" in str(e).lower():
             return 0
         raise
-    import schedule_versions as _sv
     total = 0
     for w in weeks:
-        rows = list(_csv.DictReader(_io.StringIO(w["schedule_csv"] or "")))
-        n = 0
-        for r in rows:
-            if (r.get("employee") or "").strip() and _nk(r.get("employee")) in keys and r.get("employee") != into_name:
-                if record is not None:
-                    record.append([w["id"], r.get("date") or "", r.get("shift_start") or "", r.get("shift_end") or "",
-                                   r.get("role") or "", r.get("employee")])
-                r["employee"] = into_name
-                n += 1
-        if not n:
-            continue
-        text = _schedule_csv_text(rows)
-        conn.execute("UPDATE schedule_history SET schedule_csv=? WHERE id=? AND restaurant_id=?", (text, w["id"], rid))
-        # A week with versions gets one more; one kept from before versions
-        # existed has no chain for a client to save against.
-        if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (w["id"],)).fetchone():
-            _sv._insert_version(conn, rid, w["id"], "rename", text, None, "rename", "system")
-        total += n
+        total += _rename_week(conn, rid, w,
+                              lambda r, copy: _nk(r.get("employee")) in keys and r.get("employee") != into_name,
+                              lambda r, copy: into_name, "rename", record=record, person_id=into_pid)
     return total
 
 
-def _schedule_csv_text(rows) -> str:
-    """A week's rows as the stored CSV (schedule_versions.COLS order, the
-    one every writer uses)."""
+def _rename_week(conn, rid, w, match, new_name, saved_by, record=None, person_id=None) -> int:
+    """Rename the rows `match(row, copy)` picks on both copies ("working",
+    "published") of one stored week `w` (id, schedule_csv, published_csv)
+    to `new_name(row, copy)`, ids kept, with a
+    `rename` version when the week has versions — the working copy's rows
+    renamed counted. A renamed row keeps its person id (the same person
+    under a new spelling), or takes `person_id` (a merge's survivor); the
+    rest keep theirs. Inside the caller's transaction."""
+    import schedule_rows as _srows
     import schedule_versions as _sv
-    lines = [",".join(_sv.COLS)]
-    for r in rows:
-        lines.append(",".join(str(r.get(c, "") or "").replace(",", ";").replace("\n", " ") for c in _sv.COLS))
-    return "\n".join(lines)
+    draft = _srows.parse(w["schedule_csv"] or "")
+    n = 0
+    for r in draft:
+        if (r.get("employee") or "").strip() and match(r, "working"):
+            if record is not None:
+                record.append([w["id"], r.get("date") or "", r.get("shift_start") or "", r.get("shift_end") or "",
+                               r.get("role") or "", r.get("employee")])
+            r["employee"] = new_name(r, "working")
+            if person_id is not None:
+                r["person_id"] = str(person_id)
+            n += 1
+    live = None
+    if w["published_csv"] is not None:
+        live = _srows.parse(w["published_csv"] or "")
+        moved = 0
+        for r in live:
+            if (r.get("employee") or "").strip() and match(r, "published"):
+                r["employee"] = new_name(r, "published")
+                if person_id is not None:
+                    r["person_id"] = str(person_id)
+                moved += 1
+        if not moved:
+            live = None
+    if not n and live is None:
+        return 0
+    draft_text = _srows.to_csv(draft) if n else None
+    live_text = _srows.to_csv(live) if live is not None else None
+    # A week with versions gets one more (first, so the projection carries
+    # it); one kept from before versions existed has no chain to save on.
+    if n and conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (w["id"],)).fetchone():
+        _sv._insert_version(conn, rid, w["id"], "rename", draft_text, None, saved_by, "system")
+    _sv.store_week(conn, rid, w["id"], working=draft_text, published=live_text)
+    return n
+
+
+def _schedule_csv_text(rows) -> str:
+    """A week's rows as the stored text (schedule_rows.to_csv — the one
+    writer: the eight columns, then each shift's id, person and lock)."""
+    import schedule_rows as _srows
+    return _srows.to_csv(rows)
 
 
 def _shift_sig(r) -> list:
@@ -2573,28 +2605,27 @@ def unmerge_people(restaurant_id, merge_id, user=None, db_path=None) -> dict:
             if isinstance(sg, list) and len(sg) >= 6:
                 by_week.setdefault(sg[0], {}).setdefault(tuple(sg[1:5]), []).append(sg[5])
         if by_week:
-            import csv as _csv
-            import io as _io
-            import schedule_versions as _sv
             n = 0
             for hid_, sigs_ in by_week.items():
-                w = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=? "
-                                 "AND superseded_by IS NULL", (hid_, restaurant_id)).fetchone()
+                w = conn.execute("SELECT id, schedule_csv, published_csv FROM schedule_history WHERE id=? "
+                                 "AND restaurant_id=? AND superseded_by IS NULL", (hid_, restaurant_id)).fetchone()
                 if not w:
                     continue
-                rows = list(_csv.DictReader(_io.StringIO(w["schedule_csv"] or "")))
-                k = 0
-                for r in rows:
-                    sig_ = (r.get("date") or "", r.get("shift_start") or "", r.get("shift_end") or "", r.get("role") or "")
-                    if _nk(r.get("employee")) == into_key and sigs_.get(sig_):
-                        r["employee"] = sigs_[sig_].pop()
-                        k += 1
-                if k:
-                    text = _schedule_csv_text(rows)
-                    conn.execute("UPDATE schedule_history SET schedule_csv=? WHERE id=?", (text, hid_))
-                    if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (hid_,)).fetchone():
-                        _sv._insert_version(conn, restaurant_id, hid_, "rename", text, None, "unmerge", "system")
-                    n += k
+                # Both copies back, by the shift's date, times and role (the
+                # published copy was renamed with the working one): each
+                # copy takes the names from its own pool.
+                pools = {c_: {k_: list(v_) for k_, v_ in sigs_.items()} for c_ in ("working", "published")}
+
+                def _sig(r):
+                    return (r.get("date") or "", r.get("shift_start") or "", r.get("shift_end") or "",
+                            r.get("role") or "")
+
+                def _match(r, copy, pools=pools):
+                    return _nk(r.get("employee")) == into_key and bool(pools[copy].get(_sig(r)))
+
+                def _name(r, copy, pools=pools):
+                    return pools[copy][_sig(r)].pop()
+                n += _rename_week(conn, restaurant_id, w, _match, _name, "unmerge", person_id=a)
             if n:
                 restored["schedule_weeks"] = n
         # Identity: their aliases back, the merge's own alias gone, them live.

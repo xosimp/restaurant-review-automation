@@ -4511,6 +4511,10 @@ def init_db(db_path: str = DB_PATH):
         _init(db_path)
     from schedule_intel import init_schedule_intel
     init_schedule_intel(db_path)
+    # One row per shift of each copy of a stored week, projected at the one
+    # commit point (schedule_shifts, schedule re-audit 10/11/26 ARCH-7).
+    from schedule_shifts import init_schedule_shifts
+    init_schedule_shifts(db_path)
     # What the restaurant's scheduling has learned, as one memory, and the
     # observation log it is built from (schedule_memory, schedule audit
     # 10/3/26 L-29).
@@ -4810,6 +4814,15 @@ def init_db(db_path: str = DB_PATH):
         _sv_boot.backfill_published_copies(db_path=db_path)
     except Exception as e:
         print(f"[schedule history] published-copy backfill skipped: {e}")
+    # Each stored week's shift projection (schedule_shifts, ARCH-7): newest
+    # weeks first, bounded; the marker table is its own cursor, so the next
+    # boot resumes where this one stopped (a reader uses the week's text for
+    # a week not projected yet).
+    try:
+        import schedule_shifts as _ss_boot
+        _ss_boot.backfill(db_path=db_path)
+    except Exception as e:
+        print(f"[schedule shifts] projection backfill skipped: {e}")
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).
@@ -11785,6 +11798,9 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                   review_json, generation_seconds, weather_json, economics_json, stages_json,
                   (stage_seconds or {}).get("total")))
             new_id = cur.lastrowid
+            # The week's shift projection, in this transaction (ARCH-7).
+            import schedule_shifts as _ss_save
+            _ss_save.project(conn, restaurant_id, new_id)
             # Drafts of the same week that were never sent are superseded by
             # this one, so the history reads as one draft per week, not five.
             if week_start:
@@ -12054,6 +12070,14 @@ def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = 
             except sqlite3.OperationalError as _no_table:
                 if "no such table" not in str(_no_table):
                     raise
+            # The week's shift projection (schedule_shifts, ARCH-7) goes with it.
+            for _proj in ("schedule_shifts", "schedule_shift_weeks"):
+                try:
+                    conn.execute(f"DELETE FROM {_proj} WHERE history_id=? AND restaurant_id=?",
+                                 (history_id, restaurant_id))
+                except sqlite3.OperationalError as _no_table:
+                    if "no such table" not in str(_no_table):
+                        raise
         cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
         conn.commit()
         return cur.rowcount > 0

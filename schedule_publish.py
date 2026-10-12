@@ -963,15 +963,27 @@ class _Refused(Exception):
         self.payload, self.status = payload, status
 
 
-def _recipients(old_live, new_rows) -> list:
+def _recipients(old_live, new_rows, restaurant_id=None, db_path=None) -> list:
     """[(name, kind)] to tell when `new_rows` replace what staff have
     (`old_live`, None on a first send): everyone on a first send; else only
     the people whose shifts differ — "removed" for those taken off the week
-    (BUGSLIFE-7), "posted" for those new to it, "changed" for the rest."""
+    (BUGSLIFE-7), "posted" for those new to it, "changed" for the rest.
+
+    Compared by the PERSON, not the spelling (schedule re-audit 10/11/26
+    BUGSLIFE-6): both copies' names read as the one person each means now
+    (people.canonical_names, as unsent_changes reads them), so a rename
+    between two Sends is never "you have no shifts" to the old spelling and
+    "is posted" to the new one."""
     import schedule_rows as _srows
     from labor import employees_in_schedule
     if old_live is None:
         return [(n, "posted") for n in employees_in_schedule(_srows.to_csv(new_rows))]
+    if restaurant_id is not None:
+        try:
+            import schedule_versions as _sv_c
+            old_live, new_rows = _sv_c.canonical_rows(restaurant_id, [old_live, new_rows], db_path=db_path)
+        except Exception as e:
+            log.warning("names not read as people for restaurant %s: %s", restaurant_id, e)
     pc = _srows.people_changed(old_live, new_rows)
     return [(n, "removed" if n in pc["removed"] else "posted" if n in pc["added"] else "changed")
             for n in pc["changed"]]
@@ -1045,20 +1057,32 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                 # The replacement keeps the ids of the shifts it keeps.
                 rows = _srows.carry_ids(rows, old_live, known_ids=[r.get("shift_id") for r in rows])
             text = _srows.to_csv(rows)
-            conn.execute("UPDATE schedule_history SET published_at=datetime('now'), published_by=?, published_csv=?, "
-                         "schedule_csv=?, publishing_at=NULL WHERE id=? AND restaurant_id=?",
-                         (actor_name, text, text, schedule_id, restaurant_id))
+        else:
+            old_live, _rebuilt = _sv._live_rows_of(conn, schedule_id, restaurant_id, row)
+            old_live = _srows.carry_ids(old_live, rows, known_ids=[r.get("shift_id") for r in old_live])
+            text = _srows.to_csv(rows)
+        # Who to tell, by the PERSON (schedule re-audit 10/11/26 BUGSLIFE-6):
+        # a rename between the last Send and this one is the same person.
+        items = _recipients(old_live, rows, restaurant_id=restaurant_id, db_path=db_path)
+        if mode == "changes" and not items:
+            raise _Refused({"ok": True, "already_published": True, "schedule_id": schedule_id}, 200)
+        # The version first, then the week's text through the one week write
+        # (schedule_versions.store_week, ARCH-24) — so its shift projection
+        # carries this revision. One transaction.
+        _row_id, new_version = _sv._insert_version(conn, restaurant_id, schedule_id, "published", text,
+                                                   saved_by=actor_name, saved_authority=authority)
+        if mode == "publish":
+            _sv.store_week(conn, restaurant_id, schedule_id, working=text, published=text,
+                           sets=("published_at=datetime('now')", "published_by=?", "publishing_at=NULL"),
+                           args=(actor_name,))
             # One live version of a week: an older published copy is retired,
             # or both fed outcomes, fairness, hours and claims (SCHED-10).
             conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
                          "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL",
                          (schedule_id, restaurant_id, row["week_start"], schedule_id))
         else:
-            old_live, _rebuilt = _sv._live_rows_of(conn, schedule_id, restaurant_id, row)
-            old_live = _srows.carry_ids(old_live, rows, known_ids=[r.get("shift_id") for r in old_live])
-            text = _srows.to_csv(rows)
-            conn.execute("UPDATE schedule_history SET published_csv=?, republished_at=datetime('now') "
-                         "WHERE id=? AND restaurant_id=?", (text, schedule_id, restaurant_id))
+            _sv.store_week(conn, restaurant_id, schedule_id, published=text,
+                           sets=("republished_at=datetime('now')",))
             # A shift the Studio moved to someone else keeps its floor
             # section now that staff have the change.
             try:
@@ -1076,11 +1100,6 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                                dates=_sv._week_dates(row["week_start"], row["week_end"] or row["week_start"]))
         except Exception as e:
             log.warning("requests not followed for week %s: %s", schedule_id, e)
-        items = _recipients(old_live, rows)
-        if mode == "changes" and not items:
-            raise _Refused({"ok": True, "already_published": True, "schedule_id": schedule_id}, 200)
-        _row_id, new_version = _sv._insert_version(conn, restaurant_id, schedule_id, "published", text,
-                                                   saved_by=actor_name, saved_authority=authority)
         batch = _uuid.uuid4().hex
         person_ids = {" ".join(str(r.get("employee") or "").split()): r.get("person_id") for r in rows
                       if r.get("person_id")}
