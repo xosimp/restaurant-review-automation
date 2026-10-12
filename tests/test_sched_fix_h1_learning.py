@@ -1072,7 +1072,9 @@ def _predict_history(rid, weeks):
 
 def test_the_predictor_steers_only_at_its_backtest_hit_rate():
     rid = _rid()
-    _predict_history(rid, 6)
+    # Seven drafts: the rolling-origin backtest (re-audit 10/11/26
+    # LEARNING-20) predicts weeks 4-7 from the weeks before each.
+    _predict_history(rid, 7)
     mon = _monday(-1)
     rows = [_row(mon + timedelta(days=d), n) for n in ("Ana", "Ben") for d in range(5)] + \
         [_row(mon + timedelta(days=5), "Zed")]
@@ -1084,7 +1086,7 @@ def test_the_predictor_steers_only_at_its_backtest_hit_rate():
     review = sl.likely_to_change(rid, rows)
     assert review["ready"] and review["rows"][0]["employee"] == "Zed" and "were right" in review["note"]
     # A manager who changes Zed's rows about half the time: the predictor
-    # flags them, but its own backtest is right only 38% of the time — shown,
+    # flags them, but its own rolling-origin backtest is right only 25% of the time — shown,
     # never steering.
     import random
     rng = random.Random(5)
@@ -1101,7 +1103,7 @@ def test_the_predictor_steers_only_at_its_backtest_hit_rate():
     bt = sl.edit_prediction_backtest(weeks)
     assert bt["weeks"] >= sl.PREDICT_MIN_BACKTEST_WEEKS and bt["flagged"] and bt["hit_rate"] < 0.6
     weak = sl.likely_edit_signals(rid, rows, weeks=weeks)
-    assert weak["ready"] is False and weak["flags"] == [] and "right 8 of 21 times" in weak["reason"]
+    assert weak["ready"] is False and weak["flags"] == [] and "right 2 of 8 times over 5 held-out drafts" in weak["reason"]
 
 
 def test_the_publish_check_carries_likely_to_change(monkeypatch):
