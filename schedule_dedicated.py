@@ -35,10 +35,18 @@ How it is held, the way the managers' shifts are (schedule_skeleton):
     answer by code (labor.generate_optimized_schedule, restore_pinned), so
     no trim, fill or redo pass removes, re-times or re-assigns one;
   * a covered slot nobody can legally take is said in the review, with why;
-  * a note sentence naming the position with an allowance word ("no",
-    "skip", "without", "don't need", "waive") waives the slots it names
-    (its days and dayparts; none named = the whole week), and the review
-    says which note did it.
+  * a note sentence that LETS THE POSITION OFF — an allowance built on the
+    position itself ("no bar tables bartender Tuesday", "skip the bar
+    tables Monday", "bar tables not needed Sunday") — reads as a waiver of
+    the slots it names (its days and dayparts; none named = the whole
+    week). A sentence that insists ("never", "always", "keep", "must", "no
+    matter what", "somebody else must take…") is never one, and a negation
+    anywhere else in the sentence is not an allowance (blind re-audit
+    10/11/26 BUGSGEN-4: "Bar tables are never off — always staff them"
+    waived all nine slots). A waiver holds only once the owner CONFIRMED it
+    (schedule_note_rules.add_waiver — the AI tab, or the Generate sheet for
+    a draft's own instruction); until then the position is staffed and the
+    review says the note was read but not applied.
 
 The row's note is "<label> — Cavnar AI: standing position": the staff read
 the label (labor.staff_facing_note strips the Cavnar AI mark).
@@ -57,7 +65,18 @@ PART_WORDS = {"morning": "daytime", "night": "night"}
 IN_USUAL_DAYS = 28
 
 _ALLOW_RX = re.compile(r"\b(no|skip|skipping|without|waive|waived|don'?t need|do not need|not needed|no need|"
-                       r"drop|leave off|off)\b", re.I)
+                       r"drop|leave off|off|optional)\b", re.I)
+# Words that insist on the position, or on somebody taking it — never an
+# allowance, whatever negation sits beside them (BUGSGEN-4).
+_KEEP_RX = re.compile(r"\b(never|always|keep|keeps|kept|must|make sure|ensure|require|requires|"
+                      r"required|no matter|regardless|non-?negotiable|still|staff them|staff it|cover|covers|"
+                      r"covered|somebody else|someone else|anyone else|take the|takes the|instead)\b", re.I)
+# The allowance itself: a verb of letting off whose object is the position,
+# or the position as the subject of "not needed" / "off" / "optional".
+_LEAD = (r"(?:no|skip|skipping|without|waive|waived|waiving|drop|dropping|leave off|no need for|don'?t need|"
+         r"do not need|cut)\s+(?:the\s+|a\s+|an\s+|any\s+|our\s+)?")
+_TRAIL = (r"(?:\s+(?:bartender|server|position|person|shift|station|section)s?)?(?:\s+\w+){0,2}?\s+"
+          r"(?:is\s+|are\s+|can\s+be\s+)?(?:not needed|isn'?t needed|aren'?t needed|off|waived|skipped|optional)\b")
 
 
 def rules_of(restaurant) -> list:
@@ -119,17 +138,30 @@ def describe(rule) -> str:
     return f"{rule['label']}: one more {rule['family']} " + " and ".join(bits)
 
 
+def allows(low, words) -> bool:
+    """Whether the sentence `low` (lower case) lets the position off: an
+    allowance construction about the position itself (one of its waive
+    `words`), and no word that insists on it (BUGSGEN-4)."""
+    if not _ALLOW_RX.search(low) or _KEEP_RX.search(low):
+        return False
+    for w in words or ():
+        pos = re.escape(str(w).lower()) + r"(?:s|es)?"
+        if re.search(r"\b" + _LEAD + pos + r"\b", low) or re.search(r"\b" + pos + _TRAIL, low):
+            return True
+    return False
+
+
 def waivers(text, rules) -> list:
-    """[{"rule", "day", "part", "note"}]: the slots the notes waive. A
-    sentence counts when it names the position (one of its waive_words) and
-    says an allowance; its days and dayparts narrow it (none = all)."""
+    """[{"rule", "day", "part", "note"}]: the slots the notes' sentences
+    read as waiving (allows); their days and dayparts narrow it (none =
+    all). A READING: plan() is handed only the confirmed ones."""
     if not text or not rules:
         return []
     from schedule_note_rules import _DAYPART_TOKENS, _days, _normalise, _sentences
     out = []
     for s in _sentences(str(text)):
         low = " ".join(s.lower().replace("’", "'").split())
-        if not _ALLOW_RX.search(low):
+        if not _ALLOW_RX.search(low) or _KEEP_RX.search(low):
             continue
         tokens = re.findall(r"[a-z]+|\d+|-", _normalise(s))
         try:
@@ -139,13 +171,53 @@ def waivers(text, rules) -> list:
         days = list(named or DAYS)
         parts = sorted({_DAYPART_TOKENS[t] for t in tokens if t in _DAYPART_TOKENS}) or list(PARTS)
         for i, r in enumerate(rules):
-            if not any(w in low for w in r["waive_words"]):
+            if not allows(low, r["waive_words"]):
                 continue
             for d in days:
                 for p in parts:
                     if d in (r["parts"].get(p) or []):
                         out.append({"rule": i, "day": d, "part": p, "note": s.strip()[:200]})
     return out
+
+
+def confirmed_waiver_keys(restaurant_id, week_dates=None, db_path=None) -> set:
+    """The sentences (schedule_note_rules._key) whose waiver the owner
+    confirmed and that are in force for the week: every standing one, and a
+    one-week one for exactly this week."""
+    import schedule_note_rules as _snr
+    week = [str(d)[:10] for d in (week_dates or []) if d]
+    out = set()
+    try:
+        sd = _snr._start_day(restaurant_id)
+        mondays = {_snr._monday(d, sd).isoformat() for d in week}
+        for r in _snr.note_rules(restaurant_id, week_start=(week or [None])[0], db_path=db_path or _snr.DB_PATH):
+            if r.get("kind") != "waiver":
+                continue
+            if r["scope"] == "week" and mondays != {r.get("week_start")}:
+                continue
+            for src in [r.get("source_text")] + list(r.get("more_sources") or []):
+                if src:
+                    out.add(_snr._key(src))
+    except Exception as e:
+        print(f"[schedule_dedicated] confirmed waivers unread: {e!r}")
+    return out
+
+
+def split_waivers(text, rules, confirmed) -> tuple:
+    """(waived, unconfirmed): the slots the confirmed sentences waive, and
+    [{"note", "label"}] for each sentence read as a waiver the owner has not
+    confirmed — the position stays staffed and the review says so."""
+    from schedule_note_rules import _key, _sentences
+    yes, no = [], []
+    for s in _sentences(str(text or "")):
+        (yes if _key(s) in (confirmed or set()) else no).append(s)
+    waived = waivers("\n".join(yes), rules)
+    pending = []
+    for s in no:
+        ws = waivers(s, rules)
+        if ws:
+            pending.append({"note": s.strip()[:200], "label": rules[ws[0]["rule"]]["label"]})
+    return waived, pending
 
 
 def _part_of(row):
@@ -377,6 +449,9 @@ def review_lines(dplan) -> list:
     for w in (dplan or {}).get("waived") or []:
         out.append(f"{w['label']} — not staffed {sk._weekday(w['date'])} {mdy(w['date'])} {PART_WORDS[w['part']]}, "
                    f"as your note says: “{w['note']}”.")
+    for u in (dplan or {}).get("unconfirmed_waivers") or []:
+        out.append(f"{u['label']} — your note “{u['note']}” reads as letting it off, but you haven't confirmed that, "
+                   f"so the position is staffed. Confirm it in the Schedule Studio's AI tab to let it off.")
     return out
 
 

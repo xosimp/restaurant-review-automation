@@ -95,6 +95,10 @@ KINDS = {
     "schedule_generate": ("generation", "interactive", 3),
     "auto_draft": ("generation", "scheduled", 2),
     "learner": ("bulk", "bulk", 2),
+    # The owner's notes and staff notes read into typed rules when they are
+    # SAVED, one batched call (owner_rules.queue_read — blind re-audit
+    # 10/11/26 AI-22): never in a generation's critical path.
+    "owner_words_read": ("bulk", "scheduled", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -102,6 +106,7 @@ HANDLERS = {
     "schedule_generate": "schedule_engine:run_queued_generation",
     "auto_draft": "strategy_jobs:run_queued_auto_draft",
     "learner": "strategy_jobs:run_queued_learner",
+    "owner_words_read": "owner_rules:run_queued_read",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.

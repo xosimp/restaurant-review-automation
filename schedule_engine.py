@@ -2149,10 +2149,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # The owner's words read into typed rules before the rules are built
     # (owner_rules — scheduler audit 10/10/26 RM-9, AI-9, AI-19): this
     # draft's instruction, the notes' sentences the reader cannot hold and
-    # the staff notes the hold reader cannot — each sentence once, cached;
-    # the one place a model reads them. The notes' readings are held softly
-    # by build_constraints (from the cache); the instruction's, which the
-    # owner typed for this draft, hard — applied just below.
+    # the staff notes the hold reader cannot — each sentence once, cached
+    # (the notes usually read already, when they were saved — AI-22). The
+    # notes' readings are preferences in build_constraints (from the cache);
+    # an instruction reading the owner CONFIRMED before generating is a
+    # one-week rule build_constraints already holds hard; the rest of the
+    # instruction's readings are preferences only (blind re-audit 10/11/26
+    # AI-7, contract #6) — applied just below.
     import owner_rules as _owr
     _owner_words = {"instruction": []}
     # A stopped run starts no further model call (10/9/26) — the reading
@@ -2163,7 +2166,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail("owner words", _sfx, restaurant_id)
     constraints = _rules.build_constraints(restaurant_id, next_week_dates, week_days, restaurant)
-    _owr.apply(constraints, _owner_words.get("instruction") or [])
+    _owr.apply(constraints, [r for r in (_owner_words.get("instruction") or []) if not r.get("confirmed")])
     roster_rows = _staff.roster(restaurant_id)
     # Somebody with no shift in weeks is not offered to the model (schedule
     # audit 10/3/26 E-3): the departed manager "Dana" was drafted onto a
@@ -5323,11 +5326,17 @@ def _pairs_block(pairs: dict, roster_pairs: list) -> str:
     def _show(p):
         a, b = sorted(names.get(x, x.title()) for x in p)
         return f"{a} and {b}"
+    # A reading of the owner's words nobody confirmed (AI-8) is said as one:
+    # a preference, never the owner's own pairing.
+    proposed = pairs.get("proposed") or set()
+
+    def _tail(p):
+        return " (Cavnar AI's reading of the owner's notes, not confirmed - a preference)" if p in proposed else ""
     lines = []
     for p in sorted((pairs.get("avoid") or set()) - private, key=sorted):
-        lines.append(f"  keep apart: {_show(p)}")
+        lines.append(f"  keep apart: {_show(p)}{_tail(p)}")
     for p in sorted((pairs.get("prefer") or set()) - private, key=sorted):
-        lines.append(f"  work well together: {_show(p)}")
+        lines.append(f"  work well together: {_show(p)}{_tail(p)}")
     if not lines:
         return ""
     return "\n\nPAIRINGS (the owner's own notes on who works with whom):\n" + "\n".join(lines)

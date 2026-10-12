@@ -110,7 +110,11 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
                   "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max",
                   # the same words read from the notes, not yet confirmed
-                  "owner_ask_on", "owner_ask_close"})
+                  "owner_ask_on", "owner_ask_close",
+                  # a reading of the owner's words nobody confirmed, kept as a
+                  # preference only (blind re-audit 10/11/26 AI-8): never a
+                  # cap, a time, a fill exclusion or a blocked day
+                  "owner_ask_off", "owner_ask_max", "owner_ask_time", "owner_ask_floor"})
 # Soft flags about the roster, not the week, that still hold every publish:
 # with nobody counted as a floor manager the highest rule is unmet on every
 # shift and no draft can mend it, so the week waits until the owner names
@@ -178,6 +182,10 @@ LABELS = {
     "owner_word_close": "not closing or opening when your own words say they do",
     "owner_ask_on": "not on when your notes ask for them",
     "owner_ask_close": "not closing or opening when your notes ask for it",
+    "owner_ask_off": "on when your notes may mean they're off (not confirmed)",
+    "owner_ask_max": "more of a role on at once than your notes may mean (not confirmed)",
+    "owner_ask_time": "starts or ends off a time your notes may mean (not confirmed)",
+    "owner_ask_floor": "fewer of a role on than your notes may mean (not confirmed)",
 }
 
 
@@ -1432,6 +1440,12 @@ class Constraints:
     owner_person_close: list = field(default_factory=list)
     owner_weights: list = field(default_factory=list)
     typed_rules: list = field(default_factory=list)
+    # The readings of the owner's words nobody confirmed (blind re-audit
+    # 10/11/26 AI-8, contract #6): a preference only — swept as soft
+    # owner_ask_* breaches at the quality rank (owner_rules.
+    # proposal_violations), never a floor, cap, time, blocked day, fill
+    # exclusion or moved target. [typed rule + {"words"}].
+    owner_proposals: list = field(default_factory=list)
 
     # ── lookups ────────────────────────────────────────────────────────
     def key(self, name) -> str:
@@ -4042,14 +4056,20 @@ def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
             return pair
         return frozenset(c.key(x) for x in pair)
     out = {k: {q for q in (_one(p) for p in ((pairs or {}).get(k) or ())) if len(q) == 2}
-           for k in ("prefer", "avoid", "private")}
+           for k in ("prefer", "avoid", "private", "proposed")}
     for p in (getattr(c, "owner_pairs", None) or []) if c is not None else []:
         pair = frozenset((p["a"].lower(), p["b"].lower()))
         out.setdefault(p["kind"], set()).add(pair)
         if p.get("private"):
             out["private"].add(pair)
-    if not out["private"]:
-        out.pop("private")
+        # A reading of the owner's words nobody confirmed (AI-8): scored as
+        # the pairing it reads as, said as not confirmed - never as the
+        # owner's own pairing.
+        if p.get("proposed"):
+            out["proposed"].add(pair)
+    for k in ("private", "proposed"):
+        if not out[k]:
+            out.pop(k)
     return out
 
 
@@ -4562,6 +4582,12 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
     if (getattr(c, "owner_person_on", None) or getattr(c, "owner_person_close", None)) and not person_only:
         import owner_rules as _owr
         out.extend(_owr.violations(rows, c, only_dates=({r.get("date") for r in rows or []} if day_only else None)))
+    # The readings nobody confirmed, kept as preferences (AI-8): soft, the
+    # quality rank.
+    if getattr(c, "owner_proposals", None) and not person_only:
+        import owner_rules as _owr_p
+        out.extend(_owr_p.proposal_violations(rows, c, only_dates=({r.get("date") for r in rows or []}
+                                                                    if day_only else None)))
 
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
@@ -6040,6 +6066,9 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "owner_word_off": TIER_COVERAGE, "owner_word_on": TIER_COVERAGE,
                "owner_word_close": TIER_COVERAGE,
                "owner_ask_on": TIER_QUALITY, "owner_ask_close": TIER_QUALITY,
+               # A reading nobody confirmed (AI-8): a preference, the quality rank.
+               "owner_ask_off": TIER_QUALITY, "owner_ask_max": TIER_QUALITY, "owner_ask_time": TIER_QUALITY,
+               "owner_ask_floor": TIER_QUALITY,
                # More servers on at once than there are sections — the
                # owner's own "most on at once", ranked with over_role_max:
                # with no tier no stage's judge saw a pass push a night past
