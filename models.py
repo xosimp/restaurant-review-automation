@@ -8855,7 +8855,15 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # request, sent after the write commits (ARCH-9).
                        ("held_claimant", "TEXT"), ("held_claim_at", "TEXT"), ("held_claim_note", "TEXT"),
                        ("decided_how", "TEXT"), ("auto_reasons_json", "TEXT"),
-                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT")):
+                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT"),
+                       # schedule re-audit 10/11/26 ARCH-6 (contract #5): the
+                       # shift a request is about, by its id — and a swap's
+                       # colleague's shift and person — never the (name,
+                       # date, start) a retime or a rename moves; a held
+                       # claimant's written yes to a short rest, kept for
+                       # the decider's answer (BUGSLIFE-7).
+                       ("shift_id", "TEXT"), ("target_shift_id", "TEXT"), ("target_person_id", "INTEGER"),
+                       ("held_consent_rest", "INTEGER")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):
@@ -8892,6 +8900,19 @@ def init_shift_requests(db_path: str = DB_PATH):
         # Duplicates from before the index: the transactional check still
         # guards new requests; the index lands once they are answered.
         print(f"[models] uq_shift_requests_live not created yet: {e}")
+    # One live request per shift BY ITS ID (ARCH-6): a retimed or renamed
+    # shift is still the one shift.
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_shift_requests_live_sid ON shift_change_requests("
+                     "restaurant_id, shift_id) WHERE status IN ('pending','approved','open') "
+                     "AND shift_id IS NOT NULL AND shift_id <> ''")
+    except sqlite3.IntegrityError as e:
+        print(f"[models] uq_shift_requests_live_sid not created yet: {e}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_sid ON shift_change_requests(restaurant_id, shift_id)")
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shift_sections'").fetchone():
+        if "shift_id" not in {r[1] for r in conn.execute("PRAGMA table_info(shift_sections)")}:
+            conn.execute("ALTER TABLE shift_sections ADD COLUMN shift_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_sections_sid ON shift_sections(restaurant_id, shift_id)")
     conn.commit()
     conn.close()
 
@@ -10645,19 +10666,39 @@ def set_shift_section(restaurant_id: int, date: str, employee: str, shift_start:
             conn.execute("DELETE FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
                          (restaurant_id, day, key, start))
         else:
+            # The shift it is for, by id (ARCH-6): it then follows the shift
+            # through a retime, a cover or a swap (carry_shift_sections).
+            sid = _section_shift_id(conn, restaurant_id, day, key, start)
             conn.execute("""INSERT INTO shift_sections (restaurant_id, date, employee_key, employee_name, shift_start,
-                                section, updated_by, updated_at, authority) VALUES (?,?,?,?,?,?,?,datetime('now'),?)
+                                section, updated_by, updated_at, authority, shift_id)
+                                VALUES (?,?,?,?,?,?,?,datetime('now'),?,?)
                             ON CONFLICT(restaurant_id, date, employee_key, shift_start) DO UPDATE SET
                                 section=excluded.section, employee_name=excluded.employee_name,
                                 updated_by=excluded.updated_by, updated_at=excluded.updated_at,
-                                authority=excluded.authority""",
+                                authority=excluded.authority, shift_id=COALESCE(excluded.shift_id, shift_id)""",
                          (restaurant_id, day, key, " ".join(str(employee).split()), start,
                           named[wanted.casefold()], (str(updated_by or "").strip()[:120] or None),
-                          _write_attribution(user).get("authority")))
+                          _write_attribution(user).get("authority"), sid))
         conn.commit()
     finally:
         conn.close()
     return named[wanted.casefold()] if wanted else None
+
+
+def _section_shift_id(conn, restaurant_id, day, key, start):
+    """The id of the one shift a section is set on — the person's shift at
+    that start on the newest copy of its week (schedule_shifts) — or None."""
+    try:
+        rows = conn.execute(
+            "SELECT s.shift_id, s.shift_start FROM schedule_shifts s JOIN schedule_history h ON h.id=s.history_id "
+            "WHERE s.restaurant_id=? AND s.date=? AND s.employee_key=? AND h.superseded_by IS NULL "
+            "ORDER BY s.history_id DESC, s.copy DESC", (restaurant_id, day, key)).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    for r in rows:
+        if shift_section_start(r["shift_start"]) == start:
+            return r["shift_id"]
+    return None
 
 
 def sections_for_employee(restaurant_id: int, employee_name: str, db_path: str = DB_PATH) -> dict:
@@ -10677,17 +10718,32 @@ def sections_for_employee(restaurant_id: int, employee_name: str, db_path: str =
 
 
 def move_shift_section(restaurant_id: int, date: str, shift_start: str, from_name: str, to_name: str,
-                       conn=None, db_path: str = DB_PATH) -> bool:
-    """A shift that changed hands (a swap, a claimed open shift) keeps its
-    section: the row moves to the new person. On `conn` when given (inside
-    the caller's transaction; the caller commits). True when one moved."""
+                       conn=None, db_path: str = DB_PATH, shift_id=None, new_start=None, new_date=None) -> bool:
+    """A shift that changed hands (a swap, a claimed open shift) — or moved
+    (a retime: `new_date` / `new_start`) — keeps its section: the row moves
+    with it. Found by the shift's id when the section carries one, else by
+    (date, person, start) (schedule re-audit 10/11/26 ARCH-6); the section
+    takes the id. On `conn` when given (inside the caller's transaction;
+    the caller commits). True when one moved."""
     own = conn is None
     conn = conn or get_conn(db_path)
     try:
-        cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=? "
-                           "WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
-                           (_av_key(to_name), " ".join(str(to_name or "").split()), restaurant_id,
-                            str(date or "")[:10], _av_key(from_name), shift_section_start(shift_start)))
+        sid = str(shift_id or "").strip().lower() or None
+        day = str(new_date or date or "")[:10]
+        start = shift_section_start(new_start or shift_start)
+        cur = None
+        if sid:
+            cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=?, date=?, "
+                               "shift_start=? WHERE restaurant_id=? AND shift_id=?",
+                               (_av_key(to_name), " ".join(str(to_name or "").split()), day, start,
+                                restaurant_id, sid))
+        if cur is None or cur.rowcount == 0:
+            cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=?, date=?, "
+                               "shift_start=?, shift_id=COALESCE(?, shift_id) "
+                               "WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
+                               (_av_key(to_name), " ".join(str(to_name or "").split()), day, start, sid,
+                                restaurant_id, str(date or "")[:10], _av_key(from_name),
+                                shift_section_start(shift_start)))
         if own:
             conn.commit()
         return cur.rowcount > 0
@@ -10721,8 +10777,29 @@ def carry_shift_sections(conn, restaurant_id: int, before_rows: list, after_rows
                  shift_section_start(r.get("shift_end")), str(r.get("role") or "").strip().lower())
             out.setdefault(k, {})[_av_key(name)] = name
         return out
-    before, after = slots(before_rows), slots(after_rows)
     moved = 0
+    # By the shift's id first (schedule re-audit 10/11/26 ARCH-6): a shift
+    # that kept its id and changed person, date or start carries its section
+    # — a retime used to strand it on the old start.
+    before_id = {str(r.get("shift_id") or "").lower(): r for r in before_rows
+                 if str(r.get("shift_id") or "").strip() and (r.get("employee") or "").strip()}
+    done = set()
+    for r in after_rows:
+        sid = str(r.get("shift_id") or "").lower()
+        b = before_id.get(sid) if sid else None
+        if not b or not (r.get("employee") or "").strip():
+            continue
+        same = (_av_key(b.get("employee")) == _av_key(r.get("employee")) and str(b.get("date"))[:10] ==
+                str(r.get("date"))[:10] and shift_section_start(b.get("shift_start")) ==
+                shift_section_start(r.get("shift_start")))
+        done.add(sid)
+        if not same:
+            moved += bool(move_shift_section(restaurant_id, b.get("date"), b.get("shift_start"), b.get("employee"),
+                                             r.get("employee"), conn=conn, shift_id=sid,
+                                             new_start=r.get("shift_start"), new_date=r.get("date")))
+    before_rows = [r for r in before_rows if str(r.get("shift_id") or "").lower() not in done]
+    after_rows = [r for r in after_rows if str(r.get("shift_id") or "").lower() not in done]
+    before, after = slots(before_rows), slots(after_rows)
     for k, was in before.items():
         now = after.get(k) or {}
         left = [was[x] for x in was if x not in now]

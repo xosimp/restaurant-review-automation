@@ -1191,6 +1191,13 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
                   args=(json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
                         (saved_by or "").strip()[:120] or None)) != 1:
         raise LookupError("that schedule is gone")
+    # A change to the copy staff have closes every cover it undid — the
+    # holder back on a shift a request still called covered (schedule
+    # re-audit 10/11/26 BUGSLIFE-2); in this transaction, told after it.
+    if live_write:
+        import shift_requests as _srq_c
+        _srq_c.close_stale_covers(conn, restaurant_id, new_live, {r.get("date") for r in new_live} |
+                                  {r.get("date") for r in old_live or []})
     # A shift that changed hands keeps its floor section — on the copy
     # staff read: a cover or swap on the published week, any save of a week
     # never sent. A Studio swap on a sent week moves the section when Send
