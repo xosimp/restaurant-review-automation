@@ -7674,6 +7674,9 @@ svg:hover .hb-xh{opacity:1}
 .dr-grid tfoot td.day small{display:block;font-weight:400;font-size:11.5px;color:var(--ink3)}
 .dr-bud{margin-top:16px}
 .drb-top{display:flex;flex-wrap:wrap;gap:18px 32px;align-items:flex-start;justify-content:space-between}
+/* The summary and the nights (or the week's figure) are two cards: a gap
+   between them, never touching (owner, 10/12/26). */
+.drb-top+.hb-card{margin-top:20px}
 .drb-mode{display:flex;align-items:center;gap:8px}.drb-mode .k,.drb-sum .k{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
 .drb-mode [aria-pressed="true"]{border-color:var(--ember);color:var(--ink)}
 .drb-sum{display:flex;flex-wrap:wrap;gap:16px 40px}.drb-sum .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--ink);margin-top:4px}
