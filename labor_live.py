@@ -998,11 +998,12 @@ def act(restaurant_id, move_id, user=None, how="manager", now_local=None, db_pat
             return saved
         sent = None
         if pl["published"]:
+            # Only the cut goes out — never the manager's other unsent edits
+            # of the week — through the owner's undo window like any Send,
+            # its late-change premium acknowledged and on the record
+            # (schedule re-audit 10/11/26 BUGSLIFE-4, -5).
             try:
-                from client_api import send_schedule_changes
-                body, _status = send_schedule_changes(restaurant_id, pl["history_id"],
-                                                      actor=user if isinstance(user, dict) else None)
-                sent = body
+                sent = _send_cut(restaurant_id, pl, p, saved, user, db_path=db_path)
             except Exception as e:
                 sent = {"ok": False, "error": str(e)}
         _decide(move_id, "acted", how, who, db_path=db_path)
@@ -1011,6 +1012,9 @@ def act(restaurant_id, move_id, user=None, how="manager", now_local=None, db_pat
         if sent is not None and not (sent or {}).get("ok"):
             out["note"] = ("Saved to the week; it hasn't reached them — Send changes from the Studio "
                            + (f"({sent.get('error')})" if sent and sent.get("error") else "") + ".")
+        elif (sent or {}).get("queued"):
+            out["note"] = (f"Saved — {p['employee']} is told when your undo window ends"
+                           + (f" ({sent.get('undo_minutes')} min)" if sent.get("undo_minutes") else "") + ".")
         return out
     try:
         res = _srq.post_open_shift(restaurant_id, p["date"], m["start_label"] if m["kind"] == "extend" else
@@ -1026,6 +1030,58 @@ def act(restaurant_id, move_id, user=None, how="manager", now_local=None, db_pat
     if how == "manager":
         trust(restaurant_id, m["kind"], db_path=db_path)
     return {"ok": True, "status": "offered", "request_id": req_id, "via": (res.get("offer") or {}).get("via")}
+
+
+def _cut_shift_ids(rows, p) -> list:
+    """The shift id of the cut row in the week as saved: the person's shift
+    on the date that started at the planned start."""
+    import schedule_time as _st
+    want = _st.parse_minutes(p.get("shift_start") or "")
+    for r in rows or []:
+        if (r.get("date") or "")[:10] == p["date"] and _key(r.get("employee")) == _key(p["employee"]) \
+                and (want is None or _st.parse_minutes(r.get("shift_start") or "") == want) and r.get("shift_id"):
+            return [r["shift_id"]]
+    return []
+
+
+def _send_cut(restaurant_id, pl, p, saved, user, db_path=None) -> dict:
+    """Tell the person their cut — that shift alone, the week staff have
+    otherwise as it was (schedule_publish.send_live_change) — now, or when
+    the owner's undo window ends (send_delay_minutes, queued like any Send:
+    one Undo stops it). Returns the send's payload, or {queued, action_id,
+    execute_at, undo_minutes}."""
+    import schedule_publish as _sp
+    import schedule_versions as _sv
+    from models import get_restaurant
+    conn = get_conn(db_path)
+    try:
+        ids = _cut_shift_ids(_sv.latest_rows(conn, int(pl["history_id"])), p)
+    finally:
+        conn.close()
+    if not ids:
+        return {"ok": False, "error": "the cut shift couldn't be found on the saved week"}
+    actor = user if isinstance(user, dict) else None
+    r = get_restaurant(restaurant_id, db_path) if db_path else get_restaurant(restaurant_id)
+    delay = int(getattr(r, "send_delay_minutes", 0) or 0) if r else 0
+    if delay > 0:
+        import delayed
+        from time_utils import mdy
+        from permissions import answer_authority
+        by = {"authority": answer_authority(actor), "queued_by": ((actor or {}).get("username")
+                                                                  or (actor or {}).get("email") or "")[:120]} \
+            if actor else {"automatic": True}
+        act = delayed.queue_schedule_send(
+            restaurant_id, "schedule_changes_send",
+            {"schedule_id": int(pl["history_id"]), "only_shift_ids": ids, "version": saved.get("version"),
+             "live": "cut", "manual": bool(actor), **by},
+            delay, actor=actor,
+            label=f"Telling {p['employee']} their {mdy(p['date'])} shift now ends earlier",
+            **({"db_path": db_path} if db_path else {}))
+        return {"ok": True, "queued": True, "action_id": act["id"], "execute_at": act["execute_at"],
+                "undo_minutes": delay}
+    body, _status = _sp.send_live_change(restaurant_id, int(pl["history_id"]), ids, actor=actor,
+                                         version=saved.get("version"), why="live labor cut")
+    return body
 
 
 def dismiss(restaurant_id, move_id, user=None, db_path=None) -> dict:

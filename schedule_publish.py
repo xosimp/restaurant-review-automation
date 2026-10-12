@@ -1631,7 +1631,11 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                     "address on file, so nothing went out.")
     return dict(ok=True, schedule_id=schedule_id, week_label=week_label,
                 acknowledged=bool(blockers), portal_only=not got["sent"] and not got["pending"], note=note,
-                version=stamped["version"], error=None, **_delivered_payload(rid, schedule_id, got)), 200
+                version=stamped["version"], error=None,
+                # The covers and swaps this send undid, past the gate's line
+                # with a reason: each closed, both people told (BUGSLIFE-1).
+                staff_changes_undone=[it["text"] for it in stamped.get("reverted") or []],
+                **_delivered_payload(rid, schedule_id, got)), 200
 
 
 def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, version=None, override_reasons=None):
@@ -1733,7 +1737,189 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
                 "an email address on file, so nothing went out.")
     return dict(ok=True, changes_sent=True, schedule_id=row["id"], week_label=week_label, unsent_changes=[],
                 acknowledged=bool(review["blockers"]), portal_only=not got["sent"] and not got["pending"], note=note,
-                version=stamped["version"], error=None, **_delivered_payload(rid, row["id"], got)), 200
+                version=stamped["version"], error=None,
+                staff_changes_undone=[it["text"] for it in stamped.get("reverted") or []],
+                **_delivered_payload(rid, row["id"], got)), 200
+
+
+# ── one live change, sent on its own (schedule re-audit 10/11/26 BUGSLIFE-4, -5) ──
+#
+# Live labor's "cut Maria at 9" saved the new end through the Studio save and
+# then sent the WHOLE week's changes: every unsent Studio edit of any day went
+# out with it, past the owner's undo window; and under a notice rule or a
+# predictive-scheduling law (Chicago, where Simple EJ's is) the gate refused
+# it, so the cut lived only in the working copy — the person was never told,
+# the POS and attendance still expected the old end, and leaving early as
+# instructed read as left_early. A live change is the employer's change made
+# knowingly, now: only its own shifts go to the published copy, its late-
+# change premium is acknowledged and on the record, and it reaches only the
+# people it moves.
+
+def _live_target(old_live, working, only) -> list:
+    """The copy staff have (`old_live`) with only the shifts `only` names
+    (shift ids) taken from the working copy: changed, added, or — gone from
+    the working copy — removed. Every other shift stays as staff have it."""
+    import schedule_rows as _srows
+    want = {str(x).lower() for x in only or []}
+    work_by = {sid: r for sid, r in _srows.by_id(working).items() if sid in want}
+    out, seen = [], set()
+    for r in old_live:
+        sid = str(r.get("shift_id") or "").lower()
+        if sid in want:
+            seen.add(sid)
+            if sid in work_by:
+                out.append(dict(work_by[sid]))
+            continue
+        out.append(dict(r))
+    out += [dict(r) for sid, r in work_by.items() if sid not in seen]
+    return out
+
+
+def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=None, why="live labor"):
+    """Send one live change of a week staff have — the shifts `shift_ids`
+    name, as the working copy holds them now — and nothing else (BUGSLIFE-4).
+    Returns (payload, status).
+
+    No whole-week gate: the change was judged by the one legality engine when
+    it was made (shift_edits.plan) and is judged again here as the change it
+    is (schedule_rules.judge_change on the copy staff have — a new or worse
+    hard breach refuses it, nothing written). Its late-change warning and
+    predictability pay are acknowledged as the employer's knowing change —
+    kept with the send (schedule_overrides) and the premium on the ledger
+    with the version (predictability_pay.record_send) — never a refusal that
+    leaves it unsent (BUGSLIFE-5). `version` is the working copy's version it
+    was saved at: a person's edit since voids it (edited_since). The caller
+    applies the owner's undo window (labor_live.act queues it through
+    delayed, like any Send)."""
+    import schedule_rows as _srows
+    import schedule_versions as _sv
+    import schedule_rules as _rules
+    from time_utils import mdy_range as _mdy_range
+    actor = actor or {}
+    rid = restaurant_id
+    ids = [str(x).lower() for x in shift_ids or [] if _srows.valid_id(x)]
+    if not ids:
+        return {"ok": False, "error": "Which shift?"}, 400
+    if not get_restaurant(rid):
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_csv, published_at, superseded_by "
+                           "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "error": "That week is gone — reload the schedule."}, 404
+    if _sv.replaced_error(row):
+        return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"], "schedule_id": row["id"],
+                "error": _sv.replaced_error(row)}, 409
+    if not row["published_at"]:
+        return {"ok": False, "error": "This week hasn't been sent to staff yet — send the whole week."}, 400
+    if version is not None and edited_since(rid, row["id"], version=version):
+        return {"ok": False, "stale": True, "schedule_id": row["id"],
+                "error": "The week was changed after this was saved, so it wasn't sent — look at it, then send."}, 409
+    week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
+    # Judged as the change it is, on the copy staff have, outside the lock.
+    conn = get_conn()
+    try:
+        old_live, _rebuilt = _sv._live_rows_of(conn, row["id"], rid, row)
+    finally:
+        conn.close()
+    working = _srows.parse(row["schedule_csv"] or "")
+    old_live = _srows.carry_ids(old_live, working, known_ids=[r.get("shift_id") for r in old_live])
+    target = _live_target(old_live, working, ids)
+    if _sv.same_rows(old_live, target):
+        return {"ok": True, "already_published": True, "schedule_id": row["id"], "week_label": week_label,
+                "sent": [], "unreachable": [], "failed": [], "sending": [], "error": None}, 200
+    try:
+        import shift_requests as _srq_lc
+        worse = _rules.judge_change(old_live, target, _srq_lc._week_constraints(rid, target))
+    except Exception as e:
+        _ops.capture(e, job="live_change_judge", context=f"restaurant_id={rid} schedule_id={row['id']}")
+        return {"ok": False, "schedule_id": row["id"],
+                "error": "The rules couldn't be checked just now, so it wasn't sent — try again."}, 503
+    if worse:
+        return {"ok": False, "illegal": True, "schedule_id": row["id"],
+                "problems": [w.get("label") for w in worse][:4],
+                "error": "That change breaks a rule on the week staff have: " + (worse[0].get("label") or "a hard rule")}, 409
+    # What it may owe, acknowledged with the send (BUGSLIFE-5).
+    late = None
+    try:
+        import predictability_pay as _pp_lc
+        pv = _pp_lc.preview(rid, old_live, target)
+        if pv.get("covered") and pv.get("text"):
+            late = {"text": pv["text"], "total": pv.get("total"), "law": pv.get("law")}
+        else:
+            changed = _sv.shift_changes(old_live, target)["dates"]
+            w = _rules.late_change_warning(_rules.compliance(rid), changed, _local_today(rid))
+            if w:
+                late = {"text": w, "total": None, "law": None}
+    except Exception as e:
+        _ops.capture(e, job="live_change_premium", context=f"restaurant_id={rid}")
+    if not _claim(rid, row["id"], "changes"):
+        return {"ok": False, "in_progress": True, "schedule_id": row["id"],
+                "error": "This week is being sent to staff right now."}, 409
+    who = _actor_name(actor)
+    try:
+        conn = get_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            fresh = conn.execute("SELECT schedule_csv, published_csv, published_at, superseded_by FROM schedule_history "
+                                 "WHERE id=? AND restaurant_id=?", (row["id"], rid)).fetchone()
+            if fresh is None or _sv.replaced_error(fresh) or \
+                    _sv._rows_sig(fresh["schedule_csv"]) != _sv._rows_sig(row["schedule_csv"]) or \
+                    (fresh["published_csv"] or "") != (row["published_csv"] or ""):
+                conn.rollback()
+                return {"ok": False, "changed": True, "schedule_id": row["id"],
+                        "error": "The week changed while this was being checked, so it wasn't sent — try again."}, 409
+            text = _srows.to_csv(target)
+            conn.execute("UPDATE schedule_history SET published_csv=?, republished_at=datetime('now') "
+                         "WHERE id=? AND restaurant_id=?", (text, row["id"], rid))
+            try:
+                _models_mod.carry_shift_sections(conn, rid, old_live, target)
+            except Exception as e:
+                if "no such table" not in str(e).lower():
+                    raise
+            import shift_requests as _srq_f
+            _srq_f.follow_week(conn, rid, target, dates=_sv._week_dates(row["week_start"],
+                                                                        row["week_end"] or row["week_start"]))
+            items = _recipients(old_live, target)
+            batch = _uuid.uuid4().hex
+            person_ids = {" ".join(str(r.get("employee") or "").split()): r.get("person_id") for r in target
+                          if r.get("person_id")}
+            queued = enqueue(conn, rid, row["id"], row["week_start"], batch, items, requested_by=who,
+                             person_ids=person_ids)
+            version_now = _sv.latest_version(conn, row["id"])
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    finally:
+        _release(rid, row["id"])
+    # The late change, kept as sent past knowingly (TRUST-28's record).
+    late_key = "late_change:" + ",".join(_sv.shift_changes(old_live, target)["dates"])
+    if late:
+        try:
+            import schedule_overrides as _so_lc
+            _so_lc.record_overridden(rid, row["id"], version_now, [{"key": late_key, "text": late["text"],
+                                                                   "tier": DECIDE}], [late_key],
+                                     reasons={late_key: f"A {why} change the manager made on the day"},
+                                     actor=actor if isinstance(actor, dict) else None,
+                                     authority=_sv.authority_of(actor))
+        except Exception as e:
+            _ops.capture(e, job="schedule_overrides", context=f"restaurant_id={rid} live change")
+    _after_send(rid, row["id"], version_now, {"blockers": []}, [], None, actor, _sv.authority_of(actor))
+    _record_pay(rid, row["id"], target, who, before_rows=old_live, version=version_now)
+    got = deliver_notices(restaurant_id=rid, batch=batch, budget_seconds=INLINE_SECONDS)
+    log_account_event(rid, "schedule_live_change_sent", actor,
+                      detail=f"week of {_mdy_range(row['week_start'], row['week_start'])} ({why}): "
+                             f"{len(got['sent'])} of {len(queued)} told")
+    return dict(ok=True, live_change_sent=True, schedule_id=row["id"], week_label=week_label,
+                late_change=late, version=version_now, error=None,
+                portal_only=not got["sent"] and not got["pending"],
+                **_delivered_payload(rid, row["id"], got)), 200
 
 
 RESEND_SCOPES = ("missing", "all")
