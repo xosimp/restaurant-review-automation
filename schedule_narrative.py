@@ -98,7 +98,7 @@ def build_request(restaurant_id, rows, changes=None, unmet=None, chips=None) -> 
             for c in chips[:6]))
     schema = {"type": "object", "additionalProperties": False, "required": ["bullets"],
               "properties": {"bullets": {"type": "array", "items": {"type": "string"}}}}
-    return {"model": ai_utils.model_for("schedule_note"), "max_tokens": NOTE_MAX_TOKENS, "system": SYSTEM,
+    return {"model": ai_utils.model_for_run("schedule_note", restaurant_id), "max_tokens": NOTE_MAX_TOKENS, "system": SYSTEM,
             "messages": [{"role": "user", "content": "\n\n".join(parts)}],
             "output_config": {"format": {"type": "json_schema", "schema": schema}},
             "restaurant_id": restaurant_id, "action": NOTE_ACTION}

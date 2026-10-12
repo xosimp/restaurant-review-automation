@@ -1102,8 +1102,15 @@ def _inputs_failed() -> list:
 #     The run's caps (calls, dollars) are checked before the escalation, as
 #     generate() checks them before each rung: a capped run keeps its draft.
 WORKFLOW = "labor_schedule"
-# The pre-router's thresholds (each a documented, tested rule; PROMPT_LIBRARY
-# → Schedule). A week with any of these starts on the ladder's top rung:
+# The pre-router's signals (each a documented, tested rule; PROMPT_LIBRARY
+# → Schedule). Since 10/11/26 (blind re-audit AI-27) a signal is a
+# description, not a route: a week starts on the ladder's top rung only for
+# a signal a stored eval verdict backs — schedule_eval.route_evidence for
+# the roster's size, schedule_eval.tag_evidence for the kind of week
+# (ROUTE_TAGS: holiday, closure, first_week, many_rules, escalated). Every
+# other signal is recorded in the run (pre_route_signals) and the week stays
+# on T3 — onboarding and holiday weeks went to Opus at about three times the
+# cost with no measured gain, and an escalation made a week sticky on T4:
 #   * one of these holidays on a date of the week — the nights the week's
 #     shape changes (demand, closes, who asks off), not every calendar day
 #     schedule_economics.holiday_names knows;
@@ -1112,8 +1119,8 @@ WORKFLOW = "labor_schedule"
 #     trades);
 #   * a roster size the EVAL showed T4 better for (schedule_eval.
 #     route_evidence: the newest stored verdict of T4 against T3 for the
-#     roster's size band, won by T4 at 90% on agreement with the weeks
-#     owners published — scheduler audit 10/10/26 AI-3). It was "more than
+#     roster's size band, won by T4 at 90% on pre-repair defects from 20
+#     weeks of 5 restaurants — scheduler audit 10/10/26 AI-3). It was "more than
 #     120 people", a size the code itself called untested, which sent a
 #     250-person week to Opus at ~$6 a generation on no evidence;
 #   * more owner standing rules in force than HARD_WEEK_OWNER_RULES;
@@ -1196,12 +1203,14 @@ def current_schedule_run():
     return dict(run) if run is not None else None
 
 
-def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0, prior_generations=None,
+def hard_week_signals(week_dates, closed_dates=(), roster_size=0, owner_rules=0, prior_generations=None,
                       last_run_escalated=False, roster_evidence=None) -> list:
-    """Why a week is hard enough to start on the ladder's top rung — [] for
-    an ordinary week. Pure: the thresholds above, nothing asked of a model.
-    `roster_evidence` is schedule_eval.route_evidence for the roster's size
-    (the caller reads it): a size alone is never a reason (AI-3)."""
+    """[(tag, why)] — what makes this week unlike an ordinary one, each
+    with the schedule_eval.ROUTE_TAGS tag the eval judges that kind of week
+    by ("roster" for a size the eval showed T4 better for). Pure: the
+    thresholds above, nothing asked of a model. A signal is a description,
+    not a route: only a signal the eval has a verdict for starts the week on
+    T4 (hard_week_reasons with `evidence`, AI-27)."""
     from time_utils import mdy
     out = []
     hol = []
@@ -1217,18 +1226,50 @@ def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0,
     except Exception as e:
         print(f"[schedule] pre-router: holidays not read: {e!r}")
     if hol:
-        out.append("holiday in the week: " + ", ".join(hol))
+        out.append(("holiday", "holiday in the week: " + ", ".join(hol)))
     special = sorted(set(str(d)[:10] for d in closed_dates or ()) & set(str(d)[:10] for d in week_dates or ()))
     if special:
-        out.append("closed for a dated closure: " + ", ".join(mdy(d) for d in special))
+        out.append(("closure", "closed for a dated closure: " + ", ".join(mdy(d) for d in special)))
     if roster_evidence:
-        out.append(f"roster of {int(roster_size or 0)}: {roster_evidence}")
+        out.append(("roster", f"roster of {int(roster_size or 0)}: {roster_evidence}"))
     if int(owner_rules or 0) > HARD_WEEK_OWNER_RULES:
-        out.append(f"{int(owner_rules)} owner standing rules (over {HARD_WEEK_OWNER_RULES})")
+        out.append(("many_rules", f"{int(owner_rules)} owner standing rules (over {HARD_WEEK_OWNER_RULES})"))
     if prior_generations == 0:
-        out.append("the restaurant's first schedule")
+        out.append(("first_week", "the restaurant's first schedule"))
     if last_run_escalated:
-        out.append("this week's last draft escalated")
+        out.append(("escalated", "this week's last draft escalated"))
+    return out
+
+
+def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0, prior_generations=None,
+                      last_run_escalated=False, roster_evidence=None, evidence=None) -> list:
+    """Why a week starts on the ladder's top rung — [] for an ordinary week.
+    Without `evidence`, every hard_week_signals reason (what the week is,
+    said). With `evidence` — schedule_eval.tag_evidence, what the pre-router
+    passes — only the signals a stored eval verdict backs, each with that
+    evidence (scheduler re-audit 10/11/26 AI-27: holidays, dated closures,
+    first weeks, more than HARD_WEEK_OWNER_RULES rules and a week whose
+    last draft escalated went to Opus on assertion — about three times the
+    cost of every onboarding and holiday week, with no measured gain, and
+    an escalation made the week sticky on T4). A roster size is a reason
+    only with `roster_evidence` (AI-3), which is evidence already."""
+    signals = hard_week_signals(week_dates, closed_dates=closed_dates, roster_size=roster_size,
+                                owner_rules=owner_rules, prior_generations=prior_generations,
+                                last_run_escalated=last_run_escalated, roster_evidence=roster_evidence)
+    if evidence is None:
+        return [why for _tag, why in signals]
+    out = []
+    for tag, why in signals:
+        if tag == "roster":
+            out.append(why)
+            continue
+        try:
+            ev = evidence(tag)
+        except Exception as e:
+            print(f"[schedule] pre-router: evidence for {tag} not read: {e!r}")
+            ev = None
+        if ev:
+            out.append(f"{why} — {ev}")
     return out
 
 
@@ -1273,15 +1314,27 @@ def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster
             len(getattr(constraints, "owner_rules_unchecked", None) or [])
         import schedule_eval as _seval
         evidence = _seval.route_evidence(len(roster_pairs or []))
-        reasons = hard_week_reasons(week_dates, closed_dates=closed, roster_size=len(roster_pairs or []),
-                                    owner_rules=rules_n, prior_generations=prior, last_run_escalated=escalated,
-                                    roster_evidence=evidence)
+        week_facts = dict(closed_dates=closed, roster_size=len(roster_pairs or []), owner_rules=rules_n,
+                          prior_generations=prior, last_run_escalated=escalated, roster_evidence=evidence)
+        # Only what an eval verdict backs moves the week to T4 (AI-27); the
+        # rest is said in the run, so the eval can be pointed at it.
+        reasons = hard_week_reasons(week_dates, evidence=_seval.tag_evidence, **week_facts)
+        try:
+            signals = [why for _t, why in hard_week_signals(week_dates, **week_facts)]
+        except Exception as e:
+            print(f"[schedule] pre-router: signals not read: {e!r}")
+            signals = []
+    else:
+        signals = []
     pol = _wf.policy(WORKFLOW)
     start = pol.ladder[-1] if (reasons and not schedule_pinned()) else None
     route = start_route(start)
-    run.update(route=route, start=route.tier, pre_route=reasons, pinned=schedule_pinned())
+    unevidenced = [s for s in signals if not any(r.startswith(s) for r in reasons)]
+    run.update(route=route, start=route.tier, pre_route=reasons, pinned=schedule_pinned(),
+               pre_route_signals=unevidenced)
     run["steps"].append({"tier": route.tier, "model": route.model, "effort": route.effort,
-                         "kind": "redo" if redo else "week", "pre_route": reasons[:6]})
+                         "kind": "redo" if redo else "week", "pre_route": reasons[:6],
+                         "unevidenced": unevidenced[:6]})
     if reasons:
         print(f"[schedule] pre-router: {route.tier} ({'; '.join(reasons)})")
 
@@ -1395,6 +1448,7 @@ def _record_schedule_run(run) -> None:
         start = run.get("start")
         start = start if start and start in pol.ladder and start != pol.ladder[0] else None
         context = {"start": run.get("start"), "pre_route": run.get("pre_route") or [],
+                   "pre_route_signals": run.get("pre_route_signals") or [],
                    "pinned": bool(run.get("pinned")), "gate": run.get("gate"), "outcome": run.get("outcome"),
                    "notes": run.get("notes") or [], "capped": run.get("capped")}
         _orch._record(rr, pol, restaurant_id=run.get("restaurant_id"), subject=run.get("subject"),

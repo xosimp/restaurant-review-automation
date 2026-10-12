@@ -242,6 +242,39 @@ AI_UNPAID_MONTHLY_BUDGET_USD = float(os.getenv("AI_UNPAID_MONTHLY_BUDGET_USD", "
 # the global pool paying clients share.
 AI_TRIAL_DAILY_BUDGET_USD = float(os.getenv("AI_TRIAL_DAILY_BUDGET_USD", "5"))
 AI_TRIAL_MONTHLY_BUDGET_USD = float(os.getenv("AI_TRIAL_MONTHLY_BUDGET_USD", "50"))
+# A trial's schedule has its own day (scheduler re-audit 10/11/26 AI-20).
+# One schedule run may spend up to its run cap (ai_workflows labor_schedule
+# caps.usd, $6) — above the $5 a day above, so a prospect's first draft plus
+# its gate rewrite, or a second draft, met "AI is paused" during the sale.
+# Schedule calls (SCHEDULE_ACTIONS) answer to this allowance — never below
+# AI_TRIAL_SCHEDULE_RUNS of the run cap, so a trial can always finish that
+# many runs a day — and the rest of a trial's AI to the $5 day without them.
+# The month ($50) and the trial pool still count every call. 0 runs: the
+# schedule shares the $5 day as before.
+AI_TRIAL_SCHEDULE_DAILY_USD = float(os.getenv("AI_TRIAL_SCHEDULE_DAILY_USD", "0") or 0)
+AI_TRIAL_SCHEDULE_RUNS = float(os.getenv("AI_TRIAL_SCHEDULE_RUNS", "2") or 0)
+# Every call the schedule's generation makes: the week, the owner's words
+# read into rules, the note and the critic.
+SCHEDULE_ACTIONS = ("labor_schedule", "schedule_rule_extract", "schedule_note", "schedule_critic")
+
+
+def trial_schedule_daily_budget() -> float:
+    """A trial's schedule allowance for the day: AI_TRIAL_SCHEDULE_DAILY_USD,
+    never below AI_TRIAL_SCHEDULE_RUNS of the labor_schedule run cap (0 when
+    AI_TRIAL_SCHEDULE_RUNS is 0 and no allowance is set)."""
+    floor = 0.0
+    if AI_TRIAL_SCHEDULE_RUNS > 0:
+        try:
+            import ai_workflows as _wf_b
+            floor = AI_TRIAL_SCHEDULE_RUNS * float(_wf_b.POLICIES["labor_schedule"].caps.usd)
+        except Exception:
+            floor = AI_TRIAL_SCHEDULE_RUNS * 6.0
+    return max(AI_TRIAL_SCHEDULE_DAILY_USD, floor)
+
+
+# The action of the call being checked (create_with_retry sets it around
+# its budget check): a trial's schedule call answers to its own allowance.
+_BUDGET_ACTION = contextvars.ContextVar("cavnar_ai_budget_action", default=None)
 
 # Every trial together (owner decision, 9/29/26). The ceilings above bound
 # one trial; nothing bounded how many there are, so a provisioning bug, a
@@ -406,7 +439,8 @@ _PLACES_ROW_SQL = "(vendor='google_places' OR COALESCE(model,'') LIKE 'google-pl
 _AI_ROW_SQL = "(COALESCE(vendor,'') <> 'google_places' AND COALESCE(model,'') NOT LIKE 'google-places%')"
 
 
-def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, scope="ai", trials_only=False):
+def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, scope="ai", trials_only=False,
+                 actions=None):
     """Spend since `sql_window` for one budget scope.
 
     scope "ai" — Claude and Perplexity. A restaurant's own figure leaves out
@@ -423,6 +457,9 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, 
         _ensure_usage_schema(conn, path)
         where = "WHERE created_at >= ? AND " + (_PLACES_ROW_SQL if scope == "places" else _AI_ROW_SQL)
         params = [sql_window]
+        if actions:
+            where += " AND action IN (" + ",".join("?" for _a in actions) + ")"
+            params += list(actions)
         if restaurant_id is not None:
             where += " AND restaurant_id=?"
             params.append(restaurant_id)
@@ -474,7 +511,8 @@ def _prune_budget_cache(current_windows):
                 _budget_cache.pop(key, None)
 
 
-def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False, scope="ai", trials_only=False):
+def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False, scope="ai", trials_only=False,
+                  actions=None):
     now = time.time()
     with _budget_lock:
         hit = _budget_cache.get(cache_key)
@@ -483,7 +521,7 @@ def _cached_spend(cache_key, sql_window, restaurant_id, db_path, paid_only=False
     # The read runs outside the lock: a SUM over the ledger must not hold
     # every other call's budget check.
     spend = _spend_since(sql_window, restaurant_id, db_path, paid_only=paid_only, scope=scope,
-                         trials_only=trials_only)
+                         trials_only=trials_only, actions=actions)
     with _budget_lock:
         _budget_cache[cache_key] = (now, spend)
     return spend
@@ -506,6 +544,24 @@ def _resets_at(scope_window):
     return nxt.isoformat(timespec="seconds")
 
 
+# A month's spend is projected to its end once this many days of it have
+# passed (re-audit 10/11/26 AI-19): earlier, one busy day reads as a month.
+AI_BUDGET_FORECAST_MIN_DAYS = float(os.getenv("AI_BUDGET_FORECAST_MIN_DAYS", "3"))
+
+
+def month_forecast(spend, now=None):
+    """The month's spend projected to its end at the rate so far (UTC), or
+    None before AI_BUDGET_FORECAST_MIN_DAYS of it have passed."""
+    import calendar
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc)
+    days = calendar.monthrange(now.year, now.month)[1]
+    elapsed = (now.day - 1) + (now.hour * 3600 + now.minute * 60 + now.second) / 86400.0
+    if elapsed < AI_BUDGET_FORECAST_MIN_DAYS or elapsed <= 0:
+        return None
+    return round(float(spend or 0) * days / elapsed, 2)
+
+
 def _finish_status(out):
     for k, v in out.items():
         if not isinstance(v, dict) or "budget" not in v:
@@ -514,6 +570,13 @@ def _finish_status(out):
         v["pct"] = round((v["spend"] / v["budget"]) * 100, 1) if v["budget"] else 0.0
         # The warning line (#122): an issue before the ceiling stops anything.
         v["warn"] = bool(v["budget"]) and v["pct"] >= AI_BUDGET_WARN_PCT
+        # Where a month is heading (AI-19): the platform pool pages on the
+        # forecast, so a fleet growing into its ceiling is seen weeks before
+        # the 80% line — not on the day it would stop every client.
+        if "month" in k:
+            f = month_forecast(v["spend"])
+            v["forecast"] = f
+            v["forecast_over"] = bool(v["budget"]) and f is not None and f >= v["budget"]
     return out
 
 
@@ -563,6 +626,14 @@ def ai_budget_status(restaurant_id=None, db_path=None):
             pass
         out["day"] = {"spend": _cached_spend((restaurant_id, day), day, restaurant_id, db_path),
                       "budget": daily, "resets_at": _resets_at("day")}
+        if tier == TIER_TRIAL and trial_schedule_daily_budget() > 0:
+            # The schedule's own day (AI-20); the day above is then the rest
+            # of the trial's AI.
+            sched = _cached_spend((("schedule", restaurant_id), day), day, restaurant_id, db_path,
+                                  actions=SCHEDULE_ACTIONS)
+            out["schedule_day"] = {"spend": sched, "budget": trial_schedule_daily_budget(),
+                                   "resets_at": _resets_at("day")}
+            out["day"]["spend"] = max(0.0, out["day"]["spend"] - sched)
         out["month"] = {"spend": _cached_spend((restaurant_id, month), month, restaurant_id, db_path),
                         "budget": monthly, "resets_at": _resets_at("month")}
         out["tier"] = tier
@@ -660,7 +731,10 @@ def ai_budget_exceeded(restaurant_id=None, db_path=None, trigger=None):
         day_label, month_label = _TIER_LABELS.get(status.get("tier") or TIER_PAID, _TIER_LABELS[TIER_PAID])
         scopes = [("global_month", "monthly budget across all clients")]
         if trigger != "admin":
-            scopes += [("day", day_label), ("month", month_label)]
+            day_scope = "day"
+            if status.get("schedule_day") is not None and _BUDGET_ACTION.get() in SCHEDULE_ACTIONS:
+                day_scope, day_label = "schedule_day", "daily schedule budget for trial accounts"
+            scopes += [(day_scope, day_label), ("month", month_label)]
             if restaurant_id is not None and status.get("tier") == TIER_TRIAL:
                 scopes += list(_TRIAL_POOL_SCOPES.items())
         for scope, label in scopes:
@@ -729,6 +803,10 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
     a ceiling, once per scope per window. Cheap: nothing is read or written
     until a window is actually past the line, and a window already claimed in
     this process is skipped without touching the database."""
+    entry = (status or {}).get("global_month")
+    if vendor == "anthropic" and isinstance(entry, dict) and entry.get("forecast_over") \
+            and not entry.get("warn") and not entry.get("over"):
+        _note_forecast(entry)
     for scope, entry in (status or {}).items():
         if not isinstance(entry, dict) or not entry.get("warn") or entry.get("over"):
             continue
@@ -768,6 +846,33 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
                                           f"{int(AI_BUDGET_WARN_PCT)}%",
                   [f"Monthly spend across all paying clients is {detail}.",
                    "At 100% every AI call is refused until the month resets."])
+
+
+def _note_forecast(entry):
+    """Page once a month when the platform pool's month is projected past
+    its ceiling (AI-19) — what to raise, and by when."""
+    period = _budget_period("global_forecast", None)
+    memo = ("anthropic", period)
+    if memo in _warned_memo:
+        return
+    if len(_warned_memo) >= _WARNED_MEMO_MAX:
+        _warned_memo.clear()
+    _warned_memo.add(memo)
+    try:
+        import ops
+        if not ops.claim_period("ai_budget_forecast:anthropic", period):
+            return
+    except Exception:
+        return
+    detail = (f"global_month projected at ${float(entry.get('forecast') or 0):,.2f} against a "
+              f"${float(entry.get('budget') or 0):,.2f} ceiling (${float(entry.get('spend') or 0):,.2f} so far)")
+    record_health_event("anthropic", "budget_forecast", scope="global_month", detail=detail)
+    _page("budget_forecast:anthropic", "Cavnar AI: the platform AI budget is projected to run out this month",
+          [f"At this month's rate, spend across all paying clients reaches the ceiling before the month ends: "
+           f"{detail}.",
+           "At 100% every AI call is refused for every client until the month resets. The ceiling is "
+           "AI_GLOBAL_PER_CLIENT_USD a paying client (floor AI_GLOBAL_MONTHLY_BUDGET_USD); raise it, or find what "
+           "is spending in the admin console → Operations → AI."])
 
 
 # ── the spend-rate runaway detector (scheduler audit 10/10/26, SCALE-11) ──
@@ -992,6 +1097,9 @@ def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None, actio
             pool_cached = any(k[0] == "trial_pool" for k in _budget_cache)
         if restaurant_id is not None and pool_cached and _budget_tier(restaurant_id) == TIER_TRIAL:
             scopes += ("trial_pool",)
+        # A schedule call moves the trial's schedule day too (AI-20).
+        if restaurant_id is not None and action in SCHEDULE_ACTIONS:
+            scopes += (("schedule", restaurant_id),)
     # One read-add-write under the lock (#90): two calls finishing at once
     # each read the same total and the second write dropped the first's cost.
     with _budget_lock:
@@ -1083,6 +1191,28 @@ def _breaker_publish(provider):
 
 class AIProviderDown(RuntimeError):
     """Raised instead of calling a provider that just failed repeatedly."""
+
+
+class AINotConfigured(AIProviderDown):
+    """No API key (or other credential) is configured for the provider on
+    this server: no call is sent (scheduler re-audit 10/11/26 SCALE-30). An
+    AIProviderDown, so every caller that already treats the model as
+    unavailable does so; a call site that says why (the schedule's fallback,
+    STRESS-23) reads it as a configuration problem, never "the model failed
+    partway"."""
+
+
+def client_unconfigured(client) -> bool:
+    """Whether `client` is an Anthropic SDK client with no credential to
+    send: no api_key and no auth_token (get_client builds one from an empty
+    ANTHROPIC_API_KEY). A test double or any other object is never
+    "unconfigured" — only the SDK's own clients are judged."""
+    try:
+        if not type(client).__module__.startswith("anthropic"):
+            return False
+        return not (getattr(client, "api_key", None) or getattr(client, "auth_token", None))
+    except Exception:
+        return False
 
 
 # How long one probe may hold the half-open breaker before another caller is
@@ -1463,6 +1593,37 @@ def model_for(purpose: str) -> str:
     """The model a call site uses: its env override if set, else its default."""
     env, default = MODELS[purpose]
     return os.getenv(env, default)
+
+
+# A call site's default that is a tier's NEW model, and that tier (scheduler
+# re-audit 10/11/26 AI-26): while ai_workflows holds the tier to the canary
+# restaurants (AI_TIER_CANARY), so is the call site's default — the
+# schedule's rule extraction (which can create hard rules) and its note
+# defaulted to Haiku 5.5 for every restaurant, around the canary the
+# platform uses for T1 everywhere else.
+_CANARIED_DEFAULTS = {HAIKU_55: "T1"}
+
+
+def model_for_run(purpose: str, restaurant_id=None) -> str:
+    """model_for for one restaurant's call: the env override when set;
+    else the default — or, when the default is a canaried tier's new model
+    (_CANARIED_DEFAULTS) and `restaurant_id` is outside the canary (or the
+    call is for no one restaurant), the tier's previous model, as
+    ai_workflows routes that tier."""
+    env, default = MODELS[purpose]
+    pinned = os.getenv(env)
+    if pinned:
+        return pinned
+    tier = _CANARIED_DEFAULTS.get(default)
+    if tier is None:
+        return default
+    try:
+        import ai_workflows as _wf_m
+        if _wf_m.tier_canaried(tier) and not _wf_m._in_canary(restaurant_id):
+            return _wf_m._previous_tier_models().get(tier) or default
+    except Exception as e:
+        log.warning("canary not read for %s: %s", purpose, e)
+    return default
 
 
 _clients = {}
@@ -2256,10 +2417,25 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
         log_blocked(restaurant_id, action, model, "deadline", detail="the job's time ran out before the call",
                     **attribution)
         raise CallDeadlineExceeded("no time was left for this call")
+    # No credential on this server (a local backend, an eval box, a worker
+    # started without its keys — re-audit 10/11/26 SCALE-30): nothing is
+    # sent. It used to go out and come back "Could not resolve
+    # authentication method" (a TypeError from the SDK), logged as a
+    # provider error — twice per generation — so error-rate and quality
+    # dashboards counted a key-less environment as the provider failing.
+    # A zero-cost 'blocked' row (no_key) and a typed AINotConfigured, which
+    # callers already treat as the model being unavailable.
+    if client_unconfigured(client):
+        log_blocked(restaurant_id, action, model, "no_key", detail="ANTHROPIC_API_KEY is not set", **attribution)
+        raise AINotConfigured("Cavnar AI's model isn't configured on this server.")
     # One positional argument: callers and tests replace this function with
     # their own; it reads the trigger itself (an admin's call answers only
     # to the global pool, #148).
-    over = ai_budget_exceeded(restaurant_id)
+    _act_token = _BUDGET_ACTION.set(action)
+    try:
+        over = ai_budget_exceeded(restaurant_id)
+    finally:
+        _BUDGET_ACTION.reset(_act_token)
     if over:
         _record_budget_stop(over, restaurant_id)
         log_blocked(restaurant_id, action, model, "budget", detail=over, **attribution)

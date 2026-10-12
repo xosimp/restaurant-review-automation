@@ -215,7 +215,8 @@ POLICIES = {p.workflow: p for p in (
     # rules engine: its fill in code runs first, and only a gate that still
     # trips after it (rule_breach) sends the gate's days to T4 — that
     # rewrite IS the escalation, with the gate's reasons as its notes.
-    # schedule_engine.hard_week_reasons pre-routes a hard week to T4; a
+    # schedule_engine.hard_week_reasons pre-routes a hard week to T4 only
+    # on an eval verdict for that kind of week (re-audit 10/11/26 AI-27); a
     # SCHEDULE_MODEL env pin skips the ladder (schedule_engine.
     # schedule_route). Caps: a week's planned calls, the generation's own
     # MAX_EXTRA_CALLS (8) retries and splits, and the gate's rewrite with
@@ -225,7 +226,8 @@ POLICIES = {p.workflow: p for p in (
        caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background", batch=True,
        context=("profile", "owner_rules", "roster", "sales_trend", "labor_trend", "events", "weather",
                 "memory", "data_state"),
-       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder; "
+       note="a hard week starts on T4 only where an eval verdict backs it (schedule_engine.hard_week_reasons, "
+            "schedule_eval.tag_evidence); a SCHEDULE_MODEL pin skips the ladder; "
             "the unattended auto-draft's first call goes through Message Batches (schedule_batch), a press never"),
     # The schedule's two small calls (scheduler audit 10/10/26): the owner's
     # words read into typed rules (owner_rules — every proposed rule
@@ -599,7 +601,9 @@ def route_for(pol: Policy, step: int = 0, start: str | None = None, restaurant_i
         if not pol.purpose:
             raise ValueError(f"{pol.workflow}: '{DEFAULT}' has no call-site model to run on")
         import ai_utils as _ai
-        return Route(tier=DEFAULT, model=_ai.model_for(pol.purpose))
+        # The call site's own model, held to a canaried tier like the tier
+        # itself (re-audit 10/11/26 AI-26).
+        return Route(tier=DEFAULT, model=_ai.model_for_run(pol.purpose, restaurant_id))
     t = _tier_table(restaurant_id).get(tier)
     if t is None:
         raise ValueError(f"{pol.workflow}: tier {tier!r} has no model")
