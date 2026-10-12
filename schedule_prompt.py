@@ -85,8 +85,8 @@ def _mdy_to_date(m):
 
 def iso_dates(text) -> str:
     """`text` with every M/D/YY date written as weekday and ISO date, except
-    inside a fence: people's own words (between UNTRUSTED_GUEST_TEXT or
-    OWNER_RULE markers) are theirs and stay as written. Code-built lines
+    inside a fence: people's own words (between UNTRUSTED_GUEST_TEXT,
+    OWNER_RULE or MANAGER_NOTE markers) are theirs and stay as written. Code-built lines
     shared with owner-facing screens ("rain nights here ran 18% below a
     typical one (measured 4 times, last 9/12/26)") carry M/D/YY there and
     the one model format here (PR-20). A weekday already in front of the
@@ -95,6 +95,7 @@ def iso_dates(text) -> str:
     text = str(text or "")
     fences = re.compile("(" + re.escape(ai_guard.UNTRUSTED_OPEN) + ".*?" + re.escape(ai_guard.UNTRUSTED_CLOSE)
                         + "|" + re.escape(ai_guard.OWNER_RULE_OPEN) + ".*?" + re.escape(ai_guard.OWNER_RULE_CLOSE)
+                        + "|" + re.escape(ai_guard.MANAGER_NOTE_OPEN) + ".*?" + re.escape(ai_guard.MANAGER_NOTE_CLOSE)
                         + ")", re.S)
     out = []
     for i, part in enumerate(fences.split(text)):
