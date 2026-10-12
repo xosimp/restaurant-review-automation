@@ -10698,10 +10698,18 @@ def move_shift_section(restaurant_id: int, date: str, shift_start: str, from_nam
     own = conn is None
     conn = conn or get_conn(db_path)
     try:
-        cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=? "
+        # The new holder's own row for that shift, if any, gives way to the
+        # moving one (what UPDATE OR REPLACE did — said in portable SQL,
+        # Postgres has no OR REPLACE on an UPDATE: blind re-audit SCALE-10).
+        key = (restaurant_id, str(date or "")[:10], _av_key(from_name), shift_section_start(shift_start))
+        if _av_key(to_name) != _av_key(from_name) and conn.execute(
+                "SELECT 1 FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? "
+                "AND shift_start=?", key).fetchone():
+            conn.execute("DELETE FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? "
+                         "AND shift_start=?", (key[0], key[1], _av_key(to_name), key[3]))
+        cur = conn.execute("UPDATE shift_sections SET employee_key=?, employee_name=? "
                            "WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
-                           (_av_key(to_name), " ".join(str(to_name or "").split()), restaurant_id,
-                            str(date or "")[:10], _av_key(from_name), shift_section_start(shift_start)))
+                           (_av_key(to_name), " ".join(str(to_name or "").split())) + key)
         if own:
             conn.commit()
         return cur.rowcount > 0

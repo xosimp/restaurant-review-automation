@@ -589,8 +589,7 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
     ]:
         try:
-            import sqlite3 as _sql
-            conn_m = _sql.connect(db_path)
+            conn_m = boot_conn(db_path)
             conn_m.execute(col_sql)
             conn_m.commit()
             conn_m.close()
@@ -601,8 +600,7 @@ def init_auth(db_path: str = DB_PATH):
     # with users.role's column default 'client', which is what the session
     # fell back to whenever no active membership resolved (SEC-1, SEC-29).
     try:
-        import sqlite3 as _sql_bf
-        conn_bf = _sql_bf.connect(db_path)
+        conn_bf = boot_conn(db_path)
         conn_bf.execute("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
                         "AND (role IS NULL OR role='client')")
         conn_bf.commit()

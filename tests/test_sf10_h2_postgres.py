@@ -34,11 +34,15 @@ def _tr(pks=None, cols=None):
      "SELECT * FROM t WHERE created_at < to_char((timezone('UTC', now()) + CAST(%s AS interval)), "
      "'YYYY-MM-DD HH24:MI:SS')"),
     ("SELECT date('now', '-7 days')", "SELECT to_char((timezone('UTC', now()) + interval '-7 days'), 'YYYY-MM-DD')"),
-    ("SELECT datetime(x)", "SELECT to_char(CAST(x AS timestamp), 'YYYY-MM-DD HH24:MI:SS')"),
-    ("UPDATE jobs SET n=MAX(0, n-1)", "UPDATE jobs SET n=GREATEST(0, n-1)"),
+    # A text stamp is read through cavnar_ts: NULL for '' or no date, as
+    # SQLite's datetime('') is (blind re-audit 10/11/26, SCALE-9).
+    ("SELECT datetime(x)", "SELECT to_char(cavnar_ts(CAST(x AS text)), 'YYYY-MM-DD HH24:MI:SS')"),
+    # SQLite's scalar MAX(a, b) is NULL when an argument is; GREATEST is not.
+    ("UPDATE jobs SET n=MAX(0, n-1)", "UPDATE jobs SET n=(SELECT CASE WHEN COUNT(_v) < COUNT(*) THEN NULL "
+     "ELSE MAX(_v) END FROM (VALUES (0), (n-1)) AS _m(_v))"),
     ("SELECT MAX(n) FROM t", "SELECT MAX(n) FROM t"),
     ("SELECT IFNULL(a, 0), INSTR(a, 'x') FROM t", "SELECT COALESCE(a, 0), STRPOS(a, 'x') FROM t"),
-    ("SELECT name FROM t WHERE name LIKE '%a%'", "SELECT name FROM t WHERE name ILIKE '%%a%%'"),
+    ("SELECT name FROM t WHERE name LIKE '%a%'", "SELECT name FROM t WHERE name ILIKE '%%a%%' ESCAPE ''"),
     ("SELECT * FROM t LIMIT -1", "SELECT * FROM t LIMIT ALL"),
     ("SELECT CURRENT_TIMESTAMP", "SELECT to_char(timezone('UTC', now()), 'YYYY-MM-DD HH24:MI:SS')"),
 ])
@@ -49,7 +53,7 @@ def test_statements_translate(sqlite, pg):
 def test_epoch_julianday_and_week_formats_keep_sqlites_answers():
     tr = _tr()
     out = tr.translate("SELECT CAST(strftime('%s', deadline_at) AS INTEGER) FROM t")
-    assert "floor(extract(epoch from CAST(deadline_at AS timestamp)))" in out
+    assert "floor(extract(epoch from cavnar_ts(CAST(deadline_at AS text))))" in out
     assert "2440587.5" in tr.translate("SELECT julianday('now') - julianday(created_at) FROM t")
     week = tr.translate("SELECT strftime('%Y-W%W', d) FROM t")
     assert "'YYYY-\"W\"'" in week and "extract(doy from" in week and "lpad(" in week
@@ -78,8 +82,12 @@ def test_rowid_glob_and_json():
     assert "ctid" in tr.translate("DELETE FROM pos_tickets WHERE rowid IN (SELECT rowid FROM pos_tickets LIMIT 5)")
     g = tr.translate("SELECT 1 FROM t WHERE d GLOB '[0-9][0-9]-*' AND e NOT GLOB '?x' AND f GLOB ?")
     assert "d ~ '^[0-9][0-9]\\-.*$'" in g and "e !~ '^.x$'" in g and "f LIKE replace(replace(%s" in g
+    # Selected as a column it keeps its JSON type (the driver hands back the
+    # number / string it holds); compared, its text.
     j = tr.translate("SELECT json_extract(meta, '$.a.b') FROM t")
-    assert "(CAST(meta AS jsonb) #>> '{a,b}')" in j
+    assert "(CAST(meta AS jsonb) #> '{a,b}')" in j
+    j = tr.translate("SELECT 1 FROM t WHERE json_extract(meta, '$.a.b') = ?")
+    assert "(CAST(meta AS jsonb) #>> '{a,b}') = %s" in j
 
 
 def test_ddl_types_and_defaults():
@@ -120,6 +128,10 @@ class _RawCursor:
                           for i, c in enumerate(self.raw.tables.get(t, []))]
             self.description = [("column_name",), ("data_type",), ("is_nullable",), ("column_default",),
                                  ("ordinal_position",)]
+        elif "indisunique" in sql:
+            t = params[0]
+            self._rows = [(f"{t}_pkey", ["id"], True)] if "id" in self.raw.tables.get(t, []) else []
+            self.description = [("indexrelid",), ("cols",), ("pk",)]
         elif "pg_index" in sql:
             t = params[0]
             self._rows = [("id",)] if "id" in self.raw.tables.get(t, []) else []
@@ -173,7 +185,12 @@ def test_a_pg_connection_reads_like_sqlite(pg):
     assert row[0] == 7 and row["name"] == "seven" and row["NAME"] == "seven" and dict(row) == {"n": 7, "Name": "seven"}
     assert raw.log[-1] == ("SELECT n, name FROM jobs WHERE id=%s", (1,))
     cur = conn.execute("INSERT INTO jobs (kind) VALUES (?)", ("x",))
-    assert cur.lastrowid == 41 and raw.log[-1][0].endswith("RETURNING id")
+    # Inside the transaction the SELECT opened: under its own savepoint
+    # (SQLite's statement atomicity, SCALE-5/8).
+    sent = [s for s, _p in raw.log if not s.startswith(("SAVEPOINT", "RELEASE", "SELECT column_name", "SELECT a.attname",
+                                                          "SELECT i.indexrelid"))]
+    assert cur.lastrowid == 41 and sent[-1].endswith("RETURNING id")
+    assert [s for s, _p in raw.log[-3:]] == ["SAVEPOINT cavnar_stmt", sent[-1], "RELEASE SAVEPOINT cavnar_stmt"]
     assert conn.execute("INSERT INTO pairs (a, b) VALUES (?, ?)", (1, 2)).lastrowid is None
     assert conn.execute("UPDATE jobs SET kind='y'").rowcount == 3
 
@@ -181,7 +198,7 @@ def test_a_pg_connection_reads_like_sqlite(pg):
 def test_begin_immediate_takes_the_one_writer_lock_and_pragmas_answer(pg):
     conn, raw = pg
     conn.execute("BEGIN IMMEDIATE")
-    assert raw.log[-1] == ("SELECT pg_advisory_xact_lock(%s)", (db_dialect.WRITE_LOCK_KEY,))
+    assert ("SELECT pg_advisory_xact_lock(%s)", (db_dialect.WRITE_LOCK_KEY,)) in raw.log
     assert conn.in_transaction
     conn.execute("COMMIT")
     assert raw.commits == 1 and not conn.in_transaction

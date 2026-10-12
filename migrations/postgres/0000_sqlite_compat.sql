@@ -28,3 +28,14 @@ CREATE OR REPLACE FUNCTION cavnar_ts(v text) RETURNS timestamp
     SELECT CASE WHEN v ~ '^\s*[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([ T]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?)?\s*(Z|[+-][0-9]{2}(:?[0-9]{2})?)?\s*$'
                 THEN timezone('UTC', CAST(v AS timestamptz)) END
 $$;
+
+-- cav_name_key: staff_settings.name_key, the one rule that makes a typed
+-- name one person (whitespace collapsed, case folded). On SQLite people.py
+-- registers the Python function per connection; on Postgres it is this
+-- (db_dialect.SQL_PORTED_FUNCTIONS). Python's casefold() also folds a few
+-- characters lower() keeps (German ß): names differing only there match in
+-- Python and not here.
+CREATE OR REPLACE FUNCTION cav_name_key(v text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT lower(regexp_replace(btrim(coalesce(v, ''), E' \t\n\r\f\v'), E'[\\s]+', ' ', 'g'))
+$$;

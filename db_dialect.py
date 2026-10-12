@@ -90,6 +90,10 @@ PARTITIONED = {
     "schedule_model_calls": "created_at",
 }
 
+# Python functions the app registers on SQLite connections, defined in SQL
+# on Postgres (0000_sqlite_compat.sql).
+SQL_PORTED_FUNCTIONS = {"cav_name_key"}
+
 WRITE_LOCK_KEY = 7310042026          # the advisory lock BEGIN IMMEDIATE takes
 
 _TS_FMT = "'YYYY-MM-DD HH24:MI:SS'"
@@ -981,6 +985,15 @@ def _map_error(e):
             "NotNullViolation" in name or "CheckViolation" in name:
         return sqlite3.IntegrityError(str(e))
     msg = str(e)
+    # SQLite's own wording first, so `"duplicate column" in str(e)` and
+    # `"no such table" in str(e)` tests across the app keep meaning what
+    # they meant; Postgres's message follows.
+    if "DuplicateColumn" in name:
+        return sqlite3.OperationalError(f"duplicate column name: {msg}")
+    if "DuplicateTable" in name or "DuplicateObject" in name:
+        return sqlite3.OperationalError(f"table already exists: {msg}")
+    if "UndefinedColumn" in name:
+        return sqlite3.OperationalError(f"no such column: {msg}")
     if "UndefinedTable" in name or "does not exist" in msg:
         return sqlite3.OperationalError(f"no such table or column: {msg}")
     return sqlite3.OperationalError(msg)
@@ -1212,6 +1225,9 @@ class PgConnection:
             return cur
         if _CREATE_TABLE.match(sql):
             return self._create_table(sql, cur)
+        m = _UPDATE_OR.match(sql)
+        if m:
+            return self._update_or_ignore(m, sql, params, cur)
         try:
             text, returning = _translate_cached(self, sql)
         except TranslationError as e:
@@ -1221,6 +1237,35 @@ class PgConnection:
             got = cur.fetchone()
             cur.lastrowid = got[0] if got else None
             cur._rows, cur._pos = [], 0
+        return cur
+
+    def _update_or_ignore(self, m, sql, params, cur):
+        """SQLite's UPDATE OR IGNORE: rows the change would make collide
+        with another on a unique key are left as they are, the rest
+        updated. Postgres has no such clause, so each matching row is
+        updated on its own, a collision skipped (statement-atomic per row).
+        UPDATE OR REPLACE (delete the row collided with) has no faithful
+        row-by-row form and is refused — its call sites say what to delete."""
+        if m.group(1).upper() != "IGNORE":
+            raise sqlite3.OperationalError("not translatable to Postgres: UPDATE OR REPLACE")
+        table = m.group(2)
+        toks = tokenize(sql)
+        where = next((i for i, t in enumerate(toks) if t.kind == "word" and t.upper == "WHERE"), None)
+        set_at = next(i for i, t in enumerate(toks) if t.kind == "word" and t.upper == "SET")
+        set_part = _render(toks[set_at + 1:where] if where is not None else toks[set_at + 1:])
+        n_set = sum(1 for t in toks[set_at + 1:(where if where is not None else len(toks))] if t.kind == "param")
+        params = tuple(params or ())
+        cond = _render(toks[where + 1:]) if where is not None else "1=1"
+        ids = [r[0] for r in self.execute(f"SELECT ctid FROM {table} WHERE {cond}", params[n_set:]).fetchall()]
+        n = 0
+        for ctid in ids:
+            try:
+                n += self.execute(f"UPDATE {table} SET {set_part} WHERE ctid = CAST(? AS tid)",
+                                  params[:n_set] + (ctid,)).rowcount or 0
+            except sqlite3.IntegrityError:
+                continue
+        cur._load()
+        cur.rowcount = n
         return cur
 
     def _final_text(self, sql):
@@ -1328,8 +1373,14 @@ class PgConnection:
         self._run(sql if params else sql.replace("%", "%%"), params, cur)
         return cur
 
-    def create_function(self, *a, **k):
-        raise sqlite3.NotSupportedError("custom SQL functions are SQLite-only")
+    def create_function(self, name, *a, **k):
+        """A Python function SQLite calls from SQL. The ones the app uses
+        exist on Postgres as SQL functions (SQL_PORTED_FUNCTIONS, created by
+        migrations/postgres/0000_sqlite_compat.sql): nothing to register.
+        Any other cannot run on Postgres and says so."""
+        if str(name).lower() in SQL_PORTED_FUNCTIONS:
+            return None
+        raise sqlite3.NotSupportedError(f"custom SQL function {name!r} has no Postgres form")
 
     def __enter__(self):
         return self
@@ -1362,6 +1413,8 @@ def _translate_cached(conn, sql):
         _TRANSLATIONS[key] = out
     return out
 
+
+_UPDATE_OR = re.compile(r"^\s*UPDATE\s+OR\s+(IGNORE|REPLACE)\s+(\"?[A-Za-z_]\w*\"?)\s+SET\b", re.I)
 
 # Foreign keys of tables created before the table they point at, per
 # database: {ALTER TABLE … ADD FOREIGN KEY …: table}.
