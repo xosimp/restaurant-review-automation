@@ -58,6 +58,7 @@ import traceback
 from dataclasses import dataclass, field
 
 import schedule_engine as se
+import schedule_time as _stime
 
 # The quality gate's passes after the first draft: the fill in code, then the
 # model's rewrite (each at most once). A loop over this, never a recursion.
@@ -575,8 +576,11 @@ def _stage_parse(job: GenerationRun, cand: Candidate, editable, kept_rows) -> _P
             continue
         # A row with no shift times, or a weekday where the role belongs, is
         # not a shift (owner, 9/26/26): dropped and counted, never saved.
+        # A start equal to its end ("5:00pm-5:00pm") is a typo, never a
+        # 24-hour shift (sched re-audit 10/11/26 BUGSGEN-19): unreadable.
         if (not (_row.get("shift_start") or "").strip() or not (_row.get("shift_end") or "").strip()
-                or (_row.get("role") or "").strip() in se._WEEKDAYS):
+                or (_row.get("role") or "").strip() in se._WEEKDAYS
+                or _stime.span(_row) is None):
             _dropped_rows.append(_line[:120])
             continue
         # The sweep's own ceiling (close_cap_minutes) with the rules the

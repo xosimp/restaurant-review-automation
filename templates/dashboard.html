@@ -44751,7 +44751,12 @@ function sfw2RuleCheck(chk) {
     h+='<div class="lb2-form" style="margin-top:0"><div class="ac-field w"><label>District</label><input class="ac-input" id="cmp-district" maxlength="80" value="'+esc(cal.district||'')+'"'+(ro?' disabled':'')+'></div>';
     var y0=yrs.length?yrs[yrs.length-1]:{};
     h+='<div class="ac-field"><label>First day of school</label><input class="ac-input" type="date" id="cmp-ystart" value="'+esc(y0.start||'')+'"'+(ro?' disabled':'')+'></div>';
-    h+='<div class="ac-field"><label>Last day</label><input class="ac-input" type="date" id="cmp-yend" value="'+esc(y0.end||'')+'"'+(ro?' disabled':'')+'></div></div>';
+    h+='<div class="ac-field"><label>Last day</label><input class="ac-input" type="date" id="cmp-yend" value="'+esc(y0.end||'')+'"'+(ro?' disabled':'')+'></div>';
+    // the bell times: 14-15 year olds may not work while school is in session
+    var shr=cal.hours||{};
+    h+='<div class="ac-field"><label>School starts</label><input class="ac-input" id="cmp-shstart" maxlength="10" placeholder="7:30am" value="'+esc(shr.start||'')+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>School ends</label><input class="ac-input" id="cmp-shend" maxlength="10" placeholder="3:30pm" value="'+esc(shr.end||'')+'"'+(ro?' disabled':'')+'></div></div>';
+    h+='<div class="cmp-src">14-15 year olds are kept off the schedule during school hours on a school day — '+(shr.start?esc(shr.start)+' to '+esc(shr.end):'7:30am to 3:30pm until you set your district’s bell times')+'.</div>';
     var br=(y0.breaks||[]).map(function(b){return b.start+' '+b.end+(b.label?' '+b.label:'');}).join('\n');
     h+='<div class="ac-field w"><label>Breaks, one a line: first-day last-day label (e.g. 2026-12-21 2027-01-01 Winter)</label><textarea class="ac-input" id="cmp-breaks" rows="3"'+(ro?' disabled':'')+'>'+esc(br)+'</textarea></div>';
     if(!ro)h+='<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary" onclick="cmpSaveCalendar(this)">Save the school year</button><span class="ac-status" id="cmp-cal-status"></span></div>';
@@ -44808,7 +44813,8 @@ function sfw2RuleCheck(chk) {
     for(i=0;i<keep.length;i++)years.push(keep[i]);
     if(s||e)years.push({start:s,end:e,breaks:breaks});
     var done=busy(btn);
-    jsend('/api/labor/compliance/school-calendar',{district:document.getElementById('cmp-district').value,years:years},function(d){done();if(!d.ok){toast(d.error||'Could not save that','error');return;}_cmp=d;cmpRender();toast('School year saved','success');});
+    var hs=document.getElementById('cmp-shstart').value,he=document.getElementById('cmp-shend').value;
+    jsend('/api/labor/compliance/school-calendar',{district:document.getElementById('cmp-district').value,years:years,hours:(hs||he)?{start:hs,end:he}:null},function(d){done();if(!d.ok){toast(d.error||'Could not save that','error');return;}_cmp=d;cmpRender();toast('School year saved','success');});
   };
   window.cmpDraftEstimate=function(btn){
     var who=btn.getAttribute('data-cmp-emp'),done=busy(btn,'Drafting…');

@@ -117,7 +117,7 @@ def test_a_minor_is_never_given_a_shift_past_their_band():
     not work past 7pm — the add move used to check availability only."""
     names = ["Ann", "Teen", "Kim"]
     c = cons(names, minors={"teen"}, minor_bands={"teen": "14-15"})
-    rows = [row(TUE, "Ann", "5:00pm", "11:00pm"), row(MON, "Teen", "3:00pm", "6:00pm"), row(MON, "Kim", "5:00pm", "11:00pm")]
+    rows = [row(TUE, "Ann", "5:00pm", "11:00pm"), row(MON, "Teen", "3:30pm", "6:30pm"), row(MON, "Kim", "5:00pm", "11:00pm")]
     sig = _sig(names, typical_headcount={("Tuesday", "night"): {"Server": 3}})
     res = so.optimize(rows, {}, signals=sig, constraints=c)
     assert not _on(res["rows"], "Teen", TUE)

@@ -957,14 +957,11 @@ class Problem:
                 return _rules.LABELS["role_not_held"]
             if not drafted and c.training_row(dict(r, employee=name)):
                 return "would be a training shift"
-            if low in c.minors:
-                latest, _label = _rules.minor_latest(c, low, u.date)
-                e_m, s_m = _rules.end_minutes(r), _rules.start_minutes(r)
-                if latest is not None and e_m is not None and e_m > latest:
-                    return _rules.LABELS["minor_late"]
-                earliest = _rules.minor_earliest(c, low)
-                if earliest is not None and s_m is not None and s_m < earliest:
-                    return _rules.LABELS["minor_early"]
+            # a minor's time-of-day limits — late, early, school hours — by
+            # the sweep's one rule (STRESS-5)
+            why = _rules.minor_row_breach(c, low, r, u.date)
+            if why:
+                return why
             ok, why = c.rest_ok(name, r, [])
             if not ok:
                 return why
