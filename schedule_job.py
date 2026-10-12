@@ -512,7 +512,7 @@ class _PassContext:
         self.added_dates = {}
         self.extended_dates = {}
         self.trimmed_dates = {}
-        self.pizza_added_dates = {}
+        self.floor_added_dates = {}
         self.split = {"hourly": None, "salaried": None}
 
 
@@ -778,7 +778,7 @@ def _stage_repair(job: GenerationRun, cand: Candidate, ctx: _PassContext, editab
     se._apply_repair_reports(result, loop)
     ctx.hours_added = round(float((loop.get("hours_added") or {}).get("top_up") or 0.0), 1)
     ctx.added_dates = dict((loop.get("rows_added") or {}).get("top_up") or {})
-    ctx.pizza_added_dates = dict((loop.get("rows_added") or {}).get("floors") or {})
+    ctx.floor_added_dates = dict((loop.get("rows_added") or {}).get("floors") or {})
     ctx.trimmed_dates = dict(loop.get("section_cap_dates") or {})
     print(f"[schedule] repair loop: {loop['cycles']} cycle(s), "
           f"{'converged' if loop['converged'] else 'stopped at its bound'}, {len(loop['fixes'])} fixes, "
@@ -1429,7 +1429,7 @@ def _stage_payload(cand: Candidate, ctx: _PassContext) -> None:
         backstop_added_dates=ctx.added_dates,
         backstop_extended_dates=ctx.extended_dates,
         backstop_trimmed_dates=ctx.trimmed_dates,
-        backstop_pizza_added_dates=ctx.pizza_added_dates,
+        backstop_floor_added_dates=ctx.floor_added_dates,
         trimmed=result.get("trimmed") or [],
         hours_trimmed=result.get("hours_trimmed") or 0.0,
         staggered=result.get("staggered") or [],
