@@ -12,7 +12,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import DB_PATH, get_conn
+from models import DB_PATH, get_conn, boot_conn
 
 # ── Schema extension ──────────────────────────────────────────────────────────
 
@@ -474,7 +474,7 @@ def init_auth(db_path: str = DB_PATH):
     # ran in the opposite order, so every ALTER silently failed against a
     # not-yet-existing table and CREATE TABLE IF NOT EXISTS then created users/
     # sessions missing role, google_id, and active_restaurant_id entirely.
-    conn = sqlite3.connect(db_path)
+    conn = boot_conn(db_path)
     conn.executescript(AUTH_SCHEMA)
     conn.commit()
     conn.close()
@@ -618,7 +618,7 @@ def init_auth(db_path: str = DB_PATH):
     # can never log in again, regardless of what's typed. Idempotent — a
     # no-op once every username is already lowercase, safe to run every boot.
     try:
-        conn_n = sqlite3.connect(db_path)
+        conn_n = boot_conn(db_path)
         conn_n.execute("UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)")
         conn_n.commit()
         conn_n.close()
@@ -627,7 +627,7 @@ def init_auth(db_path: str = DB_PATH):
 
     # Indexes last: they name columns the ALTERs above add.
     try:
-        conn_i = sqlite3.connect(db_path)
+        conn_i = boot_conn(db_path)
         conn_i.executescript(AUTH_INDEXES)
         conn_i.commit()
         conn_i.close()
@@ -644,7 +644,7 @@ def init_auth(db_path: str = DB_PATH):
     # (two_fa_challenges replaced them); blank any value left from before so
     # no live code sits in the file or in a backup of it.
     try:
-        conn_2fa = sqlite3.connect(db_path)
+        conn_2fa = boot_conn(db_path)
         conn_2fa.execute("UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
                          "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
         conn_2fa.commit()
@@ -693,7 +693,7 @@ def normalize_session_rows(db_path: str = DB_PATH) -> dict:
     Returns the row counts, for the test."""
     out = {"expiry_fixed": 0, "view_as_ended": 0, "internal_capped": 0}
     try:
-        conn = sqlite3.connect(db_path)
+        conn = boot_conn(db_path)
         try:
             cur = conn.execute(
                 "UPDATE sessions SET expires_at=COALESCE(strftime('%Y-%m-%d %H:%M:%S', expires_at), expires_at) "
@@ -877,7 +877,7 @@ def ensure_active_name_index(db_path: str = DB_PATH) -> bool:
     names) rather than repaired, because which of the two is the real person
     is an owner's call — the code-level checks still hold every new write."""
     try:
-        conn = sqlite3.connect(db_path)
+        conn = boot_conn(db_path)
         try:
             conn.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS {ACTIVE_NAME_INDEX} ON memberships"
@@ -890,7 +890,7 @@ def ensure_active_name_index(db_path: str = DB_PATH) -> bool:
     except Exception as exc:
         dupes = ""
         try:
-            conn = sqlite3.connect(db_path)
+            conn = boot_conn(db_path)
             try:
                 dupes = "; ".join(f"rid={r[0]} {r[1]!r} x{r[2]}" for r in conn.execute(
                     "SELECT restaurant_id, lower(trim(employee_name)), COUNT(*) FROM memberships "

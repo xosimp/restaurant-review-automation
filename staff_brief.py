@@ -82,8 +82,8 @@ def _conn(db_path=None):
 
 
 def init_staff_brief(db_path=DB_PATH):
-    import sqlite3
-    conn = sqlite3.connect(db_path)
+    import models
+    conn = models.boot_conn(db_path)
     try:
         for ddl in _DDL:
             conn.execute(ddl)

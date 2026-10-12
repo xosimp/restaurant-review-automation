@@ -29,7 +29,14 @@ SCHEDULER_STALE_MINUTES = _jobs_registry.HEARTBEAT_STALE_MINUTES
 
 
 def _conn(db_path=None):
-    c = sqlite3.connect(db_path or DB_PATH)
+    import models
+    path = db_path or DB_PATH
+    if path == models.DB_PATH and models._db_backend() == "postgres":
+        # The platform's database on Postgres: the status, the heartbeat
+        # and the incidents live there, never in the volume's idle SQLite
+        # file (blind re-audit 10/11/26, SCALE-10).
+        return models.get_conn()
+    c = sqlite3.connect(path)
     c.row_factory = sqlite3.Row
     return c
 

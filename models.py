@@ -1177,6 +1177,24 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def boot_conn(db_path: str = DB_PATH):
+    """The connection a boot migration (init_db, init_auth, the init_*
+    chain) writes through: a plain sqlite3 connection to `db_path` — or,
+    when `db_path` is the platform's database and that lives on Postgres,
+    the Postgres one (db_dialect). The boot used sqlite3.connect directly,
+    so on Postgres every CREATE / ALTER / index of init_db and init_auth
+    landed in the volume's empty SQLite file and never in the database the
+    app reads: a fresh Postgres never got its tables, and after the cutover
+    no new table or column would ever have reached it (blind re-audit
+    10/11/26, SCALE-5/SCALE-10)."""
+    if db_path is None:
+        db_path = DB_PATH
+    if db_path == DB_PATH and _db_backend() == "postgres":
+        import db_dialect
+        return db_dialect.connect()
+    return sqlite3.connect(db_path)
+
+
 def _db_backend() -> str:
     """db_dialect.backend() without importing it on SQLite: "postgres" only
     when DATABASE_URL is a postgres URL and DB_BACKEND does not pin sqlite."""
@@ -2018,8 +2036,9 @@ def ensure_tracker_change_stamps(db_path: str = DB_PATH):
     value. Boot only (models.init_db, after outcomes.init_outcomes has added
     its columns). The update trigger is re-created each boot from the
     columns that exist, so a column added later is watched too. Millisecond
-    stamps; the sync's cursor is (changed_at, id)."""
-    conn = sqlite3.connect(db_path)
+    stamps; the sync's cursor is (changed_at, id). On Postgres the
+    triggers are plpgsql (db_dialect.install_triggers)."""
+    conn = boot_conn(db_path)
     try:
         have = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
         if not have:
@@ -2037,6 +2056,9 @@ def ensure_tracker_change_stamps(db_path: str = DB_PATH):
         conn.execute(f"CREATE TRIGGER trg_outcomes_changed_upd AFTER UPDATE ON recommendation_outcomes "
                      f"WHEN {when} BEGIN UPDATE recommendation_outcomes SET changed_at={stamp} WHERE id=NEW.id; END")
         conn.commit()
+        import db_dialect as _dialect
+        if _dialect.is_postgres(conn):
+            _dialect.install_triggers(conn)
     finally:
         conn.close()
 
@@ -2178,7 +2200,7 @@ def _ensure_place_id_uniqueness(conn):
         dupes = conn.execute(
             "SELECT google_place_id, GROUP_CONCAT(id) AS ids, COUNT(*) AS n FROM restaurants "
             "WHERE COALESCE(google_place_id,'')<>'' AND COALESCE(is_demo,0)=0 "
-            "GROUP BY google_place_id HAVING n > 1"
+            "GROUP BY google_place_id HAVING COUNT(*) > 1"
         ).fetchall()
         if dupes:
             for d in dupes:
@@ -2248,7 +2270,12 @@ def adopt_legacy_db(db_path: str = DB_PATH):
 
 def init_db(db_path: str = DB_PATH):
     adopt_legacy_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = boot_conn(db_path)
+    import db_dialect as _dialect
+    if _dialect.is_postgres(conn):
+        # The sqlite_master view the migrations below read (a fresh
+        # Postgres has no copy to have installed it).
+        _dialect.install_compat(conn)
     conn.executescript(SCHEMA)
     # Migrate: add new columns to existing databases
     migrations = [
@@ -7429,7 +7456,7 @@ def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str =
     return out
 
 def init_staff_notes(db_path: str = DB_PATH):
-    conn = sqlite3.connect(db_path)
+    conn = boot_conn(db_path)
     conn.executescript(STAFF_NOTES_SCHEMA)
     # Each constraint dated, with an optional end (memory audit 9/29/26,
     # staff_notes): "Out until 6/1 after surgery" still blocked a cook in
