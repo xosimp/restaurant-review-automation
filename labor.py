@@ -4506,6 +4506,43 @@ def _weekday_span(dates) -> str:
     return "/".join(names)
 
 
+# A server-side refusal fallback on the synchronous schedule call (scheduler
+# re-audit 10/11/26 AI-30): Opus 5.5 and Sonnet 5.5 run safety classifiers
+# that can decline a request (stop_reason "refusal"); a refused week was
+# drafted in code (schedule_fallback) where a fallback model could have
+# written it. With SCHEDULE_REFUSAL_FALLBACK=1 the call carries the API's
+# `fallbacks: "default"` (beta server-side-fallback-2026-07-01, routed by the
+# refusal's category) — Claude API only, never through Message Batches
+# (which reject it: schedule_batch builds its requests without it) and never
+# on a request that turns thinking off with between_tools. OFF by default
+# until a live call on the production account confirms the beta is
+# accepted there (a 400 on every week would be worse than a rare refusal);
+# the code-draft fallback stays the path either way.
+REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+REFUSAL_FALLBACK_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1")
+
+
+def refusal_fallback(call: dict) -> dict:
+    """`call` as sent: with the server-side refusal fallback when
+    SCHEDULE_REFUSAL_FALLBACK=1 and its model takes it, else unchanged.
+    The stored request (schedule_model_calls, the batch's) never carries it."""
+    import os
+    if str(os.getenv("SCHEDULE_REFUSAL_FALLBACK", "") or "").strip() != "1":
+        return call
+    model = str(call.get("model") or "").lower()
+    if not model.startswith(REFUSAL_FALLBACK_MODELS) or (call.get("thinking") or {}).get("type") == "between_tools":
+        return call
+    out = dict(call)
+    headers = dict(out.get("extra_headers") or {})
+    beta = [b for b in str(headers.get("anthropic-beta") or "").split(",") if b.strip()]
+    if REFUSAL_FALLBACK_BETA not in beta:
+        beta.append(REFUSAL_FALLBACK_BETA)
+    headers["anthropic-beta"] = ",".join(beta)
+    out["extra_headers"] = headers
+    out["extra_body"] = dict(out.get("extra_body") or {}, fallbacks="default")
+    return out
+
+
 def _roster_people(employees, facts=None, availability=None, time_off=None, scores=None, role_scores=None,
                    tenure=None, experienced=None, leader_flags=None, prior_pattern=None, families=None,
                    role_counts=None, held=None, week_dates=None, closed=(), ceiling=40.0,
@@ -6107,7 +6144,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         import schedule_batch as _sbatch
         msg = _sbatch.answer_for(dict(_call, readiness=_ready_sched))
         if msg is None:
-            msg = create_with_retry(_client, readiness=_ready_sched, **_call)
+            msg = create_with_retry(_client, readiness=_ready_sched, **refusal_fallback(_call))
     except CallDeadlineExceeded as _dx:
         # Out of the job's time mid-answer (P-22): what streamed is read
         # like a truncated answer — the engine keeps its finished days and

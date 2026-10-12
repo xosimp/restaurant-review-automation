@@ -3381,7 +3381,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     contract = _sched_out.schedule_contract(kwargs.get("contract"))
     costs = call_cost_model(kwargs.get("restaurant_id"), contract=contract)
     per_call = rows_per_call(kwargs.get("restaurant_id"), costs=costs)
-    plan = _plan_tasks(expected * len(want) / max(1, len(open_dates)), want, roster_pairs, managers, per_call)
+    plan = _plan_tasks(expected * len(want) / max(1, len(open_dates)), want, roster_pairs, managers, per_call,
+                       split_rows=parallel_split_rows())
     per_date = expected / max(1, len(open_dates))
     heads = max(1, len(roster_pairs or []))
 
@@ -4353,7 +4354,39 @@ def _call_measured(costs) -> bool:
     return (costs or {}).get("seconds_source") in ("fit", "rate")
 
 
-def _plan_tasks(rows: float, dates: list, roster_pairs, managers=(), per_call: int = None) -> list:
+# A big week an owner is waiting for is written in parallel parts
+# (scheduler re-audit 10/11/26 AI-21): past PARALLEL_SPLIT_ROWS rows, each
+# department in its own calls (sized so the parts number about the
+# generation's parallel calls), sent together — not one 8-13 minute streamed
+# call that fits CHUNK_ROWS_PER_CALL (1,683 rows) because it fits. Each part
+# pays its thinking again, so an unattended draft (the scheduled and bulk
+# classes — the auto-draft goes through Message Batches) stays one call:
+# nobody is waiting on it. SCHEDULE_PARALLEL_SPLIT_ROWS=0 turns it off.
+PARALLEL_SPLIT_ROWS = 600
+
+
+def parallel_split_rows():
+    """The rows past which a week an owner waits for is written in parallel
+    parts, or None when that is off (SCHEDULE_PARALLEL_SPLIT_ROWS=0, one
+    call at a time, or nobody waiting: model_gateway.call_class is not
+    interactive)."""
+    try:
+        n = int(os.getenv("SCHEDULE_PARALLEL_SPLIT_ROWS", str(PARALLEL_SPLIT_ROWS)) or 0)
+    except ValueError:
+        n = PARALLEL_SPLIT_ROWS
+    if n <= 0 or parallel_calls() <= 1:
+        return None
+    try:
+        import model_gateway as _mg_split
+        if _mg_split.call_class() != "interactive":
+            return None
+    except Exception:
+        return None
+    return n
+
+
+def _plan_tasks(rows: float, dates: list, roster_pairs, managers=(), per_call: int = None,
+                split_rows: int = None) -> list:
     """The calls the dates are written in, each planned to fit `per_call`
     rows (rows_per_call; CHUNK_ROWS_PER_CALL by default): one; else date
     slices; past three slices' worth, each department in date slices — and
@@ -4365,17 +4398,23 @@ def _plan_tasks(rows: float, dates: list, roster_pairs, managers=(), per_call: i
         what = "STAFF" if label is None else label + (f" GROUP {gi + 1} OF {gn}" if gn > 1 else "")
         return {"dates": list(ds), "people": people, "label": label, "group": (gi, gn), "what": what,
                 "depth": 0, "retry": False, "missed": None}
-    if rows <= per_call:
+    depts = _departments(roster_pairs, managers)
+    # A big week an owner waits for, in parallel parts (AI-21).
+    split = bool(split_rows) and rows > float(split_rows) and len(depts) > 1
+    if rows <= per_call and not split:
         return [task(dates)]
-    if rows <= per_call * 3 and len(dates) > 1:
+    if rows <= per_call * 3 and len(dates) > 1 and not split:
         parts = min(len(dates), -(-int(rows) // per_call))
         size = -(-len(dates) // parts)
         return [task(dates[i:i + size]) for i in range(0, len(dates), size)]
     out = []
     per_head = rows / max(1, len(roster_pairs or []))
-    for label, people in _departments(roster_pairs, managers).items():
-        k, p = _plan_calls(per_head * len(people), len(dates), min_slices=2, max_groups=len(people),
-                           per_call=per_call)
+    part_rows = per_call
+    if split:
+        part_rows = min(per_call, max(MIN_ROWS_PER_CALL, int(rows / parallel_calls() * 1.25)))
+    for label, people in depts.items():
+        k, p = _plan_calls(per_head * len(people), len(dates), min_slices=1 if split else 2,
+                           max_groups=len(people), per_call=part_rows)
         size_p = -(-len(people) // k)
         chunks = [people[i:i + size_p] for i in range(0, len(people), size_p)]
         size_d = -(-len(dates) // p)
