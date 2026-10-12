@@ -109,6 +109,42 @@ def test_trim_conflict_line_names_the_binding_budget():
     assert "the dollar budget is the one that binds" in line
 
 
+# ── LOGIC-15: knowing less never makes a week look better ───────────────────
+
+def test_the_band_is_held_by_the_share_measured():
+    assert sq.measured_band(95, 0.9) == ("excellent", None)
+    assert sq.measured_band(95, 0.5) == ("good", "excellent")
+    assert sq.measured_band(95, 0.2) == ("fair", "excellent")
+    assert sq.measured_band(80, 0.3) == ("fair", "good")
+    assert sq.measured_band(70, 0.1) == ("fair", None)        # no floor under fair
+    assert sq.measured_band(95, None) == ("excellent", None)
+
+
+def test_a_thin_data_week_cannot_read_excellent_and_says_why():
+    rows = _friday(FRIDAY_CREW)
+    out = sq.score_rows(rows, typical_headcount={("Friday", "night"): FRIDAY_CREW})
+    assert out["score"] >= 90                                   # the number is what was judged
+    m = out["measured"]
+    assert m["share"] < sq.BAND_MEASURED_MIN["good"]
+    assert out["band"] == "fair" and m["band_capped_from"] == "excellent"
+    assert "operational_strength" in m["withdrawn"] and m["withdrawn_weight"] > 0
+    assert m["text"].startswith(f"Scored on {int(round(100 * m['share']))}% of what a full score weighs")
+    # Confidence says it beside the number, with the points it cost.
+    conf = out["confidence"]
+    assert any(b["reason"].startswith("The score stands on") for b in conf["breakdown"])
+    # Every shift carries its own share.
+    assert out["shifts"][0]["measured"]["share"] is not None
+
+
+def test_measuring_more_raises_the_share_never_the_band_by_itself():
+    rows = _friday(FRIDAY_CREW)
+    th = {("Friday", "night"): FRIDAY_CREW}
+    thin = sq.score_rows(rows, typical_headcount=th)
+    rated = sq.score_rows(rows, typical_headcount=th, scores={r["employee"]: 4 for r in rows},
+                          tenure={r["employee"]: 40 for r in rows})
+    assert rated["measured"]["share"] > thin["measured"]["share"]
+
+
 # ── TRUST-30: the forecast's record against a naive guess ───────────────────
 
 def _forecast_weeks_with_naive(rid, weeks):

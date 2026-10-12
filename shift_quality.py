@@ -4031,6 +4031,67 @@ def band_for(score: int) -> str:
     return "weak"
 
 
+# What a score is measured on (blind re-audit 10/11/26 LOGIC-15). A
+# dimension with no data withdraws and the weights renormalise over the
+# rest, so the same solver week read 98 "excellent" on thin data and 87 on
+# full data: knowing less made a week look better. The number stays the
+# weighted mean of what was judged (the passes compare options on one set of
+# inputs, where the share is the same for every option); the BAND it may
+# claim is held by how much of the score's data-driven weight was measured,
+# and every surface gets the share and what withdrew.
+#
+# The data-driven measures: each withdraws only for want of data the
+# restaurant does not have yet (ratings, tenure, sales, a measured curve, a
+# published week, attendance, the scheduling memory). The ones an owner
+# switches on by setting something (leader rules, pairs, stations, minimum
+# hours, stated preferences, trainees, cross-training targets) are not a
+# data gap when unset and are left out of the share.
+MEASURED_DIMENSIONS = ("coverage", "coverage_curve", "operational_strength", "labor_efficiency", "splh",
+                       "experience_balance", "reliability", "fairness", "stability", "fatigue", "overtime",
+                       "learned", "shift_length")
+# The least measured share each band may be claimed on.
+BAND_MEASURED_MIN = {"excellent": 0.6, "good": 0.4}
+
+
+def measured_band(score, share) -> tuple:
+    """(band, capped_from or None): band_for(score), held under any band
+    whose BAND_MEASURED_MIN `share` does not reach (LOGIC-15)."""
+    band = band_for(int(score))
+    if share is None:
+        return band, None
+    order = [name for _f, name in BANDS]
+    capped_from = None
+    while band in BAND_MEASURED_MIN and float(share) < BAND_MEASURED_MIN[band] - 1e-9:
+        capped_from = capped_from or band
+        band = order[order.index(band) + 1]
+    return band, capped_from
+
+
+def _measured_weights(applied: dict, merged: dict, keys) -> tuple:
+    """(measured weight, possible weight) over the MEASURED_DIMENSIONS among
+    `keys` that carry weight here. `applied` {key: the weight it counted
+    at} — a rating measure scaled down for a thinly rated roster
+    (weight_share) is measured only that far."""
+    possible = measured = 0.0
+    for k in keys:
+        if k not in MEASURED_DIMENSIONS:
+            continue
+        w = float(merged.get(k, DEFAULT_WEIGHTS.get(k, 0)) or 0)
+        if w <= 0:
+            continue
+        possible += w
+        if k in applied:
+            measured += min(w, float(applied[k] or 0))
+    return measured, possible
+
+
+def _band_cap_text(share, capped_from, band, withdrawn) -> str:
+    names = [DIMENSION_LABELS.get(k, k).lower() for k in withdrawn[:3]]
+    return (f"Scored on {int(round(100 * share))}% of what a full score weighs"
+            + (f" (no {', no '.join(names)} yet)" if names else "")
+            + f", so it reads {band} rather than {capped_from} until more is measured.")
+
+
 def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
     """Score one shift across every dimension that has something to say.
 
@@ -4184,12 +4245,25 @@ def evaluate_shift(ctx: ShiftContext, weights: dict = None) -> dict:
                      "for this shift, so it was left out of the score.")
     line_keys = {line: d.key for d in applied for line in d.strengths + d.weaknesses + d.blind_spots}
     line_keys.update({line: HARD_RULES_KEY for line in breach_text})
+    # How much of the shift's data-driven weight was measured (LOGIC-15).
+    shift_keys = [k for k in DIMENSIONS if k not in WEEK_LEVEL_DIMENSIONS]
+    m_w, p_w = _measured_weights({d.key: d.weight for d in applied}, merged, shift_keys)
+    applied_keys = {d.key for d in applied}
+    withdrawn = [k for k in shift_keys if k in MEASURED_DIMENSIONS and k not in applied_keys
+                 and float(merged.get(k, 0) or 0) > 0]
+    m_share = round(m_w / p_w, 3) if p_w > 0 else None
+    band, capped_from = measured_band(score, m_share)
 
     return {
         "date": ctx.date, "day": ctx.day, "daypart": ctx.daypart,
         "scored": True,
         "score": score,
-        "band": band_for(score),
+        "band": band,
+        # What the score stands on (LOGIC-15): the measured share of its
+        # data-driven weight, the measures that withdrew, and the band the
+        # number alone would have claimed when the share held it lower.
+        "measured": {"share": m_share, "weight": round(m_w, 2), "possible": round(p_w, 2),
+                     "withdrawn": withdrawn, "band_capped_from": capped_from},
         "profile": _profile_facts(ctx.profile),
         "meets_profile": score >= int(ctx.profile.min_quality or 0),
         "capped_by": capped_by,
@@ -4398,6 +4472,11 @@ def evaluate_schedule(contexts: list, weights: dict = None,
         hoisted["weaknesses"] = [held_by["text"]] + [w for w in (hoisted.get("weaknesses") or [])
                                                       if w != held_by["text"]]
 
+    measured = week_measured(scored, week_dims, weights)
+    band, capped_from = measured_band(overall, measured["share"])
+    measured["band_capped_from"] = capped_from
+    measured["text"] = (_band_cap_text(measured["share"], capped_from, band, measured["withdrawn"])
+                        if capped_from else None)
     return {
         "checked": True,
         "score": overall,
@@ -4406,7 +4485,11 @@ def evaluate_schedule(contexts: list, weights: dict = None,
         # Before rounding, for a search that has to see a shift move three
         # points (schedule_optimizer.objective).
         "raw_score": round(raw, 4),
-        "band": band_for(overall),
+        # Held by the share measured (LOGIC-15): no "excellent" on a score
+        # that stands on little of its data; `measured` says how much, what
+        # withdrew and the band the number alone would claim.
+        "band": band,
+        "measured": measured,
         "shifts": shifts,
         "dimensions": _rollup(scored) + [
             {"key": d.key, "label": d.label, "shifts": 0, "score": d.score, "worst": None,
@@ -4431,8 +4514,41 @@ def evaluate_schedule(contexts: list, weights: dict = None,
         # the points the week gains when each is fully done (SQ-28).
         "recommendation_details": details,
         "recommendation_points": {d["text"]: d["points"] for d in details},
-        "confidence": confidence(shifts, signals or {}),
+        "confidence": confidence(shifts, dict(signals or {}, measured_share=measured["share"],
+                                              measured_withdrawn=measured["withdrawn_labels"])),
     }
+
+
+def week_measured(scored: list, week_dims: list, weights: dict = None) -> dict:
+    """{share, weight, possible, withdrawn: [key], withdrawn_weight,
+    withdrawn_labels} — the measured share of the week score's data-driven
+    weight (LOGIC-15): the shifts' own shares, demand weighted, with the
+    week-level measures' weight on top. `withdrawn`: the data-driven measures
+    that judged no shift of the week (biggest weight first)."""
+    merged = dict(DEFAULT_WEIGHTS)
+    merged.update(weights or {})
+    num_m = num_p = den = 0.0
+    applied_anywhere = set()
+    for s in scored or []:
+        m = s.get("measured") or {}
+        w = DEMAND_WEIGHT.get((s.get("profile") or {}).get("demand"), 1.0)
+        num_m += float(m.get("weight") or 0) * w
+        num_p += float(m.get("possible") or 0) * w
+        den += w
+        applied_anywhere.update(d.get("key") for d in s.get("dimensions") or [])
+    shift_m = num_m / den if den else 0.0
+    shift_p = num_p / den if den else 0.0
+    week_keys = list(WEEK_LEVEL_DIMENSIONS)
+    applied_week = {d.key: d.weight for d in week_dims or []}
+    week_m, week_p = _measured_weights(applied_week, merged, week_keys)
+    possible = shift_p + week_p
+    share = round((shift_m + week_m) / possible, 3) if possible > 0 else None
+    applied_anywhere.update(applied_week)
+    withdrawn = sorted((k for k in DIMENSIONS if k in MEASURED_DIMENSIONS and k not in applied_anywhere
+                        and float(merged.get(k, 0) or 0) > 0), key=lambda k: -float(merged.get(k) or 0))
+    return {"share": share, "weight": round(shift_m + week_m, 2), "possible": round(possible, 2),
+            "withdrawn": withdrawn, "withdrawn_weight": round(sum(float(merged.get(k) or 0) for k in withdrawn), 2),
+            "withdrawn_labels": [DIMENSION_LABELS.get(k, k) for k in withdrawn]}
 
 
 def _below_line(shift: dict) -> dict:
@@ -4750,6 +4866,16 @@ def confidence(shifts: list, signals: dict) -> dict:
     for c in signals.get("capped_rules") or []:
         reasons.append(f"Only {c['able']} on the roster can meet the rule “{c['label']}”, so each "
                        f"shift it covers is held to {c['able']} — rate or mark more people for it, or change the rule.")
+
+    # The score's own coverage (LOGIC-15): what share of its data-driven
+    # weight was measured. Under the share "excellent" needs, the points
+    # missing are said with the measures that withdrew.
+    ms = signals.get("measured_share")
+    if ms is not None and float(ms) < BAND_MEASURED_MIN["excellent"]:
+        names = [str(x).lower() for x in (signals.get("measured_withdrawn") or [])[:3]]
+        charge(int(round((BAND_MEASURED_MIN["excellent"] - float(ms)) * 50)),
+               f"The score stands on {int(round(100 * float(ms)))}% of what a full score weighs"
+               + (f" — no {', no '.join(names)} yet" if names else "") + ".")
 
     unfixable = int(signals.get("unsatisfiable") or 0)
     if unfixable:

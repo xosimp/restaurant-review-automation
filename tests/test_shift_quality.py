@@ -702,7 +702,11 @@ def test_a_restaurant_of_only_strong_staff_scores_at_the_top():
     out = sq.score_rows(rows, profiles=profiles(), scores={k: 5 for k in "ABCDEF"},
                         tenure={k: 60 for k in "ABCDEF"})
     assert out["score"] >= 95
-    assert out["band"] == "excellent"
+    # The number is at the top; the band is held by how much of the score
+    # was measured (blind re-audit 10/11/26 LOGIC-15) — ratings and tenure
+    # alone, no sales, no published week, read "good", never "excellent".
+    assert out["measured"]["share"] < sq.BAND_MEASURED_MIN["excellent"]
+    assert out["band"] == "good" and out["measured"]["band_capped_from"] == "excellent"
 
 
 def test_a_two_person_restaurant_is_evaluated_not_skipped():
