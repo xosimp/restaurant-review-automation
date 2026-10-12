@@ -874,7 +874,15 @@ def index(current_user):
         _social_channels = _channels_of(restaurant)
     except Exception:
         _social_channels = {"instagram": False, "facebook": False, "google": False}
+    # The person signed in (auth.viewer_name), for the header and Home's
+    # greeting - never the restaurant's owner for every login (10/12/26).
+    try:
+        from auth import viewer_name as _viewer_name
+        _viewer = _viewer_name(current_user, restaurant)
+    except Exception:
+        _viewer = restaurant.owner_name or current_user.get("username") or ""
     return render_template('dashboard.html',
+        viewer_name=_viewer,
         social_channels=_social_channels,
         show_welcome=show_welcome,
         is_principal=_principal, export_scopes=_export_scopes, can_delete_login=_can_delete_login,

@@ -973,6 +973,33 @@ def get_membership(user_id: int, restaurant_id: int,
     return dict(row) if row else None
 
 
+def viewer_name(current_user, restaurant=None, db_path: str = DB_PATH) -> str:
+    """The name of the person signed in, for greetings and the header: the
+    roster name on this login's membership here ("Anthony Abbott"), else the
+    restaurant's owner name for the owner's own login, else the username.
+    Home greeted every login at Simple EJ's as "Erik" - the restaurant's
+    owner_name - when Anthony and Jim signed in (owner, 10/12/26)."""
+    if not current_user:
+        return ""
+    try:
+        m = get_membership(int(current_user.get("id") or 0), int(current_user.get("restaurant_id") or 0),
+                           db_path=db_path) if current_user.get("id") else None
+    except Exception:
+        m = None
+    name = ((m or {}).get("employee_name") or "").strip()
+    if name:
+        return name
+    owner = (getattr(restaurant, "owner_name", None) or "").strip() if restaurant is not None else ""
+    if owner and (current_user.get("role") or "") in ("owner", "client"):
+        return owner
+    return (current_user.get("username") or "").strip()
+
+
+def viewer_first_name(current_user, restaurant=None, db_path: str = DB_PATH) -> str:
+    n = viewer_name(current_user, restaurant, db_path=db_path)
+    return n.split(" ")[0].title() if n else ""
+
+
 def get_memberships_for_user(user_id: int, db_path: str = DB_PATH) -> list:
     """Every restaurant this identity can act in. The multi-restaurant story:
     one person, many memberships, a different role in each."""

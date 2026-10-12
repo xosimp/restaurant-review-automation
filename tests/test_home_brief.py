@@ -340,3 +340,19 @@ def test_labor_tip_splits_salaries_for_the_owner_only():
     none = home_brief._labor_tip({"includes_salaries": False}, 22.0, 30, None, None, None, None, False, 28, 7, True)
     assert "No salaried staff are on file" in none["lines"][0]
     assert "Cavnar AI's starting target" in none["lines"][1]
+
+
+def test_greeting_names_the_person_signed_in_not_the_owner(db_path):
+    """Anthony's and Jim's logins were greeted "Erik" - the restaurant's
+    owner_name (owner, 10/12/26). The login's roster name wins."""
+    rid = _seed(db_path, owner_name="Erik Baylis")
+    from auth import upsert_membership
+    uid = create_user(rid, "aabbott", "a@x.com", "x", db_path=db_path, role="manager", generated=True)
+    upsert_membership(uid, rid, "manager", employee_name="Anthony Abbott", db_path=db_path)
+    p, _ = home_brief.build_home_brief(_user(rid, uid=uid, role="manager"), fresh=True)
+    assert p["greeting_name"] == "Anthony"
+    # No membership name: the owner's own login still reads the owner's name.
+    p2, _ = home_brief.build_home_brief(_user(rid, uid=9999, role="owner"), fresh=True)
+    assert p2["greeting_name"] == "Erik"
+    html = open("templates/dashboard.html").read()
+    assert '<span class="hdr-user">{{ viewer_name or' in html

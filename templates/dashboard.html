@@ -2326,7 +2326,7 @@ function loadFailed(el, d){
          id: the changelog panel anchors to it and closes on a click outside. -->
     <div style="position:relative" id="changelog-wrap">
       <button type="button" id="user-menu-btn" class="cbtn cbtn-text cbtn-sm hdr-user-btn" onclick="toggleUserMenu()" aria-haspopup="true" aria-expanded="false" aria-controls="user-menu" title="Account menu">
-        <span class="hdr-user">{{ restaurant.owner_name or current_user.username }}</span>
+        <span class="hdr-user">{{ viewer_name or restaurant.owner_name or current_user.username }}</span>
         <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
         <span id="changelog-badge" style="display:none" aria-hidden="true"></span>
       </button>
@@ -4007,7 +4007,7 @@ svg:hover .hb-xh{opacity:1}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
       <div class="hb-kicker" id="hb-kicker">{{ now }}</div>
-      <h1 class="hb-h1" id="hb-h1">{% if restaurant.owner_name or current_user.username %}Hello, {{ (restaurant.owner_name or current_user.username).split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
+      <h1 class="hb-h1" id="hb-h1">{% set _vn = viewer_name or restaurant.owner_name or current_user.username %}{% if _vn %}Hello, {{ _vn.split(' ')[0]|title }}.{% else %}Your brief.{% endif %} <span class="hb-head neutral">Reading the room…</span></h1>
       <!-- The 3-second status (density fix #1): last night's verdict, score,
            net and vs budget from the report (dsr.access.summary), toned. -->
       <div class="hb-status" id="hb-status" hidden></div>

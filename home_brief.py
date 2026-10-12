@@ -367,6 +367,16 @@ def _rows_dict(conn, sql, params=()):
         return []
 
 
+def _viewer_first(current_user, restaurant):
+    """auth.viewer_first_name, never raising: a greeting must not fail Home."""
+    try:
+        import auth
+        return auth.viewer_first_name(current_user, restaurant)
+    except Exception:
+        n = (getattr(restaurant, "owner_name", None) or current_user.get("username") or "")
+        return n.split(" ")[0].title()
+
+
 def _plural(n, one, many=None):
     return f"{n} {one if n == 1 else (many or one + 's')}"
 
@@ -2836,7 +2846,8 @@ def _build(current_user, present=True, reads=None):
         "charts": charts,
         "generated_at": _iso_z(now),
         "local_now": local_now.isoformat(),
-        "greeting_name": (restaurant.owner_name or current_user.get("username") or "").split(" ")[0].title() if (restaurant.owner_name or current_user.get("username")) else None,
+        # The person signed in, not the restaurant's owner (10/12/26).
+        "greeting_name": _viewer_first(current_user, restaurant) or None,
         "context": {"restaurant_name": restaurant.name, "location_name": restaurant.location_name or None, "group_name": group_name,
                     "view": "location" if group_name else "single", "locations": locations, "portfolio": portfolio, "timezone": str(local_now.tzinfo)},
         "freshness": freshness,
@@ -3209,7 +3220,7 @@ def build_group_brief(current_user, fresh=False):
         headline = "All locations healthy"; tone = "good"
     payload = {
         "ok": True, "scope": "group", "generated_at": _iso_z(now), "group_name": base.location_group,
-        "greeting_name": (base.owner_name or current_user.get("username") or "").split(" ")[0].title() or None,
+        "greeting_name": _viewer_first(current_user, base) or None,
         "headline": headline, "tone": tone,
         "locations": locs, "attention": attention[:12],
         "portfolio": {"total": len(locs), "healthy": sum(1 for l in locs if l["health"] == "healthy"), "needing": len(needing),
