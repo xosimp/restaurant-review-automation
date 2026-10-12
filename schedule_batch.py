@@ -200,7 +200,6 @@ def on_auto_draft(item, message=None, error=None):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return
     import strategy_jobs as sj
-    import schedule_engine as se
     target = ctx.get("week_start") or ctx.get("target")
     if target:
         # The owner may have made the week while the batch was out: theirs
@@ -211,41 +210,25 @@ def on_auto_draft(item, message=None, error=None):
                 return
         finally:
             conn.close()
-    counts = {"drafted": 0, "skipped": 0, "failed": 0}
-
-    def _bump(k):
-        counts[k] = counts.get(k, 0) + 1
-    import job_queue
-    if job_queue.enabled():
-        # The draft is a job_queue row like any auto-draft (scheduler audit
-        # 10/10/26 RM-7): it takes a generation slot by the queue's rules,
-        # with the batched answer carried in the row (its text, stop reason
-        # and usage — what the call site reads), not on this callback thread.
-        answer = None
-        if error is None and message is not None:
-            try:
-                from ai_utils import extract_text
-                import labor
-                answer = {"key": ctx.get("key"), "text": extract_text(message),
-                          "stop_reason": getattr(message, "stop_reason", None),
-                          "model": getattr(message, "model", None), "usage": labor._usage_of(message),
-                          "call_id": getattr(message, "_cavnar_call_id", None)}
-            except Exception as e:
-                ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch answer unread)")
-                answer = None
+    # The draft is a job_queue row like any auto-draft (scheduler audit
+    # 10/10/26 RM-7; the one path since blind re-audit 10/11/26 ARCH-10): it
+    # takes a generation slot by the queue's rules, with the batched answer
+    # carried in the row (its text, stop reason and usage — what the call
+    # site reads), not on this callback thread.
+    answer = None
+    if error is None and message is not None:
         try:
-            sj.enqueue_auto_draft(r, period=ctx.get("period"), target=ctx.get("target"), attempt=ctx.get("attempt"),
-                                  batch=False, answer=answer)
+            from ai_utils import extract_text
+            import labor
+            answer = {"key": ctx.get("key"), "text": extract_text(message),
+                      "stop_reason": getattr(message, "stop_reason", None),
+                      "model": getattr(message, "model", None), "usage": labor._usage_of(message),
+                      "call_id": getattr(message, "_cavnar_call_id", None)}
         except Exception as e:
-            ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch enqueue)")
-        return
+            ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch answer unread)")
+            answer = None
     try:
-        if error is not None or message is None:
-            sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
-                          attempt=ctx.get("attempt"), batch=False)
-        else:
-            with answering(ctx.get("key"), message):
-                sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
-                              attempt=ctx.get("attempt"), batch=False)
+        sj.enqueue_auto_draft(r, period=ctx.get("period"), target=ctx.get("target"), attempt=ctx.get("attempt"),
+                              batch=False, answer=answer)
     except Exception as e:
-        ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch)")
+        ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch enqueue)")

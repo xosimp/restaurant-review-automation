@@ -1959,6 +1959,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # UNIQUE index on (source, external_id) is created by
         # billing_jobs.init_billing, after this column exists.
         ("admin_events", "external_id", "TEXT"),
+        # A running queue row's phase (job_queue.model_wait — blind re-audit
+        # 10/11/26 SCALE-1): NULL doing code work (holding a CPU slot),
+        # 'model' waiting on a model answer (its slot given back), 'await'
+        # back from the model and waiting for a slot.
+        ("jobs", "phase", "TEXT"),
     ]
     try:
         for table, col, col_type in columns_to_add:

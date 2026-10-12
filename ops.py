@@ -1042,8 +1042,7 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
         resumable = []
         try:
             import job_queue as _jq_sweep
-            if _jq_sweep.enabled():
-                resumable = [str(x) for x in _jq_sweep.resumable_external_ids()]
+            resumable = [str(x) for x in _jq_sweep.resumable_external_ids()]
         except Exception as e:
             log.warning(f"sweep_stale_jobs: the queue could not be read ({e}); every pending job is failed")
             resumable = []
@@ -1374,6 +1373,33 @@ def job_still_pending(job_id) -> bool:
         return True
 
 
+_QUEUE_ENDED_MESSAGES = {
+    "expired": "The schedule couldn't be started in time — try again.",
+    "failed": "The schedule couldn't be finished, so nothing was saved. Try again.",
+    "cancelled": "Stopped — nothing was saved.",
+    "done": "The schedule ended without a result, so nothing was saved. Try again.",
+}
+
+
+def _queue_state(job_id):
+    """The durable queue's word on an async job it runs (job_queue.row_for):
+    "live" (queued, or running on a lease not yet run out), the row's end
+    state, or None (the queue does not run this job). Never raises."""
+    try:
+        import job_queue as _jq_state
+        row = _jq_state.row_for(job_id)
+    except Exception:
+        return None
+    if not row:
+        return None
+    st = row.get("state")
+    if st == "queued" or (st == "running" and float(row.get("lease_until") or 0) > time.time()):
+        return "live"
+    if st == "running":
+        return None                       # its process died: the next consumer resumes it
+    return st
+
+
 def read_async_job(job_id, restaurant_id=None):
     """The job's {"status", "result"}, or None if it doesn't exist (or belongs
     to another restaurant).
@@ -1409,7 +1435,25 @@ def read_async_job(job_id, restaurant_id=None):
             conn.close()
             return None
         status = row["status"]
-        if status == "pending" and (row["overdue"] or row["past_deadline"]):
+        # One source of truth for a job the durable queue runs (blind
+        # re-audit 10/11/26 ARCH-10): the queue row says whether it can still
+        # finish. A row that expired unstarted, failed, was cancelled or
+        # ended without writing a result will never write one — the owner
+        # is told now rather than polling to a timeout; a row still queued
+        # (waiting its turn) or running on a live lease is never called dead
+        # by its age, only by its own deadline.
+        queue_state = _queue_state(job_id) if status == "pending" else None
+        if queue_state in ("expired", "failed", "cancelled", "done"):
+            failed = {"ok": False, "error": _QUEUE_ENDED_MESSAGES[queue_state]}
+            try:
+                conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                             "AND status='pending'", (json.dumps(failed), str(job_id)))
+                conn.commit()
+            except Exception as e:
+                log.error(f"read_async_job({job_id}) could not record the ended queue job: {e}")
+            conn.close()
+            return {"status": "error", "result": failed}
+        if status == "pending" and (row["past_deadline"] or (row["overdue"] and queue_state != "live")):
             # Past any real generation (or past the job's own deadline): its
             # result was never stored (the write failed, or the process died
             # after the boot sweep ran). Polling 'pending' forever helps

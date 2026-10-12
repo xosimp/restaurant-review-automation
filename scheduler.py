@@ -5843,9 +5843,8 @@ def scheduler_loop():
                 # Each draft a `scheduled` job_queue row when the queue is on
                 # (SCALE-13): the pass claims and enqueues in seconds instead
                 # of holding the AI lane up to 40 minutes an hour.
-                import job_queue as _jq_ad
                 if not _ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now,
-                                        enqueue=_jq_ad.enabled()):
+                                        enqueue=True):
                     _ops.release_period("auto_draft_schedule", f"{today}-{now.hour}")
 
             # Monday 7am local — the agent files the week's three actions.

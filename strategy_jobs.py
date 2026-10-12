@@ -25,6 +25,7 @@ and the cadence all live in the loop.
   run_coverage_check        service — scheduled staff who have not clocked in
 """
 import logging
+import os
 import threading
 import config
 import uuid
@@ -1434,7 +1435,7 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
     with batch=False and the answer handed to the call. A gate's refusal
     drafts nothing; batches off here or nothing to batch, it runs now."""
     import ops
-    from schedule_engine import generation_scope, generation_request, GEN_PRIORITY_BACKGROUND
+    from schedule_engine import generation_scope, generation_request
     # What it asks, as an owner's press of Generate for next week would: an
     # owner's identical press joins it, and it never joins (or is joined by)
     # a generation of anything else (re-audit 10/4/26 UI-8).
@@ -1477,24 +1478,14 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
     import schedule_engine as _watch
     told = set()
     try:
-        # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
-        # presses Generate takes the next free slot ahead of queued drafts.
-        try:
-            with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND, restaurant_id=r.id):
-                # The week it claimed, resolved before the wait for a slot
-                # (up to GEN_BACKGROUND_WAIT_SECONDS): across midnight it
-                # built the week after (BUGSGEN-11).
-                _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
-        except _se.GenerationSlotTimeout:
-            # Every slot stayed busy (owners' presses first): the job is closed,
-            # the day handed back, and the next hourly pass tries again.
-            ops.finish_async_job(job_id, "error", {"ok": False, "error": "No generation slot came free — "
-                                                                         "it will try again within the hour."})
-            if period:
-                ops.release_period(f"auto_draft:{r.id}", period)
-            _release_auto_draft_attempt(r.id, target, attempt)  # no model call was made
-            _bump("skipped")
-            return
+        # Its slot is its auto_draft queue row (scheduled class: behind any
+        # owner's press, its own reserved slot while drafts wait — job_queue;
+        # blind re-audit 10/11/26 ARCH-10, SCALE-28). A row no slot took in
+        # AUTO_DRAFT_QUEUE_HOURS expires and hands its day back
+        # (on_auto_draft_expired). The week it claimed was resolved before
+        # it ran: across midnight it built the week after (BUGSGEN-11).
+        with generation_scope(job_id, restaurant_id=r.id):
+            _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
         # _run_schedule_job reports its own failures into the job row rather
         # than raising, so the push below must wait on that verdict — telling
         # an owner a draft is waiting when none was saved is worse than silence.
@@ -1611,6 +1602,22 @@ def _tell_auto_draft_gave_up(r, db_path, target):
 # enqueues it again. Its deadline also orders the scheduled class (earliest
 # first).
 AUTO_DRAFT_QUEUE_HOURS = 6
+# A timezone's drafts start spread over this many minutes from the pass that
+# queued them (blind re-audit 10/11/26 SCALE-28): every restaurant of a zone
+# used to become claimable at one instant at 6am local.
+AUTO_DRAFT_SPREAD_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MINUTES", "120"))
+
+
+def auto_draft_offset_seconds(restaurant_id) -> int:
+    """The restaurant's fixed place in its zone's draft spread: the same
+    every week (a stable hash of its id), so an owner sees the draft land at
+    the same time of the morning."""
+    span = max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
+    if span <= 0 or restaurant_id is None:
+        return 0
+    import hashlib
+    h = int(hashlib.sha256(f"auto_draft:{int(restaurant_id)}".encode()).hexdigest()[:8], 16)
+    return h % span
 
 
 def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None):
@@ -1627,8 +1634,12 @@ def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, an
                                "correlation_id": f"auto_draft:{r.id}:{target}"}}
     key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if answer is not None else
                                                       ":sync" if not batch else "")
+    # A first half starts at the restaurant's place in the spread; a batched
+    # answer, already paid for, is drafted as soon as a slot allows.
+    start = _t.time() + (0 if answer is not None else auto_draft_offset_seconds(r.id))
     qid, _created = job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
-                                      idempotency_key=key, deadline=_t.time() + AUTO_DRAFT_QUEUE_HOURS * 3600)
+                                      idempotency_key=key, not_before=start,
+                                      deadline=start + AUTO_DRAFT_QUEUE_HOURS * 3600)
     return qid
 
 
@@ -1729,13 +1740,13 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     return _counts(created, created, 0, len(items) - created, False, queued=created)
 
 
-def learner_pass(name, fn):
+def learner_pass(name, fn=None):
     """What scheduler_loop runs for a nightly learner: its fan-out onto the
-    job queue when the queue is on, else `fn` (the bounded inline sweep)."""
-    import job_queue
-    if job_queue.enabled():
-        return lambda: fan_out_learner(name)
-    return fn
+    job queue — the one path (blind re-audit 10/11/26 ARCH-10; JOB_QUEUE=0
+    and its inline sweep in the scheduler thread are gone). `fn`, the
+    bounded sweep body, is what a direct call (a script, a test) runs; the
+    scheduler never does."""
+    return lambda: fan_out_learner(name)
 
 
 def run_queued_learner(job):
