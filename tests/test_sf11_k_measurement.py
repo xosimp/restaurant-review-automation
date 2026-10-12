@@ -109,6 +109,72 @@ def test_trim_conflict_line_names_the_binding_budget():
     assert "the dollar budget is the one that binds" in line
 
 
+# ── STRESS-14: the score condemns doubles the restaurant never works ────────
+
+WEEK = [(date(2026, 10, 19) + timedelta(days=i)).isoformat() for i in range(7)]
+
+
+def _crew_week(start, end, people=("Ann", "Ben", "Cal", "Dee", "Eve", "Fay"), role="Server", days=5):
+    out = []
+    for i, n in enumerate(people):
+        for d in WEEK[(i % 2):(i % 2) + days]:
+            out.append(dict(_r(d, n, role, start, end), scheduled_hours=str(
+                sq._stime.span({"shift_start": start, "shift_end": end, "date": d})[1] / 60.0
+                - sq._stime.span({"shift_start": start, "shift_end": end, "date": d})[0] / 60.0)))
+    return out
+
+
+TYPICAL_WEEK = {(sq._day_name(d), p): {"Server": 2} for d in WEEK for p in ("morning", "night")}
+
+
+def test_a_week_of_twelve_hour_doubles_is_held_weak():
+    normal = sq.score_rows(_crew_week("4:00pm", "10:00pm") + _crew_week("11:00am", "4:00pm", people=("Gus", "Hal")),
+                           typical_headcount=TYPICAL_WEEK, max_shift_hours=12)
+    doubles = sq.score_rows(_crew_week("11:00am", "11:00pm"), typical_headcount=TYPICAL_WEEK, max_shift_hours=12)
+    sl = next(d for d in doubles["week_dimensions"] if d["key"] == "shift_length")
+    assert sl["facts"]["long_days"] == sl["facts"]["days"] and sl["score"] == 0
+    assert doubles["held_by"]["key"] == "shift_length"
+    assert doubles["score"] < sq.SHIFT_LENGTH_FLOOR and doubles["band"] == "weak"
+    assert "run longer than 10 hours" in doubles["held_by"]["text"]
+    sl_n = next(d for d in normal["week_dimensions"] if d["key"] == "shift_length")
+    assert sl_n["score"] == 100 and normal["held_by"] is None
+
+
+def test_doubles_the_restaurant_works_are_its_norm():
+    hist = []
+    for i in range(30):
+        d = (date(2026, 9, 1) + timedelta(days=i)).isoformat()
+        hist.append({"employee": f"P{i % 6}", "date": d, "role": "Server", "shift_start": "11:00am",
+                     "shift_end": "11:00pm", "actual_hours": 12})
+    norms = sq.length_norms(hist)
+    assert norms["server"]["p90"] == 12 and norms["server"]["days"] == 30
+    out = sq.score_rows(_crew_week("11:00am", "11:00pm"), typical_headcount=TYPICAL_WEEK, max_shift_hours=12,
+                        length_norms=norms)
+    sl = next(d for d in out["week_dimensions"] if d["key"] == "shift_length")
+    assert sl["score"] == 100 and sl["facts"]["limits"]["server"]["source"] == "yours"
+    # Fewer than LENGTH_MIN_DAYS days of history is no norm.
+    assert sq.length_norms(hist[:5]) == {}
+
+
+def test_managers_days_are_not_scored_but_their_load_past_their_own_usual_is_said():
+    rows = _crew_week("4:00pm", "10:00pm") + [
+        dict(_r(d, "Mia", "Manager", "8:00am", "11:00pm"), scheduled_hours="15") for d in WEEK]
+    ledger = {"Mia": [{"week": w, "hours": 45.0, "slots": [], "role": "Manager"}
+                      for w in ("2026-09-28", "2026-10-05", "2026-10-12")]}
+    out = sq.score_rows(rows, typical_headcount=TYPICAL_WEEK, max_shift_hours=12, managers={"mia": "Manager"},
+                        max_shift_exempt=["mia"], hours_exempt=["mia"], load_ledger=ledger)
+    sl = next(d for d in out["week_dimensions"] if d["key"] == "shift_length")
+    assert sl["score"] == 100                                    # her 15h days are hers
+    load = sl["facts"]["manager_load"]
+    assert load and load[0]["name"] == "Mia" and load[0]["hours"] == 105 and load[0]["usual"] == 45
+    assert any("not scored" in w and "Mia" in w for w in sl["weaknesses"])
+    # The owner is never read this way.
+    own = sq.score_rows(rows, typical_headcount=TYPICAL_WEEK, max_shift_hours=12, managers={"mia": "Owner"},
+                        max_shift_exempt=["mia"], hours_exempt=["mia"], load_ledger=ledger)
+    sl2 = next(d for d in own["week_dimensions"] if d["key"] == "shift_length")
+    assert sl2["facts"]["manager_load"] == []
+
+
 # ── LOGIC-15: knowing less never makes a week look better ───────────────────
 
 def test_the_band_is_held_by_the_share_measured():

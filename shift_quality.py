@@ -487,6 +487,10 @@ class ShiftContext:
     # The restaurant's own role weights ({family: weight}) over
     # role_criticality's defaults (LOGIC-14); {} reads the defaults.
     role_criticality: dict = field(default_factory=dict)
+    # How long this restaurant's people in each role work a day (length_norms
+    # over its punches: {family: {"days", "p90", "max"}}) — shift length's
+    # own norm (STRESS-14); {} judges against DEFAULT_LONG_DAY_HOURS.
+    length_norms: dict = field(default_factory=dict)
     # Kitchen stations (kitchen_stations.normalise), {} when none (SQ-26).
     stations: dict = field(default_factory=dict)
     # What staff showed they want by what they drop and claim (schedule_
@@ -707,6 +711,7 @@ DIMENSION_LABELS = {
     "preferences": "Staff preferences", "stability": "Schedule stability",
     "cross_training": "Cross-training", "min_hours": "Minimum hours", "overtime": "Overtime",
     "stations": "Kitchen stations", "learned": "Learned patterns",
+    "shift_length": "Shift length",
 }
 
 
@@ -758,6 +763,10 @@ DEFAULT_WEIGHTS = {
     # withdraws until the scheduling memory has an active fact. The
     # managers' own repeated edits — "an owner's edits never vanish".
     "learned": 10,
+    # Person-days longer than this restaurant works (week_shift_length,
+    # blind re-audit 10/11/26 STRESS-14): judged once for the week, its
+    # floor (SHIFT_LENGTH_FLOOR) holding the week, not only weighing in.
+    "shift_length": 10,
 }
 
 
@@ -2055,6 +2064,177 @@ def week_min_hours(contexts: list) -> DimensionResult | None:
         res.weaknesses.append(f"{name} has {have:g}h of the {need:g}h minimum you set.")
     if not short:
         res.strengths.append("Everybody with a minimum is at it.")
+    return res
+
+
+# ── Shift length against the restaurant's own (blind re-audit 10/11/26
+# STRESS-14) ────────────────────────────────────────────────────────────────
+# Weeks of 11-12 hour lunch-to-close doubles scored 85-94 "good/excellent":
+# fatigue flagged a shift only past max_shift_hours (12) and the shapes'
+# cap was 12, so the optimum double was never a finding. A person's day on
+# the clock is judged against what THIS restaurant's people in that role
+# actually work (length_norms: the 90th percentile of their punched days
+# over the last weeks, from LENGTH_MIN_DAYS of them), else
+# DEFAULT_LONG_DAY_HOURS — never past the restaurant's own maximum. A day
+# over it is long; each long day costs LONG_DAY_PENALTY times its share of
+# the person-days, and under SHIFT_LENGTH_FLOOR it holds the WEEK at its own
+# score (week_score_raw), as a critical floor holds a shift: a week of
+# doubles the restaurant never works cannot read good.
+#
+# Owners and managers are not held to the shift-length maximum
+# (schedule_rules.max_shift_applies) nor scored on their hours (Simple EJ's,
+# 10/7/26 — "erik is always at the store"): their days are left out of the
+# share. Their LOAD is still read against their own published weeks
+# (manager_load in the facts, one line): a manager drafted far past what
+# they usually carry is said, never scored.
+DEFAULT_LONG_DAY_HOURS = 10.0
+LENGTH_MIN_DAYS = 20
+LENGTH_PERCENTILE = 0.9
+SHIFT_LENGTH_FLOOR = 70
+LONG_DAY_PENALTY = 3.0
+MANAGER_LOAD_OVER = 1.25          # past their own usual week by a quarter...
+MANAGER_LOAD_MIN_HOURS = 55.0     # ...and at least this many hours
+MANAGER_LOAD_MIN_WEEKS = 3
+
+
+def length_norms(rows, families=None) -> dict:
+    """{family: {"days", "p90", "max"}} — each role family's person-days on
+    the clock in `rows` (punches or published weeks: {employee, date, role,
+    shift_start, shift_end | scheduled_hours | actual_hours}), the hours at
+    LENGTH_PERCENTILE and the longest. Only families with LENGTH_MIN_DAYS
+    days. Pure."""
+    days = {}
+    for r in rows or []:
+        name = (r.get("employee") or "").strip().lower()
+        date = str(r.get("date") or "")[:10]
+        if not (name and date):
+            continue
+        h = None
+        for key in ("actual_hours", "scheduled_hours"):
+            try:
+                v = float(r.get(key)) if r.get(key) not in (None, "") else None
+            except (TypeError, ValueError):
+                v = None
+            if v and v > 0:
+                h = v
+                break
+        if h is None:
+            sp = _stime.span(r)
+            h = (sp[1] - sp[0]) / 60.0 if sp else None
+        if not h or h <= 0 or h > 24:
+            continue
+        key = (name, date)
+        e = days.setdefault(key, {"hours": 0.0, "family": role_family(r.get("role"), families)})
+        e["hours"] += h
+    by_fam = {}
+    for e in days.values():
+        if e["family"]:
+            by_fam.setdefault(e["family"], []).append(e["hours"])
+    out = {}
+    for fam, hours in by_fam.items():
+        if len(hours) < LENGTH_MIN_DAYS:
+            continue
+        hours.sort()
+        idx = min(len(hours) - 1, int(LENGTH_PERCENTILE * (len(hours) - 1) + 0.5))
+        out[fam] = {"days": len(hours), "p90": round(hours[idx], 2), "max": round(hours[-1], 2)}
+    return out
+
+
+def long_day_limit(ctx: ShiftContext, family: str) -> tuple:
+    """(hours, source) a person-day of `family` may run before it is long."""
+    norm = (getattr(ctx, "length_norms", None) or {}).get(family)
+    limit, source = DEFAULT_LONG_DAY_HOURS, "default"
+    if norm and norm.get("p90"):
+        limit, source = max(float(norm["p90"]), 4.0), "yours"
+    if ctx.max_shift_hours:
+        limit = min(limit, float(ctx.max_shift_hours))
+    return round(limit, 2), source
+
+
+def _manager_load(ctx: ShiftContext, exempt: set) -> list:
+    """[{name, hours, usual, weeks}] — owners' and managers' weeks far past
+    their own published usual (said, never scored)."""
+    out = []
+    for name, entries in (ctx.week_assignments or {}).items():
+        low = (name or "").strip().lower()
+        if low not in exempt:
+            continue
+        if "owner" in str((ctx.managers or {}).get(low) or "").lower():
+            continue           # the owner is at the store as long as they choose
+        total = sum((e.get("hours") or 0) for e in entries or () if not e.get("prior"))
+        _busy, past = _past_load(ctx, name)
+        past = [h for h in past if h > 0]
+        if len(past) < MANAGER_LOAD_MIN_WEEKS:
+            continue
+        usual = sum(past) / len(past)
+        if total >= MANAGER_LOAD_MIN_HOURS and total > usual * MANAGER_LOAD_OVER:
+            out.append({"name": name, "hours": round(total, 1), "usual": round(usual, 1), "weeks": len(past)})
+    return sorted(out, key=lambda x: -x["hours"])
+
+
+def week_shift_length(contexts: list) -> DimensionResult | None:
+    """Shift length, judged once for the week (STRESS-14): of the hourly
+    staff's person-days, the share no longer than this restaurant's own
+    long day for their role (long_day_limit). None when the week has nobody
+    held to it."""
+    if not contexts:
+        return None
+    ctx = contexts[0]
+    if not ctx.week_assignments:
+        return None
+    exempt = (getattr(ctx, "max_shift_exempt", None) or set()) | (getattr(ctx, "hours_exempt", None) or set())
+    tracked = long = 0
+    excess = 0.0
+    longs, by_limit = [], {}
+    for name, entries in ctx.week_assignments.items():
+        if (name or "").strip().lower() in exempt:
+            continue
+        per_day = {}
+        for e in entries or ():
+            if e.get("prior") or not e.get("date"):
+                continue
+            d = per_day.setdefault(e["date"], {"hours": 0.0, "role": e.get("role") or ""})
+            d["hours"] += float(e.get("hours") or 0)
+        for date, d in per_day.items():
+            if d["hours"] <= 0:
+                continue
+            fam = ctx.family(d["role"]) if d["role"] else ""
+            limit, source = long_day_limit(ctx, fam)
+            by_limit[fam or "staff"] = (limit, source)
+            tracked += 1
+            if d["hours"] > limit + 0.25:
+                long += 1
+                excess += d["hours"] - limit
+                longs.append({"name": name, "date": date, "hours": round(d["hours"], 2), "limit": limit,
+                              "role": d["role"], "source": source})
+    load = _manager_load(ctx, exempt)
+    if not tracked:
+        return None
+    # Each long day costs LONG_DAY_PENALTY times its share: one in ten
+    # person-days a double the restaurant does not work holds the week at
+    # the floor; a stray one costs a few points.
+    score = max(0, int(round(100.0 * (1.0 - LONG_DAY_PENALTY * long / float(tracked)))))
+    res = DimensionResult(key="shift_length", label=DIMENSION_LABELS["shift_length"], score=score,
+                          weight=DEFAULT_WEIGHTS["shift_length"], floor=SHIFT_LENGTH_FLOOR,
+                          facts={"days": tracked, "long_days": long, "excess_hours": round(excess, 1),
+                                 "long": sorted(longs, key=lambda x: (-x["hours"], x["date"], x["name"]))[:20],
+                                 "limits": {f: {"hours": h, "source": s} for f, (h, s) in sorted(by_limit.items())},
+                                 "manager_load": load})
+    if long:
+        worst = res.facts["long"][0]
+        own = worst["source"] == "yours"
+        res.weaknesses.append(
+            f"{long} of {tracked} shifts run longer than "
+            + (f"your {role_words(worst['role'], 2) or 'staff'} usually work ({worst['limit']:g}h)" if own
+               else f"{DEFAULT_LONG_DAY_HOURS:g} hours")
+            + f" — {worst['name']} is down for {worst['hours']:g}h on {_day_name(worst['date'])}"
+            + (". Split the doubles or bring in a second person." if long > 1 else "."))
+    else:
+        res.strengths.append("No shift runs longer than your people usually work.")
+    for m in load[:2]:
+        res.weaknesses.append(f"{m['name']} is down for {m['hours']:g}h this week against their usual "
+                              f"{m['usual']:g}h over the last {m['weeks']} published weeks — not scored "
+                              "(managers' hours are their own), worth a look.")
     return res
 
 
@@ -3987,6 +4167,7 @@ DIMENSIONS = {
     "overtime": week_overtime,          # a payroll-week fact: judged only for the week
     "stations": dim_stations,
     "learned": week_learned,            # the scheduling memory: judged only for the week
+    "shift_length": week_shift_length,  # STRESS-14: judged only for the week
 }
 
 # Dimensions that are properties of the whole week, judged once per week in
@@ -4001,6 +4182,7 @@ WEEK_LEVEL_DIMENSIONS = {
     "preferences": week_preferences,
     "overtime": week_overtime,
     "learned": week_learned,
+    "shift_length": week_shift_length,
 }
 
 # What the owner sees as a bar: every shift dimension that counts toward the
@@ -4471,6 +4653,16 @@ def evaluate_schedule(contexts: list, weights: dict = None,
                             + f". The week cannot score above {WEEK_HARD_BREACH_CEILING} until it is fixed.")}
         hoisted["weaknesses"] = [held_by["text"]] + [w for w in (hoisted.get("weaknesses") or [])
                                                       if w != held_by["text"]]
+    else:
+        # A week-level measure under its floor holding the week (STRESS-14),
+        # named as the reason for the number.
+        wh = week_floor_hold(week_dims)
+        if wh is not None and overall <= wh.score:
+            held_by = {"key": wh.key, "label": wh.label, "score": overall, "floor": wh.floor,
+                       "text": f"{wh.label} is holding the week at {overall}"
+                               + (f": {wh.weaknesses[0]}" if wh.weaknesses else ".")}
+            hoisted["weaknesses"] = [held_by["text"]] + [w for w in (hoisted.get("weaknesses") or [])
+                                                          if w not in wh.weaknesses[:1]]
 
     measured = week_measured(scored, week_dims, weights)
     band, capped_from = measured_band(overall, measured["share"])
@@ -4623,6 +4815,14 @@ def week_held(scored: list) -> bool:
     return any(s.get("hard_breaches") for s in scored or [])
 
 
+def week_floor_hold(week_dims: list):
+    """The week-level measure under its floor that holds the week (the
+    lowest), or None (STRESS-14)."""
+    under = [d for d in week_dims or [] if getattr(d, "floor", None) is not None
+             and d.score < d.floor and float(getattr(d, "weight", 0) or 0) > 0]
+    return min(under, key=lambda d: d.score) if under else None
+
+
 def week_score_raw(scored: list, week_dims: list = None) -> float:
     """The week's score before rounding.
 
@@ -4644,6 +4844,12 @@ def week_score_raw(scored: list, week_dims: list = None) -> float:
         num += (s["score"] * (1 - share) + week_val * share) * w
         den += w
     raw = max(0.0, min(float(SCORE_MAX), num / (den or 1.0)))
+    # A week-level measure with a floor under it holds the week at its own
+    # score, as a critical dimension holds a shift (shift length, blind
+    # re-audit 10/11/26 STRESS-14: a week of doubles read 99).
+    held = week_floor_hold(week_dims)
+    if held is not None:
+        raw = min(raw, float(held.score))
     # A broken hard rule holds the whole week, not only its shift (SQ-2).
     if week_held(scored):
         raw = raw * WEEK_HARD_BREACH_CEILING / float(SCORE_MAX)
@@ -5805,6 +6011,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             held_roles=signals.get("held_roles") or {},
             roster_roles=signals.get("roster_roles") or {},
             role_criticality={str(k).strip().lower(): v for k, v in (signals.get("role_criticality") or {}).items()},
+            length_norms=signals.get("length_norms") or {},
             stations=signals.get("stations") or {},
             learned_preferences=learned or {},
             load_ledger=load_ledger,

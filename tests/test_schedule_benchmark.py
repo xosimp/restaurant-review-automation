@@ -238,6 +238,18 @@ def test_the_fast_subset_saves_a_week_on_both_code_arms_without_a_model(fast):
             assert m["unfilled_pricing"] in ("schedule_objective", "day_sales_per_needed_person_half_hour")
 
 
+def test_the_score_never_reads_good_over_a_week_the_gate_fails(fast):
+    """Shift Quality condemns what the invariants condemn (blind re-audit
+    10/11/26 STRESS-14): solver weeks breaking two or three invariants —
+    doubles the restaurant never works among them — scored 92-98."""
+    import shift_quality as _sq
+    for key, r in fast.items():
+        for arm, m in r["arms"].items():
+            failed = set(sb.failed_invariants(m))
+            if "no_long_shifts" in failed and m.get("quality") is not None:
+                assert m["quality"] < _sq.BANDS[1][0], (key, arm, m["quality"], sorted(failed))
+
+
 def test_no_legal_rule_is_broken_on_any_fast_archetype(fast):
     """The engine's own oracle agrees with the independent checks: no hard
     breach of a legal kind on any code-drafted week."""
