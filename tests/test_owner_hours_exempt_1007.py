@@ -81,3 +81,31 @@ def test_the_score_skips_their_hours():
     assert mh is not None and [s["name"] for s in mh.facts["short"]] == ["Ann"]
     found = sq._fatigue_findings(["Erik"], ctx)
     assert not any(found.values()), found
+
+
+def test_leaders_setting_their_own_hours_is_the_restaurants_setting_not_a_rule_for_everyone():
+    """Blind re-audit 10/11/26 ARCH-22: the exemption came from one client;
+    it is compliance leaders_set_own_hours now — on by default (EJ's keeps
+    it), off for a restaurant whose leaders are held to its limits."""
+    assert sr.DEFAULTS["leaders_set_own_hours"] is True
+    c = C()
+    c.compliance["leaders_set_own_hours"] = False
+    for who in ("Erik", "Jim", "Andrew", "Ann"):
+        assert sr.hours_rules_apply(c, who) and sr.max_shift_applies(c, who), who
+    rows = [R(i, "Jim", "10:00am", "11:30pm") for i in range(7)]
+    assert "long_run" in kinds_for(rows, c, "Jim")
+    assert "shift_too_long" in kinds_for([R(0, "Erik", "6:00am", "11:30pm", role="Owner")], c, "Erik")
+    c.compliance["leaders_set_own_hours"] = None                  # a blank reads as the default
+    assert not sr.hours_rules_apply(c, "Jim") and not sr.max_shift_applies(c, "Erik")
+
+
+def test_the_setting_is_read_from_the_restaurant_and_merged_on_save():
+    class Rest:
+        compliance_json = '{"leaders_set_own_hours": false}'
+        jurisdiction = None
+        compliance_profile_json = None
+    assert sr.compliance(Rest())["leaders_set_own_hours"] is False
+    Rest.compliance_json = "{}"
+    assert sr.compliance(Rest())["leaders_set_own_hours"] is True
+    merged = sr.merged_compliance({"max_shift_hours": 10}, {"leaders_set_own_hours": False})
+    assert merged["leaders_set_own_hours"] is False and merged["max_shift_hours"] == 10

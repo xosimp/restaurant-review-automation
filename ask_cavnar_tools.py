@@ -188,7 +188,7 @@ def _read_order_draft(restaurant_id):
 def _read_schedule(restaurant_id):
     """The most recently generated schedule, plus who has actually opened
     the link it was sent with."""
-    from models import get_conn, get_schedule_share_status
+    from models import get_conn
     from labor import employees_in_schedule
     conn = get_conn()
     try:
@@ -217,7 +217,8 @@ def _read_schedule(restaurant_id):
         "hours_budget": row["hours_budget"],
         "edited_by_manager": bool(row["edited_at"]),
         "employees": employees_in_schedule(row["schedule_csv"] or ""),
-        "share_status": get_schedule_share_status(restaurant_id, row["id"]),
+        # Across every copy of the week staff were sent (BUGSLIFE-8).
+        "share_status": __import__("schedule_publish").week_share_status(restaurant_id, row["id"]),
     }
     # Contract K8: how far the demand forecast this schedule was staffed
     # against has been off (nightly, out of sample) and how the frozen weekly

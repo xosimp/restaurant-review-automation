@@ -161,8 +161,9 @@ def test_auto_publish_holds_a_week_with_blockers():
     # publish_review (publish_blockers' source, recomputed at send time —
     # NS5 H3) before it ever reaches _publish_schedule.
     fn = src[src.index("def run_auto_publish_schedules"):]
-    assert fn.index("publish_review(r.id, row[\"id\"], unattended=True)") < fn.index("delayed.schedule(")
-    assert fn.index("schedule_publish_held") < fn.index("delayed.schedule(")
+    # One queued send per week (re-audit 10/11/26 BUGSLIFE-9): queue_schedule_send.
+    assert fn.index("publish_review(r.id, row[\"id\"], unattended=True)") < fn.index("delayed.queue_schedule_send(")
+    assert fn.index("schedule_publish_held") < fn.index("delayed.queue_schedule_send(")
 
 
 # ── the staff portal shows only published weeks ────────────────────────

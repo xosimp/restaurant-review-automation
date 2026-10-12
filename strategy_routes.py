@@ -4205,8 +4205,15 @@ def _do_shift_request_decide(u, request_id):
     note = b.get("note") if isinstance(b.get("note"), str) else None
     try:
         # `note` reaches the employee with the answer (COM-14).
+        # `covered_by`: who runs the floor when approving leaves no manager on
+        # (schedule re-audit 10/11/26 STRESS-16) — without it, or a named
+        # cover, such a drop is refused with the gap (409 needs_cover).
         row = _sq_req.decide(_rid(u), request_id, decision == "approve", decided_by=_who(u),
-                             replacement=(b.get("replacement") or "").strip() or None, note=note)
+                             replacement=(b.get("replacement") or "").strip() or None, note=note,
+                             covered_by=(b.get("covered_by") or "").strip()
+                             if isinstance(b.get("covered_by"), str) else None)
+    except _sq_req.ManagerGapRefused as e:
+        return {"ok": False, "needs_cover": True, "manager_gap": e.gap, "error": str(e)}, 409
     except _sq_req.ShiftRequestError as e:
         return {"ok": False, "error": str(e)}, 400
     if not row:
