@@ -174,6 +174,15 @@ def test_the_table_has_a_row_per_archetype_and_arm():
     assert "not saved" in t[3]
 
 
+def test_the_pipeline_carries_no_name_from_a_removed_one_client_rule():
+    """ARCH-22: the repair loop's floor top-up dates were still carried as
+    pizza_added_dates (a pizza cook on every shift, one client's rule,
+    removed long ago). They are the floors' dates by name now."""
+    src = open(os.path.join(ROOT, "schedule_job.py"), encoding="utf-8").read()
+    assert "pizza" not in src.lower()
+    assert "backstop_floor_added_dates=ctx.floor_added_dates" in src
+
+
 # ── the fast subset, end to end ────────────────────────────────────────────
 
 # (archetype, arm, invariant) the code breaks today, and the finding whose
