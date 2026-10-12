@@ -2061,7 +2061,7 @@ def _holdout_check(samples, keys, current, usd) -> dict:
     if all(abs(cand[k_] - float(current.get(k_, cand[k_]))) < 0.05 for k_ in cand):
         out["reason"] = "the older weeks alone point nowhere"
         return out
-    vals, comp_c, comp_n, groups = [], [], [], []
+    vals, comp_c, comp_n, groups, weeks_of = [], [], [], [], []
     for s in test:
         v = [CALIBRATION_OUTCOMES[o][0] * s[1][o] * float(usd.get(o) or 0) for o in CALIBRATION_OUTCOMES
              if s[1].get(o) is not None]
@@ -2078,6 +2078,7 @@ def _holdout_check(samples, keys, current, usd) -> dict:
         comp_c.append(a)
         comp_n.append(b)
         groups.append(_fe_group(s))
+        weeks_of.append(s[2])
     if len(vals) < 10:
         out["reason"] = "too few held-out shifts with an outcome"
         return out
@@ -2089,7 +2090,11 @@ def _holdout_check(samples, keys, current, usd) -> dict:
     if rc is None or rn is None:
         out["reason"] = "the held-out shifts did not vary enough to tell"
         return out
-    out["p_better"] = paired_better(xa, xb, yv)
+    # Williams' test of two dependent correlations (LEARNING-1): the
+    # bootstrap's share of resamples confirmed noise.
+    test = better_correlation(xa, xb, yv)
+    out["p_better"] = test["better"]
+    out["p_value"] = test["p"]
     out["confirmed"] = rn > rc + 1e-9 and (out["p_better"] or 0) >= CALIBRATION_HOLDOUT_CONFIDENCE
     if not out["confirmed"]:
         out["reason"] = (f"on the newest {k} week{'s' if k != 1 else ''}, held out, the suggested weights were not "
@@ -2100,8 +2105,10 @@ def _holdout_check(samples, keys, current, usd) -> dict:
 def paired_better(xa, xb, yv, tries=200) -> float:
     """The share of bootstrap resamples (paired, seeded) of the held-out
     shifts in which the score `xb` correlates with the outcome `yv` better
-    than `xa` does — how sure a set of weights is the better one. None when
-    no resample could be read."""
+    than `xa` does. None when no resample could be read. A DESCRIPTION of
+    how stable the difference is, not a test: two nearly identical scores
+    keep the sign of a noise difference in most resamples (blind re-audit
+    10/11/26 LEARNING-1) — a decision reads better_correlation."""
     import random
     n = len(yv)
     if n < 3:
@@ -2117,6 +2124,41 @@ def paired_better(xa, xb, yv, tries=200) -> float:
         done += 1
         wins += 1 if c2 > c1 else 0
     return round(wins / float(done), 3) if done else None
+
+
+def better_correlation(xa, xb, yv) -> dict:
+    """The test a weights decision reads (blind re-audit 10/11/26
+    LEARNING-1): does the score `xb` track the outcome `yv` better than `xa`
+    does, beyond chance, on shifts neither was fitted on? Williams' t for
+    two dependent correlations that share `yv` (Steiger 1980, eq. 14) —
+    one-sided, n − 3 degrees of freedom. It accounts for how alike the two
+    scores are (r_ab): two nearly identical weightings differ by little, and
+    a bootstrap kept the sign of a noise difference in most resamples, so it
+    confirmed noise. {"gain" (r_yb − r_ya), "t", "p" (one-sided), "better"
+    (1 − p)}; None values with too little to read. Pure."""
+    from learning_stats import t_cdf
+    n = len(yv)
+    out = {"gain": None, "t": None, "p": None, "better": None}
+    if n < 6:
+        return out
+    ra = _pearson(list(zip(xa, yv)))
+    rb = _pearson(list(zip(xb, yv)))
+    rab = _pearson(list(zip(xa, xb)))
+    if ra is None or rb is None:
+        return out
+    gain = rb - ra
+    if rab is None:
+        rab = 1.0
+    rab = max(-0.999999, min(0.999999, rab))
+    det = 1.0 - ra * ra - rb * rb - rab * rab + 2.0 * ra * rb * rab
+    rbar = (ra + rb) / 2.0
+    den = 2.0 * (n - 1.0) / (n - 3.0) * max(det, 0.0) + rbar * rbar * (1.0 - rab) ** 3
+    if den <= 1e-15:
+        p = 0.0 if gain > 1e-12 else 1.0
+        return {"gain": round(gain, 4), "t": None, "p": p, "better": 1.0 - p}
+    t = gain * math.sqrt((n - 1.0) * (1.0 + rab) / den)
+    p = 1.0 - t_cdf(t, n - 3)
+    return {"gain": round(gain, 4), "t": round(t, 3), "p": round(p, 4), "better": round(1.0 - p, 4)}
 
 
 def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> dict:
