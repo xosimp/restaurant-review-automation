@@ -8005,8 +8005,8 @@ svg:hover .hb-xh{opacity:1}
     if(wk){
       var tn=isNum(bd.net)?bd.net:'',tg=isNum(bd.gross)?bd.gross:'';
       h+='<section class="hb-card drb-week"><div class="hb-h3"><span>The week’s figure</span></div>'
-        +'<div class="drb-wrow"><label>Net<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" id="drb-wnet" value="'+esc(tn)+'"></label>'
-        +'<label>Gross<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" id="drb-wgross" value="'+esc(tg)+'"></label>'
+        +'<div class="drb-wrow"><label>Net<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" id="drb-wnet" value="'+esc(budFmt(tn))+'"></label>'
+        +'<label>Gross<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" id="drb-wgross" value="'+esc(budFmt(tg))+'"></label>'
         +(isNum(sg.net)?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-drb="use-week">Use Cavnar AI’s '+hn(esc(money(sg.net)))+'</button>':'')+'</div>'
         +'<div class="hb-empty">'+(d.mix&&Object.keys(d.mix).length?'Split across the nights by '+esc(d.mix_basis||'your weekday mix')+'. A night your mix has no share of gets nothing.':'There isn’t enough sales history yet to split a week across its nights — budget by day until there is.')+'</div>'
         +'<div class="drb-split" id="drb-split">'+budSplitHtml(d,tn===''?null:+tn)+'</div></section>';
@@ -8014,8 +8014,8 @@ svg:hover .hb-xh{opacity:1}
       h+='<section class="hb-card drb-days"><div class="drb-grid"><span class="h">Night</span><span class="h">Your net</span><span class="h">Your gross</span><span class="h">Cavnar AI suggests</span><span class="h"></span>';
       for(i=0;i<days.length;i++){x=days[i];var s=x.suggest;
         h+='<span class="d"><b>'+esc(x.weekday.slice(0,3))+'</b> '+hn(esc(md(x.date)))+'</span>'
-          +'<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" aria-label="Net budget '+esc(md(x.date))+'" data-drb-net="'+esc(x.date)+'" value="'+(isNum(x.budget_net)?x.budget_net:'')+'">'
-          +'<input class="ac-input" type="number" min="0" step="10" inputmode="decimal" aria-label="Gross budget '+esc(md(x.date))+'" data-drb-gross="'+esc(x.date)+'" value="'+(isNum(x.budget_gross)?x.budget_gross:'')+'">'
+          +'<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" aria-label="Net budget '+esc(md(x.date))+'" data-drb-net="'+esc(x.date)+'" value="'+esc(budFmt(x.budget_net))+'">'
+          +'<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" aria-label="Gross budget '+esc(md(x.date))+'" data-drb-gross="'+esc(x.date)+'" value="'+esc(budFmt(x.budget_gross))+'">'
           +'<span class="sg">'+(s?hn(esc(money(s.net)))+' net'+(isNum(s.gross)?' · '+hn(esc(money(s.gross)))+' gross':'')+'<small>'+esc(s.basis||'')+'</small>':'<small>'+esc(x.why_none||'No suggestion for this night')+'</small>')+'</span>'
           +'<span>'+(s?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-drb="use" data-date="'+esc(x.date)+'">Use</button>':'')+'</span>';}
       h+='</div></section>';
@@ -8030,6 +8030,20 @@ svg:hover .hb-xh{opacity:1}
     for(i=0;i<days.length;i++){x=days[i];
       h+='<span class="d"><b>'+esc(x.weekday.slice(0,3))+'</b> '+hn(esc(md(x.date)))+'</span><span class="v">'+(has(sp,x.date)?hn(esc(money(sp[x.date]))):'—')+'</span>';}
     return h+'</div>';
+  }
+  // Budget figures read with thousands commas as they are typed ("9,500"),
+  // owner 10/12/26; budVal strips them, so what saves is the number.
+  function budCommas(clean){
+    var parts=clean.split('.'),ip=parts[0].replace(/^0+(?=\d)/,'');
+    return ip.replace(/\B(?=(\d{3})+(?!\d))/g,',')+(parts.length>1?'.'+parts.slice(1).join('').slice(0,2):'');
+  }
+  function budFmt(v){return isNum(v)?budCommas(String(Math.round(v*100)/100)):(v==null?'':String(v));}
+  function budLive(inp){
+    var raw=String(inp.value||''),pos=inp.selectionStart==null?raw.length:inp.selectionStart;
+    var before=raw.slice(0,pos).replace(/[^\d.]/g,'').length,out=budCommas(raw.replace(/[^\d.]/g,''));
+    if(out===raw)return;inp.value=out;
+    var i=0,seen=0;while(i<out.length&&seen<before){if(/[\d.]/.test(out.charAt(i)))seen++;i++;}
+    try{inp.setSelectionRange(i,i);}catch(err){}
   }
   function budVal(inp){var v=String(inp&&inp.value||'').replace(/[$,\s]/g,'');if(v==='')return null;var n=Number(v);return isFinite(n)&&n>=0?n:NaN;}
   function budSave(btn){
@@ -8053,13 +8067,13 @@ svg:hover .hb-xh{opacity:1}
     var a=t.getAttribute('data-drb'),i,x;e.preventDefault();
     if(a==='use'){var dt=t.getAttribute('data-date');for(i=0;i<BUD.days.length;i++){x=BUD.days[i];if(x.date===dt&&x.suggest){
         var ni=document.querySelector('[data-drb-net="'+dt+'"]'),gi=document.querySelector('[data-drb-gross="'+dt+'"]');
-        if(ni)ni.value=x.suggest.net;if(gi&&isNum(x.suggest.gross))gi.value=x.suggest.gross;}}}
+        if(ni)ni.value=budFmt(x.suggest.net);if(gi&&isNum(x.suggest.gross))gi.value=budFmt(x.suggest.gross);}}}
     else if(a==='use-all'){for(i=0;i<BUD.days.length;i++){x=BUD.days[i];if(!x.suggest)continue;
         var n2=document.querySelector('[data-drb-net="'+x.date+'"]'),g2=document.querySelector('[data-drb-gross="'+x.date+'"]');
-        if(n2)n2.value=x.suggest.net;if(g2&&isNum(x.suggest.gross))g2.value=x.suggest.gross;}
+        if(n2)n2.value=budFmt(x.suggest.net);if(g2&&isNum(x.suggest.gross))g2.value=budFmt(x.suggest.gross);}
       var s=el('drb-status');if(s)s.textContent='Filled in — check them, then Save.';}
     else if(a==='use-week'){var wn=el('drb-wnet'),wg=el('drb-wgross'),sg=BUD.suggest||{};
-      if(wn&&isNum(sg.net))wn.value=sg.net;if(wg&&isNum(sg.gross))wg.value=sg.gross;
+      if(wn&&isNum(sg.net))wn.value=budFmt(sg.net);if(wg&&isNum(sg.gross))wg.value=budFmt(sg.gross);
       var sp=el('drb-split');if(sp)sp.innerHTML=budSplitHtml(BUD,isNum(sg.net)?sg.net:null);}
     else if(a==='mode'){var m=t.getAttribute('data-mode');if(m===BUD.mode)return;
       // Day and Week read the same week (budget_plan.week_view): switch in
@@ -8074,7 +8088,10 @@ svg:hover .hb-xh{opacity:1}
     else if(a==='save')budSave(t);
   });
   document.addEventListener('input',function(e){
-    if(!BUD||!e.target||e.target.id!=='drb-wnet')return;
+    var tg=e.target;
+    if(!BUD||!tg)return;
+    if(tg.id==='drb-wnet'||tg.id==='drb-wgross'||(tg.getAttribute&&(tg.getAttribute('data-drb-net')||tg.getAttribute('data-drb-gross'))))budLive(tg);
+    if(tg.id!=='drb-wnet')return;
     var sp=el('drb-split'),v=budVal(e.target);if(sp)sp.innerHTML=budSplitHtml(BUD,v===v?v:null);
   });
 

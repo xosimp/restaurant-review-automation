@@ -94,3 +94,12 @@ def test_mode_switch_redraws_in_place_without_a_reload():
     branch = branch[:branch.index("else if(a==='save')")]
     assert "budMode(m)" in branch and "loadBudget(" not in branch
     assert "budMode(prev)" in branch
+
+
+def test_budget_inputs_show_thousands_commas():
+    """Typed figures read "9,500" (owner, 10/12/26): text inputs formatted
+    as typed, and budVal strips the commas before saving."""
+    html = open("templates/dashboard.html").read()
+    assert 'type="number" min="0" step="10" inputmode="decimal" id="drb-wnet"' not in html
+    assert "data-drb-net=\"'+esc(x.date)+'\" value=\"'+esc(budFmt(x.budget_net))+'\"" in html
+    assert "function budLive(inp)" in html and "replace(/[$,\\s]/g,'')" in html
