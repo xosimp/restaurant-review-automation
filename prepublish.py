@@ -635,10 +635,52 @@ def forecast_record(rid) -> dict:
     # The miss FORECAST_BAND of the scored weeks came in at or under.
     band = max(1.0, math.ceil(srt[max(0, math.ceil(FORECAST_BAND * len(srt)) - 1)]))
     last = rows[0] if rows else None
+    # Against a naive guess (blind re-audit 10/11/26 TRUST-30): "within 12%
+    # on 7 of 9 weeks" sounded good even where "same as last week" would
+    # have been within 8%. The weeks this projection was nearer the actual
+    # than last week's sales were, and forecast_log.skill (the lower of its
+    # skill against last week and against the recent average — it must beat
+    # both); the range is withheld when it is not positive (_numbers).
+    sk = forecast_log.skill(rows)
+    beat, vs = 0, 0
+    for r in rows:
+        p, a, n = forecast_log._f(r.get("predicted")), forecast_log._f(r.get("actual")), \
+            forecast_log._f(r.get("naive_last"))
+        if None in (p, a, n):
+            continue
+        vs += 1
+        if abs(p - a) < abs(n - a):
+            beat += 1
     return {"weeks": len(errs), "within_pct": int(band), "weeks_within": sum(1 for e in errs if e <= band),
             "mean_error_pct": round(sum(errs) / len(errs), 1),
+            "skill": sk.get("skill"), "skill_pct": sk.get("skill_pct"),
+            "skill_vs_last": sk.get("skill_vs_last"), "skill_vs_mean": sk.get("skill_vs_mean"),
+            "n_skill": sk.get("n_skill"), "beats_last_week": beat, "vs_last_week": vs,
             "last": ({"projected": last.get("predicted"), "actual": last.get("actual"),
                       "period": last.get("horizon_end")} if last else None)}
+
+
+def forecast_skill_line(rec) -> str | None:
+    """The forecast's record against a naive guess, in words (TRUST-30):
+    "Beats last week's sales as a guess on 5 of 8 weeks" — None until the
+    naive figure was recorded for FORECAST_MIN_WEEKS weeks."""
+    if not rec or int(rec.get("vs_last_week") or 0) < FORECAST_MIN_WEEKS:
+        return None
+    line = (f"Beats last week's sales as a guess on {rec['beats_last_week']} of the last "
+            f"{rec['vs_last_week']} weeks")
+    if rec.get("skill") is not None and rec["skill"] <= 0:
+        line += " — no better than a naive guess, so no range is shown"
+    return line + "."
+
+
+def forecast_has_skill(rec) -> bool:
+    """False when the forecast's measured skill is zero or below (it does
+    no better than repeating last week, or the recent average): the labor
+    range and its record are not stated then (TRUST-30). True while the
+    skill is not measured yet — the plain miss record still stands."""
+    if not rec:
+        return False
+    return rec.get("skill") is None or float(rec["skill"]) > 0
 
 
 def _numbers(rid, row, rows, c, dates) -> dict:
@@ -666,16 +708,26 @@ def _numbers(rid, row, rows, c, dates) -> dict:
         pct = lv.get("pct")
         low = high = None
         track = None
-        if rec and pct and rev:
+        skill_line = forecast_skill_line(rec)
+        if rec and pct and rev and forecast_has_skill(rec):
             e = rec["within_pct"] / 100.0
             low, high = round(lv["cost"] / (float(rev) * (1 + e)) * 100, 1), \
                 (round(lv["cost"] / (float(rev) * (1 - e)) * 100, 1) if e < 1 else None)
             track = (f"Our sales forecasts here were within {rec['within_pct']}% on {rec['weeks_within']} of the last "
-                     f"{rec['weeks']} weeks.")
+                     f"{rec['weeks']} weeks" + (f"; {skill_line[0].lower()}{skill_line[1:]}" if skill_line else "."))
+        elif rec and skill_line:
+            # No better than a naive guess: the range is withheld and the
+            # reason is the record line (TRUST-30).
+            track = skill_line
         out["labor_pct"] = {"value": pct, "low": low, "high": high, "basis": lv.get("basis"), "label": lv.get("label"),
                             "target": lv.get("target_pct"), "target_basis": lv.get("target_basis"),
                             "grade": lv.get("grade") or _econ.labor_grade(pct, lv.get("target_pct")),
                             "track_record": track, "text": lv.get("text"),
+                            # Against a naive guess (TRUST-30, additive).
+                            "forecast_skill": ({"skill": rec.get("skill"), "skill_pct": rec.get("skill_pct"),
+                                                "beats_last_week": rec.get("beats_last_week"),
+                                                "vs_last_week": rec.get("vs_last_week"),
+                                                "range_withheld": not forecast_has_skill(rec)} if rec else None),
                             "other_basis_note": lv.get("other_basis_note")}
         out["cost"] = {"hourly": lv.get("hourly_cost"), "salaried": lv.get("salaried_cost"), "total": lv.get("cost"),
                        "text": (f"${lv.get('hourly_cost'):,.0f} hourly"
@@ -1204,11 +1256,18 @@ def _sure(rid, quality, likely, numbers) -> dict:
     rec = _safe(lambda: forecast_record(rid), None, "forecast_record", rid)
     if rec:
         fc = {"within_pct": rec["within_pct"], "weeks_within": rec["weeks_within"], "weeks": rec["weeks"],
-              "mean_error_pct": rec["mean_error_pct"]}
+              "mean_error_pct": rec["mean_error_pct"], "skill": rec.get("skill"),
+              "beats_last_week": rec.get("beats_last_week"), "vs_last_week": rec.get("vs_last_week")}
         hit = int(round(100.0 * rec["weeks_within"] / rec["weeks"]))
-        parts.append((max(0, 100 - int(round(rec["mean_error_pct"]))),
-                      f"sales forecast off by {rec['mean_error_pct']:g}% on average over {rec['weeks']} weeks"))
-        out["lines"].append(lp.get("track_record") or f"Sales forecasts within {rec['within_pct']}% on {hit}% of weeks.")
+        if forecast_has_skill(rec):
+            parts.append((max(0, 100 - int(round(rec["mean_error_pct"]))),
+                          f"sales forecast off by {rec['mean_error_pct']:g}% on average over {rec['weeks']} weeks"))
+        else:
+            # A forecast no better than repeating last week earns no
+            # confidence for its small misses (TRUST-30).
+            parts.append((0, f"sales forecast no better than a naive guess over {rec.get('n_skill') or rec['weeks']} weeks"))
+        out["lines"].append(lp.get("track_record") or forecast_skill_line(rec)
+                            or f"Sales forecasts within {rec['within_pct']}% on {hit}% of weeks.")
     out["forecast"] = fc
     conf = (quality or {}).get("confidence") or {}
     if conf.get("score") is not None:
