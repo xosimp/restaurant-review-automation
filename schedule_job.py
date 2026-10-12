@@ -94,6 +94,10 @@ class Base:
     csv: str
     history_id: object = None
     week_start: object = None
+    # A candidate held in memory: what its own pass said about the whole
+    # week (notes, where each day came from, days not written, stage
+    # failures) — carried into a gate pass that wins (BUGSGEN-10).
+    facts: dict = None
 
 
 @dataclass
@@ -111,6 +115,10 @@ class PassSpec:
     focus: list = None
     code_redo: bool = False      # drafted in code first (AI-28)
     gate: dict = None            # the gate this pass answers
+    # How a reused answer was drafted ("code" / "model"): a re-run over an
+    # edited draft reuses a code redo's answer, and its saved redo said
+    # "model" (blind re-audit 10/11/26 BUGSGEN-15).
+    redo_how: str = None
 
     @property
     def redo(self) -> bool:
@@ -139,6 +147,7 @@ class Candidate:
     gate_answer: dict = None     # the week's answer before any pass, for the gate's fill
     code_redo_on: bool = False
     pinned: list = field(default_factory=list)
+    noted: bool = False          # Cavnar AI's note written (the winner only — ARCH-13)
     _rules: dict = None
 
     def view(self) -> dict:
@@ -235,8 +244,14 @@ def run(req: Request) -> None:
 
 def _finish(job: GenerationRun, winner: Candidate) -> None:
     """After the one save: a Stop that landed while it was written says what
-    is in force (ARCH-2); otherwise the job is done with the saved draft."""
-    se._raise_if_stopped(job.clock)
+    is in force (ARCH-2); otherwise the job is done with the saved draft —
+    even when a poll called it dead while the after-save steps ran: the
+    draft is saved and in force, so only the OWNER's Stop changes what the
+    job says (blind re-audit 10/11/26 BUGSGEN-13: the poll's verdict made the
+    owner read "didn't finish in time" over a draft that had replaced
+    theirs). The poll yields to a saved job (ops.read_async_job, saved_ref)
+    and the finish replaces its provisional verdict."""
+    se._raise_if_stopped(job.clock, owner_only=True)
     se._ops.finish_async_job(job.req.job_id, "done", se._json_ready(job.payload))
 
 
@@ -278,6 +293,20 @@ def _read_base(req: Request) -> Base:
                 week_start=b.get("week_start"))
 
 
+def _refuse_dates_outside(base: Base, dates) -> None:
+    """A redo's days must be days of the draft it rewrites (BUGSGEN-2)."""
+    if not base.week_start or not dates:
+        return
+    week = set(se.week_dates_from(se._date_of(str(base.week_start)[:10])))
+    outside = sorted({str(d)[:10] for d in dates} - week)
+    if outside:
+        from time_utils import mdy
+        raise se.ScheduleGenerationError(
+            "The days you picked (" + ", ".join(mdy(d) for d in outside[:3]) + ("…" if len(outside) > 3 else "")
+            + f") aren't in this draft's week of {mdy(str(base.week_start)[:10])}, so nothing was redone. "
+            "Open the week those days belong to and redo them there.")
+
+
 def _owner_redo(job: GenerationRun) -> Candidate:
     """An owner's redo of some days (or a focused redo named by the caller):
     drafted in code first when the reason reads as rules (AI-28), else — or
@@ -287,8 +316,14 @@ def _owner_redo(job: GenerationRun) -> Candidate:
     REDO_RERUNS_MAX times. No recursion: each turn is one more pass."""
     req = job.req
     base = _read_base(req)
-    week_start = req.week_start or base.week_start
+    # A redo belongs to its draft's own week, whatever week the client named
+    # or the restaurant's week start is now (blind re-audit 10/11/26
+    # BUGSGEN-2: EJ's moved Monday -> Wednesday with drafts on file, and a
+    # redo saved rows outside the week it was filed under, or refused as
+    # "closed"); a day outside that week is refused, never drafted.
+    week_start = base.week_start or req.week_start
     req.week_start = week_start
+    _refuse_dates_outside(base, req.dates)
     code_first = False
     if not req.focus:
         # An owner's redo is drafted in code first (scheduler audit 10/10/26
@@ -324,7 +359,9 @@ def _owner_redo(job: GenerationRun) -> Candidate:
             # The model's answer as it came back, over the draft as it now
             # stands (PIPE-2): nothing is paid twice.
             spec = PassSpec(kind="redo", dates=spec.dates, base=_read_base(req), answer=cand.answer,
-                            focus=spec.focus, code_redo=False)
+                            focus=spec.focus, code_redo=False,
+                            redo_how=((cand.result.get("redo") or {}).get("how")
+                                      or ("code" if cand.code_redo_on else "model")))
 
 
 def _week(job: GenerationRun) -> Candidate:
@@ -343,7 +380,7 @@ def _week(job: GenerationRun) -> Candidate:
             # leaves the draft as it was, captured (P-17) — never a lost week.
             print(f"[schedule] quality gate failed: {_gx!r}")
             se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={req.restaurant_id}")
-            first.payload["gate"] = {"ran": False}
+            first.payload["gate"] = _gate_not_run("error")
             winner = first
     _commit(job, winner)
     return winner
@@ -376,6 +413,10 @@ def _build_pass(job: GenerationRun, spec: PassSpec) -> Candidate:
         except Exception as _gcx:
             print(f"[schedule] gate: answer not copied, no fill in code: {_gcx!r}")
     editable, kept_rows = _stage_scope(cand)
+    if spec.kind in ("gate_fill", "gate_rewrite") and spec.base is not None and spec.base.facts:
+        # The days the gate keeps were built by the first pass: what it said
+        # about them leads this pass's review too (BUGSGEN-10).
+        _inherit_week_facts(cand.result, spec.base.facts, spec.dates)
     try:
         ctx = _stage_parse(job, cand, editable, kept_rows)
         _boundary(job, "parsed")
@@ -402,7 +443,8 @@ def _build_pass(job: GenerationRun, spec: PassSpec) -> Candidate:
         raise se.ScheduleGenerationError("The draft was written but its checks failed, so nothing was saved. "
                                          "Try again.")
     _stage_requirements_met(cand, rid)
-    _stage_note(job, cand)
+    # No note here: it is a model call, written for the pass the job saves
+    # (_commit), never for a gate pass that loses (ARCH-13).
     _stage_inputs(cand)
     _boundary(job, "built")
     _stage_payload(cand, ctx)
@@ -484,7 +526,7 @@ def _stage_scope(cand: Candidate):
                       "base_history_id": int(spec.base.history_id) if spec.base.history_id else None,
                       "by": spec.by,
                       # Redone in code, no model call (AI-28), or by the model.
-                      "how": "code" if cand.code_redo_on else "model"}
+                      "how": spec.redo_how or ("code" if cand.code_redo_on else "model")}
     return keep, kept_rows
 
 
@@ -1313,10 +1355,14 @@ def _stage_note(job: GenerationRun, cand: Candidate) -> None:
     """"Cavnar AI's note", written from the FINISHED week and checked against
     its rows (TRUST-15, AI-21). It is a model call: a stopped run starts no
     further one (10/9/26) — stopped by the owner is said as stopped, called
-    dead by a poll as out of time."""
+    dead by a poll as out of time. Written once, for the candidate the job
+    saves, just before the save (_commit — blind re-audit 10/11/26 ARCH-13:
+    every pass used to pay for a note before the gate chose, up to three a
+    generation for two that were thrown away)."""
     result, preview_rows = cand.result, cand.rows
     rid = job.req.restaurant_id
     _boundary(job, "note")
+    cand.noted = True
     try:
         import schedule_narrative as _snar
         _note = _snar.write(rid, preview_rows, changes=result.get("summary") or [],
@@ -1331,6 +1377,15 @@ def _stage_note(job: GenerationRun, cand: Candidate) -> None:
     except Exception as _nx:
         se._soft_fail("note", _nx, rid)
         result["narrative"] = []
+        # Said as the inputs stage would have said it (it ran before this).
+        review = result.get("review")
+        if isinstance(review, dict):
+            review["inputs_missing"] = list(dict.fromkeys(list(review.get("inputs_missing") or []) + ["note"]))
+            review.setdefault("lines", []).append(se._input_failure_line(["note"]))
+    if isinstance(cand.payload, dict):
+        cand.payload["narrative"] = result.get("narrative") or []
+        if isinstance(result.get("review"), dict):
+            cand.payload["review"] = result["review"]
 
 
 def _stage_inputs(cand: Candidate) -> None:
@@ -1467,7 +1522,9 @@ def _stage_payload(cand: Candidate, ctx: _PassContext) -> None:
         manager_coverage=result.get("manager_coverage") or {"extended": 0, "added": 0, "left": []},
         min_hours=result.get("min_hours") or {"moved": 0, "added": 0, "left": []},
         # What the generation could not do, said (P-34, E-20, E-30).
-        partial=bool(result.get("unwritten_dates")) and not result.get("redo"),
+        # A gate pass that won carries the first pass's empty days
+        # (BUGSGEN-10): the week is partial for them as it was.
+        partial=(bool(result.get("unwritten_dates")) and not result.get("redo")) or bool(result.get("partial_week")),
         unwritten_dates=result.get("unwritten_dates") or [],
         unstaffable_dates=result.get("unstaffable_dates") or [],
         starting_point=result.get("starting_point") or {"no_history": False},
@@ -1554,6 +1611,7 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
         # check the rewrite (P-22): the draft stands as it is.
         print(f"[schedule] quality gate skipped: {int(clock.model_seconds_left())}s of model time left")
         se._run_gate(gate, "skipped")
+        first.payload["gate"] = _gate_not_run("time", gate)
         return first
     se._run_gate(gate)
     _boundary(job, "gate")
@@ -1580,14 +1638,17 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
             # the run is at its caps, when the draft stands as it was.
             if se._escalate_for_gate(gate) == "capped":
                 print("[schedule] quality gate rewrite skipped: the run is at its caps")
+                first.payload["gate"] = _gate_not_run("capped", gate)
                 return first
             escalated_here = True
     except se.ScheduleGenerationError:
         raise
     except Exception as _gx:
-        # The draft stands; the failed gate is captured (P-17).
+        # The draft stands; the failed gate is captured (P-17) and said on
+        # the payload (BUGSGEN-1, BUGSGEN-16 — it used to carry no verdict).
         print(f"[schedule] quality gate failed: {_gx!r}")
         se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={rid}")
+        first.payload["gate"] = _gate_not_run("error", gate)
         return first
     for attempt in attempts:
         if attempt == "fill":
@@ -1645,13 +1706,170 @@ def _gate_fill(job: GenerationRun, gate: dict, in_force: InForce, fill_answer: d
                                                            fill=fill_info)))
 
 
+# Why the quality gate did not run on a draft that tripped it (BUGSGEN-16):
+# the payload always carries a verdict, so the owner and the clients can tell
+# a gate skipped or failed from one that found nothing.
+_GATE_NOT_RUN = {
+    "time": "Cavnar AI ran out of time to rework the weakest days, so the draft is as it was written.",
+    "capped": "Cavnar AI reached this draft's limit on AI model calls before it could rework the weakest days, "
+              "so the draft is as it was written.",
+    "error": "Cavnar AI couldn't check this draft's weakest days just now, so the draft is as it was written.",
+}
+
+
+def _gate_not_run(why: str, gate: dict = None) -> dict:
+    out = {"ran": False, "why": why, "reason": _GATE_NOT_RUN.get(why, _GATE_NOT_RUN["error"])}
+    if gate:
+        out["dates"] = list(gate.get("dates") or [])
+        if gate.get("reason"):
+            out["tripped"] = gate.get("reason")
+    return out
+
+
+def _rewrite_skipped(in_force: InForce, why: str) -> InForce:
+    """The rewrite was owed but not run (time, the run's caps): the payload in
+    force says so beside what the fill did (BUGSGEN-16)."""
+    g = dict((in_force.payload or {}).get("gate") or {})
+    g.update(rewrite={"tried": False, "skipped": why})
+    if not g.get("kept"):
+        g.update(kept="original", reason=_GATE_NOT_RUN.get(why, _GATE_NOT_RUN["error"]))
+    return InForce(in_force.cand, dict(in_force.payload, gate=g))
+
+
 def _held_base(cand: Candidate) -> Base:
     """A candidate held in memory as the base a gate pass writes over: its
     stored text (schedule_rows.to_csv) read back as rows, exactly as a saved
     draft's would be — never saved itself (ARCH-17)."""
     text = cand.payload.get("schedule_csv") or ""
     return Base(rows=se._versions.rows_from_csv(text), csv=text, history_id=None,
-                week_start=(cand.result.get("week_dates") or [None])[0])
+                week_start=(cand.result.get("week_dates") or [None])[0], facts=_week_facts(cand.result))
+
+
+# What a pass says about the whole week, beside its rows (BUGSGEN-10).
+_WEEK_FACT_KEYS = ("week_dates", "draft_source", "unwritten_dates", "unstaffable_dates", "stage_failures",
+                   "empty_accepted", "closed_dates", "open_unwritten", "generation_notes")
+
+
+def _week_facts(result: dict) -> dict:
+    return copy.deepcopy({k: result.get(k) for k in _WEEK_FACT_KEYS if result.get(k) is not None})
+
+
+def _inherit_week_facts(result: dict, facts: dict, gate_dates) -> None:
+    """A gate pass over a candidate held in memory keeps that candidate's days
+    outside its own: what the first pass said about them is this pass's to
+    say too — which days were built without the model and why, the days not
+    written, the days nobody could work, a stage that did not run, the empty
+    days accepted, the days closed to the passes. A gate rewrite's result
+    used to describe only its own days, and when it won the review lost
+    "Built without the AI model ..." for six of the week's seven days (blind
+    re-audit 10/11/26 BUGSGEN-10). Mutates `result`."""
+    gate = {str(d)[:10] for d in gate_dates or ()}
+    week = list(facts.get("week_dates") or result.get("week_dates") or [])
+    kept = set(week) - gate
+
+    def _on(items, dates):
+        return [dict(u) for u in items or [] if str(u.get("date") or "")[:10] in dates]
+    own_ds = dict(result.get("draft_source") or {})
+    first_ds = dict(facts.get("draft_source") or {})
+    first_code = sorted(d for d in first_ds.get("code_dates") or [] if d in kept)
+    own_code = sorted(d for d in own_ds.get("code_dates") or [] if d in gate)
+    code_line = None
+    if own_code and own_ds.get("line"):
+        # The pass drafted its own days in code (the gate's fill reuses the
+        # first answer): its line names them, unless it misses a kept day.
+        ds = dict(own_ds)
+        if not (set(first_code) - set(own_ds.get("code_dates") or ())):
+            code_line = own_ds.get("line")
+    elif first_code:
+        ds = dict(first_ds)
+        if first_code == sorted(first_ds.get("code_dates") or []):
+            code_line = first_ds.get("line")
+    else:
+        ds = dict(own_ds or first_ds)
+    code = sorted(set(first_code) | set(own_code))
+    why = {d: (own_ds.get("why") or {}).get(d) or (first_ds.get("why") or {}).get(d) for d in code}
+    ds["code_dates"] = code
+    ds["why"] = why
+    if first_ds.get("chosen"):
+        ds["chosen"] = first_ds["chosen"]               # the arm the week drew
+    if code and code_line is None:
+        try:
+            import schedule_fallback as _sfb
+            reasons = [w for w in why.values() if w]
+            main = max(set(reasons), key=reasons.count) if reasons else "other"
+            src = ds.get("code_source") or ds.get("source") or "solver"
+            code_line = _sfb.note_line(src, main, code, ds.get("base") if src == "carry_forward" else None)
+        except Exception as e:
+            print(f"[schedule] code-built days line not rebuilt: {e!r}")
+            se._ops.capture(e, job="schedule_generate", context="code-built days line")
+    if code_line:
+        ds["line"] = code_line
+    else:
+        ds.pop("line", None)
+    result["draft_source"] = ds
+    # The days the first pass left empty stay empty: a gate day keeps the
+    # first draft's rows, so it is unwritten only if it was empty there and
+    # the pass did not write it either.
+    own_notes = list(result.get("generation_notes") or [])
+    own_recon = _recon_lines(own_ds, result)
+    own_unwritten = {str(u.get("date") or "")[:10] for u in result.get("unwritten_dates") or []}
+    first_unwritten = list(facts.get("unwritten_dates") or [])
+    week_unwritten = _on(first_unwritten, kept) + [dict(u) for u in first_unwritten
+                                                   if str(u.get("date") or "")[:10] in own_unwritten & gate]
+    result["unwritten_dates"] = sorted(week_unwritten, key=lambda u: u.get("date") or "")
+    result["partial_week"] = bool(week_unwritten)
+    result["unstaffable_dates"] = _on(facts.get("unstaffable_dates"), kept) +         _on(result.get("unstaffable_dates"), gate)
+    accepted = _on(facts.get("empty_accepted"), kept)
+    if accepted:
+        result["empty_accepted"] = accepted + _on(result.get("empty_accepted"), gate)
+    result["closed_dates"] = sorted({d for d in facts.get("closed_dates") or [] if d in kept}
+                                    | {d for d in result.get("closed_dates") or [] if d in gate})
+    result["open_unwritten"] = sorted({d for d in facts.get("open_unwritten") or [] if d in kept}
+                                      | {d for d in result.get("open_unwritten") or [] if d in gate})
+    own_fail = list(result.get("stage_failures") or [])
+    seen = {(f.get("stage"), f.get("line")) for f in own_fail}
+    result["stage_failures"] = own_fail + [dict(f, from_first_pass=True) for f in facts.get("stage_failures") or []
+                                           if (f.get("stage"), f.get("line")) not in seen]
+    # The week's lead lines rebuilt from the merged facts, in the order the
+    # generation writes them; then the first pass's other lines (a first week
+    # with no history), then what this pass said of its own days (a gate day
+    # it could not redo).
+    first_notes = list(facts.get("generation_notes") or [])
+    first_recon = _recon_lines(first_ds, facts)
+    notes = []
+    if result["unstaffable_dates"]:
+        notes.append(se._unstaffable_line(result["unstaffable_dates"]))
+    if code_line:
+        notes.append(code_line)
+    if week_unwritten:
+        notes.append(se._unwritten_line(result["unwritten_dates"]))
+    if accepted:
+        notes.append(se._accepted_empty_line(result["empty_accepted"]))
+    for n in [x for x in first_notes if x not in first_recon] + \
+            [x for x in own_notes if x not in own_recon and x not in first_notes]:
+        if n and n not in notes:
+            notes.append(n)
+    result["generation_notes"] = notes
+
+
+def _recon_lines(ds: dict, facts: dict) -> set:
+    """The lead lines a pass's own facts produce (the code-built days, the
+    days not written, the empty days accepted, the days nobody could work),
+    so a merge rebuilds them from the merged facts instead of keeping both
+    versions (BUGSGEN-10)."""
+    out = {ds.get("line")}
+    try:
+        if facts.get("unwritten_dates"):
+            out.add(se._unwritten_line(facts["unwritten_dates"]))
+        if facts.get("empty_accepted"):
+            out.add(se._accepted_empty_line(facts["empty_accepted"]))
+        if facts.get("unstaffable_dates"):
+            out.add(se._unstaffable_line(facts["unstaffable_dates"]))
+    except Exception as e:
+        print(f"[schedule] week lines not rebuilt: {e!r}")
+        se._ops.capture(e, job="schedule_generate", context="week lines")
+    out.discard(None)
+    return out
 
 
 def _standing(in_force: InForce) -> Candidate:
@@ -1674,10 +1892,10 @@ def _gate_rewrite(job: GenerationRun, gate: dict, in_force: InForce, escalated=F
         if clock is not None and clock.model_seconds_left() < se.GATE_MIN_MODEL_SECONDS:
             print(f"[schedule] quality gate rewrite skipped: {int(clock.model_seconds_left())}s of model time left")
             se._run_gate(gate, "skipped")
-            return _standing(in_force)
+            return _standing(_rewrite_skipped(in_force, "time"))
         if se._escalate_for_gate(gate) == "capped":
             print("[schedule] quality gate rewrite skipped: the run is at its caps")
-            return _standing(in_force)
+            return _standing(_rewrite_skipped(in_force, "capped"))
     print(f"[schedule] quality gate: regenerating {dates} ({gate.get('reason')})")
     se._record_gate_path(rid, "model", dates)
     base_cand = in_force.cand
@@ -1738,6 +1956,9 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
     rid = req.restaurant_id
     result, spec = winner.result, winner.spec
     job.week_dates = list(result.get("week_dates") or [])
+    if not winner.noted:
+        # Cavnar AI's note: for the winner only, before its save (ARCH-13).
+        _stage_note(job, winner)
     # A job past its own deadline, or one a poll has already called dead,
     # saves nothing (P-22); checked with half the store's grace in hand.
     # Stopped by the owner is said as stopped (BUGSGEN-12); the save itself

@@ -859,6 +859,9 @@ def run_queued_generation(job):
     job_id, restaurant_id = p.get("job_id"), p.get("restaurant_id")
     resumed = job.resumed
     if resumed:
+        # A try that saved settles the job from its checkpoint, the owner's
+        # Stop after the save honoured and no later draft touched (blind
+        # re-audit 10/11/26 BUGSGEN-11).
         if _sres.finish_from_checkpoint(job):
             _settle_rejection(job_id, restaurant_id, p.get("rejection"))
             notify_generation_watchers(job_id, restaurant_id)
@@ -1789,8 +1792,11 @@ def check_week_start(restaurant_id, raw):
         today = restaurant_now_by_id(restaurant_id, naive=True).date()
     except Exception:
         today = _date.today()
-    from labor import get_week_start_day
-    monday = d - _t(days=(d.weekday() - get_week_start_day(restaurant_id)) % 7)
+    # A draft already saved under this week keeps the week it was built on
+    # (week_start_day_for — blind re-audit 10/11/26 BUGSGEN-2): a redo of a
+    # Monday-week draft after the move to Wednesday was read as the week
+    # before and refused as already happened.
+    monday = d - _t(days=(d.weekday() - week_start_day_for(restaurant_id, raw)) % 7)
     if monday + _t(days=6) < today:
         return None, "That week has already happened — pick this week or a later one."
     if monday > today + _t(days=7 * 12):
@@ -3687,6 +3693,9 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
         merged["draft_source"] = {"chosen": chosen, "source": code_draft["source"] if chosen != "model" else "model",
                                   "code_source": code_draft["source"], "code_dates": list(code_draft["dates"]),
                                   "why": {d: code_draft["why"].get(d) for d in code_draft["dates"]},
+                                  # Its review line, so a gate pass that wins
+                                  # names the same days (BUGSGEN-10).
+                                  "line": code_draft["line"],
                                   "base": {k: (code_draft.get("base") or {}).get(k)
                                            for k in ("source", "week_start", "week_end")},
                                   "left_out": list(code_draft.get("dropped") or [])[:50],
