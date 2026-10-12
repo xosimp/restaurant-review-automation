@@ -484,6 +484,9 @@ class ShiftContext:
     role_families: dict = field(default_factory=dict)
     held_roles: dict = field(default_factory=dict)
     roster_roles: dict = field(default_factory=dict)
+    # The restaurant's own role weights ({family: weight}) over
+    # role_criticality's defaults (LOGIC-14); {} reads the defaults.
+    role_criticality: dict = field(default_factory=dict)
     # Kitchen stations (kitchen_stations.normalise), {} when none (SQ-26).
     stations: dict = field(default_factory=dict)
     # What staff showed they want by what they drop and claim (schedule_
@@ -826,6 +829,66 @@ def shift_role_requirements(typical: dict = None, floors: dict = None, minimums:
     return {display[k]: v for k, v in out.items()}
 
 
+# How much a shift depends on each role (blind re-audit 10/11/26 LOGIC-14):
+# a kitchen with no cook or no dishwasher stops, a floor with no host slows.
+# Matched on the role family's words, first hit wins; anything else is 1.0.
+# The one objective (schedule_objective.ROLE_CRITICALITY, contract #1) wins
+# where it exists, and a restaurant's own ({family: weight}, the
+# `role_criticality` signal) over both.
+ROLE_CRITICALITY_WORDS = (
+    (("manager", "gm", "chef", "sous", "supervisor", "lead"), 1.5),
+    (("cook", "line", "grill", "fry", "saute", "pizza", "kitchen"), 1.5),
+    (("dish", "dishwasher", "porter", "steward"), 1.4),
+    (("server", "waiter", "waitress"), 1.2),
+    (("bartender", "bar"), 1.2),
+    (("host", "hostess", "cashier", "counter"), 1.0),
+    (("expo", "runner", "busser", "barback", "prep", "food runner"), 0.9),
+)
+ROLE_CRITICALITY = {"default": 1.0}
+# Coverage points a role with nobody on it takes per unit of criticality:
+# the coverage score is held at 100 − ROLE_ABSENT_POINTS × criticality
+# (a cook 40, a dishwasher 44, a server 52, a host 60, a runner 64) — under
+# every built-in coverage floor (70), so the shift is capped by it.
+ROLE_ABSENT_POINTS = 40
+
+
+def role_criticality(role, families=None, overrides=None) -> float:
+    """The weight of one role in a shift's coverage (LOGIC-14): the
+    restaurant's own ({family or role lower: weight}), else the one
+    objective's table, else ROLE_CRITICALITY_WORDS on the family's words."""
+    fam = role_family(role, families)
+    low = str(role or "").strip().lower()
+    for table in (overrides or {}, _objective_criticality()):
+        for key in (fam, low):
+            if key and key in table:
+                try:
+                    return max(0.1, float(table[key]))
+                except (TypeError, ValueError):
+                    pass
+    words = set(fam.split()) | {fam}
+    for keys, weight in ROLE_CRITICALITY_WORDS:
+        if words & set(keys):
+            return weight
+    return ROLE_CRITICALITY["default"]
+
+
+def _objective_criticality() -> dict:
+    """schedule_objective.ROLE_CRITICALITY when that module exists (the
+    one objective's own, contract #1), else {}."""
+    try:
+        import schedule_objective as _so
+    except Exception:
+        return {}
+    t = getattr(_so, "ROLE_CRITICALITY", None)
+    return t if isinstance(t, dict) else {}
+
+
+def role_absent_cap(criticality: float) -> int:
+    """The coverage score a shift is held at with nobody on a role of this
+    criticality (LOGIC-14)."""
+    return max(0, min(69, int(round(100 - ROLE_ABSENT_POINTS * float(criticality or 1.0)))))
+
+
 def _capped(ctx: ShiftContext, required: dict) -> tuple:
     """(required, trimmed) under the section cap (staffing_curve.cap_requirement)
     — for a half hour's need only: people on at once, the cap's own unit."""
@@ -863,6 +926,16 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
     filled = missing = 0
     gaps = []
     short = {}
+    # Per role, weighted by how much the shift depends on it (blind re-audit
+    # 10/11/26 LOGIC-14): the share was filled heads over required heads
+    # across every role, so a Friday dinner with no dishwasher and no host
+    # read 76 — "mostly covered" — while the kitchen stopped. Each role's
+    # fill share is weighted by its heads x its criticality, and a role
+    # the shift needs with NOBODY on it holds coverage at
+    # role_absent_cap(criticality) — under every built-in coverage floor,
+    # so the shift is capped whether or not a half-hour curve was measured.
+    per_role, absent = [], []
+    w_need = w_filled = 0.0
     for role, need in required.items():
         need = int(need or 0)
         if need <= 0:
@@ -873,21 +946,35 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
                 have = len(people)
                 break
         filled += min(have, need)
+        crit = role_criticality(role, getattr(ctx, "role_families", None), getattr(ctx, "role_criticality", None))
+        w_need += need * crit
+        w_filled += min(have, need) * crit
+        per_role.append({"role": role, "need": need, "have": have, "criticality": crit})
         if have < need:
             missing += need - have
             short[role] = need - have
             gaps.append(f"{role} short {need - have} of {need}")
+        if have == 0:
+            absent.append((role, need, crit))
 
     total_required = sum(int(c or 0) for c in required.values() if int(c or 0) > 0)
     if total_required <= 0:
         return None
 
-    score = _pct(filled, total_required)
+    score = int(round(100.0 * w_filled / w_need)) if w_need > 0 else _pct(filled, total_required)
+    held_by_role = None
+    for role, need, crit in sorted(absent, key=lambda a: -a[2]):
+        cap = role_absent_cap(crit)
+        if score > cap:
+            score = cap
+            held_by_role = role
     res = DimensionResult(
         key="coverage", label="Coverage", score=score,
         weight=DEFAULT_WEIGHTS["coverage"], floor=_floor(ctx, "coverage"),
         facts={"required": total_required, "filled": filled, "missing": missing,
-               "gaps": gaps, "short": short, "requirement_source": source},
+               "gaps": gaps, "short": short, "requirement_source": source,
+               "per_role": per_role, "absent_roles": [a[0] for a in absent],
+               "held_by_absent_role": held_by_role},
     )
     if over_cap:
         res.facts["held_to_section_cap"] = {"cap": int(ctx.section_cap), "trimmed": over_cap}
@@ -901,6 +988,12 @@ def dim_coverage(ctx: ShiftContext) -> DimensionResult | None:
         res.facts["no_shift_written"] = True
         res.weaknesses.append(f"No shift written for {ctx.day} {part} — it needs {crew} ({source}).")
     elif missing:
+        if absent:
+            # A role with nobody on it is the reason, said first (LOGIC-14).
+            worst = sorted(absent, key=lambda a: -a[2])[:3]
+            res.weaknesses.append(
+                "No " + " and no ".join(role_words(r) for r, _n, _c in worst) + " on this shift — it needs "
+                + ", ".join(f"{n} {role_words(r, n)}" for r, n, _c in worst) + f" ({source}).")
         res.weaknesses.append(
             f"{missing} {_plural(missing, 'position')} unfilled — " + "; ".join(gaps) + ".")
     else:
@@ -5585,6 +5678,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             experienced_default=by_default,
             held_roles=signals.get("held_roles") or {},
             roster_roles=signals.get("roster_roles") or {},
+            role_criticality={str(k).strip().lower(): v for k, v in (signals.get("role_criticality") or {}).items()},
             stations=signals.get("stations") or {},
             learned_preferences=learned or {},
             load_ledger=load_ledger,

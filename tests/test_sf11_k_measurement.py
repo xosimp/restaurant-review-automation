@@ -12,7 +12,63 @@ from datetime import date, timedelta
 import models
 import prepublish
 import schedule_economics as E
+import shift_quality as sq
 from tests.test_ios_parity_labor import _rid, db  # noqa: F401
+
+FRI = "2026-10-23"
+
+
+def _r(date_, emp, role, start="5:00pm", end="10:00pm"):
+    return {"date": date_, "day": sq._day_name(date_), "employee": emp, "role": role,
+            "shift_start": start, "shift_end": end, "notes": ""}
+
+
+FRIDAY_CREW = {"Server": 7, "Cook": 4, "Dishwasher": 2, "Bartender": 2, "Host": 2}
+
+
+def _friday(roles: dict) -> list:
+    out = []
+    for role, n in roles.items():
+        out += [_r(FRI, f"{role}{i}", role) for i in range(n)]
+    return out
+
+
+# ── LOGIC-14: coverage sees a role with nobody on it ────────────────────────
+
+def test_friday_dinner_with_no_dish_and_no_host_is_capped_without_a_curve():
+    rows = _friday({"Server": 7, "Cook": 4, "Bartender": 2})
+    out = sq.score_rows(rows, typical_headcount={("Friday", "night"): FRIDAY_CREW})
+    shift = next(s for s in out["shifts"] if s["date"] == FRI and s["daypart"] == "night")
+    cov = next(d for d in shift["dimensions"] if d["key"] == "coverage")
+    # Role-blind it read 13/17 = 76 — over the 70 floor, "mostly covered".
+    assert cov["score"] == sq.role_absent_cap(sq.role_criticality("Dishwasher")) == 44
+    assert shift["capped_by"] == "coverage" and shift["score"] == 44
+    assert set(cov["facts"]["absent_roles"]) == {"Dishwasher", "Host"}
+    assert shift["weaknesses"][0].startswith("No dishwasher and no host on this shift")
+
+
+def test_coverage_weighs_roles_by_criticality():
+    short_cook = _friday({"Server": 7, "Cook": 3, "Dishwasher": 2, "Bartender": 2, "Host": 2})
+    short_host = _friday({"Server": 7, "Cook": 4, "Dishwasher": 2, "Bartender": 2, "Host": 1})
+    th = {("Friday", "night"): FRIDAY_CREW}
+
+    def cov(rows):
+        s = sq.score_rows(rows, typical_headcount=th)["shifts"][0]
+        return next(d for d in s["dimensions"] if d["key"] == "coverage")["score"]
+    # One head short either way: a cook costs more than a host.
+    assert cov(short_cook) < cov(short_host) < 100
+
+
+def test_a_restaurants_own_criticality_wins():
+    assert sq.role_criticality("Host", overrides={"host": 1.6}) == 1.6
+    assert sq.role_criticality("Dishwasher") == 1.4
+    assert sq.role_criticality("Expo") == 0.9
+    assert sq.role_criticality("Sommelier") == 1.0
+    rows = _friday({"Server": 7, "Cook": 4, "Dishwasher": 2, "Bartender": 2})
+    out = sq.score_rows(rows, typical_headcount={("Friday", "night"): FRIDAY_CREW},
+                        role_criticality={"host": 1.6})
+    cov = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
+    assert cov["score"] == sq.role_absent_cap(1.6) == 36
 
 
 # ── BUGSGEN-22: the budget line never contradicts itself ────────────────────

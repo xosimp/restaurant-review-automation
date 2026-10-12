@@ -167,7 +167,10 @@ def test_the_cap_names_which_dimension_did_it():
                         scores={"Sam": 5, "Dana": 5, "Lee": 5})
     shift = out["shifts"][0]
     assert shift["capped_by"] == "coverage"
-    assert shift["score"] == 50, shift["score"]
+    # No cook at all: coverage is held at the absent role's cap, not the
+    # role-blind half of the heads it read before (blind re-audit 10/11/26
+    # LOGIC-14).
+    assert shift["score"] == sq.role_absent_cap(sq.role_criticality("Cook")) == 40, shift["score"]
 
 
 # ── Team composition, not individual ratings ───────────────────────────────
@@ -1001,7 +1004,10 @@ def test_role_minimums_apply_everywhere_when_there_is_no_history_to_narrow_them(
                         role_minimums={"Bartender": 1, "Cook": 1},
                         scores={"Cook1": 4})
     coverage = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
-    assert coverage["score"] == 50
+    # The bartender minimum binds, and nobody on bar holds coverage at the
+    # absent role's cap (LOGIC-14) — it read a role-blind 50.
+    assert coverage["score"] == sq.role_absent_cap(sq.role_criticality("Bartender"))
+    assert coverage["facts"]["absent_roles"] == ["Bartender"]
 
 
 def test_a_seven_day_run_produces_advice_not_just_a_complaint():
@@ -1480,7 +1486,10 @@ def test_findings_are_ordered_by_what_they_actually_cost_the_shift():
                         role_minimums={"Cook": 2, "Bartender": 2, "Server": 2},
                         scores={"Rookie": 1, "Pat": 5, "Other": 5})
     weaknesses = out["shifts"][0]["weaknesses"]
-    assert "unfilled" in weaknesses[0], weaknesses
+    # Coverage speaks first: the role with nobody on it, then the count
+    # (LOGIC-14 names an absent role before the unfilled total).
+    assert weaknesses[0].startswith("No server on this shift"), weaknesses
+    assert "unfilled" in weaknesses[1], weaknesses
     # And the lighter finding is still there, just lower down.
     assert any("nobody stronger" in w for w in weaknesses), weaknesses
 
@@ -1498,7 +1507,9 @@ def test_a_person_in_two_roles_at_once_is_counted_once(db_path=None):
     out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
                         role_minimums={"Cook": 1, "Bartender": 1}, scores={"Solo": 5})
     coverage = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
-    assert coverage["score"] == 50, coverage["facts"]
+    # Counted once, as the cook: the bar has nobody, and an absent role
+    # holds coverage at its cap (LOGIC-14) — it read a role-blind 50.
+    assert coverage["score"] == sq.role_absent_cap(sq.role_criticality("Bartender")), coverage["facts"]
     assert coverage["facts"]["role_conflicts"]
     assert any("at the same time" in w for w in out["shifts"][0]["weaknesses"])
 
