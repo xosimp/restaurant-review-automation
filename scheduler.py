@@ -6152,21 +6152,16 @@ def scheduling_allowed():
     brief at 7:52, a second "one week in" at 1:39pm, a failure digest about
     the dev machine's own errors. Morning briefs, digests, alerts and issue
     texts reach real people; a laptop must never be a second sender.
+
+    Held while a restore is in progress (RESTORE_FROM: jobs must not write
+    into the restored database, or send from it, until someone has confirmed
+    it) and during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
+    docs/ops/POSTGRES_CUTOVER.md). The one rule lives in
+    config.scheduling_allowed, so a gate read outside the scheduler never
+    imports this module (blind re-audit 10/11/26 BUGSGEN-3, SCALE-29).
     """
-    # Held while a restore is in progress: jobs must not write into the
-    # restored database (or send from it) until someone has confirmed it and
-    # removed RESTORE_FROM.
-    if (os.getenv("RESTORE_FROM") or "").strip():
-        return False
-    # Held during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
-    # docs/ops/POSTGRES_CUTOVER.md): no job writes the database being copied.
-    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
-        return False
-    if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
-        return True
-    # Railway sets all of these on every deploy; any one is enough.
-    return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
-                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+    import config as _config_gate
+    return _config_gate.scheduling_allowed()
 
 
 def _run_scheduler_thread():
