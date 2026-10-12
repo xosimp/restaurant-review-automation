@@ -3523,6 +3523,10 @@ class PlacesError(RuntimeError):
         super().__init__(text)
 
     @property
+    def transient(self):
+        return self.status in PLACES_TRANSIENT_STATUSES
+
+    @property
     def owner_message(self):
         if self.status == "NOT_FOUND" or self.status == "INVALID_REQUEST":
             return "Google no longer recognises this restaurant's listing ID — update it in Settings."
@@ -3530,6 +3534,11 @@ class PlacesError(RuntimeError):
 
 
 PLACES_OK_STATUSES = ("OK", "ZERO_RESULTS")
+# Google's side ran slow or hiccuped: the next attempt (the job's own retry,
+# the daily retry pass) usually succeeds, so these are not paged as errors
+# (Sentry CAVNAR-AI-2J, 10/12/26: EJ's competitor read hit DEADLINE_EXCEEDED
+# at 6:01 and succeeded at 6:06). A run of them still shows in source_health.
+PLACES_TRANSIENT_STATUSES = ("DEADLINE_EXCEEDED", "UNAVAILABLE", "INTERNAL", "UNKNOWN_ERROR")
 
 
 def places_error(body):

@@ -2111,12 +2111,15 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
                 # restaurant's Places ceiling) — already a blocked ledger row.
                 return {"ok": False, "error": pu.owner_message, "places_status": pu.reason}
             except _PlacesError as pe:
-                try:
-                    import ops
-                    ops.capture(pe, job="competitor_intel", context=f"restaurant_id={restaurant_id}")
-                except Exception:
-                    pass
-                return {"ok": False, "error": pe.owner_message, "places_status": pe.status}
+                # Captured here, once (the weekly job no longer captures it
+                # again), and not at all when Google's side was only slow.
+                if not pe.transient:
+                    try:
+                        import ops
+                        ops.capture(pe, job="competitor_intel", context=f"restaurant_id={restaurant_id}")
+                    except Exception:
+                        pass
+                return {"ok": False, "error": pe.owner_message, "places_status": pe.status, "captured": True}
             _discovered_at = _run_at
             # A place tracked before brings the reviews it was read with
             # inside the reuse window (#15) — a Details call saved per place.

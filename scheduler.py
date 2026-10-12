@@ -1181,6 +1181,16 @@ def _served_client(r):
     return in_service(r) and str(getattr(r, "billing_status", "") or "").strip().lower() != "internal"
 
 
+def _watched_client(r):
+    """A client whose silence or stale data is worth an email to Will or the
+    owner: served, and not a demo (is_demo). The demo accounts are for
+    testing only (Will, 10/12/26: "Stale inventory data — Simple EJ's Demo"
+    and "1 inactive client — Simple EJ's Demo" were noise); the operator's
+    Monday digest already left them out. _served_client stays as it is for
+    the jobs a demo is meant to exercise (auto-publish)."""
+    return _served_client(r) and not int(getattr(r, "is_demo", 0) or 0)
+
+
 def _served_client_sql(column="billing_status"):
     """_served_client as a WHERE fragment."""
     from models import in_service_sql
@@ -1223,7 +1233,7 @@ def find_stale_inventory():
             return None if dt is None else (now_utc - dt).days
 
         for r in restaurants:
-            if not r.module_inventory or not _served_client(r):
+            if not r.module_inventory or not _watched_client(r):
                 continue
             try:
                 conn = __import__('models').get_conn()
@@ -3005,7 +3015,7 @@ def find_inactive_clients():
     cutoff = now - timedelta(days=14)
 
     for r in restaurants:
-        if not _served_client(r):
+        if not _watched_client(r):
             continue
         try:
             conn = get_conn()
@@ -3092,7 +3102,7 @@ def send_while_away_nudges():
     sent = failed = attempted = 0
     now = _chi_now()
     for r in get_all_restaurants():
-        if not _served_client(r):
+        if not _watched_client(r):
             continue
         try:
             conn = get_conn()
@@ -3283,7 +3293,9 @@ def run_weekly_competitor_analysis(retry_only=False):
                 counts["failed"] += 1
             _record(r.id, "competitor", False, error=res.get("error") or "competitor analysis failed",
                     provider="places")
-            if res.get("places_status") or "No nearby competitors" not in (res.get("error") or ""):
+            # A Places refusal is captured where it happened (competitor), or
+            # deliberately not at all when it was transient.
+            if not res.get("captured") and (res.get("places_status") or "No nearby competitors" not in (res.get("error") or "")):
                 _ops.capture(RuntimeError(res.get("error") or "competitor analysis failed"),
                              job="competitor_analysis", context=f"restaurant_id={r.id}")
         elif res.get("batched"):
