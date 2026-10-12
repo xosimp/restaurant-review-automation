@@ -2057,7 +2057,7 @@ def locked_rows_of(restaurant_id, week_start, dates=None) -> list:
 
 
 def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None,
-                           instruction=None, code_redo=False, keep_locked=True):
+                           instruction=None, code_redo=False, keep_locked=True, started_week=False):
     """Shared logic for both schedule endpoints.
 
     keep_locked — keep the owner's locked shifts of the week's working copy
@@ -2069,6 +2069,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     restaurant's usual shifts and solved against every rule — the reason
     they gave read as typed rules — with no model call; the job sends the
     days to the model only when that changes nothing.
+
+    started_week — `dates` are the days of a whole-week Generate still
+    ahead of today's business date (blind re-audit 10/11/26 BUGSGEN-24): the
+    week is drafted as a week (the code drafts what the model cannot, the
+    review says the days not written) but only from today; the days already
+    worked keep the rows in `prior_rows` (the week's working copy), and a
+    past day with none is closed to every pass.
 
     focus — named weaknesses of the previous draft (a list of strings), for
     a regeneration of chosen dates; rendered into the prompt as "THE
@@ -2829,6 +2836,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     import schedule_fallback as _sfb
     _fallback = {"source": "solver" if code_redo else _sfb.draft_source(restaurant_id, _arms),
                  "code_redo": bool(code_redo and dates), "restaurant_id": restaurant_id,
+                 "started_week": bool(started_week and dates),
                  "constraints": constraints, "roster_names": [n for n, _r in roster_pairs],
                  "roster_roles": {n: r for n, r in roster_pairs}, "week_dates": next_week_dates,
                  "plan_rows": list(manager_plan.get("rows") or []),
@@ -3393,7 +3401,10 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # call is made at all; every date is drafted in code below.
     chosen = (fallback or {}).get("source") or "model"
     code_redo = bool((fallback or {}).get("code_redo")) and redo is not None
-    if (redo is None and chosen != "model") or code_redo:
+    # A whole week begun before today (BUGSGEN-24) is a week: drafted in
+    # code where the model cannot write, its empty days said.
+    week_like = redo is None or bool((fallback or {}).get("started_week"))
+    if (week_like and chosen != "model") or code_redo:
         queue = []
     parallel_cap = parallel_calls()
     while queue:
@@ -3611,7 +3622,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # owner's rows instead (the caller puts them back); data that is not
     # current is never papered over.
     code_draft = None
-    if fallback is not None and (redo is None or code_redo):
+    if fallback is not None and (week_like or code_redo):
         import schedule_fallback as _sfb
         if chosen != "model":
             gaps = {d: "chosen" for d in want if d not in {x[0] for x in written if x[0] and x[3] and not x[4]}}
@@ -3684,7 +3695,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     merged["generated_dates"] = sorted({x[0] for x in kept_lines if x[0] and x[3] and not x[4]})
     gaps = sorted(unwritten)
     merged["unwritten_dates"] = [{"date": d, "day": _date_of(d).strftime("%A"), "why": unwritten[d]} for d in gaps]
-    merged["generation_notes"] = [_unwritten_line(merged["unwritten_dates"])] if (gaps and redo is None) else []
+    merged["generation_notes"] = [_unwritten_line(merged["unwritten_dates"])] if (gaps and week_like) else []
     # Where each day came from (contract #7): the model's, or drafted in code
     # and why — said at the top of the review, never a "⚠" (the days are
     # whole and swept by every rule like any other).
@@ -3715,16 +3726,22 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # repair passes leave it alone (open_unwritten), as they leave a day the
     # model did not write.
     empty = set(_missing_dates(merged["schedule_csv"], asked)) | (set(unstaffable) & set(asked))
-    if redo is not None:
+    if not week_like:
         empty -= set(gaps)
     held_open = (empty & owner_open) - set(unstaffable)
+    if redo is not None and week_like:
+        # The days already worked of a week begun before today: kept as the
+        # working copy had them, and a day it had nothing on is closed —
+        # never judged as an unstaffed day nobody can now staff.
+        kept_days = {str(r.get("date") or "")[:10] for r in kept}
+        empty |= {d for d in open_dates if d not in set(asked) and d not in kept_days}
     merged["closed_dates"] = sorted(closed | (empty - held_open))
     merged["open_unwritten"] = sorted(held_open)
     # The days left empty that may be — no hours on file and a holiday or a
     # small roster's day off — said, never silent (BUGSGEN-5).
     said = sorted(d for d in accepted if d in empty and d not in unwritten)
     merged["empty_accepted"] = [{"date": d, "day": _date_of(d).strftime("%A"), "why": accepted[d]} for d in said]
-    if said and redo is None:
+    if said and week_like:
         merged["generation_notes"].append(_accepted_empty_line(merged["empty_accepted"]))
     return merged
 
@@ -5593,11 +5610,19 @@ def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffer
     if end_minutes <= ceiling:
         return
 
-    if start_minutes is None or start_minutes >= ceiling:
-        # Can't produce a sensible corrected shift (e.g. shift_start is
-        # itself already past the ceiling) — don't fabricate a number,
-        # flag it for a human instead.
+    if start_minutes is None:
+        # No start to cap from: don't fabricate a number, flag it for a
+        # human, with why.
         row["needs_review"] = True
+        row["review_reason"] = "its start time couldn't be read"
+        return
+    if start_minutes >= ceiling:
+        # A shift that starts after the close (an overnight porter or
+        # cleaner): nothing to cap, and not unreadable — the final sweep
+        # judges it (past_close, a soft breach the review names). It used to
+        # be marked NEEDS REVIEW "could not be auto-checked" here, a mark no
+        # later stage clears, while the sweep called it soft (blind re-audit
+        # 10/11/26 BUGSGEN-14).
         return
 
     row["shift_end"] = _format_minutes_to_time(ceiling)

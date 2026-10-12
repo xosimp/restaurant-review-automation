@@ -365,3 +365,52 @@ def test_the_note_is_written_once_for_the_winner_never_for_a_losing_rewrite(db, 
     assert notes == [["Ana"]], "one note, for the draft that was saved"
     assert finished["result"]["narrative"] == ["Ana holds the week"]
     assert finished["result"]["review"]["note"]["source"] == "final_week"
+
+
+# ── BUGSGEN-14: an after-close shift is the sweep's to judge, not NEEDS REVIEW ─
+
+def test_a_shift_starting_after_the_close_is_judged_soft_by_the_sweep_not_flagged():
+    import sched_d2_week as w
+    import schedule_rules as sr
+    rows, c, _sig = w.big_week(breaches=False)
+    d = w.WEEK[4]
+    porter = w.row(d, "P50", "12:30am", "4:00am", "Dishwasher")
+    se._enforce_close_time(porter, "Friday", c.close_times, {}, constraints=c)
+    assert not porter.get("needs_review"), porter
+    mine = [v for v in sr.violations(rows + [porter], c) if v.get("employee") == "P50" and v["date"] == d]
+    assert [v["hard"] for v in mine if v["kind"] == "past_close"] == [False]       # the sweep: soft
+
+
+# ── BUGSGEN-24: a week already begun is drafted from today only ──────────
+
+def test_a_week_already_begun_is_drafted_from_today_and_keeps_the_days_worked(db, monkeypatch):
+    import time_utils
+    rid = _build_harness(monkeypatch, db)
+    _save(db, rid, "Cy")                                        # the week's working copy
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: dt.datetime(2026, 10, 8, 9, 0))
+    calls = []
+    monkeypatch.setattr(labor, "generate_optimized_schedule",
+                        _gen([[_line(d, "Ana") for d in WEEK[3:]]], calls))
+    monkeypatch.setattr(se, "_quality_gate", lambda result: None)
+    finished = _finished(monkeypatch)
+    se._run_schedule_job("j-begun", rid, week_start=WEEK[0])
+    assert finished["status"] == "done", finished
+    assert len(calls) == 1 and calls[0]["slice"] == WEEK[3:]       # nothing paid for the days gone
+    res = finished["result"]
+    saved = {(r["date"], r["employee"]) for r in res["preview_rows"]}
+    assert {(d, "Cy") for d in WEEK[:3]} <= saved and {(d, "Ana") for d in WEEK[3:]} <= saved
+    assert not any(e == "Cy" and d in WEEK[3:] for d, e in saved)
+    assert not res.get("redo") and any("had already begun" in x for x in res["review"]["lines"])
+
+
+def test_a_started_week_gate_never_reworks_a_day_already_worked(db, monkeypatch):
+    import time_utils
+    rid = _build_harness(monkeypatch, db)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: dt.datetime(2026, 10, 8, 9, 0))
+    calls = []
+    monkeypatch.setattr(labor, "generate_optimized_schedule", _gen([[_line(d, "Ana") for d in WEEK[3:]]], calls))
+    gate = dict(_sat_gate(), dates=[WEEK[1]], triggers={WEEK[1]: ["coverage"]})
+    monkeypatch.setattr(se, "_quality_gate", lambda result: gate)
+    finished = _finished(monkeypatch)
+    se._run_schedule_job("j-begun-gate", rid, week_start=WEEK[0])
+    assert len(calls) == 1 and finished["result"]["gate"]["why"] == "past"

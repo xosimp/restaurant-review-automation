@@ -368,7 +368,15 @@ def _week(job: GenerationRun) -> Candidate:
     """A whole week: one pass, then the quality gate's passes held in memory,
     then the one save of the winner (ARCH-17)."""
     req = job.req
-    first = _build_pass(job, PassSpec(kind="week", focus=req.focus))
+    started = _started_week(req)
+    if started is None:
+        first = _build_pass(job, PassSpec(kind="week", focus=req.focus))
+    else:
+        # The week has begun (blind re-audit 10/11/26 BUGSGEN-24): only the
+        # days from today's business date are drafted and paid for; the days
+        # already worked keep the working copy's rows.
+        ahead, kept = started
+        first = _build_pass(job, PassSpec(kind="week", focus=req.focus, dates=ahead, base=kept))
     winner = first
     if req.gate:
         try:
@@ -384,6 +392,41 @@ def _week(job: GenerationRun) -> Candidate:
             winner = first
     _commit(job, winner)
     return winner
+
+
+def _started_week(req: Request):
+    """(the week's days from today's business date on, Base of the days
+    already worked) when a whole-week Generate names a week that has begun,
+    else None (BUGSGEN-24: a week three days gone was drafted whole, its
+    past days paid for and saved over what was worked). The past days keep
+    the week's working copy's rows (none: they are closed to every pass)."""
+    if req.dates or not req.week_start:
+        return None                  # the default week is the first one still ahead
+    import time_utils
+    restaurant = se.get_restaurant(req.restaurant_id)
+    now = time_utils.restaurant_now(restaurant, naive=True)
+    try:
+        today = time_utils.business_date(restaurant, now).isoformat()
+    except Exception:
+        today = now.date().isoformat()
+    monday = se._week_monday(now, req.week_start, start_day=se.week_start_day_for(restaurant, req.week_start))
+    week = se.week_dates_from(monday)
+    past = [d for d in week if d < today]
+    if not past or len(past) == len(week):
+        return None
+    rows = []
+    try:
+        import models
+        conn = models.get_conn()
+        try:
+            row = models.week_draft(conn, req.restaurant_id, week[0])
+        finally:
+            conn.close()
+        if row is not None:
+            rows = [r for r in se._versions.rows_from_csv(row["schedule_csv"] or "") if r.get("date") in set(past)]
+    except Exception as e:
+        se._soft_fail("the week's working copy", e, req.restaurant_id)
+    return [d for d in week if d not in past], Base(rows=rows, csv="", history_id=None, week_start=week[0])
 
 
 # ── one pass ─────────────────────────────────────────────────────────────
@@ -477,6 +520,8 @@ def _stage_draft(job: GenerationRun, spec: PassSpec, timer) -> dict:
         build_kw.update(dates=sorted(set(spec.dates)), prior_rows=pinned)
     if spec.code_redo:
         build_kw["code_redo"] = True
+    if spec.kind == "week" and spec.dates:
+        build_kw["started_week"] = True          # BUGSGEN-24
     with timer.stage("inputs_and_model"):
         if spec.answer is not None:
             # An answer reused as it came back (the gate's fill, a re-run
@@ -514,6 +559,13 @@ def _stage_scope(cand: Candidate):
     # NEEDS REVIEW mark taken off (PIPE-6).
     import schedule_skeleton as _skel_keep
     kept_rows = _skel_keep.kept_rows(cand.pinned + [r for r in spec.base.rows if r.get("date") in unwritten])
+    if spec.kind == "week":
+        # A week begun before today (BUGSGEN-24): a week, drafted from
+        # today; its empty days are the generation's own "not written" line.
+        past = sorted(set(result.get("week_dates") or []) - set(dates))
+        result["started_week"] = {"kept_dates": past, "drafted_dates": sorted(set(dates))}
+        result.setdefault("generation_notes", []).append(_started_week_line(past, sorted(set(dates))))
+        return keep, kept_rows
     result["regenerated_dates"] = sorted(keep)
     if unwritten:
         result.setdefault("generation_notes", []).insert(0, se._not_redone_line(sorted(unwritten)))
@@ -528,6 +580,14 @@ def _stage_scope(cand: Candidate):
                       # Redone in code, no model call (AI-28), or by the model.
                       "how": spec.redo_how or ("code" if cand.code_redo_on else "model")}
     return keep, kept_rows
+
+
+def _started_week_line(past, ahead) -> str:
+    from time_utils import mdy
+    first_past, last_past = past[0], past[-1]
+    gone = mdy(first_past) if first_past == last_past else f"{mdy(first_past)}–{mdy(last_past)}"
+    return (f"This week had already begun, so only the days from {mdy(ahead[0])} were drafted — {gone} "
+            f"{'is' if len(past) == 1 else 'are'} kept as {'it was' if len(past) == 1 else 'they were'}.")
 
 
 class _PassContext:
@@ -1587,6 +1647,14 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
     gate = se._quality_gate(view)
     if not gate:
         return first
+    if first.spec.kind == "week" and first.spec.dates:
+        # A week begun before today (BUGSGEN-24): the gate reworks only the
+        # days still ahead.
+        ahead = set(first.spec.dates)
+        if not set(gate.get("dates") or ()) & ahead:
+            first.payload["gate"] = _gate_not_run("past", gate)
+            return first
+        gate = dict(gate, dates=[d for d in gate["dates"] if d in ahead])
     # The gate's days solved exactly before any model call (LOGIC-26): a
     # breach an added shift could answer is offered to the solver; where no
     # legal arrangement exists, the smallest set of rules in the way is said
@@ -1714,6 +1782,7 @@ _GATE_NOT_RUN = {
     "capped": "Cavnar AI reached this draft's limit on AI model calls before it could rework the weakest days, "
               "so the draft is as it was written.",
     "error": "Cavnar AI couldn't check this draft's weakest days just now, so the draft is as it was written.",
+    "past": "The weakest days have already happened, so Cavnar AI left them as they were.",
 }
 
 
@@ -1940,6 +2009,8 @@ def _metrics_kind(spec: PassSpec) -> str:
     (the gate's rewrite), an owner's redo, else the week."""
     if spec.kind == "gate_fill":
         return "gate_fill"
+    if spec.kind == "week":
+        return "week"                          # a week begun before today too
     if spec.focus and spec.redo:
         return "gate_rewrite"
     return "redo" if spec.redo else "week"
