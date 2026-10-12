@@ -37813,6 +37813,24 @@ window._cuRole=window.CAV_BOOT.role;
       loadShiftRequests();if(window.lb2LoadWaiting)lb2LoadWaiting();
     });
   };
+  /* A drop whose approval leaves part of the day with no manager on is
+     approved only with who runs the floor instead (the owner counts) —
+     asked inline, sent again with covered_by (re-audit 10/11/26 STRESS-16). */
+  window.shrNeedsCover=function(btn,id,body,d,after){
+    cField(btn,{label:'Who runs the floor instead?',placeholder:'A manager, or you',hint:d.manager_gap||d.error||'',save:'Approve',
+      onSave:function(v,close){
+        var who=String(v||'').replace(/^\s+|\s+$/g,'');
+        if(!who){close('Name who runs the floor through it');return;}
+        var b2={};for(var k in body){if(Object.prototype.hasOwnProperty.call(body,k))b2[k]=body[k];}
+        b2.covered_by=who;
+        jsend('/api/labor/shift-requests/'+id+'/decide',b2,function(r){
+          if(!r.ok){close(r.error||'Could not approve that');return;}
+          close();
+          toast('Approved \u2014 '+(r.warning||(who+' runs the floor')),'warning');
+          if(after)after();
+        });
+      }});
+  };
   window.decideShiftRequest=function(id,decision,btn){
     var row=btn;while(row&&!(row.getAttribute&&row.getAttribute('data-shr')))row=row.parentNode;
     var sel=row?row.querySelector('[data-shr-rep]'):null,body={decision:decision};
@@ -37820,6 +37838,9 @@ window._cuRole=window.CAV_BOOT.role;
     var done=busy(btn,decision==='approve'?'Approving…':'Denying…');
     jsend('/api/labor/shift-requests/'+id+'/decide',body,function(d){
       done();
+      /* Approving it leaves no manager on the floor: it goes only with who
+         runs the floor instead (re-audit 10/11/26 STRESS-16). */
+      if(d.needs_cover){shrNeedsCover(btn,id,body,d,function(){loadShiftRequests();});return;}
       if(!d.ok){toast(d.error||'Could not decide that','error');return;}
       var rq=d.request||{},st=rq.status;
       /* A drop that leaves the floor without a manager says so (re-audit RULES-15). */
@@ -40280,6 +40301,7 @@ window.cavPalette = cavPalette;
     var done = cbtnBusy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
     postJ('/api/labor/shift-requests/' + id + '/decide', body, function (d) {
       done();
+      if (d.needs_cover) { shrNeedsCover(btn, id, body, d, function () { lb2LoadWaiting(); if (window.loadShiftRequests) loadShiftRequests(); }); return; }
       if (!d.ok) { toast(d.error || 'Could not decide that', 'error'); return; }
       var st = (d.request || {}).status;
       /* A drop that leaves the floor without a manager says so (re-audit RULES-15). */

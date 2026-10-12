@@ -197,11 +197,36 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
                     ok, reason = constraints.window_ok(name, d, row["shift_start"], row["shift_end"])
                     if not ok:
                         why = reason
+                if why is None:
+                    why = _legal_clash(constraints, row, out)
                 if why:
                     dropped.append({"employee": name, "date": d, "why": why})
                     continue
             out.append(row)
     return {"rows": out, "dropped": dropped}
+
+
+def _legal_clash(constraints, row, carried) -> str:
+    """The label of a LEGAL breach `row` would add to its person's week —
+    the rows carried so far plus everything fixed elsewhere that the sweep
+    reads (Constraints.base_rows: the published tail, and the organisation's
+    other locations' published shifts on these dates, E-26) — else "". A
+    shared person North already has on Friday dinner is never carried onto
+    South's Friday dinner: the repair loop cannot move another location's
+    shift, so the double booking reached the saved week as a hard overlap
+    (schedule benchmark, multi_location_org, 10/11/26). Only the legal tier:
+    the restaurant's own limits are the repair loop's to weigh."""
+    import schedule_rules as _rules
+    try:
+        group = constraints.sweep_key(row.get("employee"))
+        mine = [r for r in carried if constraints.sweep_key(r.get("employee")) == group]
+        worse = _rules.regressions(_rules.breach_profile(mine, constraints, person_only=True),
+                                   _rules.breach_profile(mine + [row], constraints, person_only=True),
+                                   upto=_rules.TIER_LEGAL, hard_only=False)
+    except Exception:
+        return ""                          # never costs the carried week
+    worse = [w for w in worse if w.get("tier") == _rules.TIER_LEGAL]
+    return worse[0]["label"] if worse else ""
 
 
 def solver_rows(dates, requirements_by_date, constraints, base_rows=None, context_rows=None, open_times=None,

@@ -4423,9 +4423,14 @@ def run_auto_publish_schedules():
             except Exception as e:
                 _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
             return False
-        action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
-                                  AUTO_PUBLISH_UNDO_MINUTES,
-                                  label=f"Publishing the week of {mdy(row['week_start'])} to staff")
+        # Never beside a Send already waiting for the week (schedule re-audit
+        # 10/11/26 BUGSLIFE-9): a person's queued Send stands, and Undo on
+        # its countdown is the whole of it.
+        action = delayed.queue_schedule_send(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
+                                             AUTO_PUBLISH_UNDO_MINUTES, replace=False,
+                                             label=f"Publishing the week of {mdy(row['week_start'])} to staff")
+        if action.get("existing"):
+            return False
         try:
             from strategy_jobs import _reach, _clock
             # The real send time. The job's window runs 9am to 2pm local, so
