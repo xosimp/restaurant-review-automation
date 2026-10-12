@@ -1227,10 +1227,13 @@ else:
     print("Scheduler not started in web process (RUN_SCHEDULER_IN_WEB=0) — "
           "worker.py is expected to be running it")
 
-# The durable job queue (job_queue — scheduler audit 10/10/26 RM-7): this
-# process consumes it by default ("inprocess"); with QUEUE_WORKER=1 worker.py
-# (a second process in THIS service) consumes and this one only enqueues —
-# unless no worker has beaten its heartbeat, so a press is never stranded.
+# The durable job queue (job_queue — scheduler audit 10/10/26 RM-7): by
+# default the queue worker process (`worker.py --queue`, started beside this
+# one by gunicorn.conf.py — blind re-audit 10/11/26 SCALE-17) consumes and
+# this process only enqueues — unless no worker has beaten its heartbeat, so
+# a press is never stranded (a local run with no worker consumes here).
+# QUEUE_WORKER=0: this process consumes ("inprocess"). The heartbeat written
+# here is also the worker's signal that the schema is migrated.
 # A row a deploy interrupted is claimed again here and resumes from its
 # checkpoints; at exit the rows this process runs are handed back.
 try:

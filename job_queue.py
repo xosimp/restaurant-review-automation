@@ -1370,7 +1370,13 @@ def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=N
         if recycle.is_set() and not any(t.is_alive() for t in workers):
             log.info("queue worker recycling after %d job(s), %s MB resident", ran_total[0], rss_mb())
             return "recycle"
-        stop.wait(min(RENEW_SECONDS, 1.0) if recycle.is_set() else RENEW_SECONDS)
+        # A heartbeat every RENEW_SECONDS; a stop or a recycle noticed within a second.
+        for _tick in range(max(1, int(RENEW_SECONDS))):
+            if stop.is_set() or recycle.is_set():
+                break
+            stop.wait(1.0)
+        if recycle.is_set():
+            stop.wait(0.2)
     for t in workers:
         t.join(timeout=1)
     return "stopped"
