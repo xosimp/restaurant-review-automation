@@ -1194,7 +1194,7 @@ SHARED_INPUTS = ("analysis", "shifts")
 def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=None, week_start=None,
                 dates=None, ai_call_id=None, model=None, effort=None, contract=None, stop_reason=None,
                 outcome=None, error=None, seconds=None, usage=None, rows=None, answer_chars=None,
-                db_path=None, call_kind=None, tier=None, job_id=None):
+                db_path=None, call_kind=None, tier=None, job_id=None, call_key=None):
     """Store one schedule call: the exact request (model, max_tokens, system,
     messages, thinking, output_config with its schema), the generator's
     arguments (`inputs`, encoded so a replay rebuilds them), and the answer
@@ -1205,9 +1205,9 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
     req = dict(request or {})
     try:
         import schedule_batch as _sb_key
-        _key = _sb_key.call_key(req)
+        _key = call_key or _sb_key.call_key(req)
     except Exception:
-        _key = None
+        _key = call_key
     prompt_text = json.dumps(req.get("messages") or [], default=str)
     names = guest_names_in(prompt_text)
     req = _scrub(encode(req), names)
@@ -1278,7 +1278,9 @@ def prompt_sig(request=None, stored=None) -> str:
 # A stored answer a resumed generation may read again (schedule_resume): one
 # the model finished, or cut short (its finished days are kept the same way
 # the first time), never an error, a refusal or JSON that did not parse.
-REUSABLE_OUTCOMES = ("ok", "truncated", "salvaged")
+# "batch_answer" — an auto-draft's Message Batches answer, stored by its
+# callback for the draft to read by call key (schedule_batch, ARCH-15).
+REUSABLE_OUTCOMES = ("ok", "truncated", "salvaged", "batch_answer")
 
 
 def stored_answers(job_id, db_path=None) -> list:
@@ -1308,7 +1310,8 @@ def stored_answers(job_id, db_path=None) -> list:
         if not text:
             continue
         try:
-            sig = prompt_sig(stored=_unz(r["request_z"]) or {})
+            stored_req = _unz(r["request_z"]) or {}
+            sig = usage.get("prompt_sig") or (prompt_sig(stored=stored_req) if stored_req.get("messages") else None)
         except Exception:
             sig = None
         out.append({"id": r["id"], "call_key": r["call_key"], "model": r["model"],

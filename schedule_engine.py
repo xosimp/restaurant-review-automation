@@ -2853,6 +2853,8 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # keyword arguments never carry it to labor).
     _gen_kwargs["draft_fallback"] = _fallback
     result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    if result.get("planned_calls") is not None:
+        return result                     # schedule_batch.plan_requests: the calls, nothing more
     result["experiment_arms"] = _arms
     # The instruction's typed rules, for the review's chips (owner_rules.chips).
     result["instruction_rules"] = list(_owner_words.get("instruction") or [])
@@ -3482,6 +3484,14 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
             queue = []
             break
         outcomes = _dispatch_calls(ready, analysis, shifts, kept, written_rows, generate_optimized_schedule)
+        import schedule_batch as _sb_plan
+        planned = [exc.request for _part, exc in outcomes if isinstance(exc, _sb_plan.CallPlanned)]
+        if planned:
+            # The auto-draft planning its Message Batch (ARCH-15): this first
+            # batch of independent calls IS the plan — every one listed,
+            # nothing sent. The answers come back as stored answers by call
+            # key (schedule_resume) when the draft runs.
+            return {"planned_calls": planned}
         front = []
         halt = None
         for (t, dk, whole, entry), (part, exc) in zip(ready, outcomes):

@@ -66,10 +66,11 @@ class StoredMessage:
             self.text = text
 
     class _Usage:
-        input_tokens = 0
-        output_tokens = 0
-        cache_read_input_tokens = 0
-        cache_creation_input_tokens = 0
+        def __init__(self):
+            self.input_tokens = 0
+            self.output_tokens = 0
+            self.cache_read_input_tokens = 0
+            self.cache_creation_input_tokens = 0
 
     def __init__(self, text, stop_reason=None, model=None, record_id=None):
         self.content = [StoredMessage._Text(text)]
@@ -130,8 +131,22 @@ def stored_answer(request):
                 state["moved"].append(a["id"])
     except Exception as e:
         print(f"[schedule] resumed: prompt not compared ({e!r})")
+    msg = StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
+    u = a.get("usage") or {}
+    if u.get("batch"):
+        # An auto-draft's Message Batches answer (schedule_batch, ARCH-15):
+        # paid, at the batch rate — recorded with its tokens and as a batch.
+        msg._cavnar_resumed = False
+        msg._cavnar_batch = True
+        msg._cavnar_call_id = u.get("call_id")
+        msg.usage.input_tokens = int(u.get("input_tokens") or 0)
+        msg.usage.output_tokens = int(u.get("output_tokens") or 0)
+        msg.usage.cache_read_input_tokens = int(u.get("cache_read_tokens") or 0)
+        msg.usage.cache_creation_input_tokens = int(u.get("cache_write_tokens") or 0)
+        print(f"[schedule] the batched answer {a['id']} used for its call")
+        return msg
     print(f"[schedule] resumed: call {a['id']}'s stored answer read again, not paid for")
-    return StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
+    return msg
 
 
 def answers_reused() -> list:
