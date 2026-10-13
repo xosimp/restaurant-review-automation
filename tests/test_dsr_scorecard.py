@@ -94,8 +94,10 @@ def test_the_owner_sees_today_s_score_first(db):
     card = p["scorecard"]
     comps = {c["key"]: c for c in card["components"]}
     assert comps["sales"]["value"] == "+$720 vs budget"
-    assert comps["labor"]["value"] == "0.8 pts below your target"
-    assert comps["food"]["value"] == "On target"
+    # The figure leads, the gap is the detail (owner, 10/13/26).
+    assert comps["labor"]["value"] == "27.2% of sales"
+    assert comps["labor"]["detail"].startswith("0.8 pts below your target (")
+    assert comps["food"]["value"].endswith("% (est.)") and comps["food"]["detail"].startswith("on ")
     assert comps["guests"]["value"] == "★★★★☆" and comps["guests"]["detail"] == "4.6 across 5 reviews"
     assert card["overall"] is not None and 85 <= card["overall"] <= 100
     assert card["verdict"] == {"label": "Excellent day", "tone": "good"}
@@ -154,7 +156,7 @@ def test_a_starting_target_never_turns_red(db):
     rep = _night(db, r.id, SAT, 9200.0, {"Food": 5600.0}, budget_net=8480.0,
                  labor={"pct": 36.0, "target_pct": 30.0})
     lab = {c["key"]: c for c in access.render(rep, {"role": "owner"}, r)["scorecard"]["components"]}["labor"]
-    assert lab["tone"] == "warn" and "Cavnar AI's starting target" in lab["value"]
+    assert lab["tone"] == "warn" and "Cavnar AI's starting target" in lab["detail"]
 
 
 def test_a_tough_night_reads_tough(db):
@@ -232,3 +234,12 @@ def test_the_labels_name_the_night_and_the_day_after():
     assert lb["score"] == "Monday’s score" and lb["risks"] == "Monday’s risks"
     assert lb["priorities"] == "Tuesday’s priorities"
     assert "tonight" not in card["basis"]
+
+
+def test_guest_tile_counts_the_nights_own_reviews():
+    from datetime import date
+    from dsr import scorecard
+    g = scorecard._guests({"avg_rating_7d": 4.6, "reviews_7d": 10, "received": 2}, {}, date(2026, 10, 12))
+    assert g["detail"] == "4.6 across 10 reviews, last 7 days · 2 left Monday"
+    g0 = scorecard._guests({"avg_rating_7d": 4.6, "reviews_7d": 10, "received": 0}, {}, date(2026, 10, 12))
+    assert "left" not in g0["detail"]

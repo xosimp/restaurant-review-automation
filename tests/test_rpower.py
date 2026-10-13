@@ -924,3 +924,13 @@ def test_a_name_entered_in_the_wrong_boxes_reads_as_the_person():
     assert d({"fname": "Katie", "mname": "", "lname": "Royer"}) == "Katie Royer"        # corrected: the same
     assert d({"fname": "Ann", "mname": "Marie", "lname": "Boska"}) == "Ann Boska"
     assert d({"fname": "J", "mname": "R", "lname": "T"}) == "J T"
+
+
+def test_an_error_correct_line_is_a_void_in_the_days_sales():
+    """RPOWER stores EJ's voids as Error Correct lines: the day's sales
+    counted none, so the report called voids zero beside 6 voided lines
+    (owner, 10/13/26). _line_kind now agrees with _loss_kind."""
+    import rpower
+    types = {"E": {"type_error": 1}, "S": {"type_sale": 1}}
+    assert rpower._line_kind({"slstype_mid": "E"}, types) == "void"
+    assert rpower._loss_kind({"slstype_mid": "E"}, types) == "void"

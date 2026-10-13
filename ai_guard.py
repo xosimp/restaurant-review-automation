@@ -301,6 +301,26 @@ _REPLY_SOURCING = re.compile(
     re.I)
 
 
+_ECHO_FREE_RE = re.compile(r"(?:nut|peanut|tree[- ]nut|gluten|dairy|lactose|allergen|shellfish|soy|egg|sesame|wheat)"
+                           r"[- ]free", re.I)
+
+
+def _echoes_named_thing(text, m, flat_src) -> bool:
+    """True when an "<allergen>-free" match NAMES a thing the source names
+    too: the phrase and the word after it ("gluten free menu") appear there.
+    "Our kitchen is nut-free." has no thing after it - a promise, held."""
+    if not _ECHO_FREE_RE.fullmatch(m.group(0).strip()):
+        return False
+    nxt = re.match(r"\s+([a-z][\w'\u2019]*)", text[m.end():], re.I)
+    return bool(nxt) and _flat_words(m.group(0) + " " + nxt.group(1)) in flat_src
+
+
+def _flat_words(x) -> str:
+    """Lower case, every run of non-word characters (spaces, hyphens,
+    dashes, punctuation) as one space, padded: whole words compare."""
+    return " " + re.sub(r"[^\w'\u2019]+", " ", str(x or "").lower()).strip() + " "
+
+
 def public_reply_claims(draft: str, allowed_source: str = "") -> list:
     """["<what> ('<phrase>')", ...] — the claims in a public reply that it
     may not make on the restaurant's behalf unread (NS5 H5). Empty when
@@ -313,10 +333,18 @@ def public_reply_claims(draft: str, allowed_source: str = "") -> list:
     "won't happen again" never is, whoever wrote the words first."""
     text = draft or ""
     out = []
+    flat_src = _flat_words(allowed_source)
     for what, rx in _REPLY_CLAIMS:
-        m = rx.search(text)
-        if m:
+        for m in rx.finditer(text):
+            # "<allergen>-free" the guest wrote themselves ("the gluten free
+            # menu" in a review praising it) describes what they named; it is
+            # said back, not promised (owner, 10/13/26). Only that form: "safe
+            # for celiacs", "completely safe" or "no cross-contact" are
+            # promises and are held whoever wrote them first.
+            if what == "an allergen or food-safety promise" and _echoes_named_thing(text, m, flat_src):
+                continue
             out.append(f"{what} ({m.group(0).strip()!r})")
+            break
     src = " ".join((allowed_source or "").lower().split())
     src_stems = _content_stems(allowed_source or "")
     for m in _REPLY_SOURCING.finditer(text):

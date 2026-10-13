@@ -179,8 +179,10 @@ def _labor(lm, restaurant):
     tone = "good" if pts <= ON_TARGET_PTS else ("bad" if pts > 2 else "warn")
     if src == "default" and tone == "bad":
         tone = "warn"
-    return {"key": "labor", "label": "Labor", "measured": True, "value": words,
-            "detail": f"{lm['pct']:.1f}% of sales · {label} {float(target):g}%", "tone": tone,
+    # The figure leads, the gap explains it (owner, 10/13/26: "owners want
+    # the number", not "27.3 pts above the target").
+    return {"key": "labor", "label": "Labor", "measured": True, "value": f"{lm['pct']:.1f}% of sales",
+            "detail": f"{words} ({float(target):g}%)", "tone": tone,
             "score": curve("labor", pts), "pts": pts, "cites": ["labor.pct", "labor.target_pct"]}
 
 
@@ -200,13 +202,15 @@ def _food(fm, restaurant):
     tone = "good" if pts <= ON_TARGET_PTS else ("bad" if pts > 1.5 else "warn")
     if src == "default" and tone == "bad":
         tone = "warn"
-    return {"key": "food", "label": "Food cost", "measured": True, "value": words,
-            "detail": f"{pct:.1f}% estimated · {label} {float(target):g}%", "tone": tone,
+    return {"key": "food", "label": "Food cost", "measured": True, "value": f"{pct:.1f}% (est.)",
+            "detail": (f"on {label}" if abs(pts) <= ON_TARGET_PTS
+                       else f"{abs(pts):.1f} pts {'under' if pts < 0 else 'over'} {label}") + f" ({float(target):g}%)",
+            "tone": tone,
             "score": curve("food", pts), "pts": pts, "estimate": True,
             "cites": ["food.est_food_cost_pct"]}
 
 
-def _guests(rm, rdetail):
+def _guests(rm, rdetail, day=None):
     if rm is None:
         return {"key": "guests", "label": "Guest experience", "measured": False, "value": None,
                 "why": "Reviews haven't synced for this night"}
@@ -227,7 +231,11 @@ def _guests(rm, rdetail):
     n = int(n) if _num(n) else n
     return {"key": "guests", "label": "Guest experience", "measured": True,
             "value": "★" * stars + "☆" * (5 - stars), "stars": float(avg),
-            "detail": f"{float(avg):.1f} across {n} review{'' if n == 1 else 's'}" + (", last 7 days" if week else ""),
+            "detail": f"{float(avg):.1f} across {n} review{'' if n == 1 else 's'}" + (", last 7 days" if week else "")
+                      # The night's own reviews inside the week (owner, 10/13/26),
+                      # the night by its weekday.
+                      + (f" · {int(rm['received'])} left {day.strftime('%A')}"
+                         if week and day is not None and _num(rm.get("received")) and rm["received"] > 0 else ""),
             "tone": "good" if avg >= 4.5 else ("warn" if avg >= 3.5 else "bad"),
             "score": curve("guests", float(avg)),
             "cites": ["reviews.avg_rating_7d", "reviews.reviews_7d"] if week else ["reviews.avg_rating", "reviews.received"]}
@@ -432,7 +440,7 @@ def build(facts, restaurant, narrative=None, db_path=None) -> dict:
     wd = day.strftime("%a")
     comps = [_sales(_ready(blocks, "sales"), wd), _labor(_ready(blocks, "labor"), restaurant),
              _food(_ready(blocks, "food"), restaurant),
-             _guests(_ready(blocks, "reviews"), _detail(blocks, "reviews"))]
+             _guests(_ready(blocks, "reviews"), _detail(blocks, "reviews"), day)]
     score, verdict = overall(comps)
     try:
         wins, risks = _signals(blocks, restaurant, day, db_path, comps)

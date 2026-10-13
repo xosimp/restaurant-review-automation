@@ -2354,10 +2354,23 @@ class _Run:
         if why:
             self.emit("P1", "refuse", span=why.split("(")[-1].rstrip(")") if "(" in why else why, detail=why)
         src = ctx.offer_source.lower()
+        # The guest's own words may be said back to them (owner, 10/13/26):
+        # "the gluten free menu" in a reply to a review praising the gluten
+        # free menu repeats the guest, it claims nothing new. Only on a reply
+        # to that review, only a phrase the guest wrote (hyphens and spacing
+        # aside), and only for the claims an owner may make (owner_may):
+        # "safe for celiacs" the guest never wrote is still held.
+        def _flat(x):
+            return re.sub(r"[\s\-" + _DASHES + r"]+", " ", str(x or "").lower()).strip()
+        guest = " ".join(_flat(u) for u in ctx.untrusted) if ctx.surface == "reply_public" else ""
         for label, pat, owner_may in _P1:
             for m in pat.finditer(body):
                 phrase = m.group(0)
                 if owner_may and phrase.lower() in src:
+                    continue
+                if owner_may and guest and (
+                        _g._echoes_named_thing(body, m, _g._flat_words(guest)) if label == "allergen or free-from claim"
+                        else _flat(phrase) in guest):
                     continue
                 self.emit("P1", "refuse", span=phrase, detail=label)
                 break

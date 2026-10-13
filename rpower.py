@@ -807,6 +807,14 @@ def _line_kind(row: dict, types: dict) -> str:
     st = types.get(str(row.get("slstype_mid")))
     if st is None:
         return "unknown"
+    # An "error" sales type is a void, as in _loss_kind: RPOWER stores the
+    # store's voids as Error Correct lines (`voided` is 0 on every line at
+    # Simple EJ's). Without this the night's voids read $0 while the service
+    # block listed 6 voided lines for $34.48, and the report called "voids
+    # zero" a win beside them (owner, 10/13/26). Net is unchanged: an error
+    # line never counted as revenue.
+    if st.get("type_error"):
+        return "void"
     if st.get("type_comp"):
         return "comp"
     if st.get("type_refund") or st.get("type_return"):

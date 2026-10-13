@@ -187,3 +187,13 @@ def test_bulk_approve_holds_a_reply_that_makes_a_claim(db, monkeypatch):
     row = conn.execute("SELECT draft_needs_review FROM reviews WHERE id=?", (bad,)).fetchone()
     conn.close()
     assert row["draft_needs_review"] == 1
+
+
+def test_a_reply_may_name_the_free_from_thing_the_guest_named():
+    """The guest praised "the gluten free menu"; a reply saying the gluten
+    free menu back repeats them (owner, 10/13/26). A free-from promise with
+    no thing after it, or "safe for celiacs", is still held."""
+    review = "She was able to answer all of our questions about the gluten free menu."
+    assert public_reply_claims("Knowing the gluten free menu inside and out is the service we love.", review) == []
+    assert public_reply_claims("Thanks - everything on it is gluten free!", review)
+    assert public_reply_claims("Our food is safe for celiacs.", review + " Is it safe for celiacs?")
