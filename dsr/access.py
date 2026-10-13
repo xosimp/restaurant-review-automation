@@ -246,6 +246,17 @@ def narrative_for(narrative, hidden):
         # A night stored before 10/13/26 still says "tonight" about itself.
         from dsr.narrative import night_words
         n = night_words(n, n["business_date"])
+    if isinstance(n, dict):
+        # An action with no number to measure it by never builds a track
+        # record, so "it can't read high until 5 results of this kind are
+        # measured" promised what can't happen - and Measure it is only
+        # offered where there is a number (owner, 10/13/26).
+        for a in n.get("actions_tomorrow") or []:
+            conf = a.get("confidence") if isinstance(a, dict) else None
+            if isinstance(conf, dict) and not a.get("expected_metric") \
+                    and str(conf.get("caution") or "").startswith("No track record here yet"):
+                conf["caution"] = ("No number measures this kind of action on its own, so it builds no track "
+                                   "record here and its confidence stays capped.")
     if isinstance(n, dict) and n.get("operations_summary") and n.get("executive_summary") != n["operations_summary"] \
             and any(str(h).startswith("sales.budget") for h in hidden):
         # The Manager DSR leads with its own operations summary (9/25/26:

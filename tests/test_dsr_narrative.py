@@ -1236,3 +1236,25 @@ def test_the_night_is_named_by_its_weekday_never_tonight():
     from dsr.access import narrative_for
     shown = narrative_for(n, [])
     assert shown["actions_tomorrow"][0]["text"].endswith("like Monday.")
+
+
+def test_a_sales_push_on_spend_per_guest_is_measurable():
+    """Card 2 ('push upsells to lift the $27.57 per-guest average') had no
+    Measure it while promising a track record (owner, 10/13/26): a sales
+    push citing sales.per_guest now carries spend per guest; one without a
+    number says it builds no record, and Measure it follows the number."""
+    import dsr.narrative as nar, metrics, outcomes
+    assert metrics.known("per_guest") and metrics.family("per_guest") == "sales"
+    ctx = type("C", (), {"restaurant_id": 1, "business_date": None})()
+    a = {"kind": "push_sales", "cites": ["sales.per_guest", "sales.avg_ticket"], "key": "dsr_action:push_sales"}
+    assert nar.action_expected_metric(a, ctx) == "per_guest"
+    assert nar.action_expected_metric(dict(a, cites=["sales.net"]), ctx) is None
+    assert outcomes.DSR_ACTION_CITED_METRICS["push_sales"]["sales.per_guest"] == "per_guest"
+    from dsr.access import narrative_for
+    n = {"business_date": "2026-10-12", "actions_tomorrow": [
+        {"text": "Push upsells.", "expected_metric": None,
+         "confidence": {"caution": "No track record here yet — it can't read high until 5 results of this kind are measured here."}}]}
+    out = narrative_for(n, [])
+    assert out["actions_tomorrow"][0]["confidence"]["caution"].startswith("No number measures this kind of action")
+    html = open("templates/dashboard.html").read()
+    assert "x.expected_metric?{track:1}:{noTrack:1}" in html

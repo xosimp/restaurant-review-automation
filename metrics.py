@@ -113,6 +113,28 @@ def _weekday_sales(rid, start, end, param, db_path):
     return round(med, 2), f"median of {len(vals)} {day}s"
 
 
+def _per_guest(rid, start, end, param, db_path):
+    """Net sales per guest over the window, from the POS ticket archive
+    (pos_tickets: closed, not cancelled, with a guest count) - the number a
+    "lift the per-guest average" action names. Traffic moves total sales for
+    every reason (weather, games); spend per guest is the part an upsell
+    push can move (owner, 10/13/26: such a card had no Measure it)."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT SUM(net_sales) AS s, SUM(guest_count) AS g, COUNT(DISTINCT business_date) AS n "
+            "FROM pos_tickets WHERE restaurant_id=? AND business_date>=? AND business_date<=? "
+            "AND COALESCE(cancelled, 0)=0 AND guest_count > 0 AND net_sales IS NOT NULL",
+            (rid, _d(start), _d(end))).fetchone()
+    except Exception:
+        return None, "no POS ticket archive"
+    finally:
+        conn.close()
+    if not row or not row["g"] or not row["n"]:
+        return None, "no POS tickets with guest counts in this window"
+    return round(_f(row["s"]) / _f(row["g"]), 2), f"net sales per guest over {row['n']} days"
+
+
 def _labor_pct_day(rid, start, end, param, db_path):
     """Labor % on one weekday: that weekday's labor dollars over its sales,
     in the window (memory audit 9/29/26, "positive_volume") — a finer grain
@@ -491,6 +513,7 @@ _REGISTRY = {
     "food_cost_pct": (_food_cost_pct, "Food cost %",        "%",    True,  1.0,  28),
     "sales":         (_sales,         "Sales per day",      "$",    False, 0.05, 28),
     "weekday_sales": (_weekday_sales, "Sales on",           "$",    False, 0.08, 56),
+    "per_guest":     (_per_guest,     "Spend per guest",    "$",    False, 0.05, 28),
     "avg_rating":    (_avg_rating,    "Average rating",     "★",    False, 0.1,  30),
     "complaints":    (_complaints,    "Complaint share",    "%",    True,  3.0,  60),
     "weekly_waste":  (_weekly_waste,  "Waste per week",     "$",    True,  0.10, 28),
@@ -517,7 +540,7 @@ _REGISTRY = {
 }
 
 # Relative noise: these are fractions of the baseline, not absolute amounts.
-_RELATIVE_NOISE = {"sales", "weekday_sales", "weekly_waste", "overtime_hours", "response_hours", "item_waste"}
+_RELATIVE_NOISE = {"sales", "weekday_sales", "per_guest", "weekly_waste", "overtime_hours", "response_hours", "item_waste"}
 # The smallest band a relative metric can have, in its own unit. A relative
 # band on a baseline near zero is no band at all: 15% of half an overtime
 # hour would call a half-hour move a result.
@@ -537,7 +560,7 @@ FAMILIES = {
     "labor_pct": "labor_cost", "overtime_hours": "labor_cost",
     "labor_pct_day": "labor_cost", "labor_pct_part": "labor_cost",
     "food_cost_pct": "food_cost", "weekly_waste": "food_cost", "item_waste": "food_cost",
-    "sales": "sales", "weekday_sales": "sales",
+    "sales": "sales", "weekday_sales": "sales", "per_guest": "sales",
     "avg_rating": "guest_rating", "complaints": "guest_rating",
     "response_hours": "reply_speed",
     "comp_rate": "comps", "void_rate": "voids",

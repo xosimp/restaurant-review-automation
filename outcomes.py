@@ -461,6 +461,13 @@ DSR_ACTION_METRICS = {
 }
 
 
+# A kind with no number of its own that still has one when it NAMES it: a
+# sales push resting on spend per guest (sales.per_guest) is measured on
+# spend per guest - total sales move for every reason, the per-guest figure
+# is the part an upsell moves (owner, 10/13/26). {kind: {cite: metric}}.
+DSR_ACTION_CITED_METRICS = {"push_sales": {"sales.per_guest": "per_guest"}}
+
+
 def metric_for_rec(restaurant_id, key, body_metric=None, db_path=DB_PATH, viewer=None):
     """(metric or None, authoritative) — the metric this recommendation
     CARRIES. A DSR action's kind is authoritative: "reorder" carries none
@@ -480,6 +487,13 @@ def metric_for_rec(restaurant_id, key, body_metric=None, db_path=DB_PATH, viewer
     if key.startswith("dsr_action:"):
         parts = key.split(":")
         m = DSR_ACTION_METRICS.get(parts[1] if len(parts) > 1 else "")
+        if not m and (parts[1] if len(parts) > 1 else "") in DSR_ACTION_CITED_METRICS:
+            # A sales push that names spend per guest is measured on it
+            # (dsr.narrative.action_expected_metric set it from the cites).
+            rec = _latest_rec(restaurant_id, key, db_path)
+            em = rec["expected_metric"] if rec is not None else None
+            if em and em in DSR_ACTION_CITED_METRICS[parts[1]].values():
+                return _seen(em), True
         if m:
             # The finer slice the action was presented on (tomorrow's labor %,
             # one item's waste — dsr.narrative, memory audit 9/29/26), when it

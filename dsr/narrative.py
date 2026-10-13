@@ -1949,6 +1949,12 @@ def action_expected_metric(action, ctx):
         import outcomes
         m = outcomes.DSR_ACTION_METRICS.get(action.get("kind"))
         if not m:
+            # A kind with no number of its own that names one in its cites
+            # (a sales push on spend per guest - outcomes.DSR_ACTION_CITED_METRICS).
+            named = outcomes.DSR_ACTION_CITED_METRICS.get(action.get("kind")) or {}
+            for c in action.get("cites") or []:
+                if c in named:
+                    return named[c]
             return None
         if m == "labor_pct" and action.get("urgency") == "before_service":
             from datetime import timedelta as _td

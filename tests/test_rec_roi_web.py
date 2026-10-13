@@ -41,7 +41,9 @@ def test_the_review_savings_line_prices_replies_at_the_servers_rate():
 def test_marketing_is_not_offered_track():
     m = re.search(r"var REC_TRACKABLE=\{([^}]*)\};", SRC)
     assert m and "marketing" not in m.group(1) and "labor:1" in m.group(1)
-    assert "REC_TRACKABLE[m]?" in SRC
+    # A DSR action forces Track on or off by whether it carries a number
+    # (opts.track / opts.noTrack, 10/13/26); elsewhere the module decides.
+    assert "((opts&&opts.track)||REC_TRACKABLE[m])?" in SRC
 
 
 # ── #22: one reason picker, six codes, every "Not for us" ────────────────────
