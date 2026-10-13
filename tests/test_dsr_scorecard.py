@@ -272,3 +272,11 @@ def test_guest_tile_reads_the_nights_reviews_live():
     g = scorecard._guests(rm, {}, date(2026, 10, 12), (4, [5] * 12 + [4] * 2))
     assert g["detail"].endswith("· 4 left Monday") and "14 reviews" in g["detail"]
     assert g["score"] == scorecard.curve("guests", 4.6)
+
+
+def test_the_labor_win_or_risk_says_the_figure_once():
+    """'Labor 62.3%, 62.3% of sales' after the tile led with the figure
+    (owner, 10/13/26): the line names the gap, not the figure again."""
+    src = open("dsr/scorecard.py").read()
+    assert "f\"Labor {lm['pct']:.1f}%, {lab['detail']}\"" in src
+    assert "f\"Labor {lm['pct']:.1f}%, {lab['value']}\"" not in src

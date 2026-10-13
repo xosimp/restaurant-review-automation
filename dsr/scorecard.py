@@ -312,9 +312,9 @@ def _signals(blocks, restaurant, day, db_path, comps):
     lab = by.get("labor") or {}
     if _num(lab.get("pts")):
         if lab["pts"] <= ON_TARGET_PTS:
-            wins.append((15 - lab["pts"] * 3, {"text": f"Labor {lm['pct']:.1f}%, {lab['value']}", "key": "labor_target"}))
+            wins.append((15 - lab["pts"] * 3, {"text": f"Labor {lm['pct']:.1f}%, {lab['detail']}", "key": "labor_target"}))
         else:
-            risks.append((15 + lab["pts"] * 4, {"text": f"Labor {lm['pct']:.1f}%, {lab['value']}",
+            risks.append((15 + lab["pts"] * 4, {"text": f"Labor {lm['pct']:.1f}%, {lab['detail']}",
                                                 "key": "labor_target"}))
     if lm is not None and _num(lm.get("overtime_hours")):
         if lm["overtime_hours"] <= 0:
