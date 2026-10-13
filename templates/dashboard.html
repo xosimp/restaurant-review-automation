@@ -7468,7 +7468,10 @@ svg:hover .hb-xh{opacity:1}
 .dr-score .net{font-family:'Space Grotesk',sans-serif;font-size:clamp(44px,5vw,62px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);margin-top:14px}
 .dr-score .net small{font-family:'Apfel Grotezk',sans-serif;font-size:15px;font-weight:500;letter-spacing:0;color:var(--ink3);margin-left:8px}
 .dr-score .vs{font-size:17px;font-weight:600;color:var(--ink2);margin-top:8px}
-.dr-score .vs.good{color:var(--hb-good)}.dr-score .vs.warn{color:var(--hb-warn)}.dr-score .vs.bad{color:var(--hb-bad)}
+.dr-score .vs.good{color:var(--hb-good)}.dr-cheer-cv{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+@keyframes drCheerPop{0%{transform:scale(1)}35%{transform:scale(1.08)}100%{transform:scale(1)}}
+.dr-score .vs.dr-cheer-pop{display:inline-block;transform-origin:left center;animation:drCheerPop .7s cubic-bezier(.2,.9,.3,1.2) .35s}
+@media (prefers-reduced-motion:reduce){.dr-score .vs.dr-cheer-pop{animation:none}}.dr-score .vs.warn{color:var(--hb-warn)}.dr-score .vs.bad{color:var(--hb-bad)}
 .dr-more{margin-top:6px}
 .dr-more>summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--ink3);padding:6px 0;list-style:none}
 .dr-more>summary::-webkit-details-marker{display:none}
@@ -7528,10 +7531,15 @@ svg:hover .hb-xh{opacity:1}
    the 860px rule below stacks them, wins first. */
 .dr-wr{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
 .dr-wr .dr-wins{border-color:color-mix(in srgb,var(--hb-good) 34%,var(--hb-line));
-  background:radial-gradient(130% 110% at 0% 0%,color-mix(in srgb,var(--hb-good) 15%,transparent) 0%,transparent 58%),var(--surface);
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--hb-good) 10%,transparent),0 22px 48px -26px color-mix(in srgb,var(--hb-good) 55%,transparent)}
-.dr-wr .dr-wins .hb-h3{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.dr-wins-n{display:inline-flex;align-items:baseline;gap:5px;padding:4px 11px 5px;border-radius:999px;background:color-mix(in srgb,var(--hb-good) 16%,transparent);color:var(--hb-good);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:none}
+  background:radial-gradient(130% 110% at 0% 0%,color-mix(in srgb,var(--hb-good) 15%,transparent) 0%,transparent 58%),var(--surface)}
+/* No glow behind the wins card (owner, 10/13/26). The heading row is one
+   56px band from the card's top edge to the first rule, its kicker and the
+   count centred in it, on both cards - so they sit dead centre between the
+   edge and the line, level with each other and across the two cards. */
+.dr-wr .hb-card{padding-top:0}
+.dr-wr .hb-h3{display:flex;align-items:center;justify-content:space-between;gap:12px;height:56px;margin:0}
+.dr-wr .hb-h3>span:first-child{line-height:1}
+.dr-wins-n{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px;line-height:1;border-radius:999px;background:color-mix(in srgb,var(--hb-good) 16%,transparent);color:var(--hb-good);font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:none}
 .dr-wins-n .hb-num{font-family:'Space Grotesk',sans-serif;font-size:15px}
 .dr-wr .dr-wins .hb-row .t{font-size:17px;color:var(--ink);font-weight:600}
 .dr-wr .dr-wins .hb-row .t .hb-num{color:var(--hb-good);font-weight:700}
@@ -8286,6 +8294,37 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
     b.innerHTML=h;
     bigMount(b);
+    drCheer(b);
+  }
+  // The night beat its forecast or budget (owner, 10/13/26): one short
+  // burst of ember sparks from the hero's net, and its "+$X vs" line pops.
+  // Once per night per browser (localStorage, best effort), never under
+  // reduced motion, never on a night that missed.
+  function drCheer(root){
+    var hero=root&&root.querySelector('.dr-score.dr-beat[data-cheer]');if(!hero)return;
+    if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+    var key='cav_dsr_cheer:'+hero.getAttribute('data-cheer');
+    try{if(window.localStorage.getItem(key))return;window.localStorage.setItem(key,'1');}catch(e){}
+    var net=hero.querySelector('.net'),vs=hero.querySelector('.vs');if(!net)return;
+    if(vs){vs.classList.remove('dr-cheer-pop');void vs.offsetWidth;vs.classList.add('dr-cheer-pop');}
+    var cv=document.createElement('canvas');cv.className='dr-cheer-cv';cv.setAttribute('aria-hidden','true');
+    var hr=hero.getBoundingClientRect(),nr=net.getBoundingClientRect(),dpr=Math.min(2,window.devicePixelRatio||1);
+    cv.width=Math.round(hr.width*dpr);cv.height=Math.round(hr.height*dpr);cv.style.width=hr.width+'px';cv.style.height=hr.height+'px';
+    hero.appendChild(cv);
+    var ctx=cv.getContext('2d');if(!ctx){cv.remove();return;}ctx.scale(dpr,dpr);
+    var cs=getComputedStyle(hero),cols=[cs.getPropertyValue('--ember').trim(),cs.getPropertyValue('--ember2').trim(),cs.getPropertyValue('--hb-good').trim()];
+    var ox=nr.left-hr.left+nr.width*0.45,oy=nr.top-hr.top+nr.height*0.5,parts=[],i;
+    for(i=0;i<72;i++){var a=-Math.PI/2+(Math.random()-0.5)*Math.PI*1.25,sp=2.2+Math.random()*4.6;
+      parts.push({x:ox+(Math.random()-0.5)*nr.width*0.7,y:oy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:1.2+Math.random()*2.4,
+        c:cols[i%3]||cols[0],life:0,max:55+Math.random()*45,tw:Math.random()*6});}
+    var t0=null;
+    function step(t){if(t0===null)t0=t;var alive=0;ctx.clearRect(0,0,hr.width,hr.height);
+      for(var k=0;k<parts.length;k++){var q=parts[k];if(q.life>q.max)continue;alive++;
+        q.life++;q.vx*=0.985;q.vy=q.vy*0.985+0.05;q.x+=q.vx;q.y+=q.vy;
+        var f=1-q.life/q.max;ctx.globalAlpha=Math.max(0,f)*(0.75+0.25*Math.sin(q.life/3+q.tw));
+        ctx.fillStyle=q.c;ctx.shadowColor=q.c;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(q.x,q.y,q.r*(0.6+0.4*f),0,Math.PI*2);ctx.fill();}
+      if(alive&&t-t0<2400)requestAnimationFrame(step);else if(cv.parentNode)cv.parentNode.removeChild(cv);}
+    setTimeout(function(){requestAnimationFrame(step);},350);
   }
 
   // How the night was built: the stage and block times kept as provenance,
@@ -8353,7 +8392,11 @@ svg:hover .hb-xh{opacity:1}
     var sb=p&&p.facts&&p.facts.blocks&&p.facts.blocks.sales,net=sb&&sb.status==='ready'&&sb.metrics?sb.metrics.net:null;
     var heroSales=!!(sales&&sales.measured&&isNum(net));
     var lb=c.labels||{},sk=lb.score||'The night\u2019s score';
-    var h='<section class="hb-card hero dr-score" aria-label="'+esc(sk)+'"><div class="hb-kicker">'+esc(sk)+'</div><div class="top"><div class="lh">';
+    // Beat the forecast or the budget (owner, 10/13/26): the hero carries
+    // the night's key and drCheer plays its one celebration once.
+    var sc0=(sales&&sales.cites)||[],beat=heroSales&&sales.tone==='good'&&/^\+/.test(String(sales.value||''))
+      &&(sc0.indexOf('sales.vs_forecast')>=0||sc0.indexOf('sales.vs_budget')>=0);
+    var h='<section class="hb-card hero dr-score'+(beat?' dr-beat':'')+'"'+(beat?' data-cheer="'+esc(String((p&&p.restaurant_id)||'')+':'+String((p&&p.business_date)||''))+'"':'')+' aria-label="'+esc(sk)+'"><div class="hb-kicker">'+esc(sk)+'</div><div class="top"><div class="lh">';
     h+=v?'<span class="verdict '+esc(v.tone||'')+'"><i aria-hidden="true"></i>'+esc(v.label)+'</span>':'<span class="verdict"><i aria-hidden="true"></i>Not scored yet</span>';
     if(heroSales){var vs=isNum(sales.score)?sales.value:sales.detail;
       h+='<div class="net">'+hn(esc(money(net)))+'<small>net</small></div>'

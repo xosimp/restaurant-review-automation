@@ -1096,6 +1096,16 @@ CUT_FLOOR_DEFAULT = 2
 _NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "a single": 1, "a lone": 1, "just one": 1,
               "only one": 1, "zero": 0, "no": 0}
 
+_ABSOLUTE_OPS_RE = re.compile(
+    r"\b(?:one-time|one\s+time\s+thing|isolated\s+incident)\b"
+    r"|\b(?:this|that|it|which|such\s+a\s+thing)\s+(?:almost\s+)?(?:never|rarely)\s+(?:happens?|occurs?)\b"
+    r"|\bnever\s+(?:happens?|occurs?)\b"
+    r"|\b(?:we|our\s+(?:kitchen|staff|team|servers?|cooks?|chefs?|managers?|bartenders?|food|service|crew))\s+"
+    r"(?:always|never)\s+(?!(?:love|loves|enjoy|enjoys|appreciate|appreciates|look|looks|welcome|like|likes|miss|"
+    r"forget|get\s+tired|tire)\b)\w+"
+    r"|\b(?:is|are|was|were)\s+(?:always|never)\s+(?:like\s+this|this\s+way|the\s+case|an\s+issue|a\s+problem)\b",
+    re.I)
+
 _P1 = [
     ("allergen or free-from claim", re.compile(
         r"\b(?:nut[- ]free|peanut[- ]free|gluten[- ]free|dairy[- ]free|allergen[- ]free|allergy[- ](?:friendly|safe)|"
@@ -2390,7 +2400,11 @@ class _Run:
         if ctx.surface == "reply_public":
             # An absolute about how the restaurant runs, in public, is a
             # claim nobody checked (NS2 H8): held for a person to read.
-            m = re.search(r"\b(?:always|never|one-time|one\s+time\s+thing|isolated\s+incident)\b", body, re.I)
+            # Only an absolute ABOUT HOW IT RUNS ("this never happens", "our
+            # kitchen always checks", "an isolated incident") - praise is not
+            # one ("those wings never disappoint", "always a pleasure"; owner,
+            # 10/13/26: the bare words held a five-star thank-you).
+            m = _ABSOLUTE_OPS_RE.search(body)
             if m:
                 self.emit("P1", "refuse", span=m.group(0), detail="an absolute claim in a public reply")
             for phrase in _g.unsupported_commitments(body):

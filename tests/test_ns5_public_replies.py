@@ -197,3 +197,15 @@ def test_a_reply_may_name_the_free_from_thing_the_guest_named():
     assert public_reply_claims("Knowing the gluten free menu inside and out is the service we love.", review) == []
     assert public_reply_claims("Thanks - everything on it is gluten free!", review)
     assert public_reply_claims("Our food is safe for celiacs.", review + " Is it safe for celiacs?")
+
+
+def test_praise_with_never_or_always_is_not_an_absolute_claim():
+    """'those wings never disappoint' held a five-star thank-you (owner,
+    10/13/26); only an absolute about how the restaurant runs is held."""
+    import drafter
+    review = "Our waiter was amazing and the wings were fall-off-the-bone delicious!"
+    ok = "Thanks Jay, those fall-off-the-bone wings never disappoint. It's always a pleasure to have you."
+    assert drafter.check_reply(ok, None, review_text=review, author="Jay", action="test")[0] is None
+    for bad in ("Sorry - this never happens on a Friday.", "Our kitchen always checks every order twice.",
+                "This was an isolated incident."):
+        assert "absolute claim" in (drafter.check_reply(bad, None, review_text=review, author="Jay", action="test")[0] or "")

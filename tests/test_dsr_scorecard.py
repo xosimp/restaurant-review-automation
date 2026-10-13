@@ -243,3 +243,12 @@ def test_guest_tile_counts_the_nights_own_reviews():
     assert g["detail"] == "4.6 across 10 reviews, last 7 days · 2 left Monday"
     g0 = scorecard._guests({"avg_rating_7d": 4.6, "reviews_7d": 10, "received": 0}, {}, date(2026, 10, 12))
     assert "left" not in g0["detail"]
+
+
+def test_a_night_that_beat_its_forecast_celebrates_once():
+    html = open("templates/dashboard.html").read()
+    assert "function drCheer(root)" in html and "drCheer(b);" in html
+    assert "sc0.indexOf('sales.vs_forecast')>=0||sc0.indexOf('sales.vs_budget')>=0" in html
+    body = html[html.index("function drCheer(root)"):]
+    body = body[:body.index("\n  }\n")]
+    assert "prefers-reduced-motion" in body and "localStorage" in body
