@@ -1,0 +1,177 @@
+{
+  "_about": "Simple EJ's bar recipe cards, transcribed from Will's photos of the laminated cards behind the bar (10/13/26). A head start for the bar module; Back Office's recipes are the source of truth once exported, and any difference between the two is a finding. Amounts are exactly as printed; 'splash' and 'top' have no volume on the card. rpower_item is the RPOWER button, with its sales from the local ticket archive 8/25/26-10/12/26.",
+  "captured": "2026-10-13",
+  "source": "photos of the bar's recipe cards",
+  "recipes": [
+    {
+      "name": "Old Fashioned - Classic",
+      "alcoholic": true,
+      "rpower_item": "Classic Old Fash", "rpower_category": "38. Cocktails", "sold": 436, "sales": 6213,
+      "ingredients": [
+        {"item": "Demerara syrup", "amount": 0.5, "unit": "oz"},
+        {"item": "Angostura bitters", "amount": 3, "unit": "dash"},
+        {"item": "Orange bitters", "amount": 2, "unit": "dash"},
+        {"item": "Whistle Pig (card says bourbon)", "amount": 2, "unit": "oz"},
+        {"item": "Soda", "amount": null, "unit": "splash"}
+      ],
+      "method": "Stir in a stirring glass for 20 seconds; strain over a large cube.",
+      "glass": "rocks", "ice": "large cube",
+      "garnish": "orange peel ('glammed' on the card) and a Filthy cherry",
+      "flavor": "Soft and sweet.",
+      "flags": ["WhistlePig is best known for rye - confirm the exact bottle (Back Office item).", "'Glammed' orange peel - likely 'flamed'; confirm."]
+    },
+    {
+      "name": "Smoked Walnut Maple Old Fashioned",
+      "alcoholic": true,
+      "rpower_item": "Walnut Old Fash", "rpower_category": "38. Cocktails", "sold": 118, "sales": 2330,
+      "rpower_also": [{"item": "Walnut For 2", "sold": 17, "sales": 654, "note": "likely a double batch - confirm the spec"}],
+      "ingredients": [
+        {"item": "Angel's Envy Bourbon", "amount": 2, "unit": "oz"},
+        {"item": "Maple syrup (Grade A, dark preferred)", "amount": 0.25, "unit": "oz"},
+        {"item": "Black walnut bitters", "amount": 2, "unit": "dash"},
+        {"item": "Angostura bitters", "amount": 1, "unit": "dash"},
+        {"item": "Salt", "amount": 1, "unit": "pinch"}
+      ],
+      "method": "Stir in a stirring glass for 20 seconds; strain over a large ice cube.",
+      "glass": "rocks", "ice": "large cube",
+      "garnish": "expressed orange peel and a toasted walnut",
+      "flavor": null,
+      "flags": ["The name says smoked but the build has no smoke step - confirm whether it's smoked (and what that costs)."]
+    },
+    {
+      "name": "Pure Passion Margarita",
+      "alcoholic": true,
+      "rpower_item": "Passion Margarita", "rpower_category": "38. Cocktails", "sold": 447, "sales": 6153,
+      "ingredients": [
+        {"item": "Don Julio Blanco", "amount": 1, "unit": "oz"},
+        {"item": "Lime juice", "amount": 1, "unit": "oz"},
+        {"item": "Passion fruit", "amount": 0.5, "unit": "oz"},
+        {"item": "Agave", "amount": 0.5, "unit": "oz"},
+        {"item": "Aperol", "amount": 1, "unit": "oz"}
+      ],
+      "method": "Rim a rocks glass with Tajin. Build in a shaker tin with the lime juice first; strain over fresh ice.",
+      "glass": "rocks (Tajin rim)", "ice": "fresh",
+      "garnish": "dehydrated lime wheel",
+      "flavor": "Sweet with a tart finish.",
+      "flags": ["Passion fruit: puree or syrup? (product and cost differ)."]
+    },
+    {
+      "name": "Sweet Mango",
+      "alcoholic": true,
+      "rpower_item": "Mango Mojito", "rpower_category": "38. Cocktails", "sold": 304, "sales": 4180,
+      "ingredients": [
+        {"item": "Bacardi Rum", "amount": 1.5, "unit": "oz"},
+        {"item": "Simple syrup", "amount": 0.25, "unit": "oz"},
+        {"item": "Lime juice", "amount": 0.75, "unit": "oz"},
+        {"item": "Mango puree", "amount": 0.5, "unit": "oz"},
+        {"item": "Mint leaves", "amount": 8, "unit": "leaf"},
+        {"item": "Soda", "amount": null, "unit": "top"}
+      ],
+      "method": "Muddle simple syrup and mint in a shaker; add the rest (juice first); shake and strain into a tall glass; top with soda.",
+      "glass": "tall", "ice": null,
+      "garnish": "mint and a dehydrated lime wheel",
+      "flavor": "Earthy, sweet and minty.",
+      "flags": ["Matched to the RPOWER button 'Mango Mojito' (rum, mint, lime, mango, soda) - confirm it's the same drink."]
+    },
+    {
+      "name": "Espresso Martini",
+      "alcoholic": true,
+      "rpower_item": "Espresso Martini", "rpower_category": "38. Cocktails", "sold": 303, "sales": 4166,
+      "ingredients": [
+        {"item": "Ketel One Vodka", "amount": 1.5, "unit": "oz"},
+        {"item": "Simple syrup", "amount": 0.5, "unit": "oz"},
+        {"item": "Espresso", "amount": 1, "unit": "oz"},
+        {"item": "Coffee liqueur", "amount": 1, "unit": "oz"}
+      ],
+      "method": "Shaker, simple syrup first; shake hard for foam; double strain.",
+      "glass": "martini", "ice": null,
+      "garnish": "coffee beans",
+      "flavor": null,
+      "flags": ["Coffee liqueur brand not named on the card."]
+    },
+    {
+      "name": "All Girls Deserve Flowers",
+      "alcoholic": true,
+      "rpower_item": "Girls Deserve", "rpower_category": "38. Cocktails", "sold": 234, "sales": 3159,
+      "ingredients": [
+        {"item": "Gin", "amount": 1, "unit": "oz"},
+        {"item": "Elderflower liqueur", "amount": 1, "unit": "oz"},
+        {"item": "Lemon juice", "amount": 0.75, "unit": "oz"},
+        {"item": "Raspberry puree", "amount": 0.5, "unit": "oz"},
+        {"item": "Simple syrup", "amount": 0.75, "unit": "oz"},
+        {"item": "Soda water", "amount": null, "unit": "splash"}
+      ],
+      "method": "Shake everything but the soda; strain into a tall glass with ice; top with soda water.",
+      "glass": "tall", "ice": "yes",
+      "garnish": "dehydrated lemon and rosemary",
+      "flavor": "Floral with light citrus finish.",
+      "flags": ["Gin and elderflower liqueur brands not named on the card."]
+    },
+    {
+      "name": "Dirty Martini",
+      "alcoholic": true,
+      "rpower_item": null, "rpower_category": null, "sold": null, "sales": null,
+      "rpower_note": "No Dirty Martini button: it's rung as a vodka with the 'Martini' liquor add-on (126 Martini add-ons since 8/25, dirty or not can't be told apart).",
+      "ingredients": [
+        {"item": "Vodka", "amount": 2, "unit": "oz"},
+        {"item": "Dry vermouth", "amount": 0.25, "unit": "oz"},
+        {"item": "Olive brine", "amount": 0.75, "unit": "oz"}
+      ],
+      "method": "Shaker with olive brine first; shake until frosted; strain.",
+      "glass": "martini", "ice": null,
+      "garnish": "2 olives",
+      "flavor": "Salty",
+      "flags": ["Vodka is whichever the guest calls (the spirit button rung with it).", "Vermouth brand not named."]
+    },
+    {
+      "name": "Spa Water",
+      "alcoholic": false,
+      "rpower_item": "Spa Water", "rpower_category": "22. Zero Proof", "sold": 95, "sales": 760,
+      "ingredients": [
+        {"item": "Cucumber juice", "amount": 1, "unit": "oz"},
+        {"item": "Apple juice", "amount": 1, "unit": "oz"},
+        {"item": "Lime juice", "amount": 0.5, "unit": "oz"},
+        {"item": "Ginger syrup (house recipe)", "amount": 0.5, "unit": "oz"},
+        {"item": "Soda", "amount": null, "unit": "top"}
+      ],
+      "method": "Build in a glass with ice; stir gently.",
+      "glass": null, "ice": "yes",
+      "garnish": "fresh lime wheel and mint",
+      "flavor": null,
+      "flags": ["Ginger syrup is a house recipe - its own batch recipe is needed to cost it."]
+    },
+    {
+      "name": "Charlie's Sipper",
+      "alcoholic": false,
+      "rpower_item": "Charlie's Sipper", "rpower_category": "22. Zero Proof", "sold": 90, "sales": 720,
+      "ingredients": [
+        {"item": "Hibiscus syrup", "amount": 2, "unit": "oz"},
+        {"item": "Lime juice", "amount": 0.5, "unit": "oz"},
+        {"item": "Pineapple juice", "amount": 1, "unit": "oz"},
+        {"item": "Soda water", "amount": null, "unit": "top"},
+        {"item": "Lemon lime soda", "amount": null, "unit": "top"}
+      ],
+      "method": "Build in a glass with ice; stir gently.",
+      "glass": null, "ice": "yes",
+      "garnish": "fresh lime wheel",
+      "flavor": null,
+      "flags": ["Soda water and lemon-lime soda have no amounts on the card."]
+    },
+    {
+      "name": "Shirley Temple 2.0",
+      "alcoholic": false,
+      "rpower_item": "Shirley Tmpl 2.0", "rpower_category": "22. Zero Proof", "sold": 36, "sales": 288,
+      "ingredients": [
+        {"item": "Grenadine", "amount": 0.5, "unit": "oz"},
+        {"item": "Lime juice", "amount": 0.5, "unit": "oz"},
+        {"item": "Lemon lime soda", "amount": 2, "unit": "oz"},
+        {"item": "Ginger beer", "amount": 2, "unit": "oz"}
+      ],
+      "method": "Build over ice; stir gently.",
+      "glass": null, "ice": "yes",
+      "garnish": "lemon wheel and a cherry",
+      "flavor": null,
+      "flags": []
+    }
+  ]
+}
