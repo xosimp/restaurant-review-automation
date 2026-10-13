@@ -145,3 +145,23 @@ def test_a_programs_name_is_never_read_as_a_person():
     reason, _ = drafter.check_reply("Thanks! Ask for Marcus next time. Erik & Jim", restaurant=r,
                                     review_text="Great night", sign_off="Erik & Jim")
     assert reason and "person" in reason
+
+
+def test_house_facts_reach_the_reply_prompt_and_pass_the_check():
+    """The owner's menu notes are their house facts (owner, 10/13/26: EJ's
+    three fryers, one beef tallow): in the prompt when the review raises the
+    topic, named in the FACTS rule, and a reply stating them passes."""
+    import inspect, drafter
+    src = inspect.getsource(drafter.draft_response)
+    assert 'getattr(_gr_hf(restaurant_id), "menu_notes", "")' in src and "{house_note}" in src
+    assert '", the HOUSE FACTS" if house_note' in src
+
+    class R:
+        name = "Simple EJ's"; sign_off_name = "Erik & Jim"; voice_notes = ""; never_say = ""
+        menu_notes = ("We run three fryers and only one uses beef tallow; the other two use a standard soy-blend oil, "
+                      "so we can fry separately for allergy and vegetarian guests.")
+    reply = ("Amanda, we're sorry. We run three fryers and only one uses beef tallow; the other two use a standard "
+             "soy-blend oil, so we can fry separately for allergy and vegetarian guests. Erik & Jim")
+    reason, _ = drafter.check_reply(reply, R(), review_text="Everything was fried in beef tallow.", author="Amanda",
+                                    action="test")
+    assert reason is None, reason

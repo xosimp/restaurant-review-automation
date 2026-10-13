@@ -784,6 +784,18 @@ def draft_response(review_id: int, rating: int, text: str,
     _prog = _rp.pick(_rp_all, rating, text, urgency=urgency, sentiment=sentiment, platform=platform,
                      rating_only=rating_only) if _rp_all else None
     keyword_note += _rp.prompt_note(_prog, platform)
+    # The owner's house facts (restaurants.menu_notes): what the kitchen
+    # really does, in their words - "three fryers, only one uses beef
+    # tallow", so a guest asking about allergies gets the true answer, not
+    # a generic one (owner, 10/13/26). Used only when the review raises it;
+    # the public-reply check already reads these as the owner's words.
+    try:
+        from models import get_restaurant as _gr_hf
+        _house = str(getattr(_gr_hf(restaurant_id), "menu_notes", "") or "").strip()[:1200] if restaurant_id else ""
+    except Exception:
+        _house = ""
+    house_note = ("\nHOUSE FACTS (the owner's own words - use one only when the review raises that topic, never as "
+                  "filler, and never stretch it into a promise): " + _house) if (_house and not rating_only) else ""
     if rating_only:
         opener_ban = ("\nRATING ONLY: the guest left " + str(rating) + " stars and wrote nothing. Reply to the rating in "
                       "1-2 sentences. Never mention, hint at or apologise for the review having no words or details, "
@@ -815,10 +827,10 @@ Platform: {platform_note}
 Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {sign_off_name}
 {reviewer_line}
-Length: {length_note}{never_note}{keyword_note}{style_block}{template_block}{edit_note}{theme_note}{fix_note}{health_note}{memory_note}
+Length: {length_note}{never_note}{keyword_note}{house_note}{style_block}{template_block}{edit_note}{theme_note}{fix_note}{health_note}{memory_note}
 LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
-FACTS: State only what the restaurant has told you above (Voice{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary{" (the MEMBERSHIP perk above, in its own words, is the one exception)" if _prog else ""} — you cannot know any of it is true.
+FACTS: State only what the restaurant has told you above (Voice{", the HOUSE FACTS" if house_note else ""}{", and the OWNER-CONFIRMED CHANGES" if fixes else ""}). Never claim an action was taken or will be taken (spoke with the team, retrained, changed a process, "going forward"){" other than an OWNER-CONFIRMED CHANGE, in its own words" if fixes else ""}, never discipline or single out a staff member, and never offer a refund, credit, discount or anything complimentary{" (the MEMBERSHIP perk above, in its own words, is the one exception)" if _prog else ""} — you cannot know any of it is true.
 
 Review ({rating}/5 stars, {sentiment}):
 {"(a star rating only — the guest wrote nothing)" if rating_only else wrap_untrusted(text)}
