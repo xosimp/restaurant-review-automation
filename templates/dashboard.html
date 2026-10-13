@@ -7468,7 +7468,9 @@ svg:hover .hb-xh{opacity:1}
 .dr-score .net{font-family:'Space Grotesk',sans-serif;font-size:clamp(44px,5vw,62px);font-weight:600;letter-spacing:-.03em;line-height:1;color:var(--ink);margin-top:14px}
 .dr-score .net small{font-family:'Apfel Grotezk',sans-serif;font-size:15px;font-weight:500;letter-spacing:0;color:var(--ink3);margin-left:8px}
 .dr-score .vs{font-size:17px;font-weight:600;color:var(--ink2);margin-top:8px}
-.dr-score .vs.good{color:var(--hb-good)}.dr-cheer-cv{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+.dr-score .vs.good{color:var(--hb-good)}/* Over the hero, never in its flow: .hb-card.hero>* (position:relative)
+   outranks a bare class and pushed the card down by the canvas's height. */
+.hb-card.hero>.dr-cheer-cv,.dr-cheer-cv{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
 @keyframes drCheerPop{0%{transform:scale(1)}35%{transform:scale(1.08)}100%{transform:scale(1)}}
 .dr-score .vs.dr-cheer-pop{display:inline-block;transform-origin:left center;animation:drCheerPop .7s cubic-bezier(.2,.9,.3,1.2) .35s}
 @media (prefers-reduced-motion:reduce){.dr-score .vs.dr-cheer-pop{animation:none}}.dr-score .vs.warn{color:var(--hb-warn)}.dr-score .vs.bad{color:var(--hb-bad)}
@@ -8309,7 +8311,7 @@ svg:hover .hb-xh{opacity:1}
     if(vs){vs.classList.remove('dr-cheer-pop');void vs.offsetWidth;vs.classList.add('dr-cheer-pop');}
     var cv=document.createElement('canvas');cv.className='dr-cheer-cv';cv.setAttribute('aria-hidden','true');
     var hr=hero.getBoundingClientRect(),nr=net.getBoundingClientRect(),dpr=Math.min(2,window.devicePixelRatio||1);
-    cv.width=Math.round(hr.width*dpr);cv.height=Math.round(hr.height*dpr);cv.style.width=hr.width+'px';cv.style.height=hr.height+'px';
+    cv.width=Math.round(hr.width*dpr);cv.height=Math.round(hr.height*dpr);cv.style.cssText='position:absolute;left:0;top:0;width:'+hr.width+'px;height:'+hr.height+'px;pointer-events:none;z-index:3';
     hero.appendChild(cv);
     var ctx=cv.getContext('2d');if(!ctx){cv.remove();return;}ctx.scale(dpr,dpr);
     var cs=getComputedStyle(hero),cols=[cs.getPropertyValue('--ember').trim(),cs.getPropertyValue('--ember2').trim(),cs.getPropertyValue('--hb-good').trim()];

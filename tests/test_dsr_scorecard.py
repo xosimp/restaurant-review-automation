@@ -252,3 +252,11 @@ def test_a_night_that_beat_its_forecast_celebrates_once():
     body = html[html.index("function drCheer(root)"):]
     body = body[:body.index("\n  }\n")]
     assert "prefers-reduced-motion" in body and "localStorage" in body
+
+
+def test_the_celebration_canvas_never_enters_the_heros_layout():
+    """.hb-card.hero>* (position:relative) outranked .dr-cheer-cv and the
+    canvas pushed the card down by its own height (owner, 10/13/26)."""
+    html = open("templates/dashboard.html").read()
+    assert ".hb-card.hero>.dr-cheer-cv,.dr-cheer-cv{position:absolute" in html
+    assert "cv.style.cssText='position:absolute;left:0;top:0;" in html
