@@ -87,7 +87,7 @@ def test_both_sections_reach_the_model_fenced_with_the_rule_that_governs_them(mo
     system, user = _prompt(client)
     assert "Never repeat one the owner already answered" in system
     assert "yesterday's priorities, the prediction review" in system, "named among the fenced data"
-    head, _, rest_of = user.partition("YESTERDAY'S PRIORITIES (the 9/18/26 report's actions for tonight")
+    head, _, rest_of = user.partition("YESTERDAY'S PRIORITIES (the 9/18/26 report's actions for the night")
     assert rest_of, user
     fenced = rest_of.split("\n", 1)[1]
     assert fenced.startswith(ai_guard.UNTRUSTED_OPEN)

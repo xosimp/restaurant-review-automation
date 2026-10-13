@@ -124,10 +124,10 @@ def _estimate(ctx):
         # id, the same id the item sync matches menu_items on: cost those.
         tonight, waiting = _tonight_items(ctx)
         if tonight:
-            sold, units_from = tonight, "tonight's POS item sales"
+            sold, units_from = tonight, "this night's POS item sales"
         elif waiting:
-            return empty, {"estimate": None, "note": "Waiting for tonight's sales from the POS."}, \
-                "Waiting for tonight's sales from the POS"
+            return empty, {"estimate": None, "note": "Waiting for this night's sales from the POS."}, \
+                "Waiting for this night's sales from the POS"
     if not sold:
         import pos
         since = (ctx.business_date - timedelta(days=ITEM_HISTORY_DAYS)).isoformat()
@@ -239,7 +239,7 @@ def _drivers_at_stake(ctx):
     total = drv.get("total_monthly_deduplicated")
     complete = bool(drv.get("complete", True))
     if total is None or (not complete and not drv.get("drivers")):
-        return None, {"note": "The cost drivers couldn't be priced tonight.",
+        return None, {"note": "The cost drivers couldn't be priced for this night.",
                       "degraded_sources": drv.get("degraded_sources") or []}
     return float(total), {
         "total_monthly": float(total),
@@ -264,7 +264,7 @@ def _recoverable(analysis):
     means on every surface (NS3 H3, R11)."""
     v = (analysis or {}).get("recoverable_monthly")
     if v is None:
-        return None, {"note": "Recoverable waste couldn't be read tonight."}
+        return None, {"note": "Recoverable waste couldn't be read for this night."}
     return float(v), {
         "total_monthly": float(v),
         "per": "month",
@@ -334,7 +334,7 @@ def collect(ctx):
     metrics["waste_logged"] = w["total"] if w else None
     metrics["waste_counted"] = w["counted"] if w else None
     metrics["waste_inferred"] = w["inferred"] if w else None
-    detail["waste"] = w or {"note": w_note or "Waste couldn't be read tonight."}
+    detail["waste"] = w or {"note": w_note or "Waste couldn't be read for this night."}
 
     stock = _stock(analysis)
     metrics["critical_low"] = stock["critical_count"]
@@ -346,12 +346,12 @@ def collect(ctx):
     detail["recoverable"] = rec[1]
     drv = common.guard(ctx, "food", "drivers", lambda: _drivers_at_stake(ctx), gaps, default=(None, None))
     metrics["drivers_at_stake_monthly"] = drv[0]
-    detail["drivers_at_stake"] = drv[1] or {"note": "The cost drivers couldn't be priced tonight."}
+    detail["drivers_at_stake"] = drv[1] or {"note": "The cost drivers couldn't be priced for this night."}
 
     var = common.guard(ctx, "food", "variance", lambda: _variance(ctx, ledger), gaps, default=(None, None))
     metrics["variance_cost"] = var[0]["cost"] if var[0] else None
     metrics["variance_items"] = var[0]["items"] if var[0] else None
-    detail["variance"] = var[1] or {"note": "Variance couldn't be read tonight."}
+    detail["variance"] = var[1] or {"note": "Variance couldn't be read for this night."}
 
     detail["unavailable_parts"] = gaps
     if awaiting:

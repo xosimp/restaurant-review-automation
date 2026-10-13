@@ -679,7 +679,7 @@ def collect(ctx):
         "cost_basis": cost_basis,
         "cost_basis_label": thresholds.LABOR_COST_BASIS_LABELS.get(cost_basis),
         "cost_note": (None if costed and not (cost_basis == "pos_wages" and pos_share is not None and pos_share < 0.995)
-                      else (f"{round((1 - pos_share) * 100)}% of tonight's hours have no pay rate in the POS and are "
+                      else (f"{round((1 - pos_share) * 100)}% of this night's hours have no pay rate in the POS and are "
                             f"costed at your role or blended rate; set pay by role to cost them exactly."
                             if costed else
                             "Set your wage rates to see labor cost — Cavnar AI won't cost your "

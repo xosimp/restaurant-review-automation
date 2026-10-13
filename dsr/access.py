@@ -65,7 +65,7 @@ STAGE_LABELS = {
     "writing": "Writing the summary",
     "final": "Ready",
     "provisional": "Provisional — some data is still syncing",
-    "failed": "Couldn't finish tonight",
+    "failed": "Couldn't finish this report",
 }
 BLOCK_LABELS = {"sales": "Sales", "labor": "Labor", "service": "Service", "food": "Food", "reviews": "Reviews",
                 "marketing": "Marketing", "intel": "Intel", "closeout": "Manager closeout"}
@@ -242,6 +242,10 @@ def narrative_for(narrative, hidden):
     that is the lead. `executive_summary` is therefore always the lead to
     show, and `lead_from` says when it was substituted."""
     n = filter_narrative(narrative, hidden)
+    if isinstance(n, dict) and n.get("business_date"):
+        # A night stored before 10/13/26 still says "tonight" about itself.
+        from dsr.narrative import night_words
+        n = night_words(n, n["business_date"])
     if isinstance(n, dict) and n.get("operations_summary") and n.get("executive_summary") != n["operations_summary"] \
             and any(str(h).startswith("sales.budget") for h in hidden):
         # The Manager DSR leads with its own operations summary (9/25/26:

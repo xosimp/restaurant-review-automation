@@ -216,7 +216,7 @@ def test_food_costs_tonights_items_from_the_sales_pull_and_never_promises_a_foll
         {"guid": None, "name": "Open food", "qty": 1.0}]})
     b = block_food.collect(ctx)
     m, est = b["metrics"], b["detail"]["estimate"]
-    assert b["status"] == dsr.READY and est["units_from"] == "tonight's POS item sales"
+    assert b["status"] == dsr.READY and est["units_from"] == "this night's POS item sales"
     # 10 burgers × (0.25 lb × $20 + a $0.50 bun) = $55; 10 of 15 units costed.
     assert (m["est_food_cost"], m["recipe_coverage_pct"]) == (55.0, 66.7)
 

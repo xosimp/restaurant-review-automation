@@ -269,7 +269,7 @@ def _dropped(out):
 def test_sales_still_syncing_refuses_without_a_model_call(monkeypatch, rest, db_path):
     out, client = _run(monkeypatch, rest, db_path, sales_awaiting_night(), strong_reply())
     assert out == {"ok": False, "narrative": None,
-                   "reason": "Not enough data tonight for a summary — sales are still syncing."}
+                   "reason": "Not enough data for this night's summary — sales are still syncing."}
     assert client.calls == []
 
 
@@ -287,7 +287,7 @@ def test_sales_alone_is_too_little_to_summarise(monkeypatch, rest, db_path):
     for b in ("labor", "food", "reviews", "intel"):
         f["blocks"][b] = dsr.block(dsr.UNAVAILABLE, block_name=b)
     out, client = _run(monkeypatch, rest, db_path, f, weak_reply())
-    assert not out["ok"] and out["reason"].startswith("Not enough data tonight for a summary")
+    assert not out["ok"] and out["reason"].startswith("Not enough data for this night's summary")
     assert client.calls == []
 
 
@@ -1218,3 +1218,21 @@ def test_a_forecast_the_words_name_completes_its_cite_and_the_lead_stands():
     assert "sales.forecast_net" not in F.complete_cites(f"Net sales came in at ${net:,.0f}; $5,532 was the call.",
                                                         ["sales.net"])
     assert narrative.kind_of("sales.forecast_net") == "projection"
+
+
+def test_the_night_is_named_by_its_weekday_never_tonight():
+    """The report is read the next morning: "slower nights like tonight" on
+    Tuesday meant Monday (owner, 10/13/26). The prompt names the night by
+    weekday, and night_words rewrites the model's own "tonight"."""
+    import dsr.narrative as nar
+    assert "TONIGHT" not in nar.SYSTEM_PROMPT and "never \"tonight\"" in nar.SYSTEM_PROMPT
+    n = {"business_date": "2026-10-12", "actions_tomorrow": [
+        {"text": "Push upsells on slower nights like tonight.", "why": "Tonight's per-guest was $27.57.",
+         "cites": ["sales.per_guest"], "urgency": "next_schedule"}]}
+    out = nar.night_words(n, n["business_date"])
+    a = out["actions_tomorrow"][0]
+    assert a["text"] == "Push upsells on slower nights like Monday."
+    assert a["why"] == "Monday's per-guest was $27.57." and a["cites"] == ["sales.per_guest"]
+    from dsr.access import narrative_for
+    shown = narrative_for(n, [])
+    assert shown["actions_tomorrow"][0]["text"].endswith("like Monday.")
