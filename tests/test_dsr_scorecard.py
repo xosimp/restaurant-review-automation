@@ -260,3 +260,15 @@ def test_the_celebration_canvas_never_enters_the_heros_layout():
     html = open("templates/dashboard.html").read()
     assert ".hb-card.hero>.dr-cheer-cv,.dr-cheer-cv{position:absolute" in html
     assert "cv.style.cssText='position:absolute;left:0;top:0;" in html
+
+
+def test_guest_tile_reads_the_nights_reviews_live():
+    """A 4am report counted 1 of Monday's 4 reviews; the rest arrived with
+    the 8am fetch (owner, 10/13/26). The tile's words read now; the score
+    stays the night's."""
+    from datetime import date
+    from dsr import scorecard
+    rm = {"avg_rating_7d": 4.6, "reviews_7d": 10, "received": 1}
+    g = scorecard._guests(rm, {}, date(2026, 10, 12), (4, [5] * 12 + [4] * 2))
+    assert g["detail"].endswith("· 4 left Monday") and "14 reviews" in g["detail"]
+    assert g["score"] == scorecard.curve("guests", 4.6)

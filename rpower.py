@@ -959,7 +959,7 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             # of the plate it modifies — both stay in the money, neither is
             # an "item" in the top and bottom lists.
             key = str(row.get("menuitem_mid") or "")
-            it = items.setdefault(key, {"name": (item.get("name") or "").strip() or "Unknown item",
+            it = items.setdefault(key, {"name": clean_item_name(item.get("name")) or "Unknown item",
                                         "department": dep, "qty": 0.0, "parts": _parts(),
                                         "guid": key or None})
             buckets.append(it["parts"])

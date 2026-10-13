@@ -110,6 +110,28 @@ def _week_ratings(ctx, axis, start, end):
     return out
 
 
+def live_counts(restaurant, business_date, db_path=None):
+    """(the night's review count, the 7-day ratings) read NOW, on the same
+    window collect() uses - for the scorecard's guest tile at render time.
+    A report built at 4am counted the reviews Google had delivered by then;
+    the rest of the night's arrive with the next fetch (owner, 10/13/26:
+    "1 left Monday" while the inbox held 4). None, None when unreadable."""
+    from types import SimpleNamespace
+    from models import REVIEW_TIME_AXIS_BARE as AXIS
+    try:
+        day = business_date if hasattr(business_date, "isoformat") else \
+            __import__("datetime").date.fromisoformat(str(business_date)[:10])
+        ctx = SimpleNamespace(restaurant=restaurant, restaurant_id=restaurant.id, business_date=day, db_path=db_path)
+        start, end = common.local_bounds(restaurant, day)
+        lo, hi = (start.date() - timedelta(days=1)).isoformat(), (end.date() + timedelta(days=1)).isoformat()
+        cand = _rows(ctx, f"SELECT {AXIS} AS at FROM reviews WHERE restaurant_id=? AND deleted_at IS NULL "
+                          f"AND substr({AXIS}, 1, 10) BETWEEN ? AND ?", (restaurant.id, lo, hi))
+        night = sum(1 for rv in cand if common.in_local_day(rv["at"], restaurant, day, (start, end)))
+        return night, _week_ratings(ctx, AXIS, start, end)
+    except Exception:
+        return None, None
+
+
 def collect(ctx):
     from models import REVIEW_TIME_AXIS_BARE as AXIS
     r = ctx.restaurant

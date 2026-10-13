@@ -27,7 +27,7 @@
           "unit": "dash"
         },
         {
-          "item": "Whistle Pig (card says bourbon)",
+          "item": "WhistlePig Bourbon",
           "amount": 2,
           "unit": "oz"
         },
@@ -43,7 +43,6 @@
       "garnish": "orange peel ('glammed' on the card) and a Filthy cherry",
       "flavor": "Soft and sweet.",
       "flags": [
-        "WhistlePig is best known for rye - confirm the exact bottle (Back Office item).",
         "'Glammed' orange peel - likely 'flamed'; confirm."
       ]
     },
@@ -89,13 +88,13 @@
           "unit": "pinch"
         }
       ],
-      "method": "Stir in a stirring glass for 20 seconds; strain over a large ice cube.",
+      "method": "Smoked. Stir in a stirring glass for 20 seconds; strain over a large ice cube.",
       "glass": "rocks",
       "ice": "large cube",
       "garnish": "expressed orange peel and a toasted walnut",
       "flavor": null,
       "flags": [
-        "The name says smoked but the build has no smoke step - confirm whether it's smoked (and what that costs)."
+        "Walnut For 2: confirm it is exactly a double."
       ]
     },
     {
@@ -277,11 +276,10 @@
     {
       "name": "Dirty Martini",
       "alcoholic": true,
-      "rpower_item": null,
-      "rpower_category": null,
-      "sold": null,
-      "sales": null,
-      "rpower_note": "No Dirty Martini button: it's rung as a vodka with the 'Martini' liquor add-on (126 Martini add-ons since 8/25, dirty or not can't be told apart).",
+      "rpower_item": "Perfect Game",
+      "rpower_category": "38. Cocktails",
+      "sold": 99,
+      "sales": 1510,
       "ingredients": [
         {
           "item": "Vodka",
@@ -305,7 +303,7 @@
       "garnish": "2 olives",
       "flavor": "Salty",
       "flags": [
-        "Vodka is whichever the guest calls (the spirit button rung with it).",
+        "Vodka brand not named on the card.",
         "Vermouth brand not named."
       ]
     },
@@ -391,9 +389,7 @@
       "ice": "yes",
       "garnish": "fresh lime wheel",
       "flavor": null,
-      "flags": [
-        "Soda water and lemon-lime soda have no amounts on the card."
-      ]
+      "flags": []
     },
     {
       "name": "Shirley Temple 2.0",
@@ -431,5 +427,11 @@
       "flavor": null,
       "flags": []
     }
+  ],
+  "_answers_1013": [
+    "Splash and top-off amounts are non-alcoholic mixers - Erik (10/13/26): they don't matter for the liquor counts.",
+    "Dirty Martini is RPOWER's 'Perfect Game' button.",
+    "Smoked Walnut Maple OF is actually smoked, with Angel's Envy.",
+    "Classic Old Fashioned uses WhistlePig bourbon."
   ]
 }

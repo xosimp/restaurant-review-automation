@@ -7153,8 +7153,9 @@ svg:hover .hb-xh{opacity:1}
   box-shadow:inset 0 1px 0 var(--hb-sheen),0 1px 2px rgba(14,12,10,.04),0 10px 28px -16px rgba(14,12,10,.18);
   transition:transform .26s cubic-bezier(.2,.9,.3,1),box-shadow .26s cubic-bezier(.2,.9,.3,1),border-color .26s ease}
 [data-theme="dark"] .kx-hero,[data-theme="dark"] .kx-card{background:radial-gradient(120% 90% at 100% 0%,var(--hb-tint) 0%,transparent 55%),var(--surface-glass),var(--surface);border-color:var(--line-hi);box-shadow:var(--elev-1)}
-.kx-hero:hover,.kx-card:hover{transform:translateY(-4px);border-color:var(--hb-tint2);box-shadow:inset 0 1px 0 var(--hb-sheen),0 2px 6px rgba(14,12,10,.06),0 34px 64px -30px var(--hb-glow)}
-[data-theme="dark"] .kx-hero:hover,[data-theme="dark"] .kx-card:hover{box-shadow:var(--elev-2),0 34px 64px -30px var(--hb-glow)}
+/* No orange glow on hover (owner, 10/13/26): a lift and a neutral shadow. */
+.kx-hero:hover,.kx-card:hover{transform:translateY(-4px);box-shadow:inset 0 1px 0 var(--hb-sheen),0 2px 6px rgba(14,12,10,.06),0 18px 34px -22px rgba(0,0,0,.45)}
+[data-theme="dark"] .kx-hero:hover,[data-theme="dark"] .kx-card:hover{box-shadow:var(--elev-2),0 18px 34px -22px rgba(0,0,0,.55)}
 .kx-hero{grid-column:span 2;grid-row:span 2;display:flex;flex-direction:column;gap:14px;padding:30px 32px 28px;border-radius:26px;border-color:var(--hb-tint2);
   background:radial-gradient(85% 75% at 92% -12%,var(--hb-glow) 0%,transparent 62%),linear-gradient(165deg,var(--surface) 35%,var(--hb-tint) 100%),var(--surface)}
 [data-theme="dark"] .kx-hero{background:radial-gradient(85% 75% at 92% -12%,var(--hb-glow) 0%,transparent 62%),linear-gradient(165deg,transparent 35%,var(--hb-tint) 100%),var(--surface-glass),var(--surface);border-color:var(--hb-tint2)}
@@ -7165,7 +7166,7 @@ svg:hover .hb-xh{opacity:1}
 .kx-ic{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:var(--hb-tint);color:var(--ember);box-shadow:inset 0 0 0 1px var(--hb-tint2);transition:background-color .26s ease,color .26s ease,box-shadow .26s ease}
 .kx-ic svg{width:19px;height:19px}
 .kx-hero .kx-ic{width:46px;height:46px;border-radius:14px}.kx-hero .kx-ic svg{width:24px;height:24px}
-.kx-hero:hover .kx-ic,.kx-card:hover .kx-ic{background:var(--ember);color:var(--surface);box-shadow:0 8px 20px -8px var(--ember)}
+.kx-hero:hover .kx-ic,.kx-card:hover .kx-ic{box-shadow:none}
 .kx-lbl{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kx-lbl small{font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink3)}
 .kx-hero .kx-lbl{font-size:13px}
@@ -9334,10 +9335,14 @@ svg:hover .hb-xh{opacity:1}
     if(isNum(d.unallocated))h+=note(hn(money(d.unallocated))+' of net isn’t in any department on the POS.');
     return h;
   }
+  // RPOWER item names carry a grave accent (\x60): at the end ("Wings") and
+  // between an item and its variant ("Cosmo" + "Liquor Add-On"). Shown as
+  // words: the trailing one dropped, an inner one a " · " (owner, 10/13/26).
+  function posName(n){return String(n||'').replace(/[\x60\s]+$/,'').replace(/\s*\x60\s*/g,' \u00b7 ');}
   function itemsTable(list,empty){
     if(!list||!list.length)return empty?'<div class="hb-empty">'+esc(empty)+'</div>':'';
     var h='<table class="dr-tbl"><thead><tr><th>Item</th><th class="r">Sold</th><th class="r">Net</th></tr></thead><tbody>';
-    for(var i=0;i<list.length;i++){var x=list[i];h+='<tr><td>'+esc(x.name||'')+'</td><td class="r">'+esc(cnt(x.qty))+'</td><td class="r">'+esc(money(x.net))+'</td></tr>';}
+    for(var i=0;i<list.length;i++){var x=list[i];h+='<tr><td>'+esc(posName(x.name))+'</td><td class="r">'+esc(cnt(x.qty))+'</td><td class="r">'+esc(money(x.net))+'</td></tr>';}
     return h+'</tbody></table>';
   }
 

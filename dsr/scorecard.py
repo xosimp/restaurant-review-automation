@@ -210,7 +210,7 @@ def _food(fm, restaurant):
             "cites": ["food.est_food_cost_pct"]}
 
 
-def _guests(rm, rdetail, day=None):
+def _guests(rm, rdetail, day=None, live=None):
     if rm is None:
         return {"key": "guests", "label": "Guest experience", "measured": False, "value": None,
                 "why": "Reviews haven't synced for this night"}
@@ -219,6 +219,19 @@ def _guests(rm, rdetail, day=None):
     # the night alone, as it did.
     week = "avg_rating_7d" in rm or "reviews_7d" in rm
     avg, n = (rm.get("avg_rating_7d"), rm.get("reviews_7d")) if week else (rm.get("avg_rating"), rm.get("received"))
+    score_avg = avg
+    # What the tile SAYS is read now (block_reviews.live_counts): reviews of
+    # the night that Google delivered after the report was built count too.
+    # The score stays the one the night was scored on.
+    received = rm.get("received")
+    if live and week:
+        night_n, week_r = live
+        if _num(night_n):
+            received = night_n
+        if week_r:
+            from thresholds import RATING_MIN_REVIEWS
+            if len(week_r) >= RATING_MIN_REVIEWS:
+                avg, n = round(sum(week_r) / len(week_r), 2), len(week_r)
     if not _num(avg):
         why = ((rdetail.get("rating_7d_note") or ("No reviews in the last 7 days" if not n else "Too few reviews to rate"))
                if week else
@@ -234,10 +247,10 @@ def _guests(rm, rdetail, day=None):
             "detail": f"{float(avg):.1f} across {n} review{'' if n == 1 else 's'}" + (", last 7 days" if week else "")
                       # The night's own reviews inside the week (owner, 10/13/26),
                       # the night by its weekday.
-                      + (f" · {int(rm['received'])} left {day.strftime('%A')}"
-                         if week and day is not None and _num(rm.get("received")) and rm["received"] > 0 else ""),
+                      + (f" · {int(received)} left {day.strftime('%A')}"
+                         if week and day is not None and _num(received) and received > 0 else ""),
             "tone": "good" if avg >= 4.5 else ("warn" if avg >= 3.5 else "bad"),
-            "score": curve("guests", float(avg)),
+            "score": curve("guests", float(score_avg)) if _num(score_avg) else None,
             "cites": ["reviews.avg_rating_7d", "reviews.reviews_7d"] if week else ["reviews.avg_rating", "reviews.received"]}
 
 
@@ -428,6 +441,16 @@ def _texts(items):
     return out
 
 
+def _live_reviews(restaurant, day, db_path):
+    if restaurant is None or not getattr(restaurant, "id", None):
+        return None
+    try:
+        from dsr.block_reviews import live_counts
+        return live_counts(restaurant, day, db_path)
+    except Exception:
+        return None
+
+
 def build(facts, restaurant, narrative=None, db_path=None) -> dict:
     """The owner's scorecard for one night's facts (dsr.access.render's
     facts, before any manager redaction)."""
@@ -440,7 +463,7 @@ def build(facts, restaurant, narrative=None, db_path=None) -> dict:
     wd = day.strftime("%a")
     comps = [_sales(_ready(blocks, "sales"), wd), _labor(_ready(blocks, "labor"), restaurant),
              _food(_ready(blocks, "food"), restaurant),
-             _guests(_ready(blocks, "reviews"), _detail(blocks, "reviews"), day)]
+             _guests(_ready(blocks, "reviews"), _detail(blocks, "reviews"), day, _live_reviews(restaurant, day, db_path))]
     score, verdict = overall(comps)
     try:
         wins, risks = _signals(blocks, restaurant, day, db_path, comps)
