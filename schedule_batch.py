@@ -280,7 +280,6 @@ def _run_group(rid, ctx, group):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return
     import strategy_jobs as sj
-    import schedule_engine as se
     target = ctx.get("week_start") or ctx.get("target")
     if target:
         # The owner may have made the week while the batch was out: theirs
@@ -291,29 +290,14 @@ def _run_group(rid, ctx, group):
                 return
         finally:
             conn.close()
-    import job_queue
-    if job_queue.enabled():
-        # The draft is a job_queue row like any auto-draft (RM-7), keyed so
-        # the group's last two callbacks never queue it twice.
-        try:
-            sj.enqueue_auto_draft(r, period=ctx.get("period"), target=ctx.get("target"), attempt=ctx.get("attempt"),
-                                  batch=False, answers_job=group)
-        except Exception as e:
-            ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch enqueue)")
-        return
-    if not ops.claim_marker("auto_draft_batch_ran", group):
-        return
-    counts = {"drafted": 0, "skipped": 0, "failed": 0}
-
-    def _bump(k):
-        counts[k] = counts.get(k, 0) + 1
-    import schedule_resume
+    # The draft is a job_queue row like any auto-draft (RM-7; the one path
+    # since blind re-audit 10/11/26 ARCH-10), keyed so the group's last two
+    # callbacks never queue it twice.
     try:
-        with schedule_resume.resuming(group):
-            sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
-                          attempt=ctx.get("attempt"), batch=False)
+        sj.enqueue_auto_draft(r, period=ctx.get("period"), target=ctx.get("target"), attempt=ctx.get("attempt"),
+                              batch=False, answers_job=group)
     except Exception as e:
-        ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch)")
+        ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch enqueue)")
 
 
 def _on_legacy_item(rid, ctx, message, error):
@@ -328,24 +312,6 @@ def _on_legacy_item(rid, ctx, message, error):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return
     import strategy_jobs as sj
-    import job_queue
-    if not job_queue.enabled():
-        import schedule_engine as se
-        counts = {}
-
-        def _bump(k):
-            counts[k] = counts.get(k, 0) + 1
-        try:
-            if error is not None or message is None:
-                sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
-                              attempt=ctx.get("attempt"), batch=False)
-            else:
-                with answering(ctx.get("key"), message):
-                    sj._draft_one(r, sj.DB_PATH, se, _bump, period=ctx.get("period"), target=ctx.get("target"),
-                                  attempt=ctx.get("attempt"), batch=False)
-        except Exception as e:
-            ops.capture(e, job="auto_draft_schedule", context=f"restaurant_id={rid} (batch)")
-        return
     answer = None
     if error is None and message is not None:
         try:

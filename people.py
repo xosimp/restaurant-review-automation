@@ -1284,6 +1284,11 @@ class _Index:
         self.by_key = {}            # name_key -> {live pid}
         self.by_ext = {}            # (source, external_id) -> pid
         self.ext_of = {}            # (pid, source) -> external_id
+        # Read once per resolution, not once per person (blind re-audit
+        # 10/11/26 SCALE-27: 250 reads of the organization and 4,274 question
+        # lookups in one 250-person stamp).
+        self._org = ()
+        self._asked = None
         for r in conn.execute("SELECT * FROM people WHERE restaurant_id=?", (restaurant_id,)).fetchall():
             self.people[r["id"]] = dict(r)
         for pid, p in self.people.items():
@@ -1317,13 +1322,28 @@ class _Index:
     def keys_of(self, pid) -> set:
         return {k for k, ps in self.by_key.items() if pid in ps}
 
+    def org(self, conn):
+        """The restaurant's organization id (None when single), read once."""
+        if self._org == ():
+            try:
+                row = conn.execute("SELECT organization_id FROM restaurants WHERE id=?", (self.rid,)).fetchone()
+                self._org = row[0] if row else None
+            except Exception:
+                return None
+        return self._org
+
+    def asked(self, conn) -> dict:
+        """{(person_a, person_b, kind): question id} for every question the
+        restaurant has, read once (one indexed read, not two per pair)."""
+        if self._asked is None:
+            self._asked = {(r[1], r[2], r[3]): r[0] for r in conn.execute(
+                "SELECT id, person_a, person_b, kind FROM person_questions WHERE restaurant_id=?",
+                (self.rid,)).fetchall()}
+        return self._asked
+
 
 def _create_person(conn, idx, name, via, seen_on=None):
-    try:
-        row = conn.execute("SELECT organization_id FROM restaurants WHERE id=?", (idx.rid,)).fetchone()
-        org = row[0] if row else None
-    except Exception:
-        org = None
+    org = idx.org(conn)
     display = _clean(name)
     cur = conn.execute("INSERT INTO people (restaurant_id, organization_id, display_name, name_key, created_via) "
                        "VALUES (?,?,?,?,?)", (idx.rid, org, display, _nk(display), via))
@@ -1429,21 +1449,18 @@ def _ask(conn, idx, pid_new, pid_old, kind, reason, evidence=None):
     if a == b:
         return None
     lo, hi = min(a, b), max(a, b)
-    # Two exact lookups on the UNIQUE(restaurant_id, person_a, person_b,
-    # kind) index — the stored order (hi, lo) first. The one OR-query over
-    # both orders scanned the table, and a big sync asks thousands of these
-    # (a 25-page Toast window: 72s of one test, 10/2/26).
-    answered = None
+    # Either stored order counts. The restaurant's questions are read once
+    # per index (_Index.asked — blind re-audit 10/11/26 SCALE-27); they were
+    # two exact lookups per pair, and the one OR-query over both orders
+    # before that scanned the table (a 25-page Toast window: 72s, 10/2/26).
+    asked = idx.asked(conn)
     for pa, pb in ((hi, lo), (lo, hi)):
-        answered = conn.execute("SELECT id FROM person_questions WHERE restaurant_id=? AND person_a=? "
-                                "AND person_b=? AND kind=?", (idx.rid, pa, pb, kind)).fetchone()
-        if answered:
-            break
-    if answered:
-        return answered["id"]
+        if (pa, pb, kind) in asked:
+            return asked[(pa, pb, kind)]
     cur = conn.execute("INSERT OR IGNORE INTO person_questions (restaurant_id, person_a, person_b, kind, reason, "
                        "evidence_json) VALUES (?,?,?,?,?,?)",
                        (idx.rid, hi, lo, kind, reason, _json.dumps(evidence or {}, default=str)[:2000]))
+    asked[(hi, lo, kind)] = cur.lastrowid
     return cur.lastrowid
 
 
@@ -2979,7 +2996,7 @@ def stamp_person_ids(restaurant_id, db_path=None, create=True) -> dict:
                 where += f" AND {store['where']}"
             names = [r[0] for r in conn.execute(f"SELECT DISTINCT {col} FROM {table} WHERE {where}",
                                                 (restaurant_id,)).fetchall()]
-            n = 0
+            stamps = []
             for name in names:
                 key = _nk(name)
                 cands = idx.for_key(key)
@@ -2990,9 +3007,13 @@ def stamp_person_ids(restaurant_id, db_path=None, create=True) -> dict:
                     _question_similar(conn, idx, pid)
                 else:
                     continue
-                cur = conn.execute(f"UPDATE {table} SET person_id=? WHERE {where} AND cav_name_key({col})=?",
-                                   (pid, restaurant_id, key))
-                n += cur.rowcount or 0
+                stamps.append((pid, restaurant_id, key))
+            # One batch per table (SCALE-27), not one statement per name.
+            n = 0
+            if stamps:
+                cur = conn.executemany(f"UPDATE {table} SET person_id=? WHERE {where} AND cav_name_key({col})=?",
+                                       stamps)
+                n = max(0, cur.rowcount or 0)
             if n:
                 stamped[table] = n
         conn.commit()

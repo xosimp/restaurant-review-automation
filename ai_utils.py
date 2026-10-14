@@ -2529,7 +2529,13 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 if deadline is not None:
                     # Each attempt waits at most the time left (P-22).
                     kwargs["timeout"] = _attempt_timeout(client, deadline)
-                message = _send(client, kwargs, stream, deadline=deadline, on_stream=on_stream)
+                # Inside a queue job the attempt is a wait, not code work: the
+                # row gives its CPU slot back while the model writes and takes
+                # one back after (job_queue.model_wait — blind re-audit
+                # 10/11/26 SCALE-1). Outside a queue job, nothing.
+                import job_queue as _jq_wait
+                with _jq_wait.model_wait():
+                    message = _send(client, kwargs, stream, deadline=deadline, on_stream=on_stream)
             except CallDeadlineExceeded as e:
                 # The job's own clock, not the provider: never a breaker failure,
                 # and what streamed before the cut is billed, so it is filed with

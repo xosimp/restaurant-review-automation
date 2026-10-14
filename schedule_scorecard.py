@@ -331,12 +331,11 @@ def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned
     re-audit 10/11/26 ARCH-14): the rows that came into the repair loop and
     the rows it made, packed; the context it re-runs in is the one stored
     with this week's metrics (schedule_metrics.snapshot, its `kind`). What
-    the generation tags carry until it runs: {"queued": True, ...}; with the
-    queue off, {"ran": False, "why": "queue off"} — never inline."""
+    the generation tags carry until it runs: {"queued": True, ...} — never
+    inline (the queue is the one path since ARCH-10; there is no "queue
+    off")."""
     import job_queue
     import schedule_resume as _pk
-    if not job_queue.enabled():
-        return {"ran": False, "queued": False, "why": "queue off", "learned": int(learned or 0)}
     payload = {"restaurant_id": restaurant_id, "history_id": int(history_id), "kind": kind,
                "learned": int(learned or 0), "reassign_on": bool(reassign_on),
                "pre_z": _pk.pack([dict(r) for r in pre_rows or []]), "on_z": _pk.pack(compact(rows_on))}
