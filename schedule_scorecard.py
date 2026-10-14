@@ -75,11 +75,14 @@ from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
+# The Draft Rework Rate and a generation's tags are read by the experiments and
+# the memory below this module (schedule_experiments, layer S3); re-exported.
+from schedule_experiments import (  # noqa: E402,F401
+    EDIT_WEIGHTS, RETIME_WEIGHT_PER_30, _minutes, drr, edit_weight, generation_tags)
+
 SCORECARD_VERSION = 1
 FREEZE_AFTER_DAYS = 14
 SCORE_WEEKS = 12                    # the Monday job reads each restaurant's published weeks this far back
-EDIT_WEIGHTS = {"added": 1.0, "removed": 1.0, "moved": 1.0, "role_changed": 0.5}
-RETIME_WEIGHT_PER_30 = 0.25
 DEFAULT_SLOT_HOURS = 4.0
 # The learning ablation (run at generation, schedule_engine): bounded, and
 # switched off with SCHEDULE_LEARNING_ABLATION=0.
@@ -187,23 +190,6 @@ def init_schedule_scorecard(db_path=None):
 
 # ── the drafts' distance to a week (the rework a draft needed) ─────────────
 
-def _minutes(value):
-    from schedule_rules import parse_minutes
-    return parse_minutes(value or "")
-
-
-def edit_weight(kind, item) -> float:
-    """One edit item's weight in the Draft Rework Rate."""
-    if kind == "retimed":
-        moved = 0
-        for a, b in (("old_start", "new_start"), ("old_end", "new_end")):
-            x, y = _minutes((item or {}).get(a)), _minutes((item or {}).get(b))
-            if x is not None and y is not None:
-                d = abs(y - x)
-                moved += min(d, 1440 - d)
-        return max(RETIME_WEIGHT_PER_30, RETIME_WEIGHT_PER_30 * round(moved / 30.0))
-    return EDIT_WEIGHTS.get(kind, 1.0)
-
 
 def distance(draft_rows, final_rows) -> dict:
     """The rework `draft_rows` would need to become `final_rows`: weighted
@@ -215,22 +201,6 @@ def distance(draft_rows, final_rows) -> dict:
     weights = [edit_weight(kind, item) for kind, _keys, item in sv.change_items(sv.diff(draft_rows or [],
                                                                                       final_rows or []))]
     return learning_stats.weighted_rate_ci(weights, len(draft_rows or []))
-
-
-def drr(rec) -> dict:
-    """The Draft Rework Rate of one week's learning record (schedule_versions.
-    learning_weeks): the manager's own pre-publish edit items — Cavnar AI's
-    kept fixes and an admin's hand left out; a change the owner called a
-    one-off is still rework the draft needed — per 100 drafted rows."""
-    import learning_stats
-    weights = [edit_weight(e["kind"], e["item"]) for e in (rec or {}).get("items") or []
-               if e.get("origin") == "manager" and e.get("excluded") in (None, "answered")]
-    out = learning_stats.weighted_rate_ci(weights, len((rec or {}).get("base") or []))
-    out["kinds"] = {}
-    for e in (rec or {}).get("items") or []:
-        if e.get("origin") == "manager" and e.get("excluded") in (None, "answered"):
-            out["kinds"][e["kind"]] = out["kinds"].get(e["kind"], 0) + 1
-    return out
 
 
 # ── the row origins (AI-29) ─────────────────────────────────────────────────
@@ -357,7 +327,7 @@ def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned
     inline (the queue is the one path since ARCH-10; there is no "queue
     off")."""
     import job_queue
-    import schedule_resume as _pk
+    import schedule_context as _pk
     payload = {"restaurant_id": restaurant_id, "history_id": int(history_id), "kind": kind,
                "learned": int(learned or 0), "reassign_on": bool(reassign_on),
                "pre_z": _pk.pack([dict(r) for r in pre_rows or []]), "on_z": _pk.pack(compact(rows_on))}
@@ -365,47 +335,6 @@ def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned
                                       idempotency_key=f"{ABLATION_KIND}:{int(history_id)}", db_path=db_path)
     return {"ran": False, "queued": True, "job": qid, "learned": int(learned or 0)}
 
-
-def run_queued_ablation(job, db_path=None) -> dict:
-    """job_queue's handler for `schedule_ablation`: the week's repair loop
-    run again over the same rows, in the same frozen context, with the
-    learned memory off (schedule_engine.post_model_rows' context), bounded
-    by ABLATION_MAX_SECONDS; the result is written into the week's
-    generation tags (record_ablation). Offline — no owner waits on it."""
-    import time as _t
-    import types as _types
-    import schedule_engine as se
-    import schedule_metrics as sm
-    import schedule_resume as _pk
-    p = job.payload if hasattr(job, "payload") else (job or {}).get("payload") or {}
-    hid, rid = p.get("history_id"), p.get("restaurant_id")
-    blob = sm.context_for(history_id=hid, kind=p.get("kind"), db_path=db_path)
-    ctx = sm.load_context(blob) if blob else None
-    if not ctx:
-        out = {"ran": False, "why": "no stored context", "learned": p.get("learned")}
-        record_ablation(hid, out, db_path=db_path)
-        return out
-    c = ctx.get("constraints")
-    result = dict(ctx.get("result") or {})
-    result["constraints"] = c
-    if c is not None and result.get("roster_roles") and not getattr(c, "roster_roles", None):
-        c.roster_roles = dict(result["roster_roles"])
-    rest = ctx.get("restaurant")
-    signals = dict(ctx.get("signals") or {}, learned=[]) if ctx.get("signals") is not None else None
-    x = se.RepairContext(rid, result, c, editable=set(ctx["editable"]) if ctx.get("editable") else None,
-                         restaurant=_types.SimpleNamespace(**rest) if isinstance(rest, dict) else None,
-                         close_times=ctx.get("close_times") or {}, role_buffers=ctx.get("role_buffers") or {},
-                         signals=signals, weights=ctx.get("weights"), requirements=ctx.get("requirements") or [],
-                         curve=ctx.get("curve") or {}, clock=None, solver_on=ctx.get("solver_on", True),
-                         max_seconds=ABLATION_MAX_SECONDS)
-    x.reassign_on = bool(p.get("reassign_on", True))
-    x.shadow = True
-    t0 = _t.monotonic()
-    loop = se.repair_week([dict(r) for r in _pk.unpack(p.get("pre_z")) or []], x)
-    out = {"ran": True, "learned": p.get("learned"), "rows_on": _pk.unpack(p.get("on_z")) or [],
-           "rows_off": compact(loop.get("rows")), "seconds": round(_t.monotonic() - t0, 2), "offline": True}
-    record_ablation(hid, out, db_path=db_path)
-    return {"ran": True, "history_id": hid, "seconds": out["seconds"]}
 
 
 def record_ablation(history_id, ablation, db_path=None) -> bool:
@@ -457,25 +386,6 @@ def tag_generation(restaurant_id, history_id, generation_id=None, arms=None, ori
     except Exception as e:
         log.warning("generation tags not kept for history %s: %s", history_id, e)
         return False
-
-
-def generation_tags(history_id, db_path=None) -> dict:
-    conn = get_conn(db_path)
-    try:
-        r = conn.execute("SELECT * FROM schedule_generation_tags WHERE history_id=?", (int(history_id),)).fetchone()
-    except Exception:
-        return {}
-    finally:
-        conn.close()
-    if r is None:
-        return {}
-    d = dict(r)
-    for k in ("arms_json", "origins_json", "ablation_json", "rules_json"):
-        try:
-            d[k[:-5]] = json.loads(d.pop(k) or "null")
-        except (TypeError, ValueError):
-            d[k[:-5]] = None
-    return d
 
 
 def rules_honoured(constraints, violations) -> dict:

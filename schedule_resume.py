@@ -38,15 +38,15 @@ again. This module is what that next try does differently:
     schedule_engine._StageClock) so the Jobs page and the resume can say
     how far a try got.
 """
-import base64
-import contextlib
-import contextvars
-import json
-import threading
 import time
-import zlib
 
-_STATE = contextvars.ContextVar("schedule_resume_state", default=None)
+# A resumed try's stored answers (resuming, stored_answer, what it reused) live
+# in schedule_output beside the call records; re-exported here.
+from schedule_output import (  # noqa: F401
+    _STATE, INPUTS_MOVED_LINE, StoredMessage, answers_reused, inputs_moved, resume_facts, resuming, stored_answer)
+
+from schedule_context import pack, unpack  # noqa: F401  (a checkpoint's payload; re-exported)
+
 
 # How long past a resumed try's start its owner's poll waits before calling
 # it dead: a deploy takes a minute or two, and the try that died set its
@@ -54,144 +54,7 @@ _STATE = contextvars.ContextVar("schedule_resume_state", default=None)
 RESUME_GRACE_SECONDS = 20 * 60
 
 
-class StoredMessage:
-    """An answer read back from schedule_model_calls, shaped like the SDK's
-    Message as far as the schedule call site reads one (content, stop_reason,
-    usage). Zero tokens: nothing was spent on it this time."""
-
-    class _Text:
-        type = "text"
-
-        def __init__(self, text):
-            self.text = text
-
-    class _Usage:
-        def __init__(self):
-            self.input_tokens = 0
-            self.output_tokens = 0
-            self.cache_read_input_tokens = 0
-            self.cache_creation_input_tokens = 0
-
-    def __init__(self, text, stop_reason=None, model=None, record_id=None):
-        self.content = [StoredMessage._Text(text)]
-        self.stop_reason = stop_reason or "end_turn"
-        self.stop_details = None
-        self.model = model
-        self.usage = StoredMessage._Usage()
-        self._cavnar_resumed = True
-        self._cavnar_call_id = None
-        self.resumed_from = record_id
-
-
-@contextlib.contextmanager
-def resuming(job_id):
-    """Within: the schedule calls of this generation read the answers the
-    queue job `job_id`'s earlier tries stored, instead of calling the model
-    (stored_answer). `job_id` None: calls go out as usual."""
-    if not job_id:
-        yield None
-        return
-    import schedule_output
-    answers = schedule_output.stored_answers(job_id)
-    state = {"job_id": job_id, "lock": threading.Lock(), "by_key": {}, "used": [], "moved": []}
-    for a in answers:
-        state["by_key"].setdefault(a["call_key"], []).append(a)
-    token = _STATE.set(state)
-    try:
-        yield state
-    finally:
-        _STATE.reset(token)
-
-
-def stored_answer(request):
-    """The stored answer for this call when a resumed generation has one
-    (the next unused answer with the same call key), else None."""
-    state = _STATE.get()
-    if not state or not state["by_key"]:
-        return None
-    try:
-        import schedule_batch
-        key = schedule_batch.call_key(request)
-    except Exception:
-        return None
-    with state["lock"]:
-        queue = state["by_key"].get(key) or []
-        if not queue:
-            return None
-        a = queue.pop(0)
-        state["used"].append(a["id"])
-    # The answer was written for the prompt the dead try built; the prompt
-    # this try builds is read from the database as it is NOW. When they
-    # differ the inputs moved meanwhile (time off approved, a person gone,
-    # a week published): said on the draft (inputs_moved, ARCH-25).
-    try:
-        import schedule_output
-        if a.get("prompt_sig") and schedule_output.prompt_sig(request) != a["prompt_sig"]:
-            with state["lock"]:
-                state["moved"].append(a["id"])
-    except Exception as e:
-        print(f"[schedule] resumed: prompt not compared ({e!r})")
-    msg = StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
-    u = a.get("usage") or {}
-    if u.get("batch"):
-        # An auto-draft's Message Batches answer (schedule_batch, ARCH-15):
-        # paid, at the batch rate — recorded with its tokens and as a batch.
-        msg._cavnar_resumed = False
-        msg._cavnar_batch = True
-        msg._cavnar_call_id = u.get("call_id")
-        msg.usage.input_tokens = int(u.get("input_tokens") or 0)
-        msg.usage.output_tokens = int(u.get("output_tokens") or 0)
-        msg.usage.cache_read_input_tokens = int(u.get("cache_read_tokens") or 0)
-        msg.usage.cache_creation_input_tokens = int(u.get("cache_write_tokens") or 0)
-        print(f"[schedule] the batched answer {a['id']} used for its call")
-        return msg
-    print(f"[schedule] resumed: call {a['id']}'s stored answer read again, not paid for")
-    return msg
-
-
-def answers_reused() -> list:
-    state = _STATE.get()
-    return list(state["used"]) if state else []
-
-
-def inputs_moved() -> list:
-    """The stored answers this resumed try reused whose prompt differs from
-    the one it built now: written from inputs that have since moved."""
-    state = _STATE.get()
-    return list(state.get("moved") or []) if state else []
-
-
-# What a resumed draft says when the answers it reused were written from
-# inputs that moved while the job restarted (blind re-audit 10/11/26
-# ARCH-25): the rows are re-checked against the inputs as they are now —
-# every rule, the repair loop and the score read the live tables — but the
-# model wrote them from the earlier ones.
-INPUTS_MOVED_LINE = ("⚠ Cavnar AI restarted while writing this draft and reused the AI model's answer it had "
-                     "already paid for — but your team's details changed in between, so that answer was written "
-                     "from the earlier details. Every rule was checked again against them as they are now; read "
-                     "the week through before you publish.")
-
-
-def resume_facts() -> dict:
-    """{"resumed", "answers_reused", "inputs_moved"} for the draft's payload
-    and review — {"resumed": False} outside a resumed try."""
-    state = _STATE.get()
-    if not state:
-        return {"resumed": False}
-    return {"resumed": True, "answers_reused": len(state["used"]), "inputs_moved": bool(state.get("moved"))}
-
-
 # ── the saved stage ─────────────────────────────────────────────────────────
-
-def pack(payload) -> str:
-    return base64.b64encode(zlib.compress(json.dumps(payload, default=str).encode("utf-8"))).decode("ascii")
-
-
-def unpack(text):
-    try:
-        return json.loads(zlib.decompress(base64.b64decode(text)).decode("utf-8"))
-    except Exception:
-        return None
 
 
 def checkpoint_saved(history_id, payload, week_start=None) -> bool:

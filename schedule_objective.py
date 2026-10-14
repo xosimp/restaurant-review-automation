@@ -995,3 +995,101 @@ def stated_rates(ctx=None) -> dict:
             "starved_share": STARVED_SHARE, "stability_usd": STABILITY_USD,
             "history_pattern_usd": HISTORY_PATTERN_USD, "fairness_usd": FAIRNESS_USD,
             "overtime_premium": OVERTIME_PREMIUM}
+
+
+def _name_key(name) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def _punch_pay(shift) -> float:
+    try:
+        paid = float(shift.get("pay_rate") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return paid if 0 < paid <= 500 else 0.0
+
+
+def rate_book(shifts: list, person_rates: dict = None) -> tuple:
+    """(people, roles): what each person and each role is paid an hour,
+    read from the punches themselves, for the punches that carry no pay.
+
+    RPOWER puts a person's rate on some punches and $0 on others - at Simple
+    EJ's every Host PM, Barback PM and most bartender job rows are $0 while
+    the same people's AM punches carry $15-17 (9/30/26) - and those hours
+    were costed at the $26 blended default. A person's rate is their latest
+    paid punch; the owner's own rate for them (models.person_rates) wins over
+    it. A role's typical rate is the median of the rates of the people who
+    worked it - what a host costs when one host has no rate anywhere."""
+    people = {}
+    for s in sorted(shifts or (), key=lambda x: str(x.get("date") or "")):
+        paid = _punch_pay(s)
+        if paid:
+            people[_name_key(s.get("employee"))] = round(paid, 2)
+    people.update(person_rates or {})
+    worked = {}
+    for s in shifts or ():
+        rate = people.get(_name_key(s.get("employee")))
+        if rate:
+            worked.setdefault((s.get("role") or "").strip().lower(), {})[_name_key(s.get("employee"))] = rate
+    roles = {}
+    for role, by_person in worked.items():
+        vals = sorted(by_person.values())
+        if role and vals:
+            mid = len(vals) // 2
+            roles[role] = round(vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0, 2)
+    return people, roles
+
+
+def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
+                role_typical: dict = None) -> float:
+    """Return the hourly rate for a single shift based on role.
+
+    Matched case- and whitespace-insensitively. The role names an owner
+    types into settings ("Server") and the ones their CSV carries
+    ("server", from the paste-box template the product itself documents)
+    are the same role, and an exact match meant every per-role wage they
+    had configured was silently ignored in favour of the flat default.
+    """
+    return _shift_rate_source(shift, role_rates, fallback, person_rates, role_typical)[0]
+
+
+# Where an hour's wage came from (_shift_rate_source): the POS's pay on the
+# punch, the person's own rate (the owner's for them, or their pay on their
+# other punches), the owner's rate for the role, what the role's people
+# make, or the flat fallback nothing on file backs.
+RATE_SOURCES = ("punch", "person", "role_rate", "role_typical", "fallback")
+
+
+def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
+                       role_typical: dict = None) -> tuple:
+    """(rate, source) for one shift — _shift_rate's one chain, saying which
+    link priced the hour (RATE_SOURCES), so the budget's divisor can say how
+    much of it rests on a wage nobody entered (schedule audit 10/3/26 D-2,
+    E-24)."""
+    # What the POS's payroll pays this person (rpower.normalise_entries'
+    # pay_rate) is what the hour cost - it beats any rate set for the role.
+    # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
+    # $21-24 and servers at $9 on every punch (9/28/26).
+    paid = _punch_pay(shift)
+    if paid:
+        return paid, "punch"
+    # This person's own rate: the owner's for them (models.person_rates),
+    # else their pay on their other punches (rate_book) - a host's $0 PM
+    # punch costs what her AM punches pay.
+    if person_rates:
+        own = person_rates.get(_name_key(shift.get("employee")))
+        if own:
+            return own, "person"
+    role_rates = role_rates or {}
+    default = role_rates.get("_default", fallback)
+    raw = shift.get("role", "") or ""
+    if raw in role_rates and raw != "_default":
+        return role_rates[raw], "role_rate"
+    key = raw.strip().lower()
+    for name, rate in role_rates.items():
+        if name != "_default" and (name or "").strip().lower() == key:
+            return rate, "role_rate"
+    # Nobody's rate and no rate set for the role: what the role's people make.
+    if role_typical and role_typical.get(key):
+        return role_typical[key], "role_typical"
+    return default, "fallback"

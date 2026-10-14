@@ -14,6 +14,7 @@ draft is written against the bar it is judged by.
 Pure: no I/O, no model call. labor.generate_optimized_schedule calls these
 while it builds the prompt; schedule_engine gathers the inputs.
 """
+import json
 import re
 from datetime import datetime
 
@@ -1290,3 +1291,18 @@ def headcount_to_apply(base, delta, settled) -> int:
     if delta < 0:
         return min(0, max(delta, target - base))
     return 0
+
+
+def _parse_role_minimums(raw):
+    """{role: floor} from the settings textarea, or {} when it is junk.
+
+    An owner typing malformed JSON into a settings box must never be the
+    reason a schedule fails to generate.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return {str(k): int(v) for k, v in (parsed or {}).items() if int(v or 0) > 0}
+    except Exception:
+        return {}

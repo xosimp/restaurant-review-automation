@@ -46,11 +46,12 @@ A batched answer's usage is marked `batch` (schedule_model_calls.usage_json),
 so schedule_metrics prices it at ai_utils.BATCH_PRICE_MULTIPLIER; ai_batches
 ledgers it in ai_usage at the batch rate when it lands.
 """
-import contextvars
-import hashlib
-import json
-import threading
 import uuid
+
+# The call site's hooks (plan_call, answer_for, CallPlanned, call_key) live in
+# schedule_output, below labor; re-exported here.
+from schedule_output import (  # noqa: F401
+    _HOOK, CallPlanned, _dates_of, _Scope, answer_for, answering, call_key, plan_call, planning)
 
 WORKFLOW = "labor_schedule"
 CALLBACK = "schedule_batch:on_auto_draft"
@@ -59,100 +60,6 @@ CALLBACK = "schedule_batch:on_auto_draft"
 BATCH_CUTOFF_HOURS = 6
 # The schedule_model_calls outcomes a group's items leave.
 ANSWERED, FAILED, BLOCKED = "batch_answer", "batch_failed", "batch_blocked"
-
-
-class CallPlanned(Exception):
-    """Raised at labor's call site while planning: the request this call
-    would have sent. An ordinary Exception: the engine's dispatch collects it
-    with the round's other calls (it used to be a BaseException that tunnelled
-    past cleanup written as `except Exception` and captured only the first
-    call — blind re-audit 10/11/26 ARCH-15)."""
-
-    def __init__(self, request):
-        super().__init__("schedule call planned for a batch")
-        self.request = request
-
-
-# None: calls go out as usual (or read a resumed try's stored answers).
-# {"mode": "plan", "requests": [...], "lock": Lock} while planning;
-# {"mode": "answer", ...} — a queue row from before ARCH-15 carrying one answer.
-_HOOK = contextvars.ContextVar("schedule_batch_hook", default=None)
-
-
-def _dates_of(request):
-    try:
-        import schedule_prompt as sp
-        return sorted(sp.request_dates((request.get("messages") or [{}])[0].get("content")))
-    except Exception:
-        return []
-
-
-def call_key(request) -> str:
-    """What a stored answer must match to be used for a call: the model, the
-    dates the call writes and its output schema (a changed roster changes the
-    schema's enums, and that answer is then not this call's)."""
-    req = dict(request or {})
-    schema = ((req.get("output_config") or {}).get("format") or {})
-    blob = json.dumps({"model": req.get("model"), "dates": _dates_of(req), "schema": schema}, sort_keys=True,
-                      default=str)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
-
-
-def plan_call(request) -> bool:
-    """labor's call site asks this before anything is sent: True while
-    planning — the request is listed, and the caller raises CallPlanned."""
-    hook = _HOOK.get()
-    if not hook or hook.get("mode") != "plan":
-        return False
-    with hook["lock"]:
-        hook["requests"].append(dict(request or {}))
-    return True
-
-
-def answer_for(request):
-    """labor's call site asks this before it sends: a stored answer for this
-    call (a group's batched answer or a resumed try's — schedule_resume, by
-    call key, each once), else None — send it."""
-    hook = _HOOK.get()
-    if hook and hook.get("mode") == "answer":
-        # A queue row from before ARCH-15 carrying its one batched answer.
-        with hook["lock"]:
-            if not hook.get("used") and call_key(request) == hook.get("key"):
-                hook["used"] = True
-                msg = hook.get("message")
-                try:
-                    msg._cavnar_batch = True
-                except Exception:
-                    pass
-                return msg
-    import schedule_resume
-    return schedule_resume.stored_answer(request)
-
-
-class _Scope:
-    def __init__(self, value):
-        self.value, self.token = value, None
-
-    def __enter__(self):
-        self.token = _HOOK.set(self.value)
-        return self.value
-
-    def __exit__(self, *exc):
-        _HOOK.reset(self.token)
-        return False
-
-
-def planning():
-    """`with planning() as plan:` — every model call of the generation's
-    first round is listed in plan["requests"], none sent."""
-    return _Scope({"mode": "plan", "requests": [], "lock": threading.Lock()})
-
-
-def answering(key, message):
-    """`with answering(key, message):` — the call matching `key` reads
-    `message` instead of calling the model, once. Kept for an auto-draft
-    queue row enqueued before ARCH-15 with its one answer in the payload."""
-    return _Scope({"mode": "answer", "key": key, "message": message, "used": False, "lock": threading.Lock()})
 
 
 def plan_requests(restaurant_id, week_start=None) -> list:

@@ -33,10 +33,14 @@ a model, effort or prompt change can be replayed against real weeks
 (scripts/schedule_model_eval.py). Created at boot (init_schedule_output, from
 models.init_db); pruned by the retention registry (ops._RETENTION_DAYS).
 """
+import contextlib
+import contextvars
 import dataclasses
+import hashlib
 import json
 import os
 import re
+import threading
 import uuid
 import zlib
 from datetime import date as _date, datetime as _datetime
@@ -1247,8 +1251,7 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
     from ai_utils import guest_names_in
     req = dict(request or {})
     try:
-        import schedule_batch as _sb_key
-        _key = call_key or _sb_key.call_key(req)
+        _key = call_key or _request_call_key(req)
     except Exception:
         _key = call_key
     prompt_text = json.dumps(req.get("messages") or [], default=str)
@@ -1676,3 +1679,235 @@ def station_report(rows: list, constraints, week_dates: list) -> dict:
         assigned.append({"date": r.get("date"), "employee": r.get("employee"), "shift_start": r.get("shift_start"),
                          "role": r.get("role"), "morning": parts.get("morning"), "night": parts.get("night")})
     return {"stations": cfg["stations"], "assigned": assigned, "gaps": w["gaps"]}
+
+
+# ── a call's answer before it is sent: planned for a batch, or stored ──────
+#
+# labor's call site asks plan_call (the auto-draft planning its Message Batch,
+# schedule_batch) and answer_for (a batched answer, or a resumed try's stored
+# one — schedule_resume) before it sends anything. They live here, beside the
+# call records they read, so the call site never imports the batch or the
+# resume (ARCH-3); both re-export them.
+
+class CallPlanned(Exception):
+    """Raised at labor's call site while planning: the request this call
+    would have sent. An ordinary Exception: the engine's dispatch collects it
+    with the round's other calls (it used to be a BaseException that tunnelled
+    past cleanup written as `except Exception` and captured only the first
+    call — blind re-audit 10/11/26 ARCH-15)."""
+
+    def __init__(self, request):
+        super().__init__("schedule call planned for a batch")
+        self.request = request
+
+
+# None: calls go out as usual (or read a resumed try's stored answers).
+# {"mode": "plan", "requests": [...], "lock": Lock} while planning;
+# {"mode": "answer", ...} — a queue row from before ARCH-15 carrying one answer.
+_HOOK = contextvars.ContextVar("schedule_batch_hook", default=None)
+
+
+def _dates_of(request):
+    try:
+        import schedule_prompt as sp
+        return sorted(sp.request_dates((request.get("messages") or [{}])[0].get("content")))
+    except Exception:
+        return []
+
+
+def call_key(request) -> str:
+    """What a stored answer must match to be used for a call: the model, the
+    dates the call writes and its output schema (a changed roster changes the
+    schema's enums, and that answer is then not this call's)."""
+    req = dict(request or {})
+    schema = ((req.get("output_config") or {}).get("format") or {})
+    blob = json.dumps({"model": req.get("model"), "dates": _dates_of(req), "schema": schema}, sort_keys=True,
+                      default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+
+# record_call's own `call_key` argument shadows the function inside it.
+_request_call_key = call_key
+
+
+def plan_call(request) -> bool:
+    """labor's call site asks this before anything is sent: True while
+    planning — the request is listed, and the caller raises CallPlanned."""
+    hook = _HOOK.get()
+    if not hook or hook.get("mode") != "plan":
+        return False
+    with hook["lock"]:
+        hook["requests"].append(dict(request or {}))
+    return True
+
+
+def answer_for(request):
+    """labor's call site asks this before it sends: a stored answer for this
+    call (a group's batched answer or a resumed try's — schedule_resume, by
+    call key, each once), else None — send it."""
+    hook = _HOOK.get()
+    if hook and hook.get("mode") == "answer":
+        # A queue row from before ARCH-15 carrying its one batched answer.
+        with hook["lock"]:
+            if not hook.get("used") and call_key(request) == hook.get("key"):
+                hook["used"] = True
+                msg = hook.get("message")
+                try:
+                    msg._cavnar_batch = True
+                except Exception:
+                    pass
+                return msg
+    return stored_answer(request)
+
+
+class _Scope:
+    def __init__(self, value):
+        self.value, self.token = value, None
+
+    def __enter__(self):
+        self.token = _HOOK.set(self.value)
+        return self.value
+
+    def __exit__(self, *exc):
+        _HOOK.reset(self.token)
+        return False
+
+
+def planning():
+    """`with planning() as plan:` — every model call of the generation's
+    first round is listed in plan["requests"], none sent."""
+    return _Scope({"mode": "plan", "requests": [], "lock": threading.Lock()})
+
+
+def answering(key, message):
+    """`with answering(key, message):` — the call matching `key` reads
+    `message` instead of calling the model, once. Kept for an auto-draft
+    queue row enqueued before ARCH-15 with its one answer in the payload."""
+    return _Scope({"mode": "answer", "key": key, "message": message, "used": False, "lock": threading.Lock()})
+
+
+_STATE = contextvars.ContextVar("schedule_resume_state", default=None)
+
+
+class StoredMessage:
+    """An answer read back from schedule_model_calls, shaped like the SDK's
+    Message as far as the schedule call site reads one (content, stop_reason,
+    usage). Zero tokens: nothing was spent on it this time."""
+
+    class _Text:
+        type = "text"
+
+        def __init__(self, text):
+            self.text = text
+
+    class _Usage:
+        def __init__(self):
+            self.input_tokens = 0
+            self.output_tokens = 0
+            self.cache_read_input_tokens = 0
+            self.cache_creation_input_tokens = 0
+
+    def __init__(self, text, stop_reason=None, model=None, record_id=None):
+        self.content = [StoredMessage._Text(text)]
+        self.stop_reason = stop_reason or "end_turn"
+        self.stop_details = None
+        self.model = model
+        self.usage = StoredMessage._Usage()
+        self._cavnar_resumed = True
+        self._cavnar_call_id = None
+        self.resumed_from = record_id
+
+
+@contextlib.contextmanager
+def resuming(job_id):
+    """Within: the schedule calls of this generation read the answers the
+    queue job `job_id`'s earlier tries stored, instead of calling the model
+    (stored_answer). `job_id` None: calls go out as usual."""
+    if not job_id:
+        yield None
+        return
+    answers = stored_answers(job_id)
+    state = {"job_id": job_id, "lock": threading.Lock(), "by_key": {}, "used": [], "moved": []}
+    for a in answers:
+        state["by_key"].setdefault(a["call_key"], []).append(a)
+    token = _STATE.set(state)
+    try:
+        yield state
+    finally:
+        _STATE.reset(token)
+
+
+def stored_answer(request):
+    """The stored answer for this call when a resumed generation has one
+    (the next unused answer with the same call key), else None."""
+    state = _STATE.get()
+    if not state or not state["by_key"]:
+        return None
+    try:
+        key = call_key(request)
+    except Exception:
+        return None
+    with state["lock"]:
+        queue = state["by_key"].get(key) or []
+        if not queue:
+            return None
+        a = queue.pop(0)
+        state["used"].append(a["id"])
+    # The answer was written for the prompt the dead try built; the prompt
+    # this try builds is read from the database as it is NOW. When they
+    # differ the inputs moved meanwhile (time off approved, a person gone,
+    # a week published): said on the draft (inputs_moved, ARCH-25).
+    try:
+        if a.get("prompt_sig") and prompt_sig(request) != a["prompt_sig"]:
+            with state["lock"]:
+                state["moved"].append(a["id"])
+    except Exception as e:
+        print(f"[schedule] resumed: prompt not compared ({e!r})")
+    msg = StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
+    u = a.get("usage") or {}
+    if u.get("batch"):
+        # An auto-draft's Message Batches answer (schedule_batch, ARCH-15):
+        # paid, at the batch rate — recorded with its tokens and as a batch.
+        msg._cavnar_resumed = False
+        msg._cavnar_batch = True
+        msg._cavnar_call_id = u.get("call_id")
+        msg.usage.input_tokens = int(u.get("input_tokens") or 0)
+        msg.usage.output_tokens = int(u.get("output_tokens") or 0)
+        msg.usage.cache_read_input_tokens = int(u.get("cache_read_tokens") or 0)
+        msg.usage.cache_creation_input_tokens = int(u.get("cache_write_tokens") or 0)
+        print(f"[schedule] the batched answer {a['id']} used for its call")
+        return msg
+    print(f"[schedule] resumed: call {a['id']}'s stored answer read again, not paid for")
+    return msg
+
+
+def answers_reused() -> list:
+    state = _STATE.get()
+    return list(state["used"]) if state else []
+
+
+def inputs_moved() -> list:
+    """The stored answers this resumed try reused whose prompt differs from
+    the one it built now: written from inputs that have since moved."""
+    state = _STATE.get()
+    return list(state.get("moved") or []) if state else []
+
+
+# What a resumed draft says when the answers it reused were written from
+# inputs that moved while the job restarted (blind re-audit 10/11/26
+# ARCH-25): the rows are re-checked against the inputs as they are now —
+# every rule, the repair loop and the score read the live tables — but the
+# model wrote them from the earlier ones.
+INPUTS_MOVED_LINE = ("⚠ Cavnar AI restarted while writing this draft and reused the AI model's answer it had "
+                     "already paid for — but your team's details changed in between, so that answer was written "
+                     "from the earlier details. Every rule was checked again against them as they are now; read "
+                     "the week through before you publish.")
+
+
+def resume_facts() -> dict:
+    """{"resumed", "answers_reused", "inputs_moved"} for the draft's payload
+    and review — {"resumed": False} outside a resumed try."""
+    state = _STATE.get()
+    if not state:
+        return {"resumed": False}
+    return {"resumed": True, "answers_reused": len(state["used"]), "inputs_moved": bool(state.get("moved"))}

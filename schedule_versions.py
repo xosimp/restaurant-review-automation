@@ -1283,7 +1283,7 @@ def save_studio_week(restaurant_id, history_id, csv_text, *, raw_rows=None, expl
       contract #4), and the week is written through write_on (the working
       copy only on a week staff have; the version; the shift projection);
     * the generation's review is kept and only what the edited rows decide
-      is refreshed (schedule_engine.refresh_review, P-26) — `review` and
+      is refreshed (schedule_review.refresh_review, P-26) — `review` and
       `violations` from the save's sweep; a sweep that could not run
       (`review` None) leaves the stored review as it was.
 
@@ -1323,7 +1323,7 @@ def save_studio_week(restaurant_id, history_id, csv_text, *, raw_rows=None, expl
                                "WHERE id=? AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
             # The whole saved review (stored once by reference, SCALE-13).
             saved_rv = _m_rv.history_review(conn, was) if was else {}
-            from schedule_engine import refresh_review
+            from schedule_review import refresh_review
             review = refresh_review(saved_rv, violations, rows if rows is not None else rows_from_csv(csv_text),
                                     constraints, hours_budget=(was["hours_budget"] if was else None),
                                     extras=review_extras or {})

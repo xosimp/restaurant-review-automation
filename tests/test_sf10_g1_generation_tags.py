@@ -7,6 +7,7 @@ import pytest
 from test_schedule_b2_calls import db, _csv, _line, _restaurant, WEEK, DAYS  # noqa: F401
 import models
 import ops
+import schedule_job
 import schedule_engine as se
 import schedule_memory
 import schedule_scorecard as ssc
@@ -63,7 +64,7 @@ def test_with_a_learned_memory_binding_the_ablation_runs_the_loop_again_without_
     conn.close()
     assert row["priority_class"] == "bulk" and row["idempotency_key"] == f"schedule_ablation:{hid}"
     job = job_queue.Job(dict(row), payload=json.loads(row["payload_json"]))
-    assert ssc.run_queued_ablation(job)["ran"] is True
+    assert schedule_job.run_queued_ablation(job)["ran"] is True
     assert ran[1:] and all(ran[1:])                          # the shadow loop, on the worker
     ab = ssc.generation_tags(hid)["ablation"]
     assert ab and ab["ran"] and ab["learned"] == 1 and ab["offline"] is True

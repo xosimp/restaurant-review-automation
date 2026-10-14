@@ -2724,7 +2724,7 @@ def why_row(restaurant_id, history_id, row, db_path=None) -> dict:
     passes were bound by), headcount — the learned headcount on its slot and
     whether the baseline still needed it, preferences — what the person
     drops and claims, with denominators}. Read-only."""
-    import schedule_scorecard
+    import schedule_experiments
     import schedule_versions as sv
     d = str((row or {}).get("date") or "")[:10]
     day = _weekday(d)
@@ -2738,7 +2738,7 @@ def why_row(restaurant_id, history_id, row, db_path=None) -> dict:
     role = " ".join(str((row or {}).get("role") or "").split()).lower()
     out = {"row": {k: (row or {}).get(k) for k in ("date", "employee", "role", "shift_start", "shift_end")},
            "origin": None, "asked": {}, "learned": [], "headcount": {}, "preferences": None}
-    tags = schedule_scorecard.generation_tags(history_id, db_path=db_path) if history_id else {}
+    tags = schedule_experiments.generation_tags(history_id, db_path=db_path) if history_id else {}
     out["origin"] = (tags.get("origins") or {}).get(sv.row_sig(row or {}))
     conn = get_conn(db_path)
     try:

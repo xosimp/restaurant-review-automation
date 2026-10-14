@@ -18,11 +18,14 @@ no schedule module but schedule_time, so labor, the rules and the learners
 read the generation's context without importing schedule_engine.
 schedule_engine re-exports every name here, so `se.NAME` keeps working.
 """
+import base64
 import contextlib
 import contextvars
 import copy
+import json
 import logging
 import os
+import zlib
 
 import schedule_time as _stime
 
@@ -122,6 +125,11 @@ def _inputs_failed() -> list:
     store = _FROZEN.get()
     return list(store["failed"]) if store is not None else []
 
+
+# ── The eval's verdicts the pre-router reads (schedule_eval writes them) ─────
+#
+# The newest stored verdict of T4 against T3 for a roster size band or a kind
+# of week (schedule_eval.record_verdict); a week starts on T4 only on one.
 
 # ── One orchestrated run per generation (AI orchestration, 10/7/26) ───────
 #
@@ -343,3 +351,111 @@ def schedule_model_thinks(model) -> bool:
     effort level (the 5.5 generation and later), or the old thinking-off
     shape (16k tokens, no effort)."""
     return str(model or "").lower().startswith(SCHEDULE_THINKING_MODELS)
+
+
+# The paired metric the router decides on (scheduler re-audit 10/11/26
+# AI-3, AI-4): an OUTCOME of the arm's own rows, read BEFORE the repair loop
+# and the gate's fill touch them — the hard breaches the model wrote plus
+# the requirement items its week left unmet. It was agreement with the week
+# the owner published (F1), which is an edit of whatever production drafted
+# (or of last week, carried forward): the arm that drafted it and the
+# carry-forward arm won by anchoring, and a better-than-habit week scored
+# worse. And it was read after the repair, which flattened Sonnet and Opus
+# to the same week (78 v 79, 0 hard after repair, 10/7/26) — the eval could
+# only say whether repair could fix a model, never whether a model was
+# better. Agreement with the published week is kept as a SECONDARY metric,
+# read only on weeks a third arm drafted (ANCHORED_METRICS, anchored).
+ROUTE_METRIC = "pre_repair_defects"
+
+
+# A verdict names a winner only from at least this many weeks from at least
+# this many learning-eligible restaurants in its band or tag (AI-5) — the
+# live experiments' own floor (schedule_experiments.MIN_WEEKS_PER_ARM,
+# MIN_RESTAURANTS_PER_ARM). cluster_mean_ci gives an interval from two
+# restaurants, so Simple EJ's and its demo copy (the same data) could have
+# sent a whole roster band to Opus.
+MIN_VERDICT_WEEKS = 20
+
+
+MIN_VERDICT_RESTAURANTS = 5
+
+
+def latest_verdict(metric, arm_a, arm_b, roster_size=None, tag=None, db_path=None):
+    """The newest stored verdict of arm_a against arm_b on `metric` — for
+    the band holding `roster_size`, or (with `tag`) for that kind of week —
+    or None."""
+    import models
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        if tag:
+            r = conn.execute(
+                "SELECT * FROM schedule_eval_verdicts WHERE metric=? AND arm_a=? AND arm_b=? AND tag=? "
+                "ORDER BY id DESC LIMIT 1", (metric, arm_a, arm_b, tag)).fetchone()
+        else:
+            n = int(roster_size or 0)
+            r = conn.execute(
+                "SELECT * FROM schedule_eval_verdicts WHERE metric=? AND arm_a=? AND arm_b=? AND band_lo<=? "
+                "AND band_hi>=? AND tag IS NULL ORDER BY id DESC LIMIT 1", (metric, arm_a, arm_b, n, n)).fetchone()
+    finally:
+        conn.close()
+    return dict(r) if r else None
+
+
+def _decisive(v) -> bool:
+    """A stored verdict the router may act on: T4 named the winner on
+    ROUTE_METRIC, from at least the floors (re-checked on read, so a row
+    stored before the floor existed is never evidence)."""
+    return bool(v and v.get("winner") == "T4" and int(v.get("weeks") or 0) >= MIN_VERDICT_WEEKS
+                and int(v.get("restaurants") or 0) >= MIN_VERDICT_RESTAURANTS)
+
+
+def _evidence_text(v, what) -> str:
+    return (f"the eval showed T4 better for {what} ({float(v['diff'] or 0):+.3f} {ROUTE_METRIC} T4 minus T3, "
+            f"90% CI {float(v['ci_lo']):.3f} to {float(v['ci_hi']):.3f}, {v['weeks']} weeks from "
+            f"{v['restaurants']} restaurants)")
+
+
+def route_evidence(roster_size, db_path=None):
+    """Why a week of this roster size starts on T4, or None (AI-3: route by
+    measured evidence). A reason only when the newest stored verdict of T4
+    against T3 for the roster's size band named T4 the winner at 90% on
+    ROUTE_METRIC, from the floors (_decisive). Never raises: a store that
+    cannot be read is no evidence, so the week starts where the ladder
+    starts it."""
+    try:
+        v = latest_verdict(ROUTE_METRIC, "T4", "T3", roster_size, db_path=db_path)
+    except Exception as e:
+        print(f"[schedule_eval] route evidence not read: {e!r}")
+        return None
+    if not _decisive(v):
+        return None
+    return _evidence_text(v, f"rosters of {v['band_lo']}-{v['band_hi']}")
+
+
+def tag_evidence(tag, db_path=None):
+    """Why a week carrying `tag` (ROUTE_TAGS) starts on T4, or None — the
+    same rule as route_evidence, for a kind of week (AI-27: holidays, first
+    weeks, many rules and a week whose last draft escalated were sent to
+    Opus on assertion). Never raises."""
+    try:
+        v = latest_verdict(ROUTE_METRIC, "T4", "T3", tag=tag, db_path=db_path)
+    except Exception as e:
+        print(f"[schedule_eval] tag evidence not read: {e!r}")
+        return None
+    if not _decisive(v):
+        return None
+    return _evidence_text(v, f"{str(tag).replace('_', ' ')} weeks")
+
+
+# ── a checkpoint's payload, as the queue row keeps it ─────────────────────
+
+def pack(payload) -> str:
+    """`payload` as compressed JSON text (a queue row's checkpoint, a scorecard's kept rows)."""
+    return base64.b64encode(zlib.compress(json.dumps(payload, default=str).encode("utf-8"))).decode("ascii")
+
+
+def unpack(text):
+    try:
+        return json.loads(zlib.decompress(base64.b64decode(text)).decode("utf-8"))
+    except Exception:
+        return None

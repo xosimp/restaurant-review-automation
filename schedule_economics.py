@@ -31,6 +31,8 @@ from datetime import date, datetime, timedelta
 import models as _models_mod
 from models import DB_PATH
 import schedule_time as _stime
+from schedule_time import _APPROXIMATE, _holiday_dates, holiday_names  # noqa: F401  (the holiday calendar; re-exported)
+from schedule_review import binding_budget, budget_conflict_line  # noqa: E402,F401  (the review's budget lines; re-exported)
 
 
 def get_conn(db_path=None):
@@ -2060,73 +2062,6 @@ def splh_report(objective: dict, rows: list, demand_by_date: dict = None) -> dic
 
 # ── holidays: what they did here last time ────────────────────────────────
 
-# A holiday the calendar only approximates (its date moves with a league's
-# calendar — demand.APPROXIMATE_HOLIDAYS) never takes a date's name from a
-# holiday that falls on its own date every year.
-_APPROXIMATE = ("Super Bowl Sunday",)
-
-
-def holiday_names(year: int) -> dict:
-    """{iso date: [names]} — every dining holiday on each date of `year`
-    (the ones marketing.get_upcoming_holidays already knows), the date's own
-    fixed holiday first, then the floating ones, then the approximate.
-
-    Two can fall on one night: Super Bowl Sunday on 2/14/27 is Valentine's
-    Day, and the one-name calendar let whichever was written last overwrite
-    the other (schedule audit 10/3/26 E-8)."""
-    from datetime import date as _date
-    fixed = {(1, 1): "New Year's Day", (2, 14): "Valentine's Day", (3, 17): "St. Patrick's Day",
-             (5, 5): "Cinco de Mayo", (7, 4): "Fourth of July", (10, 31): "Halloween",
-             (11, 11): "Veterans Day", (12, 24): "Christmas Eve", (12, 25): "Christmas Day",
-             (12, 31): "New Year's Eve"}
-    out = {}
-
-    def add(d, name):
-        names = out.setdefault(d.isoformat() if hasattr(d, "isoformat") else d, [])
-        if name not in names:
-            names.append(name)
-    for (m, d), n in fixed.items():
-        add(_date(year, m, d), n)
-
-    def nth_weekday(month, weekday, n):
-        first = _date(year, month, 1)
-        off = (weekday - first.weekday()) % 7
-        return first + timedelta(days=off + 7 * (n - 1))
-
-    def last_weekday(month, weekday):
-        nxt = _date(year + (month == 12), (month % 12) + 1, 1)
-        d = nxt - timedelta(days=1)
-        while d.weekday() != weekday:
-            d -= timedelta(days=1)
-        return d
-    add(nth_weekday(5, 6, 2), "Mother's Day")
-    add(nth_weekday(6, 6, 3), "Father's Day")
-    add(nth_weekday(11, 3, 4), "Thanksgiving")
-    add(last_weekday(5, 0), "Memorial Day")
-    add(nth_weekday(9, 0, 1), "Labor Day")
-    # Easter (Anonymous Gregorian algorithm)
-    a, b, c = year % 19, year // 100, year % 100
-    d_, e = b // 4, b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d_ - g + 15) % 30
-    i, k = c // 4, c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    add(_date(year, month, day), "Easter")
-    add(nth_weekday(2, 6, 2), "Super Bowl Sunday")
-    for names in out.values():
-        names.sort(key=lambda n: n in _APPROXIMATE)       # stable: fixed, floating, then approximate
-    return out
-
-
-def _holiday_dates(year: int) -> dict:
-    """{iso date: name} — each date's first holiday (holiday_names): the
-    fixed-date one wherever two fall on one night."""
-    return {d: names[0] for d, names in holiday_names(year).items()}
-
 
 def last_years_holiday_night(name: str, day) -> str:
     """The ISO date `name` fell on in the year before `day` — the night a
@@ -3070,126 +3005,6 @@ def _conflict(total, budget, refusals, timed_out=False) -> dict:
     if timed_out:
         out["timed_out"] = True
     return out
-
-
-def binding_budget(cost, dollar_budget, hours, hours_budget, overtime_premium=0.0) -> dict:
-    """Which budget binds when the dollar budget is over (blind re-audit
-    10/11/26 BUGSGEN-22). The dollar budget prices each person at their own
-    rate; the hours budget is the same dollars at the blended rate. So a week
-    can be dollars over with its hours exactly at budget, and "$298 over
-    (988h scheduled against 988h)" read as a contradiction. Pure.
-
-    {"binds": "both" | "dollars" | None, "over_dollars", "paid_rate",
-    "assumed_rate", "overtime_premium", "note"} — `note` the words that go in
-    brackets after "$X over": the hours beside it when they are over too,
-    else that the hours are within budget and why the dollars are over all
-    the same (the crew is paid above the blended rate the hours budget
-    assumes, and/or the overtime premium) — the dollar budget binds."""
-    try:
-        cost, lbd = float(cost or 0), float(dollar_budget or 0)
-        hrs, hb = float(hours or 0), float(hours_budget or 0)
-        prem = max(0.0, float(overtime_premium or 0))
-    except (TypeError, ValueError):
-        return {"binds": None, "note": ""}
-    out = {"binds": None, "over_dollars": round(cost - lbd, 0) if lbd > 0 else None, "paid_rate": None,
-           "assumed_rate": round(lbd / hb, 2) if (lbd > 0 and hb > 0) else None,
-           "overtime_premium": round(prem, 0), "note": ""}
-    if lbd <= 0 or cost <= lbd:
-        return out
-    if hb > 0 and hrs > hb + 0.5:
-        out["binds"] = "both"
-        out["note"] = f"{hrs:,.0f}h scheduled against {hb:,.0f}h"
-        return out
-    out["binds"] = "dollars"
-    straight = cost - prem
-    out["paid_rate"] = round(straight / hrs, 2) if hrs > 0 else None
-    why = []
-    if out["paid_rate"] and out["assumed_rate"] and out["paid_rate"] > out["assumed_rate"] + 0.005:
-        why.append(f"this crew is paid ${out['paid_rate']:,.2f}/h on average against the "
-                   f"${out['assumed_rate']:,.2f}/h blended rate the hours budget assumes")
-    if prem >= 1:
-        why.append(f"${prem:,.0f} of it is overtime premium")
-    hours_words = f"{hrs:,.0f}h of a {hb:,.0f}h hours budget" if hb > 0 else f"{hrs:,.0f}h scheduled"
-    out["note"] = (f"the hours are within budget, {hours_words}; the dollar budget is the one that binds"
-                   + (" — " + " and ".join(why) if why else ""))
-    return out
-
-
-def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = None) -> str:
-    """One sentence for the review when the trim stopped above the budget:
-    what holds the remaining hours — the shifts' own requirement, days and
-    dayparts kept from cuts, the rules — and what the owner can change
-    (schedule audit 10/3/26 SQ-7: the requirement and the budget disagree,
-    said once). "" when there is no conflict."""
-    if not conflict:
-        return ""
-    over = conflict.get("over_by") if over_by is None else over_by
-    b = conflict.get("budget") if budget is None else budget
-    held = conflict.get("held") or {}
-    ex = conflict.get("examples") or []
-
-    def _first(reason):
-        return next((x for x in ex if x.get("reason") == reason), None)
-
-    def _part(p):
-        return {"morning": "lunch", "night": "dinner"}.get(p, p or "")
-    bits = []
-    if held.get("requirement"):
-        from shift_quality import role_words
-        x = _first("requirement")
-        what = ""
-        if x and x.get("required"):
-            what = (f" — {x['day']} {_part(x.get('daypart'))} needs {x['required']} "
-                    f"{role_words(x.get('role'), int(x['required']), 'people')}"
-                    + (f" at {x['at']}" if x.get("at") else ""))
-        bits.append("what the shifts need (your usual staffing, floors and demand" + what + ")")
-    if held.get("objective"):
-        # LOGIC-6: the cut would lose more, at the stated value of a person
-        # short on that half hour, than the dollars it saves past the budget.
-        from shift_quality import role_words
-        x = _first("objective")
-        what = ""
-        if x and x.get("required"):
-            what = (f" — {x['day']} {_part(x.get('daypart'))} needs {x['required']} "
-                    f"{role_words(x.get('role'), int(x['required']), 'people')}")
-        elif x and x.get("day") and x.get("role"):
-            what = f" — {x['day']} {x['role']}"
-        bits.append("what the shifts need, worth more in service than the cut would save" + what)
-    if held.get("learned"):
-        x = _first("learned")
-        bits.append(f"{x['day']}s, where staffing cuts measured worse here" if x and x.get("day")
-                    else "days where staffing cuts measured worse here")
-    if held.get("troubled"):
-        x = _first("troubled")
-        bits.append(f"{x['day']} {_part(x.get('daypart'))}, which has gone wrong before" if x and x.get("day")
-                    else "dayparts that have gone wrong before")
-    if held.get("rule"):
-        x = _first("rule")
-        bits.append("the rules" + (f" — {x['label']}" if x and x.get("label") else ""))
-    if held.get("floor") or held.get("last_of_role") or held.get("station"):
-        bits.append("your floors and the last of each role")
-    if held.get("min_hours") or held.get("only_shift"):
-        bits.append("minimum hours and people's only shifts")
-    if held.get("kept"):
-        bits.append("the days you kept as they were")
-    if conflict.get("timed_out"):
-        bits.insert(0, "its time limit")
-    if not bits:
-        return ""
-    if conflict.get("over_by_dollars") is not None and conflict.get("budget_dollars"):
-        # The budget is held in dollars (LOGIC-13): said that way, the
-        # hours beside it.
-        # Which budget binds, never "(988h against 988h)" beside a dollar
-        # overrun (BUGSGEN-22).
-        _bd = float(conflict["budget_dollars"])
-        _bb = binding_budget(_bd + float(conflict["over_by_dollars"]), _bd, conflict.get("scheduled"),
-                             conflict.get("budget"), conflict.get("overtime_premium"))
-        return (f"The trim stopped ${float(conflict['over_by_dollars']):,.0f} over the "
-                f"${_bd:,.0f} hourly budget" + (f" ({_bb['note']})" if _bb.get("note") else "")
-                + ": the rest is held by "
-                + "; ".join(bits[:3]) + ". Raise the budget, or lower the floors or staffing you set, to close it.")
-    return (f"The trim stopped {over:,.0f}h over the {b:,.0f}h budget: the rest is held by "
-            + "; ".join(bits[:3]) + ". Raise the hours budget, or lower the floors or staffing you set, to close it.")
 
 
 def trim_lines(trimmed: list, hours_removed: float, budget: float, limit: int = 6) -> list:

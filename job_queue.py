@@ -124,7 +124,7 @@ HANDLERS = {
     "auto_draft": "strategy_jobs:run_queued_auto_draft",
     "learner": "strategy_jobs:run_queued_learner",
     "owner_words_read": "owner_rules:run_queued_read",
-    "schedule_ablation": "schedule_scorecard:run_queued_ablation",
+    "schedule_ablation": "schedule_job:run_queued_ablation",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.

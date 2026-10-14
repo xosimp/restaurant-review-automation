@@ -696,3 +696,89 @@ def window_allows(lo, hi, start_m, end_m) -> tuple:
     if hi is not None and end > hi:
         return False, "late"
     return True, ""
+
+
+# A holiday the calendar only approximates (its date moves with a league's
+# calendar — demand.APPROXIMATE_HOLIDAYS) never takes a date's name from a
+# holiday that falls on its own date every year.
+_APPROXIMATE = ("Super Bowl Sunday",)
+
+
+def holiday_names(year: int) -> dict:
+    """{iso date: [names]} — every dining holiday on each date of `year`
+    (the ones marketing.get_upcoming_holidays already knows), the date's own
+    fixed holiday first, then the floating ones, then the approximate.
+
+    Two can fall on one night: Super Bowl Sunday on 2/14/27 is Valentine's
+    Day, and the one-name calendar let whichever was written last overwrite
+    the other (schedule audit 10/3/26 E-8)."""
+    from datetime import date as _date
+    fixed = {(1, 1): "New Year's Day", (2, 14): "Valentine's Day", (3, 17): "St. Patrick's Day",
+             (5, 5): "Cinco de Mayo", (7, 4): "Fourth of July", (10, 31): "Halloween",
+             (11, 11): "Veterans Day", (12, 24): "Christmas Eve", (12, 25): "Christmas Day",
+             (12, 31): "New Year's Eve"}
+    out = {}
+
+    def add(d, name):
+        names = out.setdefault(d.isoformat() if hasattr(d, "isoformat") else d, [])
+        if name not in names:
+            names.append(name)
+    for (m, d), n in fixed.items():
+        add(_date(year, m, d), n)
+
+    def nth_weekday(month, weekday, n):
+        first = _date(year, month, 1)
+        off = (weekday - first.weekday()) % 7
+        return first + timedelta(days=off + 7 * (n - 1))
+
+    def last_weekday(month, weekday):
+        nxt = _date(year + (month == 12), (month % 12) + 1, 1)
+        d = nxt - timedelta(days=1)
+        while d.weekday() != weekday:
+            d -= timedelta(days=1)
+        return d
+    add(nth_weekday(5, 6, 2), "Mother's Day")
+    add(nth_weekday(6, 6, 3), "Father's Day")
+    add(nth_weekday(11, 3, 4), "Thanksgiving")
+    add(last_weekday(5, 0), "Memorial Day")
+    add(nth_weekday(9, 0, 1), "Labor Day")
+    # Easter (Anonymous Gregorian algorithm)
+    a, b, c = year % 19, year // 100, year % 100
+    d_, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d_ - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    add(_date(year, month, day), "Easter")
+    add(nth_weekday(2, 6, 2), "Super Bowl Sunday")
+    for names in out.values():
+        names.sort(key=lambda n: n in _APPROXIMATE)       # stable: fixed, floating, then approximate
+    return out
+
+
+def _holiday_dates(year: int) -> dict:
+    """{iso date: name} — each date's first holiday (holiday_names): the
+    fixed-date one wherever two fall on one night."""
+    return {d: names[0] for d, names in holiday_names(year).items()}
+
+
+_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%m-%d-%Y", "%d-%b-%Y", "%b %d %Y")
+
+
+def _iso_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw[:len(raw)], fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(raw[:19]).strftime("%Y-%m-%d")
+    except ValueError:
+        return None

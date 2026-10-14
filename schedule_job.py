@@ -2452,3 +2452,48 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
                                week_start=(result.get("week_dates") or [None])[0] or req.week_start)
     except Exception as _cpx:
         print(f"[schedule] saved checkpoint not kept: {_cpx!r}")
+
+
+# ── the learning ablation, offline (a job_queue row after the save) ─────────
+
+def run_queued_ablation(job, db_path=None) -> dict:
+    """job_queue's handler for `schedule_ablation` (schedule_scorecard's learning
+    ablation, run here, above the repair loop it re-runs): the week's repair loop
+    run again over the same rows, in the same frozen context, with the
+    learned memory off (schedule_engine.post_model_rows' context), bounded
+    by ABLATION_MAX_SECONDS; the result is written into the week's
+    generation tags (record_ablation). Offline — no owner waits on it."""
+    import time as _t
+    import types as _types
+    import schedule_context as _pk
+    import schedule_metrics as sm
+    import schedule_scorecard as _ssc
+    p = job.payload if hasattr(job, "payload") else (job or {}).get("payload") or {}
+    hid, rid = p.get("history_id"), p.get("restaurant_id")
+    blob = sm.context_for(history_id=hid, kind=p.get("kind"), db_path=db_path)
+    ctx = sm.load_context(blob) if blob else None
+    if not ctx:
+        out = {"ran": False, "why": "no stored context", "learned": p.get("learned")}
+        _ssc.record_ablation(hid, out, db_path=db_path)
+        return out
+    c = ctx.get("constraints")
+    result = dict(ctx.get("result") or {})
+    result["constraints"] = c
+    if c is not None and result.get("roster_roles") and not getattr(c, "roster_roles", None):
+        c.roster_roles = dict(result["roster_roles"])
+    rest = ctx.get("restaurant")
+    signals = dict(ctx.get("signals") or {}, learned=[]) if ctx.get("signals") is not None else None
+    x = se.RepairContext(rid, result, c, editable=set(ctx["editable"]) if ctx.get("editable") else None,
+                         restaurant=_types.SimpleNamespace(**rest) if isinstance(rest, dict) else None,
+                         close_times=ctx.get("close_times") or {}, role_buffers=ctx.get("role_buffers") or {},
+                         signals=signals, weights=ctx.get("weights"), requirements=ctx.get("requirements") or [],
+                         curve=ctx.get("curve") or {}, clock=None, solver_on=ctx.get("solver_on", True),
+                         max_seconds=_ssc.ABLATION_MAX_SECONDS)
+    x.reassign_on = bool(p.get("reassign_on", True))
+    x.shadow = True
+    t0 = _t.monotonic()
+    loop = se.repair_week([dict(r) for r in _pk.unpack(p.get("pre_z")) or []], x)
+    out = {"ran": True, "learned": p.get("learned"), "rows_on": _pk.unpack(p.get("on_z")) or [],
+           "rows_off": _ssc.compact(loop.get("rows")), "seconds": round(_t.monotonic() - t0, 2), "offline": True}
+    _ssc.record_ablation(hid, out, db_path=db_path)
+    return {"ran": True, "history_id": hid, "seconds": out["seconds"]}

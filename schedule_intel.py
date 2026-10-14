@@ -324,7 +324,7 @@ class _Actuals:
                        placed), plus the salaried people's planned shifts —
                        they don't clock in, so their plan is their record
       labor_cost       the punched hours priced at each punch's own pay, the
-                       person's rate, the role's (labor._shift_rate — the
+                       person's rate, the role's (schedule_objective._shift_rate — the
                        labor analysis's one chain), split at the 3pm line the
                        daypart sales are split at; hourly only, as the day's
                        labor % is (labor_daily_history)
@@ -362,7 +362,7 @@ class _Actuals:
         return role_family(role, self.families)
 
     def week(self, week_start, week_end, plan_rows) -> dict:
-        import labor
+        import schedule_objective as _wages
         import shift_facts
         import schedule_memory as _sm
         from schedule_rules import daypart_of
@@ -372,7 +372,7 @@ class _Actuals:
                    and salaried_name_key(p.get("employee")) not in self.salaried]
         if not punches:
             return {}
-        _people, role_typical = labor.rate_book(punches, self.person_rates)
+        _people, role_typical = _wages.rate_book(punches, self.person_rates)
         measured = {str(p["date"])[:10] for p in punches}
         out = {}
 
@@ -393,7 +393,7 @@ class _Actuals:
             e["hours"] += hours
             e["people"].add(salaried_name_key(p.get("employee")))
             e["worked_by_family"].setdefault(self._fam(p.get("role")), set()).add(salaried_name_key(p.get("employee")))
-            rate = labor._shift_rate(p, self.role_rates, self.fallback, self.person_rates, role_typical)
+            rate = _wages._shift_rate(p, self.role_rates, self.fallback, self.person_rates, role_typical)
             s, t = _sm._minutes(p.get("shift_start")), _sm._minutes(p.get("shift_end"))
             split = 15 * 60
             if s is None or t is None or part == "night" and s < split:
@@ -887,7 +887,7 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
     (record_weeks: published, else punches — D-21) — the rotation memory a
     seven-day window cannot hold. `from_punches`: how many of those weeks
     are the time clock's, said wherever the ledger is."""
-    from schedule_economics import _holiday_dates
+    from schedule_time import _holiday_dates
     today = today or date.today()
     hist = record_weeks(restaurant_id, weeks=weeks, db_path=db_path, today=today)
     if not hist:
@@ -973,7 +973,7 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
     on the roster and files them under their roster role; without it each
     person's most-worked role is used. Empty when fewer than two weeks of
     record exist: a rotation needs a history to rotate from."""
-    from schedule_economics import _holiday_dates
+    from schedule_time import _holiday_dates
     today = today or date.today()
     # The weeks of record (published, else punches — D-21), newest first.
     hist = record_weeks(restaurant_id, weeks=weeks, db_path=db_path, today=today)
@@ -2945,7 +2945,7 @@ def _normalise_tenure_dates(conn) -> int:
     be read at all falls back to the other column (or updated_at's date):
     first_seen is NOT NULL and a guess from the same row beats a sort-order
     accident. Returns the rows rewritten."""
-    from labor import _iso_date
+    from schedule_time import _iso_date
     rows = conn.execute(
         f"SELECT restaurant_id, employee_name, first_seen, last_seen, updated_at FROM staff_first_seen "
         f"WHERE first_seen NOT GLOB '{_ISO_GLOB}' OR length(first_seen) != 10 "
@@ -2975,7 +2975,7 @@ def remember_tenure(restaurant_id, shifts: list, db_path=DB_PATH) -> None:
     older upload re-sent never makes a current employee look departed."""
     if not shifts:
         return
-    from labor import _iso_date
+    from schedule_time import _iso_date
     first, last, count = {}, {}, {}
     for s in shifts:
         n = (s.get("employee") or "").strip()

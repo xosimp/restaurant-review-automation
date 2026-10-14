@@ -675,7 +675,7 @@ def strength_crews_view(restaurant_id, thresholds=None, c=None) -> dict:
         print(f"[setup] usual crew unavailable for {restaurant_id}: {e!r}")
         typical = {}
     try:
-        from schedule_engine import _parse_role_minimums
+        from schedule_requirements import _parse_role_minimums
         minimums = _parse_role_minimums(getattr(get_restaurant(restaurant_id), "role_minimums_json", None))
     except Exception:
         minimums = {}

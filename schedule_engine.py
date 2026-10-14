@@ -47,6 +47,12 @@ from schedule_rules import (  # noqa: F401
     requirement_shortfall)
 from labor import COHORT_BLOCK_HEADER, _COHORT_METRICS, _cohort_block, cohort_comparisons, cohort_facts  # noqa: F401
 from schedule_solver import SHAPE_SOLVE_SECONDS, assign_shape_slots  # noqa: F401
+from schedule_requirements import _parse_role_minimums  # noqa: F401
+# The stored review a save refreshes, and its lines about days nobody wrote
+# or nobody can work (schedule_review, below the history store).
+from schedule_review import (  # noqa: F401
+    _REVIEW_RULE_KEYS, _UNWRITTEN_WHY, _fix_sig, _gap_groups, _left_span, _safe_hours_sum, _span_of, _unfixed_from,
+    _unstaffable_line, _unwritten_line, refresh_review)
 
 
 def station_report(rows: list, constraints, week_dates: list) -> dict:
@@ -994,13 +1000,13 @@ def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster
             closed = []
         rules_n = len(getattr(constraints, "owner_rules", None) or []) + \
             len(getattr(constraints, "owner_rules_unchecked", None) or [])
-        import schedule_eval as _seval
-        evidence = _seval.route_evidence(len(roster_pairs or []))
+        import schedule_context as _verdicts
+        evidence = _verdicts.route_evidence(len(roster_pairs or []))
         week_facts = dict(closed_dates=closed, roster_size=len(roster_pairs or []), owner_rules=rules_n,
                           prior_generations=prior, last_run_escalated=escalated, roster_evidence=evidence)
         # Only what an eval verdict backs moves the week to T4 (AI-27); the
         # rest is said in the run, so the eval can be pointed at it.
-        reasons = hard_week_reasons(week_dates, evidence=_seval.tag_evidence, **week_facts)
+        reasons = hard_week_reasons(week_dates, evidence=_verdicts.tag_evidence, **week_facts)
         try:
             signals = [why for _t, why in hard_week_signals(week_dates, **week_facts)]
         except Exception as e:
@@ -2667,18 +2673,6 @@ def _nobody_can_work(c, names, dates) -> dict:
     return out
 
 
-def _unstaffable_line(items) -> str:
-    """The review's warning for days nobody can work (E-20) — a "⚠" line, so
-    the publish gate holds the week until the owner has seen it."""
-    from time_utils import mdy
-    days = [f"{it['day']} {mdy(it['date'])}" for it in items]
-    which = days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1]
-    one = len(days) == 1
-    return (f"⚠ Nobody on the team can work {which} (time off or availability), so {'it was' if one else 'they were'} "
-            f"left empty — mark {'it' if one else 'them'} closed or fix availability, then redo "
-            f"{'that day' if one else 'those days'}.")
-
-
 def _starting_point_line(restaurant, start: dict, payload: dict = None) -> str:
     """What a first week with no history of its own was drafted from (E-30)."""
     name = getattr(restaurant, "name", None) or "This restaurant"
@@ -3168,7 +3162,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
             queue = []
             break
         outcomes = _dispatch_calls(ready, analysis, shifts, kept, written_rows, generate_optimized_schedule)
-        import schedule_batch as _sb_plan
+        import schedule_output as _sb_plan
         planned = [exc.request for _part, exc in outcomes if isinstance(exc, _sb_plan.CallPlanned)]
         if planned:
             # The auto-draft planning its Message Batch (ARCH-15): this first
@@ -4863,57 +4857,6 @@ def _failure_kind(exc) -> str:
     return "other"
 
 
-_UNWRITTEN_WHY = {
-    "skipped": "the model left them empty even when asked again",
-    "cut": "the model ran out of room writing them, even in smaller parts",
-    "calls": "the generation used every call it is allowed",
-    "time": "the generation ran out of time",
-    "timeout": "the model took too long on them",
-    "budget": "AI is paused — this account has reached its AI limit",
-    "provider_down": "Cavnar AI's model provider stopped responding partway",
-    "provider": "Cavnar AI's model provider failed partway",
-    "data": "the data behind them stopped being current partway",
-    "refused": "the model declined to write them",
-    "capped": "the generation reached the spending cap a draft is allowed",
-    "config": "Cavnar AI couldn't reach its model partway (we've been alerted)",
-    "generation": "they couldn't be written",
-    "other": "something failed partway (we've been alerted)",
-}
-
-
-def _gap_groups(items) -> list:
-    """[(days words, why words)] for unwritten dates, grouped by why, in
-    _UNWRITTEN_WHY's order: "Saturday 10/10/26 and Sunday 10/11/26" with
-    "the model left them empty even when asked again"."""
-    from time_utils import mdy
-    by = {}
-    for it in items:
-        by.setdefault(it["why"], []).append(f"{it['day']} {mdy(it['date'])}")
-    order = list(_UNWRITTEN_WHY)
-    out = []
-    for why in sorted(by, key=lambda w: order.index(w) if w in order else len(order)):
-        days = by[why]
-        words = _UNWRITTEN_WHY.get(why, _UNWRITTEN_WHY["other"])
-        if len(days) == 1:
-            words = words.replace("them", "it")
-        out.append((days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1], words, len(days)))
-    return out
-
-
-def _unwritten_line(items) -> str:
-    """The review's warning for days the generation could not write — a "⚠"
-    line, so the publish gate holds the week until they are redone. The
-    rest of the week is kept (P-34): the days already paid for are not
-    thrown away for the ones that failed."""
-    groups = _gap_groups(items)
-    one = len(items) == 1
-    tail = f" The rest of the week is here; redo {'that day' if one else 'those days'} before you publish."
-    if len(groups) == 1:
-        days, why, n = groups[0]
-        return f"⚠ {days} {'was' if n == 1 else 'were'} not written — {why}.{tail}"
-    return "⚠ Not written: " + "; ".join(f"{days} — {why}" for days, why, _n in groups) + "." + tail
-
-
 def _not_redone_line(dates) -> str:
     """A redo day the model could not write keeps the owner's rows (P-34):
     said, so a redo that changed nothing on a day never reads as done."""
@@ -5332,21 +5275,6 @@ def _reliability_block(reliability: dict) -> str:
     return ""
 
 
-def _parse_role_minimums(raw):
-    """{role: floor} from the settings textarea, or {} when it is junk.
-
-    An owner typing malformed JSON into a settings box must never be the
-    reason a schedule fails to generate.
-    """
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-        return {str(k): int(v) for k, v in (parsed or {}).items() if int(v or 0) > 0}
-    except Exception:
-        return {}
-
-
 # Async schedule generation is tracked in ops.async_jobs (a table), not a
 # module dict — see ops.start_async_job for why. This alias is kept so the
 # admin console and tests have one name to reach for.
@@ -5478,25 +5406,6 @@ def _hourly_hours_sum(rows: list, constraints=None) -> float:
     it and never crowd out an hourly shift."""
     sal = getattr(constraints, "is_salaried", None)
     return _safe_hours_sum([r for r in rows or [] if not (sal and sal(r.get("employee")))])
-
-
-def _safe_hours_sum(rows: list) -> float:
-    """Total scheduled_hours across rows, skipping any row whose value
-    isn't actually numeric instead of raising — a live generation
-    occasionally has one malformed row out of 100+ (see
-    test_schedule_row_repair.py) where scheduled_hours ends up holding a
-    stray time string from a column shift. The original per-row parsing
-    loop already tolerates this per-row; the backstop passes' own
-    hours_scheduled recomputes need the same tolerance, since a single bad
-    row previously aborted the recompute (and by extension the CSV
-    rebuild) via an uncaught ValueError from float() inside sum()."""
-    total = 0.0
-    for r in rows:
-        try:
-            total += float(r.get("scheduled_hours") or 0)
-        except (ValueError, TypeError):
-            pass
-    return round(total, 1)
 
 
 def _normalise_row_times(row: dict) -> None:
@@ -10978,30 +10887,6 @@ def _merge_search(key, runs) -> dict:
     return out
 
 
-def _unfixed_from(viols, rows, editable, why) -> list:
-    """What the week still breaks on a row after the loop, from the FINAL
-    sweep (P-15: it came from the first fix pass and was reported after
-    later passes had changed the rows), each with why it was left."""
-    import shift_quality as _sq
-    out = []
-    for v in viols or []:
-        if not v.get("hard") or v.get("day_level") or not isinstance(v.get("index"), int):
-            continue
-        r = rows[v["index"]]
-        if editable is not None and r.get("date") not in editable:
-            continue
-        label = v.get("label") or v.get("kind")
-        reason = (why or {}).get(((v.get("employee") or "").strip().lower(), r.get("date"), v.get("kind")))
-        if not reason:
-            reason = (f"{label} — nobody who could legally take the shift was found"
-                      if v.get("kind") in _sq.PERSON_FIXABLE
-                      else f"{label} — not something a different person on the shift would change.")
-        out.append({"index": v["index"], "row_id": r.get("_rid"), "employee": v.get("employee"),
-                    "date": v.get("date"), "shift_start": v.get("shift_start"), "kind": v.get("kind"),
-                    "reason": reason})
-    return out
-
-
 _ANSWER_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
 
 
@@ -11330,164 +11215,6 @@ def generation_error_message(exc, clock=None) -> str:
 
 
 _COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes")
-
-
-# ── A Studio save keeps the generation's review (schedule audit 10/3/26 P-26) ──
-#
-# The Studio's save overwrote the week's review with a bare summarize() of
-# the edited rows, so what the generation did and found — the fix lines, the
-# optimizer's changes, the trims, the manager stretches nobody could cover
-# and why, the owner's rules it could not check, the over-budget line —
-# vanished at the first save. refresh_review keeps all of it and refreshes
-# only what the rows decide.
-_REVIEW_RULE_KEYS = ("hard", "soft", "over_limit", "by_kind", "hard_rows", "hard_days")
-
-
-def _fix_sig(r) -> tuple:
-    return ((r.get("employee") or "").strip().lower(), r.get("date") or "", r.get("shift_start") or "",
-            r.get("shift_end") or "")
-
-
-def _span_of(frm, to):
-    """(start, end) of a stored stretch's clock words on the business
-    timeline (schedule_time.place): a stretch starting in the small hours is
-    that night's, as manager_gaps reads it (BUGSGEN-10). For a review saved
-    before its entries carried their minutes."""
-    return _stime.place(_rules.parse_minutes(frm or ""), _rules.parse_minutes(to or ""))
-
-
-def _left_span(entry):
-    """(start, end) minutes of a manager stretch the backstop left: its own
-    gap_start/gap_end when it carries them (BUGSGEN-10), else read from its
-    words."""
-    try:
-        if entry.get("gap_start") is not None and entry.get("gap_end") is not None:
-            return int(entry["gap_start"]), int(entry["gap_end"])
-    except (TypeError, ValueError):
-        pass
-    return _span_of(entry.get("from"), entry.get("to"))
-
-
-def refresh_review(saved, violations, rows, constraints=None, hours_budget=None, extras=None) -> dict:
-    """The review a Studio save stores for edited `rows`: the generation's
-    own — what Cavnar AI fixed, trimmed, staggered and optimized, the
-    manager plan and its question, the setup, the rules it could not check,
-    the repair stages that did not run, the settings it could not read —
-    kept, and only what the rows decide refreshed from `violations` (their
-    sweep): the counts and the rule lines, the rows still broken, the
-    rows needing review, the hours over the budget, the manager stretches
-    and minimum hours still short, and `extras` (what the week does not
-    meet, its staffing asks — schedule_output.week_review_extras). A fix
-    line keeps pointing at its row while the shift it describes is still in
-    the week and points at none once the edit took it out. A review saved
-    before its lines were told apart keeps its non-⚠ lines; its ⚠ lines were
-    the sweep's and the budget's, and are read fresh."""
-    saved = dict(saved or {})
-    fresh = _rules.summarize(violations or [])
-    out = dict(saved)
-    for k in _REVIEW_RULE_KEYS:
-        out[k] = fresh.get(k)
-    out.update(extras or {})
-    out["unfixed"] = _unfixed_from(violations, rows, None, {})
-    out["needs_review"] = [{"index": u["index"], "row_id": None, "reason": u["reason"]} for u in out["unfixed"]]
-    at = {}
-    for i, r in enumerate(rows or []):
-        at.setdefault(_fix_sig(r), i)
-    fixes = []
-    for f in saved.get("fixes") or []:
-        f = dict(f)
-        f["index"] = at.get(_fix_sig(f.get("row") or {})) if f.get("row") else None
-        f.pop("row_id", None)            # ids live with a generation's rows, not a saved CSV
-        fixes.append(f)
-    out["fixes"] = fixes
-    # What the backstops could not do, while it is still so.
-    if constraints is not None and isinstance(saved.get("manager_coverage"), dict):
-        gaps = _rules.manager_gaps(rows or [], constraints)
-        mc = dict(saved["manager_coverage"])
-        still = []
-        for e in mc.get("left") or []:
-            want = _left_span(e)
-            if want and any(gs < want[1] and want[0] < ge for gs, ge, _i in gaps.get(e.get("date"), [])):
-                still.append(e)
-        mc["left"] = still
-        if not still:
-            mc["shortfall"] = None
-        out["manager_coverage"] = mc
-    # The closing stays the owner's verdict assumes, as the rows now stand
-    # (TRUST-21): an edit that wrote a manager to the last person out, or
-    # moved the last person, changes them.
-    old_stay_lines = list(saved.get("stay_lines") or [])
-    if constraints is not None:
-        try:
-            stays = _rules.assumed_stays(rows or [], constraints)
-        except Exception as _sx:
-            print(f"[schedule] assumed stays unavailable: {_sx!r}")
-            stays = None
-        if stays is not None:
-            out["assumed_stays"] = stays
-            out["stay_lines"] = [s["text"] for s in stays]
-    if isinstance(saved.get("min_hours"), dict):
-        short = {(v.get("employee") or "").strip().lower() for v in violations or [] if v.get("kind") == "under_min_hours"}
-        mh = dict(saved["min_hours"])
-        mh["left"] = [e for e in mh.get("left") or [] if (e.get("employee") or "").strip().lower() in short]
-        out["min_hours"] = mh
-    # The lines: the budget's, then what the generation had to say first,
-    # then the sweep's, then the rest of what it said.
-    told_apart = "rule_lines" in saved
-    rule_lines = set(saved.get("rule_lines") or [])
-    budget_old = list(saved.get("budget_lines") or [])
-    lead = list(saved.get("lead_lines") or []) if told_apart else []
-    if told_apart:
-        tail = [ln for ln in saved.get("lines") or []
-                if ln not in rule_lines and ln not in set(budget_old) and ln not in set(lead)]
-    else:
-        tail = [ln for ln in saved.get("lines") or [] if not str(ln).startswith("⚠")]
-    if "stay_lines" in out and out.get("stay_lines") != old_stay_lines:
-        tail = [ln for ln in tail if ln not in set(old_stay_lines)] + list(out["stay_lines"])
-    # A day the generation could not write, or nobody could work, that the
-    # owner has since filled is not said as empty any more.
-    on = {r.get("date") for r in rows or [] if (r.get("employee") or "").strip()}
-    for key, line_of in (("unwritten_dates", _unwritten_line), ("unstaffable_dates", _unstaffable_line)):
-        items = list(saved.get(key) or [])
-        if not items:
-            continue
-        try:
-            old = line_of(items)
-        except Exception:
-            continue
-        left = [u for u in items if u.get("date") not in on]
-        out[key] = left
-        if old in lead:
-            i = lead.index(old)
-            if left:
-                lead[i] = line_of(left)
-            else:
-                lead.pop(i)
-    budget = []
-    try:
-        hb = float(hours_budget or 0)
-        hs = _rules.hours_split(rows or [], constraints)["hourly"] if constraints is not None else \
-            _safe_hours_sum(rows or [])
-    except (TypeError, ValueError, KeyError):
-        hb = hs = 0.0
-    if hb > 0 and hs > hb * 1.02:
-        out["over_budget_hours"] = round(hs - hb, 1)
-        budget.append(f"⚠ {hs:,.0f}h scheduled against a {hb:,.0f}h budget — {hs - hb:,.0f}h over the ceiling")
-        if saved.get("budget_conflict"):
-            try:
-                import schedule_economics as _econ
-                bcl = _econ.budget_conflict_line(saved["budget_conflict"], over_by=round(hs - hb, 1), budget=hb)
-                if bcl:
-                    budget.append(bcl)
-            except Exception as _bx:
-                print(f"[schedule] budget conflict line unavailable: {_bx}")
-        budget += [ln for ln in budget_old[1:] if ln.startswith("The rules that come before the budget")]
-    else:
-        out.pop("over_budget_hours", None)
-    out["lines"] = budget + lead + list(fresh.get("lines") or []) + tail
-    out["rule_lines"], out["budget_lines"], out["lead_lines"] = list(fresh.get("lines") or []), budget, lead
-    out["edited"] = True
-    return out
 
 
 def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weather=None, economics=None,

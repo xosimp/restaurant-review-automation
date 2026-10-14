@@ -964,9 +964,8 @@ def readout(db_path=DB_PATH) -> dict:
                     accepted[w["history_id"]] = w["unchanged_share"]
             need = [w["history_id"] for w in weeks_ if w.get("looked_at") and w["history_id"] not in rework]
             if need:
-                import schedule_scorecard as _ssc
                 for rec in sv.learning_weeks(rid, history_ids=need, include_unlooked=True, db_path=db_path):
-                    d = _ssc.drr(rec)
+                    d = drr(rec)
                     if d.get("rate") is not None:
                         rework[rec["history_id"]] = d["rate"]
         except Exception as e:
@@ -1178,3 +1177,62 @@ def init_schedule_experiments(db_path: str = DB_PATH):
     )""")
     conn.commit()
     conn.close()
+
+
+EDIT_WEIGHTS = {"added": 1.0, "removed": 1.0, "moved": 1.0, "role_changed": 0.5}
+
+
+RETIME_WEIGHT_PER_30 = 0.25
+
+
+def _minutes(value):
+    from schedule_rules import parse_minutes
+    return parse_minutes(value or "")
+
+
+def edit_weight(kind, item) -> float:
+    """One edit item's weight in the Draft Rework Rate."""
+    if kind == "retimed":
+        moved = 0
+        for a, b in (("old_start", "new_start"), ("old_end", "new_end")):
+            x, y = _minutes((item or {}).get(a)), _minutes((item or {}).get(b))
+            if x is not None and y is not None:
+                d = abs(y - x)
+                moved += min(d, 1440 - d)
+        return max(RETIME_WEIGHT_PER_30, RETIME_WEIGHT_PER_30 * round(moved / 30.0))
+    return EDIT_WEIGHTS.get(kind, 1.0)
+
+
+def drr(rec) -> dict:
+    """The Draft Rework Rate of one week's learning record (schedule_versions.
+    learning_weeks): the manager's own pre-publish edit items — Cavnar AI's
+    kept fixes and an admin's hand left out; a change the owner called a
+    one-off is still rework the draft needed — per 100 drafted rows."""
+    import learning_stats
+    weights = [edit_weight(e["kind"], e["item"]) for e in (rec or {}).get("items") or []
+               if e.get("origin") == "manager" and e.get("excluded") in (None, "answered")]
+    out = learning_stats.weighted_rate_ci(weights, len((rec or {}).get("base") or []))
+    out["kinds"] = {}
+    for e in (rec or {}).get("items") or []:
+        if e.get("origin") == "manager" and e.get("excluded") in (None, "answered"):
+            out["kinds"][e["kind"]] = out["kinds"].get(e["kind"], 0) + 1
+    return out
+
+
+def generation_tags(history_id, db_path=None) -> dict:
+    conn = get_conn(db_path)
+    try:
+        r = conn.execute("SELECT * FROM schedule_generation_tags WHERE history_id=?", (int(history_id),)).fetchone()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    if r is None:
+        return {}
+    d = dict(r)
+    for k in ("arms_json", "origins_json", "ablation_json", "rules_json"):
+        try:
+            d[k[:-5]] = json.loads(d.pop(k) or "null")
+        except (TypeError, ValueError):
+            d[k[:-5]] = None
+    return d

@@ -17,6 +17,12 @@ from schedule_context import (  # noqa: F401
 # read off a note or the role minimums (schedule_requirements): re-exported.
 from schedule_time import OVERTIME_MULTIPLIER, OVERTIME_THRESHOLD_HOURS, _week_key, week_hours_split  # noqa: F401
 from schedule_requirements import _role_minimums_dict, note_floors  # noqa: F401
+# What an hour costs (the punches' own pay, each person's and each role's
+# rate) is the one objective's (schedule_objective); a date in any of the
+# shift files' formats is schedule_time's. Both re-exported.
+from schedule_objective import (  # noqa: F401
+    RATE_SOURCES, _name_key, _punch_pay, _shift_rate, _shift_rate_source, rate_book)
+from schedule_time import _DATE_FORMATS, _iso_date  # noqa: F401
 
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
@@ -33,7 +39,6 @@ _SHIFT_NUMERIC = ("actual_hours", "scheduled_hours", "sales", "sales_that_day", 
 _SHIFT_HOURS = ("actual_hours", "scheduled_hours")
 _SHIFT_NUMBER_CEILING = 1e9        # past this a cell is garbage, not a figure
 _MAX_SHIFT_HOURS = 24.0
-_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%m-%d-%Y", "%d-%b-%Y", "%b %d %Y")
 
 
 def _clean_number(value):
@@ -54,21 +59,6 @@ def _clean_number(value):
     if not math.isfinite(n) or abs(n) > _SHIFT_NUMBER_CEILING:
         return ""
     return repr(n) if n != int(n) else str(int(n))
-
-
-def _iso_date(value):
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    for fmt in _DATE_FORMATS:
-        try:
-            return datetime.strptime(raw[:len(raw)], fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    try:
-        return datetime.fromisoformat(raw[:19]).strftime("%Y-%m-%d")
-    except ValueError:
-        return None
 
 
 def normalise_shift_rows(rows: list) -> list:
@@ -1081,49 +1071,6 @@ def _covers_for_shifts(restaurant_id, shifts):
     return _covers.by_date(restaurant_id, dates[0], dates[-1])
 
 
-def _name_key(name) -> str:
-    return " ".join(str(name or "").lower().split())
-
-
-def _punch_pay(shift) -> float:
-    try:
-        paid = float(shift.get("pay_rate") or 0)
-    except (TypeError, ValueError):
-        return 0.0
-    return paid if 0 < paid <= 500 else 0.0
-
-
-def rate_book(shifts: list, person_rates: dict = None) -> tuple:
-    """(people, roles): what each person and each role is paid an hour,
-    read from the punches themselves, for the punches that carry no pay.
-
-    RPOWER puts a person's rate on some punches and $0 on others - at Simple
-    EJ's every Host PM, Barback PM and most bartender job rows are $0 while
-    the same people's AM punches carry $15-17 (9/30/26) - and those hours
-    were costed at the $26 blended default. A person's rate is their latest
-    paid punch; the owner's own rate for them (models.person_rates) wins over
-    it. A role's typical rate is the median of the rates of the people who
-    worked it - what a host costs when one host has no rate anywhere."""
-    people = {}
-    for s in sorted(shifts or (), key=lambda x: str(x.get("date") or "")):
-        paid = _punch_pay(s)
-        if paid:
-            people[_name_key(s.get("employee"))] = round(paid, 2)
-    people.update(person_rates or {})
-    worked = {}
-    for s in shifts or ():
-        rate = people.get(_name_key(s.get("employee")))
-        if rate:
-            worked.setdefault((s.get("role") or "").strip().lower(), {})[_name_key(s.get("employee"))] = rate
-    roles = {}
-    for role, by_person in worked.items():
-        vals = sorted(by_person.values())
-        if role and vals:
-            mid = len(vals) // 2
-            roles[role] = round(vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0, 2)
-    return people, roles
-
-
 def person_rate_book(restaurant_id: int) -> tuple:
     """rate_book over this restaurant's punches with the owner's own rates
     for people on top - for pricing a drafted week (schedule_economics.
@@ -1134,61 +1081,6 @@ def person_rate_book(restaurant_id: int) -> tuple:
                          person_rates(get_restaurant(restaurant_id)))
     except Exception:
         return {}, {}
-
-
-def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
-                role_typical: dict = None) -> float:
-    """Return the hourly rate for a single shift based on role.
-
-    Matched case- and whitespace-insensitively. The role names an owner
-    types into settings ("Server") and the ones their CSV carries
-    ("server", from the paste-box template the product itself documents)
-    are the same role, and an exact match meant every per-role wage they
-    had configured was silently ignored in favour of the flat default.
-    """
-    return _shift_rate_source(shift, role_rates, fallback, person_rates, role_typical)[0]
-
-
-# Where an hour's wage came from (_shift_rate_source): the POS's pay on the
-# punch, the person's own rate (the owner's for them, or their pay on their
-# other punches), the owner's rate for the role, what the role's people
-# make, or the flat fallback nothing on file backs.
-RATE_SOURCES = ("punch", "person", "role_rate", "role_typical", "fallback")
-
-
-def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
-                       role_typical: dict = None) -> tuple:
-    """(rate, source) for one shift — _shift_rate's one chain, saying which
-    link priced the hour (RATE_SOURCES), so the budget's divisor can say how
-    much of it rests on a wage nobody entered (schedule audit 10/3/26 D-2,
-    E-24)."""
-    # What the POS's payroll pays this person (rpower.normalise_entries'
-    # pay_rate) is what the hour cost - it beats any rate set for the role.
-    # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
-    # $21-24 and servers at $9 on every punch (9/28/26).
-    paid = _punch_pay(shift)
-    if paid:
-        return paid, "punch"
-    # This person's own rate: the owner's for them (models.person_rates),
-    # else their pay on their other punches (rate_book) - a host's $0 PM
-    # punch costs what her AM punches pay.
-    if person_rates:
-        own = person_rates.get(_name_key(shift.get("employee")))
-        if own:
-            return own, "person"
-    role_rates = role_rates or {}
-    default = role_rates.get("_default", fallback)
-    raw = shift.get("role", "") or ""
-    if raw in role_rates and raw != "_default":
-        return role_rates[raw], "role_rate"
-    key = raw.strip().lower()
-    for name, rate in role_rates.items():
-        if name != "_default" and (name or "").strip().lower() == key:
-            return rate, "role_rate"
-    # Nobody's rate and no rate set for the role: what the role's people make.
-    if role_typical and role_typical.get(key):
-        return role_typical[key], "role_typical"
-    return default, "fallback"
 
 
 # The share of the costed hours priced at a wage nobody entered (the flat
@@ -6080,9 +5972,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # request is listed and nothing is sent or recorded. CallPlanned is an
     # ordinary exception the engine's dispatch collects with the batch's
     # other calls — never a BaseException tunnelled past cleanup.
-    import schedule_batch as _sbatch
-    if _sbatch.plan_call(dict(_call, readiness=_ready_sched)):
-        raise _sbatch.CallPlanned(dict(_call, readiness=_ready_sched))
+    if _sched_out.plan_call(dict(_call, readiness=_ready_sched)):
+        raise _sched_out.CallPlanned(dict(_call, readiness=_ready_sched))
     _client = get_client(timeout=360.0)
     # The days the answer has finished, as it streams, for the Building
     # screen's "N of 7 days drafted" (AI cost audit 10/7/26 #36): a job's
@@ -6104,7 +5995,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # A stored answer for this call — the auto-draft's batched answers
         # (schedule_batch — RM-10, ARCH-15) or a resumed try's
         # (schedule_resume) — read by its call key, else None: send it.
-        msg = _sbatch.answer_for(dict(_call, readiness=_ready_sched))
+        msg = _sched_out.answer_for(dict(_call, readiness=_ready_sched))
         if msg is None:
             msg = create_with_retry(_client, readiness=_ready_sched, **refusal_fallback(_call))
     except CallDeadlineExceeded as _dx:
