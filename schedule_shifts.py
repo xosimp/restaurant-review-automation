@@ -61,13 +61,17 @@ def get_conn(db_path=None):
 
 
 def init_schedule_shifts(db_path=None):
-    """The projection's tables, at boot (init_db)."""
+    """The projection's tables, at boot (init_db). history_id carries no
+    foreign key on purpose: the projection is derived, every deleter of a
+    week removes its rows (models.delete_schedule_history, the drafts
+    prune), and a stray row for a week that is gone is never read (readers
+    join schedule_history)."""
     conn = get_conn(db_path)
     try:
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_shifts (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
-            history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+            history_id     INTEGER NOT NULL,
             copy           TEXT    NOT NULL,
             revision       INTEGER NOT NULL DEFAULT 0,
             shift_id       TEXT    NOT NULL,
@@ -92,7 +96,7 @@ def init_schedule_shifts(db_path=None):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_shifts_key "
                      "ON schedule_shifts(restaurant_id, employee_key, date)")
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_shift_weeks (
-            history_id     INTEGER PRIMARY KEY REFERENCES schedule_history(id),
+            history_id     INTEGER PRIMARY KEY,
             restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
             revision       INTEGER NOT NULL DEFAULT 0,
             source_sig     TEXT,
@@ -326,8 +330,9 @@ def find(restaurant_id, shift_id, copy="published", db_path=None):
         return None
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT * FROM schedule_shifts WHERE restaurant_id=? AND shift_id=? AND copy=? "
-                         "ORDER BY history_id DESC LIMIT 1",
+        r = conn.execute("SELECT s.* FROM schedule_shifts s JOIN schedule_history h ON h.id=s.history_id "
+                         "WHERE s.restaurant_id=? AND s.shift_id=? AND s.copy=? "
+                         "ORDER BY s.history_id DESC LIMIT 1",
                          (restaurant_id, str(shift_id).lower(), copy)).fetchone()
     finally:
         conn.close()
