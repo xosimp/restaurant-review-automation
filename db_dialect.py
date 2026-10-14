@@ -2183,9 +2183,9 @@ def _driver_connect(url):
     return raw
 
 
-def _env_int(name, default):
+def _env_int(value, default):
     try:
-        return max(0, int(os.getenv(name) or default))
+        return max(0, int(value or default))
     except ValueError:
         return default
 
@@ -2225,9 +2225,10 @@ class _Pool:
         self.opened = 0                   # live raw connections (out + idle)
 
     def limits(self):
-        return (_env_int("PG_POOL_MAX", 20), _env_int("PG_POOL_OVERFLOW", 20), _env_int("PG_POOL_IDLE", 5),
-                _env_int("PG_POOL_MAX_LIFETIME", 1800), _env_int("PG_POOL_IDLE_SECONDS", 300),
-                _env_int("PG_POOL_TIMEOUT", 30))
+        # Read each checkout (cheap), so a changed limit needs no restart.
+        return (_env_int(os.getenv("PG_POOL_MAX"), 20), _env_int(os.getenv("PG_POOL_OVERFLOW"), 20),
+                _env_int(os.getenv("PG_POOL_IDLE"), 5), _env_int(os.getenv("PG_POOL_MAX_LIFETIME"), 1800),
+                _env_int(os.getenv("PG_POOL_IDLE_SECONDS"), 300), _env_int(os.getenv("PG_POOL_TIMEOUT"), 30))
 
     def checkout(self):
         held = _held()
