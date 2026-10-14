@@ -558,20 +558,29 @@ struct PublishNumbersCard: View {
                 CavnarMixedText(line, role: .secondary)
             }
             if let ot = numbers.overtimeText { CavnarMixedText(ot, role: .secondary) }
+            if let reconcile = numbers.forecastSales?.reconcile { CavnarMixedText(reconcile, role: .caption) }
             if let score = quality?.score {
                 CavnarMixedText("Shift quality \(score)/100" + (quality?.grade.flatMap(Self.gradeWord) ?? ""),
                                 role: .secondary, color: .cavnarInk)
                 if let lead = quality?.lead ?? quality?.text { CavnarMixedText(lead, role: .caption) }
+                // How much was measured (LOGIC-15) and what the score has
+                // meant here (TRUST-31) — "—" below 3 weeks a side.
+                if let m = quality?.measuredText { CavnarMixedText(m, role: .caption) }
+                if let q = quality { CavnarMixedText(q.outcomeLine, role: .caption) }
             }
-            if let savings = numbers.savings, let v = savings.value, v > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
-                    // A projection, never a figure called savings (owner
-                    // copy rule; the web's tile says the same — TRUST-23).
-                    CavnarMixedText("Under your recent labor by about \(Self.money(v))", role: .secondary,
-                                    color: .cavnarInk)
-                    ScheduleRowTag(text: "Projection")
+            // Scheduled against scheduled (TRUST-7, TRUST-23): this draft
+            // against the last published week's plan, a projection — never
+            // called savings, withheld while a shift is short.
+            if let vp = numbers.vsLastPlan {
+                if let v = vp.value {
+                    HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                        CavnarMixedText("\(vp.label) by \(Self.money(abs(v)))", role: .secondary, color: .cavnarInk)
+                        ScheduleRowTag(text: "Projection")
+                    }
+                    if let t = vp.text { CavnarMixedText(t, role: .caption) }
+                } else if let w = vp.withheld {
+                    CavnarMixedText(w, role: .caption)
                 }
-                if let basis = savings.basis { CavnarMixedText(basis, role: .caption) }
             }
             if let last = numbers.lastWeekText { CavnarMixedText(last, role: .caption) }
         }

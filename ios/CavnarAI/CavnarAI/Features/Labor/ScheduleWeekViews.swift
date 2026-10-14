@@ -583,9 +583,13 @@ struct ScheduleSummaryTiles {
         // grade), never fixed 80/60 lines that put most weeks in amber
         // (TRUST-22, the web's TRUST-29): no grade, no colour.
         let grade = pr?.quality.grade
-        let qsub = pr?.quality.lead ?? pr?.quality.text
+        var qsub = pr?.quality.lead ?? pr?.quality.text
             ?? band.map { $0.prefix(1).uppercased() + $0.dropFirst() + " \u{00B7} graded from the finished week, out of 100" }
             ?? "Not graded yet"
+        // What the score stands on and what it has meant here (LOGIC-15,
+        // TRUST-31): the server's words, "—" below 3 weeks a side.
+        if let m = pr?.quality.measuredText ?? q?.measured?.line { qsub += "\n" + m }
+        if score != nil, let pq = pr?.quality { qsub += "\n" + pq.outcomeLine }
         out.append(Tile(key: "quality", label: "Shift quality", value: score.map(String.init), unit: "",
                         sub: qsub,
                         tone: score == nil ? .neutral : (grade == "good" ? .good : (grade == "weak" ? .warn : .neutral))))
@@ -596,18 +600,30 @@ struct ScheduleSummaryTiles {
                         tone: cov.map { $0 >= 90 ? .good : ($0 >= 75 ? .warn : .bad) } ?? .neutral))
         out.append(overtimeTile(r, pr))
         out.append(warningsTile(r, source))
-        let lv = r.laborView
-        let basis = lv.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
-        if let sav = lv?.savings, let rec = lv?.recentPct, let rev = r.forecastSales, rev > 0 {
-            out.append(Tile(key: "savings", label: "Under your recent labor", value: money(sav), unit: "",
-                            sub: "vs your last \(lv?.recentDays ?? 14) days at \(ScheduleBuildSettings.pct(rec))% (\(basis)), on \(money(rev)) forecast sales",
-                            tone: .hero))
-        } else {
-            out.append(Tile(key: "savings", label: "Under your recent labor", value: nil, unit: "",
-                            sub: "Needs your recent labor % and a forecast",
-                            tone: .hero))
-        }
+        let basis = r.laborView.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
+        out.append(planTile(r, pr, basis: basis))
         return out
+    }
+
+    /// "Under/Over last week's plan" — an ordinary tile, never the hero
+    /// (blind re-audit 10/11/26 TRUST-7, TRUST-23, the web's same tile):
+    /// this draft against the last published week's plan, priced the same
+    /// way, a projection; withheld while any shift is short of its people.
+    /// The key stays "savings" for the tag the card draws.
+    static func planTile(_ r: GeneratedSchedule, _ pr: PublishReview?, basis: String) -> Tile {
+        let vp = pr?.numbers.vsLastPlan ?? r.laborView?.vsLastPlan
+        let label = vp?.label ?? "Under last week\u{2019}s plan"
+        guard let vp, let v = vp.value else {
+            return Tile(key: "savings", label: label, value: nil, unit: "",
+                        sub: vp?.withheld ?? "Needs a published week priced with its forecast", tone: .neutral)
+        }
+        var sub = "Against last week\u{2019}s plan"
+        if let last = vp.lastPct, let now = pr?.numbers.laborPct?.value ?? r.laborView?.pct {
+            sub = "its \(ScheduleBuildSettings.pct(last))% scheduled against this draft\u{2019}s \(ScheduleBuildSettings.pct(now))%"
+                + (basis.isEmpty ? "" : " (\(basis))")
+            if let rev = r.forecastSales, rev > 0 { sub += ", on \(money(rev)) forecast sales" }
+        }
+        return Tile(key: "savings", label: label, value: money(abs(v)), unit: "", sub: sub, tone: .neutral)
     }
 
     /// The Labor tile: the review's figure (the rows priced the way Send is

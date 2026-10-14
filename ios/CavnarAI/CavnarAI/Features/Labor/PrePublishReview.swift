@@ -433,9 +433,12 @@ struct PublishReview: Decodable, Equatable {
         var target: Double? = nil
         /// "hourly" when the target is the hourly budget's share.
         var targetBasis: String? = nil
+        /// Forecast sales: the sized-on figure against Home's, reconciled
+        /// in words when they differ (ARCH-28).
+        var reconcile: String? = nil
 
         enum CodingKeys: String, CodingKey {
-            case value, low, high, basis, projected, text, total, hourly, salaried, label, grade, target
+            case value, low, high, basis, projected, text, total, hourly, salaried, label, grade, target, reconcile
             case trackRecord = "track_record"
             case targetBasis = "target_basis"
         }
@@ -465,6 +468,7 @@ struct PublishReview: Decodable, Equatable {
             grade = c.sfText(.grade)
             target = c.sfDouble(.target)
             targetBasis = c.sfText(.targetBasis)
+            reconcile = c.sfText(.reconcile)
         }
     }
 
@@ -475,11 +479,33 @@ struct PublishReview: Decodable, Equatable {
         var grade: String? = nil
         var lead: String? = nil
         var text: String? = nil
-        enum CodingKeys: String, CodingKey { case score, grade, lead, text }
+        /// How much of the score was measured (LOGIC-15) and what the score
+        /// has meant here: the restaurant's 78+ weeks against its under-65
+        /// weeks as they RAN (TRUST-31) — nil below 3 weeks a side, said
+        /// "—" with `outcomeNote` (the floor).
+        var measuredText: String? = nil
+        var outcomeText: String? = nil
+        var outcomeNote: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case score, grade, lead, text
+            case measuredText = "measured_text"
+            case outcomeText = "outcome_text"
+            case outcomeLink = "outcome_link"
+        }
+        private enum LinkKeys: String, CodingKey { case note }
         init() {}
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             score = c.sfInt(.score); grade = c.sfText(.grade); lead = c.sfText(.lead); text = c.sfText(.text)
+            measuredText = c.sfText(.measuredText)
+            outcomeText = c.sfText(.outcomeText)
+            outcomeNote = (try? c.nestedContainer(keyedBy: LinkKeys.self, forKey: .outcomeLink))?.sfText(.note)
+        }
+
+        /// "Your high- against low-scoring weeks: …", or "—" with the floor.
+        var outcomeLine: String {
+            if let outcomeText { return outcomeText }
+            return "Your high- against low-scoring weeks: \u{2014}" + (outcomeNote.map { " (\($0))" } ?? "")
         }
     }
 
@@ -502,6 +528,32 @@ struct PublishReview: Decodable, Equatable {
         var laborMissing: Missing? = nil
         /// Last week's projection against what ran.
         var lastWeekText: String? = nil
+        /// Scheduled against scheduled (blind re-audit 10/11/26 TRUST-7):
+        /// this draft against the last published week's plan, priced the
+        /// same way — withheld while any shift is short. `savings` is null
+        /// since then.
+        var vsLastPlan: VsLastPlan? = nil
+
+        struct VsLastPlan: Codable, Hashable {
+            var lastPct: Double? = nil
+            var value: Double? = nil
+            var text: String? = nil
+            var withheld: String? = nil
+            enum CodingKeys: String, CodingKey {
+                case value, text, withheld
+                case lastPct = "last_pct"
+            }
+            init(lastPct: Double? = nil, value: Double? = nil, text: String? = nil, withheld: String? = nil) {
+                self.lastPct = lastPct; self.value = value; self.text = text; self.withheld = withheld
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                lastPct = c.sfDouble(.lastPct); value = c.sfDouble(.value)
+                text = c.sfText(.text); withheld = c.sfText(.withheld)
+            }
+            /// "Under last week's plan" / "Over last week's plan".
+            var label: String { (value ?? 0) < 0 ? "Over last week\u{2019}s plan" : "Under last week\u{2019}s plan" }
+        }
 
         /// Why a figure is missing, said with the fix that would produce it.
         struct Missing: Decodable, Equatable {
@@ -535,6 +587,7 @@ struct PublishReview: Decodable, Equatable {
             case forecastSales = "forecast_sales"
             case laborMissing = "labor_missing"
             case lastWeek = "last_week"
+            case vsLastPlan = "vs_last_plan"
         }
 
         init() {}
@@ -554,6 +607,7 @@ struct PublishReview: Decodable, Equatable {
             }
             laborMissing = (try? c.decodeIfPresent(Missing.self, forKey: .laborMissing)) ?? nil
             lastWeekText = ((try? c.decodeIfPresent(Figure.self, forKey: .lastWeek)) ?? nil)?.text
+            vsLastPlan = (try? c.decodeIfPresent(VsLastPlan.self, forKey: .vsLastPlan)) ?? nil
         }
 
         var isEmpty: Bool { laborPct?.value == nil && cost?.value == nil && overtimeHours == nil && forecastSales?.value == nil }

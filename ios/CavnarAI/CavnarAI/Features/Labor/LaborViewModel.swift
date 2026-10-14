@@ -454,6 +454,41 @@ struct QualityWeekDimension: Codable, Identifiable, Equatable {
     }
 }
 
+/// shift_quality's `measured`: the share of the score's weight that came
+/// from data (LOGIC-15), the measures that withdrew, the band it was held
+/// down from, and the server's sentence for it. Lenient: any odd field is
+/// nil.
+struct QualityMeasured: Codable, Equatable {
+    var share: Double? = nil
+    var text: String? = nil
+    var withdrawnLabels: [String] = []
+    var bandCappedFrom: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case share, text
+        case withdrawnLabels = "withdrawn_labels"
+        case bandCappedFrom = "band_capped_from"
+    }
+
+    init(share: Double? = nil, text: String? = nil) { self.share = share; self.text = text }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        share = c.sfDouble(.share)
+        text = c.sfText(.text)
+        withdrawnLabels = c.setupTexts(.withdrawnLabels)
+        bandCappedFrom = c.sfText(.bandCappedFrom)
+    }
+
+    /// "Rated on 26% measured data — Coverage curve, Operational scores
+    /// withdrew" — the server's sentence, else the measures named.
+    var line: String? {
+        if let text { return text }
+        guard !withdrawnLabels.isEmpty else { return nil }
+        return "Not measured this week: " + withdrawnLabels.joined(separator: ", ") + "."
+    }
+}
+
 /// What a shift was judged against. Monday lunch and Saturday dinner are
 /// different jobs, and the profile is what says so.
 struct QualityProfile: Codable, Equatable {
@@ -747,6 +782,10 @@ struct ScheduleQuality: Codable, Equatable {
     /// engine's words (schedule re-audit 10/4/26 SQ-2). Absent on older
     /// payloads and on a week with no hard breach.
     var heldBy: QualityHeldBy? = nil
+    /// How much of the score was MEASURED (blind re-audit 10/11/26
+    /// LOGIC-15): the band is held by it — thin data never reads
+    /// "excellent" — and the measures that withdrew are named.
+    var measured: QualityMeasured? = nil
 
     var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
     var customerDimensions: [QualityDimension] {

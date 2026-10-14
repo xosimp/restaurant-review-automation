@@ -218,8 +218,20 @@ final class LaborParityRoundTests: XCTestCase {
         XCTAssertEqual(tiles["overtime"]?.tone, .bad)
         XCTAssertEqual(tiles["warnings"]?.value, "3")
         XCTAssertEqual(tiles["warnings"]?.tone, .bad)
-        XCTAssertEqual(tiles["savings"]?.value, "$612")
-        XCTAssertTrue(tiles["savings"]?.sub.contains("on $17,000 forecast sales") == true)
+        // A measured recent % against this draft's scheduled one is never a
+        // figure any more (re-audit 10/11/26 TRUST-7): scheduled against
+        // the last published week's plan, `vs_last_plan`, or "—".
+        XCTAssertNil(tiles["savings"]?.value)
+        XCTAssertEqual(tiles["savings"]?.label, "Under last week\u{2019}s plan")
+        let planned = try JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: Data("""
+        {"ok": true, "history_id": 5, "labor_view": {"basis": "all_in", "pct": 27.4,
+         "vs_last_plan": {"last_pct": 29.0, "value": -320, "text": "Over the week of 10/7/26's plan by $320"}},
+         "projected_revenue": 17000}
+        """.utf8))
+        let plan = try XCTUnwrap(ScheduleSummaryTiles.tiles(planned).first { $0.key == "savings" })
+        XCTAssertEqual(plan.label, "Over last week\u{2019}s plan")
+        XCTAssertEqual(plan.value, "$320")
+        XCTAssertEqual(plan.tone, .neutral, "an ordinary tile, never the hero")
         XCTAssertEqual(r.forecastSales, 17000)
     }
 

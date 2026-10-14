@@ -1253,6 +1253,9 @@ struct ScheduleLaborView: Codable, Hashable {
     /// The server's one grade (schedule_economics.labor_grade): over /
     /// under / no_target — both clients colour by it (TRUST-7, TRUST-22).
     var grade: String?
+    /// This draft against the last published week's plan (TRUST-7); the
+    /// `savings` above is always null since.
+    var vsLastPlan: PublishReview.Numbers.VsLastPlan?
 
     var isAllIn: Bool { basis == "all_in" }
 
@@ -1272,9 +1275,11 @@ struct ScheduleLaborView: Codable, Hashable {
         basis = c.sfText(.basis); pct = c.sfDouble(.pct); targetPct = c.sfDouble(.targetPct)
         targetBasis = c.sfText(.targetBasis); recentPct = c.sfDouble(.recentPct); recentDays = c.sfInt(.recentDays)
         savings = c.sfDouble(.savings); text = c.sfText(.text); grade = c.sfText(.grade)
+        vsLastPlan = (try? c.decodeIfPresent(PublishReview.Numbers.VsLastPlan.self, forKey: .vsLastPlan)) ?? nil
     }
     enum CodingKeys: String, CodingKey {
         case basis, pct, savings, text, grade
+        case vsLastPlan = "vs_last_plan"
         case targetPct = "target_pct"
         case targetBasis = "target_basis"
         case recentPct = "recent_pct"

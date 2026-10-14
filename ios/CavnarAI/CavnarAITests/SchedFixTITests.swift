@@ -33,7 +33,9 @@ final class SchedFixTITests: XCTestCase {
             .map { ($0.key, $0) })
         // Typical for this restaurant: no colour, never amber for a 64.
         XCTAssertEqual(tiles["quality"]?.tone, .neutral)
-        XCTAssertEqual(tiles["quality"]?.sub, "typical for you")
+        XCTAssertTrue(tiles["quality"]?.sub.hasPrefix("typical for you") == true)
+        // The track record below 3 weeks a side is a dash (TRUST-31).
+        XCTAssertTrue(tiles["quality"]?.sub.contains("Your high- against low-scoring weeks: \u{2014}") == true)
         // No target: neutral, never green.
         XCTAssertEqual(tiles["labor"]?.tone, .neutral)
         XCTAssertEqual(tiles["labor"]?.label, "All-in labor")
@@ -179,5 +181,25 @@ final class SchedFixTITests: XCTestCase {
         XCTAssertEqual(s.secondManagerLine, "A second manager once 9 or more are on \u{2014} your own weeks run two managers from there")
         XCTAssertEqual(s.structure, ["Mia is the only manager open every day."])
         XCTAssertTrue(s.learnedLine?.contains("45 min") == true)
+    }
+
+    // MARK: K — measurement honesty on the phone
+
+    func testTheScoreSaysWhatWasMeasuredAndThePlanIsScheduledAgainstScheduled() throws {
+        let q = try decode(QualityMeasured.self, """
+        {"share": 0.26, "withdrawn_labels": ["Coverage curve", "Operational scores"], "band_capped_from": "excellent"}
+        """)
+        XCTAssertEqual(q.line, "Not measured this week: Coverage curve, Operational scores.")
+        let r = try decode(PublishReview.self, """
+        {"ok": true, "verdict": {"tone": "green", "sentence": "Ready"},
+         "quality": {"score": 81, "measured_text": "Rated on 26% measured data", "outcome_text": "Your 78+ weeks ran with 0.4 issues a week"},
+         "numbers": {"savings": null, "vs_last_plan": {"last_pct": 29.0, "value": null, "withheld": "Not shown: 2 shifts are short"},
+                     "forecast_sales": {"value": 52000, "reconcile": "Sized on $52,000; Home says $50,100"}}}
+        """)
+        XCTAssertNil(r.numbers.savings)
+        XCTAssertEqual(r.numbers.vsLastPlan?.withheld, "Not shown: 2 shifts are short")
+        XCTAssertEqual(r.numbers.forecastSales?.reconcile, "Sized on $52,000; Home says $50,100")
+        XCTAssertEqual(r.quality.measuredText, "Rated on 26% measured data")
+        XCTAssertEqual(r.quality.outcomeLine, "Your 78+ weeks ran with 0.4 issues a week")
     }
 }
