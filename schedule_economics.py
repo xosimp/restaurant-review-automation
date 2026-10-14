@@ -652,9 +652,12 @@ def last_plan_labor(restaurant_id, week_dates, all_in: bool, restaurant=None) ->
         conn = get_conn()
         try:
             row = conn.execute(
-                "SELECT h.id, h.week_start, h.week_end, " + _m.live_csv_sql("h") + " AS csv, h.economics_json "
+                "SELECT h.id, h.week_start, h.week_end, h.economics_json "
                 "FROM schedule_history h WHERE h.restaurant_id=? AND " + _m.live_where("h") + " AND h.week_end < ? "
                 "ORDER BY h.week_end DESC, h.id DESC LIMIT 1", (restaurant_id, dates[0])).fetchone()
+            # Its published rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+            import schedule_shifts as _ss_lp
+            plan_rows = _ss_lp.rows_of(row["id"], "live", conn=conn) if row is not None else []
         finally:
             conn.close()
     except Exception as e:
@@ -669,8 +672,7 @@ def last_plan_labor(restaurant_id, week_dates, all_in: bool, restaurant=None) ->
         return None
     if rev <= 0:
         return None
-    from schedule_versions import rows_from_csv
-    rows = rows_from_csv(row["csv"] or "")
+    rows = plan_rows
     if not rows:
         return None
     if restaurant is None:

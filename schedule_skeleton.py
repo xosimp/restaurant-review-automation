@@ -229,10 +229,14 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
         try:
             import models as _m_live
             found = conn.execute(
-                "SELECT " + _m_live.live_csv_sql("schedule_history") + " AS schedule_csv FROM schedule_history "
+                "SELECT id FROM schedule_history "
                 "WHERE restaurant_id=? AND " + _m_live.live_where("schedule_history") + " "
                 "AND substr(week_start,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY week_start",
                 (restaurant_id, since, until)).fetchall()
+            # Their published rows from the shift table (schedule_shifts —
+            # schedule re-audit 10/11/26 ARCH-7).
+            import schedule_shifts
+            found_rows = schedule_shifts.rows_by_week([f["id"] for f in found], "live", conn=conn)
         finally:
             conn.close()
     except Exception as exc:
@@ -240,10 +244,9 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
         # recorded, never silent.
         import ops
         ops.capture(exc, job="schedule_manager_plan", context=f"restaurant {restaurant_id} published weeks")
-        found = []
-    from schedule_versions import rows_from_csv
+        found, found_rows = [], {}
     for row in found:
-        for r in rows_from_csv(row["schedule_csv"]):
+        for r in found_rows.get(int(row["id"])) or []:
             if since <= str(r.get("date") or "")[:10] <= until:
                 out.append(dict(r, _source="published"))
     punches = []

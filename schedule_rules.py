@@ -4518,7 +4518,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     and `_source` / `_site` / `_week` say where it came from."""
     if not c.week_dates:
         return
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     buckets = {c.bucket(d) for d in c.week_dates}
     first = datetime.strptime(min(c.week_dates), "%Y-%m-%d")
     last = datetime.strptime(max(c.week_dates), "%Y-%m-%d")
@@ -4528,14 +4528,19 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     conn = get_conn(db_path)
     try:
         published = conn.execute(
-            "SELECT id, week_start, week_end, " + _LIVE_CSV + " AS schedule_csv FROM schedule_history WHERE "
+            "SELECT id, week_start, week_end FROM schedule_history WHERE "
             "restaurant_id=? AND " + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? "
             "ORDER BY id DESC",
             (restaurant_id, lo, hi)).fetchall()
         drafts = conn.execute(
-            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
+            "SELECT id, week_start, week_end FROM schedule_history WHERE restaurant_id=? AND "
             "published_at IS NULL AND superseded_by IS NULL AND substr(week_end,1,10) >= ? "
             "AND substr(week_start,1,10) <= ? ORDER BY id DESC", (restaurant_id, lo, hi)).fetchall()
+        # Their rows from the shift table (schedule_shifts — schedule
+        # re-audit 10/11/26 ARCH-7): a live week's published copy, a
+        # draft's working copy.
+        pub_rows = schedule_shifts.rows_by_week([w["id"] for w in published], "live", conn=conn)
+        draft_rows = schedule_shifts.rows_by_week([w["id"] for w in drafts], "working", conn=conn)
     finally:
         conn.close()
 
@@ -4580,7 +4585,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                 c.base_hours.setdefault(k, {})[b] = c.base_hours.get(k, {}).get(b, 0.0) + h
 
     for w in published:
-        for r in rows_from_csv(w["schedule_csv"]):
+        for r in pub_rows.get(int(w["id"])) or []:
             _take(r, "published")
     try:
         from time_utils import restaurant_now_by_id
@@ -4603,7 +4608,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
         if ws in drafted or not (span - covered):
             continue
         drafted.add(ws)
-        for r in rows_from_csv(w["schedule_csv"]):
+        for r in draft_rows.get(int(w["id"])) or []:
             if (r.get("date") or "") not in covered:
                 _take(r, "draft", week=ws)
         covered |= span
@@ -4755,7 +4760,7 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
         ids = []
     if not ids:
         return []
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     out = []
     conn = get_conn(db_path)
     try:
@@ -4765,10 +4770,15 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
             if not meta:
                 continue
             rows = []
-            for w in conn.execute("SELECT " + _LIVE_CSV + " AS schedule_csv FROM schedule_history WHERE "
-                                  "restaurant_id=? AND " + _LIVE_PUBLISHED + " AND substr(week_end,1,10) >= ? AND "
-                                  "substr(week_start,1,10) <= ? ORDER BY id DESC", (sid, lo, hi)).fetchall():
-                rows += [r for r in rows_from_csv(w["schedule_csv"]) if lo <= (r.get("date") or "") <= hi]
+            sib = [w["id"] for w in conn.execute(
+                "SELECT id FROM schedule_history WHERE restaurant_id=? AND " + _LIVE_PUBLISHED + " AND "
+                "substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
+                (sid, lo, hi)).fetchall()]
+            # Their published rows from the shift table (schedule_shifts,
+            # ARCH-7).
+            by_week = schedule_shifts.rows_by_week(sib, "live", conn=conn)
+            for hid in sib:
+                rows += [r for r in by_week.get(int(hid)) or [] if lo <= (r.get("date") or "") <= hi]
             if rows:
                 out.append((sid, meta["label"], rows))
     finally:

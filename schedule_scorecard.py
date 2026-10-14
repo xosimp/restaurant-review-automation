@@ -543,8 +543,13 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
     today = today or date.today()
     conn = get_conn(db_path)
     try:
-        h = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_at, economics_json FROM "
+        h = conn.execute("SELECT id, week_start, week_end, published_at, economics_json FROM "
                          "schedule_history WHERE id=? AND restaurant_id=?", (int(history_id), restaurant_id)).fetchone()
+        # The week staff were sent — its PUBLISHED copy — from the shift
+        # table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7). This
+        # read the working copy, which carries a manager's unsent edits.
+        import schedule_shifts
+        published = schedule_shifts.rows_of(h["id"], "live", conn=conn) if h is not None and h["published_at"] else []
     finally:
         conn.close()
     if h is None or not h["published_at"]:
@@ -561,7 +566,6 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
     kw = {"db_path": db_path} if db_path else {}
     recs = sv.learning_weeks(restaurant_id, history_ids=[int(history_id)], include_unlooked=True, today=today, **kw)
     rec = recs[0] if recs else None
-    published = sv.rows_from_csv(h["schedule_csv"] or "")
     out["looked_at"] = bool(rec and rec["looked_at"])
     out["generated"] = rec is not None
     if rec is not None:

@@ -4012,22 +4012,21 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
     failure (the baseline then reads the punches alone)."""
     try:
         import canonical_facts as _cf
-        from models import get_published_week_csv
-        from schedule_versions import rows_from_csv
+        import schedule_shifts
         if before is None:
             from time_utils import restaurant_now_by_id
             before = restaurant_now_by_id(restaurant_id).date().isoformat()
         b = date.fromisoformat(str(before)[:10])
         since = (b - timedelta(weeks=int(weeks))).isoformat()
+        # Each week's published rows from the shift table, two queries for
+        # all of them (schedule_shifts — schedule re-audit 10/11/26 ARCH-7;
+        # never the full detail reader, scheduler audit 10/10/26 SCALE-18).
+        ids = [w["history_id"] for w in _cf.published_weeks(restaurant_id, since)
+               if w["week_start"] < b.isoformat()]
+        by_week = schedule_shifts.rows_by_week(ids, "live", restaurant_id=restaurant_id)
         rows = []
-        for w in _cf.published_weeks(restaurant_id, since):
-            if w["week_start"] >= b.isoformat():
-                continue
-            # The CSV alone (scheduler audit 10/10/26, SCALE-18): the full
-            # detail reader SELECTs * and parses the summary, the 130-440 KB
-            # quality, the review and the weather to hand back one column.
-            week = get_published_week_csv(w["history_id"], restaurant_id) or {}
-            rows.extend(rows_from_csv(week.get("schedule_csv") or ""))
+        for hid in ids:
+            rows.extend(by_week.get(int(hid)) or [])
         return rows
     except Exception as e:
         print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")

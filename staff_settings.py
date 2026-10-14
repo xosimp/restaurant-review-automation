@@ -960,21 +960,24 @@ def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:
         try:
             import models as _m_live
             weeks = conn.execute(
-                "SELECT " + _m_live.live_csv_sql("h") + " AS schedule_csv FROM schedule_history h WHERE "
+                "SELECT h.id FROM schedule_history h WHERE "
                 "h.restaurant_id=? AND " + _m_live.live_where("h") + " AND substr(h.week_end,1,10) >= ?",
                 (restaurant_id, mgr_cutoff)).fetchall()
+            # Their published rows from the shift table (schedule_shifts —
+            # schedule re-audit 10/11/26 ARCH-7).
+            import schedule_shifts
+            week_rows = schedule_shifts.rows_by_week([w["id"] for w in weeks], "live", conn=conn)
         except Exception:
-            weeks = []
+            weeks, week_rows = [], {}
     finally:
         conn.close()
     if weeks:
-        from schedule_versions import rows_from_csv
         try:
             from schedule_rules import manager_role_kind
         except Exception:
             manager_role_kind = None
         for w in weeks:
-            for r in rows_from_csv(w["schedule_csv"]):
+            for r in week_rows.get(int(w["id"])) or []:
                 d = r.get("date") or ""
                 if d >= cutoff or (d >= mgr_cutoff and manager_role_kind and manager_role_kind(r.get("role"))):
                     out.add(name_key(r.get("employee")))

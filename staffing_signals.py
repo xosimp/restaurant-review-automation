@@ -642,7 +642,7 @@ def present_requirements(restaurant_id, reqs, db_path=None) -> dict:
         return {}
 
 
-def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None, db_path=None) -> list:
+def record_published(restaurant_id, history_id, user_id=None, db_path=None) -> list:
     """A week was published: every soft "+1" its draft was asked for
     (schedule_history.review_json) that the PUBLISHED rows honour is
     recorded as implemented under the week (source_ref "schedule:<id>",
@@ -657,7 +657,10 @@ def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None,
             # The whole review (stored once, SCALE-13).
             review = _m_ss.history_review(conn, row) if row is not None else {}
             if row is not None:
-                row = {"schedule_csv": row["published_csv"] or row["schedule_csv"], "week_start": row["week_start"]}
+                # The PUBLISHED rows from the shift table, by shift_id
+                # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+                import schedule_shifts
+                row = {"rows": schedule_shifts.rows_of(history_id, "live", conn=conn), "week_start": row["week_start"]}
         finally:
             conn.close()
     except Exception as e:
@@ -668,12 +671,7 @@ def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None,
     reqs = [r for r in (review.get("soft_requirements") or []) if isinstance(r, dict) and r.get("key")]
     if not reqs:
         return []
-    try:
-        from schedule_versions import rows_from_csv
-        rows = rows_from_csv(schedule_csv if schedule_csv is not None else row["schedule_csv"])
-    except Exception as e:
-        log.warning("staffing_signals: published rows unreadable for %s: %s", restaurant_id, e)
-        return []
+    rows = row["rows"]
     typical = {}
     for r in reqs:
         if r.get("typical") is not None:

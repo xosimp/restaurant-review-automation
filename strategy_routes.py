@@ -2998,11 +2998,12 @@ def _do_compliance_breaks(u):
     conn = get_conn()
     try:
         if sid:
-            h = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+            h = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
                              (sid, rid)).fetchone()
             if h:
-                from schedule_versions import rows_from_csv
-                rows = rows_from_csv(h["schedule_csv"] or "")
+                # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+                import schedule_shifts as _ss_cb
+                rows = _ss_cb.rows_of(h["id"], "working", conn=conn)
                 for i, bl in sorted(_breaks.plan_week(rows, rules).items()):
                     out["planned"].append({"employee": rows[i].get("employee"), "date": rows[i].get("date"),
                                            "shift_start": rows[i].get("shift_start"),

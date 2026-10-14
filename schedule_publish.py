@@ -1589,7 +1589,7 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
     # person added and what the complaints did next (re-audit CROSSMODULE-10).
     try:
         import staffing_signals as _stsig_pub
-        _stsig_pub.record_published(rid, schedule_id, row["schedule_csv"],
+        _stsig_pub.record_published(rid, schedule_id,
                                     user_id=actor.get("id") if isinstance(actor, dict) else None)
     except Exception as _spx:
         print(f"[publish] staffing asks not recorded for {rid}: {_spx}")
@@ -2121,7 +2121,6 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
     owner's explicit "Send again to everyone"). Nothing on the week
     changes, so there is no gate; the caller checks SCHEDULE_PUBLISH.
     Returns (payload, status)."""
-    import schedule_rows as _srows
     import schedule_versions as _sv
     from time_utils import mdy_range as _mdy_range
     actor = actor or {}
