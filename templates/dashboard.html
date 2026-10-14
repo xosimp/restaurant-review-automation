@@ -23193,7 +23193,9 @@ function renderQualityOptimizer() {
     }
   }
   var g = _sqGate;
-  if (g && g.ran && g.reason) h += '<div class="sq-gate">' + num(g.reason) + '</div>';
+  // A gate that was owed but skipped or failed says so too (blind re-audit
+  // 10/11/26 BUGSGEN-16: it carries why).
+  if (g && (g.ran || g.why) && g.reason) h += '<div class="sq-gate">' + num(g.reason) + '</div>';
   el.innerHTML = h;
 }
 

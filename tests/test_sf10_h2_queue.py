@@ -471,7 +471,9 @@ def test_a_resumed_try_past_the_saved_stage_finishes_with_that_draft(db, quiet, 
     monkeypatch.setattr(se, "_run_schedule_job", lambda *a, **k: pytest.fail("a saved try is never regenerated"))
     again = jq.claim("new", groups=("generation",))
     out = jq.run_one(again)
-    assert out == {"resumed": "saved"} and restored == [41] and notified == ["job-s"]
+    # The saved draft is never put back over a later one (blind re-audit
+    # 10/11/26 BUGSGEN-11): the job saved nothing after it.
+    assert out == {"resumed": "saved"} and restored == [] and notified == ["job-s"]
     job = ops.read_async_job("job-s", restaurant_id=rid)
     assert job["status"] == "done" and job["result"]["history_id"] == 41 and job["result"]["resumed"] is True
 
