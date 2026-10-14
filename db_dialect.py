@@ -1467,6 +1467,33 @@ def _control(cur, sql):
         cur.execute(sql)
 
 
+def run_atomic_many(raw, sql, rows, in_tx_hint=False):
+    """run_atomic for executemany: the whole batch under one savepoint
+    inside a transaction (one round trip with psycopg's pipelined
+    executemany), rolled back to it as one unit on a failure."""
+    status = _tx_status(raw, in_tx_hint)
+    if status == "inerror":
+        _quiet_rollback(raw)
+        raise TransactionLost("the open transaction had already failed and was rolled back")
+    cur = raw.cursor()
+    if status == "idle":
+        try:
+            cur.executemany(sql, rows)
+        except Exception:
+            _quiet_rollback(raw)
+            raise
+        return cur
+    sp = raw.cursor()
+    _control(sp, f"SAVEPOINT {_STMT_SAVEPOINT}")
+    try:
+        cur.executemany(sql, rows)
+    except Exception:
+        _undo_statement(raw)
+        raise
+    _control(sp, f"RELEASE SAVEPOINT {_STMT_SAVEPOINT}")
+    return cur
+
+
 def _undo_statement(raw):
     """Back to the statement's savepoint (the transaction before it)."""
     try:
@@ -1704,12 +1731,45 @@ class PgConnection:
                 pass
 
     def executemany(self, sql, seq):
+        """One statement for many parameter rows, sent as ONE batch
+        (psycopg's executemany, pipelined: a round trip for the whole set,
+        not one a row — people_nightly's and the queue's batched writes were
+        a round trip per row on Postgres). Statement-atomic like execute: a
+        row that fails undoes the whole call, the transaction kept. A
+        statement this layer rewrites itself (UPDATE OR IGNORE, a CREATE
+        TABLE, a PRAGMA) runs row by row as before."""
         cur = PgCursor(self, None)
-        total = 0
-        for params in seq:
-            self.execute(sql, params, _cursor=cur)
-            total += max(0, cur.rowcount or 0)
-        cur.rowcount = total
+        rows = [tuple(p or ()) for p in seq]
+        if self._closed:
+            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        if not rows:
+            cur.rowcount = 0
+            return cur
+        if _UPDATE_OR.match(sql) or _CREATE_TABLE.match(sql) or _PRAGMA.match(sql) or _BEGIN.match(sql) \
+                or _END.match(sql) or _TRIGGER.match(sql):
+            total = 0
+            for params in rows:
+                self.execute(sql, params, _cursor=cur)
+                total += max(0, cur.rowcount or 0)
+            cur.rowcount = total
+            return cur
+        try:
+            text = _translate_cached(self, sql)[0]
+        except TranslationError as e:
+            raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
+        # The RETURNING _final_text adds for lastrowid has no use here
+        # (sqlite3's executemany has no lastrowid either).
+        text = re.sub(r"\s+RETURNING\s+\w+\s*$", "", text) if text.rstrip().upper().startswith("INSERT") \
+            and not re.search(r"\bRETURNING\b", sql, re.I) else text
+        try:
+            raw = run_atomic_many(self._raw, text, rows, self._in_tx)
+        except Exception as e:
+            raise _map_error(e) from e
+        self._in_tx = True
+        cur._load()
+        cur.rowcount = raw.rowcount if raw.rowcount is not None else -1
+        if _DDL.match(sql):
+            Catalog.forget()
         return cur
 
     def executescript(self, script):
