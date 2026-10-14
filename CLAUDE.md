@@ -242,7 +242,9 @@ A deletion is only "verified" when the trace is written down alongside it.
   keyed on a database stamp, so right in every worker: the Studio's kept
   inputs (`_studio_cache`, on `models.schedule_inputs_version`), its live
   check (`_studio_live`) and the requirement model cache
-  (`_REQUIREMENT_MODEL_CACHE`) on `schedule_engine.shifts_stamp`. (Moved
+  (`_REQUIREMENT_MODEL_CACHE`) on `schedule_engine.shifts_stamp`, and the
+  pre-publish review cache (`prepublish._CACHE`, 30 s, keyed on the week's
+  version, `schedule_inputs_version` and the dismissal/override stamps). (Moved
   into the database 10/11/26, blind re-audit ARCH-26/SCALE-23: the admin
   request ceiling — `admin_request_hits`, `security._admin_hits` only its
   fallback; the console's fleet memo — dropped in every worker through the
@@ -297,8 +299,13 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **SQL must stay translatable to Postgres.** `models.get_conn` returns a
   Postgres connection when `DATABASE_URL` names one (`db_dialect`); run
   `scripts/pg_sql_audit.py` after adding SQL — it must report
-  `untranslatable: 0, sqlite_only: 0`. Never set `DATABASE_URL` outside the
-  cutover runbook (`docs/ops/POSTGRES_CUTOVER.md`).
+  `untranslatable: 0, sqlite_only: 0`. The text check alone hid 50+
+  statements that failed on a real server (10/11/26 SCALE-10): CI's
+  `postgres` job PREPAREs every statement (`pg_sql_audit.py --database-url`,
+  `prepare_failed: 0`) and runs the DB-heavy tests on Postgres; run it locally
+  against a throwaway cluster when a change is SQL-heavy. Never set
+  `DATABASE_URL` for the app outside the cutover runbook
+  (`docs/ops/POSTGRES_CUTOVER.md`).
 - **Every Anthropic call passes the model gateway** (`model_gateway`, inside
   `ai_utils.create_with_retry`): call classes, per-tenant budgets and the
   organisation's tokens a minute. The fleet AI ceiling is per paying
