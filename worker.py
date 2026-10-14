@@ -42,7 +42,18 @@ a press is never stranded). Without it the web process consumes its own
 queue, as one process. On SIGTERM the rows this process is running are handed
 back to the queue (job_queue.shutdown) before the lease is released, so the
 next process resumes them from their checkpoints at once.
+
+`worker.py --queue` (blind re-audit 10/11/26 SCALE-17, SCALE-18) is the
+queue consumer alone — no scheduler — and what gunicorn's master starts
+beside the web process by default (gunicorn.conf.py). It waits for the web
+process's boot (its heartbeat: the schema is migrated — two processes never
+run init_db at once), consumes until it has run QUEUE_WORKER_MAX_JOBS rows
+or its resident memory passes QUEUE_WORKER_MAX_RSS_MB, then exits 0 so the
+supervisor starts a fresh process (max-jobs-per-child: a 250-person
+generation left 1.4 GB resident for good). On SIGTERM it hands its running
+rows back first.
 """
+import os
 import logging
 import signal
 import sys
@@ -153,6 +164,67 @@ def main():
             time.sleep(30)
 
 
+QUEUE_WORKER_MAX_JOBS = int(os.getenv("QUEUE_WORKER_MAX_JOBS", "20") or 0)
+QUEUE_WORKER_MAX_RSS_MB = float(os.getenv("QUEUE_WORKER_MAX_RSS_MB", "1500") or 0)
+# How long the queue worker waits for the web process's boot.
+BOOT_WAIT_SECONDS = 600
+
+
+def _handle_queue_stop(signum, _frame):
+    log.info("queue worker received signal %s — handing its rows back", signum)
+    _STOP.set()
+    try:
+        import job_queue
+        job_queue.shutdown()
+    except Exception:
+        log.exception("could not hand the running queue jobs back")
+    sys.exit(0)
+
+
+def _web_booted(since) -> bool:
+    """Whether a web process has booted since `since` (its job_queue
+    heartbeat, written after init_db)."""
+    try:
+        import models
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT MAX(started_at) AS s FROM job_workers WHERE role='web'").fetchone()
+        finally:
+            conn.close()
+        return bool(row and row["s"] and float(row["s"]) >= since - 5)
+    except Exception:
+        return False
+
+
+def main_queue():
+    """The queue consumer alone (gunicorn.conf.py's child). Returns the exit
+    code: 0 after a planned recycle or a stop."""
+    import logging_setup
+    logging_setup.configure()
+    logging_setup.bind(process="queue-worker")
+    signal.signal(signal.SIGTERM, _handle_queue_stop)
+    signal.signal(signal.SIGINT, _handle_queue_stop)
+    import models
+    models.require_volume()
+    started = time.time()
+    while not _web_booted(started):
+        if _STOP.is_set():
+            return 0
+        if time.time() - started > BOOT_WAIT_SECONDS:
+            log.error("no web process booted in %ss — the queue worker exits (the supervisor retries)",
+                      BOOT_WAIT_SECONDS)
+            return 1
+        _STOP.wait(2)
+    import job_queue
+    job_queue.register_shutdown()
+    log.info("queue worker consuming (recycles after %s jobs or %s MB)", QUEUE_WORKER_MAX_JOBS,
+             QUEUE_WORKER_MAX_RSS_MB)
+    out = job_queue.run_worker(stop=_STOP, max_jobs=QUEUE_WORKER_MAX_JOBS or None,
+                               max_rss_mb=QUEUE_WORKER_MAX_RSS_MB or None)
+    log.info("queue worker done (%s)", out)
+    return 0
+
+
 if __name__ == "__main__":
     # The entry point loads the .env beside it (hosted_dashboard does the
     # same); modules never do it on import.
@@ -162,4 +234,6 @@ if __name__ == "__main__":
         _ld(_pl.Path(__file__).parent / ".env")
     except Exception:
         pass
+    if "--queue" in sys.argv[1:]:
+        sys.exit(main_queue())
     main()

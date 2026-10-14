@@ -27,7 +27,6 @@ def db(db_path, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     import job_queue
     job_queue.reset_for_tests()
-    monkeypatch.delenv("JOB_QUEUE", raising=False)
     monkeypatch.delenv("QUEUE_WORKER", raising=False)
     return db_path
 
@@ -295,10 +294,18 @@ def test_checkpoints_keep_the_stages_reached(db, quiet):
 # ── modes and consumers ─────────────────────────────────────────────────────
 
 def test_the_modes_and_the_worker_fallback(db, monkeypatch):
+    """Worker mode is the default since blind re-audit 10/11/26 (SCALE-17):
+    the queue worker process consumes, and the web process consumes only
+    while no worker is alive. QUEUE_WORKER=0 is in-process consumption. The
+    JOB_QUEUE=0 paths are gone (ARCH-10)."""
     import job_queue as jq
-    assert jq.mode() == "inprocess" and jq.this_process_consumes()
+    assert jq.mode() == "worker" and jq.worker_process_wanted()
+    monkeypatch.setenv("QUEUE_WORKER", "0")
+    assert jq.mode() == "inprocess" and jq.this_process_consumes() and not jq.worker_process_wanted()
     monkeypatch.setenv("QUEUE_WORKER", "1")
     assert jq.mode() == "worker"
+    monkeypatch.setenv("QUEUE_WORKER_PROCESS", "0")
+    assert not jq.worker_process_wanted()
     # No worker has beaten its heartbeat: the web process consumes after all.
     assert jq.this_process_consumes()
     conn = models.get_conn()
@@ -310,7 +317,7 @@ def test_the_modes_and_the_worker_fallback(db, monkeypatch):
         conn.close()
     assert jq.worker_alive() and not jq.this_process_consumes()
     monkeypatch.setenv("JOB_QUEUE", "0")
-    assert jq.mode() == "off" and not jq.enabled()
+    assert jq.mode() == "worker" and not hasattr(jq, "enabled")
 
 
 def test_the_in_process_consumer_runs_a_row_through_its_handler(db, monkeypatch):
@@ -496,7 +503,7 @@ def test_a_resumed_try_before_the_save_runs_again_reading_stored_answers(db, qui
     def run(job_id, r, **k):
         seen["kwargs"] = k
         seen["answer"] = schedule_resume.stored_answer(request)
-        seen["slots_busy"] = se._GEN_SLOTS.busy
+        seen["clock"] = se.current_clock() is not None
         ops.finish_async_job(job_id, "done", {"ok": True, "history_id": 9})
     monkeypatch.setattr(se, "_run_schedule_job", run)
     monkeypatch.setattr(se, "notify_generation_watchers", lambda *a, **k: 0)
@@ -504,8 +511,8 @@ def test_a_resumed_try_before_the_save_runs_again_reading_stored_answers(db, qui
     assert out["resumed"] is True and out["history_id"] == 9
     assert seen["kwargs"] == {"week_start": "2026-10-19"}
     assert seen["answer"] is not None and seen["answer"].content[0].text == "stored answer"
-    # The claimed row is the slot: the in-process slots were not taken.
-    assert seen["slots_busy"] == 0
+    # The claimed row is the slot; the job runs on its own clock.
+    assert seen["clock"]
 
 
 def test_a_resumed_try_the_owner_stopped_runs_nothing(db, quiet, monkeypatch):
@@ -559,23 +566,28 @@ def test_watchers_are_rows_taken_once(db):
     assert se.take_generation_watchers("job-w") == {}
 
 
-def test_generation_scope_takes_no_in_process_slot_inside_a_queue_job(db, quiet, monkeypatch):
+def test_generation_scope_is_a_clock_and_the_slot_is_the_row(db, quiet, monkeypatch):
+    """ARCH-10 (blind re-audit 10/11/26): one store. The in-process
+    GenerationSlots and the JOB_QUEUE=0 pool are gone; generation_scope is
+    the clock alone, in a queue job or a direct call."""
     jq = quiet
+    import inspect
     import schedule_engine as se
     monkeypatch.setattr(se._ops, "set_async_job_deadline", lambda *a, **k: None)
-    gate = se.GenerationSlots(1)
-    monkeypatch.setattr(se, "_GEN_SLOTS", gate)
+    for gone in ("GenerationSlots", "_GEN_SLOTS", "_gen_pool", "GenerationSlotTimeout", "GEN_BACKGROUND_WAIT_SECONDS"):
+        assert not hasattr(se, gone), gone
+    assert "_enqueue_generation" in inspect.getsource(se.submit_generation)
     jq.enqueue("schedule_generate", {})
     j = jq.claim("w", groups=("generation",))
     token = jq._CURRENT.set(j)
     try:
-        with se.generation_scope("in-queue"):
-            assert gate.busy == 0
+        with se.generation_scope("in-queue") as clock:
+            assert se.current_clock() is clock
     finally:
         jq._CURRENT.reset(token)
-    with se.generation_scope("direct"):
-        assert gate.busy == 1                       # a direct call still takes one
-    assert gate.busy == 0
+    with se.generation_scope("direct") as clock:
+        assert se.current_clock() is clock
+    assert se.current_clock() is None
 
 
 # ── the auto-draft and the learners as queue work ──────────────────────────
@@ -606,6 +618,7 @@ def test_a_queued_auto_draft_runs_the_draft_in_its_slot(db, quiet, monkeypatch):
     jq = quiet
     import strategy_jobs
     rid = _restaurant(db, auto_draft_schedule=1, module_labor=1)
+    monkeypatch.setattr(strategy_jobs, "AUTO_DRAFT_SPREAD_MINUTES", 0)
     calls = []
     monkeypatch.setattr(strategy_jobs, "_draft_one",
                         lambda r, db_path, se, bump, **k: calls.append((r.id, k, jq.in_group("generation")))
@@ -673,13 +686,13 @@ def test_the_scheduler_hands_the_learners_and_the_draft_to_the_queue():
     loop = inspect.getsource(scheduler.scheduler_loop)
     for name in ("schedule_outcomes", "people_nightly", "schedule_memory"):
         assert f'_ops.run_job("{name}", learner_pass("{name}",' in loop
-    assert "enqueue=_jq_ad.enabled()" in loop
+    assert "enqueue=True" in loop
+    # The queue is the one path (ARCH-10): no switch puts the learners back
+    # inline in the scheduler thread.
     import os
-    os.environ.pop("JOB_QUEUE", None)
-    assert strategy_jobs.learner_pass("x", "inline") != "inline"
     os.environ["JOB_QUEUE"] = "0"
     try:
-        assert strategy_jobs.learner_pass("x", "inline") == "inline"
+        assert strategy_jobs.learner_pass("x", "inline") != "inline"
     finally:
         os.environ.pop("JOB_QUEUE", None)
 

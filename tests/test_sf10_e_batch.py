@@ -176,14 +176,11 @@ def test_the_engine_plans_every_independent_call_of_its_first_round(monkeypatch,
 
 def test_the_groups_last_answer_queues_the_draft_with_its_answers(monkeypatch, store):
     import models
-    import job_queue
-    monkeypatch.delenv("JOB_QUEUE", raising=False)
     r = types.SimpleNamespace(id=3, auto_draft_schedule=1, module_labor=1)
     monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: r)
     monkeypatch.setattr(sj, "_draft_one", lambda *a, **k: pytest.fail("not on the callback thread"))
     rows = []
     monkeypatch.setattr(sj, "enqueue_auto_draft", lambda rr, **k: rows.append(k))
-    assert job_queue.enabled()
     ctx = {"group": "sd-3-g", "n": 2, "period": "p", "target": None, "attempt": 0}
     sb.on_auto_draft({"restaurant_id": 3, "context": dict(ctx, key="k1", i=0)}, message=_msg(WEEK))
     assert rows == [], "one of two answers in: nothing runs yet"
@@ -204,13 +201,11 @@ def test_with_the_queue_on_an_item_from_before_the_groups_still_rides_a_queue_ro
     group) carries its one answer in the row, as it did."""
     import models
     import job_queue
-    monkeypatch.delenv("JOB_QUEUE", raising=False)
     r = types.SimpleNamespace(id=3, auto_draft_schedule=1, module_labor=1)
     monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: r)
     monkeypatch.setattr(sj, "_draft_one", lambda *a, **k: pytest.fail("not on the callback thread"))
     rows = []
     monkeypatch.setattr(sj, "enqueue_auto_draft", lambda rr, **k: rows.append(k))
-    assert job_queue.enabled()
     sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1", "period": "p", "target": "t", "attempt": 0}},
                      message=_msg(WEEK))
     sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1"}}, error=ai_batches.BatchItemFailed("cutoff"))
@@ -231,30 +226,7 @@ def test_the_auto_draft_submits_first_and_holds_no_job_or_slot(monkeypatch):
     assert bumped == ["batched"] and got["week_start"] == WEEK[0] and got["period"] == "2026-10-08"
 
 
-def test_the_answer_runs_the_ordinary_auto_draft_with_the_answer_in_hand(monkeypatch, store):
-    import models
-    import schedule_resume
-    # The old path, with the job queue off (JOB_QUEUE=0): an item from before
-    # the groups reads its one answer; a group's last answer runs the draft
-    # under resuming(group).
-    monkeypatch.setenv("JOB_QUEUE", "0")
-    r = types.SimpleNamespace(id=3, auto_draft_schedule=1, module_labor=1)
-    monkeypatch.setattr(models, "get_restaurant", lambda rid, *a, **k: r)
-    seen = []
-
-    def draft(rr, db_path, se_, bump, period=None, target=None, attempt=None, batch=True):
-        h = sb._HOOK.get()
-        seen.append((batch, h and h["mode"], h and h["key"]))
-    monkeypatch.setattr(sj, "_draft_one", draft)
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1", "period": None}}, message=_msg(WEEK))
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1"}}, error=ai_batches.BatchItemFailed("cutoff"))
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"key": "k1"}}, error=RuntimeError("budget"))
-    assert seen == [(False, "answer", "k1"), (False, None, None)]
-    resumed = []
-    monkeypatch.setattr(sj, "_draft_one", lambda *a, **k: resumed.append(schedule_resume.resume_facts()["resumed"]))
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"group": "sd-3-q", "n": 1, "key": "k1"}}, message=_msg(WEEK))
-    sb.on_auto_draft({"restaurant_id": 3, "context": {"group": "sd-3-q", "n": 1, "key": "k1"}}, message=_msg(WEEK))
-    assert resumed == [True], "the group's draft runs once, reading the stored answers"
+# test_the_answer_runs_the_ordinary_auto_draft_with_the_answer_in_hand: removed with the JOB_QUEUE=0 path (blind re-audit 10/11/26 ARCH-10). Its queue twins: test_with_the_queue_on_the_answer_rides_a_queue_row and test_the_groups_last_answer_queues_the_draft_with_its_answers.
 
 
 def test_labor_schedule_may_batch():

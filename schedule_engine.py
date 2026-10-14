@@ -197,12 +197,10 @@ SCHEDULE_POST_MODEL_SECONDS = 240
 SCHEDULE_JOB_MIN_SECONDS = 15 * 60
 SCHEDULE_JOB_MAX_SECONDS = 40 * 60
 
-# At most this many generations run at once in this process (P-39): each
-# was a daemon thread of its own, and their CPU-bound passes held the GIL
-# against every other restaurant's requests on a four-thread web process.
-# Owners' presses queue on the pool; the weekly auto-draft takes a slot
-# the same way (generation_scope), behind any press waiting for one
-# (GenerationSlots — AI cost audit 10/7/26 #5).
+# The generation group's CPU slots (P-39): job_queue.group_concurrency's
+# default (QUEUE_GENERATION_CONCURRENCY), a count of claimed rows across
+# every process. A row streaming a model answer holds no slot
+# (job_queue.model_wait — blind re-audit 10/11/26 SCALE-1).
 SCHEDULE_GEN_WORKERS = max(1, int(os.getenv("SCHEDULE_GEN_WORKERS", "2")))
 
 
@@ -277,6 +275,8 @@ class GenerationClock:
         # whole-week Generate would replace, or a redo's own draft): a Stop
         # after this job saved puts it back (ARCH-2). submit_generation sets it.
         self.prior_draft_id = None
+        # Seconds excused: waits for a CPU slot after a model answer (excuse).
+        self.excused = 0.0
         self._record()
 
     # ── how far the draft has got (#36) ─────────────────────────────────
@@ -344,6 +344,19 @@ class GenerationClock:
             # press (re-audit 10/4/26 PIPE-9).
             _ops.set_async_job_deadline(self.job_id, self.deadline, started_ts=self.started)
 
+    def excuse(self, seconds) -> None:
+        """The generation waited `seconds` for its CPU slot back after a model
+        answer (job_queue.model_wait — blind re-audit 10/11/26 SCALE-1): the
+        platform's load is not the generation's time, so the deadline moves
+        out by it, at most SLOT_WAIT_EXCUSE_SECONDS in all — the repair loop
+        and the solver are not skipped "for time" because other restaurants
+        were drafting."""
+        add = min(max(0.0, float(seconds or 0)), SLOT_WAIT_EXCUSE_SECONDS - self.excused)
+        if add > 0:
+            self.excused += add
+            self.deadline += add
+            self._record()
+
     @property
     def model_deadline(self) -> float:
         return self.deadline - SCHEDULE_POST_MODEL_SECONDS
@@ -380,167 +393,30 @@ def current_clock():
     return _CLOCK.get()
 
 
-# Who goes first for a free slot (AI cost audit 10/7/26 #5): an owner's
-# press, then a background generation (the weekly auto-draft). FIFO within
-# each. A plain semaphore woke whichever waiter the OS picked, so an owner
-# pressing Generate on a draft morning waited behind every queued draft.
-GEN_PRIORITY_PRESS = 0
-GEN_PRIORITY_BACKGROUND = 1
-# A press announced (submit_generation) but never seen at the gate stops
-# holding the background back once its pool future is done or cancelled (it
-# will never reach the gate), and in any case after this long.
-GEN_ANNOUNCE_MAX_SECONDS = 2 * 60 * 60
-# A background generation (the auto-draft) waits at most this long for a
-# slot, then gives up (GenerationSlotTimeout): its pass hands the period back
-# and the next hourly pass tries again. It never waits without end — a
-# waiter blocked forever held the AI lane, and in the suite a worker.
-GEN_BACKGROUND_WAIT_SECONDS = 30 * 60
+# The most a generation's clock is moved out for slot waits (excuse).
+SLOT_WAIT_EXCUSE_SECONDS = 15 * 60
 
 
-class GenerationSlotTimeout(RuntimeError):
-    """A background generation found no free slot in GEN_BACKGROUND_WAIT_SECONDS."""
+def _excuse_slot_wait(seconds) -> None:
+    """job_queue.SLOT_WAIT_HOOKS: a slot wait inside a generation is excused
+    from its clock (the call threads carry the generation's context)."""
+    clock = _CLOCK.get()
+    if clock is not None:
+        clock.excuse(seconds)
 
 
-class GenerationSlots:
-    """SCHEDULE_GEN_WORKERS slots taken highest priority first. A press is
-    announced when it is queued on the owner pool (submit_generation), so a
-    slot freed while its pool thread is still on its way to the gate is held
-    for it rather than taken by a waiting auto-draft. Never more holders than
-    slots: the bound is the same as the semaphore's (P-39).
-
-    A press that joins a queued auto-draft promotes it (promote): the owner is
-    now waiting on that job, so it takes press priority and loses the
-    background give-up (re-audit 10/7/26 #1)."""
-
-    def __init__(self, slots: int):
-        self.slots = max(1, int(slots))
-        self.busy = 0
-        self._cv = threading.Condition()
-        self._waiting = []          # heap of (priority, seq)
-        self._seq = 0
-        self._announced = {}        # job_id -> time it was announced
-        self._tickets = {}          # job_id -> its ticket while it waits at the gate
-        self._held = set()          # job_ids holding a slot
-        self._promoted = {}         # job_id -> time a press joined it before it reached the gate
-
-    def announce(self, job_id, future=None) -> None:
-        with self._cv:
-            self._announced[job_id] = (time.time(), future)
-
-    def attach(self, job_id, future) -> None:
-        """The pool future of an announced press, so a press whose thread
-        will never reach the gate (done, cancelled) stops being waited for."""
-        with self._cv:
-            if job_id in self._announced:
-                self._announced[job_id] = (self._announced[job_id][0], future)
-
-    def withdraw(self, job_id) -> None:
-        """A press that will never reach the gate (its submit failed)."""
-        with self._cv:
-            self._announced.pop(job_id, None)
-            self._cv.notify_all()
-
-    def promote(self, job_id) -> str:
-        """An owner's press joined `job_id` (re-audit 10/7/26 #1): a queued
-        auto-draft goes on waiting as a press — press priority, its place in
-        line kept (its original sequence, so no press queued after it passes
-        it and it cannot be starved), and no give-up. The waiting acquire
-        re-reads its ticket on every wake. A job not yet at the gate is
-        promoted when it gets there. Returns "waiting", "pending" or
-        "running" (already holding a slot — nothing to do)."""
-        import heapq
-        with self._cv:
-            if job_id in self._held:
-                return "running"
-            ticket = self._tickets.get(job_id)
-            if ticket is None:
-                self._promoted[job_id] = time.time()
-                return "pending"
-            if ticket[0] > GEN_PRIORITY_PRESS:
-                self._waiting.remove(ticket)
-                promoted = (GEN_PRIORITY_PRESS, ticket[1])
-                self._tickets[job_id] = promoted
-                heapq.heappush(self._waiting, promoted)
-                heapq.heapify(self._waiting)
-                self._cv.notify_all()
-            return "waiting"
-
-    def _presses_on_the_way(self) -> bool:
-        cutoff = time.time() - GEN_ANNOUNCE_MAX_SECONDS
-        for j, (t, fut) in list(self._announced.items()):
-            if t < cutoff or (fut is not None and fut.done()):
-                self._announced.pop(j, None)
-        for j, t in list(self._promoted.items()):
-            if t < cutoff:
-                self._promoted.pop(j, None)
-        return bool(self._announced)
-
-    def acquire(self, priority=GEN_PRIORITY_PRESS, job_id=None, timeout=None) -> None:
-        """Wait for a slot in priority order. `timeout` (seconds) bounds the
-        wait: past it, GenerationSlotTimeout and the ticket leaves the queue.
-        A waiter promoted while it waits (promote) — or before it arrived —
-        waits as a press, with no bound."""
-        import heapq
-        with self._cv:
-            self._announced.pop(job_id, None)
-            if job_id is not None and self._promoted.pop(job_id, None) is not None:
-                priority, timeout = GEN_PRIORITY_PRESS, None
-            self._seq += 1
-            ticket = (int(priority), self._seq)
-            heapq.heappush(self._waiting, ticket)
-            if job_id is not None:
-                # Job ids are unique; a duplicate (tests) is simply not promotable.
-                self._tickets.setdefault(job_id, ticket)
-            give_up = (time.time() + float(timeout)) if timeout else None
-            try:
-                while True:
-                    mine = self._tickets.get(job_id) if job_id is not None else None
-                    if mine is not None and mine[1] == ticket[1]:
-                        ticket = mine
-                        if ticket[0] <= GEN_PRIORITY_PRESS:
-                            give_up = None            # promoted: an owner is waiting on it now
-                    if (self.busy < self.slots and self._waiting[0] == ticket
-                            and not (ticket[0] > GEN_PRIORITY_PRESS and self._presses_on_the_way())):
-                        break
-                    if give_up is not None and time.time() >= give_up:
-                        raise GenerationSlotTimeout(f"no generation slot free in {int(timeout)}s")
-                    # A timed wait, so an announcement that expires is noticed.
-                    self._cv.wait(30 if give_up is None else max(0.05, min(30, give_up - time.time())))
-            except BaseException:
-                mine = self._tickets.get(job_id) if job_id is not None else None
-                if mine is not None and mine[1] == ticket[1]:
-                    ticket = mine                     # promoted during the wait that raised
-                self._waiting.remove(ticket)
-                heapq.heapify(self._waiting)
-                self._forget_ticket(job_id, ticket)
-                self._cv.notify_all()
-                raise
-            heapq.heappop(self._waiting)
-            self._forget_ticket(job_id, ticket)
-            if job_id is not None:
-                self._held.add(job_id)
-            self.busy += 1
-            # The next in line may fit a second free slot.
-            self._cv.notify_all()
-
-    def _forget_ticket(self, job_id, ticket) -> None:
-        if job_id is not None and (self._tickets.get(job_id) or (None, None))[1] == ticket[1]:
-            self._tickets.pop(job_id, None)
-
-    def release(self, job_id=None) -> None:
-        with self._cv:
-            self.busy = max(0, self.busy - 1)
-            self._held.discard(job_id)
-            self._cv.notify_all()
-
-    def waiting(self) -> int:
-        with self._cv:
-            return len(self._waiting)
+import job_queue as _jq_hooks  # noqa: E402 — job_queue imports this module only lazily
+if not any(getattr(h, "__name__", "") == "_excuse_slot_wait" for h in _jq_hooks.SLOT_WAIT_HOOKS):
+    _jq_hooks.SLOT_WAIT_HOOKS.append(_excuse_slot_wait)
 
 
-_GEN_SLOTS = GenerationSlots(SCHEDULE_GEN_WORKERS)
-_gen_pool = None
-_gen_pool_lock = threading.Lock()
+# Generation slots (blind re-audit 10/11/26 ARCH-10): a generation's slot
+# is its claimed job_queue row — the queue counts running rows across every
+# process, orders presses before drafts, keeps one generation per
+# restaurant, and gives the CPU slot back while the model writes
+# (job_queue.model_wait). The in-process GenerationSlots and its pool (the
+# JOB_QUEUE=0 path) are gone: two stores for "is my schedule running" and a
+# bound that multiplied with every process.
 
 
 def _settle_rejection(job_id, restaurant_id, rejection) -> None:
@@ -567,38 +443,25 @@ def _settle_rejection(job_id, restaurant_id, rejection) -> None:
 
 
 @contextlib.contextmanager
-def generation_scope(job_id, priority=GEN_PRIORITY_PRESS, restaurant_id=None):
-    """One generation's slot and clock: waits for one of the
-    SCHEDULE_GEN_WORKERS slots (P-39), then starts the clock (P-22) — a
-    generation queued behind two others does not spend its time waiting.
-    submit_generation runs an owner's job inside it; the auto-draft enters it
-    itself (strategy_jobs._draft_one) at GEN_PRIORITY_BACKGROUND, so a press
-    takes the next free slot ahead of it (AI cost audit 10/7/26 #5).
-
-    Inside a queue job of the generation group (job_queue — scheduler audit
-    10/10/26 RM-7, SCALE-24, ARCH-22) the slot IS the claimed row: the queue
-    counts running rows across every process, orders presses before drafts
-    and keeps one generation per restaurant, so no in-process slot is
-    taken. The in-process slots remain for a direct call (a script, a test)."""
-    import job_queue as _jq_scope
-    _queued = _jq_scope.in_group("generation")
-    if not _queued:
-        _GEN_SLOTS.acquire(priority, job_id=job_id,
-                           timeout=GEN_BACKGROUND_WAIT_SECONDS if priority > GEN_PRIORITY_PRESS else None)
+def generation_scope(job_id, restaurant_id=None):
+    """One generation's clock (P-22), started when it runs — a generation
+    that waited for its slot does not spend its time waiting — inside the
+    restaurant's own dayparts. Its slot is its claimed job_queue row (the
+    queue counts running rows across every process, orders presses before
+    drafts, keeps one generation per restaurant — scheduler audit 10/10/26
+    RM-7, SCALE-24, ARCH-22); a direct call (a script, a test) takes none
+    (blind re-audit 10/11/26 ARCH-10: the in-process GenerationSlots are
+    gone)."""
+    clock = GenerationClock(job_id)
+    token = _CLOCK.set(clock)
     try:
-        clock = GenerationClock(job_id)
-        token = _CLOCK.set(clock)
-        try:
-            # The restaurant's own lunch/dinner boundary (restaurants.
-            # daypart_boundary — schedule_time.daypart_scope, ARCH-12) for
-            # every daypart question the generation asks.
-            with _stime.daypart_scope(_restaurant_split(restaurant_id)):
-                yield clock
-        finally:
-            _CLOCK.reset(token)
+        # The restaurant's own lunch/dinner boundary (restaurants.
+        # daypart_boundary — schedule_time.daypart_scope, ARCH-12) for
+        # every daypart question the generation asks.
+        with _stime.daypart_scope(_restaurant_split(restaurant_id)):
+            yield clock
     finally:
-        if not _queued:
-            _GEN_SLOTS.release(job_id)
+        _CLOCK.reset(token)
 
 
 def _restaurant_split(restaurant_id):
@@ -621,20 +484,18 @@ def promote_generation(job_id) -> str:
     A queued generation (job_queue) is promoted in the database — its row
     goes on as interactive with its give-up lifted, whichever process will
     run it (ARCH-22: the promotion used to reach only the web process's
-    memory while the auto-draft waited in another)."""
+    memory while the auto-draft waited in another). "waiting", "running" or
+    "pending" (no queue row: nothing to promote)."""
     import job_queue as _jq_p
-    if _jq_p.enabled():
-        state = _jq_p.promote(job_id)
-        if state != "pending":
-            return state
-    return _GEN_SLOTS.promote(job_id)
+    return _jq_p.promote(job_id)
 
 
 def submit_generation(job_id, restaurant_id, prior_draft_id=None, rejection=None, **job_kwargs):
-    """Queue an owner's generation on the bounded pool (P-39). The pool's
-    thread has no request to read who asked from, so the owner's attribution
-    is taken here, on the request thread (ai_utils.attributed, #148). Returns
-    the Future.
+    """Queue an owner's generation (P-39) as a job_queue row — the one path
+    (blind re-audit 10/11/26 ARCH-10). The consumer's thread has no request
+    to read who asked from, so the owner's attribution is taken here, on the
+    request thread, and travels in the row (#148). Returns a Future resolved
+    when the row finishes in this process.
 
     `prior_draft_id` is the draft in force when the owner pressed — a Stop
     after this job saved its own puts that one back (ARCH-2). `rejection`
@@ -644,52 +505,13 @@ def submit_generation(job_id, restaurant_id, prior_draft_id=None, rejection=None
     ARCH-18) — never at the press, so a press stopped or failed teaches the
     learners nothing.
 
-    With the job queue on (job_queue.mode() — the default; JOB_QUEUE=0 is
-    the old pool), the press is a durable `schedule_generate` row (RM-7):
-    an interactive row ahead of every scheduled draft, run by this process's
-    consumer or by worker.py's (QUEUE_WORKER=1), resumed after a deploy from
-    its checkpoints without paying again for an answer already stored
-    (SCALE-2, schedule_resume). The owner's attribution travels in the row
-    (ai_utils.attribution_for_thread, #148). Returns a Future resolved when
-    the row finishes in this process."""
-    import job_queue as _jq
-    if _jq.enabled():
-        return _enqueue_generation(job_id, restaurant_id, prior_draft_id=prior_draft_id, rejection=rejection,
-                                   **job_kwargs)
-    global _gen_pool
-    import concurrent.futures
-    import ai_utils as _ai
-    with _gen_pool_lock:
-        if _gen_pool is None:
-            _gen_pool = concurrent.futures.ThreadPoolExecutor(max_workers=SCHEDULE_GEN_WORKERS,
-                                                              thread_name_prefix="schedule-gen")
-    job = _run_schedule_job            # the job as it stands when the owner pressed, not when a slot frees
-    # Held for before its pool thread reaches the gate (GenerationSlots).
-    _GEN_SLOTS.announce(job_id)
-
-    def _run(*a, **k):
-        try:
-            with generation_scope(job_id, restaurant_id=restaurant_id) as clock:
-                clock.prior_draft_id = prior_draft_id
-                return job(*a, **k)
-        except Exception as e:
-            # The job reports its own failures; this is one around it (the
-            # slot, the clock). Said, and the job closed, so the owner's poll
-            # never waits on a job nothing will finish.
-            _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
-            _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
-        finally:
-            _settle_rejection(job_id, restaurant_id, rejection)
-            # The owner who pressed may have left: their phone hears the
-            # draft landed (iOS parity #16).
-            notify_generation_watchers(job_id, restaurant_id)
-    try:
-        fut = _gen_pool.submit(_ai.attributed(_run), job_id, restaurant_id, **job_kwargs)
-    except BaseException:
-        _GEN_SLOTS.withdraw(job_id)
-        raise
-    _GEN_SLOTS.attach(job_id, fut)
-    return fut
+    The press is a durable `schedule_generate` row (RM-7): an interactive
+    row ahead of every scheduled draft, run by the queue worker process or
+    this process's consumer, resumed after a deploy from its checkpoints
+    without paying again for an answer already stored (SCALE-2,
+    schedule_resume)."""
+    return _enqueue_generation(job_id, restaurant_id, prior_draft_id=prior_draft_id, rejection=rejection,
+                               **job_kwargs)
 
 
 # Who asked for each running generation (iOS parity #16, 10/7/26): the
@@ -4494,11 +4316,22 @@ _CALL_POOL_LOCK = threading.Lock()
 
 
 def call_pool_workers() -> int:
+    """SCHEDULE_CALL_POOL_WORKERS, else the generations that may be waiting
+    on the model at once (job_queue.max_running — a row streaming holds no
+    CPU slot since blind re-audit 10/11/26 SCALE-1) x a generation's own
+    parallel calls."""
     try:
         n = int(os.getenv("SCHEDULE_CALL_POOL_WORKERS", "") or 0)
     except ValueError:
         n = 0
-    return max(1, n or SCHEDULE_GEN_WORKERS * parallel_calls())
+    if n:
+        return max(1, n)
+    try:
+        import job_queue as _jq_pool
+        running = _jq_pool.max_running("generation")
+    except Exception:
+        running = SCHEDULE_GEN_WORKERS
+    return max(1, running * parallel_calls())
 
 
 def _call_pool():
@@ -7226,9 +7059,11 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
         return store[key]
     # Eight weeks of tickets and punches change once a night: a Studio edit's
     # live rescore reuses the last read for REQUIREMENT_MODEL_TTL seconds
-    # (per process, per database file — a cache, safe to keep per worker).
+    # (per process, per database file) while the shift history's stamp is
+    # unchanged — keyed on the database's stamp, so every worker drops it
+    # the moment an upload or a sync lands (blind re-audit 10/11/26 ARCH-26).
     import time as _time_rm
-    ckey = (str(_m_rm.DB_PATH), int(restaurant_id))
+    ckey = (str(_m_rm.DB_PATH), int(restaurant_id), shifts_stamp(restaurant_id))
     hit = _REQUIREMENT_MODEL_CACHE.get(ckey)
     if hit and _time_rm.monotonic() - hit[0] < REQUIREMENT_MODEL_TTL:
         if store is not None:
@@ -8469,22 +8304,45 @@ def _studio_put(key, entry, now) -> None:
         total -= _studio_weight(old)
 
 
+def shifts_stamp(restaurant_id):
+    """The shift history's stamp in the database (client_data's updated_at
+    and size): a process-local cache keyed on it is right in EVERY process
+    the moment an upload or a POS sync lands (blind re-audit 10/11/26
+    ARCH-26 — a cache was right only in the process that wrote). None when
+    unreadable (the cache is then not used)."""
+    import models as _m_ss
+    try:
+        conn = _m_ss.get_conn()
+        try:
+            row = conn.execute("SELECT updated_at, LENGTH(shifts_csv) FROM client_data WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        return tuple(row) if row else ()
+    except Exception:
+        return None
+
+
 def studio_is_live(restaurant_id) -> bool:
     """Whether the restaurant's own shifts are on file (labor.
     analyse_shifts_for_restaurant's is_live), remembered for
-    STUDIO_CACHE_SECONDS — it reads every shift the restaurant has."""
+    STUDIO_CACHE_SECONDS while the shift history's stamp (shifts_stamp) is
+    unchanged — it reads every shift the restaurant has. It used to be
+    remembered on time alone, so an owner who uploaded shifts right after a
+    "not live" read was told to upload them for up to 15 minutes."""
     import time as _time
     now = _time.monotonic()
+    stamp = shifts_stamp(restaurant_id)
     with _studio_lock:
         hit = _studio_live.get(restaurant_id)
-    if hit is not None and now - hit[1] < STUDIO_CACHE_SECONDS:
+    if hit is not None and stamp is not None and hit[2] == stamp and now - hit[1] < STUDIO_CACHE_SECONDS:
         return hit[0]
     from labor import analyse_shifts_for_restaurant
     live = bool((analyse_shifts_for_restaurant(restaurant_id) or {}).get("is_live"))
     with _studio_lock:
         if len(_studio_live) > 4096:
             _studio_live.clear()
-        _studio_live[restaurant_id] = (live, now)
+        _studio_live[restaurant_id] = (live, now, stamp)
     return live
 
 

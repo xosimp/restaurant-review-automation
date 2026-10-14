@@ -138,7 +138,9 @@ def test_a_queued_one_tap_send_runs_the_unattended_gate_when_its_window_ends(db,
     c, h, _ = _client(db, rid, monkeypatch)
     monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: True)
     queued = []
-    monkeypatch.setattr(delayed, "schedule", lambda rid_, kind, payload, delay, **k: queued.append(payload)
+    # The week's send is queued through queue_schedule_send since BUGSLIFE-9
+    # (one pending send per week); this test patched the old delayed.schedule.
+    monkeypatch.setattr(delayed, "queue_schedule_send", lambda rid_, kind, payload, delay, **k: queued.append(payload)
                         or {"id": 1, "execute_at": "2026-10-08 12:00:00"})
     body = c.post("/mobile/api/labor/publish-schedule", headers=h,
                   json={"schedule_id": hid, "one_tap": True}).get_json()
@@ -261,15 +263,7 @@ def _auto(db, rid, monkeypatch, run):
     return _SE, watched
 
 
-def test_a_slot_timeout_releases_the_watchers(db, monkeypatch, pushed):
-    rid = _rid(db)
-    r = models.get_restaurant(rid)
-
-    def run(job_id, rid_, **_kw):
-        raise _Timeout()
-    _SE, watched = _auto(db, rid, monkeypatch, run)
-    strategy_jobs._draft_one(r, db, _SE, lambda k: None)
-    assert se.generation_watchers(watched["job"]) == {} and pushed == []
+# test_a_slot_timeout_releases_the_watchers: removed with GenerationSlots (blind re-audit 10/11/26 ARCH-10 — an auto-draft no longer waits for an in-process slot).
 
 
 def test_an_exception_out_of_the_run_releases_the_watchers_and_closes_the_job(db, monkeypatch, pushed):
