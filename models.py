@@ -1403,6 +1403,13 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "edited_by", "TEXT"),
         ("schedule_history", "quality_score", "REAL"),
         ("schedule_history", "quality_band", "TEXT"),
+        # The whole Shift Quality evaluation and generation review of a
+        # draft, stored once compressed (quality_blobs) — quality_json and
+        # review_json keep their headlines (blind re-audit 10/11/26
+        # SCALE-13: 227-582 KB of quality JSON and 88 KB of review inline
+        # per week). Read through history_quality / history_review.
+        ("schedule_history", "quality_ref", "TEXT"),
+        ("schedule_history", "review_ref", "TEXT"),
         ("schedule_history", "quality_confidence", "TEXT"),
         ("schedule_history", "what_if_json", "TEXT"),
         ("schedule_history", "republished_at", "TEXT"),
@@ -8869,6 +8876,14 @@ def init_schedule_versions(db_path: str = DB_PATH):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_quality_blobs_created ON quality_blobs(created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_qref ON schedule_versions(quality_ref) "
                  "WHERE quality_ref IS NOT NULL")
+    # A draft's stored detail (SCALE-13): the blob collector asks whether
+    # any draft still names a blob.
+    _hcols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+    if {"quality_ref", "review_ref"} <= _hcols:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_qref ON schedule_history(quality_ref) "
+                     "WHERE quality_ref IS NOT NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_rref ON schedule_history(review_ref) "
+                     "WHERE review_ref IS NOT NULL")
     conn.commit()
     conn.close()
 
@@ -11819,7 +11834,8 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
             _ops_hh.capture(e, job="schedule_history_hours", context=f"restaurant_id={restaurant_id}")
     # Serialized before the write opens, so a value JSON cannot carry fails
     # the save instead of half-writing it.
-    review_json = _json_sh.dumps(review, default=str) if review else None
+    # Serialized here for the same reason; stored compressed below (SCALE-13).
+    review_whole = _json_sh.loads(_json_sh.dumps(review, default=str)) if review else None
     weather_json = _json_sh.dumps(weather, default=str) if weather else None
     economics_json = _json_sh.dumps(economics, default=str) if economics else None
     stages_json = _json_sh.dumps(stage_seconds, default=str) if stage_seconds else None
@@ -11854,20 +11870,25 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                     prior_text = (live["schedule_csv"] or "") if live else None
             schedule_csv = _srows.to_csv(_srows.carry_ids(_srows.parse(schedule_csv),
                                                           _srows.parse(prior_text) if prior_text else []))
+            # The headlines inline, the whole evaluation and review stored
+            # once compressed — the same evaluation a `generated` version
+            # stores is the same blob (SCALE-13).
+            import schedule_versions as _sv_sh
+            quality_head, quality_ref = _sv_sh.store_quality(conn, restaurant_id, quality)
+            review_json, review_ref = store_history_review(conn, restaurant_id, review_whole)
             cur = conn.execute("""
                 INSERT INTO schedule_history
                     (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
-                     labor_target, schedule_csv, summary_json, quality_json,
+                     labor_target, schedule_csv, summary_json, quality_json, quality_ref,
                      quality_score, quality_band, quality_confidence, what_if_json,
-                     hours_hourly, hours_salaried, review_json, generation_seconds, weather_json,
+                     hours_hourly, hours_salaried, review_json, review_ref, generation_seconds, weather_json,
                      economics_json, stage_seconds_json, total_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
-                  schedule_csv, _json_sh.dumps(summary or []),
-                  _json_sh.dumps(quality) if quality else None,
+                  schedule_csv, _json_sh.dumps(summary or []), quality_head, quality_ref,
                   q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
                   _json_sh.dumps(what_if) if what_if else None, hours_hourly, hours_salaried,
-                  review_json, generation_seconds, weather_json, economics_json, stages_json,
+                  review_json, review_ref, generation_seconds, weather_json, economics_json, stages_json,
                   (stage_seconds or {}).get("total")))
             new_id = cur.lastrowid
             # Drafts of the same week that were never sent are superseded by
@@ -11893,6 +11914,48 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
 _HISTORY_COLUMNS_OK = set()
 
 
+def _row_get(row, key):
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
+
+
+def history_quality(conn, row) -> dict:
+    """A draft's whole Shift Quality evaluation: the stored detail its
+    quality_ref names, else what quality_json holds (a row from before
+    10/14/26 holds it whole; a thinned one its headline). {} for none.
+    `row` is a schedule_history row or dict with quality_json (and
+    quality_ref when selected)."""
+    import schedule_versions as _sv_hq
+    return _sv_hq.version_quality(conn, _row_get(row, "quality_json"), _row_get(row, "quality_ref"))
+
+
+def history_review(conn, row) -> dict:
+    """A draft's whole generation review (the stored detail review_ref
+    names, else review_json). {} for none."""
+    import json as _json_hr
+    import schedule_versions as _sv_hr
+    whole = _sv_hr.load_detail(conn, _row_get(row, "review_ref"))
+    if whole is not None:
+        return whole if isinstance(whole, dict) else {}
+    try:
+        out = _json_hr.loads(_row_get(row, "review_json") or "null") or {}
+    except (TypeError, ValueError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def store_history_review(conn, restaurant_id, review) -> tuple:
+    """(review_json headline, review_ref) to write for `review`."""
+    import json as _json_sr
+    import schedule_versions as _sv_sr
+    if not review:
+        return None, None
+    return _json_sr.dumps(_sv_sr.review_headline(review), default=str), \
+        _sv_sr.store_detail(conn, restaurant_id, review)
+
+
 def _ensure_history_columns(conn):
     """Columns added to schedule_history after it first shipped.
 
@@ -11913,7 +11976,8 @@ def _ensure_history_columns(conn):
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
                        ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL"),
-                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL"), ("published_csv", "TEXT")):
+                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL"), ("published_csv", "TEXT"),
+                       ("quality_ref", "TEXT"), ("review_ref", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -12054,15 +12118,19 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
         d["summary"] = _json_sh.loads(d.pop("summary_json") or "[]")
     except Exception:
         d["summary"] = []
+    # The whole evaluation and review, from their stored detail (SCALE-13).
+    conn = get_conn(db_path)
     try:
-        d["quality"] = _json_sh.loads(d.pop("quality_json", None) or "null")
+        d["quality"] = history_quality(conn, d) or None
+        d["review"] = history_review(conn, d) or None
+    finally:
+        conn.close()
+    for col in ("quality_json", "quality_ref", "review_json", "review_ref"):
+        d.pop(col, None)
+    try:
+        d["weather_forecast"] = _json_sh.loads(d.pop("weather_json", None) or "null")
     except Exception:
-        d["quality"] = None
-    for col, key in (("review_json", "review"), ("weather_json", "weather_forecast")):
-        try:
-            d[key] = _json_sh.loads(d.pop(col, None) or "null")
-        except Exception:
-            d[key] = None
+        d["weather_forecast"] = None
     return d
 
 
@@ -12079,24 +12147,22 @@ def get_published_week_csv(history_id: int, restaurant_id: int, with_stations: b
     # never reaches staff before Send. A week that never went out reads as
     # its working copy (the callers only ever ask for live weeks).
     cols = ("id, week_start, week_end, COALESCE(published_csv, schedule_csv) AS schedule_csv, published_at, "
-            "edited_at" + (", review_json" if with_stations else ""))
+            "edited_at" + (", review_json, review_ref" if with_stations else ""))
     conn = get_conn(db_path)
     try:
+        _ensure_history_columns(conn)
         row = conn.execute(f"SELECT {cols} FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (history_id, restaurant_id)).fetchone()
+        d = dict(row) if row else None
+        if d is not None and with_stations:
+            review = history_review(conn, d)
+            d.pop("review_json", None)
+            d.pop("review_ref", None)
+            d["stations"] = review.get("stations")
     except Exception:
-        row = None
+        d = None
     finally:
         conn.close()
-    if not row:
-        return None
-    d = dict(row)
-    if with_stations:
-        try:
-            review = _json_pw.loads(d.pop("review_json", None) or "null") or {}
-        except Exception:
-            review = {}
-        d["stations"] = review.get("stations") if isinstance(review, dict) else None
     return d
 
 

@@ -5403,12 +5403,15 @@ def schedule_generations(limit=20, db_path=None):
     conn = get_conn(db_path)
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
-        want = [c for c in ("stage_seconds_json", "total_seconds", "review_json") if c in cols]
+        want = [c for c in ("stage_seconds_json", "total_seconds", "review_json", "review_ref") if c in cols]
         rows = conn.execute(
             "SELECT h.id, h.restaurant_id, h.week_start, h.generated_at, h.hours_scheduled, h.hours_budget"
             + "".join(", h." + c for c in want)
             + ", r.name AS restaurant FROM schedule_history h LEFT JOIN restaurants r ON r.id = h.restaurant_id "
             "ORDER BY h.id DESC LIMIT ?", (max(1, min(100, int(limit or 20))),)).fetchall()
+        # The whole review of each (stored once, SCALE-13).
+        import models as _m_rv
+        reviews = {r["id"]: _m_rv.history_review(conn, r) for r in rows}
     finally:
         conn.close()
 
@@ -5419,7 +5422,7 @@ def schedule_generations(limit=20, db_path=None):
             return {}
     for r in rows:
         d = dict(r)
-        review = _load(d.get("review_json")) if "review_json" in d else {}
+        review = reviews.get(d["id"]) or {}
         repair = review.get("repair") or {}
         out["weeks"].append({
             "id": d["id"], "restaurant_id": d["restaurant_id"], "restaurant": d.get("restaurant"),

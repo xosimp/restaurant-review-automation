@@ -663,3 +663,77 @@ def test_the_shadow_on_postgres_matches_content_and_catches_a_change(db_path, sc
         assert bad["revisions"] == (1, 1) and not bad["ok"] and bad["content"]["mismatched"]
     finally:
         target.close()
+
+
+# ── a week's stored detail (SCALE-13, SCALE-14) ─────────────────────────────
+
+def _big_quality(people=60):
+    return {"checked": True, "score": 74, "band": "good", "confidence": {"level": "medium", "reasons": ["x"]},
+            "weaknesses": ["Saturday close is thin"], "strengths": ["Friday covered"], "recommendations": [],
+            "week_dimensions": [{"key": "coverage", "score": 80}],
+            "shifts": [{"day": d, "daypart": p, "scored": True, "score": 70,
+                        "dimensions": [{"key": f"k{i}", "score": 70, "why": f"w{d}{p}{i}" * 30} for i in range(11)],
+                        "people": [{"name": f"P{n}", "note": f"n{n}" * 15} for n in range(people // 4)]}
+                       for d in range(7) for p in ("am", "pm", "late")]}
+
+
+def _big_review():
+    return {"hard": 0, "soft": 3, "ok": True, "inputs_missing": [], "stations": {"Mon": {"bar": "Ana"}},
+            "unmet": [{"kind": "ask", "date": "2026-10-19"}], "soft_requirements": [{"key": "k", "applied": True}],
+            "assignment_reasons": [{"shift_id": f"{i:032x}", "text": f"reason {i} " * 20} for i in range(300)]}
+
+
+def test_a_draft_keeps_headlines_inline_and_its_whole_detail_once(db_path, monkeypatch):
+    import json as _json
+    import ops
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Bytes Co", owner_email="b@x.com"), db_path=db_path)
+    q, rv = _big_quality(), _big_review()
+    whole = len(_json.dumps(q)) + len(_json.dumps(rv))
+    hid = models.save_schedule_history(rid, "2026-10-19", "2026-10-25", 300, 320, 28, "date,employee\n", [],
+                                       quality=q, review=rv, db_path=db_path)
+    conn = models.get_conn(db_path)
+    try:
+        row = conn.execute("SELECT * FROM schedule_history WHERE id=?", (hid,)).fetchone()
+        inline = len(row["quality_json"] or "") + len(row["review_json"] or "")
+        assert row["quality_ref"] and row["review_ref"]
+        assert inline < whole / 20                                          # the headlines only
+        assert models.history_quality(conn, row) == _json.loads(_json.dumps(q, sort_keys=True))
+        assert models.history_review(conn, row)["assignment_reasons"] == rv["assignment_reasons"]
+        stored = conn.execute("SELECT COALESCE(SUM(length(body)), 0) FROM quality_blobs WHERE restaurant_id=?",
+                              (rid,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert stored < whole / 3                                               # compressed
+    full = models.get_schedule_history_detail(hid, rid, db_path=db_path)
+    assert full["quality"]["shifts"] and full["review"]["unmet"] and "quality_ref" not in full
+    assert models.get_published_week_csv(hid, rid, with_stations=True, db_path=db_path)["stations"] == rv["stations"]
+    per = ops.storage_per_week(db_path)
+    assert per["weeks"] == 1 and per["total_bytes"] < whole / 2
+
+
+def test_an_old_draft_is_compacted_and_its_detail_survives_collection(db_path, monkeypatch):
+    import json as _json
+    import ops
+    import time as _t
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Old Co", owner_email="o@x.com"), db_path=db_path)
+    q, rv = _big_quality(20), _big_review()
+    conn = models.get_conn(db_path)
+    try:
+        # As a draft was written before 10/14/26: both whole, inline.
+        hid = conn.execute("INSERT INTO schedule_history (restaurant_id, week_start, week_end, schedule_csv, "
+                           "quality_json, review_json) VALUES (?, '2026-09-07', '2026-09-13', '', ?, ?)",
+                           (rid, _json.dumps(q), _json.dumps(rv))).lastrowid
+        conn.commit()
+        assert ops._compact_history_detail(conn, _t.monotonic() + 30) == 1
+        assert ops._compact_history_detail(conn, _t.monotonic() + 30) == 0          # resumable: done is done
+        row = conn.execute("SELECT * FROM schedule_history WHERE id=?", (hid,)).fetchone()
+        assert row["quality_ref"] and row["review_ref"] and len(row["quality_json"]) < 2000
+        conn.execute("UPDATE quality_blobs SET created_at = datetime('now', '-2 hours')")
+        conn.commit()
+        ops._gc_quality_blobs(conn, _t.monotonic() + 30)                           # a draft names both
+        assert models.history_quality(conn, row)["shifts"] == q["shifts"]
+        assert models.history_review(conn, row)["unmet"] == rv["unmet"]
+    finally:
+        conn.close()

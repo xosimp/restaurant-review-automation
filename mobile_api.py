@@ -8747,12 +8747,10 @@ def mobile_score_schedule(current_user):
                 # lines, the trims, the manager stretches nobody could cover,
                 # the rules it could not check and the budget line vanished.
                 if review is not None and violations is not None:
-                    _was = conn2.execute("SELECT review_json, hours_budget FROM schedule_history "
+                    _was = conn2.execute("SELECT review_json, review_ref, hours_budget FROM schedule_history "
                                          "WHERE id=? AND restaurant_id=?", (hid, rid)).fetchone()
-                    try:
-                        _saved_rv = json.loads((_was["review_json"] if _was else None) or "null") or {}
-                    except ValueError:
-                        _saved_rv = {}
+                    # The whole saved review (stored once, SCALE-13).
+                    _saved_rv = _models_mod.history_review(conn2, _was) if _was else {}
                     from schedule_engine import refresh_review as _refresh_rv
                     review = _refresh_rv(_saved_rv, violations, rows, inputs.get("constraints"),
                                          hours_budget=(_was["hours_budget"] if _was else None),
@@ -8760,8 +8758,10 @@ def mobile_score_schedule(current_user):
                 if review is not None:
                     # A sweep that could not run leaves the review as it was,
                     # never wiped.
-                    conn2.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
-                                  (json.dumps(review, default=str), hid, rid))
+                    _rv_head, _rv_ref = _models_mod.store_history_review(
+                        conn2, rid, json.loads(json.dumps(review, default=str)))
+                    conn2.execute("UPDATE schedule_history SET review_json=?, review_ref=? WHERE id=? AND restaurant_id=?",
+                                  (_rv_head, _rv_ref, hid, rid))
                 conn2.commit()
                 saved = hid
             except _sv.StaleVersion:

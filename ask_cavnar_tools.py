@@ -199,7 +199,12 @@ def _read_schedule(restaurant_id):
         from models import newest_draft as _newest_draft
         row = _newest_draft(conn, restaurant_id,
                             columns="id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, "
-                                    "hours_budget, schedule_csv, quality_json, edited_at")
+                                    "hours_budget, schedule_csv, quality_json, quality_ref, edited_at")
+        if row:
+            # The whole evaluation (its shifts), stored once (SCALE-13).
+            import models as _m_ask
+            row = dict(row)
+            row["quality"] = _m_ask.history_quality(conn, row)
     finally:
         conn.close()
     if not row:
@@ -235,11 +240,7 @@ def _read_schedule(restaurant_id):
     # why got a worse answer here than the panel had already given them.
     # Trimmed to the verdict and the problems — the full evaluation carries
     # eleven dimensions per shift and would crowd out everything else.
-    try:
-        import json as _j
-        q = _j.loads(row["quality_json"]) if row["quality_json"] else None
-    except Exception:
-        q = None
+    q = row.get("quality") or None
     if q and q.get("checked"):
         out["quality"] = {
             "score": q.get("score"), "band": q.get("band"),

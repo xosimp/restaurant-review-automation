@@ -113,8 +113,14 @@ def test_what_is_never_thinned(kind):
             _x("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart) VALUES (?,?,?,?)",
                (rid, hid, "2026-08-01", "dinner"))
     ops.prune_ledgers()
-    row = _one("SELECT quality_json, detail_thinned_at FROM schedule_history WHERE id=?", (hid,))
-    assert row["detail_thinned_at"] is None and "shifts" in json.loads(row["quality_json"])
+    row = _one("SELECT quality_json, quality_ref, detail_thinned_at FROM schedule_history WHERE id=?", (hid,))
+    # Kept whole — stored once by reference since 10/14/26 (SCALE-13).
+    c = models.get_conn()
+    try:
+        whole = models.history_quality(c, row)
+    finally:
+        c.close()
+    assert row["detail_thinned_at"] is None and "shifts" in whole
 
 
 def _version(rid, hid, version, reason, days_ago):
@@ -148,8 +154,9 @@ def test_old_intermediate_versions_are_thinned_and_the_rest_kept_whole():
         assert ("shifts" in q) is whole, vid
         assert q["score"] == 71
         assert "shifts" not in json.loads(row["quality_json"])
-    # One stored copy for the three identical evaluations.
-    assert _one("SELECT COUNT(*) AS n FROM quality_blobs WHERE restaurant_id=?", (rid,))["n"] == 1
+    # One stored copy for the identical evaluations (the versions' and the
+    # draft's, blind re-audit SCALE-13) and one for the draft's review.
+    assert _one("SELECT COUNT(*) AS n FROM quality_blobs WHERE restaurant_id=?", (rid,))["n"] == 2
     listed = schedule_versions.list_versions(rid, hid)
     assert [v["score"] for v in listed] == [71, 71, 71, 71], "the version list keeps its scores"
 
