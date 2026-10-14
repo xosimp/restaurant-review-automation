@@ -85,6 +85,8 @@ def init_schedule_shifts(db_path=None):
             starts_at      TEXT,
             ends_at        TEXT,
             hours          REAL,
+            scheduled_hours TEXT,
+            notes          TEXT,
             locked         INTEGER NOT NULL DEFAULT 0,
             week_start     TEXT,
             UNIQUE(history_id, copy, shift_id)
@@ -130,11 +132,12 @@ def shift_values(row) -> dict:
             "employee_key": _fold(name), "role": (row.get("role") or "").strip() or None,
             "date": str(row.get("date") or "")[:10], "shift_start": (row.get("shift_start") or "").strip(),
             "shift_end": (row.get("shift_end") or "").strip(), "starts_at": _stamp(s), "ends_at": _stamp(e),
-            "hours": hours, "locked": 1 if _srows.is_locked(row) else 0}
+            "hours": hours, "scheduled_hours": (row.get("scheduled_hours") or "").strip(),
+            "notes": (row.get("notes") or "").strip(), "locked": 1 if _srows.is_locked(row) else 0}
 
 
 _COLS = ("shift_id", "person_id", "employee_name", "employee_key", "role", "date", "shift_start", "shift_end",
-         "starts_at", "ends_at", "hours", "locked")
+         "starts_at", "ends_at", "hours", "scheduled_hours", "notes", "locked")
 
 
 def source_sig(row) -> str:
@@ -266,9 +269,15 @@ def _as_row(r) -> dict:
     """A projected shift in the schedule_rows shape (plus its projection
     fields), so a reader moved onto the table reads what it read before."""
     d = dict(r)
-    return {"date": d["date"], "day": "", "employee": d["employee_name"], "role": d.get("role") or "",
+    try:
+        from datetime import date as _date
+        wd = _date.fromisoformat(d["date"]).strftime("%A")
+    except (TypeError, ValueError):
+        wd = ""
+    return {"date": d["date"], "day": wd, "employee": d["employee_name"], "role": d.get("role") or "",
             "shift_start": d.get("shift_start") or "", "shift_end": d.get("shift_end") or "",
-            "scheduled_hours": "" if d.get("hours") is None else f"{d['hours']:g}", "notes": "",
+            "scheduled_hours": d.get("scheduled_hours") if d.get("scheduled_hours") is not None
+            else ("" if d.get("hours") is None else f"{d['hours']:g}"), "notes": d.get("notes") or "",
             "shift_id": d["shift_id"], "person_id": "" if d.get("person_id") is None else str(d["person_id"]),
             "locked": "1" if d.get("locked") else "", "history_id": d["history_id"], "copy": d["copy"],
             "starts_at": d.get("starts_at"), "ends_at": d.get("ends_at"), "hours": d.get("hours")}

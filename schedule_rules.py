@@ -1386,6 +1386,11 @@ class Constraints:
     # not (D-8): [{"source", "name", "detail"}] — the review names each,
     # so a fact typed under a spelling nobody goes by is never silent.
     unmatched: list = field(default_factory=list)
+    # What the shift history says about who is who (people.identity_concerns,
+    # schedule re-audit 10/11/26 STRESS-7/8): one name worn by two people,
+    # one person under two names — said in the review; a handoff pair is
+    # also joined in `linked`.
+    identity_concerns: list = field(default_factory=list)
     # Every role a person can be scheduled in (F1, D-15): their roster role,
     # the roles they hold (held_roles) and every role they have worked here.
     # {lower: set(role lower)}; holds() reads it by family. A role written
@@ -2693,6 +2698,40 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
         c.linked = dict(idx.get("linked") or {})
     except Exception as exc:
         _input_problem(c, "who is who on the roster", exc)
+    # What the shift history itself says about who is who (schedule
+    # re-audit 10/11/26 STRESS-7, STRESS-8), read every build — not only
+    # once a question was filed: a name that took over another's role and
+    # days is one person to the sweep (hours, overtime, rest, days in a row)
+    # until the owner answers; one name worn by two people is said. Both
+    # reach the review (identity_concerns).
+    try:
+        import people
+        from models import _cached_shifts
+        _since = (min(c.week_dates) if c.week_dates else "")
+        try:
+            _since = (datetime.strptime(_since, "%Y-%m-%d") - timedelta(days=120)).strftime("%Y-%m-%d")
+        except ValueError:
+            _since = ""
+        found = people.identity_concerns([s for s in (_cached_shifts(restaurant_id) or [])
+                                          if str(s.get("date") or "")[:10] >= _since])
+    except Exception as exc:
+        found = []
+        print(f"[schedule_rules] identity concerns unread rid={restaurant_id}: {exc!r}")
+    c.identity_concerns = []
+    for f in found:
+        if f["kind"] == "handoff":
+            a, b = c.key(f["old"]), c.key(f["new"])
+            if a not in c.display or b not in c.display:
+                continue                       # one of them is not on the roster any more
+            ra, rb = c.linked.get(a, a), c.linked.get(b, b)
+            rep = min(ra, rb)
+            for k, v in list(c.linked.items()):
+                if v in (ra, rb):
+                    c.linked[k] = rep
+            c.linked[a] = c.linked[b] = c.linked[ra] = c.linked[rb] = rep
+        elif c.key(f["name"]) not in c.display:
+            continue
+        c.identity_concerns.append(f)
 
 
 def _file_under(c: "Constraints", source: str, name, detail: str = "") -> str:

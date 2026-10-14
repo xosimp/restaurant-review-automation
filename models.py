@@ -4823,6 +4823,12 @@ def init_db(db_path: str = DB_PATH):
         _ss_boot.backfill(db_path=db_path)
     except Exception as e:
         print(f"[schedule shifts] projection backfill skipped: {e}")
+    # Requests from before they kept their shift's id, matched once (ARCH-6).
+    try:
+        import shift_requests as _srq_boot
+        _srq_boot.backfill_shift_ids(db_path=db_path)
+    except Exception as e:
+        print(f"[shift requests] shift-id backfill skipped: {e}")
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).

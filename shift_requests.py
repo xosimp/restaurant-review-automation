@@ -1704,6 +1704,79 @@ def _cover_holds(rows, req, spellings_of=None) -> bool:
     return _leg(req.get("shift_id"), req.get("date"), req.get("shift_start"), req.get("replacement_name"))
 
 
+def backfill_shift_ids(db_path=None, max_seconds: float = 10.0) -> int:
+    """At boot: every live or covered request from before requests kept
+    their shift's id (schedule re-audit 10/11/26 ARCH-6) is matched ONCE to
+    its shift on the live week by (name, date, start) — a covered one by
+    its taker, who holds the shift now — and keeps the shift's id (and a
+    swap its colleague's) from then on. Bounded; resumable by its own
+    filter (a row matched is never read again); one that matches nothing
+    keeps the old lookup. Returns rows matched."""
+    import time as _t
+    from schedule_versions import rows_from_csv
+    stop = _t.monotonic() + float(max_seconds)
+    conn = get_conn(db_path)
+    try:
+        try:
+            todo = [dict(r) for r in conn.execute(
+                "SELECT * FROM shift_change_requests WHERE (shift_id IS NULL OR shift_id='') AND employee_name<>'' "
+                "AND status IN ('pending','approved','open','covered') ORDER BY id DESC LIMIT 5000").fetchall()]
+        except Exception as e:
+            if "no such" in str(e).lower():
+                return 0
+            raise
+    finally:
+        conn.close()
+    n = 0
+    weeks = {}
+    for req in todo:
+        if _t.monotonic() > stop:
+            break
+        rid = req["restaurant_id"]
+        conn = get_conn(db_path)
+        try:
+            key = (rid, req["date"])
+            if key not in weeks:
+                hist = _live_hist(conn, rid, req)
+                weeks[key] = rows_from_csv(hist["schedule_csv"]) if hist else []
+            rows = weeks[key]
+            covered = req["status"] == "covered"
+            holder = (req.get("target_name") if (req.get("kind") or "") == "swap" else req.get("replacement_name")) \
+                if covered else req["employee_name"]
+            i = _find(rows, holder, req["date"], req["shift_start"])
+            if i is None:
+                continue
+            sid, pid = _id_of(rows[i])
+            sets, args = ["shift_id=?"], [sid]
+            if not covered and pid and not req.get("person_id"):
+                sets.append("person_id=?")
+                args.append(pid)
+            if (req.get("kind") or "") == "swap" and not req.get("target_shift_id"):
+                trows = rows if req.get("target_date") == req["date"] else rows_from_csv(
+                    (_live_hist(conn, rid, {"date": req.get("target_date"), "history_id": req["history_id"]})
+                     or {"schedule_csv": ""})["schedule_csv"])
+                j = _find(trows, req["employee_name"] if covered else req.get("target_name"), req.get("target_date"),
+                          req.get("target_start"))
+                if j is not None:
+                    sets.append("target_shift_id=?")
+                    args.append(_id_of(trows[j])[0])
+            if not sid:
+                continue
+            try:
+                n += conn.execute(f"UPDATE shift_change_requests SET {', '.join(sets)} WHERE id=? "
+                                  "AND (shift_id IS NULL OR shift_id='')", (*args, req["id"])).rowcount
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                if "UNIQUE" not in str(e).upper():
+                    raise
+        except Exception as e:
+            print(f"[shift_requests] shift id not matched for request {req.get('id')}: {e!r}")
+        finally:
+            conn.close()
+    return n
+
+
 def reconcile(restaurant_id, db_path=DB_PATH) -> int:
     """follow_week over every live week with a live request, in its own
     write transaction, then flush_notices — the hourly watch's safety net

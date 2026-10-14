@@ -1045,7 +1045,10 @@ MEMBERSHIP_STORES = (
 POS_SOURCES = ("rpower", "rpower_payroll", "toast", "square", "clover")
 SOURCES = POS_SOURCES + ("upload", "manual", "portal", "merge", "rename", "backfill")
 
-QUESTION_KINDS = ("same_person", "same_name")
+# two_people: ONE record whose history reads as two humans (one spelling,
+# overlapping shifts in different roles on the same days) — asked as "split
+# them?" (person_a == person_b; schedule re-audit 10/11/26 STRESS-7).
+QUESTION_KINDS = ("same_person", "same_name", "two_people")
 
 
 class PeopleError(ValueError):
@@ -2905,6 +2908,225 @@ def _after_change(restaurant_id, kind, before, after, actor_user_id, source, use
 
 # ── the owner's questions ───────────────────────────────────────────────────
 
+# ── identity the history itself contradicts (schedule re-audit 10/11/26) ────
+#
+# A name was the identity of a person throughout the schedule: two different
+# people with one spelling and no POS id were merged silently (STRESS-7: two
+# "Maria Garcia"s — 58h of history scheduled as one 22h person), and a POS
+# rename with no id split one human in two (STRESS-8: "Jon Smith" until
+# Tuesday, "Jonathan Smith" from Wednesday — 46h for one person, no
+# overtime line). The history carries the evidence: one person cannot work
+# two overlapping shifts in different roles on the same day, and a name that
+# starts the week another name with the same role and days stops is likely
+# the same person. identity_concerns reads it (pure); raise_identity_questions
+# asks the owner (person_questions); the schedule's rules read the handoffs
+# as one person until answered (schedule_rules) and the review says so.
+
+SAME_NAME_MIN_DAYS = 2          # days of overlapping, different-role shifts under one name
+HANDOFF_MAX_GAP_DAYS = 14       # an old name's last shift to the new name's first
+HANDOFF_MIN_OLD_SHIFTS = 4      # the old name had a pattern to hand off
+HANDOFF_MIN_DAY_OVERLAP = 0.6   # Jaccard of the two names' weekdays (when the names are not alike)
+HANDOFF_RECENT_DAYS = 56        # only a handoff inside the history the draft reads
+
+
+def _span_minutes(r):
+    from schedule_time import span
+    return span(r)
+
+
+def identity_concerns(shifts) -> list:
+    """What a shift history says about who is who, pure:
+    [{"kind": "two_people", "name", "roles", "dates", "text"} |
+     {"kind": "handoff", "old", "new", "role", "old_last", "new_first", "why", "text"}].
+    `shifts` are history rows (date, employee, role, shift_start, shift_end)."""
+    from datetime import date as _d, timedelta as _td
+    from time_utils import mdy
+    by_name, display = {}, {}
+    for s in shifts or []:
+        n = " ".join(str(s.get("employee") or "").split())
+        d = str(s.get("date") or "")[:10]
+        if not n or len(d) != 10:
+            continue
+        k = fold(n)
+        by_name.setdefault(k, []).append(s)
+        display.setdefault(k, n)
+    out = []
+    # One name, two humans: overlapping shifts in different roles, same day.
+    for k, rows in by_name.items():
+        per_day = {}
+        for r in rows:
+            per_day.setdefault(str(r.get("date"))[:10], []).append(r)
+        dates, roles = set(), set()
+        for day, rs in per_day.items():
+            for i in range(len(rs)):
+                for j in range(i + 1, len(rs)):
+                    a, b = rs[i], rs[j]
+                    ra, rb = str(a.get("role") or "").strip(), str(b.get("role") or "").strip()
+                    if not ra or not rb or ra.casefold() == rb.casefold():
+                        continue
+                    sa, sb = _span_minutes(a), _span_minutes(b)
+                    if sa and sb and sa[0] < sb[1] and sb[0] < sa[1]:
+                        dates.add(day)
+                        roles |= {ra, rb}
+        if len(dates) >= SAME_NAME_MIN_DAYS:
+            rl = sorted(roles, key=str.casefold)
+            out.append({"kind": "two_people", "name": display[k], "roles": rl, "dates": sorted(dates),
+                        "text": (f"Two people may share the name {display[k]}: on {len(dates)} days they worked "
+                                 f"overlapping {' and '.join(rl)} shifts (last {mdy(max(dates))}). Until you split "
+                                 f"them in Team, Cavnar AI schedules them as one person.")})
+    # One human, two names: a name that starts as another with the same
+    # role (and its days, or a like spelling) stops.
+    stats = {}
+    for k, rows in by_name.items():
+        ds = sorted(str(r.get("date"))[:10] for r in rows)
+        roles = [str(r.get("role") or "").strip().casefold() for r in rows if str(r.get("role") or "").strip()]
+        try:
+            wd = {_d.fromisoformat(x).weekday() for x in ds}
+        except ValueError:
+            continue
+        stats[k] = {"first": ds[0], "last": ds[-1], "n": len(ds), "role": max(set(roles), key=roles.count)
+                    if roles else "", "days": wd}
+    newest = max((s["last"] for s in stats.values()), default="")
+    try:
+        horizon = (_d.fromisoformat(newest) - _td(days=HANDOFF_RECENT_DAYS)).isoformat()
+    except ValueError:
+        horizon = ""
+    for new, sn in stats.items():
+        best = None
+        for old, so in stats.items():
+            if old == new or so["n"] < HANDOFF_MIN_OLD_SHIFTS or so["last"] < horizon:
+                continue
+            if not (so["last"] < sn["first"]) or not so["role"] or so["role"] != sn["role"]:
+                continue
+            gap = (_d.fromisoformat(sn["first"]) - _d.fromisoformat(so["last"])).days
+            if gap > HANDOFF_MAX_GAP_DAYS:
+                continue
+            why = similar(display[old], display[new])
+            jac = len(so["days"] & sn["days"]) / max(1, len(so["days"] | sn["days"]))
+            if not why and jac < HANDOFF_MIN_DAY_OVERLAP:
+                continue
+            why = why or "the same role and days"
+            if best is None or gap < best[0]:
+                best = (gap, old, why)
+        if best:
+            _gap, old, why = best
+            out.append({"kind": "handoff", "old": display[old], "new": display[new], "role": sn["role"],
+                        "old_last": stats[old]["last"], "new_first": sn["first"], "why": why,
+                        "text": (f"{display[new]} may be {display[old]} under a new name ({why}): "
+                                 f"{display[old]}'s shifts stop {mdy(stats[old]['last'])} and {display[new]}'s "
+                                 f"start {mdy(sn['first'])}. Until you answer in Team, Cavnar AI counts them as one "
+                                 f"person for hours, overtime and rest.")})
+    return out
+
+
+def raise_identity_questions(restaurant_id, shifts=None, db_path=None) -> int:
+    """Ask the owner about every identity_concerns finding not asked before
+    (person_questions: a handoff is `same_person` — which the rules then read
+    as one person until answered — and one name worn by two is
+    `two_people`). People the history names but identity never met are made
+    first (person_id_for). Never raises; returns questions opened."""
+    try:
+        if shifts is None:
+            from datetime import date as _d, timedelta as _td
+            import shift_facts
+            shifts = shift_facts.person_rows(restaurant_id, since=(_d.today() - _td(days=120)).isoformat(),
+                                             db_path=db_path)
+        found = identity_concerns(shifts)
+        if not found:
+            return 0
+        n = 0
+        conn = _conn(db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            idx = _Index(conn, restaurant_id)
+            for f in found:
+                if f["kind"] == "handoff":
+                    a, b = idx.for_key(_nk(f["new"])), idx.for_key(_nk(f["old"]))
+                    if len(a) != 1 or len(b) != 1:
+                        continue
+                    pa, pb = next(iter(a)), next(iter(b))
+                    if pa == pb:
+                        continue
+                    before = conn.total_changes
+                    _ask(conn, idx, pa, pb, "same_person", f["text"][:300],
+                         {k: f[k] for k in ("old", "new", "role", "old_last", "new_first", "why")})
+                    n += conn.total_changes - before
+                else:
+                    a = idx.for_key(_nk(f["name"]))
+                    if len(a) != 1:
+                        continue
+                    pid = next(iter(a))
+                    cur = conn.execute("INSERT OR IGNORE INTO person_questions (restaurant_id, person_a, person_b, "
+                                       "kind, reason, evidence_json) VALUES (?,?,?,?,?,?)",
+                                       (restaurant_id, pid, pid, "two_people", f["text"][:300],
+                                        _json.dumps({"roles": f["roles"], "dates": f["dates"][-10:]})))
+                    n += cur.rowcount
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return n
+    except Exception as e:
+        _log.warning("[people] identity questions not raised rid=%s: %s", restaurant_id, e)
+        return 0
+
+
+def split_by_role(restaurant_id, person_id, role, db_path=None) -> dict:
+    """The owner's "two people": the shifts `person_id`'s name worked in
+    `role` become a person of their own, "<name> (<role>)" until renamed —
+    in the shift history (the file and shift_facts), so the roster, the
+    rules and every learner read two people from then on (STRESS-7).
+    Stores keyed by the name (settings, availability, ratings) stay with
+    the first; the owner moves what belongs to the second in Team. Returns
+    {person_id, name, moved}."""
+    conn = _conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        idx = _Index(conn, restaurant_id)
+        pid = idx.live(int(person_id))
+        if pid is None:
+            raise PeopleError("That person is gone.")
+        old = idx.people[pid]["display_name"]
+        new_name = f"{old} ({role})"
+        while idx.for_key(_nk(new_name)):
+            new_name += "'"
+        new_pid = _create_person(conn, idx, new_name, "split")
+        keys = set(idx.keys_of(pid)) | {_nk(old)}
+        moved = 0
+        row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        text = (row["shifts_csv"] if row else "") or ""
+        if text.strip():
+            import csv as _csv
+            import io as _io
+            rows = list(_csv.DictReader(_io.StringIO(text)))
+            for r in rows:
+                if _nk(r.get("employee")) in keys and str(r.get("role") or "").strip().casefold() == role.casefold():
+                    r["employee"] = new_name
+                    moved += 1
+            if moved:
+                _write_shifts_csv(conn, restaurant_id, rows)
+        if "shift_facts" in _tables(conn):
+            cur = conn.execute(
+                "UPDATE shift_facts SET employee_name=?, employee_key=?, person_id=? WHERE restaurant_id=? "
+                "AND employee_key IN (%s) AND lower(trim(COALESCE(role,'')))=?" % ",".join("?" * len(keys)),
+                (new_name, _nk(new_name), new_pid, restaurant_id, *sorted(keys), role.strip().lower()))
+            moved = max(moved, cur.rowcount or 0)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    try:
+        import models as _m
+        _m._invalidate_shift_reads(restaurant_id)
+    except Exception:
+        pass
+    return {"person_id": new_pid, "name": new_name, "moved": moved}
+
+
 def open_questions(restaurant_id, db_path=None) -> list:
     """The identity questions waiting on the owner: [{id, kind, reason,
     a: {person_id, name, key, shifts, rated, sources}, b: {...}, asked}] —
@@ -2936,6 +3158,19 @@ def open_questions(restaurant_id, db_path=None) -> list:
     out = []
     for q in rows:
         a, b = _side(q["person_a"]), _side(q["person_b"])
+        if q["kind"] == "two_people":
+            # One record, two humans? Answered "split" (different) or "one
+            # person" (same) — STRESS-7.
+            if not a["person_id"]:
+                continue
+            try:
+                ev = _json.loads(q["evidence_json"] or "{}")
+            except ValueError:
+                ev = {}
+            out.append({"id": q["id"], "kind": q["kind"], "reason": q["reason"], "a": a, "b": a,
+                        "roles": ev.get("roles") or [], "dates": ev.get("dates") or [],
+                        "asked": mdy(q["created_at"]) if q["created_at"] else None})
+            continue
         if not a["person_id"] or not b["person_id"] or a["person_id"] == b["person_id"]:
             continue
         out.append({"id": q["id"], "kind": q["kind"], "reason": q["reason"], "a": a, "b": b,
@@ -2957,6 +3192,26 @@ def answer_question(restaurant_id, question_id, same: bool, user=None, keep=None
             raise PeopleError("That question was already answered.")
         idx = _Index(conn, restaurant_id)
         a, b = idx.live(q["person_a"]), idx.live(q["person_b"])
+        if q["kind"] == "two_people":
+            # "Same" — one person who works two roles: closed, never asked
+            # again. "Different" — two people: the second role's history
+            # becomes its own person (split_by_role, STRESS-7).
+            try:
+                ev = _json.loads(q["evidence_json"] or "{}")
+            except ValueError:
+                ev = {}
+            status = "same" if same else "different"
+            conn.execute("UPDATE person_questions SET status=?, answered_at=datetime('now'), answered_by=?, "
+                         "answered_authority=? WHERE id=?", (status, uid, answer_authority(user), q["id"]))
+            conn.commit()
+            if same:
+                return {"ok": True, "status": "same"}
+            roles = list(ev.get("roles") or [])
+            split_role = keep if keep in roles else (roles[-1] if roles else None)
+            if not split_role:
+                return {"ok": True, "status": "different"}
+            got = split_by_role(restaurant_id, a, split_role, db_path=db_path)
+            return {"ok": True, "status": "split", **got}
         if not same:
             conn.execute("UPDATE person_questions SET status='different', answered_at=datetime('now'), answered_by=?, "
                          "answered_authority=? WHERE id=?", (uid, answer_authority(user), q["id"]))
@@ -3137,6 +3392,8 @@ def backfill_people(db_path=None, max_seconds=20.0) -> int:
             src = _history_source(rid, db_path)
             resolve_rows(rid, rows, src, db_path=db_path)
             stamp_person_ids(rid, db_path=db_path)
+            # Who the history says is who (STRESS-7, STRESS-8).
+            raise_identity_questions(rid, shifts=rows, db_path=db_path)
             done += 1
         except Exception as e:
             _log.warning("[people] backfill skipped restaurant %s: %s", rid, e)
@@ -3330,7 +3587,7 @@ def remove_role(restaurant_id, name, role, db_path=None, user=None, record=True)
 def held_roles(restaurant_id, name=None, db_path=None, today=None) -> list:
     """[{name, role, since, primary, source}] in force (not removed, and its
     start date reached) — one person's, or everyone's."""
-    from datetime import date as _d
+    from datetime import date as _d, timedelta as _td
     day = (today or _d.today()).isoformat()
     conn = _conn(db_path)
     try:
