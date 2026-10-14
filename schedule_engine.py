@@ -3679,6 +3679,8 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
             # The solver-first draft's own account (RM-12, LOGIC-32): why each
             # person, what to relax, what it could not staff.
             merged["draft_source"]["solver"] = code_draft["solver"]
+        if code_draft.get("objective_need"):
+            merged["objective_need"] = code_draft["objective_need"]
         merged["generation_notes"].insert(0, code_draft["line"])
     # Dates the week leaves empty — closed, never traded, nobody able, not
     # written — are closed to every pass after this one, so no backstop
@@ -3841,6 +3843,142 @@ def _critic_scorer(facts, signals, weights):
     return score
 
 
+def manager_slots(plan, dates, c, history=None) -> tuple:
+    """(locked, flex, extra) — the manager plan's rows on `dates` split for
+    the solver-first draft (blind re-audit 10/11/26 ARCH-23: the plan was a
+    heuristic decided before, and pinned outside, the joint model):
+      locked  the owner's word, held exactly — a standing shift
+              (_plan_source "standing"), an owner-locked row, a standing
+              position (schedule_dedicated) — anything not the plan's own
+              choice;
+      flex    every other planned manager shift: a slot the solve staffs
+              with whichever manager it chooses (the planned one is its
+              hint), held by the manager tier per minute;
+      extra   candidates the solve may staff or leave, at no cost of their
+              own: a stretch the plan could not cover (the shortest shift
+              long, inside the day's window) — staffed only where it covers
+              minutes nobody else does — and each manager's own usual shift
+              (`history`, schedule_skeleton.usual_shifts) on a weekday they
+              usually work and the plan gave them nothing: the plan placed a
+              manager only where one added cover, so a 120-person week's
+              other managers sat at home (the schedule benchmark's starved
+              managers); the solve now weighs their usual week, their
+              minimum hours and the dollars like anybody else's.
+    """
+    import schedule_skeleton as _skel_m
+    want = set(dates or ())
+    locked, flex, extra = [], [], []
+    for r in (plan or {}).get("rows") or []:
+        if r.get("date") not in want:
+            continue
+        if r.get("_pinned", _skel_m.PLAN_SOURCE) == _skel_m.PLAN_SOURCE and r.get("_plan_source") != "standing" \
+                and not r.get("locked"):
+            flex.append(r)
+        else:
+            locked.append(r)
+    if c is None:
+        return locked, flex, extra
+    roles = [str(v).strip() for v in (getattr(c, "managers", None) or {}).values() if str(v or "").strip()]
+    role = max(set(roles), key=roles.count) if roles else "Manager"
+    min_len = _rules.min_shift_minutes(c)
+    for u in (plan or {}).get("uncovered") or []:
+        d = u.get("date")
+        if d not in want or u.get("start") is None or u.get("end") is None:
+            continue
+        w = ((plan or {}).get("windows") or {}).get(d) or {}
+        lo, hi = w.get("start", u["start"]), w.get("end", u["end"])
+        a, b = int(u["start"]), int(u["end"])
+        if b - a < min_len:
+            b = min(int(hi), a + min_len)
+            a = max(int(lo), b - min_len)
+        row = {"date": d, "day": _date_of(d).strftime("%A"), "employee": "", "role": role,
+               "shift_start": _rules._fmt_minutes(a % 1440), "shift_end": _rules._fmt_minutes(b % 1440),
+               "notes": f"{_skel_m.PLAN_NOTE} — covers {_date_of(d).strftime('%A')} {u.get('from')}–{u.get('to')}, "
+                        "a stretch the plan could not",
+               "_mgr_extra": True, "_plan_source": "solved",
+               "_pin_reason": f"covers {_date_of(d).strftime('%A')} {u.get('from')}–{u.get('to')}"}
+        row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(c))
+        extra.append(row)
+    if history:
+        closed = set(getattr(c, "closed_dates", None) or ())
+        mine = [k for k in (getattr(c, "managers", None) or {}) if not c.active or k in c.active]
+        usual = _skel_m.usual_shifts(history, mine, key_of=c.key)
+        display = {" ".join(str(n).split()).lower(): n for n in (c.roster_names or []) if n}
+        on = {(c.key(r.get("employee")), r.get("date")) for r in locked + flex}
+        windows = (plan or {}).get("windows") or {}
+        for k in sorted(usual):
+            name = display.get(k) or k.title()
+            for d in sorted(want):
+                if d in closed or (k, d) in on or d not in windows:
+                    continue
+                u = ((usual.get(k) or {}).get("days") or {}).get(_date_of(d).strftime("%A"))
+                if not u:
+                    continue
+                w = windows[d]
+                a, b = max(int(u["start"]), int(w.get("start", u["start"]))), min(int(u["end"]),
+                                                                                   int(w.get("end", u["end"])))
+                if b - a < min_len:
+                    continue
+                row = {"date": d, "day": _date_of(d).strftime("%A"), "employee": name,
+                       "role": u.get("role") or (c.managers or {}).get(k) or role,
+                       "shift_start": _rules._fmt_minutes(a % 1440), "shift_end": _rules._fmt_minutes(b % 1440),
+                       "notes": f"{_skel_m.PLAN_NOTE} — {name}'s usual {_date_of(d).strftime('%A')}",
+                       "_mgr_extra": True, "_plan_source": "usual",
+                       "_pin_reason": f"{name} usually works {_date_of(d).strftime('%A')}s ({u.get('weeks')} weeks "
+                                      "on file)"}
+                row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(c))
+                extra.append(row)
+    return locked, flex, extra
+
+
+def solved_manager_plan(plan, dates, locked, solved, flex) -> dict:
+    """The manager plan as the solve decided it (ARCH-23), in place: on
+    `dates` the plan's rows become the locked ones plus the manager shifts
+    the solve staffed — each re-pinned (PLAN_SOURCE) so no repair pass
+    shortens, re-times or re-assigns it, its note saying who was chosen
+    where that differs from the plan's first pick. A planned shift the
+    solve left empty is gone from the plan (its minutes are the sweep's
+    no_manager to say). Returns the account {"slots", "staffed", "changed",
+    "dropped", "added"}."""
+    import schedule_skeleton as _skel_m
+    if plan is None:
+        return {}
+    want = set(dates or ())
+    rows = []
+    changed = added = 0
+    for r in solved or []:
+        x = {k: v for k, v in dict(r).items() if k not in ("_mgr_plan", "_mgr_extra", "_open", "_s1")}
+        planned = (x.pop("_planned", None) or "").strip()
+        who = (x.get("employee") or "").strip()
+        x["_pinned"] = _skel_m.PLAN_SOURCE
+        x["_solved"] = True
+        x.setdefault("_plan_source", "solved")
+        if r.get("_mgr_extra"):
+            added += 1
+        if planned and planned.lower() != who.lower():
+            changed += 1
+            why = (f"{who} manages {x.get('day') or ''} {x.get('shift_start')}–{x.get('shift_end')} — chosen in "
+                   f"the solve with everybody's week in view (the plan's first pick was {planned})")
+            x["_pin_reason"] = why
+            x["notes"] = f"{_skel_m.PLAN_NOTE} — {why}"
+        elif not _skel_m.is_plan_note(x.get("notes")):
+            x["notes"] = f"{_skel_m.PLAN_NOTE} — {x.get('_pin_reason') or 'chosen in the solve'}"
+        rows.append(x)
+    staffed = {(r.get("date"), r.get("shift_start"), r.get("shift_end")) for r in solved or []
+               if not r.get("_mgr_extra")}
+    dropped = sum(1 for r in flex or [] if (r.get("date"), r.get("shift_start"), r.get("shift_end")) not in staffed)
+    plan["rows"] = [r for r in plan.get("rows") or [] if r.get("date") not in want] + list(locked or []) + rows
+    plan["rows"].sort(key=lambda r: (r.get("date") or "", (_rules._span(r) or (0, 0))[0], r.get("employee") or ""))
+    hours = {}
+    for r in _skel_m._plan_rows(plan["rows"]):
+        hours[r["employee"]] = round(hours.get(r["employee"], 0.0) + _rules.row_hours(r), 2)
+    plan["hours"] = hours
+    acct = {"slots": len(flex or []), "staffed": len(staffed), "changed": changed, "dropped": dropped,
+            "added": added}
+    plan["solved"] = acct
+    return acct
+
+
 def code_drafted(result) -> bool:
     """Whether a generation's result was drafted from a code source (the
     solver — the default — or carry_forward): every pass after it honours
@@ -3902,6 +4040,12 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
             # hours, rest and runs count toward each person's week).
             plan = [r for r in (fallback.get("plan_rows") or []) if r.get("date") in set(dates)] + \
                 [dict(r) for r in (kept or [])]
+            # The managers inside the solve (ARCH-23): the owner's word held,
+            # every other planned manager shift a slot the solve staffs,
+            # and the stretches the plan could not cover as candidates.
+            m_locked, m_flex, m_extra = [r for r in plan if r not in (kept or [])], [], []
+            if MANAGERS_IN_SOLVE and fallback.get("manager_plan") is not None:
+                m_locked, m_flex, m_extra = manager_slots(fallback["manager_plan"], dates, c, history=hist)
             roles = dict(fallback.get("roster_roles") or {})
             signals, weights = None, None
             try:
@@ -3913,8 +4057,20 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
             clock = current_clock()
             if clock is not None:
                 secs = max(1.0, min(secs, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
-            got = _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts,
-                                     fallback)
+            got = _solver_first_rows(rid, dates, facts, c, base, hist, m_locked + [dict(r) for r in (kept or [])],
+                                     signals, weights, roles, secs, shifts, fallback,
+                                     manager_slots=m_flex + m_extra)
+            if got is not None and got.get("rows") and (m_flex or m_extra):
+                # The managers the solve chose are the week's manager plan:
+                # re-pinned there, restored by the job like any planned row.
+                solved = [r for r in got["rows"] if r.get("_mgr_plan")]
+                got["rows"] = [r for r in got["rows"] if not r.get("_mgr_plan")]
+                acct = solved_manager_plan(fallback["manager_plan"], dates, m_locked, solved, m_flex)
+                got.setdefault("stats", {})["managers"] = dict((got.get("stats") or {}).get("managers") or {},
+                                                               **acct)
+                plan = [r for r in fallback["manager_plan"].get("rows") or [] if r.get("date") in set(dates)] + \
+                    [dict(r) for r in (kept or [])]
+                fallback["plan_rows"] = list(fallback["manager_plan"].get("rows") or [])
             if got is None or not got.get("rows"):
                 # The v0 code draft (requirement counts on the usual shift
                 # templates, people by the backtracking solver): what runs
@@ -3956,18 +4112,26 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
                                                         basis=basis)}
         if used == "solver" and solver_first:
             out["solver"] = solver_explain(solver_first)
+            # The demand Stage 1 shaped to: the one objective's need for
+            # these dates in every pass after the draft (LOGIC-6).
+            out["objective_need"] = solver_first.get("need") or {}
         return out
     except Exception as e:
         _soft_fail("code draft", e, rid)
         return None
 
 
+# The managers chosen inside the solver-first draft's solve (blind re-audit
+# 10/11/26 ARCH-23 — manager_slots): on by default; SCHEDULE_MANAGERS_IN_
+# SOLVE=0 pins the manager plan's rows as before (the rollback).
+MANAGERS_IN_SOLVE = str(os.getenv("SCHEDULE_MANAGERS_IN_SOLVE", "1")).strip() != "0"
 # How long the solver-first draft (schedule_cpsat.solver_draft: Stage 1
 # shapes, Stage 2 assignment) may take inside a generation.
 SOLVER_DRAFT_SECONDS = float(os.getenv("SCHEDULE_SOLVER_DRAFT_SECONDS", "25"))
 
 
-def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts, fallback):
+def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights, roles, secs, shifts, fallback,
+                       manager_slots=None):
     """The "solver" draft source, solver-first (scheduler audit 10/10/26
     LOGIC-24, RM-8, RM-11, RM-21): the week's shapes from the restaurant's
     own people-on-at-once curve (the baseline's `concurrent`, the week's
@@ -4014,7 +4178,8 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
                                 last_week_rows=(last or {}).get("rows") or [], signals=sig, weights=weights,
                                 profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
                                 budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget,
-                                wall_cap=wall_cap, demand_curve=sig.get("demand_curve") or facts.get("demand_curve"))
+                                wall_cap=wall_cap, demand_curve=sig.get("demand_curve") or facts.get("demand_curve"),
+                                manager_slots=manager_slots or None)
         if got.get("rows") and rid is not None:
             _solver_standby(rid, dates, got, plan, facts, c, sig, weights)
         return got
@@ -4162,6 +4327,9 @@ def solver_explain(got) -> dict:
             "seed": st.get("seed"), "budget": st.get("budget"), "phases": st.get("phases"),
             "wall_capped": bool(st.get("wall_capped")), "usual_days": st.get("usual_days"),
             "priced": st.get("priced"), "history_weeks": st.get("history_weeks"),
+            # the managers chosen inside the solve (ARCH-23): the plan's
+            # shifts staffed, re-chosen, dropped, and stretches it added
+            "managers": st.get("managers"),
             "terms": {k: {"label": v.get("label"), "count": v.get("count")} for k, v in (got.get("terms") or {}).items()}}
 
 
@@ -6158,7 +6326,7 @@ def _legal_fills(c, rows, options, date, coverage=True, limit=None) -> tuple:
 def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget: float,
                        hours_scheduled: float, restaurant_id: int,
                        close_times: dict, role_buffers: dict, constraints=None, scorer_for=None,
-                       requirements=None, only_dates=None) -> tuple:
+                       requirements=None, only_dates=None, objective_ctx=None) -> tuple:
     """Deterministic post-generation pass that adds a real shift where a
     role on a daypart is genuinely short of what that shift needs. The
     SHIFT REQUIREMENTS outrank the hours budget in both directions (sched
@@ -6194,11 +6362,23 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     the short half hours when only the ramp is short), else the daypart's
     slice of the opening hours. Every added row is tagged in its notes so
     it's visible, never silent. A day the model wrote nothing for is never
-    filled, at most a quarter of a day's target comes from this pass, and
-    `only_dates` keeps it to the days a partial redo rewrites (P-10).
+    filled, and `only_dates` keeps it to the days a partial redo rewrites
+    (P-10). There is no budget-derived cap (blind re-audit 10/11/26 LOGIC-8:
+    "at most a quarter of a day's target" left a draft more than a quarter
+    light short of its own requirements while a heavy one was trimmed to
+    them — a source-dependent week): the budget decides in dollars.
 
-    Among the legal people, the one whose shift costs the week the least
-    Shift Quality is taken when `scorer_for` gives a scorer.
+    With `objective_ctx` (the ONE objective, schedule_objective — LOGIC-6,
+    LOGIC-8): a shift is added only where it LOWERS the week's dollars — the
+    half hours it covers are worth more, at their slot value, than its wage
+    (and, past the budget, BUDGET_OVER_FACTOR on top) — or where it puts
+    somebody on a role the restaurant is never without that has nobody (the
+    requirement's firm part, which outranks the budget); and of the legal
+    people, the one whose shift lowers it most is taken. A light draft and
+    a heavy one now end at the same week from both sides (the trim reads
+    the same objective). Without it, among the legal people, the one whose
+    shift costs the week the least Shift Quality is taken when `scorer_for`
+    gives a scorer.
 
     Returns (preview_rows, hours_added, added_dates) where added_dates is
     {date: shifts_added_count}.
@@ -6292,6 +6472,35 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     closed = set(getattr(c, "closed_dates", None) or ())
     skip = _will_not_stand(preview_rows, c)
     _rel = getattr(c, "reliability", None) or {}
+    pricer = None
+    if objective_ctx is not None:
+        try:
+            import schedule_objective as _obj_t
+            pricer = _obj_t.WeekPricer([r for r in preview_rows if id(r) not in skip
+                                        and (r.get("employee") or "").strip()], objective_ctx)
+        except Exception as e:
+            print(f"[schedule] top-up objective unavailable: {e!r}")
+            pricer = None
+
+    def _econ_min_gain():
+        import schedule_economics as _econ_t
+        return _econ_t.OBJECTIVE_MIN_GAIN_USD
+
+    def _firm_nobody(target, short, spec):
+        """Whether the slot short is a role the restaurant is never without
+        with NOBODY on — the requirement's firm part (LOGIC-3), filled past
+        the budget."""
+        d, part, key = target
+        role = spec.get("role") or key
+        now = requirement_shortfall(preview_rows, index, d, c, skip)
+        if short["count"] > 0 and now.get((part, key, None), 0) >= int(spec.get("required") or 0) > 0:
+            if objective_ctx.firm_part(d, part, role):
+                return True
+        for m in short["minutes"]:
+            need = int((spec.get("half") or {}).get(m) or 0)
+            if need > 0 and now.get((part, key, m), 0) >= need and objective_ctx.firm(d, m, role):
+                return True
+        return False
 
     hours_added = 0.0
     added_dates, added_by_date = {}, {}
@@ -6301,11 +6510,6 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         slots = {}
         for d in sorted(index):
             if d not in dates_with_rows or d in closed or (only_dates is not None and d not in only_dates):
-                continue
-            # At most a quarter of the day's target can come from this pass;
-            # past that the day is flagged, not written.
-            cap_day = 0.25 * float(daily_target_hours.get(d) or 0)
-            if cap_day and added_by_date.get(d, 0.0) >= cap_day:
                 continue
             for (part, key, minute), n in requirement_shortfall(preview_rows, index, d, c, skip).items():
                 if (d, part, key) in exhausted:
@@ -6385,7 +6589,21 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
             # names it — never a bad pick forced in.
             exhausted.add(target)
             continue
-        employee, new_row = _fill_pick(scorer, preview_rows, legal)
+        if pricer is not None:
+            # The one objective (LOGIC-6, LOGIC-8): the legal person whose
+            # shift lowers the week's dollars most, added only where it
+            # lowers them — or where the role is firm and nobody is on.
+            now = pricer.total()
+            priced = sorted(((pricer.try_change(None, row), i, e, row) for i, (e, row) in enumerate(legal)),
+                            key=lambda t: (t[0], t[1]))
+            best_v, _i, employee, new_row = priced[0]
+            if best_v >= now - _econ_min_gain() and not _firm_nobody(target, short, spec):
+                exhausted.add(target)
+                continue
+            pricer.apply(None, new_row)
+            pricer.commit()
+        else:
+            employee, new_row = _fill_pick(scorer, preview_rows, legal)
 
         preview_rows.append(new_row)
         hours_added += hrs
@@ -9712,10 +9930,9 @@ REPAIR_STAGES = (
      "check those times yourself"),
 )
 _STAGE_TIER = {k: t for k, t, _w, _c in REPAIR_STAGES}
-# Run once per generation: the solver re-solves the whole assignment, and
-# solving its own answer again finds nothing new; the top-up fills at most a
-# quarter of a day's target (its own cap, P-20), which a second cycle would
-# have doubled.
+# Run once per generation: the top-up fills to the requirements (no cap
+# since LOGIC-8 — the budget decides in dollars), and once it has, a later
+# cycle could only re-add what the trim took out for the same objective.
 _REPAIR_ONCE = frozenset({"top_up"})
 # Run again in a later cycle only when the week changed since its last run:
 # the solver re-solves the whole assignment, deterministically, so its own
@@ -9741,6 +9958,60 @@ def stage_failure_line(key, blocks=None) -> str:
     if blocks:
         return f"⚠ {what} didn't run on this draft — {check} before you publish."
     return f"{what} didn't run on this draft — {check}."
+
+
+OBJECTIVE_HISTORY_DAYS = 56
+
+
+def objective_context(restaurant_id, week_dates, c, signals, requirements, budget_dollars=None, blended=None,
+                      history_rows=None, need_text=None):
+    """The ONE objective's context for a generation's week (schedule_
+    objective.ObjectiveContext, contract #1 — blind re-audit 10/11/26
+    LOGIC-6, ARCH-2, LOGIC-4): the role and person rates and the overtime
+    line from the quality signals' overtime inputs, the hourly budget in
+    dollars, the SHIFT REQUIREMENTS (the need and demand weights), the
+    sales curve, the last published week and the restaurant's own shifts of
+    the last OBJECTIVE_HISTORY_DAYS (read here when not given) — what the
+    solver-first draft prices with, so the trim, the top-up, the optimizer,
+    the gate and Shift Quality's cost judge a week in the same dollars.
+    `need_text` (the draft's `objective_need`, schedule_cpsat.need_text):
+    the demand the solver-first draft shaped to on its dates — the need
+    there, in place of the requirement rows'. None when it cannot be
+    built."""
+    try:
+        import schedule_objective as _obj
+        sig = signals or {}
+        ot = sig.get("overtime") or {}
+        rates = dict(ot.get("role_typical") or {})
+        rates.update({k: v for k, v in (ot.get("rates") or {}).items() if k != "_default"})
+        if history_rows is None and restaurant_id is not None and week_dates:
+            history_rows = []
+            try:
+                import labor as _lab_o
+                first = str(sorted(week_dates)[0])
+                since = (_date_of(first) - __import__("datetime").timedelta(days=OBJECTIVE_HISTORY_DAYS)).isoformat()
+                history_rows = [s for s in (_lab_o.load_shifts_for_restaurant(restaurant_id) or [])
+                                if since <= str(s.get("date") or "")[:10] < first]
+            except Exception as e:
+                print(f"[schedule] objective history unavailable: {e!r}")
+        ctx = _obj.ObjectiveContext.build(
+            restaurant_id, list(week_dates or []), budget=budget_dollars or None,
+            last_week_rows=sig.get("last_published_rows") or None, requirements=requirements or [],
+            demand_curve=sig.get("demand_curve") or None,
+            history_rows=list(history_rows or []) + list(sig.get("last_published_rows") or []),
+            rates=rates, person_rates=ot.get("person_rates"),
+            blended_rate=ot.get("default_rate") or (ot.get("rates") or {}).get("_default") or blended,
+            ot_line=ot.get("line"), constraints=c)
+        if need_text:
+            import schedule_cpsat as _cps_n
+            shaped = _cps_n.need_from_text(need_text)
+            dates = {d for d, _r in shaped}
+            ctx.need = {k: v for k, v in ctx.need.items() if k[0] not in dates}
+            ctx.need.update(shaped)
+        return ctx
+    except Exception as e:
+        print(f"[schedule] objective unavailable for restaurant {restaurant_id}: {e!r}")
+        return None
 
 
 class RepairContext:
@@ -9812,6 +10083,10 @@ class RepairContext:
         # {row id: the stage that made the row} for rows the loop added.
         self.origin = {}
         self._n = 0
+        # The one objective (schedule_objective — blind re-audit 10/11/26
+        # LOGIC-6, ARCH-2): built once, read by the trim, the top-up and the
+        # optimizer, as the solver drafted to it.
+        self._objective = None
 
     def new_rid(self, stage=None) -> str:
         self._n += 1
@@ -9874,6 +10149,28 @@ class RepairContext:
             return None
         import schedule_economics as _econ
         return _econ.price_week(_rules.with_assumed_stays(rows, self.c), p, rounded=False)["total"]
+
+    def objective_ctx(self):
+        """The week's schedule_objective.ObjectiveContext — the same rates,
+        budget, requirements, demand curve, last published week and history
+        the solver-first draft prices with (cross-workstream contract #1) —
+        built once; False when it cannot be built (the passes then run on
+        their own order, as before)."""
+        if self._objective is None:
+            self._objective = objective_context(self.rid, self.week_dates, self.c, self.signals,
+                                                self.requirements, budget_dollars=self.budget_dollars or None,
+                                                blended=self.result.get("blended_rate"),
+                                                need_text=self.result.get("objective_need")) or False
+        return self._objective
+
+    def objective(self, rows):
+        """The week's dollars by the one objective (price_week's total), or
+        None without it."""
+        ctx = self.objective_ctx()
+        if not ctx:
+            return None
+        import schedule_objective as _obj
+        return _obj.price_week([r for r in rows if (r.get("employee") or "").strip()], ctx)["total"]
 
     def over_budget(self, rows) -> float:
         """How far the week is past the budget and the trim's own tolerance:
@@ -10243,7 +10540,11 @@ def _stage_budget(rows, x):
         cost_fn=x.cost if x.cost([]) is not None else None, budget_value=x.budget_dollars or None,
         pricing=x.pricing() if x.budget_dollars > 0 else None,
         # Hours go where their measured return is highest (MARKET-23).
-        staffing_value=_staffing_value(x.rid))
+        staffing_value=_staffing_value(x.rid),
+        # The one objective (LOGIC-6): a cut only where it lowers it, the
+        # least valuable half hours first — never the coverage the solver
+        # bought at the same prices.
+        objective_ctx=x.objective_ctx() or None)
     return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
 
 
@@ -10261,7 +10562,7 @@ def _stage_top_up(rows, x):
     new, hours, dates = _top_up_hours_gap(
         rows, x.result.get("daily_target_hours") or {}, x.budget, x.hourly(rows), x.rid, x.close_times,
         x.role_buffers, constraints=x.c, scorer_for=x.scorer_for, requirements=x.requirements,
-        only_dates=x.editable)
+        only_dates=x.editable, objective_ctx=x.objective_ctx() or None)
     return {"rows": new, "report": {"hours": hours, "dates": dates}}
 
 

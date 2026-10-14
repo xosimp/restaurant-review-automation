@@ -58,6 +58,7 @@ count and a deterministic work budget (LOGIC-9); the wall clock only an
 emergency cap. Nothing here calls a model, reads the database or writes.
 """
 import math
+from datetime import datetime
 import os
 from collections import Counter, defaultdict
 
@@ -94,7 +95,7 @@ W_OT_HUNDREDTH = 10 ** 6             # a hundredth of an hour past a person's ov
 W_MIN_HOUR_HUNDREDTH = 3 * 10 ** 5   # a hundredth of an hour short of someone's minimum (min hours)
 W_DEMAND_SLOT = 10 ** 7 // 2         # kept for callers: the requirement tier's old flat price
 W_FIRM_SLOT = 10 ** 7 // 2           # the first person of a role the restaurant is never without (requirement)
-FIRM_PRESENCE = 0.8                  # "never without": on at that half hour on this share of its weekdays
+FIRM_PRESENCE = _obj.FIRM_PRESENCE    # "never without" (one definition: schedule_objective)
 W_DISTINCT = 10 ** 7                 # kept for callers: the old distinct-count price
 W_BUDGET_DOLLAR = 300                # kept for callers
 W_DOLLAR = 100                       # cents in a dollar: every price below is in cents
@@ -505,21 +506,9 @@ def _presence(hist_rows, family) -> dict:
     """{(family, weekday, minute): share of that weekday's history dates the
     family had somebody on at that half hour} — where the restaurant is
     never without a role (its firm part, LOGIC-3). A shift past midnight
-    counts on its own date's timeline."""
-    on = defaultdict(set)
-    dates_by_day = defaultdict(set)
-    for r in hist_rows or []:
-        sp = _span(r)
-        d = str(r.get("date") or "")[:10]
-        if not sp or not d or not (r.get("employee") or "").strip():
-            continue
-        day = sq._day_name(d)
-        dates_by_day[day].add(d)
-        f = family(r.get("role"))
-        for t in range(sp[0] - sp[0] % SLOT, sp[1], SLOT):
-            if _covers(sp[0], sp[1], t):
-                on[(f, day, t)].add(d)
-    return {k: len(v) / float(len(dates_by_day[k[1]]) or 1) for k, v in on.items()}
+    counts on its own date's timeline. One reading with every pass after
+    the draft: schedule_objective.presence."""
+    return _obj.presence(hist_rows, family=family)
 
 
 def _assumed_roles(dates, curves, c, roster_roles, profile, family, open_times, close_times):
@@ -930,6 +919,14 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     # context_rows): Stage 1 shapes everybody else.
     for k in [k for k in curves if _rules.manager_role_kind(k[1]) in ("owner", "manager")]:
         curves.pop(k)
+    # The demand Stage 1 shapes to, half hour by half hour — the one
+    # objective's need for this week (blind re-audit 10/11/26 LOGIC-6): the
+    # trim, the top-up and the optimizer price a hole against the same
+    # people-on-at-once the shifts were drawn for, never only the
+    # requirement rows' smaller need (the trim used to cut 24-hour-diner
+    # coverage Stage 1 had bought at the same prices).
+    out["need"] = {(d, role): {int(t): int(n) for t, n in cur.items() if n}
+                   for (d, role), cur in curves.items() if d not in closed and cur}
     roles_by_date = defaultdict(set)
     for (d, role) in curves:
         if d not in closed:
@@ -1270,6 +1267,13 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                 under = m.new_int_var(0, want - wfix, f"uh{p.i}")
                 m.add(under >= want - wexpr - wfix)
                 obj.append((max(1, _cents(_obj.USUAL_HOURS_USD / 100.0)), under))
+            # past half their usual week, the objective's starvation price
+            # (schedule_objective.STARVED_HOURS_USD — one objective)
+            half = int(round(p.usual_h * _obj.STARVED_SHARE * 100))
+            if p.usual_h >= _obj.STARVED_MIN_USUAL_HOURS and wfix < half:
+                starved = m.new_int_var(0, half - wfix, f"st{p.i}")
+                m.add(starved >= half - wexpr - wfix)
+                obj.append((max(1, _cents(_obj.starved_hour_usd(ctx, p.name) / 100.0)), starved))
         wds = [worked[(p.i, d)] for d in sorted(dates) if (p.i, d) in worked]
         if len(wds) > p.days_target:
             extra = m.new_int_var(0, len(wds), f"xd{p.i}")
@@ -1332,6 +1336,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
         m.add(over >= sum(dollars) + fixed_cents - _cents(float(budget_dollars)))
         obj.append((max(1, int(round(_obj.BUDGET_OVER_FACTOR))), over))
     m.minimize(sum(int(w) * v for w, v in obj if int(w)))
+    _usual_hint(m, z, z_by_pd, people, pats, hist_rows, c, family)
     s = _cp.CpSolver()
     s.parameters.random_seed = int(seed)
     s.parameters.num_workers = int(workers or WORKERS)
@@ -1384,6 +1389,60 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                     "workers": int(workers or WORKERS), "min_shift_minutes": int(round(min_h * 60)),
                     "assumed": [a["family"] for a in out["assumed"]]}
     return out
+
+
+USUAL_HINT_MIN_WEEKS = 2             # a weekday is somebody's usual once it recurs in two weeks
+
+
+def _usual_hint(m, z, z_by_pd, people, pats, hist_rows, c, family) -> int:
+    """A starting week for Stage 1's search (blind re-audit 10/11/26, P):
+    each person on the pattern nearest their own usual shift on each weekday
+    they usually work (their punches and published weeks, USUAL_HINT_MIN_
+    WEEKS of them), nobody else on. On a 120-person week the model with no
+    hint spent its whole deterministic budget without a first solution, so
+    the solver-first draft silently gave way to the v0 code draft (large_120
+    and high_volume_250 in the schedule benchmark); with the usual week as
+    the hint the search starts from a week the restaurant really works.
+    Only a hint: every rule and price still decides. Returns the number of
+    choices hinted on."""
+    if c is None or not z:
+        return 0
+    seen = defaultdict(set)                 # (key, weekday, family) -> weeks
+    spans = defaultdict(list)               # (key, weekday, family) -> [(start, end)]
+    for r in hist_rows or []:
+        name = (r.get("employee") or "").strip()
+        sp = _span(r)
+        d = str(r.get("date") or "")[:10]
+        if not name or not sp or len(d) != 10:
+            continue
+        try:
+            wk = datetime.strptime(d, "%Y-%m-%d").strftime("%G-%V")
+        except ValueError:
+            continue
+        key = (c.key(name), sq._day_name(d), family(r.get("role")))
+        seen[key].add(wk)
+        spans[key].append(sp)
+    usual = {}
+    for key, weeks in seen.items():
+        if len(weeks) >= USUAL_HINT_MIN_WEEKS:
+            ss = sorted(spans[key])
+            usual[key] = ss[len(ss) // 2]
+    on = 0
+    for (pi, d), opts in sorted(z_by_pd.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        p = people[pi]
+        day = sq._day_name(d)
+        best = None
+        for v, s, e, _h, role, _k in opts:
+            u = usual.get((p.key, day, family(role)))
+            if u is None:
+                continue
+            dist = abs(s - u[0]) + abs(e - u[1])
+            if best is None or dist < best[0]:
+                best = (dist, v)
+        for v, *_rest in opts:
+            m.add_hint(v, 1 if best is not None and v is best[1] else 0)
+        on += 1 if best is not None else 0
+    return on
 
 
 def _mark_floor(rows, floor_codes, family, open_times, close_times, fixed_on, absm=None):

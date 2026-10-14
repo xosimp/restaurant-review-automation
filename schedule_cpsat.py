@@ -519,6 +519,12 @@ class _Model:
                 cents = hours * (prob.blended or 15.0) * 100
                 self.book.add("standby", self.unf[u.id], max(1.0, 2 * cents * per_cent), {"unit": u.id})
                 continue
+            if any(r.get("_mgr_extra") for r in u.rows):
+                # a manager candidate for a stretch the plan could not cover
+                # (ARCH-23): no cost of its own — the manager tier prices the
+                # minutes it would cover, so it is staffed only where it
+                # covers a stretch nobody else does
+                continue
             if self.mode == "draft":
                 floor = any(r.get("_floor") for r in u.rows)
                 # a requirement shift's hole weighs its half hours' demand
@@ -723,27 +729,47 @@ class _Model:
             fixed_by[d0] = [(s, e) for u in units0 if u.fixed and u.draft is not None
                             and any(_rules.counts_as_manager(c, dict(r, employee=prob.names[u.draft])) for r in u.rows)
                             for s, e in u.bspans]
+        # The live units a manager may take, by date (ARCH-23: the manager
+        # plan's shifts are solved here, not pinned) — read across midnight
+        # like the kept ones: a 10pm-6am cook is managed past 4am by the next
+        # business day's opening manager whether that shift is kept or solved.
+        live_by = {}
+        for d0, units0 in by_date.items():
+            live_by[d0] = [(min(s for s, _e in u.bspans), max(e for _s, e in u.bspans), u) for u in units0
+                           if not u.fixed and u.bspans and any(self.mgr(p, d0) for p in prob.dom[u.id])]
         for d, units in sorted(by_date.items()):
             items = [(s, e, u) for u in units for s, e in u.bspans]
             if not items:
                 continue
             fixed_mgr = list(fixed_by.get(d) or [])
             near = []
+            near_live = []
             o_d = _ordinal(d)
             for d1, spans1 in fixed_by.items():
                 o1 = _ordinal(d1)
                 if o_d is not None and o1 is not None and abs(o1 - o_d) == 1:
                     near += [(s + 1440 * (o1 - o_d), e + 1440 * (o1 - o_d)) for s, e in spans1]
+                    near_live += [(s + 1440 * (o1 - o_d), e + 1440 * (o1 - o_d), u, d1)
+                                  for s, e, u in live_by.get(d1) or ()]
             lo_i, hi_i = min(s for s, _e, _u in items), max(e for _s, e, _u in items)
             near = [(s, e) for s, e in near if e > lo_i and s < hi_i]
+            near_live = [x for x in near_live if x[1] > lo_i and x[0] < hi_i]
             day = sq._day_name(d)
             o, _cl = _rules.open_hours(c, day)
             open_need = _rules.manager_need(c, d, [])
             cuts = sorted({t for s, e, _u in items for t in (s, e)} | {t for s, e in open_need for t in (s, e)}
-                          | {t for s, e in near for t in (s, e) if lo_i < t < hi_i})
+                          | {t for s, e in near for t in (s, e) if lo_i < t < hi_i}
+                          | {t for s, e, _u, _d1 in near_live for t in (s, e) if lo_i < t < hi_i})
             last_end = max(e for _s, e, _u in items)
             mgr_end = max((e for _s, e in fixed_mgr), default=None)
             mgr_starts = {s for s, _e in fixed_mgr}
+            # The managers inside the solve (blind re-audit 10/11/26
+            # ARCH-23): a live unit a manager may take earns the owner's two
+            # allowances exactly as a kept manager shift does — the stay
+            # after its end, the prep before its start — when a manager takes
+            # it. Without this, a solved 10am-9pm close left every 9:30pm
+            # crew shift empty (the stay was only ever read off pinned rows).
+            mlive = live_by.get(d) or []
             for a, b in zip(cuts, cuts[1:]):
                 if b <= a:
                     continue
@@ -766,6 +792,16 @@ class _Model:
                         and min(mgr_starts) <= o - lead_m):
                     continue
                 lits = [self.x[(u.id, p)] for u in live for p in prob.dom[u.id] if self.mgr(p, d)]
+                for s_u, e_u, u in mlive:
+                    if u in live:
+                        continue
+                    stays = e_u <= a and b <= last_end and last_end - e_u <= stay_m
+                    preps = lead_m > 0 and o is not None and b <= s_u and s_u <= o - lead_m
+                    if stays or preps:
+                        lits += [self.x[(u.id, p)] for p in prob.dom[u.id] if self.mgr(p, d)]
+                for s_u, e_u, u, d1 in near_live:
+                    if s_u <= a and b <= e_u:
+                        lits += [self.x[(u.id, p)] for p in prob.dom[u.id] if self.mgr(p, d1)]
                 gap = m.new_bool_var(f"mg{d}_{a}")
                 book.add("manager", gap, W_MANAGER_MIN * (b - a), {"date": d, "start": a, "end": b})
                 if open_req or fixed_on:
@@ -1494,7 +1530,9 @@ def _unfilled_entry(prob, u) -> dict:
         text = "Everyone who may work it is already on another shift that day or would break a higher rule."
     return {"index": u.idx[0], "rows": list(u.idx), "date": u.date, "day": u.day, "role": u.role_label,
             "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"), "hours": round(u.hours, 2),
-            "floor": any(rr.get("_floor") for rr in u.rows), "text": text}
+            "floor": any(rr.get("_floor") for rr in u.rows), "text": text,
+            "manager": any(rr.get("_mgr_plan") for rr in u.rows),
+            "mgr_extra": any(rr.get("_mgr_extra") for rr in u.rows)}
 
 
 # ── why each assignment (RM-12) ─────────────────────────────────────────────
@@ -2237,14 +2275,28 @@ def summary(result: dict) -> dict:
 def solver_draft(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                  last_week_rows=None, signals=None, weights=None, profiles=None, roster_roles=None,
                  budget_dollars=None, max_seconds=None, seed=SEED, standby_slots=None, wall_cap=None,
-                 demand_curve=None, objective=None) -> dict:
+                 demand_curve=None, objective=None, manager_slots=None) -> dict:
     """The week drafted with no model call: schedule_shapes (Stage 1) picks
     each role's shifts — and a first person for each — to cover its
     people-on-at-once demand, floors, the section cap and the closers, with
     the budget priced against the least valuable half hours; assign (Stage
-    2) picks who works each one with `context_rows` (the manager plan, a
-    redo's kept days, locked rows) held as they are. Both price the week
-    from one schedule_objective.ObjectiveContext (contract #1).
+    2) picks who works each one with `context_rows` (a standing manager
+    shift, a redo's kept days, locked rows) held as they are. Both price the
+    week from one schedule_objective.ObjectiveContext (contract #1).
+
+    `manager_slots` (blind re-audit 10/11/26 ARCH-23): the manager plan's
+    shifts that are NOT the owner's word — schedule_engine.manager_slots —
+    solved here, not pinned: each is a shift Stage 2 staffs with whichever
+    manager it chooses (the planned one is only the hint), held by the
+    manager tier per minute (W_MANAGER_MIN, with the owner's allowances) in
+    the same model as coverage, overtime, the minimums and cost — so a
+    manager's week is traded against everybody else's, never fixed before
+    it. A slot marked `_mgr_extra` (a stretch the plan could not cover) is
+    a candidate only: unfilled at no cost of its own, its minutes priced by
+    the manager tier. Stage 1 still sees them with their planned people (it
+    shapes everybody else around the managers). They come back in "rows"
+    marked `_mgr_plan` (the caller re-pins them as the week's manager rows),
+    and an unfilled one in "unassigned".
 
     `max_seconds` is a DETERMINISTIC work budget, split by size and never by
     the clock (LOGIC-9: Stage 2 used to get whatever the wall clock had
@@ -2284,18 +2336,35 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
 
     def wall_left():
         return max(0.5, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None
+    # The manager plan's shifts as Stage 2 slots (ARCH-23): Stage 1 shapes
+    # everybody else around them with their planned people; Stage 2 decides
+    # who works each, in the same model as the rest.
+    mgr_slots = []
+    for r in manager_slots or []:
+        x = {k: v for k, v in dict(r).items() if k not in ("_pinned",)}
+        hint = (x.get("employee") or "").strip()
+        x.update(employee="", _open=True, _mgr_plan=True, _s1=hint or None, _planned=hint or None)
+        mgr_slots.append(x)
+    stage1_ctx = list(context_rows or []) + [dict(r) for r in manager_slots or []
+                                              if (r.get("employee") or "").strip() and not r.get("_mgr_extra")]
     shaped = _shapes.shape_week(dates, constraints, requirements, concurrent=concurrent, history_rows=history_rows,
-                                context_rows=context_rows, last_week_rows=last_week_rows, rates=rates,
+                                context_rows=stage1_ctx, last_week_rows=last_week_rows, rates=rates,
                                 blended_rate=blended, budget_dollars=budget_dollars, roster_roles=roster_roles,
                                 max_seconds=s1_secs, seed=seed, staffing_value=sig.get("staffing_value"),
                                 person_rates=ot.get("person_rates"), objective=ctx, exclude=exclude,
                                 wall_cap=wall_left())
     stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat", "seed": int(seed),
              "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic"}}
+    # The objective's need is the demand Stage 1 shaped to (LOGIC-6): the
+    # week is priced, and every pass after the draft prices a hole, against
+    # the same people on at once — summed by role family, as Stage 1 sums it.
+    need = objective_need(shaped.get("need"), constraints)
+    if need:
+        ctx.need = need
     # A standby on a busy shift likely to come up short (RM-18, G2's
     # attendance_risk.standby_needed): one more of the role over the
     # daypart's core window, staffed only while the budget has room.
-    slots = shaped["rows"] + [dict(r, _standby=True, employee="") for r in standby_slots or []]
+    slots = shaped["rows"] + mgr_slots + [dict(r, _standby=True, employee="") for r in standby_slots or []]
     if not slots:
         return {"rows": [], "unassigned": [], "short": shaped["short"], "assumed": shaped.get("assumed") or [],
                 "conflicts": [], "reasons": [], "terms": {},
@@ -2307,9 +2376,14 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                  pending=getattr(constraints, "pending_off", None), seed=seed, wall_cap=wall_left(),
                  objective=ctx, history_rows=history_rows)
     rows = list(got["rows"][len(ctx_rows):]) if got["status"] in ("optimal", "time_limit") else []
-    clean = [{k: v for k, v in r.items() if k not in ("_open", "_pinned", "_s1")} for r in rows
+    clean = [{k: v for k, v in r.items() if k not in ("_open", "_pinned", "_s1", "_mgr_extra")} for r in rows
              if (r.get("employee") or "").strip()]
-    unassigned = [dict(e) for e in got.get("unfilled") or []]
+    # a candidate the plan could not cover, left empty: not a shift anybody
+    # was owed (its minutes are the manager tier's, said by the sweep)
+    unassigned = [dict(e) for e in got.get("unfilled") or [] if not e.get("mgr_extra")]
+    stats["managers"] = {"slots": len(mgr_slots), "staffed": sum(1 for r in clean if r.get("_mgr_plan")),
+                         "changed": sum(1 for r in clean if r.get("_mgr_plan") and r.get("_planned")
+                                        and _low(r.get("employee")) != _low(r.get("_planned")))}
     priced = None
     try:
         priced = _obj.price_week(list(context_rows or []) + clean, ctx)
@@ -2325,7 +2399,39 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                  history_weeks=int((ctx.profile or {}).get("weeks") or 0))
     return {"rows": clean, "unassigned": unassigned, "short": shaped["short"], "assumed": shaped.get("assumed") or [],
             "conflicts": got.get("conflicts") or [], "reasons": got.get("reasons") or [],
-            "terms": got.get("terms") or {}, "stats": stats}
+            "terms": got.get("terms") or {}, "stats": stats, "need": need_text(need)}
+
+
+def objective_need(curves, constraints=None) -> dict:
+    """{(date, role lower): {minute: people}} for schedule_objective's
+    `need` from Stage 1's demand curves ({(date, role): {minute: n}}),
+    summed by role family under the family's first role (Stage 1 counts a
+    family's job codes as one crew at a moment)."""
+    fam_of = constraints.family if constraints is not None and hasattr(constraints, "family") else sq.role_family
+    out, label = {}, {}
+    for (d, role), cur in sorted((curves or {}).items()):
+        fam = fam_of(role)
+        key = (d, label.setdefault((d, fam), _low(role)))
+        tgt = out.setdefault(key, {})
+        for t, n in cur.items():
+            tgt[int(t)] = tgt.get(int(t), 0) + int(n)
+    return out
+
+
+def need_text(need) -> dict:
+    """The objective's need as JSON-safe text keys ("date|role" ->
+    {"minute": people}) — carried on the draft to the repair loop."""
+    return {f"{d}|{role}": {str(t): int(n) for t, n in cur.items()} for (d, role), cur in (need or {}).items()}
+
+
+def need_from_text(text) -> dict:
+    """need_text read back."""
+    out = {}
+    for k, cur in (text or {}).items():
+        d, _sep, role = str(k).partition("|")
+        if d and role:
+            out[(d, role)] = {int(t): int(n) for t, n in (cur or {}).items()}
+    return out
 
 
 def usual_days_kept(rows, ctx) -> dict:
