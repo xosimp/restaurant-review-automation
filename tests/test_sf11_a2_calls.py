@@ -60,6 +60,6 @@ def test_the_batch_request_is_built_without_the_fallback():
     import inspect
     import schedule_batch
     assert "refusal_fallback" not in inspect.getsource(schedule_batch)
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert "create_with_retry(_client, readiness=_ready_sched, **refusal_fallback(_call))" in src
     assert "request=dict(_call)" in src

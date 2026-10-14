@@ -26,7 +26,7 @@ def _page():
 
 
 def test_the_draft_and_the_forecast_tab_share_one_hours_plan():
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert "week_hours_plan(" in src and "_MIN_DAYS_COVERED_TO_SCALE = 5" not in src
     assert "week_hours_plan(" in inspect.getsource(schedule_engine.forecast_preview)
 

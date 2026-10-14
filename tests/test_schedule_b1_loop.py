@@ -697,7 +697,7 @@ def test_every_model_call_of_a_generation_shares_one_read(db, monkeypatch):
     assert calls == [rid]
     labor._held_roles_by_name(rid, ["Ana"])                    # outside a generation: read as before
     assert calls == [rid, rid]
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert '_frozen_ns(("attendance_events", restaurant_id)' in src and '_frozen_rd(("readiness", restaurant_id' in src
 
 

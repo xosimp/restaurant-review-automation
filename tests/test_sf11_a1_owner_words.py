@@ -219,7 +219,7 @@ def test_the_prompt_receives_each_sentence_as_the_one_reader_holds_it(rid, monke
     snr.add_rule(rid, "Server", 2, ["night"], days=["Friday"], source_text="Keep 2 servers on Friday dinner.")
     assert orr.prompt_lines(rid, models.get_restaurant(rid).sched_notes, "notes", WEEK)[0].startswith("HELD BY CODE:")
     import labor
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert 'prompt_lines(restaurant_id, _owner_notes, "notes", week_dates)' in src
     assert 'prompt_lines(restaurant_id, " ".join(str(instruction).split())[:500], "instruction"' in src
 

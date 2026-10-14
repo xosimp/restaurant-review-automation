@@ -473,7 +473,7 @@ def test_every_attendance_reader_goes_through_the_one_reader():
     a window of its own."""
     import inspect
     import labor, schedule_learning
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     block = src[src.index("No-show risk per weekday"):src.index("_noshows_block = (")]
     assert "attendance_events(" in block and "weekday_absence(" in block and "weeks=26" not in block
     assert "reliability_events" not in block

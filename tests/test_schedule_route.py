@@ -362,7 +362,7 @@ def test_the_eval_replays_the_ladders_tiers():
 
 
 def test_no_schedule_call_reads_its_model_or_effort_around_the_route():
-    gen = inspect.getsource(labor.generate_optimized_schedule)
+    gen = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert 'model_for("schedule")' not in gen and "_route.apply(" in gen
     for fn in (se.call_cost_model, se.schedule_effort_in_force, se._generate_in_parts):
         assert 'model_for("schedule")' not in inspect.getsource(fn), fn.__name__
