@@ -261,6 +261,7 @@ def source(db_path):
     return db_path, rid
 
 
+@pytest.mark.sqlite_only
 def test_the_schema_plan_partitions_the_facts_and_defers_the_foreign_keys(source):
     src = sqlite3.connect(source[0])
     try:
@@ -280,6 +281,7 @@ def test_the_schema_plan_partitions_the_facts_and_defers_the_foreign_keys(source
     assert "ALTER TABLE people ADD FOREIGN KEY (merged_into) REFERENCES people(id)" in plan["after"]
 
 
+@pytest.mark.sqlite_only
 def test_a_copy_moves_every_row_counts_what_it_could_not_store_and_verifies(source, tmp_path):
     import pg_copy
     db, rid = source
@@ -309,6 +311,7 @@ def test_a_copy_moves_every_row_counts_what_it_could_not_store_and_verifies(sour
         dst.close()
 
 
+@pytest.mark.sqlite_only
 def test_the_copy_script_plans_without_a_database(source, capsys):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
     import importlib

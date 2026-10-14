@@ -619,6 +619,47 @@ class Translator:
             i += 1
         return out
 
+    def _case_bool(self, toks) -> list:
+        """CASE WHEN … THEN <predicate> ELSE 0 END: SQLite's predicate is
+        an integer, Postgres's a boolean that cannot share a CASE with 0. A
+        predicate branch beside a non-predicate one is cast to INTEGER (a
+        CASE whose every branch is a predicate stays boolean — it may be a
+        WHERE condition)."""
+        out = list(toks)
+        for st in [k for k, t in enumerate(toks) if t.kind == "word" and t.upper == "CASE"][::-1]:
+            depth, case, marks, end = 0, 0, [], None
+            for k in range(st + 1, len(out)):
+                x = out[k]
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    depth -= 1
+                elif x.kind == "word" and x.upper == "CASE":
+                    case += 1
+                elif x.kind == "word" and x.upper == "END":
+                    if case == 0 and depth == 0:
+                        end = k
+                        break
+                    case -= 1
+                elif depth == 0 and case == 0 and x.kind == "word" and x.upper in ("WHEN", "THEN", "ELSE"):
+                    marks.append((k, x.upper))
+            if end is None:
+                continue
+            branches = []                               # (start, stop) of each THEN / ELSE result
+            for n, (k, kind) in enumerate(marks):
+                if kind in ("THEN", "ELSE"):
+                    stop = marks[n + 1][0] if n + 1 < len(marks) else end
+                    branches.append((k + 1, stop))
+            flags = [_is_boolean(out[a:b]) for a, b in branches]
+            if not any(flags) or all(flags):
+                continue
+            for (a, b), is_b in sorted(zip(branches, flags), reverse=True):
+                if is_b:
+                    out[a:b] = [Tok("ws", " "), Tok("word", "CAST"), Tok("op", "("), Tok("op", "("), *out[a:b],
+                                Tok("op", ")"), Tok("ws", " "), Tok("word", "AS"), Tok("ws", " "),
+                                Tok("word", "INTEGER"), Tok("op", ")"), Tok("ws", " ")]
+        return out
+
     def _truthy_params(self, toks) -> list:
         """A parameter standing alone as a condition (`CASE WHEN ? THEN`,
         `AND ?`) is SQLite's truthiness of whatever it is; Postgres wants a
@@ -1042,6 +1083,7 @@ class Translator:
         toks = self._truthy_params(toks)
         toks = self._group_bare(toks)
         toks = self._having_alias(toks)
+        toks = self._case_bool(toks)
         toks = self._qualify_upsert(toks)
         toks = self._like_escape(toks)
         toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
@@ -1061,15 +1103,23 @@ class Translator:
                 if prev is not None and prev.kind == "word" and prev.upper == "AS":
                     out.append(t.text)                 # an alias named rowid stays rowid
                     continue
-                pk = self.pk_lookup(table) if table else None
-                have = [c.lower() for c in (self.columns_lookup(table) or [])] if table else []
+                owner = table
+                if prev is not None and prev.text == ".":
+                    q = _sig_index(toks, p, -1)
+                    if q is not None:
+                        owner = _alias_table(_significant(toks), toks[q].text) or table
+                pk = self.pk_lookup(owner) if owner else None
+                have = [c.lower() for c in (self.columns_lookup(owner) or [])] if owner else []
                 col = "rowid" if "rowid" in have else (pk[0] if pk and len(pk) == 1 else "ctid")
                 # Selected bare, it is still read back as row["rowid"].
                 selected = prev is not None and ((prev.kind == "word" and prev.upper in ("SELECT", "DISTINCT"))
                                                  or (prev.kind == "op" and prev.text == ","))
                 ends = nxt is None or (nxt.kind == "op" and nxt.text == ",") or \
                     (nxt.kind == "word" and nxt.upper == "FROM")
-                out.append(f"{col} AS rowid" if selected and ends and self._in_select_list(toks[:k]) else col)
+                top = sum(1 if x.text == "(" else -1 if x.text == ")" else 0
+                          for x in toks[:k] if x.kind == "op") == 0
+                out.append(f"{col} AS rowid" if selected and ends and top and self._in_select_list(toks[:k])
+                           else col)
             else:
                 out.append(t.text)
         return "".join(out).replace("LIMIT -1", "LIMIT ALL")
@@ -1216,12 +1266,37 @@ def _with_rowid(ddl) -> str:
 
 def _main_table(sig):
     """The table a statement writes or reads first (INSERT INTO t, UPDATE t,
-    DELETE FROM t, … FROM t)."""
+    DELETE FROM t, … FROM t) — at the statement's own level first: a
+    subquery in the select list (SELECT CASE WHEN EXISTS (SELECT … FROM
+    rec_events) … FROM rec_instances) does not name it."""
+    first, depth = None, 0
     for i, t in enumerate(sig):
-        if t.kind == "word" and t.upper in ("INTO", "UPDATE", "FROM") and i + 1 < len(sig):
+        if t.kind == "op" and t.text == "(":
+            depth += 1
+        elif t.kind == "op" and t.text == ")":
+            depth -= 1
+        elif t.kind == "word" and t.upper in ("INTO", "UPDATE", "FROM") and i + 1 < len(sig):
             nxt = sig[i + 1]
             if nxt.kind in ("word", "qid") and nxt.upper not in ("SELECT",):
-                return nxt.text.strip('"').lower()
+                name = nxt.text.strip('"').lower()
+                if depth == 0:
+                    return name
+                first = first or name
+    return first
+
+
+def _alias_table(sig, alias):
+    """The table `alias` names (FROM t alias / JOIN t AS alias), or None."""
+    a = alias.strip('"').lower()
+    for i, t in enumerate(sig):
+        if t.kind == "word" and t.upper in ("FROM", "JOIN", "UPDATE", "INTO") and i + 2 < len(sig):
+            tbl, nxt = sig[i + 1], sig[i + 2]
+            if nxt.kind == "word" and nxt.upper == "AS" and i + 3 < len(sig):
+                nxt = sig[i + 3]
+            if tbl.kind in ("word", "qid") and nxt.kind in ("word", "qid") and nxt.text.strip('"').lower() == a:
+                return tbl.text.strip('"').lower()
+            if tbl.kind in ("word", "qid") and tbl.text.strip('"').lower() == a:
+                return a
     return None
 
 
