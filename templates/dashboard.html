@@ -38639,10 +38639,21 @@ window._cuRole=window.CAV_BOOT.role;
 /* The notes under the summary tiles: clear of the tiles above, a little
    air between rows (owner, 10/6/26). */
 #ss-summary .sfw1-notes{padding:0;margin:26px 0 22px;gap:10px}
-.sfw1-n{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;border-radius:12px;background:var(--sf-recess);box-shadow:inset 3px 0 0 var(--ink3);font-size:14.5px;line-height:1.5;color:var(--ink2)}
-.sfw1-n.warn{box-shadow:inset 3px 0 0 var(--hb-warn)}
-.sfw1-n.bad{box-shadow:inset 3px 0 0 var(--hb-bad)}
-.sfw1-n.ai{background:var(--sf-ai);box-shadow:inset 3px 0 0 var(--ember),0 0 0 1px var(--sf-ai-line)}
+.sfw1-n{display:flex;gap:12px;align-items:flex-start;padding:11px 14px;border-radius:12px;background:var(--sf-recess);font-size:14.5px;line-height:1.5;color:var(--ink2)}
+.sfw1-n.warn .tx::before,.sfw1-n.bad .tx::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 8px 1px 0;vertical-align:middle;background:var(--hb-warn)}
+.sfw1-n.bad .tx::before{background:var(--hb-bad)}
+.sfw1-n.ai{background:var(--sf-ai);box-shadow:0 0 0 1px var(--sf-ai-line)}
+.sfw1-g{border-radius:12px;background:var(--sf-recess);padding:4px 14px;font-size:14.5px;color:var(--ink2)}
+.sfw1-g .hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:9px 0 7px}
+.sfw1-g .hd b{color:var(--ink);font-weight:600}
+.sfw1-g .hd span{font-size:13px;color:var(--ink3)}
+.sfw1-gr{display:flex;align-items:center;gap:14px;min-height:40px;padding:4px 0;border-top:1px solid var(--hb-line2)}
+.sfw1-gr .d{width:84px;flex-shrink:0;color:var(--ink3)}
+.sfw1-gr .nm{flex:1;min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sfw1-gr .v{flex-shrink:0;color:var(--ink2)}
+.sfw1-gr .v em{font-style:normal;color:var(--ink3);margin-left:6px}
+.sfw1-gr.more{color:var(--ink3);font-size:13px}
+@media (max-width:640px){.sfw1-gr{flex-wrap:wrap;gap:6px 12px}.sfw1-gr .d{width:auto}}
 .sfw1-n .tx{flex:1;min-width:0}
 .sfw1-n .tx b{color:var(--ink);font-weight:600}
 .sfw1-n .tx small{display:block;margin-top:3px;font-size:13.5px;color:var(--ink3)}
@@ -39122,18 +39133,39 @@ function sfw1RatingLine(s) {
     }
     var sk = p.skipped || [];
     for (i = 0; i < Math.min(sk.length, 3); i++) h += note('', n(sfw1SkippedLine(sk[i])));
-    var st = S.stays || [];
-    for (i = 0; i < st.length; i++) {
-      var sa = st[i].action || {};
-      h += note('', n(st[i].text), ed && sa.label ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-stay="' + i + '">' + e(sa.label) + '</button>' : '');
-    }
-    var mh = (S.minh && S.minh.left) || [];
-    for (i = 0; i < Math.min(mh.length, 4); i++) h += note('', n(mh[i].employee + ' is ' + sfw1G(mh[i].short_by) + 'h under the ' + sfw1G(mh[i].min) + 'h minimum you set' + (mh[i].reason ? ' — ' + mh[i].reason : '') + '.'));
+    h += staysHtml(S.stays || [], ed);
+    h += minHoursHtml((S.minh && S.minh.left) || []);
     if (S.start && S.start.no_history && S.startLine) h += note('', n(S.startLine.replace(/^A starting point:\s*/, '')), '', '');
     var dd = S.ddt;
     if (dd && (dd.line || dd.message) && (dd.blind || dd.stale || dd.blocked)) h += note('warn', n(dd.message || dd.line));
     h += setupHtml(S.setup);
     return h;
+  }
+  /* Closing managers assumed to stay until the last person leaves, and
+     people left under their minimum hours: one compact list each (date,
+     who, the figure, one action) instead of a sentence per row. */
+  function sfw1Day(d, day) { return e(String(day || '').slice(0, 3)) + ' ' + e(typeof mdy === 'function' ? mdy(d) : d); }
+  function staysHtml(st, ed) {
+    if (!st.length) return '';
+    var rows = '', i, hourly = false;
+    for (i = 0; i < st.length; i++) {
+      var s = st[i], sa = s.action || {};
+      if (s.hourly) hourly = true;
+      rows += '<div class="sfw1-gr"><span class="d">' + sfw1Day(s.date, s.day) + '</span><span class="nm">' + e(s.employee) + '</span>'
+        + '<span class="v">' + n('until ' + s.until) + ' <em>' + n('+' + s.minutes + 'm') + '</em></span>'
+        + (ed && sa.label ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-stay="' + i + '" title="' + e(sa.label) + '">Add to schedule</button>' : '') + '</div>';
+    }
+    return '<div class="sfw1-g"><div class="hd"><b>Closers staying late</b><span>' + (hourly ? 'Until the last person leaves, counted in labor' : 'Until the last person leaves') + '</span></div>' + rows + '</div>';
+  }
+  function minHoursHtml(mh) {
+    if (!mh.length) return '';
+    var rows = '', i, show = Math.min(mh.length, 6);
+    for (i = 0; i < show; i++) {
+      var m = mh[i];
+      rows += '<div class="sfw1-gr"><span class="nm">' + e(m.employee) + '</span><span class="v">' + n(sfw1G(+m.min - +m.short_by) + 'h of ' + sfw1G(m.min) + 'h') + ' <em>' + n(sfw1G(m.short_by) + 'h short') + '</em></span></div>';
+    }
+    if (mh.length > show) rows += '<div class="sfw1-gr more">' + n('+' + (mh.length - show) + ' more') + '</div>';
+    return '<div class="sfw1-g"><div class="hd"><b>Under their minimum hours</b><span>No legal shift could be added</span></div>' + rows + '</div>';
   }
   /* The setup the week was drafted against (F1-9): each item with its own
      action — leader rules nobody counts for ("Count them as mine", the
@@ -39171,9 +39203,11 @@ function sfw1RatingLine(s) {
       + '<button type="button" class="cbtn cbtn-soft cbtn-sm" data-sfw1-act="' + e(date) + '">Make acting manager</button>'
       + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam(\'roster\')">Change availability</button>';
   }
+  /* The week's notes live on the Summary step only: the Schedule step is
+     the grid, and the same list above it was a second copy (Will, 10/14/26). */
   function renderNotes() {
     var h = notesHtml(), a = $id('sfw1-week');
-    if (a) a.innerHTML = h;
+    if (a) a.innerHTML = '';
     var sum = $id('ss-summary');
     if (sum) { var b = $id('sfw1-sum'); if (b) b.innerHTML = h; }
   }

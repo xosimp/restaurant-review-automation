@@ -446,7 +446,7 @@ def _run_iife(page, body):
 
 def test_the_renders_draw_real_payloads(page):
     o = _run_iife(page, r"""
-__host('sfw1-week');
+__host('sfw1-week'); __host('ss-summary'); __host('sfw1-sum');
 sfw1Take({manager_plan: {failed: false, question: 'Which days and hours do Erik and Jim work?', unknown_pattern: ['Erik', 'Jim'],
             windows: {'2026-10-07': {from: '11:00am', to: '11:00pm'}}, uncovered: [], skipped: [{employee: 'Erik', date: '2026-10-06', why: 'their note'}]},
           manager_coverage: {left: [{date: '2026-10-07', day: 'Wednesday', from: '9:00am', to: '10:00am', reasons: [{employee: 'Max', why: 'on approved time off'}], could_act: ['Kay']}],
@@ -462,7 +462,8 @@ sfw1Take({manager_plan: {failed: false, question: 'Which days and hours do Erik 
                            {kind: 'close_times_missing', line: true, text: 'No close time for Monday.'},
                            {kind: 'owner_rule', line: true, text: 'Your rule “two on the patio” is checked as: 2 servers'},
                            {kind: 'managers', line: false, text: 'Managers: Erik'}]}});
-__o.notes = __els['sfw1-week'].innerHTML;
+__o.notes = __els['sfw1-sum'].innerHTML;
+__o.week_notes = __els['sfw1-week'].innerHTML;
 __o.day = sfw1DayHead('2026-10-07') + sfw1DayHead('2026-10-10');
 __o.chip = sfw1ChipMarks({_pinned: 'manager_plan', _pin_reason: 'Erik usually works Mondays', dst_hours: 1});
 __o.pane = sfw1ShiftExtras({_pinned: 'manager_plan', _pin_reason: 'Erik usually works Mondays'});
@@ -491,10 +492,11 @@ __o.usd = [sfw1Dollars(84), sfw1Dollars(-12.4), sfw1Dollars(0), sfw1Dollars(null
     for piece in ("wasn’t written", 'data-sfw1-redo="2026-10-10"', "Nobody on the team can work Sunday", "A question for you",
                   "Which days and hours do Erik and Jim work?", 'data-sfw1-wk="Erik"', 'data-sfw1-wk="Jim"',
                   "1h of the week has no manager on", "Max — on approved time off", "Kay · on that day",
-                  "Make acting manager", "Erik’s standing shift", "1h under the", "has no shift history",
+                  "Make acting manager", "Erik’s standing shift", "Under their minimum hours", "1h short", "has no shift history",
                   "Sales through", "Count them as mine", "Set the hours", "How this week was set up", "two on the patio"):
         assert piece in n or piece in plain["notes"], piece
     assert "Managers: Erik" not in n, "a line:false setup item stays where its payload puts it"
+    assert o["week_notes"] == "", "the notes show on the Summary step only, never a second copy over the grid"
     assert "Manager on" in o["day"] and "Not written" in o["day"]
     assert "Manager plan" in o["chip"] and "clocks" in o["chip"] and "Erik usually works Mondays" in o["pane"]
     assert o["usual"]["section"] == "Patio"
