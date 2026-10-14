@@ -283,7 +283,8 @@ def patterns_for(role, d, demand, hist, c, bounds, min_h, max_h, role_times=None
         o, _c2 = _rules.open_hours(c, day)
         if o is not None and cl is not None and cl - o >= 2 * min_h * 60:
             mid = _q(o + (cl - o) / 2.0)
-            for s, e in ((o, mid), (mid, cl), (o, min(hi, mid + 60)), (max(lo, mid - 60), cl)):
+            for s, e in ((o, mid), (mid, cl), (o, min(hi, mid + 60)), (max(lo, mid - 60), cl), (mid, hi),
+                         (max(lo, mid - 60), hi)):
                 cand[(int(s), int(e))] += 500
     for s in sorted(steps):
         for length in range(int(min_h * 60), int(max_h * 60) + 1, 60):
