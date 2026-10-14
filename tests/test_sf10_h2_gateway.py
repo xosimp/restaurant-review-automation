@@ -65,7 +65,10 @@ def test_an_owner_over_the_allowance_waits_briefly_then_goes(db, monkeypatch):
     naps = []
     mg.admit(1, _kw(max_tokens=1000), klass="interactive", sleep=naps.append)
     t = mg.admit(1, _kw(max_tokens=1000), klass="interactive", sleep=naps.append)
-    assert t is not None and t.est_out == 0 and t.waited >= mg.WAIT_SECONDS["interactive"]
+    assert t is not None and t.waited >= mg.WAIT_SECONDS["interactive"]
+    # It goes anyway WITH its estimate reserved (re-audit 10/11/26 SCALE-25:
+    # a zero ticket under-counted the minute exactly at saturation).
+    assert t.est_out == 1000 and mg.usage_now()["classes"]["interactive"]["output"] == 2000
 
 
 def test_settle_replaces_the_estimate_with_real_usage(db, monkeypatch):

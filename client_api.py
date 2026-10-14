@@ -12075,7 +12075,7 @@ def _publish_schedule_request(current_user):
         # imports): this path ran client_api's bound copy while every other
         # Send ran schedule_publish's.
         review = _schedule_publish.publish_review(rid, row["id"])
-        acked, unacked = _schedule_publish._ack_gate(review, acknowledge, reasons)
+        acked, unacked = _schedule_publish._ack_gate(review, acknowledge, reasons, actor=current_user)
         if unacked:
             out, status = _schedule_publish._needs_ack(review, unacked, row["id"])
             return jsonify(**out), status
@@ -12095,15 +12095,18 @@ def _publish_schedule_request(current_user):
         import schedule_versions as _sv_q
         newest = _sv_q.newest_version(rid, row["id"])
         _seen = version if version is not None else (newest[0]["version"] if newest else None)
+        # One waiting send per week (schedule re-audit 10/11/26 BUGSLIFE-9):
+        # a press while one waits — this device's or another's — re-points
+        # it, so the Undo every device shows stops the one send.
         if changes:
-            act = delayed.schedule(rid, "schedule_changes_send",
+            act = delayed.queue_schedule_send(rid, "schedule_changes_send",
                                    {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     "version": _seen, **_by},
                                    delay, actor=current_user,
                                    label=f"Sending the changes to the week of {_mdy_pub(row['week_start'])} "
                                          f"to {len(changes)} {'person' if len(changes) == 1 else 'people'}")
         else:
-            act = delayed.schedule(rid, "schedule_publish",
+            act = delayed.queue_schedule_send(rid, "schedule_publish",
                                    {"schedule_id": row["id"], "manual": True, "acknowledge": acked, **_why,
                                     "version": _seen,
                                     # The window's end runs the unattended
@@ -12112,7 +12115,8 @@ def _publish_schedule_request(current_user):
                                    delay, actor=current_user,
                                    label=f"Publishing the week of {_mdy_pub(row['week_start'])} to staff")
         return jsonify(ok=True, queued=True, action_id=act["id"], execute_at=act["execute_at"],
-                       undo_minutes=delay, sent=[], unreachable=[], failed=[])
+                       undo_minutes=delay, replaced_queued=bool(act.get("replaced")), sent=[], unreachable=[],
+                       failed=[])
     if changes:
         out, status = send_schedule_changes(rid, schedule_id, current_user, acknowledge=acknowledge, **_why,
                                             **({"version": version} if version is not None else {}))

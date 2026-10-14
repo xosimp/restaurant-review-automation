@@ -489,11 +489,23 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
             f"{' (' + start + ')' if start else ''}. Can you cover? Call your manager to say yes or no — "
             "a reply to this message isn't read.")
     contact = {} if via else _staff_contact(restaurant_id, who, db_path)
-    phone = _consented_phone(restaurant_id, contact.get("phone"), db_path)
-    if phone:
-        import notify
-        with notify.sms_context(restaurant_id):
-            if notify.send_sms(phone, text[:320], use_case="alert"):
+    if via is None:
+        # A text only on the STAFF campaign, under the person's own staff
+        # consent for requests (people.reach / people.deliver) — never the
+        # owner-alert campaign a consented alert number happened to be on
+        # (schedule re-audit 10/11/26 BUGSLIFE-20); else email below.
+        import people as _people
+        try:
+            ch = (_people.reach(restaurant_id, [who], purpose="request", db_path=db_path) or {}).get(who) or {}
+        except Exception as e:
+            log.warning("cover reach failed rid=%s: %s", restaurant_id, e)
+            ch = {}
+        if ch.get("sms"):
+            got = _people.deliver(restaurant_id, who, {"sms": ch["sms"], "sms_scope": ch.get("sms_scope")},
+                                  alert_type="staff_request", title="Can you cover a shift today?", body=text,
+                                  purpose="request", sms_text=f"{text[:280]} Reply STOP to stop these texts.",
+                                  shift_date=day, db_path=db_path)
+            if got in ("sms", "sms_held"):
                 via = "sms"
     if via is None and contact.get("email"):
         try:

@@ -631,6 +631,11 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                                + " by the labor standard at the busiest half hour")
             row = {"date": d, "day": day, "daypart": part, "roles": roles_out,
                    "target_hours": (daily_targets or {}).get(d), "demand": demand,
+                   # Whether that level rests on anything (re-audit 10/11/26
+                   # AI-11): the restaurant's own sales, the owner's word for
+                   # the date, a profile the owner configured, or the date's
+                   # measured demand — never the built-in guess alone.
+                   "demand_measured": _demand_measured(profile, measured),
                    "leader": leader, "factor": factor, "reasons": reasons}
             if abs(float(p_ratio or 1.0) - float(ratio or 1.0)) >= 0.005:
                 row["part_ratio"] = round(float(p_ratio), 3)
@@ -795,6 +800,24 @@ def _service_window(day: str, part: str, open_times: dict = None, close_times: d
     return split, (close_m if close_m is not None and close_m > split else 24 * 60)
 
 
+# The profile sources that say a shift's demand level was measured or stated
+# (shift_quality.profile_for_shift): the restaurant's sales by weekday, the
+# owner's lift for a date.
+MEASURED_DEMAND_SOURCES = ("your sales history", "what you told us about this date")
+
+
+def _demand_measured(profile, measured=False) -> bool:
+    """Whether a shift's demand level rests on a measurement or the owner's
+    own word: the date's measured demand (date_demand), a profile levelled by
+    the restaurant's sales or the owner's lift, or a profile the owner set
+    up — not the built-in profile's default level."""
+    if measured:
+        return True
+    if getattr(profile, "source", "default") in MEASURED_DEMAND_SOURCES:
+        return True
+    return not bool(getattr(profile, "builtin", True))
+
+
 def requirements_block(rows: list, unread_rules: bool = False) -> str:
     """The SHIFT REQUIREMENTS table: one line per shift. How coverage is
     counted, the half-hour ramp and the late-night line are standing
@@ -820,7 +843,10 @@ def requirements_block(rows: list, unread_rules: bool = False) -> str:
         if r.get("target_hours") and r["daypart"] != LATE_PART:
             bits.append(f"day target {float(r['target_hours']):g}h")
         if r.get("demand"):
-            bits.append(f"{r['demand']} demand")
+            # A level nothing measured is not said as one (AI-11): it sat
+            # beside "NO DEMAND HISTORY — do not describe any day as busy,
+            # slow, peak" as "peak demand", from the built-in profile's guess.
+            bits.append(f"{r['demand']} demand" if r.get("demand_measured", True) else "demand not measured")
         if r.get("leader"):
             bits.append("leader: " + "; ".join(r["leader"]))
         if r.get("half_hours"):
@@ -835,7 +861,8 @@ def requirements_block(rows: list, unread_rules: bool = False) -> str:
     return ("\n\nSHIFT REQUIREMENTS — priority 2. One line per shift of this request: the people each role needs on "
             "it (\"(floor N)\" the owner's hard minimum inside the number, \"(borrowed)\" a figure lent by similar "
             "restaurants, \"(usual N)\" what the number was before this date's demand moved it), the date's hours "
-            "target, the demand level the shift is scored at, who it needs to run it, its half-hour numbers and why "
+            "target, the demand level the shift is scored at (\"demand not measured\" where no sales or owner's word "
+            "sets one), who it needs to run it, its half-hour numbers and why "
             "a number moved. Schedule to these numbers — they carry every event, holiday, measured volume change and "
             "staffing ask on the date, and every staffing floor, hour a role starts or ends and ceiling of the owner's "
             "that the code reads — and never above them to use up hours."

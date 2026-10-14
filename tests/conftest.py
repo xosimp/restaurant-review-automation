@@ -617,9 +617,12 @@ def two_restaurants(db_path):
 
 @pytest.fixture(autouse=True)
 def _fresh_generation_slots():
-    """schedule_engine._GEN_SLOTS is process-wide: a press one test announced
-    and never ran (a stubbed pool) held every later auto-draft in the same
-    worker behind it — the suite's intermittent hang at 99% (10/7/26)."""
-    import schedule_engine
-    schedule_engine._GEN_SLOTS = schedule_engine.GenerationSlots(schedule_engine.SCHEDULE_GEN_WORKERS)
+    """A generation's slot is its job_queue row since blind re-audit
+    10/11/26 ARCH-10 (the process-wide GenerationSlots are gone). What is
+    still process-wide is the queue's drain flag: a test that ran
+    job_queue.shutdown() must not leave every later test's consumer
+    refusing to claim."""
+    import job_queue
+    job_queue._draining.clear()
     yield
+    job_queue._draining.clear()

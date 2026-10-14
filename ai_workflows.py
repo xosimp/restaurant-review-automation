@@ -50,7 +50,7 @@ from dataclasses import dataclass, field, replace
 # Bumped when any default below changes: every ai_runs row records the policy
 # version it ran under, so the learner never compares runs across a change it
 # cannot see.
-POLICY_VERSION = "2026-10-10.1"
+POLICY_VERSION = "2026-10-11.1"   # schedule_critic caps (re-audit 10/11/26 AI-18)
 
 TIERS = ("T0", "T1", "T2", "T3", "T4")
 DEFAULT = "default"
@@ -215,7 +215,8 @@ POLICIES = {p.workflow: p for p in (
     # rules engine: its fill in code runs first, and only a gate that still
     # trips after it (rule_breach) sends the gate's days to T4 — that
     # rewrite IS the escalation, with the gate's reasons as its notes.
-    # schedule_engine.hard_week_reasons pre-routes a hard week to T4; a
+    # schedule_engine.hard_week_reasons pre-routes a hard week to T4 only
+    # on an eval verdict for that kind of week (re-audit 10/11/26 AI-27); a
     # SCHEDULE_MODEL env pin skips the ladder (schedule_engine.
     # schedule_route). Caps: a week's planned calls, the generation's own
     # MAX_EXTRA_CALLS (8) retries and splits, and the gate's rewrite with
@@ -225,7 +226,8 @@ POLICIES = {p.workflow: p for p in (
        caps=Caps(calls=16, usd=6.0, seconds=2400), delivery="background", batch=True,
        context=("profile", "owner_rules", "roster", "sales_trend", "labor_trend", "events", "weather",
                 "memory", "data_state"),
-       note="hard weeks (schedule_engine.hard_week_reasons) start on T4; a SCHEDULE_MODEL pin skips the ladder; "
+       note="a hard week starts on T4 only where an eval verdict backs it (schedule_engine.hard_week_reasons, "
+            "schedule_eval.tag_evidence); a SCHEDULE_MODEL pin skips the ladder; "
             "the unattended auto-draft's first call goes through Message Batches (schedule_batch), a press never"),
     # The schedule's two small calls (scheduler audit 10/10/26): the owner's
     # words read into typed rules (owner_rules — every proposed rule
@@ -240,10 +242,14 @@ POLICIES = {p.workflow: p for p in (
        caps=Caps(calls=1, usd=0.02, seconds=60), delivery="background",
        note="schedule_narrative: written from the final week, every bullet checked against its rows"),
     # The critic of a week the solver built (schedule_critic — AI-8): at
-    # most six typed edits, each kept only when code finds it breaks nothing.
+    # most six typed edits a call, each kept only when code finds it breaks
+    # nothing. Since 10/11/26 (re-audit AI-18) it thinks at medium effort and
+    # reviews a big week a few whole days a call (schedule_critic.chunks, at
+    # most MAX_CRITIC_CALLS) instead of a table cut at 600 rows.
     _p("schedule_critic", "scheduling", "schedule_critic", ladder=(DEFAULT,), reviewer="rules",
-       caps=Caps(calls=1, usd=0.20, seconds=120), delivery="background",
-       note="schedule_critic: Sonnet 5.5, structured edits; code validates each (can_add, regressions, the score)"),
+       caps=Caps(calls=7, usd=1.00, seconds=600), delivery="background",
+       note="schedule_critic: Sonnet 5.5 at medium effort, structured edits, a few whole days a call; code "
+            "validates each (can_add, regressions, the Shift Quality score)"),
     # ── cfo ─────────────────────────────────────────────────────────────
     _p("ask_cavnar", "cfo", "ask_cavnar", ladder=("T2",), reviewer="rules",
        caps=Caps(calls=8, usd=0.60, seconds=90),
@@ -595,7 +601,9 @@ def route_for(pol: Policy, step: int = 0, start: str | None = None, restaurant_i
         if not pol.purpose:
             raise ValueError(f"{pol.workflow}: '{DEFAULT}' has no call-site model to run on")
         import ai_utils as _ai
-        return Route(tier=DEFAULT, model=_ai.model_for(pol.purpose))
+        # The call site's own model, held to a canaried tier like the tier
+        # itself (re-audit 10/11/26 AI-26).
+        return Route(tier=DEFAULT, model=_ai.model_for_run(pol.purpose, restaurant_id))
     t = _tier_table(restaurant_id).get(tier)
     if t is None:
         raise ValueError(f"{pol.workflow}: tier {tier!r} has no model")

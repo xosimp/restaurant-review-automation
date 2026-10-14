@@ -1896,10 +1896,13 @@ def apple_date(value):
 
 def native_push_allowed() -> bool:
     """Silent and Live Activity pushes leave only where the scheduler may
-    run — never from a laptop holding production's APNs key."""
+    run — never from a laptop holding production's APNs key. The rule is
+    config.scheduling_allowed: reached from a generation stage (live
+    activities), it never imports the scheduler (blind re-audit 10/11/26
+    BUGSGEN-3 — that import loaded the production .env mid-run)."""
     try:
-        import scheduler
-        return bool(scheduler.scheduling_allowed())
+        import config
+        return bool(config.scheduling_allowed())
     except Exception:
         return False
 

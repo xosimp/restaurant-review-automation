@@ -4423,9 +4423,14 @@ def run_auto_publish_schedules():
             except Exception as e:
                 _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
             return False
-        action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
-                                  AUTO_PUBLISH_UNDO_MINUTES,
-                                  label=f"Publishing the week of {mdy(row['week_start'])} to staff")
+        # Never beside a Send already waiting for the week (schedule re-audit
+        # 10/11/26 BUGSLIFE-9): a person's queued Send stands, and Undo on
+        # its countdown is the whole of it.
+        action = delayed.queue_schedule_send(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
+                                             AUTO_PUBLISH_UNDO_MINUTES, replace=False,
+                                             label=f"Publishing the week of {mdy(row['week_start'])} to staff")
+        if action.get("existing"):
+            return False
         try:
             from strategy_jobs import _reach, _clock
             # The real send time. The job's window runs 9am to 2pm local, so
@@ -5843,9 +5848,8 @@ def scheduler_loop():
                 # Each draft a `scheduled` job_queue row when the queue is on
                 # (SCALE-13): the pass claims and enqueues in seconds instead
                 # of holding the AI lane up to 40 minutes an hour.
-                import job_queue as _jq_ad
                 if not _ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now,
-                                        enqueue=_jq_ad.enabled()):
+                                        enqueue=True):
                     _ops.release_period("auto_draft_schedule", f"{today}-{now.hour}")
 
             # Monday 7am local — the agent files the week's three actions.
@@ -6152,21 +6156,16 @@ def scheduling_allowed():
     brief at 7:52, a second "one week in" at 1:39pm, a failure digest about
     the dev machine's own errors. Morning briefs, digests, alerts and issue
     texts reach real people; a laptop must never be a second sender.
+
+    Held while a restore is in progress (RESTORE_FROM: jobs must not write
+    into the restored database, or send from it, until someone has confirmed
+    it) and during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
+    docs/ops/POSTGRES_CUTOVER.md). The one rule lives in
+    config.scheduling_allowed, so a gate read outside the scheduler never
+    imports this module (blind re-audit 10/11/26 BUGSGEN-3, SCALE-29).
     """
-    # Held while a restore is in progress: jobs must not write into the
-    # restored database (or send from it) until someone has confirmed it and
-    # removed RESTORE_FROM.
-    if (os.getenv("RESTORE_FROM") or "").strip():
-        return False
-    # Held during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
-    # docs/ops/POSTGRES_CUTOVER.md): no job writes the database being copied.
-    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
-        return False
-    if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
-        return True
-    # Railway sets all of these on every deploy; any one is enough.
-    return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
-                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+    import config as _config_gate
+    return _config_gate.scheduling_allowed()
 
 
 def _run_scheduler_thread():

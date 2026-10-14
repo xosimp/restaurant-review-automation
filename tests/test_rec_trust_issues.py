@@ -31,8 +31,23 @@ def _redirect(monkeypatch, db_path):
 @pytest.fixture
 def texts(monkeypatch):
     out = []
-    monkeypatch.setattr("notify.send_sms", lambda to, msg, use_case="alert": out.append((to, msg)) or True)
+    monkeypatch.setattr("notify.send_sms", lambda to, msg, use_case="alert": out.append((to, msg, use_case)) or True)
     return out
+
+def _staff_text_consent(monkeypatch, name, phone):
+    """{name}'s own staff text consent covering requests (people.reach) —
+    the only consent a cover ask may text under (re-audit 10/11/26
+    BUGSLIFE-20); an owner-alert contact's consent never is."""
+    import people
+    real = people.reach
+
+    def reach(rid, names, purpose=None, db_path=None):
+        out = real(rid, names, purpose=purpose, db_path=db_path)
+        for n in names:
+            if n.strip().lower() == name.lower():
+                out[n] = dict(out.get(n) or {}, sms=phone, sms_scope=["schedule", "request"])
+        return out
+    monkeypatch.setattr(people, "reach", reach)
 
 
 def _rid(db_path, **kw):
@@ -258,13 +273,20 @@ def test_ask_ana_to_cover_texts_her_consented_number_and_records_the_yes(db_path
     # No consent on record for her number: never texted.
     out = intraday.ask_to_cover(rid, cov["id"], "Ana", db_path=db_path)
     assert out["ok"] is False and "call them" in out["error"]
+    # An owner-alert contact's consent is not hers to be texted under
+    # (re-audit 10/11/26 BUGSLIFE-20): still never texted.
     _contact(db_path, rid, name="Ana", phone="+15555550142")
+    texts.clear()
+    out = intraday.ask_to_cover(rid, cov["id"], "Ana", db_path=db_path)
+    assert out["ok"] is False and not texts
+    # Her own staff text consent covering requests: on the staff campaign.
+    _staff_text_consent(monkeypatch, "Ana", "+15555550142")
     texts.clear()
     out = intraday.ask_to_cover(rid, cov["id"], "ana", user_id=9, db_path=db_path)
     # Ana has no app login, so no in-app offer (offer_id None): she is asked
     # the old way, told to call (employee audit H2).
     assert out == {"ok": True, "via": "sms", "name": "Ana", "offer_id": None}
-    assert len(texts) == 1 and "Dana K" in texts[0][1] and "cover" in texts[0][1]
+    assert len(texts) == 1 and "Dana K" in texts[0][1] and "cover" in texts[0][1] and texts[0][2] == "staff"
     conn = get_conn(db_path)
     ev = conn.execute("SELECT event FROM rec_events WHERE restaurant_id=? AND key=?",
                       (rid, intraday.cover_key(cov))).fetchall()
@@ -279,6 +301,7 @@ def test_the_issue_page_offers_the_one_tap_and_sends_it(db_path, texts, monkeypa
     from strategy_routes import issue_link_bp
     rid = _coverage_world(db_path, monkeypatch, lambda: [])
     _contact(db_path, rid, name="Ana", phone="+15555550142")
+    _staff_text_consent(monkeypatch, "Ana", "+15555550142")
     conn = get_conn(db_path)
     conn.execute("INSERT INTO staff_contacts (restaurant_id, employee_name, phone) VALUES (?, 'Ana', '+15555550142')",
                  (rid,))

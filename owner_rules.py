@@ -325,7 +325,7 @@ def build_request(restaurant_id, sentences, names, roles, week_dates=None) -> di
     text = (f"PEOPLE: {', '.join(sorted(str(n) for n in names or ()))}\n"
             f"ROLES: {', '.join(sorted(str(r) for r in roles or ()))}\n{week}"
             f"SENTENCES:\n" + "\n".join(lines))
-    return {"model": ai_utils.model_for("schedule_rules"), "max_tokens": EXTRACT_MAX_TOKENS, "system": SYSTEM,
+    return {"model": ai_utils.model_for_run("schedule_rules", restaurant_id), "max_tokens": EXTRACT_MAX_TOKENS, "system": SYSTEM,
             "messages": [{"role": "user", "content": text}],
             "output_config": {"format": {"type": "json_schema", "schema": rules_schema()}},
             "restaurant_id": restaurant_id, "action": EXTRACT_ACTION}

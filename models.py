@@ -2008,6 +2008,11 @@ def ensure_columns(db_path: str = DB_PATH):
         # UNIQUE index on (source, external_id) is created by
         # billing_jobs.init_billing, after this column exists.
         ("admin_events", "external_id", "TEXT"),
+        # A running queue row's phase (job_queue.model_wait — blind re-audit
+        # 10/11/26 SCALE-1): NULL doing code work (holding a CPU slot),
+        # 'model' waiting on a model answer (its slot given back), 'await'
+        # back from the model and waiting for a slot.
+        ("jobs", "phase", "TEXT"),
     ]
     try:
         for table, col, col_type in columns_to_add:
@@ -2576,6 +2581,17 @@ def init_db(db_path: str = DB_PATH):
             attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_login_attempts_key ON login_attempts(key, attempted_at)",
+        # The /admin request ceiling's counts (security.admin_request_allowed
+        # — blind re-audit 10/11/26 ARCH-26/SCALE-23): per session and
+        # minute in the database, so N web workers share one ceiling instead
+        # of each allowing its own.
+        """CREATE TABLE IF NOT EXISTS admin_request_hits (
+            key      TEXT NOT NULL,
+            win      INTEGER NOT NULL,
+            requests INTEGER NOT NULL DEFAULT 0,
+            writes   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (key, win)
+        )""",
         # Temporary passwords are no longer persisted (security audit A3):
         # they are emailed once and a fresh one is minted at contract
         # signing. Anything still stored is a plaintext login credential.
@@ -8900,7 +8916,10 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # request, sent after the write commits (ARCH-9).
                        ("held_claimant", "TEXT"), ("held_claim_at", "TEXT"), ("held_claim_note", "TEXT"),
                        ("decided_how", "TEXT"), ("auto_reasons_json", "TEXT"),
-                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT")):
+                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT"),
+                       # schedule re-audit 10/11/26 STRESS-16: who runs the
+                       # floor when an approved drop leaves no manager on.
+                       ("floor_covered_by", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):

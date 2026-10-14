@@ -144,23 +144,48 @@ SCALE-25) schedule generation — owners' presses and the auto-draft — and the
 nightly learners' per-restaurant passes are rows in the durable `jobs`
 table (`job_queue.py`), not threads. Who runs them:
 
-- **Default (`QUEUE_WORKER` unset):** the web process consumes its own
-  queue on bounded pools — the same one process production has always run,
-  with every unit of work a row that survives a restart. The generation
-  pool's bound is `QUEUE_GENERATION_CONCURRENCY` (default
-  `SCHEDULE_GEN_WORKERS`, 2), now a count of claimed rows across every
-  process.
-- **`QUEUE_WORKER=1` on the service, with the second-process start command
-  above:** `worker.py` consumes the queue (`job_queue.run_worker`) beside
-  its scheduler loop, so the generation CPU (the repair loop, the solver,
-  the optimizer — 15 to 150 s a generation) and the model waits leave the
-  web process and its four request threads; the web process only enqueues.
-  If the worker has not beaten its heartbeat (`job_workers`) for
+- **Default (`QUEUE_WORKER` unset or `1`; since the blind re-audit of
+  10/11/26, SCALE-17, SCALE-18):** the queue worker process consumes.
+  gunicorn's master reads `gunicorn.conf.py` (gunicorn's default config file
+  in the working directory — the start command in `railway.json` and the
+  `Procfile` is unchanged) and, in `when_ready`, starts `worker.py --queue`
+  in the SAME container and restarts it whenever it exits. `worker.py
+  --queue` is the consumer alone — no scheduler: it waits for the web
+  process's boot heartbeat (the schema is migrated; two processes never run
+  `init_db` at once), runs `job_queue.run_worker`, and exits 0 after
+  `QUEUE_WORKER_MAX_JOBS` rows (20) or past `QUEUE_WORKER_MAX_RSS_MB` (1500)
+  so the supervisor starts a fresh process — a 250-person generation used to
+  leave 1.4 GB resident in the web process for good, and two of them pushed
+  a 1 ms request to a 137 ms p95 under the one GIL. The generation CPU (the
+  repair loop, the solver, the optimizer) and the model waits leave the web
+  process and its four request threads; the web process only enqueues. If
+  no worker has beaten its heartbeat (`job_workers`) for
   `QUEUE_WORKER_STALE_SECONDS` (90 s), the web process consumes after all —
-  a press is never stranded behind a worker that is not running.
-- **`JOB_QUEUE=0`:** the old paths (the in-process generation pool, the
-  auto-draft and the learners inline in the scheduler thread) — the
-  rollback.
+  a press is never stranded behind a worker that is not running, and a
+  local `python3 hosted_dashboard.py` (no gunicorn, no worker) consumes
+  in-process. At the master's exit (`on_exit`, a deploy's SIGTERM) the queue
+  worker is SIGTERMed and given 25 seconds to hand its rows back.
+- **`QUEUE_WORKER=0`:** no queue worker is started; the web process consumes
+  its own queue on bounded pools (the rollback: a variable change redeploys
+  the service on Railway, and the new master starts no worker).
+- **`QUEUE_WORKER_PROCESS=0`:** worker mode, but gunicorn starts nothing —
+  for a `worker.py` run some other way (the `sh -c` command above, which
+  also runs the scheduler loop; in worker mode plain `worker.py` consumes
+  the queue too).
+- `JOB_QUEUE=0` is retired (ARCH-10): the queue is the one path — the
+  in-process generation pool and its `GenerationSlots`, and the learners
+  inline in the scheduler thread, are gone.
+
+Slots: a generation row holds one of the group's CPU slots
+(`QUEUE_GENERATION_CONCURRENCY`, default `SCHEDULE_GEN_WORKERS` = 2) only
+while it does code work; while it waits on a model answer it gives the slot
+back (`job_queue.model_wait`, entered by `ai_utils.create_with_retry` around
+every attempt) and counts only against `QUEUE_GENERATION_MAX_RUNNING`
+(default 3 x the slots; under `GATEWAY_ORG_OTPM`, never more streams than
+the budget carries). One slot is kept for owners' presses and one for the
+auto-draft while drafts wait (`QUEUE_INTERACTIVE_RESERVED`,
+`QUEUE_SCHEDULED_RESERVED`). A row back from the model waits ('await') ahead
+of any new claim.
 
 On a deploy's SIGTERM the process hands its running rows back to the queue
 (`job_queue.shutdown`, before `ops.shutdown_scheduler` in `worker.py`, and at
@@ -171,10 +196,9 @@ that had not reads back every model answer it already paid for
 will resume. A process killed without SIGTERM loses only its lease
 (`QUEUE_LEASE_SECONDS`, 120 s): the next consumer then claims the row.
 
-Turning the worker on: set the start command above (in `railway.json` and
-the `Procfile`), then `QUEUE_WORKER=1`. Rollback: unset `QUEUE_WORKER` — the
-web process consumes again at once; the worker's rows are handed back at its
-SIGTERM or after their lease.
+Turning the queue worker off: `QUEUE_WORKER=0` and a redeploy — the web
+process consumes again; the worker's rows are handed back at its SIGTERM or
+after their lease.
 
 A separate worker SERVICE is still impossible on the volume; it becomes
 possible after the Postgres cutover (`docs/ops/POSTGRES_CUTOVER.md`), when the
@@ -193,17 +217,25 @@ was already durable (`security.py`'s `login_attempts` table;
 Process-local state still multiplies with N workers (the full inventory and
 the order to move it are in `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`):
 
-  * `security._admin_hits` — the admin request ceiling (240 requests / 60
-    writes a minute per session) would be N times that
+  * (moved 10/11/26, blind re-audit ARCH-26) `security._admin_hits` — the
+    admin request ceiling (240 requests / 60 writes a minute per session) is
+    counted in `admin_request_hits` (a sliding-window counter over minute
+    buckets); the dict is only its fallback
   * (moved 10/10/26) `ai_utils._breakers` — every opening, closing and
     reset is the shared `ai_breakers` row now, read back within seconds
-  * the admin console's fleet memo (`admin_ops._fleet_state`) — a write on one
-    worker drops only that worker's memo, so the other serves a read up to
-    45 seconds stale
-  * the bounded pools (the two admin pools — `ops.run_admin_task` and the
-    one admin job pool, `admin_routes._submit_admin_job` — the webhook and
-    push delivery pools, `ASK_MAX_CONCURRENT`, `INTERACTIVE_AI_SLOTS`) — each
-    bound would be N times its value
+  * (moved 10/11/26, ARCH-26) the admin console's fleet memo
+    (`admin_ops._fleet_state`) — an admin write moves the shared generation
+    (`job_cursors['admin_fleet_gen']`), so every worker's memo is dropped,
+    not only the writer's
+  * (keyed on the database 10/11/26) the Studio's live check and the
+    requirement model cache — on `schedule_engine.shifts_stamp`, so an
+    upload or a sync is seen by every worker at once
+  * the bounded pools on outbound work (the two admin pools —
+    `ops.run_admin_task` and the one admin job pool,
+    `admin_routes._submit_admin_job` — the webhook and push delivery pools,
+    the owner AI pool and the AI background pools) — each bound would be N
+    times its value. `ASK_MAX_CONCURRENT` and `INTERACTIVE_AI_SLOTS` are per
+    process by design: each guards that process's own request threads
   * `http_layer`'s in-memory latency window and in-flight gauge — each
     worker reports only its own traffic (the persisted per-minute rollups
     add up correctly)
