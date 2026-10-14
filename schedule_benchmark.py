@@ -672,7 +672,7 @@ def generate(rid, week_start, arm) -> dict:
 
 def cpu_seconds() -> float:
     """CPU this process and its finished children have used (user + system):
-    a solve run in its own process (schedule_cpsat.isolated) counts too."""
+    a solve run in its own process (schedule_cpsat.run) counts too."""
     import resource
     tot = 0.0
     for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN):
@@ -1130,7 +1130,7 @@ def table(results) -> str:
 def peak_rss_mb(children=False) -> float:
     """This process's peak resident memory, MB (ru_maxrss is bytes on macOS,
     kilobytes on Linux) — or, `children`, the largest finished child's (a
-    solve run in its own process, schedule_cpsat.isolated)."""
+    solve run in its own process, schedule_cpsat.run)."""
     import resource
     r = resource.getrusage(resource.RUSAGE_CHILDREN if children else resource.RUSAGE_SELF).ru_maxrss
     return round(r / (1024.0 * 1024.0) if sys.platform == "darwin" else r / 1024.0, 1)
