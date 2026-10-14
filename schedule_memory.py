@@ -2317,6 +2317,9 @@ def enforced_signals(restaurant_id, week_dates, roster_names=None, db_path=None,
     A learned closer for a role whose closers the owner chose binds only
     when it is one of them (LEARN-10): `closers` ({family: {name key}},
     chosen_closers_of) when the caller has them, else read here."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return []  # learning_v2's off week (LEARNING-14)
     if not restaurant_id or not _learns(restaurant_id, db_path):
         return []
     rows = _rows(restaurant_id, ("active",), db_path, kinds=SIGNAL_KINDS + ("retime_end",))
@@ -2867,6 +2870,9 @@ def prompt_lines(restaurant_id, week_dates, roster_names=None, budget_chars=1600
     confidence, and the least relevant go first. A section that had to drop
     lines says how many. What is kept reads in its original order. "" when
     nothing has anything to say."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return ""  # learning_v2's off week (LEARNING-14)
     weekdays = {_weekday(d) for d in (week_dates or []) if _weekday(d)}
     names = sorted({_nk(n) for n in (roster_names or []) if _nk(n)}, key=len, reverse=True)
     parts = []

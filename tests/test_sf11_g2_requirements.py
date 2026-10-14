@@ -70,6 +70,26 @@ def test_the_ledger_explains_the_number_and_the_arbiter_holds_stacking():
     assert words.startswith("5: usual 4") and "the manager's own level +1" in words
 
 
+def test_an_elasticity_target_level_and_weekdays_go_through_the_ledger():
+    """G1's level semantics (LEARNING-6/7) on the one ledger path: a +1
+    measured to a target of 5 lifts a usual 4 to 5, a baseline already at 5
+    is held (logged, not applied), and a weekday it was not measured on is
+    left alone."""
+    mv = {("server", "night"): {"move": 1, "target": 5, "weekdays": ["Friday"], "reason": "measured +1"}}
+    up = _server(req.shift_requirements([FRI], typical_headcount={("Friday", "night"): {"Server": 4}},
+                                        elasticity=mv))
+    assert up["required"] == 5
+    assert [e for e in up["ledger"] if e["lever"] == "elasticity"][0]["applied"]
+    held = _server(req.shift_requirements([FRI], typical_headcount={("Friday", "night"): {"Server": 5}},
+                                          elasticity=mv))
+    e = [e for e in held["ledger"] if e["lever"] == "elasticity"][0]
+    assert held["required"] == 5 and not e["applied"] and "already at the level" in e["held_by"]
+    sat = "2026-10-17"
+    rows = req.shift_requirements([sat], typical_headcount={("Saturday", "night"): {"Server": 4}}, elasticity=mv)
+    s = next(x for x in next(r for r in rows if r["daypart"] == "night")["roles"] if x["role"] == "Server")
+    assert s["required"] == 4 and not [e for e in s["ledger"] if e["lever"] == "elasticity"]
+
+
 def test_the_baseline_keeps_people_on_at_once_in_step(monkeypatch):
     import schedule_learning
     monkeypatch.setattr(schedule_learning, "learned_headcount",

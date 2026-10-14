@@ -3405,7 +3405,11 @@ def apply_learned_headcount(restaurant_id, typical: dict, record: dict = None) -
     adjustment is positive. `record` (a dict) is filled with what was
     applied — {(weekday, daypart): {role: {delta, settled, base, applied}}}
     — so the requirements table can take it back out of a driven figure and
-    apply it as a LEVEL after the driver (re-audit 10/11/26 LEARNING-18)."""
+    apply it as a LEVEL after the driver (re-audit 10/11/26 LEARNING-18).
+    On learning_v2's off week (LEARNING-14) nothing is applied or recorded."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return typical  # learning_v2's off week (LEARNING-14)
     out = {k: dict(v) for k, v in (typical or {}).items()}
     try:
         from schedule_learning import learned_headcount, headcount_to_apply
@@ -3752,7 +3756,8 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
 
     trends = []
     # {(weekday, daypart): {role: "pre_cavnar" | "cavnar" | "validated" |
-    # "trim_held"}} — where a moved level came from (trend_guard; LEARNING-5).
+    # "trim_held" | "elasticity_held"}} — where a moved level came from
+    # (trend_guard; LEARNING-5; a measured +1 the drafts carried — LEARNING-6).
     provenance = {}
 
     def _typical(by_role_date, dates_by_day, find_trends=False):
@@ -3785,7 +3790,8 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                         t["provenance"] = g.get("provenance")
                         if g.get("hold"):
                             t["held"], t["reason"] = True, g.get("reason")
-                            provenance.setdefault((day, part), {})[role] = "trim_held"
+                            provenance.setdefault((day, part), {})[role] = (
+                                "elasticity_held" if g.get("provenance") == "elasticity" else "trim_held")
                             n = t["was"]
                             trends.append(dict(t, day=day, part=part, role=role))
                             if n:
@@ -4057,11 +4063,20 @@ def _trend_guard(restaurant_id):
         if not live:
             return None
         memo = {}
+        # The windows a measured +1 bound the drafts in (LEARNING-6, blind
+        # re-audit 10/11/26): an upward trend inside one is the drafts' own.
+        try:
+            import staffing_elasticity as _sel_g
+            ups = _sel_g.upward_windows(restaurant_id)
+        except Exception as e:
+            print(f"[labor] measured staffing windows unavailable for {restaurant_id}: {e}")
+            ups = {}
 
         def guard(trend):
-            key = (trend.get("day"), trend.get("part"), trend.get("since"), tuple(trend.get("recent_dates") or ()))
+            key = (trend.get("day"), trend.get("part"), trend.get("role"), trend.get("since"),
+                   tuple(trend.get("recent_dates") or ()))
             if key not in memo:
-                memo[key] = _prov.hold_down_trend(trend, live, restaurant_id=restaurant_id)
+                memo[key] = _prov.hold_down_trend(trend, live, restaurant_id=restaurant_id, ups=ups)
             return memo[key]
         return guard
     except Exception as e:

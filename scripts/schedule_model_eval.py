@@ -586,6 +586,11 @@ def arm_rows(item, arm, call_model=None) -> tuple:
             return got["rows"], cost, round(time.time() - t0, 1), got.get("error")
         except Exception as e:
             return [], 0.0, round(time.time() - t0, 1), f"{type(e).__name__}: {e}"[:300]
+    if arm["name"] == se_.NO_LEARNING_ARM:
+        # The stored answers, scored with nothing learned (run_set scores this
+        # arm against schedule_eval.without_learning(item) — LEARNING-14).
+        rows = _merge_rows(calls, production_result(calls))
+        return rows, 0.0, round(time.time() - t0, 1), None
     results = production_result(calls) if arm["name"] == PRODUCTION else \
         [replay_call(call, arm, call_model or default_call_model) for call in calls]
     rows = _merge_rows(calls, results)
@@ -609,13 +614,15 @@ def run_set(items, arms, runs=None, call_model=None, live=False, run_key=None, v
     "pairs": {arm: {metric: diff vs baseline}}, "short": [...], "runs": [...]}."""
     import schedule_eval as se_
     runs = int(runs or se_.RUNS_PER_ARM)
-    plan = [a for a in arms if a["name"] in (PRODUCTION,) + se_.CODE_ARMS or live or call_model is not None]
+    plan = [a for a in arms if a["name"] in (PRODUCTION, se_.NO_LEARNING_ARM) + se_.CODE_ARMS or live
+            or call_model is not None]
     out_runs = []
     for item in items:
         for arm in plan:
             for i in range(runs):
                 rows, cost, secs, err = arm_rows(item, arm, call_model=call_model)
-                m = se_.score_arm(rows, item) if not err or rows else {"error": err}
+                scored_on = se_.without_learning(item) if arm["name"] == se_.NO_LEARNING_ARM else item
+                m = se_.score_arm(rows, scored_on) if not err or rows else {"error": err}
                 m.update(cost=cost, seconds=secs, error=err)
                 rec = {"arm": arm["name"], "item_key": item["item_key"], "restaurant_id": item.get("restaurant_id"),
                        "run_index": i, "metrics": m, "drafted_by": item.get("drafted_by") or ""}
@@ -731,8 +738,9 @@ def main(argv=None):
     ap.add_argument("--set", metavar="VERSION", help="run the arms on the frozen set VERSION instead of stored weeks")
     ap.add_argument("--tags", help="only the set's items carrying all these tags (comma-separated)")
     ap.add_argument("--runs", type=int, help="runs per arm per week (default schedule_eval.RUNS_PER_ARM, 3)")
-    ap.add_argument("--code-arms", default="carry_forward,solver,solver_v0",
-                    help="no-model arms to run on the set (schedule_eval.CODE_ARMS)")
+    ap.add_argument("--code-arms", default="carry_forward,solver,solver_v0,production_no_learning",
+                    help="no-model arms to run on the set (schedule_eval.CODE_ARMS, and production_no_learning: "
+                         "the stored answers scored with nothing learned - LEARNING-14)")
     ap.add_argument("--store", action="store_true", help="keep each run in schedule_eval_runs")
     ap.add_argument("--verdict", help="A,B: record A against B per roster-size band (the router reads T4,T3)")
     ap.add_argument("--verdict-tags", help="also record A against B for these kinds of week "

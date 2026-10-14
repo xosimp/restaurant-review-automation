@@ -1291,6 +1291,9 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
                reads (schedule_engine, LEARNING-28).
     A denied drop is not a preference (SCHED-40); a drop let go that nobody
     claimed before the shift passed still counts (LEARN-12)."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     import learning_stats
     since = (date.today() - timedelta(days=int(weeks) * 7)).isoformat()
     conn = get_conn(db_path)

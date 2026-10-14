@@ -1472,6 +1472,9 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     says nothing about attendance (the same rule labor.py's no-show block
     applies).
     """
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     # Every shift somebody WATCHED (attendance.reliability_events — memory
     # audit 9/29/26): the outcomes the live check, the close-out and the
     # nightly published-week-vs-punches join recorded, and the shifts from a
