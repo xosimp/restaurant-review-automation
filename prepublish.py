@@ -422,8 +422,10 @@ def _row(rid, schedule_id):
 
 
 def _stored_rows(row) -> list:
-    from schedule_versions import rows_from_csv
-    return rows_from_csv(row.get("schedule_csv") or "")
+    """The week's WORKING rows, from the shift table (schedule_shifts —
+    schedule re-audit 10/11/26 ARCH-7)."""
+    import schedule_shifts
+    return schedule_shifts.rows_of(row.get("id"), "working") if row.get("id") else []
 
 
 def _econ_of(row) -> dict:

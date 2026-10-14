@@ -137,7 +137,12 @@ def project(conn, restaurant_id, history_id, version) -> dict:
     except Exception:
         tz = "America/Chicago"
     published = v["reason"] == "published"
-    rows = sv.rows_from_csv(v["schedule_csv"])
+    # The revision's rows from the shift table when it is the revision the
+    # table holds (a drain right after the write); an older one's stored
+    # text otherwise — the table keeps one revision per copy
+    # (schedule_shifts.revision_rows, schedule re-audit 10/11/26 ARCH-7).
+    import schedule_shifts
+    rows = schedule_shifts.revision_rows(conn, int(history_id), int(version), v["schedule_csv"])
     shifts = []
     seen = set()
     for i, r in enumerate(rows):
@@ -160,7 +165,7 @@ def project(conn, restaurant_id, history_id, version) -> dict:
                        "role": r.get("role") or None, "business_date": str(r.get("date"))[:10],
                        "start_ts": _iso_utc(start), "end_ts": _iso_utc(end), "scheduled_hours": hours,
                        "notes": r.get("notes") or None, "locked": bool(r.get("locked")), "published": published})
-    events = _events(v, prev, rows)
+    events = _events(v, prev, rows, conn=conn, history_id=int(history_id))
     return {"week": {"id": int(h["id"]), "restaurant_id": int(h["restaurant_id"]),
                      "week_start": str(h["week_start"] or "")[:10], "week_end": str(h["week_end"] or "")[:10] or None,
                      "superseded_by": h["superseded_by"]},
@@ -171,14 +176,18 @@ def project(conn, restaurant_id, history_id, version) -> dict:
             "shifts": shifts, "events": events, "published": published}
 
 
-def _events(v, prev, rows):
+def _events(v, prev, rows, conn=None, history_id=None):
     """The revision's operations on shifts, by shift_id: add / remove /
-    change (before and after), and generate / publish for those kinds."""
+    change (before and after), and generate / publish for those kinds. The
+    revision before is an older one: its stored text (revision_rows)."""
     import schedule_versions as sv
+    import schedule_shifts
     out = []
     if v["reason"] in ("generated", "published"):
         out.append({"kind": "generate" if v["reason"] == "generated" else "publish", "payload": {"rows": len(rows)}})
-    before = {r.get("shift_id"): r for r in (sv.rows_from_csv(prev["schedule_csv"]) if prev else []) if r.get("shift_id")}
+    before_rows = (schedule_shifts.revision_rows(conn, history_id, prev["version"], prev["schedule_csv"])
+                   if prev and conn is not None else (sv.rows_from_csv(prev["schedule_csv"]) if prev else []))
+    before = {r.get("shift_id"): r for r in before_rows if r.get("shift_id")}
     after = {r.get("shift_id"): r for r in rows if r.get("shift_id")}
     for sid in sorted(set(before) | set(after)):
         b, a = before.get(sid), after.get(sid)

@@ -152,7 +152,6 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
     SCALE-15/16): a week is read while it is settling (WEEK_SETTLE_DAYS
     after its end — its late reviews and punches) and after that only when
     its inputs changed (week_fingerprint), never all twelve again."""
-    from schedule_versions import rows_from_csv
     today = today or date.today()
     conn = get_conn(db_path)
     written = 0
@@ -174,6 +173,10 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
             weeks = kept
         if not weeks:
             return {"written": 0, "weeks": 0}
+        # Each week's published rows from the shift table, by shift_id
+        # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_oc
+        week_rows = _ss_oc.rows_by_week([w["id"] for w in weeks], "live", conn=conn)
         share = _morning_share(conn, restaurant_id)
         # Issues are stamped in UTC; the schedule's dates and dayparts are
         # the restaurant's own. A 7pm Central no-show is 00:00 UTC the next
@@ -203,7 +206,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
             print(f"[outcomes] issues unavailable for restaurant {restaurant_id}: {_ix}")
         actuals = _Actuals(restaurant_id, db_path)
         for w in weeks:
-            rows = rows_from_csv(w["schedule_csv"])
+            rows = week_rows.get(int(w["id"])) or []
             by = {}
             for r in rows:
                 part = _daypart(r)
@@ -819,17 +822,19 @@ def record_weeks(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, toda
     published schedule, else its punches (shift_facts.person_rows — what was
     worked, the hours being the punch's). Names are each person's one
     spelling (people.canonical_names)."""
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     today = today or date.today()
     conn = get_conn(db_path)
     try:
         published = _published_weeks(conn, restaurant_id, weeks, today)
+        # Their rows from the shift table (schedule_shifts, ARCH-7).
+        week_rows = schedule_shifts.rows_by_week([w["id"] for w in published], "live", conn=conn)
     finally:
         conn.close()
     out, covered = [], set()
     for w in published:
         ws = str(w["week_start"] or "")[:10]
-        out.append((ws, rows_from_csv(w["schedule_csv"]), "published"))
+        out.append((ws, week_rows.get(int(w["id"])) or [], "published"))
         try:
             d0, d1 = date.fromisoformat(ws), date.fromisoformat(str(w["week_end"] or ws)[:10])
             covered |= {(d0 + timedelta(days=i)).isoformat() for i in range((d1 - d0).days + 1)}
@@ -953,7 +958,7 @@ ROTATION_SHOW = 3                # names per queue shown and prompted
 
 def _published_weeks(conn, restaurant_id, weeks, today):
     return conn.execute(
-        "SELECT week_start, week_end, " + _live_csv("schedule_history") + " AS schedule_csv FROM schedule_history "
+        "SELECT id, week_start, week_end, " + _live_csv("schedule_history") + " AS schedule_csv FROM schedule_history "
         "WHERE restaurant_id=? AND " + _live_where("schedule_history") + " "
         "AND week_start >= ? ORDER BY week_start DESC LIMIT ?",
         (restaurant_id, (today - timedelta(weeks=weeks)).isoformat(), weeks)).fetchall()
@@ -1302,16 +1307,20 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
                             "FROM shift_change_requests WHERE restaurant_id=? AND created_at >= date('now', ?)",
                             (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
         pubs = conn.execute(
-            "SELECT schedule_csv FROM schedule_history h WHERE restaurant_id=? AND published_at IS NOT NULL AND "
+            "SELECT id FROM schedule_history h WHERE restaurant_id=? AND published_at IS NOT NULL AND "
             "superseded_by IS NULL AND COALESCE(week_end, week_start) >= ? AND NOT EXISTS (SELECT 1 FROM "
             "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
             "n.published_at IS NOT NULL AND n.id > h.id)", (restaurant_id, since)).fetchall()
+        # Each week's rows from the shift table (schedule_shifts — schedule
+        # re-audit 10/11/26 ARCH-7): the WORKING copy, as this read always
+        # took schedule_csv.
+        import schedule_shifts
+        pub_rows = schedule_shifts.rows_by_week([p["id"] for p in pubs], "working", conn=conn)
     except Exception:
         return {}
     finally:
         conn.close()
     from schedule_rules import daypart_of
-    from schedule_versions import rows_from_csv
 
     def slot_of(d, start):
         try:
@@ -1331,7 +1340,7 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
         return " ".join(str(n or "").split()).casefold()
     spell, scheduled, drops, claims, offers = {}, {}, {}, {}, {}
     for p in pubs:
-        for r in rows_from_csv(p["schedule_csv"] or ""):
+        for r in pub_rows.get(int(p["id"])) or []:
             s_, k = slot_of(r.get("date"), r.get("shift_start")), key(r.get("employee"))
             if s_ and k and str(r.get("date") or "")[:10] >= since:
                 scheduled.setdefault(k, {}).setdefault(s_, set()).add(str(r["date"])[:10])
@@ -2065,7 +2074,6 @@ def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_R
     and its observations are written in one transaction (SCALE-26)."""
     import schedule_memory as _sm
     import models as _models_rq
-    from schedule_versions import rows_from_csv
     today = today or date.today()
     conn = get_conn(db_path)
     marks = {}
@@ -2085,21 +2093,25 @@ def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_R
                     marks[h["id"]] = fp
             hist = kept
         planned = {h["id"]: _planned_quality(conn, h["id"]) for h in hist}
+        # Each week's published rows from the shift table (schedule_shifts,
+        # ARCH-7).
+        import schedule_shifts
+        week_rows = schedule_shifts.rows_by_week([h["id"] for h in hist], "live", conn=conn)
     finally:
         conn.close()
     n = 0
     db = None if db_path in (None, DB_PATH) else db_path
     with _models_rq.read_scope(), _sm.observe_batch(restaurant_id, db_path=db):
-        n = _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, rows_from_csv)
+        n = _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, week_rows)
     for hid, fp in marks.items():
         _mark_week_read(restaurant_id, hid, "as_run", fp, db_path)
     return n
 
 
-def _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, rows_from_csv) -> int:
+def _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, week_rows) -> int:
     n = 0
     for h in hist:
-        rows = as_run_rows(restaurant_id, h["week_start"], h["week_end"], rows_from_csv(h["schedule_csv"] or ""),
+        rows = as_run_rows(restaurant_id, h["week_start"], h["week_end"], week_rows.get(int(h["id"])) or [],
                            db_path)
         if not rows:
             continue

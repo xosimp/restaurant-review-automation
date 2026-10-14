@@ -40,7 +40,10 @@ def test_ai12_no_fill_order_or_counting_instruction_in_the_standing_text():
 def test_ai13_rules_code_holds_are_one_clause_naming_code():
     s = _static()
     assert "(code staggers the starts)" in s
-    assert "code keeps each person to the roles their CAN WORK lists" in s
+    # The roles rule is the rules block's one line (schedule re-audit
+    # 10/11/26 AI-15) — never restated here.
+    assert "code keeps each person to the roles their CAN WORK lists" not in s
+    assert "- Pay: each role is paid its own rate." in s
     assert "code trims to it after you write" in s
     assert "it never adds hours" in s
     # The old paragraphs that taught the stagger and the roles are gone.

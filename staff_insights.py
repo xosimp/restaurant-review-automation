@@ -179,7 +179,8 @@ def published_shifts(restaurant_id, name, start, end, db_path=None) -> list:
     first), or, for a week sent before the publish stamp, the newest shared
     copy (models._live_week_row). A draft, an auto-draft or a replaced copy
     never reaches staff. [{date, day, role, start, end, hours, notes}]."""
-    from labor import employee_shifts_from_csv
+    from labor import employee_shifts_from_rows
+    import schedule_shifts
     if not name:
         return []
     conn = get_conn(db_path)
@@ -204,7 +205,8 @@ def published_shifts(restaurant_id, name, start, end, db_path=None) -> list:
     # re-cut week); within one copy, every leg of a double is kept.
     for row in sorted(live, key=lambda r: (str(r["live_at"] or ""), r["id"]), reverse=True):
         days_here = set()
-        for s in employee_shifts_from_csv(row["schedule_csv"] or "", name):
+        for s in employee_shifts_from_rows(schedule_shifts.rows_of(row["id"], "live", db_path=db_path,
+                                                                    restaurant_id=restaurant_id), name):
             d = _parse_day(s.get("date"))
             if d is None or d < start or d > end or d in owned:
                 continue

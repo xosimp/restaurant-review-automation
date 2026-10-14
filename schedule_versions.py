@@ -1100,7 +1100,8 @@ _WEEK_SETS = frozenset({"quality_json", "hours_scheduled", "hours_hourly", "hour
 _SET_RE = re.compile(r"^\s*([a-z_]+)\s*=")
 
 
-def store_week(conn, restaurant_id, history_id, working=None, published=None, sets=(), args=()) -> int:
+def store_week(conn, restaurant_id, history_id, working=None, published=None, sets=(), args=(),
+               allow_overlaps=False) -> int:
     """THE write of a stored week's text (schedule re-audit 10/11/26 ARCH-7,
     ARCH-24): the working copy (`working` → schedule_csv), the published
     copy (`published` → published_csv), any of the week's stamps beside
@@ -1111,8 +1112,12 @@ def store_week(conn, restaurant_id, history_id, working=None, published=None, se
     calls this (tests/test_sf11_d_shift_identity.py holds the code to it),
     so the rows table never disagrees with the text and the week's
     invariants live in one place. A caller that appends a version appends
-    it FIRST, so the projection carries its revision. Returns the rows the
-    UPDATE touched (1, or 0 when the week is gone)."""
+    it FIRST, so the projection carries its revision. The projection refuses
+    a write that would newly double-book a person in the published copy
+    (schedule_shifts.DoubleBooking, and the database's own trigger behind
+    it); `allow_overlaps` is the publish gate's: the week was cleared to go
+    out as it is. Returns the rows the UPDATE touched (1, or 0 when the week
+    is gone)."""
     parts, vals = [], []
     if working is not None:
         parts.append("schedule_csv=?")
@@ -1132,7 +1137,7 @@ def store_week(conn, restaurant_id, history_id, working=None, published=None, se
                            (*vals, history_id, restaurant_id))
         n = cur.rowcount
     import schedule_shifts
-    schedule_shifts.project(conn, restaurant_id, history_id)
+    schedule_shifts.project(conn, restaurant_id, history_id, allow_overlaps=allow_overlaps)
     return n
 
 
@@ -1411,34 +1416,28 @@ def _live_rows_of(conn, history_id, restaurant_id, row) -> tuple:
 def draft_rows(history_id, restaurant_id=None, db_path=DB_PATH) -> list:
     """The Studio's rows of one week — its WORKING copy (schedule_csv): the
     draft, or a sent week with the manager's unsent changes (contract #3)."""
-    conn = get_conn(db_path)
-    try:
-        if restaurant_id is None:
-            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (history_id,)).fetchone()
-        else:
-            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                               (history_id, restaurant_id)).fetchone()
-    finally:
-        conn.close()
-    return rows_from_csv(row["schedule_csv"] if row else "")
+    import schedule_shifts
+    return schedule_shifts.rows_of(history_id, "working", db_path=db_path, restaurant_id=restaurant_id)
 
 
 def published_rows(history_id, restaurant_id=None, db_path=DB_PATH):
     """The rows staff were sent for one week (its published copy), or None
     when the week was never published."""
+    import schedule_shifts
     conn = get_conn(db_path)
     try:
-        q = "SELECT published_at, COALESCE(published_csv, schedule_csv) AS live FROM schedule_history WHERE id=?"
+        q = "SELECT published_at FROM schedule_history WHERE id=?"
         args = [history_id]
         if restaurant_id is not None:
             q += " AND restaurant_id=?"
             args.append(restaurant_id)
         row = conn.execute(q, args).fetchone()
+        if not row or not row["published_at"]:
+            return None
+        # The copy staff have, from the shift table (schedule_shifts, ARCH-7).
+        return schedule_shifts.rows_of(history_id, "live", conn=conn)
     finally:
         conn.close()
-    if not row or not row["published_at"]:
-        return None
-    return rows_from_csv(row["live"])
 
 
 def _week_dates(week_start, week_end) -> list:

@@ -128,6 +128,9 @@ struct RosterSection: View {
                     if let summary = viewModel.managerRules {
                         ManagerRulesBlock(summary: summary)
                     }
+                    // How hard each role is to run without (LOGIC-24) —
+                    // the account owner's, saved one role at a time.
+                    RulesRoleWeightsSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules)
                 }
                 VStack(spacing: 0) {
                     CavnarWebLinkRow(title: "Schedule rules",
@@ -837,6 +840,10 @@ struct RosterDetailSheet: View {
                             canEdit: editable, busy: busy) { next in
                             Task { await viewModel.updateSettings(.init(employeeName: name, closesFor: next)) }
                         }
+                    }
+                    DoublesSection(stored: member?.settings?.doubles, isMinor: member?.settings?.isMinor == true,
+                                   canEdit: editable, busy: busy) { choice in
+                        Task { await viewModel.updateSettings(.init(employeeName: name, doubles: choice)) }
                     }
                     PersonAttendanceSection(reliability: member?.reliability)
                     preferencesSection

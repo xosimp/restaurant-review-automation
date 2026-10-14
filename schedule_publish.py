@@ -198,15 +198,19 @@ def _notice_legal(short, law) -> dict:
 
 def _live_week(restaurant_id, week_start, not_id):
     """The copy of `week_start` staff have now — its live copy
-    (models.live_week_row), with its PUBLISHED rows as `schedule_csv` —
-    when that is another row than `not_id`; else None."""
+    (models.live_week_row), with its PUBLISHED rows as `rows` (read from the
+    shift table on the same connection — schedule_shifts, schedule re-audit
+    10/11/26 ARCH-7) — when that is another row than `not_id`; else None."""
+    import schedule_shifts
     conn = get_conn()
     try:
         live = _models_mod.live_week_row(conn, restaurant_id, week_start)
+        if live is None or live["id"] == not_id or not live["published_at"]:
+            return None
+        live = dict(live)
+        live["rows"] = schedule_shifts.rows_of(live["id"], "live", conn=conn)
     finally:
         conn.close()
-    if live is None or live["id"] == not_id or not live["published_at"]:
-        return None
     return live
 
 
@@ -386,7 +390,12 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             # newest row — a discarded rewrite or a replaced draft (ARCH-11).
             row = conn.execute(cols + "WHERE restaurant_id=? AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
                                (restaurant_id,)).fetchone()
+        stored_rows = []
         if row is not None:
+            # The week's WORKING rows from the shift table, read beside the
+            # row (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+            import schedule_shifts as _ss_pr
+            stored_rows = _ss_pr.rows_of(row["id"], "working", conn=conn) if rows is None else []
             # The whole review and evaluation, whatever is inline (SCALE-13).
             import models as _m_sp
             row = dict(row)
@@ -419,9 +428,8 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             soft.append(text)
 
     import schedule_rules as _sr
-    from schedule_versions import rows_from_csv
     screen = rows is not None
-    rows = [dict(r) for r in rows] if screen else rows_from_csv(row["schedule_csv"] or "")
+    rows = [dict(r) for r in rows] if screen else stored_rows
     flagged = (sum(1 for r in rows if str(r.get("needs_review") or "").strip().lower() in ("1", "true", "yes")
                    or "NEEDS REVIEW" in str(r.get("notes") or "")) if screen
                else sum(1 for line in (row["schedule_csv"] or "").split("\n") if "NEEDS REVIEW" in line))
@@ -612,7 +620,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         # What staff have now: the live copy this draft replaces, or this
         # week's own published copy (ARCH-1) — the base every late change,
         # its predictability pay and the access-to-hours note are read from.
-        told = (rows_from_csv(live["schedule_csv"] or "") if live is not None else
+        told = (live["rows"] if live is not None else
                 (_sv_pb.published_rows(row["id"], restaurant_id) if row["published_at"] else None))
         if live is not None:
             # A regenerated draft of a week staff already have: what moves
@@ -888,7 +896,7 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
     no text consent or email used to stay "sent", and "Send again to
     missing" skipped the person."""
     import threading as _threading
-    from labor import employee_shifts_from_csv
+    from labor import employee_shifts_from_csv, employee_shifts_from_rows
     import people as _people
     create_schedule_share = _models_mod.create_schedule_share
     ch = ch or {}
@@ -896,7 +904,10 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
     email = (ch.get("email") or "").strip()
     if not (ch.get("push_user_id") or ch.get("sms") or email):
         return "unreachable", {"employee_name": name, "reason": "no app, text consent or email address on file"}
-    shifts = employee_shifts_from_csv(csv_text, name)
+    # The week's rows (the outbox's context reads them from the shift table —
+    # schedule_shifts, ARCH-7); the old direct-send shape passes its text.
+    shifts = employee_shifts_from_rows(csv_text, name) if isinstance(csv_text, list) else \
+        employee_shifts_from_csv(csv_text, name)
     updated = kind != "posted"
     count = f"{len(shifts)} shift{'' if len(shifts) == 1 else 's'}" if shifts else "no shifts"
     posted = "changed" if updated else "is posted"
@@ -1116,7 +1127,7 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
                     _ops.capture(e, job="schedule_publish_reach", context=f"restaurant_id={n['restaurant_id']}")
                     c["reach"][n["employee_name"]] = {"push_user_id": None, "sms": None, "email": None}
             try:
-                status, item = _deliver_one(n["restaurant_id"], c["restaurant"], n["history_id"], c["csv"],
+                status, item = _deliver_one(n["restaurant_id"], c["restaurant"], n["history_id"], c["rows"],
                                             n["employee_name"], c["reach"].get(n["employee_name"]), c["week_label"],
                                             kind=n["kind"], base_url=base_url, notice_id=n["id"], db_path=db_path)
             except Exception as e:
@@ -1141,17 +1152,20 @@ def _notice_context(restaurant_id, history_id, db_path=None):
     label and its PUBLISHED copy as it stands now. None when the week is
     gone or was never published."""
     from time_utils import mdy_range as _mdy_range
+    import schedule_shifts
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT week_start, week_end, published_at, COALESCE(published_csv, schedule_csv) AS live "
+        row = conn.execute("SELECT id, week_start, week_end, published_at "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (history_id, restaurant_id)).fetchone()
+        # The copy staff have, from the shift table (schedule_shifts, ARCH-7).
+        rows = schedule_shifts.rows_of(row["id"], "live", conn=conn) if row else []
     finally:
         conn.close()
     restaurant = _models_mod.get_restaurant(restaurant_id)
     if not row or not row["published_at"] or not restaurant:
         return None
-    return {"restaurant": restaurant, "csv": row["live"] or "", "reach": {},
+    return {"restaurant": restaurant, "rows": rows, "reach": {},
             "week_label": _mdy_range(row["week_start"], row["week_end"] or row["week_start"])}
 
 
@@ -1299,9 +1313,9 @@ def _recipients(old_live, new_rows, restaurant_id=None, db_path=None) -> list:
     between two Sends is never "you have no shifts" to the old spelling and
     "is posted" to the new one."""
     import schedule_rows as _srows
-    from labor import employees_in_schedule
+    from labor import employees_in_rows
     if old_live is None:
-        return [(n, "posted") for n in employees_in_schedule(_srows.to_csv(new_rows))]
+        return [(n, "posted") for n in employees_in_rows(new_rows)]
     if restaurant_id is not None:
         try:
             import schedule_versions as _sv_c
@@ -1372,11 +1386,14 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
             raise _Refused({"ok": False, "changed": True, "schedule_id": schedule_id,
                             "error": "The week changed while it was being checked, so it wasn't sent. "
                                      "Look at it again, then send."}, 409)
-        rows = _srows.parse(row["schedule_csv"])
+        # The rows from the shift table, inside this transaction (schedule_
+        # shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_st
+        rows = _ss_st.rows_of(schedule_id, "working", conn=conn)
         if mode == "publish":
             live = _models_mod.live_week_row(conn, restaurant_id, row["week_start"])
-            old_live = _srows.parse(live["schedule_csv"]) if (live and live["id"] != schedule_id
-                                                              and live["published_at"]) else None
+            old_live = _ss_st.rows_of(live["id"], "live", conn=conn) if (live and live["id"] != schedule_id
+                                                                        and live["published_at"]) else None
             if old_live is not None:
                 # The replacement keeps the ids of the shifts it keeps.
                 rows = _srows.carry_ids(rows, old_live, known_ids=[r.get("shift_id") for r in rows])
@@ -1396,9 +1413,11 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
         _row_id, new_version = _sv._insert_version(conn, restaurant_id, schedule_id, "published", text,
                                                    saved_by=actor_name, saved_authority=authority)
         if mode == "publish":
+            # Past the gate: an overlap it holds was fixed or sent past with
+            # a reason (schedule_shifts' double-booking guard lets it in).
             _sv.store_week(conn, restaurant_id, schedule_id, working=text, published=text,
                            sets=("published_at=datetime('now')", "published_by=?", "publishing_at=NULL"),
-                           args=(actor_name,))
+                           args=(actor_name,), allow_overlaps=True)
             # One live version of a week: an older published copy is retired,
             # or both fed outcomes, fairness, hours and claims (SCHED-10).
             conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
@@ -1406,7 +1425,7 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                          (schedule_id, restaurant_id, row["week_start"], schedule_id))
         else:
             _sv.store_week(conn, restaurant_id, schedule_id, published=text,
-                           sets=("republished_at=datetime('now')",))
+                           sets=("republished_at=datetime('now')",), allow_overlaps=True)
             # A shift the Studio moved to someone else keeps its floor
             # section now that staff have the change.
             try:
@@ -1570,7 +1589,7 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
     # person added and what the complaints did next (re-audit CROSSMODULE-10).
     try:
         import staffing_signals as _stsig_pub
-        _stsig_pub.record_published(rid, schedule_id, row["schedule_csv"],
+        _stsig_pub.record_published(rid, schedule_id,
                                     user_id=actor.get("id") if isinstance(actor, dict) else None)
     except Exception as _spx:
         print(f"[publish] staffing asks not recorded for {rid}: {_spx}")
@@ -1780,7 +1799,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                       detail=f"{len(stamped['queued'])} to tell" + (" — acknowledged blockers" if blockers else ""))
     _after_send(rid, schedule_id, stamped["version"], review, _acked, override_reasons, actor, authority)
     _record_pay(rid, schedule_id, stamped["rows"], actor_name,
-                before_rows=_sv.rows_from_csv(_replacing["schedule_csv"] or "") if _replacing is not None else None,
+                before_rows=_replacing["rows"] if _replacing is not None else None,
                 replacement=True, version=stamped["version"])
     import schedule_rows as _srows
     _after_publish(rid, schedule_id, dict(row, schedule_csv=_srows.to_csv(stamped["rows"])), actor, actor_name,
@@ -1969,10 +1988,13 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
         return {"ok": False, "error": "Which shift?"}, 400
     if not get_restaurant(rid):
         return {"ok": False, "error": "Restaurant not found"}, 404
+    import schedule_shifts as _ss_lc
     conn = get_conn()
     try:
         row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_csv, published_at, superseded_by "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+        # The working rows, read beside the row (schedule_shifts, ARCH-7).
+        working = _ss_lc.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
     if not row:
@@ -1992,7 +2014,6 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
         old_live, _rebuilt = _sv._live_rows_of(conn, row["id"], rid, row)
     finally:
         conn.close()
-    working = _srows.parse(row["schedule_csv"] or "")
     old_live = _srows.carry_ids(old_live, working, known_ids=[r.get("shift_id") for r in old_live])
     target = _live_target(old_live, working, ids)
     if _sv.same_rows(old_live, target):
@@ -2100,7 +2121,6 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
     owner's explicit "Send again to everyone"). Nothing on the week
     changes, so there is no gate; the caller checks SCHEDULE_PUBLISH.
     Returns (payload, status)."""
-    import schedule_rows as _srows
     import schedule_versions as _sv
     from time_utils import mdy_range as _mdy_range
     actor = actor or {}
@@ -2108,9 +2128,11 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
     scope = scope if scope in RESEND_SCOPES else "missing"
     conn = get_conn()
     try:
-        row = conn.execute("SELECT id, week_start, week_end, published_at, superseded_by, "
-                           "COALESCE(published_csv, schedule_csv) AS live FROM schedule_history "
-                           "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+        row = conn.execute("SELECT id, week_start, week_end, published_at, superseded_by "
+                           "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+        # The copy staff have, from the shift table (schedule_shifts, ARCH-7).
+        import schedule_shifts as _ss_rs
+        rows = _ss_rs.rows_of(row["id"], "live", conn=conn) if row else []
     finally:
         conn.close()
     if not row:
@@ -2121,8 +2143,8 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
     if not row["published_at"]:
         return {"ok": False, "error": "This week hasn't been sent to staff yet — send it first."}, 400
     week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
-    from labor import employees_in_schedule
-    names = employees_in_schedule(row["live"] or "")
+    from labor import employees_in_rows
+    names = employees_in_rows(rows)
     if scope == "missing":
         # Only a delivery that happened (BUGSLIFE-3): a push still waiting on
         # Apple's answer is not "has it"; and across every copy of the week
@@ -2138,7 +2160,6 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
                     delivery=notice_status(rid, row["id"]), error=None), 200
     batch = _uuid.uuid4().hex
     who = _actor_name(actor)
-    rows = _srows.parse(row["live"] or "")
     person_ids = {" ".join(str(r.get("employee") or "").split()): r.get("person_id") for r in rows
                   if r.get("person_id")}
     conn = get_conn()

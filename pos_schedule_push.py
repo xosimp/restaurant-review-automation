@@ -108,7 +108,7 @@ def init_pos_schedule_push(db_path=None):
 def _hist(restaurant_id, history_id, db_path=None):
     conn = get_conn(db_path)
     try:
-        r = conn.execute("SELECT id, week_start, week_end, published_at, schedule_csv FROM schedule_history "
+        r = conn.execute("SELECT id, week_start, week_end, published_at FROM schedule_history "
                          "WHERE id=? AND restaurant_id=?", (int(history_id), restaurant_id)).fetchone()
     finally:
         conn.close()
@@ -116,27 +116,12 @@ def _hist(restaurant_id, history_id, db_path=None):
 
 
 def published_rows(restaurant_id, week_start, db_path=None) -> list:
-    """The PUBLISHED copy of the week staff are on — models.live_week_rows
-    (the one "week in force" read) where it exists, else the newest
-    published, non-superseded copy of the week. [] when none is live."""
-    live = getattr(_models_mod, "live_week_rows", None)
-    if callable(live):
-        try:
-            return list(live(restaurant_id, str(week_start)[:10], **({"db_path": db_path} if db_path else {})) or [])
-        except TypeError:
-            return list(live(restaurant_id, str(week_start)[:10]) or [])
-    from schedule_versions import rows_from_csv
-    conn = get_conn(db_path)
-    try:
-        r = conn.execute(
-            "SELECT h.schedule_csv FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start=? "
-            "AND h.published_at IS NOT NULL AND h.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM "
-            "schedule_history nw WHERE nw.restaurant_id=h.restaurant_id AND nw.week_start=h.week_start AND "
-            "nw.published_at IS NOT NULL AND nw.id > h.id) ORDER BY h.id DESC LIMIT 1",
-            (restaurant_id, str(week_start)[:10])).fetchone()
-    finally:
-        conn.close()
-    return rows_from_csv(r["schedule_csv"]) if r else []
+    """The PUBLISHED copy of the week staff are on — the one "week in force"
+    read (models.live_week_for), its rows from the shift table
+    (schedule_shifts.live_week_rows, each with its shift_id — schedule
+    re-audit 10/11/26 ARCH-7). [] when none is live."""
+    import schedule_shifts
+    return list(schedule_shifts.live_week_rows(restaurant_id, str(week_start)[:10], db_path=db_path) or [])
 
 
 def shift_key(row) -> str:

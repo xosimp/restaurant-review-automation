@@ -528,19 +528,20 @@ def job_codes(restaurant_id, db_path=DB_PATH) -> list:
 
 
 def _recent_schedule_roles(restaurant_id):
-    import csv, io
+    import schedule_shifts
     conn = get_conn()
     try:
         # The week in force (models.newest_draft, ARCH-11), never a
-        # discarded rewrite.
-        row = _models_mod.newest_draft(conn, restaurant_id, columns="schedule_csv")
+        # discarded rewrite — its WORKING rows from the shift table
+        # (schedule_shifts, ARCH-7).
+        row = _models_mod.newest_draft(conn, restaurant_id, columns="id")
+        rows = schedule_shifts.rows_of(row[0], "working", conn=conn) if row else []
     finally:
         conn.close()
     roles = set()
-    if row and row[0]:
-        for r in csv.DictReader(io.StringIO(row[0])):
-            if (r.get("role") or "").strip():
-                roles.add(" ".join(r["role"].split()))
+    for r in rows:
+        if (r.get("role") or "").strip():
+            roles.add(" ".join(r["role"].split()))
     return roles
 
 
@@ -573,17 +574,19 @@ def _published_owner(restaurant_id, day):
 def published_day_shifts(restaurant_id, day, owner=None) -> tuple:
     """(shifts, published) for one business date: every shift on the
     newest PUBLISHED week that covers it, as [{employee, role, start, end}]
-    with local datetimes (labor.timed_shifts_from_csv). A draft never
+    with local datetimes (labor.timed_shifts_from_rows). A draft never
     assigns anyone a sheet — staff_schedule's own rule. Reads only the
-    week's CSV (models.get_published_week_csv, PERF-12)."""
+    week's published rows, from the shift table (schedule_shifts — schedule
+    re-audit 10/11/26 ARCH-7; never the full detail reader, PERF-12)."""
     import labor
+    import schedule_shifts
     if owner is None:
         owner = _published_owner(restaurant_id, day)
     if owner is None:
         return [], False
-    week = _models_mod.get_published_week_csv(owner, restaurant_id) or {}
     iso = day.isoformat()
-    shifts = [s for s in labor.timed_shifts_from_csv(week.get("schedule_csv") or "") if s["start"][:10] == iso]
+    shifts = [s for s in labor.timed_shifts_from_rows(schedule_shifts.rows_of(owner, "live", restaurant_id=restaurant_id))
+              if s["start"][:10] == iso]
     # Somebody a manager let off their shift — an approved drop nobody has
     # claimed, approved time off over it — is not on it: no sheet, no
     # reminder (schedule audit 10/10/26 BUGSLIFE-12).

@@ -189,7 +189,6 @@ def _read_schedule(restaurant_id):
     """The most recently generated schedule, plus who has actually opened
     the link it was sent with."""
     from models import get_conn
-    from labor import employees_in_schedule
     conn = get_conn()
     try:
         from models import _ensure_history_columns
@@ -221,7 +220,9 @@ def _read_schedule(restaurant_id):
         "hours_salaried": row["hours_salaried"],
         "hours_budget": row["hours_budget"],
         "edited_by_manager": bool(row["edited_at"]),
-        "employees": employees_in_schedule(row["schedule_csv"] or ""),
+        # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        "employees": __import__("labor").employees_in_rows(
+            __import__("schedule_shifts").rows_of(row["id"], "working", restaurant_id=restaurant_id)),
         # Across every copy of the week staff were sent (BUGSLIFE-8).
         "share_status": __import__("schedule_publish").week_share_status(restaurant_id, row["id"]),
     }
@@ -1206,7 +1207,6 @@ def _propose_resolve(restaurant_id, dates=None, out=None, add=None):
     unsent draft covering those dates, else the week in force. Nothing is
     saved — the Studio's Re-solve applies it."""
     import schedule_engine as _se
-    import schedule_versions as _sv
     from models import get_conn
     want = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]})
     if not want:
@@ -1218,11 +1218,13 @@ def _propose_resolve(restaurant_id, dates=None, out=None, add=None):
             "AND week_start<=? AND week_end>=? AND superseded_by IS NULL "
             "ORDER BY (published_at IS NULL) DESC, id DESC LIMIT 1",
             (restaurant_id, want[0], want[-1])).fetchone()
+        # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_pr
+        rows = _ss_pr.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
     if not row:
         return {"error": "There is no schedule for those dates yet."}
-    rows = _sv.rows_from_csv(row["schedule_csv"] or "")
     outs = [{"employee": str(n)} for n in (out or []) if str(n).strip()][:10]
     adds = [a for a in (add or []) if isinstance(a, dict)][:10]
     got = _se.resolve_days(restaurant_id, rows, want, out=outs, add=adds, history_id=row["id"])

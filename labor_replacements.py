@@ -46,9 +46,10 @@ def _gap_row(restaurant_id, day, role, excluded, shift, db_path):
     else the day's row of `role` held by someone in `excluded` (the person
     missing). (None, None) when there is no published row to judge by."""
     try:
-        import intraday
-        from schedule_versions import rows_from_csv
-        rows = rows_from_csv(intraday._published_csv(restaurant_id, day, db_path))
+        # The week staff have, from the shift table (schedule_shifts —
+        # schedule re-audit 10/11/26 ARCH-7), each row with its shift_id.
+        import schedule_shifts
+        rows = schedule_shifts.live_week_rows(restaurant_id, day, db_path=db_path)
     except Exception:
         return None, None
     iso = day.isoformat()

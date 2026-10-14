@@ -2398,7 +2398,6 @@ def mobile_get_staff_contacts(current_user):
     reaches them (people.reach: the app, a text they opted into, email) —
     and `reachable` counts every channel, not only an email address."""
     from models import get_staff_contacts, get_conn as _gc
-    from labor import employees_in_schedule
     import people
     rid = current_user["restaurant_id"]
     sid = request.args.get("schedule_id", type=int)
@@ -2414,12 +2413,16 @@ def mobile_get_staff_contacts(current_user):
             # The week in force (models.newest_draft, ARCH-11).
             import models as _m_live
             row = _m_live.newest_draft(conn, rid, columns="id, week_start, week_end, schedule_csv")
+        # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_sc
+        week_rows = _ss_sc.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
     if sid and not row:
         return jsonify(ok=False, error="Not found"), 404
 
-    names = employees_in_schedule(row["schedule_csv"]) if row else []
+    from labor import employees_in_rows as _eir_sc
+    names = _eir_sc(week_rows) if row else []
     saved = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
     try:
         how = people.reach(rid, names)
@@ -3959,7 +3962,10 @@ def mobile_schedule_history_detail(history_id, current_user):
     # the unsent changes) read with the one reader — quoted fields, the
     # shift id each row keeps and its lock (ARCH-6, contract #4). The
     # comma split cut a note at its first comma.
-    preview_rows = [dict(r, locked=_sv_d._srows.is_locked(r)) for r in _sv_d.rows_from_csv(detail.get("schedule_csv"))
+    # From the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+    import schedule_shifts as _ss_d
+    preview_rows = [dict(r, locked=_sv_d._srows.is_locked(r))
+                    for r in _ss_d.rows_of(history_id, "working", restaurant_id=current_user["restaurant_id"])
                     if r.get("shift_start") or r.get("shift_end")]
     # What staff have (the published copy) stays server-side; the screen
     # gets who a Send would tell.

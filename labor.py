@@ -4012,22 +4012,21 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
     failure (the baseline then reads the punches alone)."""
     try:
         import canonical_facts as _cf
-        from models import get_published_week_csv
-        from schedule_versions import rows_from_csv
+        import schedule_shifts
         if before is None:
             from time_utils import restaurant_now_by_id
             before = restaurant_now_by_id(restaurant_id).date().isoformat()
         b = date.fromisoformat(str(before)[:10])
         since = (b - timedelta(weeks=int(weeks))).isoformat()
+        # Each week's published rows from the shift table, two queries for
+        # all of them (schedule_shifts — schedule re-audit 10/11/26 ARCH-7;
+        # never the full detail reader, scheduler audit 10/10/26 SCALE-18).
+        ids = [w["history_id"] for w in _cf.published_weeks(restaurant_id, since)
+               if w["week_start"] < b.isoformat()]
+        by_week = schedule_shifts.rows_by_week(ids, "live", restaurant_id=restaurant_id)
         rows = []
-        for w in _cf.published_weeks(restaurant_id, since):
-            if w["week_start"] >= b.isoformat():
-                continue
-            # The CSV alone (scheduler audit 10/10/26, SCALE-18): the full
-            # detail reader SELECTs * and parses the summary, the 130-440 KB
-            # quality, the review and the weather to hand back one column.
-            week = get_published_week_csv(w["history_id"], restaurant_id) or {}
-            rows.extend(rows_from_csv(week.get("schedule_csv") or ""))
+        for hid in ids:
+            rows.extend(by_week.get(int(hid)) or [])
         return rows
     except Exception as e:
         print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")
@@ -6764,13 +6763,30 @@ def break_window(shift_start: str, shift_end: str, meal_break_after_hours) -> st
 
 def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_after_hours=None,
                              restaurant_id=None, spellings=None) -> list:
-    """One employee's own shifts, pulled out of the generated schedule CSV.
+    """employee_shifts_from_rows over a schedule's text (one the caller
+    holds — a share link's, a test's). A stored week's rows are read through
+    schedule_shifts (schedule re-audit 10/11/26 ARCH-7) and passed to
+    employee_shifts_from_rows."""
+    if not schedule_csv:
+        return []
+    import schedule_rows as _srows_es
+    try:
+        rows = _srows_es.parse(schedule_csv)
+    except Exception:
+        return []
+    return employee_shifts_from_rows(rows, employee_name, meal_break_after_hours=meal_break_after_hours,
+                                     restaurant_id=restaurant_id, spellings=spellings)
 
-    The CSV is the schedule's source of truth (see generate_optimized_schedule's
-    header: date,day,employee,role,shift_start,shift_end,scheduled_hours,notes),
-    so a staff-facing view reads from it rather than from a second copy that
-    could drift. Matching is case- and whitespace-insensitive because names
-    arrive from POS exports with inconsistent spacing.
+
+def employee_shifts_from_rows(rows, employee_name: str, meal_break_after_hours=None,
+                              restaurant_id=None, spellings=None) -> list:
+    """One employee's own shifts out of a week's rows (schedule_rows shape —
+    schedule_shifts.rows_of), each with its `shift_id`.
+
+    The stored week is the schedule's source of truth, so a staff-facing
+    view reads from it rather than from a second copy that could drift.
+    Matching is case- and whitespace-insensitive because names arrive from
+    POS exports with inconsistent spacing.
 
     With `restaurant_id`, a shift a manager put in a floor section carries
     `section` ("Patio" — models.shift_sections, employee audit V12); a
@@ -6781,11 +6797,8 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     rename too (schedule audit 10/10/26 BUGSLIFE-4: the person's live week
     read as all days off).
     """
-    import csv as _csv
-    import io as _io
-
     target = (employee_name or "").strip().lower()
-    if not schedule_csv or not target:
+    if not rows or not target:
         return []
     names = {" ".join(target.split())} | {" ".join(str(s or "").lower().split()) for s in (spellings or ())}
     sections = {}
@@ -6798,8 +6811,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
             sections = {}
     shifts = []
     try:
-        reader = _csv.DictReader(_io.StringIO(schedule_csv))
-        for row in reader:
+        for row in rows:
             name = (row.get("employee") or "").strip()
             if " ".join(name.lower().split()) not in names:
                 continue
@@ -6816,6 +6828,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
                 "hours": round(hours, 2),
                 "notes": staff_facing_note(row.get("notes")),
                 "break": break_window(row.get("shift_start"), row.get("shift_end"), meal_break_after_hours),
+                "shift_id": (row.get("shift_id") or "").strip().lower(),
             })
             if sections:
                 from models import shift_section_start
@@ -6829,18 +6842,26 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
 
 
 def timed_shifts_from_csv(schedule_csv: str) -> list:
-    """Every shift in a generated schedule as [{employee, role, start, end}]
-    with full local datetimes ("2026-10-05T16:00:00") — what a POS schedule
-    push needs. A shift whose end is at or before its start closes after
-    midnight and ends the next day. Rows without both times are left out."""
+    """timed_shifts_from_rows over a schedule's text (one the caller holds —
+    an RPOWER preview's, a test's). A stored week's rows are read through
+    schedule_shifts (schedule re-audit 10/11/26 ARCH-7)."""
+    if not schedule_csv:
+        return []
     import csv as _csv
     import io as _io
+    return timed_shifts_from_rows(list(_csv.DictReader(_io.StringIO(schedule_csv))))
+
+
+def timed_shifts_from_rows(rows) -> list:
+    """Every shift in a week's rows as [{employee, role, start, end}] with
+    full local datetimes ("2026-10-05T16:00:00") — what a
+    POS schedule push and the task sheets need. A shift whose end is at or
+    before its start closes after midnight and ends the next day. Rows
+    without both times are left out."""
     from datetime import datetime as _dt, timedelta as _td
     import schedule_rules as _rules
     out = []
-    if not schedule_csv:
-        return out
-    for row in _csv.DictReader(_io.StringIO(schedule_csv)):
+    for row in rows or []:
         name, day = (row.get("employee") or "").strip(), (row.get("date") or "").strip()
         a, b = _rules.parse_minutes(row.get("shift_start")), _rules.parse_minutes(row.get("shift_end"))
         try:
@@ -6855,6 +6876,18 @@ def timed_shifts_from_csv(schedule_csv: str) -> list:
                     "start": start.strftime("%Y-%m-%dT%H:%M:%S"), "end": end.strftime("%Y-%m-%dT%H:%M:%S")})
     out.sort(key=lambda s: (s["start"], s["employee"].lower()))
     return out
+
+
+def employees_in_rows(rows) -> list:
+    """Every distinct employee named in a week's rows (schedule_rows shape —
+    schedule_shifts.rows_of), in the order a person would read them
+    (alphabetical)."""
+    seen = {}
+    for row in rows or []:
+        name = (row.get("employee") or "").strip()
+        if name and name.lower() not in seen:
+            seen[name.lower()] = name
+    return sorted(seen.values(), key=lambda n: n.lower())
 
 
 def employees_in_schedule(schedule_csv: str) -> list:

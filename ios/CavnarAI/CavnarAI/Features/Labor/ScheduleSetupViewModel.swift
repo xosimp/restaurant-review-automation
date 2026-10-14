@@ -39,9 +39,13 @@ struct RosterSettings: Codable, Equatable {
     var standingShifts: [StandingShift]? = nil
     var trainee: TraineeInfo? = nil
     var closesFor: [String]? = nil
+    // Whether they work doubles (blind re-audit 10/11/26 LOGIC-19): true,
+    // false, or nil — their own history decides (a double on a quarter of
+    // the days they worked). Absent on an older server.
+    var doubles: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case active, certifications, experienced, trainee
+        case active, certifications, experienced, trainee, doubles
         case minorAgeBand = "minor_age_band"
         case employmentType = "employment_type"
         case minHours = "min_hours"
@@ -85,6 +89,7 @@ extension RosterSettings {
             $0.targetRole.isEmpty || $0.until.isEmpty ? nil : $0
         }
         closesFor = c.contains(.closesFor) ? c.setupTexts(.closesFor) : nil
+        doubles = c.setupBool(.doubles)
     }
 }
 
@@ -1248,6 +1253,9 @@ final class ScheduleSetupViewModel {
         var standingShifts: [StandingShift]? = nil
         var trainee: TraineeChange? = nil
         var closesFor: [String]? = nil
+        /// Works doubles: yes, never, or from their history — sent as true,
+        /// false or "auto" (LOGIC-19).
+        var doubles: FloorManagerChoice? = nil
 
         /// Yes, no, or back to automatic — sent as true, false or "auto".
         enum FloorManagerChoice: Equatable {
@@ -1276,6 +1284,7 @@ final class ScheduleSetupViewModel {
             case actingManager = "acting_manager"
             case standingShifts = "standing_shifts"
             case closesFor = "closes_for"
+            case doubles
         }
 
         private struct Empty: Encodable {}
@@ -1308,6 +1317,12 @@ final class ScheduleSetupViewModel {
             case nil: break
             }
             try c.encodeIfPresent(closesFor, forKey: .closesFor)
+            switch doubles {
+            case .yes?: try c.encode(true, forKey: .doubles)
+            case .no?: try c.encode(false, forKey: .doubles)
+            case .automatic?: try c.encode("auto", forKey: .doubles)
+            case nil: break
+            }
         }
     }
 
@@ -1344,6 +1359,7 @@ final class ScheduleSetupViewModel {
             if case .set(let t) = v { settings.trainee = t } else { settings.trainee = nil }
         }
         if let v = patch.closesFor { settings.closesFor = v }
+        if let v = patch.doubles { settings.doubles = v.stored }
         next.settings = settings
         roster[index] = next
         savingFor = patch.employeeName

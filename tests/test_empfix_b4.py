@@ -200,8 +200,8 @@ def test_a_sheet_nobody_works_today_settles_the_day(db_path, monkeypatch):
     _sheet(rid, db_path, "Server", "opening", ["Roll silverware"])
     hid = _publish(db_path, rid, [("Chidi", "Server", "11:00 AM", "5:00 PM")])       # no bartender today
     parsed = []
-    real = labor.timed_shifts_from_csv
-    monkeypatch.setattr(labor, "timed_shifts_from_csv", lambda text: parsed.append(1) or real(text))
+    real = labor.timed_shifts_from_rows
+    monkeypatch.setattr(labor, "timed_shifts_from_rows", lambda rows: parsed.append(1) or real(rows))
     ts.staff_view(rid, "Chidi", ["Server"], db_path=db_path)
     first = len(parsed)
     for _ in range(3):

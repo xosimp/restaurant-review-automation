@@ -203,9 +203,8 @@ def _today_rows(restaurant_id, day, db_path=None) -> list:
 def _week_rows(restaurant_id, day, db_path=None) -> list:
     """The whole published week holding `day` — what the legality engine
     judges a move against (hours, rest and overtime are week rules)."""
-    import intraday
-    from schedule_versions import rows_from_csv
-    return rows_from_csv(intraday._published_csv(restaurant_id, day, **({"db_path": db_path} if db_path else {})))
+    import schedule_shifts
+    return schedule_shifts.live_week_rows(restaurant_id, day, db_path=db_path)
 
 
 def _rates(restaurant_id, restaurant):

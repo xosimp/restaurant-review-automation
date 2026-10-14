@@ -1088,7 +1088,6 @@ def api_colleagues(current_user):
     rid, name = _staff_context(current_user)
     import staff_schedule
     import shift_requests as _sr
-    from schedule_versions import rows_from_csv
     from models import get_published_week_csv
     from time_utils import restaurant_now_by_id
     if not name:
@@ -1110,7 +1109,9 @@ def api_colleagues(current_user):
     # Each week's PUBLISHED copy (ARCH-1) — the CSV and the stations only
     # (SCALE-19), never SELECT * and its JSON.
     details = {w["id"]: (get_published_week_csv(w["id"], rid, with_stations=True) or {}) for w in weeks}
-    rows_by_week = {wid: rows_from_csv(d.get("schedule_csv") or "") for wid, d in details.items()}
+    # Their rows from the shift table, by shift_id (schedule_shifts, ARCH-7).
+    import schedule_shifts
+    rows_by_week = schedule_shifts.rows_by_week(list(details), "live", restaurant_id=rid)
     coworkers, posted = _coworkers_on(weeks, details, rows_by_week, on, me)
 
     try:

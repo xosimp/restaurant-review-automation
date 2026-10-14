@@ -725,18 +725,22 @@ class _Ctx:
         window as staff last had it (schedule_history.schedule_csv), names
         read as the people they mean now."""
         def read():
-            from schedule_versions import rows_from_csv, canonical_rows
+            from schedule_versions import canonical_rows
+            import schedule_shifts
             conn = get_conn(self.db)
             try:
                 import models as _m_live
                 hist = conn.execute(
-                    "SELECT id, week_start, " + _m_live.live_csv_sql("h") + " AS schedule_csv FROM schedule_history h "
+                    "SELECT id, week_start FROM schedule_history h "
                     "WHERE restaurant_id=? AND week_end >= ? AND week_start < ? AND " + _m_live.live_where("h")
                     + " ORDER BY week_start",
                     (self.rid, self.since, self.today.isoformat())).fetchall()
+                # Their published rows from the shift table (schedule_shifts —
+                # schedule re-audit 10/11/26 ARCH-7).
+                by_week = schedule_shifts.rows_by_week([h["id"] for h in hist], "live", conn=conn)
             finally:
                 conn.close()
-            weeks = [(h["id"], h["week_start"], rows_from_csv(h["schedule_csv"] or "")) for h in hist]
+            weeks = [(h["id"], h["week_start"], by_week.get(int(h["id"])) or []) for h in hist]
             try:
                 kw = {"db_path": self.db} if self.db else {}
                 canon = canonical_rows(self.rid, [w[2] for w in weeks], **kw)

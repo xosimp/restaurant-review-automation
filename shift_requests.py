@@ -40,6 +40,7 @@ from datetime import date, datetime, timedelta
 from models import DB_PATH
 import models as _models
 import schedule_rows as _srows
+import schedule_shifts as _ss
 
 STATUSES = ("pending", "approved", "open", "denied", "declined", "covered", "withdrawn",
             "cancelled", "expired")
@@ -323,7 +324,6 @@ def _insert_request(conn, values: dict) -> int:
 
 def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db_path=DB_PATH, today=None, now=None):
     """Ask to drop one of your own shifts on the published week."""
-    from schedule_versions import rows_from_csv
     name = (employee_name or "").strip()
     if not name:
         raise ShiftRequestError("no employee name on this session")
@@ -339,7 +339,7 @@ def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db
         pub = _published(conn, restaurant_id, d)
         if not pub:
             raise ShiftRequestError("no published schedule to change")
-        rows = rows_from_csv(pub["schedule_csv"])
+        rows = _ss.rows_of(pub["id"], "live", conn=conn)
         i = _find(rows, name, d.isoformat(), (shift_start or "").strip(), spellings=_spellings(restaurant_id, name, db_path))
         if i is None:
             raise ShiftRequestError("that shift is not on your published schedule")
@@ -382,7 +382,6 @@ def request_swap(restaurant_id, employee_name, day, shift_start, target_name, ta
     approved it AND the colleague has said yes; the role and legality check
     runs both ways now, before the colleague is asked (WF-08, LG-11), and
     again before anything moves. The colleague is told."""
-    from schedule_versions import rows_from_csv
     name = (employee_name or "").strip()
     other = (target_name or "").strip()
     if not name:
@@ -405,7 +404,7 @@ def request_swap(restaurant_id, employee_name, day, shift_start, target_name, ta
         other_pub = _published(conn, restaurant_id, td)
         if not other_pub or other_pub["id"] != pub["id"]:
             raise ShiftRequestError("both shifts need to be in the same published week")
-        rows = rows_from_csv(pub["schedule_csv"])
+        rows = _ss.rows_of(pub["id"], "live", conn=conn)
         a = _find(rows, name, d.isoformat(), (shift_start or "").strip(), spellings=_spellings(restaurant_id, name, db_path))
         b = _find(rows, other, td.isoformat(), (target_start or "").strip(), spellings=_spellings(restaurant_id, other, db_path))
         if a is None:
@@ -914,13 +913,12 @@ def _get(conn, request_id):
 def _vanished(restaurant_id, row, db_path):
     """Raise when a request's shift is no longer on the live week — a
     republish moved it, or a swap or cover already did (LG-10)."""
-    from schedule_versions import rows_from_csv
     conn = get_conn(db_path)
     try:
         hist = _live_hist(conn, restaurant_id, row)
+        rows = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
     finally:
         conn.close()
-    rows = rows_from_csv(hist["schedule_csv"]) if hist else []
     i = _leg_index(rows, row)
     if i is None:
         raise ShiftRequestError("that shift is no longer on the schedule — the week changed after this was asked. "
@@ -959,7 +957,6 @@ def drop_warning(restaurant_id, req, db_path=DB_PATH, rows=None, constraints=Non
     coverage_floor, keyholder_until_close, ...). Never raises: a question it
     can't answer is (None, None)."""
     try:
-        from schedule_versions import rows_from_csv
         import schedule_engine as _se
         import schedule_rules as _rules
         from time_utils import mdy
@@ -969,9 +966,9 @@ def drop_warning(restaurant_id, req, db_path=DB_PATH, rows=None, constraints=Non
             conn = get_conn(db_path)
             try:
                 hist = _live_hist(conn, restaurant_id, req)
+                rows = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
             finally:
                 conn.close()
-            rows = rows_from_csv(hist["schedule_csv"]) if hist else []
         idx = _find(rows, req["employee_name"], req["date"], req["shift_start"])
         if idx is None:
             return None, None
@@ -1392,18 +1389,18 @@ def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep
     `visitor_home`: the claimant is from that sibling location (a
     cross-site yes, BUGSLIFE-10) — judged by cross_site.judge, this site's
     rules with their own facts and hours at home."""
-    from schedule_versions import rows_from_csv
     import schedule_engine as _se
     if name.lower() == (row["employee_name"] or "").strip().lower():
         raise ShiftRequestError("that is the shift being given up")
     conn = get_conn(db_path)
     try:
         hist = _live_hist(conn, restaurant_id, row)
+        live_rows = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
     finally:
         conn.close()
     if not hist:
         raise ShiftRequestError("the schedule this shift belongs to is gone")
-    rows, idx = _locate(rows_from_csv(hist["schedule_csv"]), row)
+    rows, idx = _locate(live_rows, row)
     if idx is None:
         raise ShiftRequestError("that shift is no longer on the schedule")
     if check_role:
@@ -1713,7 +1710,6 @@ def backfill_shift_ids(db_path=None, max_seconds: float = 10.0) -> int:
     filter (a row matched is never read again); one that matches nothing
     keeps the old lookup. Returns rows matched."""
     import time as _t
-    from schedule_versions import rows_from_csv
     stop = _t.monotonic() + float(max_seconds)
     conn = get_conn(db_path)
     try:
@@ -1738,7 +1734,7 @@ def backfill_shift_ids(db_path=None, max_seconds: float = 10.0) -> int:
             key = (rid, req["date"])
             if key not in weeks:
                 hist = _live_hist(conn, rid, req)
-                weeks[key] = rows_from_csv(hist["schedule_csv"]) if hist else []
+                weeks[key] = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
             rows = weeks[key]
             covered = req["status"] == "covered"
             holder = (req.get("target_name") if (req.get("kind") or "") == "swap" else req.get("replacement_name")) \
@@ -1752,9 +1748,10 @@ def backfill_shift_ids(db_path=None, max_seconds: float = 10.0) -> int:
                 sets.append("person_id=?")
                 args.append(pid)
             if (req.get("kind") or "") == "swap" and not req.get("target_shift_id"):
-                trows = rows if req.get("target_date") == req["date"] else rows_from_csv(
-                    (_live_hist(conn, rid, {"date": req.get("target_date"), "history_id": req["history_id"]})
-                     or {"schedule_csv": ""})["schedule_csv"])
+                th = None if req.get("target_date") == req["date"] else \
+                    _live_hist(conn, rid, {"date": req.get("target_date"), "history_id": req["history_id"]})
+                trows = rows if req.get("target_date") == req["date"] else \
+                    (_ss.rows_of(th["id"], "live", conn=conn) if th else [])
                 j = _find(trows, req["employee_name"] if covered else req.get("target_name"), req.get("target_date"),
                           req.get("target_start"))
                 if j is not None:
@@ -1781,7 +1778,6 @@ def reconcile(restaurant_id, db_path=DB_PATH) -> int:
     """follow_week over every live week with a live request, in its own
     write transaction, then flush_notices — the hourly watch's safety net
     and a caller's after a republish. Returns how many requests changed."""
-    from schedule_versions import rows_from_csv
     conn = get_conn(db_path)
     n = 0
     try:
@@ -1797,7 +1793,7 @@ def reconcile(restaurant_id, db_path=DB_PATH) -> int:
         if weeks:
             conn.execute("BEGIN IMMEDIATE")
             for hist, ds in weeks.values():
-                n += follow_week(conn, restaurant_id, rows_from_csv(hist["schedule_csv"]), dates=ds)
+                n += follow_week(conn, restaurant_id, _ss.rows_of(hist["id"], "live", conn=conn), dates=ds)
             conn.commit()
     except BaseException:
         conn.rollback()
@@ -2203,10 +2199,7 @@ def _taken_shift_id(conn, restaurant_id, history_id, row, name, taken):
     sid = str(taken.get("shift_id") or "").strip().lower()
     if _srows.valid_id(sid):
         return sid
-    got = conn.execute("SELECT published_csv, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                       (history_id, restaurant_id)).fetchone()
-    live = _srows.parse((got["published_csv"] if got and got["published_csv"] is not None
-                         else (got["schedule_csv"] if got else "")) or "")
+    live = _ss.rows_of(history_id, "live", conn=conn, restaurant_id=restaurant_id)
     i = _find(live, name, row["date"], row["shift_start"])
     return str(live[i].get("shift_id") or "").lower() if i is not None else None
 
@@ -2441,17 +2434,16 @@ def _swap_legal(restaurant_id, req, db_path, rows=None, constraints=None):
     manages) trading her Saturday close for Ben's Tuesday passed, and
     Saturday dinner ran with no manager — while a one-sided cover of the
     same shift by Ben was refused. Returns (a, b), the two rows' indexes."""
-    from schedule_versions import rows_from_csv
     import schedule_rules as _rules
     if rows is None:
         conn = get_conn(db_path)
         try:
             hist = _live_hist(conn, restaurant_id, req)
+            rows = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
         finally:
             conn.close()
         if not hist:
             raise ShiftRequestError("the schedule this swap belongs to is gone")
-        rows = rows_from_csv(hist["schedule_csv"])
     after, a, b = swap_rows(rows, req)
     if after is None:
         raise ShiftRequestError("one of the shifts is no longer on the schedule")
@@ -2492,13 +2484,15 @@ WEEK_CAS_ATTEMPTS = 4
 def _live_week(restaurant_id, req, db_path):
     """(hist, rows) of the live week a request's date belongs to, read with no
     write lock held; (None, []) when there is none."""
-    from schedule_versions import rows_from_csv
     conn = get_conn(db_path)
     try:
         hist = _live_hist(conn, restaurant_id, req)
+        # Read beside the week it judges, on the same connection: the
+        # compare-and-swap (_same_week) holds the two together.
+        rows = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
     finally:
         conn.close()
-    return (hist, rows_from_csv(hist["schedule_csv"])) if hist else (None, [])
+    return (hist, rows) if hist else (None, [])
 
 
 def _status_is(restaurant_id, request_id, status, db_path) -> bool:
@@ -2671,7 +2665,6 @@ def post_open_shift(restaurant_id, day, shift_start, shift_end=None, role=None, 
 
     An open row already on that shift is reused: offered to the named
     person, or (offer-only so far) put on the board for everyone."""
-    from schedule_versions import rows_from_csv
     try:
         d = date.fromisoformat(str(day)[:10])
     except (TypeError, ValueError):
@@ -2688,7 +2681,7 @@ def post_open_shift(restaurant_id, day, shift_start, shift_end=None, role=None, 
         pub = _published(conn, restaurant_id, d)
         if not pub:
             raise ShiftRequestError("no published schedule covers that date — publish the week first")
-        rows = rows_from_csv(pub["schedule_csv"])
+        rows = _ss.rows_of(pub["id"], "live", conn=conn)
         if holder:
             i = _find(rows, holder, d.isoformat(), start)
             if i is None:
@@ -3151,16 +3144,16 @@ def _who_could_take(restaurant_id, req, db_path) -> list:
     stopped working (Constraints.dormant) and nobody whose own unconfirmed
     note rules out that day (note_caution) is told — Constraints.fillable."""
     try:
-        from schedule_versions import rows_from_csv
         import schedule_engine as _se
         import schedule_rules as _rules
         import staff_settings
         conn = get_conn(db_path)
         try:
             hist = _live_hist(conn, restaurant_id, req)
+            live_rows = _ss.rows_of(hist["id"], "live", conn=conn) if hist else []
         finally:
             conn.close()
-        rows, idx = _locate(rows_from_csv(hist["schedule_csv"]) if hist else [], req)
+        rows, idx = _locate(live_rows, req)
         if idx is None:
             return []
         dates = sorted({r["date"] for r in rows if r.get("date")})

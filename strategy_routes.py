@@ -2598,6 +2598,25 @@ def _cross_training_defaults(restaurant_id) -> dict:
     return {r: int(round(_sq.cross_training_target_for(r) * 100)) for r in sorted(roles)}
 
 
+def _criticality_payload(restaurant_id, r) -> dict:
+    """{role_criticality: the owner's weights, criticality_defaults: {role:
+    stated default} for the roles this restaurant schedules,
+    criticality_bounds: [lo, hi]} — what a blank weight means and the range
+    a weight may take (schedule_objective)."""
+    import schedule_objective as _sobj
+    import schedule_rules as _sr
+    roles = set()
+    try:
+        import staff_settings as _ss
+        roles |= {(e.get("role") or "").strip() for e in (_ss.roster(restaurant_id) or [])}
+    except Exception:
+        pass
+    roles.discard("")
+    return {"role_criticality": _sr._load_json(getattr(r, "role_criticality_json", None), {}) or {},
+            "criticality_defaults": {x: round(_sobj.default_criticality(x), 2) for x in sorted(roles)},
+            "criticality_bounds": list(_sobj.CRITICALITY_BOUNDS)}
+
+
 import json as _j_ks
 
 
@@ -2698,6 +2717,11 @@ def _do_compliance_get(u):
             # out uses the default shown beside it (shift_quality).
             "role_cross_training": _sr._load_json(getattr(r, "role_cross_training_json", None), {}),
             "cross_training_defaults": _cross_training_defaults(_rid(u)),
+            # How hard each role is to run without — the owner's weights
+            # (POST {role_criticality}), the stated default beside each of
+            # the roster's roles, and the bounds (blind re-audit 10/11/26
+            # LOGIC-24; the iOS rules screen and the web read the same).
+            **_criticality_payload(_rid(u), r),
             "cross_training_default": int(round(__import__("shift_quality").CROSS_TRAINING_DEFAULT * 100)),
             "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
             # Dining sections: the most servers on the floor at once
@@ -2998,11 +3022,12 @@ def _do_compliance_breaks(u):
     conn = get_conn()
     try:
         if sid:
-            h = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+            h = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
                              (sid, rid)).fetchone()
             if h:
-                from schedule_versions import rows_from_csv
-                rows = rows_from_csv(h["schedule_csv"] or "")
+                # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+                import schedule_shifts as _ss_cb
+                rows = _ss_cb.rows_of(h["id"], "working", conn=conn)
                 for i, bl in sorted(_breaks.plan_week(rows, rules).items()):
                     out["planned"].append({"employee": rows[i].get("employee"), "date": rows[i].get("date"),
                                            "shift_start": rows[i].get("shift_start"),
@@ -7277,12 +7302,11 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
         return False
     try:
         from schedule_publish import publish_review
-        from labor import employees_in_schedule
         from models import get_conn as _gc
         import people
         conn = _gc()
         try:
-            row = conn.execute("SELECT id, published_at, superseded_by, schedule_csv FROM schedule_history "
+            row = conn.execute("SELECT id, published_at, superseded_by FROM schedule_history "
                                "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
         finally:
             conn.close()
@@ -7295,7 +7319,10 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
             review = publish_review(rid, row["id"], unattended=True) or {}
         if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
             return False
-        reach = people.reach_summary(people.reach(rid, employees_in_schedule(row["schedule_csv"] or "")))
+        import schedule_shifts as _ss_ot
+        from labor import employees_in_rows as _eir_ot
+        reach = people.reach_summary(people.reach(rid, _eir_ot(_ss_ot.rows_of(row["id"], "working",
+                                                                             restaurant_id=rid))))
         return int(reach.get("total") or 0) > 0
     except Exception as e:
         import ops
@@ -7419,7 +7446,6 @@ def _do_publish_check(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the schedule.")
     from schedule_publish import publish_review, notice_status
-    from labor import employees_in_schedule
     from models import get_conn as _gc
     import people
     rid = _rid(u)
@@ -7428,8 +7454,12 @@ def _do_publish_check(u):
         return {"ok": True, "schedule_id": None}, 200
     conn = _gc()
     try:
-        row = conn.execute("SELECT id, week_start, week_end, published_at, schedule_csv, superseded_by "
+        row = conn.execute("SELECT id, week_start, week_end, published_at, superseded_by "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?", (sid, rid)).fetchone()
+        # The week's WORKING rows from the shift table, read beside the row
+        # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_pc
+        week_rows = _ss_pc.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
     if not row:
@@ -7445,7 +7475,8 @@ def _do_publish_check(u):
         _ops_pc.capture(e, job="publish_check", context=f"restaurant_id={rid} schedule_id={row['id']}")
         items = [{"key": "check_failed", "text": "The publish check couldn't run just now — try again before sending"}]
     blockers = [b["text"] for b in items]
-    names = employees_in_schedule(row["schedule_csv"] or "")
+    from labor import employees_in_rows as _eir_pc
+    names = _eir_pc(week_rows)
     unsent = None
     if row["published_at"]:
         # A week staff already have: Send tells only the people a saved
@@ -7463,8 +7494,7 @@ def _do_publish_check(u):
     if not row["published_at"]:
         try:
             import schedule_learning as _sl_l
-            import schedule_versions as _sv_l
-            likely = _sl_l.likely_to_change(rid, _sv_l.rows_from_csv(row["schedule_csv"] or ""))
+            likely = _sl_l.likely_to_change(rid, week_rows)
         except Exception as _lx:
             import ops
             ops.capture(_lx, job="likely_to_change", context=f"restaurant_id={rid}")

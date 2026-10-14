@@ -281,10 +281,11 @@ def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
     # claims no rank of its own ("the constraint wins" competed with it).
     assert "STAFF CONSTRAINTS — PRIORITIES 1b." in prompt and "- S0: no Fridays" in prompt
     assert "the constraint wins" not in prompt
-    # Availability is the ROSTER's AVAILABLE column, marked [HARD] (C1,
-    # PR-33: one line per person instead of a block per fact).
+    # Availability is the ROSTER's AVAILABLE column (C1, PR-33: one line
+    # per person instead of a block per fact); the rule and its [HARD] tag
+    # are the rules block's one line (schedule re-audit 10/11/26 AI-15).
     roster = prompt[prompt.index("ROSTER — "):]
-    assert "approved time off (all [HARD])" in roster.split("\n\n")[0]
+    assert "approved time off" in roster.split("\n\n")[0] and "[HARD]" not in roster.split("\n\n")[0]
     assert "  S1 | Server | Server | off Mon |" in roster
     assert "RESTAURANT HOURS & SHIFT RULES (priority 1" in prompt and "Open 11am-10pm" in prompt
 

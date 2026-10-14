@@ -523,6 +523,56 @@ struct ClosesForSection: View {
     }
 }
 
+// MARK: - Doubles (LOGIC-19)
+
+/// Whether somebody works doubles — two shifts on one date with a break
+/// between: yes, never, or from their own history (a double on a quarter
+/// of the days they worked). The web Team sheet's three chips, the same
+/// words. A minor never works one, whatever is set.
+struct DoublesSection: View {
+    let stored: Bool?
+    var isMinor: Bool = false
+    let canEdit: Bool
+    let busy: Bool
+    let onChoose: (ScheduleSetupViewModel.StaffSettingsPatch.FloorManagerChoice) -> Void
+
+    private var choice: ScheduleSetupViewModel.StaffSettingsPatch.FloorManagerChoice {
+        switch stored {
+        case true?: return .yes
+        case false?: return .no
+        case nil: return .automatic
+        }
+    }
+
+    private var line: String {
+        if isMinor { return "A minor never works a double." }
+        switch choice {
+        case .yes: return "Works doubles \u{2014} two shifts on one date, with a break between."
+        case .no: return "Never given a double."
+        case .automatic: return "From their history: a double only for somebody who has worked one on a quarter of their days."
+        }
+    }
+
+    var body: some View {
+        AccountSection(kicker: "Doubles") {
+            VStack(alignment: .leading, spacing: 8) {
+                AccountFlowLayout(spacing: 6) {
+                    SetupChoiceChip(label: "From their history", on: choice == .automatic, enabled: canEdit && !busy,
+                                    tone: .cavnarInk2) { onChoose(.automatic) }
+                    SetupChoiceChip(label: "Works doubles", on: choice == .yes, enabled: canEdit && !busy) { onChoose(.yes) }
+                    SetupChoiceChip(label: "Never", on: choice == .no, enabled: canEdit && !busy,
+                                    tone: .cavnarInk3) { onChoose(.no) }
+                }
+                Text(line)
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(isMinor ? Color.cavnarAmber : Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 10)
+        }
+    }
+}
+
 // MARK: - Attendance (G, D-44 / L-18)
 
 /// What the record says about turning up: missed shifts with the

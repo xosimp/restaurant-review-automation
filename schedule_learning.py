@@ -2640,19 +2640,22 @@ def attendance_by_weekday(restaurant_id, min_shifts=ATTENDANCE_MIN_WEEKDAY_SHIFT
 
 
 def _week_rows(restaurant_id, week_dates, db_path=DB_PATH) -> list:
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     if not week_dates:
         return []
     conn = get_conn(db_path)
     try:
         # The week staff have (its live copy's published rows), else the
-        # week's working copy — the one rule (models, ARCH-11).
+        # week's working copy — the one rule (models, ARCH-11) — read from
+        # the shift table (schedule_shifts, schedule re-audit 10/11/26 ARCH-7).
         import models as _m_live
-        row = _m_live.live_week_row(conn, restaurant_id, sorted(week_dates)[0]) or \
-            _m_live.week_draft(conn, restaurant_id, sorted(week_dates)[0])
+        live = _m_live.live_week_row(conn, restaurant_id, sorted(week_dates)[0])
+        if live:
+            return schedule_shifts.rows_of(live["id"], "live", conn=conn)
+        draft = _m_live.week_draft(conn, restaurant_id, sorted(week_dates)[0])
+        return schedule_shifts.rows_of(draft["id"], "working", conn=conn) if draft else []
     finally:
         conn.close()
-    return rows_from_csv(row["schedule_csv"]) if row else []
 
 
 def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db_path=DB_PATH,
