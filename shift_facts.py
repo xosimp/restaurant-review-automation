@@ -177,7 +177,7 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
             # The record is shift_facts (SCALE-5): the window replaced there,
             # the export marked stale — never the whole three-year file
             # rewritten and re-parsed under the POS write lock.
-            return _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path)
+            return _after_ingest(restaurant_id, _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path), db_path)
         # Rows a fact cannot hold (a row with no person, one shift sent
         # twice): the file is the record again, exactly as sent — it is
         # rebuilt from the facts first, then merged below as it always was.
@@ -233,8 +233,21 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
         adopt(restaurant_id, rows_=merged, source=src, db_path=db_path)
     except Exception as e:
         log.warning("[shift_facts] adoption skipped for restaurant %s: %s", restaurant_id, e)
-    return {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
-            "resolved": new_rows}
+    return _after_ingest(restaurant_id, {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
+            "resolved": new_rows}, db_path)
+
+
+def _after_ingest(restaurant_id, out, db_path=None):
+    """What the history now says about who is who, asked of the owner
+    (people.raise_identity_questions — schedule re-audit 10/11/26 STRESS-7,
+    STRESS-8: one name worn by two people, one person under two names).
+    Never fails the ingest."""
+    try:
+        import people
+        out["identity_questions"] = people.raise_identity_questions(restaurant_id, db_path=db_path)
+    except Exception as e:
+        log.warning("[shift_facts] identity questions skipped for restaurant %s: %s", restaurant_id, e)
+    return out
 
 
 def _fits(rows_) -> bool:
@@ -864,8 +877,40 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
         return 0
     conn = get_conn(db_path)
     try:
+        # Only what changed is written (blind re-audit 10/11/26 SCALE-27):
+        # every night rewrote every person's quarters — 500 upserts at 250
+        # people for rows that had not moved. The stored rows are read once.
+        have = {(r["employee_key"], r["quarter"]): dict(r) for r in conn.execute(
+            "SELECT * FROM person_quarters WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+
+        def changed(k, vals):
+            old = have.get(k)
+            return old is None or any(old.get(c) != v for c, v in vals.items())
+        rows_s, rows_o, rows_g = [], [], []
         for (key, q), a in shifts.items():
-            conn.execute(
+            vals = {"person_id": a["pid"], "employee_name": a["name"], "shifts": a["shifts"],
+                    "hours": round(a["hours"], 2), "scheduled_shifts": a["scheduled"],
+                    "roles_json": json.dumps(a["roles"]), "dayparts_json": json.dumps(a["dayparts"]),
+                    "weekdays_json": json.dumps(a["weekdays"]), "first_date": a["first"], "last_date": a["last"]}
+            if changed((key, q), vals):
+                rows_s.append((restaurant_id, a["pid"], a["name"], key, q, a["shifts"], round(a["hours"], 2),
+                               a["scheduled"], vals["roles_json"], vals["dayparts_json"], vals["weekdays_json"],
+                               a["first"], a["last"]))
+        for (key, q), o in outcomes.items():
+            n = o["n"]
+            vals = {"watched": sum(n.values()), "no_shows": n.get("no_show", 0), "called_out": n.get("called_out", 0),
+                    "late": n.get("late", 0), "left_early": n.get("left_early", 0), "covered": n.get("covered", 0)}
+            if changed((key, q), vals):
+                rows_o.append((restaurant_id, o["pid"], o["name"], key, q, vals["watched"], vals["no_shows"],
+                               vals["called_out"], vals["late"], vals["left_early"], vals["covered"]))
+        for (key, q), g in signals.items():
+            vals = {"covers_taken": g["taken"], "covers_declined": g["declined"], "mentions_positive": g["pos"],
+                    "mentions_negative": g["neg"]}
+            if changed((key, q), vals):
+                rows_g.append((restaurant_id, g["pid"], g["name"], key, q, g["taken"], g["declined"], g["pos"],
+                               g["neg"]))
+        if rows_s:
+            conn.executemany(
                 "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, shifts, "
                 "hours, scheduled_shifts, roles_json, dayparts_json, weekdays_json, first_date, last_date, updated_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) "
@@ -873,29 +918,23 @@ def rollup_quarters(restaurant_id, db_path=None, today=None) -> int:
                 "shifts=excluded.shifts, hours=excluded.hours, scheduled_shifts=excluded.scheduled_shifts, "
                 "roles_json=excluded.roles_json, dayparts_json=excluded.dayparts_json, "
                 "weekdays_json=excluded.weekdays_json, first_date=excluded.first_date, last_date=excluded.last_date, "
-                "updated_at=excluded.updated_at",
-                (restaurant_id, a["pid"], a["name"], key, q, a["shifts"], round(a["hours"], 2), a["scheduled"],
-                 json.dumps(a["roles"]), json.dumps(a["dayparts"]), json.dumps(a["weekdays"]), a["first"], a["last"]))
-        for (key, q), o in outcomes.items():
-            n = o["n"]
-            conn.execute(
+                "updated_at=excluded.updated_at", rows_s)
+        if rows_o:
+            conn.executemany(
                 "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, watched, "
                 "no_shows, called_out, late, left_early, covered, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,"
                 "datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) DO UPDATE SET "
                 "watched=excluded.watched, no_shows=excluded.no_shows, called_out=excluded.called_out, "
                 "late=excluded.late, left_early=excluded.left_early, covered=excluded.covered, "
-                "updated_at=excluded.updated_at",
-                (restaurant_id, o["pid"], o["name"], key, q, sum(n.values()), n.get("no_show", 0), n.get("called_out", 0),
-                 n.get("late", 0), n.get("left_early", 0), n.get("covered", 0)))
-        for (key, q), g in signals.items():
-            conn.execute(
+                "updated_at=excluded.updated_at", rows_o)
+        if rows_g:
+            conn.executemany(
                 "INSERT INTO person_quarters (restaurant_id, person_id, employee_name, employee_key, quarter, "
                 "covers_taken, covers_declined, mentions_positive, mentions_negative, updated_at) "
                 "VALUES (?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, employee_key, quarter) DO UPDATE "
                 "SET covers_taken=excluded.covers_taken, covers_declined=excluded.covers_declined, "
                 "mentions_positive=excluded.mentions_positive, mentions_negative=excluded.mentions_negative, "
-                "updated_at=excluded.updated_at",
-                (restaurant_id, g["pid"], g["name"], key, q, g["taken"], g["declined"], g["pos"], g["neg"]))
+                "updated_at=excluded.updated_at", rows_g)
         conn.commit()
     finally:
         conn.close()

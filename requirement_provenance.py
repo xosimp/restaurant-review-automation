@@ -89,17 +89,48 @@ def validated(restaurant_id, pairs, db_path=DB_PATH) -> dict:
             "read": read, "well": well, "share": round(share, 2) if share is not None else None}
 
 
-def hold_down_trend(trend: dict, live: str, restaurant_id=None, db_path=DB_PATH, check=None) -> dict:
+def elasticity_hold(trend: dict, ups: dict):
+    """The window of a measured +1 (staffing_elasticity's `windows`) an
+    upward trend of the role's family on that daypart sits inside, or None
+    (blind re-audit 10/11/26 LEARNING-6). Pure."""
+    if not ups or not trend:
+        return None
+    try:
+        from intelligence.staffing import family_of
+        fam = family_of(trend.get("role"))
+    except Exception:
+        return None
+    since = str(trend.get("since") or "")[:10]
+    newest = max([str(d)[:10] for d in (trend.get("recent_dates") or [])] or [since])
+    for frm, to in (ups or {}).get((fam, trend.get("part"))) or []:
+        if str(frm)[:10] <= newest and (to is None or str(to)[:10] >= since):
+            return [frm, to]
+    return None
+
+
+def hold_down_trend(trend: dict, live: str, restaurant_id=None, db_path=DB_PATH, check=None, ups=None) -> dict:
     """{"hold": bool, "provenance": tag, "reason"} for one baseline trend
     ({day, part, role, now, was, since, direction, recent_dates}): a
     downward move whose recent nights are on or after go-live (`live`) and
     not validated is held at `was` (provenance "trim"); validated it is
-    "validated"; a move before go-live is "pre_cavnar". `check` (tests)
+    "validated"; a move before go-live is "pre_cavnar". An UPWARD move of
+    a family while a measured +1 of it bound the drafts on that daypart
+    (`ups`: staffing_elasticity.upward_windows) is held at `was` too
+    (provenance "elasticity", LEARNING-6): the drafts' own +1 is not the
+    restaurant's usual crew, and the measured move applies on top of the
+    earlier level as a target, so it never ratchets. `check` (tests)
     replaces validated()."""
     since = str((trend or {}).get("since") or "")
     if not trend or not live or since < live:
         return {"hold": False, "provenance": "pre_cavnar", "reason": None}
     if trend.get("direction") != "down":
+        win = elasticity_hold(trend, ups)
+        if win is not None:
+            from time_utils import mdy
+            return {"hold": True, "provenance": "elasticity",
+                    "reason": (f"held at {trend.get('was')}: the rise to {trend.get('now')} since {mdy(since)} came "
+                               f"from Cavnar AI adding one measured person from {mdy(win[0])}; the measured move "
+                               "is applied on its own, so it is not counted twice")}
         # A level the restaurant raised: never a trim, nothing to guard.
         return {"hold": False, "provenance": "cavnar", "reason": None}
     dates = [d for d in (trend.get("recent_dates") or []) if d >= live]
@@ -119,17 +150,30 @@ def is_cavnar_era(iso, live) -> bool:
     return bool(live) and str(iso)[:10] >= str(live)
 
 
-def cap_unvalidated(values: dict, live, ok_pairs=frozenset(), part=None) -> dict:
+def cap_unvalidated(values: dict, live, ok_pairs=frozenset(), part=None, reference=None) -> dict:
     """{date: value} with each Cavnar-era date's value (a per-person
     throughput) held to at most the pre-go-live median, unless the date's
-    (date, part) is in `ok_pairs` (validated). Pure."""
+    (date, part) is in `ok_pairs` (validated). Pure.
+
+    The median comes from the pre-go-live dates in `values` while the window
+    still holds some; after that from `reference` — the pre-go-live median
+    persisted for this family and daypart (staffing_model's
+    labor_standard_references, schedule re-audit 10/11/26 LEARNING-8: the
+    window read 8 weeks, so 8 weeks after go-live the cap vanished and a
+    Cavnar draft that ran a meal short raised the standard — fewer people
+    asked — a ratchet down). With neither, an unvalidated Cavnar-era date
+    is left out: Cavnar AI's own nights never set the standard alone."""
     if not live:
         return dict(values or {})
     pre = sorted(v for d, v in (values or {}).items() if str(d) < live and v is not None)
-    if not pre:
-        return dict(values or {})
-    n = len(pre)
-    med = pre[n // 2] if n % 2 else (pre[n // 2 - 1] + pre[n // 2]) / 2.0
+    if pre:
+        n = len(pre)
+        med = pre[n // 2] if n % 2 else (pre[n // 2 - 1] + pre[n // 2]) / 2.0
+    elif reference is not None:
+        med = float(reference)
+    else:
+        return {d: v for d, v in (values or {}).items()
+                if v is None or str(d) < live or (str(d), part) in ok_pairs}
     out = {}
     for d, v in (values or {}).items():
         if v is not None and str(d) >= live and (str(d), part) not in ok_pairs:

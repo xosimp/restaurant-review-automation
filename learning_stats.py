@@ -28,10 +28,29 @@ Pure: no I/O, no app imports (L0).
   mean_ci(values)                   a mean with a 90% normal interval
   fe_slope_ci(rows)                 the within-restaurant slope of a value
                                     over weeks since onboarding, with a
-                                    restaurant-cluster 90% interval (RM-4)
+                                    restaurant-cluster 90% interval, t on
+                                    G - 1 degrees of freedom (RM-4;
+                                    LEARNING-5)
+  trend_slope_ci(values)            ONE series' slope over its weeks with an
+                                    AR(1)-widened interval, t on the
+                                    effective n - 2 (the owner's own trend
+                                    - LEARNING-17)
+  t_cdf / t_ppf / t_pvalue          Student's t, pure
+  always_valid_p(est, se, tau)      the mixture-SPRT p-value a readout may
+                                    be peeked at every week (LEARNING-15)
+  fleet_sample(ids, k, key)         a stratified sample across the fleet,
+                                    rotated by `key` (LEARNING-23)
+  learning_off() / learning_scope() / switch_learning_off()
+                                    the generation-wide "no learned inputs"
+                                    switch the learning_v2 switchback's off
+                                    week sets (LEARNING-14): every learner's
+                                    read returns its neutral value under it
   ols(...)                          a small ridge-penalised least squares
                                     (calibration v2, LEARNING-8)
 """
+import contextlib
+import contextvars
+import hashlib
 import math
 
 WILSON_Z = 1.645                 # 90%: the experiment readout's intervals use it
@@ -216,13 +235,122 @@ def mean_ci(values, z=Z90) -> dict:
     return {"n": n, "mean": round(m, 4), "lo": round(m - half, 4), "hi": round(m + half, 4), "sd": round(sd, 4)}
 
 
-def fe_slope_ci(rows, z=Z90) -> dict:
+def _betacf(a, b, x):
+    """The incomplete beta's continued fraction (Lentz; Numerical Recipes)."""
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 300):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        de = d * c
+        h *= de
+        if abs(de - 1.0) < 1e-12:
+            break
+    return h
+
+
+def _beta_inc(x, a, b):
+    """The regularized incomplete beta I_x(a, b). Pure (the same arithmetic
+    as metrics._betainc, which this L0 module may not import)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    bt = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log(1.0 - x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _betacf(a, b, x) / a
+    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
+
+
+def t_cdf(t, df) -> float:
+    """P(T <= t) for Student's t with `df` degrees of freedom (the normal
+    when df is None). Pure."""
+    if df is None:
+        return 0.5 * (1.0 + math.erf(float(t) / math.sqrt(2.0)))
+    df, t = float(df), float(t)
+    tail = 0.5 * _beta_inc(df / (df + t * t), df / 2.0, 0.5)
+    return 1.0 - tail if t >= 0 else tail
+
+
+def t_ppf(q, df) -> float:
+    """The q-quantile of Student's t (bisection on t_cdf). Pure."""
+    lo, hi = -1000.0, 1000.0
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if t_cdf(mid, df) < q:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def t90(df) -> float:
+    """The two-sided 90% quantile of t on `df` degrees of freedom (z when
+    df is None)."""
+    return Z90 if df is None else t_ppf(0.95, max(1, int(df)))
+
+
+def t_pvalue(est, se, df=None, side=0) -> float:
+    """The p-value of est / se: two-sided (side 0), or one-sided that the
+    truth is above zero (side +1) or below it (side -1). 1.0 without a
+    standard error."""
+    try:
+        est, se = float(est), float(se)
+    except (TypeError, ValueError):
+        return 1.0
+    if se <= 0:
+        return 1.0 if est == 0 else 0.0
+    t = est / se
+    if side > 0:
+        return 1.0 - t_cdf(t, df)
+    if side < 0:
+        return t_cdf(t, df)
+    return min(1.0, 2.0 * (1.0 - t_cdf(abs(t), df)))
+
+
+def always_valid_p(est, se, tau) -> float:
+    """The always-valid p-value of the mixture sequential probability ratio
+    test (Johari et al., the normal mixture with variance tau^2): an
+    estimate read again every week may be peeked at without the false-call
+    rate growing with the number of looks - p = min(1, 1 / L),
+    L = sqrt(V / (V + tau^2)) * exp(tau^2 est^2 / (2 V (V + tau^2))),
+    V = se^2. `tau` is the size of effect worth finding (where the test is
+    most powerful). 1.0 without a standard error. Pure."""
+    try:
+        est, se, tau = float(est), float(se), float(tau)
+    except (TypeError, ValueError):
+        return 1.0
+    if se <= 0 or tau <= 0:
+        return 1.0
+    v, t2 = se * se, tau * tau
+    log_lam = 0.5 * math.log(v / (v + t2)) + t2 * est * est / (2.0 * v * (v + t2))
+    return 1.0 if log_lam <= 0 else min(1.0, math.exp(-log_lam))
+
+
+def fe_slope_ci(rows, z=None) -> dict:
     """The within-restaurant slope of y over x with a restaurant-cluster
     (CR1) 90% interval: rows = [(restaurant, x, y)]. Each restaurant's own
     mean is taken out first (restaurant fixed effects), so a restaurant that
-    started with a better draft is not read as improvement. One restaurant:
-    the plain OLS slope and its own interval. {slope, lo, hi, n,
-    restaurants}; slope None with too little spread."""
+    started with a better draft is not read as improvement. The quantile is
+    Student's t on G - 1 degrees of freedom for G clusters (blind re-audit
+    10/11/26 LEARNING-5: a z on 7 weekday clusters made the interval too
+    narrow). One restaurant: the plain OLS slope with t on n - 2 - for one
+    restaurant's own series over weeks, trend_slope_ci (serial-correlation
+    robust) is the right reading. `z` overrides the quantile. {slope, lo,
+    hi, se, df, n, restaurants}; slope None with too little spread."""
     pts = [(r, float(x), float(y)) for r, x, y in rows if x is not None and y is not None]
     by = {}
     for r, x, y in pts:
@@ -235,18 +363,89 @@ def fe_slope_ci(rows, z=Z90) -> dict:
     sxx = sum(x * x for _r, x, _y in dm)
     n, g = len(dm), len(by)
     if n < 3 or sxx <= 0:
-        return {"slope": None, "lo": None, "hi": None, "n": n, "restaurants": g}
+        return {"slope": None, "lo": None, "hi": None, "se": None, "df": None, "n": n, "restaurants": g}
     b = sum(x * y for _r, x, y in dm) / sxx
     if g >= 2:
         u = {}
         for r, x, y in dm:
             u[r] = u.get(r, 0.0) + x * (y - b * x)
         se = math.sqrt(g / (g - 1.0) * sum(v * v for v in u.values())) / sxx
+        df = g - 1
     else:
         resid = sum((y - b * x) ** 2 for _r, x, y in dm)
         se = math.sqrt(resid / max(1, n - 2) / sxx)
-    return {"slope": round(b, 4), "lo": round(b - z * se, 4), "hi": round(b + z * se, 4), "n": n,
-            "restaurants": g}
+        df = max(1, n - 2)
+    q = float(z) if z is not None else t90(df)
+    return {"slope": round(b, 4), "lo": round(b - q * se, 4), "hi": round(b + q * se, 4), "se": round(se, 6),
+            "df": df, "n": n, "restaurants": g}
+
+
+AR1_MAX = 0.9
+
+
+def trend_slope_ci(values, min_n=8) -> dict:
+    """ONE series' trend over its index (weeks, oldest first; None values
+    are skipped but keep their place): the OLS slope with its standard error
+    widened for serially correlated weeks — the residuals' lag-1
+    autocorrelation rho (bias-corrected for the series' length, Kendall's
+    + (1 + 3 rho) / n, held to [0, AR1_MAX]) inflates the variance by
+    (1 + rho) / (1 - rho) and shrinks the degrees of freedom to the
+    effective n_eff - 2, n_eff = n (1 - rho) / (1 + rho) — and Student's t
+    (blind re-audit 10/11/26 LEARNING-17: a plain OLS error with z from 4
+    weeks told 11-17% of owners with no trend at all that their drafts were
+    improving; a Newey-West error is worse still at 8-20 weeks). No slope
+    below `min_n` values. {slope, lo, hi, se, df, n, rho}."""
+    pts = [(float(i), float(v)) for i, v in enumerate(values or []) if v is not None]
+    n = len(pts)
+    out = {"slope": None, "lo": None, "hi": None, "se": None, "df": None, "n": n, "rho": None}
+    if n < max(4, int(min_n)):
+        return out
+    mx = sum(x for x, _y in pts) / n
+    my = sum(y for _x, y in pts) / n
+    sxx = sum((x - mx) ** 2 for x, _y in pts)
+    if sxx <= 0:
+        return out
+    b = sum((x - mx) * (y - my) for x, y in pts) / sxx
+    a = my - b * mx
+    e = [y - a - b * x for x, y in pts]
+    see = sum(v * v for v in e)
+    rho = 0.0
+    if see > 0:
+        r = sum(e[t] * e[t - 1] for t in range(1, n)) / see
+        rho = max(0.0, min(AR1_MAX, r + (1.0 + 3.0 * r) / n))
+    infl = (1.0 + rho) / (1.0 - rho)
+    se = math.sqrt(see / (n - 2.0) / sxx * infl)
+    df = max(1.0, n / infl - 2.0)
+    q = t_ppf(0.95, df)
+    out.update(slope=round(b, 4), lo=round(b - q * se, 4), hi=round(b + q * se, 4), se=round(se, 6),
+               df=round(df, 2), rho=round(rho, 3))
+    return out
+
+
+def fleet_sample(ids, k, key="", strata=5) -> list:
+    """At most `k` of `ids` for a fleet-wide reading (blind re-audit
+    10/11/26 LEARNING-23: the cohort and the admin trend read the FIRST
+    300/500 restaurants by id - the oldest customers only, survivorship and
+    staleness at 9,000). The ids are cut into `strata` equal bands by id
+    (sign-up order, so every era of customer is in), each band gives its
+    share of `k`, and inside a band the pick is a hash of (key, id) - pass
+    a new key each week to rotate the sample. All of them when k covers
+    them. Deterministic. Pure."""
+    ids = sorted({int(i) for i in ids or []})
+    k = int(k)
+    if k <= 0:
+        return []
+    if len(ids) <= k:
+        return ids
+    bands = max(1, min(int(strata), len(ids)))
+    size = len(ids) / float(bands)
+    out = []
+    for b in range(bands):
+        band = ids[int(round(b * size)):int(round((b + 1) * size))]
+        take = int(round((b + 1) * k / float(bands))) - int(round(b * k / float(bands)))
+        ranked = sorted(band, key=lambda i: hashlib.sha256(f"{key}|{i}".encode()).hexdigest())
+        out += ranked[:take]
+    return sorted(out)
 
 
 def _solve(a, b):
@@ -285,3 +484,39 @@ def ols(xs, ys, ridge=0.0, penalise=None) -> list:
         if penalise is None or i in penalise:
             a[i][i] += ridge
     return _solve(a, b)
+
+
+# ── the "no learned inputs" switch (blind re-audit 10/11/26 LEARNING-14) ──
+#
+# The learning ablation and learning_v1 switch off only the learned memory
+# (signals["learned"]); the prompt's learned lines, learned headcount,
+# measured staffing moves, driver standards, automatically promoted weights,
+# reliability, learned preferences, retention and the edit predictor stayed
+# on — nothing measured whether learning AS A WHOLE makes weeks better. A
+# generation whose learning_v2 arm is "off" runs inside learning_scope() with
+# switch_learning_off(): each learner's read checks learning_off() and
+# returns what it returns for a restaurant with no history.
+
+_LEARNING_OFF = contextvars.ContextVar("cavnar_learning_off", default=False)
+
+
+def learning_off() -> bool:
+    """Whether the current generation runs with every learned input off."""
+    return bool(_LEARNING_OFF.get())
+
+
+def switch_learning_off(off=True) -> None:
+    """Turn the learned inputs off (or on) for the rest of the current
+    learning_scope() — set where the week's arm is first known."""
+    _LEARNING_OFF.set(bool(off))
+
+
+@contextlib.contextmanager
+def learning_scope():
+    """One generation's extent: whatever switch_learning_off() set inside is
+    undone when it ends (a worker thread runs many generations)."""
+    token = _LEARNING_OFF.set(False)
+    try:
+        yield
+    finally:
+        _LEARNING_OFF.reset(token)

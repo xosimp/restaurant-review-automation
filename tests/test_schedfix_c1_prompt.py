@@ -86,7 +86,8 @@ def _prompt(kw):
 
 def _outside_fences(text):
     for o, c in ((ai_guard.UNTRUSTED_OPEN, ai_guard.UNTRUSTED_CLOSE),
-                 (ai_guard.OWNER_RULE_OPEN, ai_guard.OWNER_RULE_CLOSE)):
+                 (ai_guard.OWNER_RULE_OPEN, ai_guard.OWNER_RULE_CLOSE),
+                 (ai_guard.MANAGER_NOTE_OPEN, ai_guard.MANAGER_NOTE_CLOSE)):
         text = re.sub(re.escape(o) + r".*?" + re.escape(c), "<FENCE>", text, flags=re.S)
     return text
 

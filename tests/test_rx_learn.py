@@ -39,6 +39,18 @@ import shift_quality as sq
 import staff_settings
 from sched_d2_week import WEEK, DAYS, row
 
+
+@pytest.fixture(autouse=True)
+def _two_edit_candidates(monkeypatch):
+    """These tests are about their own subject, built on two-edit fixtures
+    from before the candidacy floor (schedule re-audit 10/11/26
+    LEARNING-10: three opportunities and a Wilson lower bound of 0.3 —
+    tests/test_sf11_g2_habits.py holds it). The old floor keeps each test
+    about its subject; enforcement is still earned by hand
+    (schedule_versions.habit_enforceable)."""
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_OPPORTUNITIES", 2)
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_LOWER", 0.0)
+
 MANAGER = {"id": 2, "username": "mgr", "role": "manager", "restaurant_id": None}
 MON, TUE, WED, THU, FRI, SAT, SUN = WEEK
 
@@ -305,7 +317,10 @@ def test_a_managers_always_is_theirs_and_never_brings_back_what_the_owner_let_go
     row_ = _q("SELECT * FROM schedule_standing_patterns WHERE restaurant_id=?", rid)[0]
     assert row_["source"] == "learned" and row_["text"].startswith("A manager said always")
     sm.consolidate(rid, only=("patterns",))
-    assert _mem(rid, key="pattern:" + row_["pattern_key"])[0]["status"] == "candidate"
+    # A manager's explicit "Always" binds at once as a priced habit (re-audit
+    # 10/11/26 LEARNING-11) — still theirs, never the owner's word.
+    assert _mem(rid, key="pattern:" + row_["pattern_key"])[0]["status"] == "active"
+    assert row_["enforced_since"] and row_["answer_authority"] == "delegate"
     # the owner lets it go; the manager's next "always" leaves it let go
     sv.confirm_standing(rid, row_["pattern_key"], user=OWNER, keep=False)
     _sql("INSERT INTO schedule_edit_answers (restaurant_id, history_id, question_key, kind, subject_json, keys_json, "

@@ -24228,6 +24228,38 @@ function generateSchedule(btn, opts) {
       return;
     }
   }
+  // What the owner typed for this draft, said back BEFORE it is generated
+  // (blind re-audit 10/11/26 AI-7, contract #6): each rule Cavnar AI reads
+  // from it, ticked to be held as a rule for this week; an unticked one is a
+  // preference only. Read once per press (opts.instruction_read).
+  var _instrEl = document.getElementById('sfw1-instr');
+  var _instrText = _instrEl ? String(_instrEl.value || '').replace(/^\s+|\s+$/g, '').slice(0, 500) : '';
+  if (_instrText && !opts.instruction_read && window.sfw1Sheet) {
+    btn.disabled = true;
+    var _irBody = {instruction: _instrText};
+    var _irWs = _schedWeekStart(); if (_irWs) _irBody.week_start = _irWs;
+    fetch('/api/labor/schedule-instruction/read', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(_irBody)})
+      .then(apiJson).then(function (d) {
+        btn.disabled = false;
+        var ss = (d && d.ok && d.sentences) || [], items = [], i, j;
+        for (i = 0; i < ss.length; i++) {
+          for (j = 0; j < (ss[i].rules || []).length; j++) items.push({rule: ss[i].rules[j].rule, reads_as: ss[i].rules[j].reads_as, confirmed: ss[i].rules[j].confirmed});
+          if (ss[i].waiver) items.push({rule: {kind: 'waiver', quote: ss[i].text}, reads_as: 'I read: ' + ss[i].waiver.words, confirmed: ss[i].waiver.confirmed});
+        }
+        if (!items.length) { opts.instruction_read = true; generateSchedule(btn, opts); return; }
+        window._schedInstrPending = {btn: btn, opts: opts, items: items};
+        var h = '<div class="hb-kicker">Before Cavnar AI drafts</div><h3 id="sfw1-modal-t">Is this what you meant?</h3>'
+          + '<p class="so-p">Tick each one to hold it as a rule for this week. Anything you leave unticked, the draft only aims for.</p>';
+        for (i = 0; i < items.length; i++) {
+          h += '<label class="rul-sw" style="border-top:0;gap:10px"><input type="checkbox" data-sched-instr-rule="' + i + '"' + (items[i].confirmed ? ' checked disabled' : '') + '>'
+            + '<span class="t">' + _numText(items[i].reads_as || '') + (items[i].confirmed ? ' <small>already a rule this week</small>' : '') + '</span></label>';
+        }
+        h += '<div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-sched-instr-edit="1">Change what I typed</button>'
+          + '<button type="button" class="cbtn cbtn-primary" data-sched-instr-go="1">Generate</button></div>';
+        sfw1Sheet(h);
+      }).catch(function () { btn.disabled = false; opts.instruction_read = true; generateSchedule(btn, opts); });
+    return;
+  }
   _schedBtn = btn;
   btn.disabled = true;
   var _oldNotice = document.getElementById('sched-notice'); if (_oldNotice) _oldNotice.remove();
@@ -24241,6 +24273,8 @@ function generateSchedule(btn, opts) {
   if (opts.reason_text) body.reason_text = opts.reason_text;
   var _instr = document.getElementById('sfw1-instr');
   if (_instr && String(_instr.value || '').replace(/\s+/g, '')) body.instruction = String(_instr.value).replace(/^\s+|\s+$/g, '').slice(0, 500);
+  // The readings the owner ticked on the "Is this what you meant?" sheet.
+  if (opts.confirm_rules && opts.confirm_rules.length) body.confirm_rules = opts.confirm_rules;
   var panel = document.getElementById('schedule-preview-panel');
   if (panel) panel.style.display = 'none';
 
@@ -27167,13 +27201,14 @@ function _snrForm(i, rule, d) {
 function _snrTyped(i, x, d) {
   var t = x.typed || [], o = '', j;
   if (!t.length) return '';
-  o += '<div class="snr-s"><b>Cavnar AI reads it as:</b> until you make it a rule, the draft keeps to it where it can.</div>';
+  o += '<div class="snr-s"><b>Not enforced yet.</b> Cavnar AI reads it as below — until you make it a rule, the draft only treats it as a preference.</div>';
   for (j = 0; j < t.length; j++) {
     o += '<div class="snr-act"><span class="snr-s">' + _numText(t[j].words) + '</span>'
       + (d.can_edit ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-snr-typed="' + i + ':' + j + '" data-scope="every">Make it a rule · every week</button>'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-typed="' + i + ':' + j + '" data-scope="week">Week of <span class="hb-num">' + _escHtml(mdy(d.week_of)) + '</span> only</button>' : '')
       + '</div>';
   }
+  if (d.can_edit) o += '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-dismiss="' + i + '">Not what I meant</button></div>';
   return o + '<span class="ac-status" data-snr-tstatus="' + i + '"></span>';
 }
 function snrHtml(d) {
@@ -27191,23 +27226,36 @@ function snrHtml(d) {
       used[x.rule_id] = 1;
       h += '<div class="snr-row ' + (x.stale ? 'warn' : 'ok') + '">' + q + '<div class="snr-s">' + (x.stale ? '<b>' + _escHtml(x.stale) + '</b> ' : '<b>A rule the draft is checked against:</b> ') + _numText(x.enforced) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Remove the rule</button></div>') + '</div>';
+    } else if (x.dismissed) {
+      // A reading the owner set aside (AI-10): guidance, nothing holds it.
+      h += '<div class="snr-row">' + q + '<div class="snr-s"><b>Not enforced.</b> You set Cavnar AI’s reading aside, so the draft reads it as guidance only.</div>'
+        + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-undismiss="' + i + '">Show the reading again</button></div>') + '</div>';
     } else if (x.kind === 'rule') {
-      h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
+      h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Not enforced yet — Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
         + (ro ? '' : _snrForm(i, x.rule, d)) + '</div>';
     } else if (x.typed && x.typed.length) {
       h += '<div class="snr-row offer">' + q + _snrTyped(i, x, d) + '</div>';
     } else if (x.kind === 'unchecked') {
-      h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not checked.</b> ' + _escHtml(x.why || '') + ' The draft aims for it; check the draft against it yourself.</div>'
+      h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not enforced.</b> ' + _escHtml(x.why || '') + ' The draft aims for it; check the draft against it yourself.</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-open="' + i + '">Make a minimum from it</button></div><div data-snr-slot="' + i + '"></div>') + '</div>';
     } else if (x.kind === 'waiver') {
       // A standing position waived by this note (schedule_dedicated: the
       // bar-tables bartender, Anthony 10/9/26).
-      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>Allowance:</b> ' + _escHtml(x.why || '') + '</div></div>';
+      // Applied only once the owner confirms it (BUGSGEN-4): until then the
+      // standing position is staffed.
+      if (x.confirmed) {
+        h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>Allowance in force:</b> ' + _escHtml(x.why || '') + '</div>'
+          + (ro || !x.rule_id ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Staff it again</button></div>') + '</div>';
+      } else {
+        h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not applied yet — the position is staffed.</b> Cavnar AI reads it as: ' + _escHtml(x.why || '') + '</div>'
+          + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-snr-waive="' + i + '" data-scope="every">Let it off as it says</button>'
+            + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-waive="' + i + '" data-scope="week">Week of <span class="hb-num">' + _escHtml(mdy(d.week_of)) + '</span> only</button></div>') + '</div>';
+      }
     } else if (x.kind === 'person') {
       h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>About one person.</b> ' + _escHtml(x.why || '') + '</div>'
         + '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" onclick="swOpenTeam(\'notes\')">Scheduling notes in Labor →</button></div></div>';
     } else {
-      h += '<div class="snr-row">' + q + '<div class="snr-s"><b>Guidance.</b> The draft aims for it; nothing checks it.</div></div>';
+      h += '<div class="snr-row">' + q + '<div class="snr-s"><b>Not enforced — guidance.</b> The draft aims for it; nothing checks it.</div></div>';
     }
   }
   var rest = [];
@@ -27224,8 +27272,34 @@ function snrHtml(d) {
   return h;
 }
 document.addEventListener('click', function (ev) {
-  var t = ev.target && ev.target.closest ? ev.target.closest('[data-snr-day],[data-snr-add],[data-snr-remove],[data-snr-open],[data-snr-typed],[data-snr-read]') : null;
+  var t = ev.target && ev.target.closest ? ev.target.closest('[data-snr-day],[data-snr-add],[data-snr-remove],[data-snr-open],[data-snr-typed],[data-snr-read],[data-snr-dismiss],[data-snr-undismiss],[data-snr-waive]') : null;
   if (!t || !_snr) return;
+  if (t.hasAttribute('data-snr-dismiss') || t.hasAttribute('data-snr-undismiss')) {
+    // "Not what I meant" (AI-10): the reading is neither held nor proposed.
+    var dx = (_snr.sentences || [])[+(t.getAttribute('data-snr-dismiss') || t.getAttribute('data-snr-undismiss'))];
+    if (!dx) return;
+    t.disabled = true;
+    fetch('/api/labor/note-rules/dismiss', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: dx.text, dismissed: t.hasAttribute('data-snr-dismiss')})})
+      .then(apiJson).then(function (d) {
+        if (d && d.ok) { ssLoadNoteRules(true); return; }
+        t.disabled = false; toast((d && d.error) || 'Could not save that', 'error');
+      }).catch(function () { t.disabled = false; toast('Could not save that', 'error'); });
+    return;
+  }
+  if (t.hasAttribute('data-snr-waive')) {
+    // The owner confirms a note lets a standing position off (BUGSGEN-4).
+    var wx = (_snr.sentences || [])[+t.getAttribute('data-snr-waive')];
+    if (!wx) return;
+    t.disabled = true;
+    fetch('/api/labor/note-rules/waiver', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_text: wx.text, scope: t.getAttribute('data-scope'), week_start: _snr.week_of || ''})})
+      .then(apiJson).then(function (d) {
+        if (d && d.ok) { toast('Allowance made — the draft lets it off as your note says'); ssLoadNoteRules(true); return; }
+        t.disabled = false; toast((d && d.error) || 'Could not save that', 'error');
+      }).catch(function () { t.disabled = false; toast('Could not save that', 'error'); });
+    return;
+  }
   if (t.hasAttribute('data-snr-read')) {
     // The owner's press: the sentences no model has read are read now
     // (owner_rules, RM-9) — proposals, nothing held until confirmed.
@@ -39128,6 +39202,20 @@ function sfw1RatingLine(s) {
     var p = window._schedGenPending; window._schedGenPending = null;
     closeSheet();
     p.opts.keep_locked = !t.hasAttribute('data-sched-gen-fresh');
+    generateSchedule(p.btn, p.opts);
+  });
+  // Generate's "Is this what you meant?" (AI-7): the ticked readings ride
+  // the press as confirm_rules; "Change what I typed" goes back to the box.
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sched-instr-go],[data-sched-instr-edit]') : null;
+    if (!t || !window._schedInstrPending) return;
+    var p = window._schedInstrPending; window._schedInstrPending = null;
+    var picked = [], boxes = document.querySelectorAll('[data-sched-instr-rule]'), i;
+    for (i = 0; i < boxes.length; i++) if (boxes[i].checked && !boxes[i].disabled) picked.push(p.items[+boxes[i].getAttribute('data-sched-instr-rule')].rule);
+    closeSheet();
+    if (t.hasAttribute('data-sched-instr-edit')) { var inp = $id('sfw1-instr'); if (inp) inp.focus(); return; }
+    p.opts.instruction_read = true;
+    p.opts.confirm_rules = picked;
     generateSchedule(p.btn, p.opts);
   });
   window.sfw1RedoSheet = function (dates) {

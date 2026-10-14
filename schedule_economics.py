@@ -149,7 +149,7 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     days of a payroll week is paid 1.5x for the seventh day's first 8 hours
     and 2x past 8 (California Labor Code 510); `rest_rule` — {"need",
     "multiplier" | "flat", "scope": "hours_inside" | "shift" | "instance",
-    "waived": fn(name, date) -> bool}: a short turnaround the person agreed
+    "waived": fn(name, date, start=None) -> bool}: a short turnaround the person agreed
     to in writing is paid its premium. `premiums` in the result breaks them
     out (double_time, seventh_day, rest)."""
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
@@ -276,7 +276,7 @@ def _rest_premium_dollars(name, rows, items, rule) -> float:
         gap = (s1 - e0).total_seconds() / 3600.0
         if gap < 0 or gap >= need - 0.01:
             continue
-        if not (waived and waived(name, r1.get("date"))):
+        if not (waived and waived(name, r1.get("date"), r1.get("shift_start"))):
             continue
         later_h = (e1 - s1).total_seconds() / 3600.0
         rate = rate_by_date.get(r1.get("date")) or 0.0
@@ -335,7 +335,7 @@ def _rest_rule_of(c):
         return None
     return {"need": float(comp.get("min_rest_hours") or 0), "multiplier": comp.get("rest_premium_multiplier"),
             "flat": comp.get("rest_premium_flat"), "scope": comp.get("rest_premium_scope") or "hours_inside",
-            "waived": lambda name, d: c.rest_waived(name, d)}
+            "waived": lambda name, d, start=None: c.rest_waived(name, d, start)}
 
 
 def stored_blended_rate(restaurant_id, history_id):

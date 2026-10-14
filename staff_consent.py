@@ -29,7 +29,9 @@ from models import DB_PATH
 import models as _models
 
 KINDS = ("rest_waiver", "rest_waiver_standing", "shift_change", "added_hours")
-STATUSES = ("pending", "agreed", "declined", "revoked", "withdrawn")
+# void: given for a claim that never went through (BUGSLIFE-7) — kept as
+# the record of what was said, never in force.
+STATUSES = ("pending", "agreed", "declined", "revoked", "withdrawn", "void")
 CHANNELS = ("portal", "app", "offer", "manager")
 
 
@@ -66,7 +68,50 @@ def init_staff_consent(db_path=None):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_consents_person ON staff_consents"
                      "(restaurant_id, employee_key, kind, status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_consents_created ON staff_consents(created_at)")
+        # The shift a consent is about (schedule re-audit 10/11/26
+        # BUGSLIFE-7, contract #5): a rest waiver binds to the one shift it
+        # was given for — never every shift on that date.
+        if "shift_id" not in {r[1] for r in conn.execute("PRAGMA table_info(staff_consents)").fetchall()}:
+            try:
+                conn.execute("ALTER TABLE staff_consents ADD COLUMN shift_id TEXT")
+            except Exception as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
         conn.commit()
+    finally:
+        conn.close()
+    void_unused_rest_waivers(db_path)
+
+
+def void_unused_rest_waivers(db_path=None) -> int:
+    """At boot: a per-shift rest waiver recorded for a claim that never went
+    through is void (BUGSLIFE-7). Until 10/11/26 the consent was written
+    BEFORE the claim ran, so a lost race or an overtime hold left an agreed
+    waiver for a clopen the person never got — and, keyed by date, it made
+    any short turnaround that day read as consented. A waiver whose request
+    (`source_ref` request:<id>) is not covered BY that person is set `void`
+    and stamped; the row stays (the record of what was said). Idempotent;
+    returns rows voided."""
+    conn = get_conn(db_path)
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT c.id, c.employee_key, r.status, r.replacement_name FROM staff_consents c "
+                "LEFT JOIN shift_change_requests r ON r.restaurant_id=c.restaurant_id "
+                "AND ('request:' || r.id)=c.source_ref WHERE c.kind='rest_waiver' AND c.status='agreed' "
+                "AND c.source_ref LIKE 'request:%'").fetchall()
+        except Exception as e:
+            if "no such table" in str(e).lower():
+                return 0
+            raise
+        n = 0
+        for r in rows:
+            if r["status"] == "covered" and name_key(r["replacement_name"]) == r["employee_key"]:
+                continue
+            n += conn.execute("UPDATE staff_consents SET status='void', revoked_at=? WHERE id=? AND status='agreed'",
+                              (_now(), r["id"])).rowcount
+        conn.commit()
+        return n
     finally:
         conn.close()
 
@@ -136,6 +181,33 @@ def record(restaurant_id, employee_name, kind, text, subject_date=None, subject=
     row = ask(restaurant_id, employee_name, kind, text, subject_date=subject_date, subject=subject,
               asked_by=employee_name, source_ref=source_ref, db_path=db_path)
     return answer(restaurant_id, row["id"], employee_name, True, channel=channel, db_path=db_path)
+
+
+def record_on(conn, restaurant_id, employee_name, kind, text, subject_date=None, subject=None, channel="app",
+              source_ref=None, shift_id=None, person_id=None) -> int:
+    """Consent given in the same act that uses it, written AGREED on the
+    caller's connection inside its write transaction (schedule re-audit
+    10/11/26 BUGSLIFE-7): a claim's rest waiver is recorded only in the
+    transaction that writes the week, so a claim that is lost, held or
+    refused leaves no consent behind. `shift_id` binds it to the one shift.
+    Returns the row id."""
+    if kind not in KINDS:
+        raise ConsentError("unknown consent")
+    if channel not in CHANNELS:
+        channel = "app"
+    name = " ".join(str(employee_name or "").split())
+    text = " ".join(str(text or "").split())[:600]
+    if not name or not text:
+        raise ConsentError("a consent needs the person and the words")
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO staff_consents (restaurant_id, person_id, employee_name, employee_key, kind, subject_date, "
+        "subject_json, text, status, asked_by, asked_at, answered_at, channel, source_ref, shift_id) "
+        "VALUES (?,?,?,?,?,?,?,?, 'agreed', ?, ?, ?, ?, ?, ?)",
+        (restaurant_id, person_id, name, name_key(name), kind, subject_date,
+         json.dumps(subject) if subject is not None else None, text, name[:120], now, now, channel,
+         (str(source_ref) if source_ref is not None else None), (str(shift_id).lower() if shift_id else None)))
+    return cur.lastrowid
 
 
 def answer(restaurant_id, consent_id, employee_name, agree: bool, channel="app", db_path=None) -> dict:
@@ -220,16 +292,30 @@ def for_restaurant(restaurant_id, db_path=None, since=None, limit=500) -> list:
         conn.close()
 
 
+def waiver_shift(subject) -> tuple:
+    """(date, start minutes) of the one shift a rest waiver's subject binds
+    it to, or None for a waiver written before consents named their shift."""
+    sh = (subject or {}).get("shift") if isinstance(subject, dict) else None
+    if not isinstance(sh, dict) or not sh.get("date"):
+        return None
+    from schedule_time import parse_minutes
+    m = parse_minutes(sh.get("start") or sh.get("shift_start") or "")
+    return (str(sh["date"])[:10], m) if m is not None else None
+
+
 def rest_waivers(restaurant_id, week_dates=None, db_path=None) -> dict:
-    """{employee_key: {"standing": bool, "dates": set(iso)}} — agreed rest
-    consents in force: every standing one not revoked, and the per-shift
-    ones for `week_dates` (all when None). What Constraints.rest_waived
-    reads."""
+    """{employee_key: {"standing": bool, "dates": set(iso), "shifts": {iso:
+    set(start minutes)}}} — agreed rest consents in force: every standing
+    one not revoked, and the per-shift ones for `week_dates` (all when
+    None). A waiver given for one shift (BUGSLIFE-7: every claim's since
+    10/11/26) is in `shifts` — it allows the short rest before THAT shift
+    only; `dates` holds the older date-wide ones. What
+    Constraints.rest_waived reads."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT employee_key, kind, subject_date FROM staff_consents WHERE restaurant_id=? "
-                            "AND status='agreed' AND kind IN ('rest_waiver','rest_waiver_standing')",
-                            (restaurant_id,)).fetchall()
+        rows = conn.execute("SELECT employee_key, kind, subject_date, subject_json FROM staff_consents "
+                            "WHERE restaurant_id=? AND status='agreed' "
+                            "AND kind IN ('rest_waiver','rest_waiver_standing')", (restaurant_id,)).fetchall()
     except Exception as e:
         if "no such table" in str(e).lower():
             return {}
@@ -239,12 +325,41 @@ def rest_waivers(restaurant_id, week_dates=None, db_path=None) -> dict:
     wanted = {str(d)[:10] for d in (week_dates or [])}
     out = {}
     for r in rows:
-        w = out.setdefault(r["employee_key"], {"standing": False, "dates": set()})
+        w = out.setdefault(r["employee_key"], {"standing": False, "dates": set(), "shifts": {}})
         if r["kind"] == "rest_waiver_standing":
             w["standing"] = True
+            continue
+        try:
+            bound = waiver_shift(json.loads(r["subject_json"] or "null"))
+        except (TypeError, ValueError):
+            bound = None
+        if bound is not None:
+            if not wanted or bound[0] in wanted:
+                w["shifts"].setdefault(bound[0], set()).add(bound[1])
         elif r["subject_date"] and (not wanted or r["subject_date"] in wanted):
             w["dates"].add(r["subject_date"])
     return out
+
+
+def waiver_allows(w, date_str, start=None) -> bool:
+    """Whether one person's waivers (rest_waivers' value) allow a short rest
+    before a shift on `date_str` starting at `start` (a clock string or
+    minutes): a standing waiver, a date-wide one from before waivers named
+    their shift, or one bound to exactly that shift."""
+    if not w:
+        return False
+    if w.get("standing"):
+        return True
+    d = str(date_str or "")[:10]
+    if d in (w.get("dates") or ()):
+        return True
+    if start is None:
+        return False
+    if not isinstance(start, int):
+        from schedule_time import parse_minutes
+        start = parse_minutes(start or "")
+    shifts = (w.get("shifts") or {}).get(d) or ()
+    return start is not None and start in set(shifts)
 
 
 def consented_change(restaurant_id, employee_name, subject_date, after=None, before=None, db_path=None):

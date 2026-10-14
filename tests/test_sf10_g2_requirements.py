@@ -551,9 +551,16 @@ def test_a_requirement_moves_only_when_the_interval_clears_zero():
     assert unsure["move"] == 0
     costs = se.decide({"sales": {"est": 0.0, "lo": -0.01, "hi": 0.01}}, 5000, 120.0, 30.0)
     assert costs["move"] == -1
-    service = se.decide({"sales": {"est": 0.0, "lo": -0.01, "hi": 0.01}, "turn": {"est": -9, "lo": -14, "hi": -4}},
+    # A service gain adds a person only when the sales net is not clearly
+    # negative (blind re-audit 10/11/26 LEARNING-4) ...
+    service = se.decide({"sales": {"est": 0.07, "lo": -0.01, "hi": 0.15}, "turn": {"est": -9, "lo": -14, "hi": -4}},
                         5000, 120.0, 30.0)
     assert service["move"] == 1 and service["why"].startswith("service")
+    # ... and, the net clearly negative, the measured service gain still
+    # keeps the person (no cut), but adds nobody.
+    held = se.decide({"sales": {"est": 0.0, "lo": -0.01, "hi": 0.01}, "turn": {"est": -9, "lo": -14, "hi": -4}},
+                     5000, 120.0, 30.0)
+    assert held["move"] == 0
 
 
 def test_the_trim_cuts_where_an_hour_measurably_returns_least():
