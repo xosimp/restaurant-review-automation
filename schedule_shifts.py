@@ -475,8 +475,11 @@ def backfill(db_path=None, max_seconds: float = BACKFILL_SECONDS, max_weeks: int
                 log.warning("shifts of week %s not projected: %s", m["id"], e)
         if out["hit_bound"] or len(batch) >= int(max_weeks):
             out["hit_bound"] = True
-            out["cursor"] = last
-            _cursor(conn, "" if last is None else last)
+            # Where this pass stopped; a pass that examined nothing keeps
+            # the place it was given.
+            out["cursor"] = last if last is not None else below
+            if last is not None:
+                _cursor(conn, last)
         else:
             _cursor(conn, "")
         conn.commit()

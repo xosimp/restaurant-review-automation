@@ -271,6 +271,27 @@ def trigger_statements(src) -> list:
         out.append("DROP TRIGGER IF EXISTS trg_intel_features_version ON intel_features")
         out.append("CREATE TRIGGER trg_intel_features_version BEFORE INSERT ON intel_features FOR EACH ROW "
                    "WHEN (NEW.version IS NULL) EXECUTE FUNCTION cavnar_intel_features_version()")
+    # The published copy's double-booking guard (schedule_shifts, schedule
+    # re-audit 10/11/26 ARCH-7): one person on two overlapping shifts in a
+    # week's published copy is refused unless the pair is let through
+    # (overlap_ok_with). SQLite's trigger is schedule_shifts._TRIGGER_SQL;
+    # this is the same rule. Every week write holds the write lock
+    # (BEGIN IMMEDIATE is pg_advisory_xact_lock), so the check cannot race.
+    if src.execute("SELECT 1 FROM sqlite_master WHERE name='schedule_shifts'").fetchone() and \
+            "person_ref" in {c[0] for c in table_columns(src, "schedule_shifts")}:
+        import schedule_shifts
+        out.append("CREATE OR REPLACE FUNCTION cavnar_no_double_booking() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                   "BEGIN IF NEW.copy = 'published' AND NEW.person_ref IS NOT NULL AND NEW.starts_at IS NOT NULL "
+                   "AND NEW.ends_at IS NOT NULL AND EXISTS (SELECT 1 FROM schedule_shifts o "
+                   "WHERE o.history_id = NEW.history_id AND o.copy = NEW.copy AND o.id IS DISTINCT FROM NEW.id "
+                   "AND o.person_ref = NEW.person_ref AND o.starts_at < NEW.ends_at AND NEW.starts_at < o.ends_at "
+                   "AND position(' ' || o.shift_id || ' ' in ' ' || COALESCE(NEW.overlap_ok_with, '') || ' ') = 0 "
+                   "AND position(' ' || NEW.shift_id || ' ' in ' ' || COALESCE(o.overlap_ok_with, '') || ' ') = 0) "
+                   "THEN RAISE EXCEPTION 'schedule_shifts: double booking' USING ERRCODE = "
+                   "'integrity_constraint_violation'; END IF; RETURN NEW; END $$")
+        out.append(f"DROP TRIGGER IF EXISTS {schedule_shifts.TRIGGER} ON schedule_shifts")
+        out.append(f"CREATE TRIGGER {schedule_shifts.TRIGGER} BEFORE INSERT ON schedule_shifts "
+                   "FOR EACH ROW EXECUTE FUNCTION cavnar_no_double_booking()")
     return out
 
 

@@ -6842,18 +6842,26 @@ def employee_shifts_from_rows(rows, employee_name: str, meal_break_after_hours=N
 
 
 def timed_shifts_from_csv(schedule_csv: str) -> list:
-    """Every shift in a generated schedule as [{employee, role, start, end}]
-    with full local datetimes ("2026-10-05T16:00:00") — what a POS schedule
-    push needs. A shift whose end is at or before its start closes after
-    midnight and ends the next day. Rows without both times are left out."""
+    """timed_shifts_from_rows over a schedule's text (one the caller holds —
+    an RPOWER preview's, a test's). A stored week's rows are read through
+    schedule_shifts (schedule re-audit 10/11/26 ARCH-7)."""
+    if not schedule_csv:
+        return []
     import csv as _csv
     import io as _io
+    return timed_shifts_from_rows(list(_csv.DictReader(_io.StringIO(schedule_csv))))
+
+
+def timed_shifts_from_rows(rows) -> list:
+    """Every shift in a week's rows as [{employee, role, start, end}] with
+    full local datetimes ("2026-10-05T16:00:00") — what a
+    POS schedule push and the task sheets need. A shift whose end is at or
+    before its start closes after midnight and ends the next day. Rows
+    without both times are left out."""
     from datetime import datetime as _dt, timedelta as _td
     import schedule_rules as _rules
     out = []
-    if not schedule_csv:
-        return out
-    for row in _csv.DictReader(_io.StringIO(schedule_csv)):
+    for row in rows or []:
         name, day = (row.get("employee") or "").strip(), (row.get("date") or "").strip()
         a, b = _rules.parse_minutes(row.get("shift_start")), _rules.parse_minutes(row.get("shift_end"))
         try:
