@@ -1892,8 +1892,9 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
                 return {"ok": False, "changed": True, "schedule_id": row["id"],
                         "error": "The week changed while this was being checked, so it wasn't sent — try again."}, 409
             text = _srows.to_csv(target)
-            conn.execute("UPDATE schedule_history SET published_csv=?, republished_at=datetime('now') "
-                         "WHERE id=? AND restaurant_id=?", (text, row["id"], rid))
+            # Through the one week write (store_week: the shift projection
+            # with it — ARCH-7, ARCH-24).
+            _sv.store_week(conn, rid, row["id"], published=text, sets=("republished_at=datetime('now')",))
             try:
                 _models_mod.carry_shift_sections(conn, rid, old_live, target)
             except Exception as e:
@@ -1902,7 +1903,7 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
             import shift_requests as _srq_f
             _srq_f.follow_week(conn, rid, target, dates=_sv._week_dates(row["week_start"],
                                                                         row["week_end"] or row["week_start"]))
-            items = _recipients(old_live, target)
+            items = _recipients(old_live, target, restaurant_id=rid)
             batch = _uuid.uuid4().hex
             person_ids = {" ".join(str(r.get("employee") or "").split()): r.get("person_id") for r in target
                           if r.get("person_id")}
