@@ -11428,6 +11428,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
 .ss-crew-bar .sum{margin-left:auto;font-size:13.5px;color:var(--ink3)}
 .ss-crew-list{display:flex;flex-direction:column;gap:14px}
+#ss-crew-body{scroll-margin-top:84px}
 .ss-crew-role{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:16px 16px 12px;box-shadow:var(--elev-card);min-width:0}
 .ss-crew-rh{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-bottom:10px}
 .ss-crew-rh b{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink)}
@@ -28198,7 +28199,13 @@ function ssCrewCell(role, c) {
 document.addEventListener('click', function (e) {
   var t = e.target && e.target.closest ? e.target : null; if (!t) return;
   var b = t.closest('[data-crew-show]');
-  if (b) { _ssCrewShow = b.getAttribute('data-crew-show'); try { window.localStorage.setItem('cavnar_crew_show', _ssCrewShow); } catch (x) { } ssCrewDraw(); return; }
+  if (b) {
+    _ssCrewShow = b.getAttribute('data-crew-show'); try { window.localStorage.setItem('cavnar_crew_show', _ssCrewShow); } catch (x) { } ssCrewDraw();
+    /* The view it switched to comes into sight (owner, 10/14/26): the list scrolls up under the buttons. */
+    var _cl = document.getElementById('ss-crew-body'), _rm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (_cl && _cl.scrollIntoView) _cl.scrollIntoView({behavior: _rm ? 'auto' : 'smooth', block: 'start'});
+    return;
+  }
   b = t.closest('[data-crew-answer]'); if (!b || _ssCrewBusy) return;
   _ssCrewBusy = true; b.disabled = true;
   var a = b.getAttribute('data-crew-answer'), hid = (_ssCrew && _ssCrew.history_id) || null;
