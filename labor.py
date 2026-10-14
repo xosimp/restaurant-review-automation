@@ -4507,10 +4507,47 @@ def _weekday_span(dates) -> str:
     return "/".join(names)
 
 
+# A server-side refusal fallback on the synchronous schedule call (scheduler
+# re-audit 10/11/26 AI-30): Opus 5.5 and Sonnet 5.5 run safety classifiers
+# that can decline a request (stop_reason "refusal"); a refused week was
+# drafted in code (schedule_fallback) where a fallback model could have
+# written it. With SCHEDULE_REFUSAL_FALLBACK=1 the call carries the API's
+# `fallbacks: "default"` (beta server-side-fallback-2026-07-01, routed by the
+# refusal's category) — Claude API only, never through Message Batches
+# (which reject it: schedule_batch builds its requests without it) and never
+# on a request that turns thinking off with between_tools. OFF by default
+# until a live call on the production account confirms the beta is
+# accepted there (a 400 on every week would be worse than a rare refusal);
+# the code-draft fallback stays the path either way.
+REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+REFUSAL_FALLBACK_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1")
+
+
+def refusal_fallback(call: dict) -> dict:
+    """`call` as sent: with the server-side refusal fallback when
+    SCHEDULE_REFUSAL_FALLBACK=1 and its model takes it, else unchanged.
+    The stored request (schedule_model_calls, the batch's) never carries it."""
+    import os
+    if str(os.getenv("SCHEDULE_REFUSAL_FALLBACK", "") or "").strip() != "1":
+        return call
+    model = str(call.get("model") or "").lower()
+    if not model.startswith(REFUSAL_FALLBACK_MODELS) or (call.get("thinking") or {}).get("type") == "between_tools":
+        return call
+    out = dict(call)
+    headers = dict(out.get("extra_headers") or {})
+    beta = [b for b in str(headers.get("anthropic-beta") or "").split(",") if b.strip()]
+    if REFUSAL_FALLBACK_BETA not in beta:
+        beta.append(REFUSAL_FALLBACK_BETA)
+    headers["anthropic-beta"] = ",".join(beta)
+    out["extra_headers"] = headers
+    out["extra_body"] = dict(out.get("extra_body") or {}, fallbacks="default")
+    return out
+
+
 def _roster_people(employees, facts=None, availability=None, time_off=None, scores=None, role_scores=None,
                    tenure=None, experienced=None, leader_flags=None, prior_pattern=None, families=None,
                    role_counts=None, held=None, week_dates=None, closed=(), ceiling=40.0,
-                   ot_line=OVERTIME_THRESHOLD_HOURS) -> list:
+                   ot_line=OVERTIME_THRESHOLD_HOURS, managers=None) -> list:
     """Each person's ROSTER line as fields for schedule_prompt.roster_table
     (schedule audit 10/3/26 PR-33: their facts sat in about nine blocks the
     model had to join by name, one of them capped). From the engine's facts
@@ -4552,7 +4589,16 @@ def _roster_people(employees, facts=None, availability=None, time_off=None, scor
         if not n:
             continue
         f = facts.get(n) or by_low.get(str(n).strip().lower()) or {}
-        p = {"name": n, "role": r or "", "manager": bool(f.get("manager")) if f else _sr.is_manager_role(r)}
+        # Who counts as a manager is ONE definition (re-audit 10/11/26 AI-14):
+        # the Constraints' managers, the set THE MANAGERS block and the
+        # manager plan read — `managers` (lowercase names) when the caller
+        # has it. A role-name fallback marked "(manager)" in the ROSTER
+        # beside "nobody on this roster counts as a manager".
+        if managers is not None:
+            is_mgr = str(n).strip().lower() in managers
+        else:
+            is_mgr = bool(f.get("manager")) if f else _sr.is_manager_role(r)
+        p = {"name": n, "role": r or "", "manager": is_mgr}
         p.update({k: "" for k in ("can_work", "available", "hours", "score", "experience", "closes", "usual",
                                   "wants", "reliability")})
         if f.get("acting"):
@@ -5820,7 +5866,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         employees, facts=roster_facts, availability=staff_availability, time_off=_time_off, scores=_scores,
         tenure=tenure, experienced=_experienced, leader_flags=leader_flags, prior_pattern=prior_pattern,
         families=_families, role_counts=_role_counts, held=_held_by_name, week_dates=week_dates,
-        closed=_closed_set, ceiling=_ceiling_h)
+        closed=_closed_set, ceiling=_ceiling_h,
+        managers=({" ".join(str(m.get("name") or "").split()).lower()
+                   for m in ((manager_plan or {}).get("managers") or []) if isinstance(m, dict)}
+                  if manager_plan is not None else None))
     from schedule_intel import MENTOR_SHIFTS_TO_HOLD as _HOLD_SHIFTS
     _roster_block = _sp.roster_table(_roster_lines, held_shifts=_HOLD_SHIFTS, ceiling=_ceiling_h,
                                      ot=OVERTIME_THRESHOLD_HOURS)
@@ -5888,8 +5937,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _dow_bits = [f"{k} {v}%" for k, v in sorted((dow or {}).items(),
                                                     key=lambda kv: week_days.index(kv[0]) if kv[0] in week_days else 7)
                      if v is not None]
+        # A labor % only where sales back it (re-audit 10/11/26 AI-12): with
+        # punches and no sales the analysis holds 0, and the model was told
+        # the restaurant ran at "0% (target: 30.0%)" — a missing measurement
+        # is never 0 (and "None%" was possible).
+        _pct = analysis.get("overall_labor_pct")
+        _labor_line = (f"- Overall labor over that window: {_pct}% {_labor_vs_target}"
+                       if _pct is not None and float(analysis.get("total_sales") or 0) > 0 else
+                       "- Labor %: not measured (no sales on file for that window)")
         _history_lines = (f"{_sched_window_line}\n"
-                          f"- Overall labor over that window: {analysis['overall_labor_pct']}% {_labor_vs_target}\n"
+                          f"{_labor_line}\n"
                           f"- Blended hourly rate: ${hourly_rate}/hr"
                           + (f"\n- Recent overstaffed days: {', '.join(_over)}" if _over else "")
                           + (f"\n- Recent understaffed days: {', '.join(_under)}" if _under else "")
@@ -6119,7 +6176,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # (schedule_resume) — read by its call key, else None: send it.
         msg = _sbatch.answer_for(dict(_call, readiness=_ready_sched))
         if msg is None:
-            msg = create_with_retry(_client, readiness=_ready_sched, **_call)
+            msg = create_with_retry(_client, readiness=_ready_sched, **refusal_fallback(_call))
     except CallDeadlineExceeded as _dx:
         # Out of the job's time mid-answer (P-22): what streamed is read
         # like a truncated answer — the engine keeps its finished days and
@@ -6360,6 +6417,10 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # The model's own three bullets, kept apart from the deterministic
         # "what changed" the engine writes from the diff.
         "narrative": summary_bullets[:3],
+        # Its reasons as data, each tied to a date and role (re-audit
+        # 10/11/26 AI-16): what the note writer reads, checked against the
+        # final rows (schedule_narrative.reasons_for_note).
+        "decisions": [dict(d) for d in ((_parse or {}).get("decisions") or [])],
         "truncated": _truncated,
         "stop_reason": _stop,
         "structured": bool(_parse is not None and _parse["parsed"]),

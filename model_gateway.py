@@ -244,9 +244,12 @@ def _allowance(klass, usage, limit, share):
     return max(own_left, min(free_total, max(0.0, free_total - reserve_left)))
 
 
-def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None):
+def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, force=False):
     """Reserve in this minute's windows when the class (and the tenant) has
-    room; returns the minute reserved in, or None."""
+    room; returns the minute reserved in, or None. `force` reserves whatever
+    the room: a call that waited out its allowance and goes anyway still
+    counts its estimate, so the calls after it see the minute as it is
+    (re-audit 10/11/26 SCALE-25)."""
     lim = org_limits()
     tenant_cap = _f("GATEWAY_TENANT_OTPM", 0)
     minute = _minute(now)
@@ -258,11 +261,11 @@ def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None):
         out_use = {r["klass"]: int(r["output_tokens"]) for r in rows}
         in_use = {r["klass"]: int(r["input_tokens"]) for r in rows}
         sh = shares()
-        if est_out > _allowance(klass, out_use, lim["otpm"], sh) or \
-                est_in > _allowance(klass, in_use, lim["itpm"], sh):
+        if not force and (est_out > _allowance(klass, out_use, lim["otpm"], sh) or
+                          est_in > _allowance(klass, in_use, lim["itpm"], sh)):
             conn.rollback()
             return None
-        if tenant_cap > 0 and restaurant_id is not None:
+        if tenant_cap > 0 and restaurant_id is not None and not force:
             t = conn.execute("SELECT output_tokens FROM model_tenant_windows WHERE minute=? AND restaurant_id=?",
                              (minute, restaurant_id)).fetchone()
             if t is not None and int(t["output_tokens"]) + est_out > tenant_cap:
@@ -313,16 +316,41 @@ def admit(restaurant_id, kwargs, klass=None, sleep=time.sleep, db_path=None):
             if klass == "bulk":
                 raise GatewayBusy(klass, retry_after=60 - (time.time() % 60))
             # An owner, or a generation on its clock, goes anyway: the
-            # provider's own limit and the retry are the hard stop.
-            return Ticket(klass, _minute(), 0, 0, restaurant_id, waited)
+            # provider's own limit and the retry are the hard stop. Its
+            # estimate is still RESERVED (SCALE-25): a zero ticket made the
+            # minute look emptier than it was exactly at saturation, so more
+            # calls went out and the provider's 429s followed.
+            try:
+                minute = _try_reserve(klass, est_in, est_out, restaurant_id, db_path=db_path, force=True)
+            except Exception:
+                minute = None
+            if minute is None:
+                return Ticket(klass, _minute(), 0, 0, restaurant_id, waited)
+            return Ticket(klass, minute, est_in, est_out, restaurant_id, waited)
         step = min(give_up - waited, max(0.5, 60 - (time.time() % 60)))
-        sleep(step)
+        # Waiting holds no generation slot (SCALE-25): the queue job is
+        # parked for the wait, so another restaurant's generation can do its
+        # code work meanwhile (job_queue.parked).
+        with _parked(step):
+            sleep(step)
         waited += step
+
+
+def _parked(seconds):
+    """job_queue.parked for the running queue job, or nothing outside one."""
+    try:
+        import job_queue
+        return job_queue.parked(seconds)
+    except Exception:
+        return contextlib.nullcontext()
 
 
 def settle(ticket, message=None, db_path=None) -> None:
     """Replace the ticket's estimate with what the call really used (zero for
-    a call that failed before an answer). Never raises."""
+    a call that failed before an answer), in the minute it was reserved in —
+    inserted when that minute has no row (re-audit 10/11/26 SCALE-25: an
+    UPDATE alone lost a call's real tokens whenever its row was missing, a
+    go-anyway call's or a pruned minute's). Never raises."""
     if ticket is None or ticket.settled:
         return
     ticket.settled = True
@@ -335,12 +363,16 @@ def settle(ticket, message=None, db_path=None) -> None:
     try:
         conn = get_conn(db_path)
         try:
-            conn.execute("UPDATE model_token_windows SET input_tokens=MAX(0, input_tokens+?), "
-                         "output_tokens=MAX(0, output_tokens+?) WHERE minute=? AND klass=?",
-                         (d_in, d_out, ticket.minute, ticket.klass))
+            conn.execute("INSERT INTO model_token_windows (minute, klass, input_tokens, output_tokens, calls) "
+                         "VALUES (?,?,?,?,1) ON CONFLICT(minute, klass) DO UPDATE SET "
+                         "input_tokens=MAX(0, model_token_windows.input_tokens+?), "
+                         "output_tokens=MAX(0, model_token_windows.output_tokens+?)",
+                         (ticket.minute, ticket.klass, max(0, d_in), max(0, d_out), d_in, d_out))
             if ticket.restaurant_id is not None:
-                conn.execute("UPDATE model_tenant_windows SET output_tokens=MAX(0, output_tokens+?) "
-                             "WHERE minute=? AND restaurant_id=?", (d_out, ticket.minute, ticket.restaurant_id))
+                conn.execute("INSERT INTO model_tenant_windows (minute, restaurant_id, output_tokens) VALUES (?,?,?) "
+                             "ON CONFLICT(minute, restaurant_id) DO UPDATE SET "
+                             "output_tokens=MAX(0, model_tenant_windows.output_tokens+?)",
+                             (ticket.minute, ticket.restaurant_id, max(0, d_out), d_out))
             conn.commit()
         finally:
             conn.close()

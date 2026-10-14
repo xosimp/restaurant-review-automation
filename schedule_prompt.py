@@ -182,8 +182,9 @@ LAYOUT = (
     "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below. "
     + "CODE OWNS THE ARITHMETIC: after you answer, code counts every daypart and half hour against SHIFT "
     "REQUIREMENTS, re-checks every closer and every rule, and holds every person's hours, minimum, overtime line, "
-    "rest and days in a row and the week's hours ceiling — repairing what falls short. Those figures are bounds on "
-    "your choices, never sums for you to work out: choose once, well, and write the rows.")
+    "rest and days in a row and the week's hours ceiling. Those figures are bounds on your choices, never sums "
+    "for you to work out — but every row code has to change is counted against the draft and shown to the "
+    "owner: choose once, well, and write rows that already hold.")
 
 RULE_MARKS = (
     "HOW RULES ARE MARKED\n"
@@ -283,9 +284,12 @@ def _output_text(structured: bool, enums: bool = True, contract: str = "schema")
                 "written with one-letter keys: `e` the employee exactly as the ROSTER spells them, `r` the role, `s` "
                 "the start and `t` the end " + times + " (an end at or before the start runs past midnight), and `n` "
                 "the note when one applies — the weekday and the hours are worked out from the date and the times, so "
-                "write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use "
-                "it to report what the week misses — every requirement, target, floor and request the finished week "
-                "does not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
+                "write neither. "
+                "`decisions` is at most three of the week's biggest choices, each with its `date` and `role` from "
+                "this request and `why` — the fact you were given that decided it, in 12 words or fewer; the "
+                "owner's note is written from them after code checks each against the finished week. What the "
+                "week misses is checked in code and shown to the owner, never reported here. Write the JSON object "
+                "and nothing else.")
     elif structured and contract == "shape":
         # The shape alone (#69): code chooses who works each slot
         # (schedule_engine.assign_shape_slots, the solver).
@@ -297,18 +301,24 @@ def _output_text(structured: bool, enums: bool = True, contract: str = "schema")
                 "start and `t` the end " + times + " (an end at or before the start runs past midnight), `c` how many "
                 "people work exactly that role and those times (a whole number, 1 or more), and `n` the note when "
                 "one applies. Size each day from SHIFT REQUIREMENTS and AVAILABLE BY DAY: never more slots of a role "
-                "at once than the people who can work that role that day. `summary` is at most three "
-                "bullets: the week's biggest decisions and why. Do not use it to report what the week misses — it "
-                "is checked in code and shown to the owner. Write the JSON object and nothing else.")
+                "at once than the people who can work that role that day. "
+                "`decisions` is at most three of the week's biggest choices, each with its `date` and `role` from "
+                "this request and `why` — the fact you were given that decided it, in 12 words or fewer; the "
+                "owner's note is written from them after code checks each against the finished week. What the "
+                "week misses is checked in code and shown to the owner, never reported here. Write the JSON object "
+                "and nothing else.")
     elif structured:
         spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
                 "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift's "
                 "`employee` exactly as the ROSTER spells them, its `role`, and its `start` and `end` "
                 + ("from the schema's clock times" if enums else "as 12-hour clock times with am/pm")
                 + " (an end at or before the start runs past midnight) — the weekday and the hours are worked out "
-                "from the date and the times, so write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use it "
-                "to report what the week misses — every requirement, target, floor and request the finished week does "
-                "not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
+                "from the date and the times, so write neither. "
+                "`decisions` is at most three of the week's biggest choices, each with its `date` and `role` from "
+                "this request and `why` — the fact you were given that decided it, in 12 words or fewer; the "
+                "owner's note is written from them after code checks each against the finished week. What the "
+                "week misses is checked in code and shown to the owner, never reported here. Write the JSON object "
+                "and nothing else.")
     else:
         spec = ("OUTPUT — your entire response follows this structure, with nothing before the CSV:\n\n"
                 "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
@@ -317,6 +327,11 @@ def _output_text(structured: bool, enums: bool = True, contract: str = "schema")
                 "Start the response with \"date,day,employee\" and keep that format to the end: the date as the ISO "
                 "date alone (2026-MM-DD, never with its weekday in front), a real weekday, a ROSTER name, then the role, "
                 "times, hours and note, in that order, on every row.")
+    if structured:
+        # The reasons are data now (re-audit 10/11/26 AI-16): ~120 words of
+        # rules for three prose bullets the note writer replaced were sent,
+        # and paid for, on every call.
+        return spec
     return (spec + "\nEach summary bullet: one short clause, 10 words or fewer, plain language — the concrete change "
             "and its one-line reason, nothing more. A restaurant owner should be able to read all 3 in under 5 "
             "seconds. No full sentences, no restating these rules back, no generic scheduling advice, no emoji. Name "

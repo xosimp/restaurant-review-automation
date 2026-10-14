@@ -892,6 +892,50 @@ def _price_week(cand: Candidate, ctx: _PassContext, rows) -> None:
         se._soft_fail("pricing", _px, ctx.rid)
 
 
+ASSIGNMENT_REASONS_MAX = 400
+
+
+def final_assignment_reasons(result, rows) -> dict:
+    """The final solve's reasons kept with the draft (contract #4): the
+    typed entries the solve produced — `result["assignment_reasons"]` (the
+    final solve's, schedule_cpsat.assignment_reasons) else the solver-first
+    draft's own (draft_source.solver.reasons) — matched to the FINISHED rows
+    by date, start and person, so a reason is kept only while the row still
+    carries the pick it explains (a repair pass that moved the shift makes
+    it a comparison after the draft, never the engine's). {source, reasons:
+    [{shift_id, date, shift_start, employee, runner_up, facts, text}],
+    recorded, changed_after}; reasons [] when no solve recorded any."""
+    def k(d, s, e):
+        return (str(d or "")[:10], " ".join(str(s or "").split()).lower(), " ".join(str(e or "").split()).lower())
+    items = result.get("assignment_reasons")
+    source = "solver"
+    if isinstance(items, dict):
+        source = items.get("source") or source
+        items = items.get("reasons")
+    if not items:
+        items = (((result.get("draft_source") or {}).get("solver") or {}).get("reasons")) or []
+    on = {}
+    for r in rows or []:
+        if (r.get("employee") or "").strip():
+            on.setdefault(k(r.get("date"), r.get("shift_start"), r.get("employee")), r)
+    kept, changed = [], 0
+    for x in items:
+        if not isinstance(x, dict) or not x.get("text") or not (x.get("employee") or "").strip():
+            continue
+        row = on.get(k(x.get("date"), x.get("shift_start"), x.get("employee")))
+        if row is None:
+            changed += 1
+            continue
+        ru = x.get("runner_up")
+        kept.append({"shift_id": x.get("shift_id") or row.get("shift_id"), "date": str(x.get("date"))[:10],
+                     "shift_start": x.get("shift_start"), "employee": x.get("employee"),
+                     "runner_up": (ru.get("employee") if isinstance(ru, dict) else ru) or x.get("instead"),
+                     "facts": list(x.get("facts") or [])[:8], "text": str(x["text"])[:300]})
+        if len(kept) >= ASSIGNMENT_REASONS_MAX:
+            break
+    return {"source": source, "reasons": kept, "recorded": len(kept) + changed, "changed_after": changed}
+
+
 def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     """Every rule the week is checked against, in one sweep of the FINISHED
     rows (schedule_rules.violations) — nothing changes a row after this, so
@@ -948,6 +992,16 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     # Kept with the saved review: which days were built without the model,
     # and why (contract #7, AI-11).
     review["draft_source"] = se._json_safe(result.get("draft_source") or {})
+    # The final solve's own reason for each assignment, kept with the draft
+    # for the pre-publish "why" and the Shift pane (schedule re-audit
+    # 10/11/26 contract #4, TRUST-2) — only the reasons whose row still
+    # carries the solve's pick after every later pass; the rest are counted.
+    try:
+        _ar = final_assignment_reasons(result, preview_rows)
+        if _ar["recorded"]:
+            review["assignment_reasons"] = _ar
+    except Exception as _arx:
+        se._soft_fail("assignment reasons", _arx, rid)
     # The draft's instruction as the rules code held it — chips — and every
     # typed rule of the owner's words in force (owner_rules, RM-9).
     try:
@@ -1421,7 +1475,12 @@ def _stage_note(job: GenerationRun, cand: Candidate) -> None:
                             chips=(result.get("review") or {}).get("instruction_rules") or [],
                             model_bullets=list(result.get("narrative") or []),
                             roster=result.get("roster") or [],
-                            role_floors=getattr(result.get("constraints"), "role_floors", None))
+                            role_floors=getattr(result.get("constraints"), "role_floors", None),
+                            # Why the week looks as it does (re-audit 10/11/26
+                            # AI-16, AI-17): the model's decisions still in the
+                            # final rows, requirement reasons, solver picks,
+                            # the repair's changes.
+                            reasons=_snar.reasons_for_note(result, preview_rows))
         result["narrative"] = _note["bullets"]
         if isinstance(result.get("review"), dict):
             result["review"]["note"] = {"source": _note["source"], "dropped": _note["dropped"][:6]}

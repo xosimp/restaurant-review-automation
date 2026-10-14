@@ -761,7 +761,10 @@ def test_the_generate_route_queues_on_the_pool_and_starts_no_thread_of_its_own(d
     # clock; the pool is the group's concurrency, a count of claimed rows.
     import job_queue
     assert name.startswith("queue-generation") and clocked
-    assert job_queue._pools["generation"]._max_workers == job_queue.group_concurrency("generation")
+    # Twice the bound in threads: a row parked on the model gateway's next
+    # minute sleeps on one while another drains (re-audit 10/11/26 SCALE-25);
+    # the bound itself is claim()'s count of rows, and kick()'s.
+    assert job_queue._pools["generation"]._max_workers == 2 * job_queue.group_concurrency("generation")
     assert job_queue.group_concurrency("generation") == se.SCHEDULE_GEN_WORKERS
     assert job_queue.row_for(body["job_id"])["kind"] == "schedule_generate"
     assert "threading.Thread(" not in inspect.getsource(mobile_api.mobile_generate_schedule)
