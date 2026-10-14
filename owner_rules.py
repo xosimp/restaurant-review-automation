@@ -1159,8 +1159,8 @@ def confirm(restaurant_id, rule, source_text=None, scope="every", week_start=Non
     src = _norm(source_text or (rule or {}).get("quote") or "")
     week = None
     if scope == "week":
-        import schedule_engine
-        raw, err = schedule_engine.check_week_start(restaurant_id, week_start or "")
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
         if err:
             raise ValueError(err)
         week = raw

@@ -3,6 +3,7 @@ rules only through one reader, said back and confirmed (contract #6): blind
 re-audit AI-7, AI-8, AI-9, AI-10, AI-13, AI-22, AI-23, AI-24, AI-25, AI-29,
 ARCH-16, BUGSGEN-4, BUGSGEN-23."""
 import inspect
+import schedule_context
 import json
 import types
 
@@ -111,7 +112,7 @@ def test_the_instruction_is_read_and_said_back_before_generating(rid, monkeypatc
     import strategy_routes
     monkeypatch.setattr(strategy_routes, "_may_draft", lambda u: True)
     monkeypatch.setattr(strategy_routes, "_limited", lambda *a, **k: False)
-    monkeypatch.setattr(se, "check_week_start", lambda r_, w: (w, None))
+    monkeypatch.setattr(schedule_context, "check_week_start", lambda r_, w: (w, None))
     monkeypatch.setattr(se, "generation_request", lambda *a, **k: {"week_start": WEEK[0]})
     monkeypatch.setenv("OWNER_RULES_READ", "1")
     import ai_utils
@@ -138,7 +139,7 @@ def test_the_instruction_is_read_and_said_back_before_generating(rid, monkeypatc
 
 
 def test_the_generate_press_checks_the_ticked_readings_before_anything_starts(rid, monkeypatch):
-    monkeypatch.setattr(se, "check_week_start", lambda r_, w: (w, None))
+    monkeypatch.setattr(schedule_context, "check_week_start", lambda r_, w: (w, None))
     with pytest.raises(ValueError):
         orr.confirm_for_week(rid, [_rule("close", person="Maria Lopez", days=["Friday"],
                                          quote="Don't let Maria close Friday")], WEEK[0], dry_run=True)
@@ -329,7 +330,7 @@ def test_a_family_name_is_the_family_not_its_first_code():
 
 def test_asks_card_reads_the_owners_own_words_and_shows_each_rule(rid, monkeypatch):
     import ask_cavnar_tools as act
-    monkeypatch.setattr(se, "check_week_start", lambda r_, w: (w, None))
+    monkeypatch.setattr(schedule_context, "check_week_start", lambda r_, w: (w, None))
     monkeypatch.setattr(se, "generation_request", lambda *a, **k: {"week_start": WEEK[0]})
     seen = []
 

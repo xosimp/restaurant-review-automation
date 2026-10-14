@@ -545,3 +545,48 @@ def end_daypart(row, split=None) -> str:
         return "unknown"
     cut = daypart_split() if split is None else split
     return "night" if e > cut else "morning"
+
+
+def _week_monday(today, week_start=None, start_day=0):
+    """The first day of the week to schedule. A schedule week is the
+    restaurant's own week — `start_day` is restaurants.week_start_day
+    (0 = Monday, the default; Simple EJ's runs Wednesday to Tuesday, owner
+    10/10/26), the same week its payroll and overtime are counted in: the
+    owner's choice when given (any date in the wanted week works), else the
+    next one after today. The name is kept from when every week was a
+    Monday's (callers across the app import it)."""
+    from datetime import datetime as _d, timedelta as _t
+    sd = int(start_day or 0) % 7
+    if week_start:
+        try:
+            d = _d.strptime(str(week_start)[:10], "%Y-%m-%d")
+            return d - _t(days=(d.weekday() - sd) % 7)
+        except ValueError:
+            pass
+    days_ahead = (sd - today.weekday()) % 7 or 7
+    return today + _t(days=days_ahead)
+
+
+def week_dates_from(first) -> list:
+    """The seven ISO dates of the week starting `first` (a date or datetime)."""
+    from datetime import timedelta as _t
+    return [(first + _t(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+
+
+def week_day_names(dates) -> list:
+    """The weekday name of each ISO date, in the dates' own order — a week
+    that starts Wednesday reads Wednesday first (never a fixed Monday list
+    beside dates that start elsewhere)."""
+    return [_weekday_name(d) for d in dates or []]
+
+
+def _date_of(iso):
+    from datetime import date as _date
+    return _date.fromisoformat(str(iso)[:10])
+
+
+def _weekday_name(iso) -> str:
+    try:
+        return _date_of(iso).strftime("%A")
+    except (TypeError, ValueError):
+        return ""

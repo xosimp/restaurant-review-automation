@@ -4703,7 +4703,7 @@ def _schedule_card(args, restaurant_id):
     elif days:
         monday = days[0] - _t(days=(days[0].weekday() - start_day) % 7)
     if monday is not None and restaurant_id is not None:
-        from schedule_engine import check_week_start
+        from schedule_context import check_week_start
         _ok, err = check_week_start(restaurant_id, monday.isoformat())
         if err:
             return None, None, err

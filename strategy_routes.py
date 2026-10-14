@@ -2197,8 +2197,9 @@ def _do_schedule_forecast(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the forecast.")
     from flask import request
+    import schedule_context
     import schedule_engine
-    week, err = schedule_engine.check_week_start(_rid(u), request.args.get("week_start"))
+    week, err = schedule_context.check_week_start(_rid(u), request.args.get("week_start"))
     if err:
         return {"ok": False, "error": err}, 400
     out = schedule_engine.forecast_preview(_rid(u), week)
@@ -2220,8 +2221,8 @@ def _do_note_rules_get(u):
     import schedule_note_rules as snr
     week = (request.args.get("week_start") or "").strip()[:10] or None
     if week:
-        import schedule_engine
-        week, err = schedule_engine.check_week_start(_rid(u), week)
+        import schedule_context
+        week, err = schedule_context.check_week_start(_rid(u), week)
         if err:
             return {"ok": False, "error": err}, 400
     notes = getattr(get_restaurant(_rid(u)), "sched_notes", None) or ""
@@ -2353,7 +2354,8 @@ def _do_schedule_instruction_read(u):
     if not text:
         return {"ok": True, "sentences": []}, 200
     week = (str(b.get("week_start") or "").strip()[:10]) or None
-    week, err = _se.check_week_start(_rid(u), week)
+    import schedule_context
+    week, err = schedule_context.check_week_start(_rid(u), week)
     if err:
         return {"ok": False, "error": err}, 400
     if _limited(u, "instruction_read", 10, 60):

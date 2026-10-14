@@ -151,7 +151,7 @@ def test_p23_every_call_of_a_generation_reads_the_same_first_two_blocks(monkeypa
     # slices go out together by default since 10/10/26, AI-4).
     monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: se.CHUNK_ROWS_PER_CALL + 40)
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
     roster = [(f"S{i}", "Server") for i in range(4)]
     out = se._generate_in_parts(ANALYSIS, _every_day_history(), roster,
                                 {"tz_name": None, "week_start": WEEK[0], "closed_dates": [], "roster": roster,

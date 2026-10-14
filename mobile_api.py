@@ -3670,7 +3670,7 @@ def mobile_generate_schedule(current_user):
     # week_start may also come as a query arg (the web twin's older callers);
     # the body wins when both are sent. Both routes are POST only.
     week_start = (body.get("week_start") or request.args.get("week_start") or "").strip()[:10] or None
-    from schedule_engine import check_week_start as _cws
+    from schedule_context import check_week_start as _cws
     week_start, _ws_err = _cws(rid, week_start)
     if _ws_err:
         return jsonify(ok=False, error=_ws_err), 400

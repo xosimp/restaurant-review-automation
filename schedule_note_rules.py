@@ -556,7 +556,7 @@ def _monday(iso, start_day=0):
 
 def _start_day(restaurant_id) -> int:
     try:
-        from labor import get_week_start_day
+        from schedule_context import get_week_start_day
         return get_week_start_day(restaurant_id)
     except Exception:
         return 0
@@ -680,8 +680,8 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
         raise ValueError("A rule is for every week or one week.")
     mon = None
     if scope == "week":
-        import schedule_engine
-        raw, err = schedule_engine.check_week_start(restaurant_id, week_start or "")
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
         if err:
             raise ValueError(err)
         sd = _start_day(restaurant_id)
@@ -758,8 +758,8 @@ def add_time_rule(restaurant_id, role, kind, at_time, daypart, days=None, source
         raise ValueError("A rule is for every week or one week.")
     mon = None
     if scope == "week":
-        import schedule_engine
-        raw, err = schedule_engine.check_week_start(restaurant_id, week_start or "")
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
         if err:
             raise ValueError(err)
         sd = _start_day(restaurant_id)
@@ -828,8 +828,8 @@ def add_waiver(restaurant_id, sentence, scope="every", week_start=None, user=Non
         raise ValueError("A rule is for every week or one week.")
     mon = None
     if scope == "week":
-        import schedule_engine
-        raw, err = schedule_engine.check_week_start(restaurant_id, week_start or "")
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
         if err:
             raise ValueError(err)
         sd = _start_day(restaurant_id)

@@ -2,6 +2,7 @@
 contract #5: the owner's words become typed rules a small model proposes,
 code validates, the owner confirms, and every pass enforces."""
 import json
+import schedule_context
 import types
 
 import pytest
@@ -246,7 +247,7 @@ def test_the_generation_reads_the_instruction_and_holds_it_only_once_confirmed(r
     assert t["kind"] == "close" and not t["confirmed"]
     # Confirmed for the week (the Generate sheet's tick): hard, from the
     # confirmed rules — and the instruction's reading matches it.
-    monkeypatch.setattr(se, "check_week_start", lambda r_, w: (w, None))
+    monkeypatch.setattr(schedule_context, "check_week_start", lambda r_, w: (w, None))
     orr.confirm_for_week(rid, [r], WEEK[0])
     (r2,) = orr.prepare(rid, WEEK, instruction="Maria closes Friday", call=call)["instruction"]
     assert r2["confirmed"]
