@@ -88,6 +88,11 @@ DEFAULTS = {
     # Simple EJ's values (60/60) are the defaults, so no restaurant changes.
     "closing_manager_stays_minutes": 60,
     "opening_manager_lead_minutes": 60,
+    # A second manager on the floor once this many other people are on
+    # (LOGIC-13: the rule was exactly one manager, so a Friday 7pm with ~17
+    # staff ran one). None: the restaurant's own punches decide
+    # (learn_second_manager); 0: never.
+    "second_manager_from_staff": None,
     # What "full-time" means when the owner set no minimum for the person
     # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
     # the field said nothing): at least this many hours a week. 30 is the
@@ -171,6 +176,9 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
                   # under TURNAROUND_FLAG_HOURS between two shifts where no
                   # rest rule is set (sched re-audit 10/11/26 STRESS-19)
                   "short_turnaround",
+                  # fewer than two managers on at the restaurant's
+                  # second-manager line (LOGIC-13)
+                  "second_manager",
                   # the same words read from the notes, not yet confirmed
                   "owner_ask_on", "owner_ask_close"})
 # Soft flags about the roster, not the week, that still hold every publish:
@@ -222,6 +230,7 @@ LABELS = {
     "payroll_tail_full": "at the overtime line with days of the payroll week still to come",
     "shift_too_short": "shorter than your shortest shift",
     "short_turnaround": "a short turnaround between two shifts",
+    "second_manager": "one manager on with enough staff on for a second",
     "role_not_held": "not a role they hold",
     "closer_unavailable": "none of that role's closers can work that day",
     "trainee_unpaired": "a trainee with nobody to train them",
@@ -667,6 +676,11 @@ def compliance(restaurant) -> dict:
     for k in MANAGER_ALLOWANCE_KEYS:
         if data.get(k) not in (None, ""):
             out[k] = _allowance(data[k])
+    if data.get("second_manager_from_staff") not in (None, ""):
+        try:
+            out["second_manager_from_staff"] = max(0, min(80, int(float(data["second_manager_from_staff"]))))
+        except (TypeError, ValueError):
+            pass
     out["full_time_min_confirmed"] = bool(data.get("full_time_min_confirmed"))
     if data.get("rest_mode") in REST_MODES:
         out["rest_mode"] = data["rest_mode"]
@@ -901,7 +915,8 @@ def closed_in(restaurant, week_dates) -> set:
 # The rules a save can put back to their default (the pack's value, else
 # DEFAULTS) by naming them in `reset`.
 RESETTABLE = tuple(_BOUNDS) + ("minor_latest_end", "keyholder_until_close", "rest_mode", "seventh_day_ot",
-                                "closing_manager_stays_minutes", "opening_manager_lead_minutes")
+                                "closing_manager_stays_minutes", "opening_manager_lead_minutes",
+                                "second_manager_from_staff")
 
 
 def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
@@ -933,6 +948,18 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
         clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
     if "leaders_set_own_hours" in data:
         clean["leaders_set_own_hours"] = bool(data["leaders_set_own_hours"])
+    if "second_manager_from_staff" in data:
+        v = data.get("second_manager_from_staff")
+        if v in (None, ""):
+            clean.pop("second_manager_from_staff", None)
+        else:
+            try:
+                n = int(float(v))
+            except (TypeError, ValueError):
+                n = -1
+            if not 0 <= n <= 80:
+                raise ValueError("A second manager from how many staff on: a whole number, 0 (never) to 80.")
+            clean["second_manager_from_staff"] = n
     for k in MANAGER_ALLOWANCE_KEYS:
         if k in data:
             # 0 is a value here (no allowance), never "not tracked".
@@ -1619,6 +1646,9 @@ class Constraints:
     # blocked dates, note cautions). "hard" is a rule the owner stands
     # behind (confirmed, or their own instruction for this draft).
     owner_person_on: list = field(default_factory=list)
+    # {"staff", "half_hours", "dates"} — learn_second_manager over the
+    # punches (LOGIC-13), or None.
+    second_manager_learned: dict = None
     owner_person_close: list = field(default_factory=list)
     owner_weights: list = field(default_factory=list)
     typed_rules: list = field(default_factory=list)
@@ -1790,6 +1820,28 @@ class Constraints:
         lim = self.hours_limits.get(self.key(name))
         return float(lim[0]) if lim and lim[0] else None
 
+    def row_dayparts(self, row) -> list:
+        """The dayparts `row` reaches into (schedule_time.touched_dayparts)
+        at THIS restaurant's lunch/dinner boundary (daypart_split), whatever
+        scope the caller runs in: the sweep read a restaurant's 5pm boundary
+        while the passes, the solvers and the fallback read 3pm, so a
+        morning-only person on 3:30-5:15pm was legal to one and refused by
+        the other (sched re-audit 10/11/26 BUGSGEN-12)."""
+        return _stime.touched_dayparts(row, getattr(self, "daypart_split", None))
+
+    def can_work_row(self, name: str, row) -> tuple:
+        """(ok, reason): can_work for every daypart `row` reaches into, read
+        at the restaurant's own boundary (row_dayparts) — the one question
+        the sweep, the solvers' domains, carry-forward and the passes ask
+        about a shift (BUGSGEN-12)."""
+        d = (row or {}).get("date", "") or ""
+        ok, why = True, ""
+        for part in self.row_dayparts(row):
+            ok, why = self.can_work(name, d, part)
+            if not ok:
+                break
+        return ok, why
+
     def can_work(self, name: str, date_str: str, daypart: str = None) -> tuple:
         """(ok, reason) — the one legality question every pass asks."""
         key = self.key(name)
@@ -1941,12 +1993,11 @@ class Constraints:
         if not key:
             return False, "no name"
         d = row.get("date", "")
-        # Any minute in a blocked half of the day is in it (RULES-11).
-        from shift_quality import touched_dayparts as _touched
-        for part in (_touched(row) or [daypart_of(row.get("shift_start", ""))]):
-            ok, why = self.can_work(name, d, part)
-            if not ok:
-                return False, why
+        # Any minute in a blocked half of the day is in it (RULES-11), at
+        # the restaurant's own boundary (can_work_row, BUGSGEN-12).
+        ok, why = self.can_work_row(name, row)
+        if not ok:
+            return False, why
         ok, why = self.window_ok(name, d, row.get("shift_start", ""), row.get("shift_end", ""))
         if not ok:
             return False, why
@@ -2659,10 +2710,17 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     # the roles the owner chose — until they choose, the roles their own
     # punches show on until close, so a cook marked to close (47 of 64 were,
     # at Simple EJ's) is never held to the bar's 2am.
+    _hist = _closing_history(restaurant_id, c)
+    # The restaurant's own second-manager line, from its punches (LOGIC-13):
+    # the staff count at which it already runs two managers on the floor.
+    try:
+        c.second_manager_learned = learn_second_manager(_hist, c.manages)
+    except Exception as exc:
+        _input_problem(c, "second manager", exc)
     try:
         from models import get_leader_flags
         chosen, c.closer_roles_basis = closer_roles(restaurant), "yours"
-        c.close_roles, c.early_close_roles = closing_split(c, _closing_history(restaurant_id, c))
+        c.close_roles, c.early_close_roles = closing_split(c, _hist)
         if not chosen:
             chosen = sorted(c.close_roles)
             c.closer_roles_basis = "history" if chosen else "all"
@@ -4604,7 +4662,6 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
     out = []
     by_person = {}
     seen_slots = set()
-    from shift_quality import touched_dayparts as _touched
     for i, r in enumerate([] if day_only else (rows or [])):
         name = (r.get("employee") or "").strip()
         # One person, one key: every spelling that is them (people's
@@ -4618,11 +4675,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         # Availability is judged on every daypart the shift reaches into,
         # not its start (a "mornings only" person on 2:30-11:30pm was never
         # flagged), by any minute of it, not an hour (RULES-11).
-        ok, why = True, ""
-        for part in _touched(r):
-            ok, why = c.can_work(name, r.get("date", ""), part)
-            if not ok:
-                break
+        # At the restaurant's own boundary (can_work_row, BUGSGEN-12).
+        ok, why = c.can_work_row(name, r)
         if not ok:
             kind = next((k for k, lab in LABELS.items() if lab == why), None)
             if kind is None:
@@ -4773,6 +4827,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         # a manager on the floor every minute anyone is (owner, 10/2/26)
         facts = {}
         out.extend(_manager_violations(rows, c, context=context, facts=facts))
+        # a second manager once enough staff are on (LOGIC-13)
+        out.extend(_second_manager_violations(rows, c))
 
     # The per-daypart "manager or keyholder on duty" switch (no_manager_on_
     # duty, manager_rule_unusable) is gone (schedule audit 10/10/26 LOGIC-22):
@@ -5538,8 +5594,7 @@ def _on_the_floor(c, r) -> bool:
     if c.training_row(r):
         return False
     name, d = r.get("employee"), r.get("date") or ""
-    from shift_quality import touched_dayparts
-    if not all(c.can_work(name, d, p)[0] for p in touched_dayparts(r)):
+    if not c.can_work_row(name, r)[0]:
         return False
     if not c.window_ok(name, d, r.get("shift_start", ""), r.get("shift_end", ""))[0]:
         return False
@@ -6340,6 +6395,9 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                # a short turnaround with no rest rule set (STRESS-19): a look,
                # never a reason a pass may not cover a floor
                "short_turnaround": TIER_QUALITY,
+               # a second manager at the rush (LOGIC-13): a requirement,
+               # below the one-manager rule, the floors and the limits
+               "second_manager": TIER_REQUIREMENT,
                # shorter than the one shortest shift (contract #2): soft, a look
                "shift_too_short": TIER_QUALITY,
                # the hours a role works and the most of it on at once, by the
@@ -6423,6 +6481,224 @@ def learn_manager_allowances(rows, manages, open_times=None) -> dict:
                              if len(stays) >= LEARN_ALLOWANCE_MIN_DATES else None),
             "opening_lead": ({"minutes": q(leads, 0.25), "dates": len(leads)}
                              if len(leads) >= LEARN_ALLOWANCE_MIN_DATES else None)}
+
+
+SECOND_MANAGER_MIN_DATES = 4
+SECOND_MANAGER_MIN_HALF_HOURS = 8
+SECOND_MANAGER_SHARE = 0.75
+# A salaried manager's week the second-manager fill uses before any hourly
+# lead: hours already paid for (LOGIC-13 — three salaried managers were
+# planned 24-29h while peaks ran one manager). Their own minimum wins.
+SALARIED_EXPECTED_HOURS = 40.0
+
+
+def _half_hour_counts(items):
+    """{t: (staff on, managers on)} per half hour of one date's spans
+    [(start, end, is_manager)]."""
+    out = {}
+    for s, e, mgr in items:
+        t = s - s % 30
+        while t < e:
+            if s <= t and t + 30 <= e:
+                st, mg = out.get(t, (0, 0))
+                out[t] = (st + (0 if mgr else 1), mg + (1 if mgr else 0))
+            t += 30
+    return out
+
+
+def learn_second_manager(rows, manages) -> dict:
+    """{"staff", "half_hours", "dates"} — the fewest other people on at once
+    from which this restaurant's own punches run TWO managers on the floor
+    at least SECOND_MANAGER_SHARE of the time (over at least
+    SECOND_MANAGER_MIN_HALF_HOURS half hours on SECOND_MANAGER_MIN_DATES
+    dates); None when its history never does (LOGIC-13: the learned default
+    of the second-manager line)."""
+    by_date = {}
+    for r in rows or []:
+        d = str(r.get("date") or "")[:10]
+        sp = _stime.span(r)
+        nm = (r.get("employee") or "").strip()
+        if d and sp and nm:
+            by_date.setdefault(d, []).append((sp[0], sp[1], bool(manages(nm, d))))
+    samples = []           # (staff on, two managers?, date)
+    for d, items in by_date.items():
+        for _t, (st, mg) in _half_hour_counts(items).items():
+            if mg >= 1 and st > 0:
+                samples.append((st, mg >= 2, d))
+    two = [x for x in samples if x[1]]
+    if len(two) < SECOND_MANAGER_MIN_HALF_HOURS or len({x[2] for x in two}) < SECOND_MANAGER_MIN_DATES:
+        return None
+    for n in sorted({x[0] for x in two}):
+        at = [x for x in samples if x[0] >= n]
+        hits = [x for x in at if x[1]]
+        if len(hits) >= SECOND_MANAGER_MIN_HALF_HOURS and len({x[2] for x in hits}) >= SECOND_MANAGER_MIN_DATES \
+                and len(hits) >= SECOND_MANAGER_SHARE * len(at):
+            return {"staff": int(n), "half_hours": len(hits), "dates": len({x[2] for x in hits})}
+    return None
+
+
+def second_manager_from(c):
+    """(staff, basis): the second-manager line — the owner's
+    second_manager_from_staff (0 turns it off), else what the punches show
+    (learn_second_manager), else (None, None): exactly one manager, the rule
+    as it was (LOGIC-13)."""
+    v = (getattr(c, "compliance", None) or {}).get("second_manager_from_staff")
+    if v not in (None, ""):
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            v = 0
+        return (v, "yours") if v > 0 else (None, None)
+    learned = getattr(c, "second_manager_learned", None) or {}
+    if learned.get("staff"):
+        return int(learned["staff"]), "history"
+    return None, None
+
+
+def second_manager_short(rows, c, d) -> list:
+    """[(start, end)] stretches of date `d` with at least the second-manager
+    line of other people on and fewer than two managers (second_manager_from);
+    [] when the restaurant has no line."""
+    line, _b = second_manager_from(c)
+    if not line:
+        return []
+    items = []
+    for r in rows or []:
+        if r.get("date") != d or not (r.get("employee") or "").strip():
+            continue
+        sp = _span(r)
+        if sp:
+            items.append((sp[0], sp[1], bool(counts_as_manager(c, r))))
+    counts = _half_hour_counts(items)
+    short = sorted(t for t, (st, mg) in counts.items() if st >= line and mg < 2)
+    return _merge([(t, t + 30) for t in short])
+
+
+def _second_manager_violations(rows, c) -> list:
+    """second_manager: one soft breach per date with stretches the line asks
+    a second manager for and fewer than two are on (LOGIC-13), its severity
+    the half hours short — ranked with the requirements (TIER_REQUIREMENT),
+    below the one-manager rule, the floors and every person's limits."""
+    out = []
+    line, basis = second_manager_from(c)
+    if not line or not (c.managers or c.acting_managers):
+        return out
+    by_date = {}
+    for i, r in enumerate(rows or []):
+        if r.get("date") and r.get("date") not in (c.closed_dates or set()):
+            by_date.setdefault(r["date"], []).append((i, r))
+    for d, items in sorted(by_date.items()):
+        gaps = second_manager_short(rows, c, d)
+        if not gaps:
+            continue
+        mins = sum(e - s for s, e in gaps)
+        i0, r0 = items[0]
+        out.append(_v("second_manager", i0, r0,
+                      f"{_mdy(d)} — {line} or more on the floor with one manager, "
+                      f"{_fmt_minutes(gaps[0][0] % 1440)}–{_fmt_minutes(gaps[0][1] % 1440)}"
+                      + (f" and {len(gaps) - 1} more stretch{'es' if len(gaps) > 2 else ''}" if len(gaps) > 1 else "")
+                      + (" (your rule: a second manager from " if basis == "yours" else
+                         " (your own weeks run a second manager from ") + f"{line} on)",
+                      day_level=True, severity=round(mins / 30.0, 2), gap_start=gaps[0][0]))
+    return out
+
+
+def cover_second_manager(rows: list, c: "Constraints", editable=None, line: float = None) -> dict:
+    """The second-manager fill (LOGIC-13): for each stretch with the line's
+    staff on and one manager, a manager already on that day runs on or comes
+    in earlier, else a manager off that day takes a shift over it — SALARIED
+    managers under their expected week first (SALARIED_EXPECTED_HOURS or
+    their own minimum: hours already paid for), then hourly ones inside their
+    overtime line and the restaurant's limits. Never overtime, never past a
+    policy limit, never a shift under the shortest (min_shift_minutes), and
+    nothing above the requirements tier made worse. {rows, added, extended}."""
+    rep = _Repair(rows, c, upto=TIER_MIN_HOURS, soft_upto=TIER_MIN_HOURS, max_sweeps=60, tier=TIER_REQUIREMENT)
+    added, extended = [], []
+    if not second_manager_from(c)[0] or not c.managers:
+        return {"rows": rep.rows, "added": added, "extended": extended}
+    display = _display(c, rep.rows)
+    shortest = min_shift_minutes(c)
+    max_shift_m = int(float(c.compliance.get("max_shift_hours") or DEFAULTS["max_shift_hours"]) * 60)
+
+    def week_hours(low, d):
+        return _bucket_hours(c, rep.rows, low, c.bucket(d))
+
+    def expected(low):
+        nm = display.get(low, low)
+        mn = c.min_hours(nm) if hasattr(c, "min_hours") else None
+        return float(mn) if mn else SALARIED_EXPECTED_HOURS
+
+    def free(r):
+        return (editable is None or r.get("date") in editable) and not _is_pinned(r)
+
+    for d in sorted({r.get("date") for r in rep.rows if r.get("date")}):
+        if editable is not None and d not in editable:
+            continue
+        for gs, ge in second_manager_short(rep.rows, c, d):
+            if rep.spent:
+                break
+            on = {_low(r.get("employee")) for r in rep.rows if r.get("date") == d and _span(r)
+                  and _span(r)[0] < ge and _span(r)[1] > gs and counts_as_manager(c, r)}
+            cands = []
+            for low in sorted(c.managers):
+                if low in on or low not in display:
+                    continue
+                nm = display[low]
+                if not c.can_work(nm, d)[0] or not c.fillable(nm, d)[0]:
+                    continue
+                sal = c.is_salaried(nm)
+                have = week_hours(low, d)
+                if sal and have >= expected(low) - 0.01:
+                    continue
+                cands.append((0 if sal else 1, have, low, nm))
+            cands.sort()
+            done = False
+            for _sal, _have, low, nm in cands:
+                mine = [(j, x) for j, x in enumerate(rep.rows) if x.get("date") == d and _low(x.get("employee")) == low]
+                trials = []
+                for j, x in mine:
+                    if not free(x):
+                        continue
+                    sp = _span(x)
+                    if sp and sp[1] <= gs and gs - sp[1] <= _ADJACENT_MIN and ge - sp[0] <= max_shift_m:
+                        trials.append(("extend", j, _with_note(_retimed(dict(x), sp[0], ge, c),
+                                                               "(a second manager for the rush)")))
+                    elif sp and sp[0] >= ge and sp[0] - ge <= _ADJACENT_MIN and sp[1] - gs <= max_shift_m:
+                        trials.append(("extend", j, _with_note(_retimed(dict(x), gs, sp[1], c),
+                                                               "(a second manager for the rush)")))
+                if not mine:
+                    lo, hi = gs, max(ge, gs + shortest)
+                    tmpl = next((x for x in rep.rows if x.get("date") == d), {})
+                    role = c.managers.get(low) or "Manager"
+                    trials.append(("add", None, _new_row(tmpl, d, nm, role, lo, hi,
+                                                         "Cavnar AI: a second manager for the rush", c)))
+                for kind, j, new in trials:
+                    others = [x for k, x in enumerate(rep.rows) if k != j]
+                    if not c.can_add(new, others, line=line, overtime=True, policy=True)[0]:
+                        continue
+                    trial = list(rep.rows)
+                    if kind == "extend":
+                        trial[j] = new
+                    else:
+                        trial.append(new)
+                    worse, after = rep.judge(trial)
+                    if worse:
+                        continue
+                    if sum(e - s for s, e in second_manager_short(trial, c, d)) >= \
+                            sum(e - s for s, e in second_manager_short(rep.rows, c, d)):
+                        continue
+                    rep.take(trial, after)
+                    rec = {"index": j if kind == "extend" else len(trial) - 1, "employee": nm, "date": d,
+                           "to": f"{new['shift_start']}–{new['shift_end']}", "kind": "second_manager",
+                           "reason": f"{_fmt_minutes(gs % 1440)}–{_fmt_minutes(ge % 1440)} has the staff your "
+                                     f"second-manager line asks two managers for: {nm} "
+                                     + ("stays on." if kind == "extend" else "comes in.")}
+                    (extended if kind == "extend" else added).append(rec)
+                    done = True
+                    break
+                if done:
+                    break
+    return {"rows": rep.rows, "added": added, "extended": extended}
 
 
 def manager_structure(c) -> dict:
@@ -6642,12 +6918,10 @@ def taker_problem(c: "Constraints", name: str, row: dict):
     every daypart the shift reaches into (can_work: roster, time off, the
     restaurant closed, a day or half-day they can't work) and a time-off
     request for that day nobody has answered — or None."""
-    from shift_quality import touched_dayparts as _touched
     d = row.get("date", "")
-    for part in (_touched(row) or [daypart_of(row.get("shift_start", ""))]):
-        ok, why = c.can_work(name, d, part)
-        if not ok:
-            return why
+    ok, why = c.can_work_row(name, row)          # the restaurant's own boundary (BUGSGEN-12)
+    if not ok:
+        return why
     if d and d in (c.pending_off.get(c.key(name)) or ()):
         return PENDING_OFF_LABEL
     return None

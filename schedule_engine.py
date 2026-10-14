@@ -8405,6 +8405,11 @@ def in_restaurant_dayparts(fn):
     return wrapper
 
 
+# The Studio's kept inputs and its prepared week read the restaurant's own
+# boundary too (BUGSGEN-12): its quick passes and scores ran at 3pm.
+studio_prepared = in_restaurant_dayparts(studio_prepared)
+
+
 @in_restaurant_dayparts
 def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=None, frozen=None, **extra):
     """Score the finished schedule, then see whether a better one existed.
@@ -9420,6 +9425,11 @@ REPAIR_STAGES = (
     # (LOGIC-4): the top-up fills to them before the trim, which never cuts
     # under them, so a light draft and a heavy one end at the same week.
     ("top_up", _rules.TIER_REQUIREMENT, "The fill to the shift requirements", "a shift may be short of its usual crew"),
+    # A second manager on the floor at the rush (sched re-audit 10/11/26
+    # LOGIC-13): salaried managers under their week first — hours already
+    # paid for — then hourly ones inside their line; never overtime.
+    ("second_manager", _rules.TIER_REQUIREMENT, "The second-manager fill for the rush",
+     "a rush may run on one manager"),
     # Closes that measurably run late, ended when they really end (L-16) —
     # counted against the budget before the trim makes room for them.
     ("pad_overruns", _rules.TIER_BUDGET, "The pass that ends late-running closes when they really end",
@@ -10050,6 +10060,14 @@ def _stage_optimizer(rows, x):
     return {"rows": res["rows"] if res.get("changes") else rows, "report": {"summary": _opt.summary(res, sig)}}
 
 
+def _stage_second_manager(rows, x):
+    out = _rules.cover_second_manager(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"], "to": e["to"], "kind": "second_manager",
+              "reason": e["reason"]} for e in out["added"] + out["extended"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"added": len(out["added"]), "extended": len(out["extended"])}}
+
+
 def _stage_role_windows(rows, x):
     out = _rules.apply_role_windows(rows, x.c, editable=x.editable)
     fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "role_window",
@@ -10073,7 +10091,7 @@ _STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _st
               "section_cap": _stage_section_cap,
               "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
               "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times,
-              "role_windows": _stage_role_windows}
+              "role_windows": _stage_role_windows, "second_manager": _stage_second_manager}
 
 
 def _stage_failure(key, exc, x) -> dict:
@@ -10289,6 +10307,17 @@ def post_model_rows(rows, ctx, restaurant_id=None, gate=True, max_seconds=REPAIR
 
 
 def repair_rows(rows, c, roster_roles=None, hours_budget=None) -> list:
+    """_repair_rows inside the restaurant's own lunch/dinner boundary
+    (Constraints.daypart_split — sched re-audit 10/11/26 BUGSGEN-12): every
+    pass, the solver and the scorer read the dayparts the sweep does."""
+    split = getattr(c, "daypart_split", None)
+    if split is None or split == _stime.daypart_split():
+        return _repair_rows(rows, c, roster_roles=roster_roles, hours_budget=hours_budget)
+    with _stime.daypart_scope(split):
+        return _repair_rows(rows, c, roster_roles=roster_roles, hours_budget=hours_budget)
+
+
+def _repair_rows(rows, c, roster_roles=None, hours_budget=None) -> list:
     """The job's ranked repair loop as one call over `rows` with the week's
     rules `c` and nothing else a generation reads — what the model-replay
     script repairs a stored answer with (scripts/schedule_model_eval.py's

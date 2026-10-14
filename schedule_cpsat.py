@@ -256,10 +256,10 @@ class CpProblem(_solver.Problem):
             if not ok:
                 return why
         for r in u.rows:
-            for part in sq.touched_dayparts(r):
-                ok, why = c.can_work(name, u.date, part)
-                if not ok:
-                    return why
+            # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+            ok, why = c.can_work_row(name, dict(r, date=u.date))
+            if not ok:
+                return why
             ok, why = c.window_ok(name, u.date, r.get("shift_start", ""), r.get("shift_end", ""))
             if not ok:
                 return why

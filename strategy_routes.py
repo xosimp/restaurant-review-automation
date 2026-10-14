@@ -2558,7 +2558,7 @@ def _manager_setup(restaurant_id, r) -> dict:
     """{"manager_structure": [{name, text}], "manager_allowances_learned":
     {closing_stay, opening_lead}} for the rules screen — the coming week's
     roster read once; {} parts on any failure (the screen still loads)."""
-    out = {"manager_structure": [], "manager_allowances_learned": {}}
+    out = {"manager_structure": [], "manager_allowances_learned": {}, "second_manager": {}}
     try:
         import schedule_rules as _sr
         import schedule_engine as _se
@@ -2570,6 +2570,9 @@ def _manager_setup(restaurant_id, r) -> dict:
                                   restaurant=r)
         out["manager_structure"] = [{"name": v["name"], "text": v["text"]}
                                     for _k, v in sorted(_sr.manager_structure(c).items())]
+        # The second-manager line in force and what the punches show (LOGIC-13).
+        line, basis = _sr.second_manager_from(c)
+        out["second_manager"] = {"from": line, "basis": basis, "learned": c.second_manager_learned}
         import shift_facts as _sf
         since = (ws - _td(weeks=8)).strftime("%Y-%m-%d")
         rows = _sf.person_rows(restaurant_id, since=since)

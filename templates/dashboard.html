@@ -36994,7 +36994,10 @@ window._cuRole=window.CAV_BOOT.role;
     // The owner's two allowances to the manager-every-minute rule, per
     // restaurant (LOGIC-12): 0 turns each off.
     ['closing_manager_stays_minutes','Closing manager stays after the last person','minutes \u2014 0: they leave at their scheduled end'],
-    ['opening_manager_lead_minutes','Prep before the opening manager is fine when they arrive','minutes before open, at least \u2014 0: never']];
+    ['opening_manager_lead_minutes','Prep before the opening manager is fine when they arrive','minutes before open, at least \u2014 0: never'],
+    // A second manager on the floor once this many others are on (LOGIC-13);
+    // blank: what your own weeks show, 0: never.
+    ['second_manager_from_staff','A second manager from','staff on at once \u2014 blank: your own weeks, 0: never']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
     jget('/api/labor/rules',function(d){
@@ -37184,6 +37187,8 @@ window._cuRole=window.CAV_BOOT.role;
     if(mal.closing_stay)mls.push('your closing manager is usually out '+esc(mal.closing_stay.minutes)+' min after the last person ('+esc(mal.closing_stay.dates)+' nights)');
     if(mal.opening_lead&&mal.opening_lead.minutes>0)mls.push('prep starts before a manager who is in '+esc(mal.opening_lead.minutes)+' min before open ('+esc(mal.opening_lead.dates)+' mornings)');
     if(mls.length)h+='<div class="cmp-src">From your punches: '+mls.join('; ')+'. Set the two manager fields above to match if that is how you run.</div>';
+    var sm=d.second_manager||{};
+    if(sm.from)h+='<div class="cmp-src">A second manager is asked for once '+esc(sm.from)+' or more are on'+(sm.basis==='history'?' \u2014 your own weeks run two managers from there ('+esc((sm.learned||{}).dates||0)+' days). Type your own number above to change it, 0 to turn it off.':'.')+'</div>';
     /* On by default (NS5 M8): once anyone is marked a closer, one of them
        stays until close every open day. A closer is chosen to close (the
        last of their role to leave), not a key holder (owner, 10/2/26). */

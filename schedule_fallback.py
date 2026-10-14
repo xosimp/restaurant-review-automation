@@ -154,7 +154,6 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
     note list (schedule_output.vocabulary_note); engine marks never do."""
     import schedule_output as _so
     import schedule_skeleton as _skel
-    import shift_quality as _sq
     by_day = {}
     for r in (base or {}).get("rows") or []:
         wd = _weekday(r.get("date"))
@@ -197,12 +196,9 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
             if not row["shift_start"] or not row["shift_end"]:
                 continue
             if constraints is not None:
-                why = None
-                for part in (_sq.touched_dayparts(row) or [_sq.daypart_of(row["shift_start"])]):
-                    ok, reason = constraints.can_work(name, d, part)
-                    if not ok:
-                        why = reason
-                        break
+                # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+                ok, reason = constraints.can_work_row(name, row)
+                why = None if ok else reason
                 if why is None:
                     ok, reason = constraints.window_ok(name, d, row["shift_start"], row["shift_end"])
                     if not ok:
