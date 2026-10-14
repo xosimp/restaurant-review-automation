@@ -1390,6 +1390,11 @@ class Constraints:
     # not (D-8): [{"source", "name", "detail"}] — the review names each,
     # so a fact typed under a spelling nobody goes by is never silent.
     unmatched: list = field(default_factory=list)
+    # What the shift history says about who is who (people.identity_concerns,
+    # schedule re-audit 10/11/26 STRESS-7/8): one name worn by two people,
+    # one person under two names — said in the review; a handoff pair is
+    # also joined in `linked`.
+    identity_concerns: list = field(default_factory=list)
     # Every role a person can be scheduled in (F1, D-15): their roster role,
     # the roles they hold (held_roles) and every role they have worked here.
     # {lower: set(role lower)}; holds() reads it by family. A role written
@@ -1959,20 +1964,21 @@ class Constraints:
                 continue
             if need and gap < need:
                 later = r if rs >= e else candidate      # the shift that starts inside the rest window
-                if mode == "consent_premium" and self.rest_waived(name, later.get("date")):
+                if mode == "consent_premium" and self.rest_waived(name, later.get("date"), later.get("shift_start")):
                     continue
                 return False, (f"{LABELS['rest_gap']} ({gap:.1f}h, needs {need:g}h"
                                + (" unless they agree to it in writing" if mode == "consent_premium" else "") + ")")
         return True, ""
 
-    def rest_waived(self, name_or_key, date_str) -> bool:
-        """Whether this person agreed in writing to a shorter rest before a
-        shift on `date_str` — a standing agreement, or one for that date
-        (staff_consent; MARKET-3)."""
-        w = (self.rest_waivers or {}).get(self.key(name_or_key))
-        if not w:
-            return False
-        return bool(w.get("standing")) or str(date_str or "")[:10] in (w.get("dates") or ())
+    def rest_waived(self, name_or_key, date_str, start=None) -> bool:
+        """Whether this person agreed in writing to a shorter rest before the
+        shift on `date_str` starting at `start` — a standing agreement, or
+        one for that very shift (staff_consent; MARKET-3). A waiver is bound
+        to the shift it was given for (schedule re-audit 10/11/26
+        BUGSLIFE-7): one for Tuesday's 7am never makes another Tuesday
+        turnaround read as consented."""
+        from staff_consent import waiver_allows
+        return waiver_allows((self.rest_waivers or {}).get(self.key(name_or_key)), date_str, start)
 
 
 def cert_key(cert) -> str:
@@ -2716,6 +2722,40 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
         c.linked = dict(idx.get("linked") or {})
     except Exception as exc:
         _input_problem(c, "who is who on the roster", exc)
+    # What the shift history itself says about who is who (schedule
+    # re-audit 10/11/26 STRESS-7, STRESS-8), read every build — not only
+    # once a question was filed: a name that took over another's role and
+    # days is one person to the sweep (hours, overtime, rest, days in a row)
+    # until the owner answers; one name worn by two people is said. Both
+    # reach the review (identity_concerns).
+    try:
+        import people
+        from models import _cached_shifts
+        _since = (min(c.week_dates) if c.week_dates else "")
+        try:
+            _since = (datetime.strptime(_since, "%Y-%m-%d") - timedelta(days=120)).strftime("%Y-%m-%d")
+        except ValueError:
+            _since = ""
+        found = people.identity_concerns([s for s in (_cached_shifts(restaurant_id) or [])
+                                          if str(s.get("date") or "")[:10] >= _since])
+    except Exception as exc:
+        found = []
+        print(f"[schedule_rules] identity concerns unread rid={restaurant_id}: {exc!r}")
+    c.identity_concerns = []
+    for f in found:
+        if f["kind"] == "handoff":
+            a, b = c.key(f["old"]), c.key(f["new"])
+            if a not in c.display or b not in c.display:
+                continue                       # one of them is not on the roster any more
+            ra, rb = c.linked.get(a, a), c.linked.get(b, b)
+            rep = min(ra, rb)
+            for k, v in list(c.linked.items()):
+                if v in (ra, rb):
+                    c.linked[k] = rep
+            c.linked[a] = c.linked[b] = c.linked[ra] = c.linked[rb] = rep
+        elif c.key(f["name"]) not in c.display:
+            continue
+        c.identity_concerns.append(f)
 
 
 def _file_under(c: "Constraints", source: str, name, detail: str = "") -> str:
@@ -4881,7 +4921,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                         # for the hours of the later shift inside the rest
                         # window (MARKET-3, LOGIC-21): a priced soft flag.
                         if _rmode == "consent_premium" and c.rest_waived(r_cur.get("employee") or name,
-                                                                         r_cur.get("date")):
+                                                                         r_cur.get("date"), r_cur.get("shift_start")):
                             inside = round(max(0.0, min(need - gap, (e_cur - s_cur).total_seconds() / 3600)), 2)
                             out.append(_v("rest_premium", own_i, own_r,
                                           f"{gap:.1f}h {said}{_tail_note(other)}, under the {need:g}h rule — "

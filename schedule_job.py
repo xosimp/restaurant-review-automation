@@ -1032,6 +1032,14 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
             f"{len(_unm)} fact{'s' if len(_unm) != 1 else ''} on file name{'' if len(_unm) != 1 else 's'} "
             f"nobody on the roster, so {'they apply' if len(_unm) != 1 else 'it applies'} to nobody: "
             + "; ".join(u["detail"] for u in _unm[:3]) + ("…" if len(_unm) > 3 else ""))
+    # Who is who, as the shift history reads it (schedule re-audit 10/11/26
+    # STRESS-7, STRESS-8): one name worn by two people is scheduled as one
+    # until split; one person under two names is held to one week's hours,
+    # overtime and rest until answered. Said — never a silent merge or split.
+    _idq = list(getattr(_constraints, "identity_concerns", None) or [])
+    review["identity_concerns"] = _idq
+    for _q in _idq[:3]:
+        review["lines"].append(_q["text"])
     # The manager plan, said (D-5, PR-1). Kept with the review so a reopened
     # week still asks.
     review["lines"].extend(_skeleton.review_lines(_mplan, gaps=se._rules.manager_gaps(preview_rows, _constraints)))
