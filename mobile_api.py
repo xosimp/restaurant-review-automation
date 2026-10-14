@@ -2485,7 +2485,7 @@ def mobile_publish_schedule(current_user):
 def mobile_schedule_share_status(current_user):
     """Who has actually opened the schedule — the difference between "I sent
     it" and "the closing server has seen it"."""
-    from models import get_schedule_share_status, get_conn as _gc
+    from models import get_conn as _gc
     rid = current_user["restaurant_id"]
     schedule_id = request.args.get("schedule_id", type=int)
     if not schedule_id:
@@ -2500,10 +2500,13 @@ def mobile_schedule_share_status(current_user):
         return jsonify(ok=True, status=[])
     # Who was told and how it went, per person, from the publish outbox
     # (schedule_publish.notice_status — BUGSLIFE-9): still sending, failed
-    # (retried), unreachable.
+    # (retried), unreachable. Both read across every copy of the week staff
+    # were sent: a replacement tells only the people it changed, and the
+    # rest have it — and their opens — from the copy before (re-audit
+    # 10/11/26 BUGSLIFE-8).
     import schedule_publish as _sp_st
     return jsonify(ok=True, schedule_id=schedule_id,
-                   status=get_schedule_share_status(rid, schedule_id),
+                   status=_sp_st.week_share_status(rid, schedule_id),
                    delivery=_sp_st.notice_status(rid, schedule_id))
 
 
@@ -9061,8 +9064,15 @@ def mobile_schedule_replacements(current_user):
         try:
             import prepublish as _pp_w
             from models import get_prior_shift_pattern as _gpsp
-            weighed = _pp_w.weigh_one(rid, rows, index, c, scores, _gpsp(rid) or {},
-                                      runner=(out[0]["name"] if out else None))
+            # The engine's own reason for this shift when the saved draft
+            # recorded one (schedule re-audit 10/11/26 TRUST-2), else the
+            # comparison — which never argues against the pick (TRUST-1).
+            try:
+                _sid_w = int(data.get("schedule_id") or 0) or None
+            except (TypeError, ValueError):
+                _sid_w = None
+            weighed = _pp_w.shift_why(rid, rows, index, c, scores, _gpsp(rid) or {},
+                                      runner=(out[0]["name"] if out else None), schedule_id=_sid_w)
         except Exception as _wx:
             print(f"[replacements] weighed line unavailable rid={rid}: {_wx!r}")
         return jsonify(ok=True, replacements=out, weighed=weighed,

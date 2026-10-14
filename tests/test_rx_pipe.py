@@ -312,7 +312,7 @@ def test_a_gate_that_crashes_leaves_the_draft_saved_as_it_was(db, monkeypatch):
     finished = _finish(monkeypatch)
     se._run_schedule_job("gate-crash", rid)
     res = finished["result"]
-    assert finished["status"] == "done" and res["history_id"] and res["gate"] == {"ran": False}
+    assert finished["status"] == "done" and res["history_id"] and res["gate"]["ran"] is False and res["gate"]["why"] == "error"  # said (BUGSGEN-16)
 
 
 def test_a_saved_draft_whose_payload_failed_is_named_not_called_unsaved(monkeypatch):
