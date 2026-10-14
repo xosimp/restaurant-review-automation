@@ -244,5 +244,12 @@ def test_a_time_bounded_auto_draft_pass_is_finished_later_the_same_thursday(db, 
     monkeypatch.setattr(scheduler.time, "sleep", next_tick)
     with pytest.raises(_StopLoop):
         scheduler.scheduler_loop()
-    assert drafted, "the first tick drafted somebody"
-    assert sorted(set(drafted)) == sorted(rids), drafted
+    # The pass claims and enqueues; the queue's consumer drafts (blind
+    # re-audit 10/11/26 ARCH-10: the queue is the one path). Every restaurant
+    # of the Thursday is queued by the ticks, once each, and nothing is
+    # drafted inline on the scheduler thread.
+    conn = models.get_conn(db)
+    queued = [r[0] for r in conn.execute("SELECT restaurant_id FROM jobs WHERE kind='auto_draft'").fetchall()]
+    conn.close()
+    assert sorted(queued) == sorted(rids), queued
+    assert not drafted, "drafted inline instead of by the queue"

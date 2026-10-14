@@ -569,8 +569,14 @@ def test_approving_the_only_managers_drop_says_the_floor_goes_unmanaged(db, monk
     today = date(2026, 10, 1)
     ask = srq.request_drop(rid, "Max", WEEK[5], "4:00pm", reason="wedding", db_path=db, today=today)
     assert any("no manager on" in str(a[2]) for a in told), told
-    out = srq.decide(rid, ask["id"], True, decided_by="will", db_path=db, today=today)
-    assert out["status"] == "open" and "no manager on" in out["manager_gap"] and "10/10/26" in out["manager_gap"]
+    # Approving it with nobody named is refused (re-audit 10/11/26 STRESS-16):
+    # the approver names who runs the floor, and the gap is still said.
+    with pytest.raises(srq.ManagerGapRefused) as refused:
+        srq.decide(rid, ask["id"], True, decided_by="will", db_path=db, today=today)
+    assert "no manager on" in str(refused.value) and "10/10/26" in str(refused.value)
+    models.add_manual_team_member(rid, "Erik", role="Manager")
+    out = srq.decide(rid, ask["id"], True, decided_by="will", db_path=db, today=today, covered_by="Erik")
+    assert out["status"] == "open" and "10/10/26" in out["manager_gap"] and out["floor_covered_by"] == "Erik"
     # A server's drop leaves the manager on: nothing to say.
     ask = srq.request_drop(rid, "Ana", WEEK[5], "4:00pm", db_path=db, today=today)
     assert not srq.decide(rid, ask["id"], True, db_path=db, today=today).get("manager_gap")
