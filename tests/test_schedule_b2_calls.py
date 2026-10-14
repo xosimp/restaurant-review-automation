@@ -762,9 +762,11 @@ def test_the_generate_route_queues_on_the_pool_and_starts_no_thread_of_its_own(d
     import job_queue
     assert name.startswith("queue-generation") and clocked
     # Threads for every row in flight; the CPU slots are the group's
-    # concurrency (a row waiting on the model holds no slot — SCALE-1).
+    # concurrency (a row waiting on the model holds no slot — SCALE-1),
+    # sized to the cores by default (SCALE-16).
     assert job_queue._pools["generation"]._max_workers == job_queue.max_running("generation")
-    assert job_queue.group_concurrency("generation") == se.SCHEDULE_GEN_WORKERS
+    assert job_queue.group_concurrency("generation") == min(se.SCHEDULE_GEN_WORKERS,
+                                                            job_queue.cpu_generation_slots())
     assert job_queue.row_for(body["job_id"])["kind"] == "schedule_generate"
     assert "threading.Thread(" not in inspect.getsource(mobile_api.mobile_generate_schedule)
 
@@ -830,7 +832,8 @@ def test_the_auto_draft_takes_its_slot_behind_presses():
     # The auto-draft's slot is its scheduled-class queue row, behind presses
     # (blind re-audit 10/11/26 ARCH-10); the CPU slots are unchanged.
     assert job_queue.KINDS["auto_draft"][:2] == ("generation", "scheduled")
-    assert job_queue.group_concurrency("generation") == se.SCHEDULE_GEN_WORKERS
+    assert job_queue.group_concurrency("generation") == min(se.SCHEDULE_GEN_WORKERS,
+                                                            job_queue.cpu_generation_slots())
 
 
 def test_the_auto_draft_joins_an_owners_running_generation_instead_of_starting_a_second(db, monkeypatch):
@@ -1173,10 +1176,19 @@ def _rid_of(job_rows, db):
 
 
 def _searches_skipped_for_time(monkeypatch):
-    """The first repair loop skipped its searches for want of time, as a big
-    week's does - the case the fill exists for (re-audit 10/7/26 #3: after a
-    loop that converged with every search run, the fill is not started)."""
-    monkeypatch.setattr(se, "REPAIR_MIN_SEARCH_SECONDS", 10 ** 6)
+    """The first repair loop's solver was cut short by the emergency cap, as
+    a big week's can be - the case the fill exists for (re-audit 10/7/26 #3:
+    after a loop that converged with every search run to its budget, the
+    fill is not started). Searches are never skipped for time any more
+    (blind re-audit 10/11/26 SCALE-15); a cut-short one counts the same."""
+    real = se._STAGE_FNS["solver"]
+
+    def cut_short(rows, x):
+        out = real(rows, x)
+        if "solver" not in x.wall_capped:
+            x.wall_capped.append("solver")
+        return out
+    monkeypatch.setitem(se._STAGE_FNS, "solver", cut_short)
 
 
 def test_a_gate_the_fill_settles_makes_no_second_model_call(db, monkeypatch):

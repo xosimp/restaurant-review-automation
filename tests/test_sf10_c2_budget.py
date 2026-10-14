@@ -63,9 +63,11 @@ def test_the_solver_gets_the_same_work_budget_whatever_the_clock_has_left(monkey
     se._stage_solver([{"date": WEEK[0], "employee": "Ann"}], _x(left))
     (kw,) = seen
     # The budget is the same on an idle box and a busy one (it used to be
-    # min(budget, seconds left)); what the clock has left is the cap only.
+    # min(budget, seconds left)); what the clock has left is the cap only —
+    # and never less than the searches' reserved time, whatever the loop's
+    # other stages took (blind re-audit 10/11/26 SCALE-15).
     assert kw["max_seconds"] == cps.DEFAULT_SECONDS
-    assert kw["wall_cap"] == pytest.approx(max(0.5, min(se.REPAIR_MAX_SECONDS, left - se.REPAIR_RESERVE_SECONDS)),
+    assert kw["wall_cap"] == pytest.approx(max(se.REPAIR_SEARCH_RESERVE_SECONDS, left - se.REPAIR_RESERVE_SECONDS),
                                            abs=1.0)
 
 
@@ -74,7 +76,8 @@ def test_the_backtracking_solver_gets_its_work_budget_too(monkeypatch):
     monkeypatch.setattr(ss, "improve", _fake_improve(seen))
     monkeypatch.setattr(se, "assign_engine", lambda: "backtracking")
     se._stage_solver([{"date": WEEK[0], "employee": "Ann"}], _x(se.REPAIR_RESERVE_SECONDS + 6.0))
-    assert seen[0]["max_seconds"] == ss.DEFAULT_SECONDS and seen[0]["wall_cap"] < 10
+    assert seen[0]["max_seconds"] == ss.DEFAULT_SECONDS
+    assert seen[0]["wall_cap"] == pytest.approx(se.REPAIR_SEARCH_RESERVE_SECONDS)
 
 
 def _fake_optimize(seen, evaluations=None, stopped="no improving move"):

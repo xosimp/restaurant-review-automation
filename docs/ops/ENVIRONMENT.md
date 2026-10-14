@@ -225,6 +225,12 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `SCHEDULE_CPSAT_SECONDS` | `20` | The CP-SAT assignment's budget per solve (`schedule_cpsat`, scheduler audit 10/10/26 RM-11) — a deterministic work budget when `SCHEDULE_CPSAT_DETERMINISTIC` is on, with four times it as the wall-clock backstop. | schedule_cpsat.py |
 | `SCHEDULE_CPSAT_WORKERS` | `4` | CP-SAT's search workers (its C++ search releases the GIL; Railway runs 1 gunicorn worker × 4 threads). | schedule_cpsat.py |
 | `SCHEDULE_CPSAT_DETERMINISTIC` | `1` | `1`: a fixed seed, interleaved workers and a deterministic budget — same inputs, same week. `0`: the wall clock bounds the search (faster to a first answer, not reproducible). | schedule_cpsat.py |
+| `SCHEDULE_CPSAT_DET_PER_KVAR` | `0.6` | Deterministic seconds per thousand model variables (`schedule_cpsat.work_budget`, blind re-audit 10/11/26 SCALE-19): a solve's budget is the stated one raised to this, never lower — a fixed 7.5 s Stage 1 found no week at 250 people. | schedule_cpsat.py |
+| `SCHEDULE_CPSAT_DET_CAP` | `120` | The most a size-scaled budget is raised to (deterministic seconds). | schedule_cpsat.py |
+| `SCHEDULE_CPSAT_LEAN_MIN_VARS` | `15000` | From this many variables a solve runs the memory-bounded portfolio (default_lp, max_lp, no_lp and the LNS workers — not nine full subsolvers): measured at 250 people 0.6 GB instead of 1.6-2.0 GB, and faster (STRESS-11). | schedule_cpsat.py |
+| `SCHEDULE_CPSAT_ISOLATE` | `fork` | `fork`: a large solve runs in a forked child, so what CP-SAT allocated goes back to the OS when it returns (SCALE-18); `0`: in this process. | schedule_cpsat.py |
+| `SCHEDULE_CPSAT_ISOLATE_MIN_VARS` | `5000` | The smallest model solved in a child process. | schedule_cpsat.py |
+| `SCHEDULE_CPSAT_MEMORY_MB` | `2048` | CP-SAT's memory bound per solve, over what the process already holds (`max_memory_in_mb`); a solve it ends is recorded (`memory_capped`) and counted by the platform check. | schedule_cpsat.py |
 | `SCHEDULE_SOLVER_WORK_PER_SECOND` | `8000000` | The backtracking solver's work budget rate (`schedule_solver.WorkClock`, scheduler fix round 10/10/26 ARCH-26): search nodes, placements, scans and LNS rounds counted as work, this many to one budget second — the same draft gives the same week whatever the box's load. Calibrated on synthetic weeks (8–9M units/s of search on this hardware). | schedule_solver.py |
 | `SCHEDULE_SOLVER_DETERMINISTIC` | `1` | `1`: the backtracking solver's budget is work (above), the wall clock only its emergency cap (`wall_capped` reported). `0`: the wall clock is its budget again (not reproducible under load). | schedule_solver.py |
 | `SCHEDULE_ASSIGN_ENGINE` | `cpsat` | Who re-solves the assignment in the repair loop's solver stage: `cpsat` (`schedule_cpsat.improve`) or `backtracking` (`schedule_solver.improve`, also the fallback). | schedule_engine.py |
@@ -418,7 +424,10 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULE_CALL_POOL_WORKERS` | `SCHEDULE_GEN_WORKERS x SCHEDULE_PARALLEL_CALLS` | schedule_engine.py |
 | `SCHEDULE_SLIM_REDO` | `"1"` | schedule_prompt.py — a model redo (an owner's redo the code could not draft, the quality gate's rewrite) is sent the redone dates and the seam only (AI-28); `0` sends the whole week's context again |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
-| `STUDIO_CACHE_BUDGET_ROWS` | `"20000"` | schedule_engine.py |
+| `STUDIO_CACHE_BUDGET_MB` | `"512"` | schedule_engine.py — the Studio's kept inputs, sized in bytes, each week measured as kept and its scorer as it fills (SCALE-22; replaces `STUDIO_CACHE_BUDGET_ROWS`) |
+| `STUDIO_WHAT_IF_SECONDS` | `"8"` | schedule_engine.py — the what-if's bound on a request thread (SCALE-21: 98 s at 250 people); a generation keeps its sixty evaluations |
+| `SCHEDULE_FILL_SCORE_WORK` | `"600000"` | schedule_engine.py — rows one fill/trim pass's scorer may read before the pass goes back to its own order (SCALE-15: was 6 seconds) |
+| `SCHEDULE_FILL_SCORE_TOTAL_WORK` | `"2400000"` | schedule_engine.py — the same across a generation's scorers (was 24 seconds) |
 | `STUDIO_CACHE_PER_RESTAURANT` | `"3"` | schedule_engine.py |
 | `STUDIO_CACHE_SECONDS` | `"900"` | schedule_engine.py |
 | `SWEEP_MAX_SECONDS` | `str(45 * 60` | scheduler.py |
