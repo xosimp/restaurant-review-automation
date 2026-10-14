@@ -121,6 +121,7 @@ def test_the_export_reads_unit_of_measure_and_upc_and_drops_the_bank_columns():
     lines = invs[0]["lines"]
     assert lines[0]["uom"] == "CA" and fi.uom_word("CA") == "case" and fi.uom_word("BO") == "bottle"
     assert fi.uom_word("BL") == "bottle"
+    assert fi.uom_word("KE") == "keg" and fi.uom_word("DS") == "deposit"
     assert lines[0]["upc"] == "085000000000" and lines[0]["item_code"] == "9637400"
     assert lines[0]["cost"] == 252.0                      # 6 cases at $42 each
     assert "Bank Account" not in kept and "******8991" not in kept and "Trace Number" not in kept

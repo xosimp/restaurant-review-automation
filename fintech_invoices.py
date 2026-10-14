@@ -35,8 +35,10 @@ from datetime import datetime, timezone
 
 import models as _models
 
+# Seen in EJ's export (5/4-10/13/26): CA, KE, EA, BO, DS (the keg deposit
+# lines and their empty-keg credits).
 UOM_WORDS = {"CA": "case", "CS": "case", "BO": "bottle", "BL": "bottle", "BT": "bottle", "EA": "each",
-             "KG": "keg"}
+             "KE": "keg", "KG": "keg", "DS": "deposit"}
 
 # Export columns that are about the payment, not the goods: dropped before
 # the file's text is kept.
