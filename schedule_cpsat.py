@@ -67,6 +67,7 @@ import os
 import time as _time
 from datetime import datetime
 
+import schedule_objective as _obj
 import schedule_rules as _rules
 import schedule_solver as _solver
 import shift_quality as sq
@@ -101,7 +102,16 @@ W_POLICY_REST_HOUR = 3 * 10 ** 8    # an hour of rest short of the restaurant's 
 W_POLICY_RUN_DAY = 2 * 10 ** 9      # a day past the restaurant's days-in-a-row rule
 W_OT_HOUR = 10 ** 8                 # an hour past a person's overtime line (plus its premium in dollars)
 W_MIN_HOUR = 3 * 10 ** 7            # an hour under someone's minimum
-W_REQ_HOUR = 10 ** 7                # an hour of a requirement shift left unfilled
+W_REQ_HOUR = 10 ** 7                # an hour of a requirement shift left unfilled, at an average half hour
+REQ_VALUE_BOUNDS = (0.1, 8.0)       # its demand x criticality against average: kept below the overtime tier
+# The lexicographic order of the solve (LOGIC-22, LOGIC-1, LOGIC-10): every
+# rule tier and the owner's words first; then keeping last published week's
+# (else the usual) person on each slot; then every quality tie-break —
+# fairness can never again decide which shift goes empty.
+PHASE_RULES = frozenset({"manager", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
+                         "min_hours", "requirement", "budget", "leadership", "pending", "memory", "commitment"})
+PHASE_STABILITY = frozenset({"stability", "change", "usual"})
+PHASE_SHARES = (0.6, 0.15, 0.25)    # each phase's share of the deterministic work budget
 W_CHANGE_RESOLVE = 5 * 10 ** 6      # a re-solve changing a person on a shift that stays
 BUDGET_OVER_FACTOR = 3              # a dollar past the budget costs this many dollars of quality
 K_CHANGE_IMPROVE = 0.02             # points: the repair loop's tie-break toward the draft
@@ -137,7 +147,10 @@ TERM_LABELS = {
     "retention_hours": "hours taken from somebody at risk of leaving",
     "retention_slot": "somebody at risk of leaving on a slot they keep dropping",
     "rotation_tips": "the rotation of the best-tipped shifts",
+    "usual": "a shift off somebody's usual days and slots",
+    "days": "days in past somebody's usual days a week",
 }
+DOUBLE_BREAK_MINUTES = 60           # the least break between the two legs of a double
 _STATIC_TERMS = {"pending": "pending", "reliability": "reliability", "rotation_weekend": "fairness",
                  "rotation_close": "fairness", "preference": "preferences", "learned_preference": "preferences",
                  "role": "role", "learned": "memory", "likely_edit": "memory",
@@ -401,24 +414,52 @@ def _ot_rate_cents(prob, p) -> int:
 
 
 class _Model:
-    def __init__(self, prob, mode, last_week, budget_dollars, change_cost):
+    def __init__(self, prob, mode, last_week, budget_dollars, change_cost, objective=None, usual=None,
+                 doubles=None):
         self.prob, self.mode = prob, mode
         self.m = _cp.CpModel()
         self.book = _Book(self.m)
         self.x = {}
         self.unf = {}
         self.last = last_week or {}
+        # {unit id: set(person)} — who USUALLY works the slot (their own
+        # history), where there is no published week to keep (STRESS-15)
+        self.usual = usual or {}
         self.budget = float(budget_dollars or 0)
         self.change_cost = change_cost
         self.live = [u for u in prob.units if not u.fixed]
         self.manages = {}
         self.notes = []
+        self.ctx = objective
+        # people who work doubles: two legs a date with a break (LOGIC-19)
+        self.doubles = set(doubles or ())
 
     def mgr(self, p, d) -> bool:
         k = (p, d)
         if k not in self.manages:
             self.manages[k] = bool(self.prob.manages(p, d))
         return self.manages[k]
+
+    def value_rel(self, u) -> float:
+        """A requirement shift's value against an average one: the mean of
+        its half hours' demand weight x the role's criticality
+        (schedule_objective.slot_value's own factors), held inside
+        REQ_VALUE_BOUNDS so the requirement tier stays below overtime."""
+        role = u.role_label
+        ctx = self.ctx
+        vals = []
+        for r in u.rows:
+            sp = _rules._span(r)
+            if not sp:
+                continue
+            for t in range(sp[0] - sp[0] % 30, sp[1], 30):
+                if sp[0] <= t and t + 30 <= sp[1]:
+                    if ctx is not None:
+                        vals.append(ctx.demand_weight(u.date, t) * ctx.criticality(role))
+                    else:
+                        vals.append(float(u.dw or 1.0) * _obj.default_criticality(role))
+        v = sum(vals) / len(vals) if vals else float(u.dw or 1.0) * _obj.default_criticality(role)
+        return max(REQ_VALUE_BOUNDS[0], min(REQ_VALUE_BOUNDS[1], v))
 
     # quality points per dollar: LABOR_POINTS_PER_PCT for 1% of the week's labor
     def _per_cent(self) -> float:
@@ -456,6 +497,7 @@ class _Model:
         self._slot_memory()
         self._fairness()
         self._dollars()
+        self._days()
         m.minimize(book.objective())
         self._hints()
 
@@ -473,8 +515,12 @@ class _Model:
                 continue
             if self.mode == "draft":
                 floor = any(r.get("_floor") for r in u.rows)
+                # a requirement shift's hole weighs its half hours' demand
+                # and the role's criticality (LOGIC-1, LOGIC-24): a Friday
+                # dinner dishwasher is never the cheap one to leave empty
+                rel = 1.0 if floor else self.value_rel(u)
                 self.book.add("floor" if floor else "requirement", self.unf[u.id],
-                              hours * (W_COVER_HOUR if floor else W_REQ_HOUR), {"unit": u.id})
+                              hours * (W_COVER_HOUR if floor else W_REQ_HOUR * rel), {"unit": u.id, "rel": rel})
             else:
                 # A shift on the week as it stands: dropping it is never a
                 # saving; kept as drafted when nobody can legally take it.
@@ -487,11 +533,34 @@ class _Model:
         for p, items in self.by_person.items():
             name = prob.names[p]
             rules_apply = c is None or _rules.hours_rules_apply(c, name)
-            # one shift a date
+            # one shift a date — or, for somebody who works doubles, two legs
+            # that never overlap with a break between them (LOGIC-19)
+            dbl = p in self.doubles
             by_date = {}
             for u, v in items:
                 by_date.setdefault(u.dord, []).append((u, v))
-            for o, its in by_date.items():
+            for o, its in sorted(by_date.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
+                if dbl and len(its) > 1:
+                    m.add(sum(v for _u, v in its) <= 2)
+                    spans = [(min(_minute_of(sp[0]) for sp in u.spans), max(_minute_of(sp[1]) for sp in u.spans), v)
+                             for u, v in its]
+                    for t0 in sorted({s for s, _e, _v in spans}):
+                        clique = [v for s, e, v in spans if s <= t0 < e + DOUBLE_BREAK_MINUTES]
+                        if len(clique) > 1:
+                            m.add_at_most_one(clique)
+                    w = m.new_bool_var(f"wd{p}_{o}")
+                    for _u, v in its:
+                        m.add_implication(v, w)
+                    m.add(w <= sum(v for _u, v in its))
+                    self.worked[(p, o)] = w
+                    if prob.daily_line and rules_apply:
+                        line_d = int(round(prob.daily_line * H))
+                        top_d = sum(int(round(u.hours * H)) for u, _v in its)
+                        if top_d > line_d:
+                            od = m.new_int_var(0, top_d - line_d, f"dot{p}_{o}")
+                            m.add(od >= sum(int(round(u.hours * H)) * v for u, v in its) - line_d)
+                            book.add("overtime", od, W_OT_HOUR / H, {"person": p, "date": o, "daily": True})
+                    continue
                 if len(its) > 1:
                     m.add_at_most_one([v for _u, v in its])
                 w = sum(v for _u, v in its) if len(its) > 1 else its[0][1]
@@ -559,10 +628,25 @@ class _Model:
             # whenever both days are worked (an overlap is always refused;
             # rest short of the rule is law, or a priced policy breach)
             need_r = prob.rest_need(p)
-            ords = sorted(by_date)
+            ords = sorted(o for o in by_date if o is not None)
             for o in ords:
                 nxt = by_date.get(o + 1)
                 if not nxt:
+                    continue
+                if dbl:
+                    # two legs a day: the turnaround pair by pair
+                    want = int(round(need_r * 60)) if need_r else 0
+                    for ua, va in by_date[o]:
+                        ea = max(_minute_of(sp[1]) for sp in ua.spans)
+                        for ub, vb in nxt:
+                            gap = min(_minute_of(sp[0]) for sp in ub.spans) - ea
+                            if gap < 0 or (want and gap < want and prob.law_rest):
+                                m.add_bool_or([va.Not(), vb.Not()])
+                            elif want and gap < want:
+                                br = m.new_bool_var(f"rd{p}_{ua.id}_{ub.id}")
+                                m.add(va + vb <= 1 + br)
+                                book.add("policy_rest", br, W_POLICY_REST_HOUR * (want - gap) / 60.0,
+                                         {"person": p, "date": o})
                     continue
                 ends = [(max(_minute_of(sp[1]) for sp in ua.spans), va) for ua, va in by_date[o]]
                 starts = [(min(_minute_of(sp[0]) for sp in ub.spans), vb) for ub, vb in nxt]
@@ -842,11 +926,18 @@ class _Model:
             n_here = 1
             for (d, part) in u.parts[:1]:
                 n_here = max(1, len((prob.groups.get(("S", d, part)) or {}).get("units") or ()) or 1)
-            stab = 0.0
+            unit_stab = sum(prob.dim_cost("stability", 100.0 / n_here, prob.shift_dw.get(dp, 1.0))
+                            for dp in u.parts) or prob.dim_cost("stability", 100.0 / n_here, u.dw)
+            stab, ref, term_s = 0.0, set(), "stability"
             if u.id in self.last:
-                stab = sum(prob.dim_cost("stability", 100.0 / n_here, prob.shift_dw.get(dp, 1.0))
-                           for dp in u.parts) or prob.dim_cost("stability", 100.0 / n_here, u.dw)
-                book.constant("stability", stab * Q)
+                stab, ref = unit_stab, self.last[u.id]
+            elif u.id in self.usual:
+                # no published week: the person who usually works the slot
+                # (their own punches) is kept the same way (STRESS-15)
+                stab, ref, term_s = unit_stab, self.usual[u.id], "usual"
+            if stab:
+                book.constant(term_s, stab * Q)
+            parts_u = [x for x in u.primary if x != "unknown"]
             for p in prob.dom[u.id]:
                 v = self.x[(u.id, p)]
                 comp = prob.components_of(u, p)
@@ -854,12 +945,24 @@ class _Model:
                     # every per-assignment cost the solver's table knows,
                     # under its own name where no term groups it (J3's
                     # retention and tip rotation, and whatever comes next);
-                    # dollars, stability and change are this model's own
-                    term = None if k in _OWN_TERMS else _STATIC_TERMS.get(k, k)
+                    # dollars and change are this model's own; the usual-
+                    # pattern reading is the stability phase's "usual"
+                    if k == "stability":
+                        term = "usual" if self.ctx is None else None
+                    else:
+                        term = None if k in _OWN_TERMS else _STATIC_TERMS.get(k, k)
                     if term and val:
                         book.add(term, v, val * Q, {"unit": u.id, "person": p})
-                if stab and p in self.last[u.id]:
-                    book.add("stability", v, -stab * Q, {"unit": u.id, "person": p})
+                if stab and p in ref:
+                    book.add(term_s, v, -stab * Q, {"unit": u.id, "person": p})
+                if self.ctx is not None:
+                    # a weekday and daypart they usually work, credited; a
+                    # weekday they almost never work, a cost — at the same
+                    # scale as one slot kept (schedule_objective's rates)
+                    usd = self.ctx.usual_slot_usd(prob.names[p], u.date, parts_u)
+                    if usd:
+                        book.add("usual", v, usd / _obj.STABILITY_USD * unit_stab * Q,
+                                 {"unit": u.id, "person": p})
                 d0 = drafted.get(u.id)
                 if d0 is not None and p != d0 and self.change_cost:
                     book.add("change", v, self.change_cost, {"unit": u.id, "person": p})
@@ -916,6 +1019,25 @@ class _Model:
             over = m.new_int_var(0, 10 ** 9, "over_budget")
             m.add(100 * H * over >= spend - int(round(self.budget * 100 * H)))
             book.add("budget", over, max(1.0, 100 * per_cent * BUDGET_OVER_FACTOR), {})
+
+    def _days(self):
+        """A day in past somebody's usual days a week (their history, else
+        schedule_objective.DEFAULT_DAYS_A_WEEK) at EXTRA_DAY_USD (LOGIC-5):
+        six 4h days are not a part-timer's four 6h ones."""
+        prob, m, book = self.prob, self.m, self.book
+        per_cent = getattr(self, "per_cent", 0.0) or 0.0
+        if not per_cent:
+            return
+        for p in sorted(self.by_person):
+            target = self.ctx.days_target(prob.names[p]) if self.ctx is not None else _obj.DEFAULT_DAYS_A_WEEK
+            fixed = len({f.dord for f in prob.fx_units[p] if f.dord in prob.week_ord_set})
+            live = [w for (q, o), w in sorted(self.worked.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0))
+                    if q == p and o not in {f.dord for f in prob.fx_units[p]}]
+            if fixed + len(live) <= target:
+                continue
+            extra = m.new_int_var(0, len(live) + fixed, f"xd{p}")
+            m.add(extra >= sum(live) + fixed - target)
+            book.add("days", extra, _obj.EXTRA_DAY_USD * 100 * per_cent, {"person": p})
 
     def _hints(self):
         """A complete starting week for the search: last published week's
@@ -980,7 +1102,11 @@ class _Model:
         for u in order:
             if u.id in pick:
                 continue
-            first = [p for p in sorted(self.last.get(u.id, ())) if p in prob.dom[u.id]]
+            # Stage 1's own person (its person-aware shapes), then last
+            # week's, the usual one's, the draft's
+            s1 = prob.pidx.get(prob.key(u.rows[0].get("_s1") or "")) if u.rows and u.rows[0].get("_s1") else None
+            first = [s1] if s1 is not None and s1 in prob.dom[u.id] else []
+            first += [p for p in sorted(self.last.get(u.id, ()) or self.usual.get(u.id, ())) if p in prob.dom[u.id]]
             if u.draft is not None and u.draft in prob.dom[u.id]:
                 first.append(u.draft)
             for p in first:
@@ -1024,6 +1150,114 @@ def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None, wall_c
     return s
 
 
+def _phase_exprs(mdl) -> list:
+    """[rules, stability, quality] — each phase's part of the objective, or
+    None where it has no term."""
+    groups = [[], [], []]
+    for name, expr, coef, _meta in mdl.book.terms:
+        k = 0 if name in PHASE_RULES else 1 if name in PHASE_STABILITY else 2
+        groups[k].append(coef * expr)
+    return [sum(g) if g else None for g in groups]
+
+
+def _phase_values(mdl, solver) -> list:
+    """The phase costs of a solved model, in PHASE order (a week is better
+    than another when this list is lexicographically smaller)."""
+    out = [0, 0, 0]
+    for name, expr, coef, _meta in mdl.book.terms:
+        k = 0 if name in PHASE_RULES else 1 if name in PHASE_STABILITY else 2
+        out[k] += coef * solver.value(expr)
+    return out
+
+
+def _solve_phases(mdl, max_seconds, seed, workers, deterministic, wall_left=None):
+    """Solve `mdl` phase by phase (LOGIC-22): each phase minimised with
+    its share of the deterministic budget (PHASE_SHARES; what a phase did
+    not use carries to the next, read from the solver's own deterministic
+    time — so still the same on every run), then held at what it reached
+    while the next one is optimised from that week. (solver, status,
+    [{phase, status, value, seconds}], wall capped, proved, status name);
+    solver None when the first phase found nothing."""
+    exprs = _phase_exprs(mdl)
+    det = DETERMINISTIC if deterministic is None else deterministic
+    carry = 0.0
+    best, best_st, log, capped, proved, last_name = None, None, [], False, True, "UNKNOWN"
+    for i, expr in enumerate(exprs):
+        if expr is None:
+            continue
+        secs = max(0.2, float(max_seconds) * PHASE_SHARES[i] + carry)
+        if hasattr(mdl.m, "clear_objective"):
+            mdl.m.clear_objective()
+        mdl.m.minimize(expr)
+        s = _solver_for(secs, seed=seed, workers=workers, deterministic=deterministic,
+                        wall_cap=wall_left() if wall_left else None)
+        st = s.solve(mdl.m)
+        last_name = s.status_name(st)
+        if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
+            proved = False
+            log.append({"phase": ("rules", "stability", "quality")[i], "status": last_name.lower(), "value": None,
+                        "seconds": round(s.wall_time, 3)})
+            break
+        capped = capped or _wall_capped(s, st)
+        proved = proved and st == _cp.OPTIMAL
+        val = int(round(s.objective_value))
+        log.append({"phase": ("rules", "stability", "quality")[i], "status": last_name.lower(), "value": val,
+                    "seconds": round(s.wall_time, 3)})
+        if det:
+            try:
+                carry = max(0.0, secs - float(s.response_proto.deterministic_time))
+            except Exception:
+                carry = 0.0
+        mdl.m.add(expr <= val)
+        mdl.m.clear_hints()
+        for j in range(len(mdl.m.proto.variables)):
+            v = mdl.m.get_int_var_from_proto_index(j)
+            mdl.m.add_hint(v, s.value(v))
+        best, best_st = s, st
+    return best, best_st, log, capped, proved, last_name
+
+
+def usual_week(history_rows, key, family, share=None) -> list:
+    """The restaurant's usual week as rows (STRESS-15): for each person, each
+    weekday, role family and daypart they worked in at least `share`
+    (schedule_objective.USUAL_SHARE) of the history's weeks — with at least
+    USUAL_MIN_WEEKS of them — one row at their median start. The stability
+    reference when no week has been published."""
+    share = _obj.USUAL_SHARE if share is None else share
+    weeks = set()
+    by = {}
+    for r in history_rows or []:
+        name = (r.get("employee") or "").strip()
+        s = _rules.start_minutes(r)
+        d = str(r.get("date") or "")[:10]
+        if not name or s is None or not d:
+            continue
+        try:
+            dt = datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            continue
+        wk = dt.isocalendar()[:2]
+        weeks.add(wk)
+        part = (sq.present_dayparts(r) or ["unknown"])[0]
+        k = (key(name), dt.strftime("%A"), family(r.get("role")), part)
+        by.setdefault(k, {"name": name, "role": r.get("role"), "date": d, "weeks": set(), "starts": []})
+        by[k]["weeks"].add(wk)
+        by[k]["starts"].append(s)
+        by[k].setdefault("rows", []).append(r)
+    if len(weeks) < _obj.USUAL_MIN_WEEKS:
+        return []
+    out = []
+    for k in sorted(by):
+        v = by[k]
+        if len(v["weeks"]) < share * len(weeks):
+            continue
+        mid = sorted(v["rows"], key=lambda x: (_rules.start_minutes(x) or 0, str(x.get("shift_end"))))[
+            len(v["rows"]) // 2]
+        out.append({"date": v["date"], "day": k[1], "employee": v["name"], "role": v["role"],
+                    "shift_start": mid.get("shift_start"), "shift_end": mid.get("shift_end"), "_usual": True})
+    return out
+
+
 def _wall_capped(solver, status) -> bool:
     """Whether the wall clock (the emergency cap), not the deterministic work
     budget, ended a solve that did not prove its answer optimal."""
@@ -1039,10 +1273,18 @@ def _wall_capped(solver, status) -> bool:
 
 def assign(rows, constraints, signals=None, weights=None, profiles=None, only_dates=None, last_week=None,
            max_seconds=None, seed=SEED, workers=None, mode="draft", budget_dollars=None, roster_roles=None,
-           pending=None, deterministic=None, reasons=True, explain=True, wall_cap=None) -> dict:
+           pending=None, deterministic=None, reasons=True, explain=True, wall_cap=None, objective=None,
+           history_rows=None, doubles=None) -> dict:
     """Solve who works each of `rows` (a row with no employee is a slot to
     staff; a pinned or locked row is kept; with `only_dates` every other
-    date is kept) — the whole week as one model.
+    date is kept) — the whole week as one model, solved lexicographically
+    (the rule tiers, then stability, then quality — PHASE_RULES,
+    PHASE_STABILITY). `objective` a schedule_objective.ObjectiveContext
+    (a requirement hole weighed by its demand and the role's criticality,
+    the usual days); `history_rows` the punches the usual person on each
+    slot is read from when `last_week` is empty; `doubles` the people (by
+    index) who may work two legs a date — read from the context / the
+    Constraints' doubles_ok when None.
 
     mode: "draft" (Stage 2 of the solver-first draft: an unfilled slot is
     left out, at the floor's or the requirement's cost), "improve" (the
@@ -1076,9 +1318,20 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
         out["seconds"] = round(_time.monotonic() - t0, 3)
         return out
     last = last_week_slots(prob, last_week) if last_week else {}
+    # No published week to keep: the person who usually works each slot,
+    # from their own punches, is the reference instead (STRESS-15).
+    usual = last_week_slots(prob, usual_week(history_rows, prob.key, prob.family)) \
+        if (history_rows and not last) else {}
+    if doubles is None:
+        said = getattr(constraints, "doubles_ok", None) or {}
+        doubles = {p for p, n in enumerate(prob.names)
+                   if (objective.doubles_ok(n, constraints) if objective is not None else bool(said.get(prob.key(n))))}
     change = {"improve": K_CHANGE_IMPROVE * Q, "resolve": W_CHANGE_RESOLVE}.get(mode, 0)
-    mdl = _Model(prob, mode, last, budget_dollars, change)
+    mdl = _Model(prob, mode, last, budget_dollars, change, objective=objective, usual=usual, doubles=doubles)
     mdl.build()
+    # the model with its whole objective and no phase bound: what a fixed
+    # week is evaluated on, term by term
+    mdl.base = mdl.m.clone()
     out["build_seconds"] = round(_time.monotonic() - t0, 3)
     # A complete starting week first: the greedy legal pick (last week's
     # person, the draft's, else the most room) with every cost variable
@@ -1096,23 +1349,27 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
             v = mdl.m.get_int_var_from_proto_index(i)
             mdl.m.add_hint(v, first.value(v))
     # The whole deterministic budget, whatever building the model took on the
-    # wall clock (ARCH-26: the same inputs, the same week); what the wall
-    # clock has left is only the emergency cap.
-    solver = _solver_for(max_seconds, seed=seed, workers=workers, deterministic=deterministic,
-                         wall_cap=(max(0.2, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None))
-    st = solver.solve(mdl.m)
-    out["wall_capped"] = _wall_capped(solver, st)
-    name = solver.status_name(st)
+    # wall clock (ARCH-26: the same inputs, the same week), spent phase by
+    # phase — the rule tiers, then stability, then quality, each holding the
+    # one before at its optimum (LOGIC-22); what the wall clock has left is
+    # only the emergency cap.
+    solver, st, phases, capped, proved, name = _solve_phases(
+        mdl, max_seconds, seed, workers, deterministic,
+        (lambda: max(0.2, float(wall_cap) - (_time.monotonic() - t0))) if wall_cap else None)
+    out["wall_capped"] = capped
+    out["phases"] = phases
+    out["seed"] = int(seed)
+    out["workers"] = int(workers or WORKERS)
     out["seconds"] = round(_time.monotonic() - t0, 3)
-    out["solve_seconds"] = round(solver.wall_time, 3)
-    if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
+    out["solve_seconds"] = round(sum(x.get("seconds", 0.0) for x in phases), 3)
+    if solver is None:
         if first is None:
-            out["status"] = "no_solution_in_time" if st == _cp.UNKNOWN else name.lower()
+            out["status"] = "no_solution_in_time" if name == "UNKNOWN" else str(name).lower()
             return out
         # nothing better in the budget: the complete starting week stands
-        solver, st = first, _cp.FEASIBLE
+        solver = first
         out["start_only"] = True
-    out["status"] = "optimal" if st == _cp.OPTIMAL and not out.get("start_only") else "time_limit"
+    out["status"] = "optimal" if proved and not out.get("start_only") else "time_limit"
     out["proved_optimal"] = out["status"] == "optimal"
     out["objective"] = solver.objective_value
     out["bound"] = solver.best_objective_bound if not out.get("start_only") else None
@@ -1129,6 +1386,7 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     if exact is not None:
         solver = exact
         out["objective"] = exact.objective_value
+        out["phase_cost"] = _phase_values(mdl, exact)
     # the terms, as the owner reads them
     terms = {}
     for tname, expr, coef, _meta in mdl.book.terms:
@@ -1767,6 +2025,8 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         return res
     prob, mdl = solved.get("problem"), solved.get("model")
     draft_cost = _draft_objective(mdl, prob)
+    draft_eval = _fixed_eval(mdl, prob, [u.draft for u in prob.units]) if mdl is not None else None
+    draft_phases = _phase_values(mdl, draft_eval) if draft_eval is not None else None
     stats = {"engine": "cp-sat", "status": solved["status"], "proved_optimal": solved["proved_optimal"],
              "wall_capped": bool(solved.get("wall_capped")),
              "seconds": solved["seconds"], "slots": solved.get("slots"), "people": solved.get("people"),
@@ -1781,7 +2041,15 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         out["reason"] = "the draft's own assignment was already the best the solver found"
         stats["kept"] = "draft"
         return out
-    if draft_cost is not None and solved["objective"] is not None and solved["objective"] >= draft_cost - min_gain:
+    # Better is lexicographic, as the solve is (the rule tiers first, then
+    # stability, then quality): a week no lower in that order is no better.
+    got_phases = solved.get("phase_cost")
+    no_better = (list(got_phases) >= list(draft_phases[:2]) + [draft_phases[2] - min_gain]
+                 if (got_phases is not None and draft_phases is not None) else
+                 (draft_cost is not None and solved["objective"] is not None
+                  and solved["objective"] >= draft_cost - min_gain))
+    stats["phase_cost"], stats["draft_phase_cost"] = got_phases, draft_phases
+    if no_better:
         out["reason"] = "the solver's week cost no less under its own objective"
         stats["kept"] = "draft"
         return out
@@ -1834,7 +2102,8 @@ def _fixed_eval(mdl, prob, assignment, seconds=3.0):
     CpSolver, or None."""
     if mdl is None or prob is None:
         return None
-    m = mdl.m.clone()
+    # the whole objective with no phase held (_solve_phases bounds mdl.m)
+    m = (getattr(mdl, "base", None) or mdl.m).clone()
     m.clear_hints()
     for u in mdl.live:
         p = assignment[u.id] if u.id < len(assignment) else None
@@ -1867,18 +2136,30 @@ def summary(result: dict) -> dict:
 
 # ── the solver-first draft: shapes, then people (RM-8 + RM-11) ──────────────
 
+
 def solver_draft(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                  last_week_rows=None, signals=None, weights=None, profiles=None, roster_roles=None,
-                 budget_dollars=None, max_seconds=None, seed=SEED, standby_slots=None) -> dict:
+                 budget_dollars=None, max_seconds=None, seed=SEED, standby_slots=None, wall_cap=None,
+                 demand_curve=None, objective=None) -> dict:
     """The week drafted with no model call: schedule_shapes (Stage 1) picks
-    each role's shifts to cover its people-on-at-once demand, floors, the
-    section cap and the closers within the budget priced; assign (Stage 2)
-    picks who works each one with `context_rows` (the manager plan, a
-    redo's kept days, locked rows) held as they are.
+    each role's shifts — and a first person for each — to cover its
+    people-on-at-once demand, floors, the section cap and the closers, with
+    the budget priced against the least valuable half hours; assign (Stage
+    2) picks who works each one with `context_rows` (the manager plan, a
+    redo's kept days, locked rows) held as they are. Both price the week
+    from one schedule_objective.ObjectiveContext (contract #1).
+
+    `max_seconds` is a DETERMINISTIC work budget, split by size and never by
+    the clock (LOGIC-9: Stage 2 used to get whatever the wall clock had
+    left, so the same inputs drafted different weeks on a busy box);
+    `wall_cap` the emergency wall-clock cap.
 
     {"rows" (staffed shifts — the context rows are NOT among them),
-    "unassigned" (shifts nobody could legally take, left out), "short" (demand
-    no shift could cover), "conflicts", "reasons", "terms", "stats"} — the
+    "unassigned" (shifts nobody could legally take, left out), "short"
+    (demand no shift could cover, and roles nobody may work that day, with
+    why), "assumed" (roles drafted with no history and no floor),
+    "conflicts", "reasons", "terms", "stats" (with each stage's status, seed
+    and deterministic budget, the week priced, the usual days kept)} — the
     shape schedule_fallback.solver_rows returns, so the engine's code-draft
     path takes either."""
     import schedule_shapes as _shapes
@@ -1888,33 +2169,87 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
     ot = sig.get("overtime") or {}
     rates = dict(ot.get("role_typical") or {})
     rates.update({k: v for k, v in (ot.get("rates") or {}).items() if k != "_default"})
+    blended = ot.get("default_rate") or (ot.get("rates") or {}).get("_default")
+    hist_all = list(history_rows or []) + list(last_week_rows or [])
+    ctx = objective
+    if ctx is None:
+        ctx = _obj.ObjectiveContext.build(getattr(constraints, "restaurant_id", None), dates, budget=budget_dollars,
+                                          last_week_rows=last_week_rows, requirements=requirements,
+                                          demand_curve=demand_curve or sig.get("demand_curve"),
+                                          history_rows=hist_all, rates=rates,
+                                          person_rates=ot.get("person_rates"), blended_rate=blended,
+                                          ot_line=ot.get("line"), constraints=constraints)
+    read = {_low(n) for n in (sig.get("notes_read") or ())}
+    exclude = sorted(n for n, note in (sig.get("constraints") or {}).items()
+                     if n and str(note or "").strip() and _low(n) not in read)
+    s1_secs = max(1.0, min(_shapes.DEFAULT_SECONDS, secs * 0.3))
+    s2_secs = max(1.0, secs - s1_secs)
+
+    def wall_left():
+        return max(0.5, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None
     shaped = _shapes.shape_week(dates, constraints, requirements, concurrent=concurrent, history_rows=history_rows,
                                 context_rows=context_rows, last_week_rows=last_week_rows, rates=rates,
-                                blended_rate=ot.get("default_rate") or (ot.get("rates") or {}).get("_default"),
-                                budget_dollars=budget_dollars, roster_roles=roster_roles,
-                                max_seconds=max(1.0, min(_shapes.DEFAULT_SECONDS, secs * 0.3)), seed=seed,
-                                staffing_value=sig.get("staffing_value"))
-    stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat"}
+                                blended_rate=blended, budget_dollars=budget_dollars, roster_roles=roster_roles,
+                                max_seconds=s1_secs, seed=seed, staffing_value=sig.get("staffing_value"),
+                                person_rates=ot.get("person_rates"), objective=ctx, exclude=exclude,
+                                wall_cap=wall_left())
+    stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat", "seed": int(seed),
+             "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic"}}
     # A standby on a busy shift likely to come up short (RM-18, G2's
     # attendance_risk.standby_needed): one more of the role over the
     # daypart's core window, staffed only while the budget has room.
     slots = shaped["rows"] + [dict(r, _standby=True, employee="") for r in standby_slots or []]
     if not slots:
-        return {"rows": [], "unassigned": [], "short": shaped["short"], "conflicts": [], "reasons": [], "terms": {},
+        return {"rows": [], "unassigned": [], "short": shaped["short"], "assumed": shaped.get("assumed") or [],
+                "conflicts": [], "reasons": [], "terms": {},
                 "stats": dict(stats, status="nothing_to_solve", seconds=round(_time.monotonic() - t0, 3))}
-    ctx = [dict(r, _pinned=True) for r in context_rows or []]
-    left = max(1.0, secs - (_time.monotonic() - t0))
-    got = assign(ctx + slots, constraints, signals=sig, weights=weights, profiles=profiles,
-                 only_dates=list(dates), last_week=last_week_rows, max_seconds=left, mode="draft",
+    ctx_rows = [dict(r, _pinned=True) for r in context_rows or []]
+    got = assign(ctx_rows + slots, constraints, signals=sig, weights=weights, profiles=profiles,
+                 only_dates=list(dates), last_week=last_week_rows, max_seconds=s2_secs, mode="draft",
                  budget_dollars=budget_dollars, roster_roles=roster_roles,
-                 pending=getattr(constraints, "pending_off", None), seed=seed)
-    rows = list(got["rows"][len(ctx):]) if got["status"] in ("optimal", "time_limit") else []
-    clean = [{k: v for k, v in r.items() if k not in ("_open", "_pinned")} for r in rows
+                 pending=getattr(constraints, "pending_off", None), seed=seed, wall_cap=wall_left(),
+                 objective=ctx, history_rows=history_rows)
+    rows = list(got["rows"][len(ctx_rows):]) if got["status"] in ("optimal", "time_limit") else []
+    clean = [{k: v for k, v in r.items() if k not in ("_open", "_pinned", "_s1")} for r in rows
              if (r.get("employee") or "").strip()]
     unassigned = [dict(e) for e in got.get("unfilled") or []]
+    priced = None
+    try:
+        priced = _obj.price_week(list(context_rows or []) + clean, ctx)
+        priced.pop("by_slot", None)
+    except Exception as e:                   # never costs the week
+        got.setdefault("notes", []).append(f"week not priced: {e!r}")
     stats.update(status=got["status"], proved_optimal=got.get("proved_optimal"), slots=got.get("slots"),
                  people=got.get("people"), objective=got.get("objective"), bound=got.get("bound"),
-                 assign_seconds=got.get("seconds"), build_seconds=got.get("build_seconds"), seconds=round(_time.monotonic() - t0, 3),
-                 dollars=got.get("dollars"), notes=got.get("notes"))
-    return {"rows": clean, "unassigned": unassigned, "short": shaped["short"], "conflicts": got.get("conflicts") or [],
-            "reasons": got.get("reasons") or [], "terms": got.get("terms") or {}, "stats": stats}
+                 phases=got.get("phases"), phase_cost=got.get("phase_cost"), wall_capped=got.get("wall_capped"),
+                 workers=got.get("workers"), assign_seconds=got.get("seconds"), build_seconds=got.get("build_seconds"),
+                 seconds=round(_time.monotonic() - t0, 3), dollars=got.get("dollars"), notes=got.get("notes"),
+                 priced=priced, usual_days=usual_days_kept(list(context_rows or []) + clean, ctx),
+                 history_weeks=int((ctx.profile or {}).get("weeks") or 0))
+    return {"rows": clean, "unassigned": unassigned, "short": shaped["short"], "assumed": shaped.get("assumed") or [],
+            "conflicts": got.get("conflicts") or [], "reasons": got.get("reasons") or [],
+            "terms": got.get("terms") or {}, "stats": stats}
+
+
+def usual_days_kept(rows, ctx) -> dict:
+    """{"kept", "usual", "pct", "off_usual"} — of each person's usual working
+    weekdays (worked in at least schedule_objective.USUAL_SHARE of their
+    history's weeks), how many this week keeps, and the days placed on a
+    weekday they almost never work: measured, for the review line, never
+    claimed without it (STRESS-15). pct None without history."""
+    people = (getattr(ctx, "profile", None) or {}).get("people") or {}
+    worked = {}
+    for r in rows or []:
+        n = (r.get("employee") or "").strip()
+        if n:
+            worked.setdefault(ctx.key(n), set()).add(_obj._weekday(r.get("date")))
+    kept = usual = off = 0
+    for k, pu in people.items():
+        if (pu.get("seen_weeks") or 0) < _obj.USUAL_MIN_WEEKS:
+            continue
+        days = {d for d, s in (pu.get("days") or {}).items() if s >= _obj.USUAL_SHARE}
+        got = worked.get(k, set())
+        usual += len(days)
+        kept += len(days & got)
+        off += sum(1 for d in got if float((pu.get("days") or {}).get(d) or 0) <= _obj.RARE_SHARE)
+    return {"kept": kept, "usual": usual, "pct": round(100.0 * kept / usual, 1) if usual else None, "off_usual": off}

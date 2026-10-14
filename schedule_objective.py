@@ -61,6 +61,9 @@ DEFAULT_DAYS_A_WEEK = 5
 # DEFAULT_SHIFT_HOURS + 2): this x the hours past it, squared.
 LONG_SHIFT_USD = 6.0
 DEFAULT_SHIFT_HOURS = 6.0
+# Each hour a shift falls short of the role's usual length (the same
+# median): a 3h fragment is a trip in for little pay.
+SHORT_SHIFT_USD = 5.0
 # A lunch-to-close double (a shift on the floor for both core windows)
 # where the restaurant's own history works almost none (DOUBLES_USUAL_SHARE).
 DOUBLE_USD = 60.0
@@ -203,6 +206,7 @@ def history_profile(rows, key=None, family=None, open_times=None, close_times=No
     weeks_seen = set()
     fam_len = defaultdict(list)
     fam_days = defaultdict(lambda: defaultdict(list))       # fam -> date -> spans
+    seen = set()
     for r in rows or []:
         name = (r.get("employee") or "").strip()
         sp = _span(r)
@@ -210,6 +214,12 @@ def history_profile(rows, key=None, family=None, open_times=None, close_times=No
         role = (r.get("role") or "").strip()
         if not sp or not d or not role:
             continue
+        # one shift once: the same published week can arrive as history and
+        # as last week, and read twice it looked like a double
+        ident = (key(name) if name else "", d, sp, _low(role))
+        if name and ident in seen:
+            continue
+        seen.add(ident)
         try:
             dt = datetime.strptime(d, "%Y-%m-%d")
         except ValueError:
@@ -430,7 +440,8 @@ class ObjectiveContext:
         fp = (self.profile.get("families") or {}).get(self.fam(role)) or {}
         top = int(fp["median_minutes"]) if fp.get("median_minutes") else int(DEFAULT_SHIFT_HOURS * 60) + 120
         over = max(0.0, (mins - top) / 60.0)
-        cost = SHIFT_OVERHEAD_USD + LONG_SHIFT_USD * over * over
+        short = max(0.0, (min(top, int(DEFAULT_SHIFT_HOURS * 60)) - mins) / 60.0)
+        cost = SHIFT_OVERHEAD_USD + LONG_SHIFT_USD * over * over + SHORT_SHIFT_USD * short
         if {"morning", "night"} <= set(_stime.span_dayparts((int(start), int(end)))) and not self.doubles_usual(role):
             cost += DOUBLE_USD
         return cost
@@ -467,6 +478,8 @@ class ObjectiveContext:
         doubles_ok, {key: bool}) first, else their own history (a double on
         at least a quarter of the days they worked)."""
         k = self.key(person)
+        if constraints is not None and k in (getattr(constraints, "minors", None) or ()):
+            return False                  # a minor's cap is the whole day's: one shift a date
         said = (getattr(constraints, "doubles_ok", None) or {}) if constraints is not None else {}
         if k in said:
             return bool(said[k])
@@ -664,7 +677,7 @@ def stated_rates(ctx=None) -> dict:
     shown each)."""
     return {"short_person_hour_usd": (ctx.value_per_hour if ctx is not None else SHORT_PERSON_HOUR_USD),
             "budget_over_factor": BUDGET_OVER_FACTOR, "shift_overhead_usd": SHIFT_OVERHEAD_USD,
-            "extra_day_usd": EXTRA_DAY_USD, "long_shift_usd_per_hour_sq": LONG_SHIFT_USD, "double_usd": DOUBLE_USD,
+            "extra_day_usd": EXTRA_DAY_USD, "short_shift_usd_per_hour": SHORT_SHIFT_USD, "long_shift_usd_per_hour_sq": LONG_SHIFT_USD, "double_usd": DOUBLE_USD,
             "usual_slot_usd": USUAL_SLOT_USD, "off_usual_day_usd": OFF_USUAL_DAY_USD,
             "usual_hours_usd": USUAL_HOURS_USD, "stability_usd": STABILITY_USD,
             "history_pattern_usd": HISTORY_PATTERN_USD, "fairness_usd": FAIRNESS_USD,
