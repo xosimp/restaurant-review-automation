@@ -118,9 +118,9 @@ def test_the_boot_backfill_projects_weeks_it_has_not_met(db):
     conn.execute("DELETE FROM schedule_shift_weeks")
     conn.commit()
     conn.close()
-    assert schedule_shifts.backfill(db_path=db) == 1
+    assert schedule_shifts.backfill(db_path=db)["projected"] == 1
     assert schedule_shifts.find(rid, _live(db, hid)[0]["shift_id"], db_path=db)["employee"] == "Ana"
-    assert schedule_shifts.backfill(db_path=db) == 0
+    assert schedule_shifts.backfill(db_path=db)["projected"] == 0
 
 
 def test_only_the_week_service_writes_a_weeks_text():

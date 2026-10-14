@@ -1396,9 +1396,11 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
         _row_id, new_version = _sv._insert_version(conn, restaurant_id, schedule_id, "published", text,
                                                    saved_by=actor_name, saved_authority=authority)
         if mode == "publish":
+            # Past the gate: an overlap it holds was fixed or sent past with
+            # a reason (schedule_shifts' double-booking guard lets it in).
             _sv.store_week(conn, restaurant_id, schedule_id, working=text, published=text,
                            sets=("published_at=datetime('now')", "published_by=?", "publishing_at=NULL"),
-                           args=(actor_name,))
+                           args=(actor_name,), allow_overlaps=True)
             # One live version of a week: an older published copy is retired,
             # or both fed outcomes, fairness, hours and claims (SCHED-10).
             conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
@@ -1406,7 +1408,7 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                          (schedule_id, restaurant_id, row["week_start"], schedule_id))
         else:
             _sv.store_week(conn, restaurant_id, schedule_id, published=text,
-                           sets=("republished_at=datetime('now')",))
+                           sets=("republished_at=datetime('now')",), allow_overlaps=True)
             # A shift the Studio moved to someone else keeps its floor
             # section now that staff have the change.
             try:

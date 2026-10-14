@@ -1100,7 +1100,8 @@ _WEEK_SETS = frozenset({"quality_json", "hours_scheduled", "hours_hourly", "hour
 _SET_RE = re.compile(r"^\s*([a-z_]+)\s*=")
 
 
-def store_week(conn, restaurant_id, history_id, working=None, published=None, sets=(), args=()) -> int:
+def store_week(conn, restaurant_id, history_id, working=None, published=None, sets=(), args=(),
+               allow_overlaps=False) -> int:
     """THE write of a stored week's text (schedule re-audit 10/11/26 ARCH-7,
     ARCH-24): the working copy (`working` → schedule_csv), the published
     copy (`published` → published_csv), any of the week's stamps beside
@@ -1111,8 +1112,12 @@ def store_week(conn, restaurant_id, history_id, working=None, published=None, se
     calls this (tests/test_sf11_d_shift_identity.py holds the code to it),
     so the rows table never disagrees with the text and the week's
     invariants live in one place. A caller that appends a version appends
-    it FIRST, so the projection carries its revision. Returns the rows the
-    UPDATE touched (1, or 0 when the week is gone)."""
+    it FIRST, so the projection carries its revision. The projection refuses
+    a write that would newly double-book a person in the published copy
+    (schedule_shifts.DoubleBooking, and the database's own trigger behind
+    it); `allow_overlaps` is the publish gate's: the week was cleared to go
+    out as it is. Returns the rows the UPDATE touched (1, or 0 when the week
+    is gone)."""
     parts, vals = [], []
     if working is not None:
         parts.append("schedule_csv=?")
@@ -1132,7 +1137,7 @@ def store_week(conn, restaurant_id, history_id, working=None, published=None, se
                            (*vals, history_id, restaurant_id))
         n = cur.rowcount
     import schedule_shifts
-    schedule_shifts.project(conn, restaurant_id, history_id)
+    schedule_shifts.project(conn, restaurant_id, history_id, allow_overlaps=allow_overlaps)
     return n
 
 
