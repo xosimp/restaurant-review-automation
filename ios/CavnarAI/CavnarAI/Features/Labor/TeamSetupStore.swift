@@ -36,9 +36,18 @@ struct RulesSetupFields: Decodable {
     /// own from the rules sheet (iOS parity, 10/7/26).
     var closures: RulesClosures? = nil
     var kitchenStations: KitchenStations? = nil
+    /// How hard each role is to run without (blind re-audit 10/11/26
+    /// LOGIC-24): the owner's weights, the stated default for each of the
+    /// roster's roles, and the range a weight may take.
+    var roleCriticality: [String: Double] = [:]
+    var criticalityDefaults: [String: Double] = [:]
+    var criticalityBounds: [Double] = []
 
     enum CodingKeys: String, CodingKey {
         case managers, closers, closures
+        case roleCriticality = "role_criticality"
+        case criticalityDefaults = "criticality_defaults"
+        case criticalityBounds = "criticality_bounds"
         case kitchenStations = "kitchen_stations"
         case salariedCaps = "salaried_caps"
         case managersLine = "managers_line"
@@ -86,6 +95,11 @@ struct RulesSetupFields: Decodable {
         salariedCaps = c.setupList(SalariedCap.self, .salariedCaps).filter { !$0.name.isEmpty }
         closures = (try? c.decodeIfPresent(RulesClosures.self, forKey: .closures)) ?? nil
         kitchenStations = (try? c.decodeIfPresent(KitchenStations.self, forKey: .kitchenStations)) ?? nil
+        roleCriticality = ((try? c.decodeIfPresent([String: Double].self, forKey: .roleCriticality)) ?? nil)?
+            .filter { $0.value.isFinite } ?? [:]
+        criticalityDefaults = ((try? c.decodeIfPresent([String: Double].self, forKey: .criticalityDefaults)) ?? nil)?
+            .filter { $0.value.isFinite } ?? [:]
+        criticalityBounds = ((try? c.decodeIfPresent([Double].self, forKey: .criticalityBounds)) ?? nil) ?? []
     }
 }
 
@@ -156,6 +170,16 @@ final class TeamSetupStore {
     var stationBusy = false
     var stationNote: String?
     var stationError: String?
+    // How hard each role is to run without (LOGIC-24): the owner's
+    // weights, each role's stated default and the range; saved one role at
+    // a time (ScheduleRulesQuickEdits.saveRoleWeight).
+    var roleCriticality: [String: Double] = [:]
+    var criticalityDefaults: [String: Double] = [:]
+    var criticalityBounds: ClosedRange<Double> = 0.3...3.0
+    var roleWeightBusy: String?
+    var roleWeightPending: [String: Double?] = [:]
+    var roleWeightNote: String?
+    var roleWeightError: String?
 
     func apply(_ f: RulesSetupFields) {
         managers = f.managers
@@ -180,6 +204,11 @@ final class TeamSetupStore {
         salariedCaps = f.salariedCaps
         if let cl = f.closures { closedWeekdays = cl.closedWeekdays }
         if let ks = f.kitchenStations { kitchenStations = ks }
+        roleCriticality = f.roleCriticality
+        criticalityDefaults = f.criticalityDefaults
+        if f.criticalityBounds.count == 2, f.criticalityBounds[0] < f.criticalityBounds[1] {
+            criticalityBounds = f.criticalityBounds[0]...f.criticalityBounds[1]
+        }
     }
 
     // MARK: Who runs the floor (POST labor/managers)

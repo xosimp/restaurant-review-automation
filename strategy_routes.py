@@ -2598,6 +2598,25 @@ def _cross_training_defaults(restaurant_id) -> dict:
     return {r: int(round(_sq.cross_training_target_for(r) * 100)) for r in sorted(roles)}
 
 
+def _criticality_payload(restaurant_id, r) -> dict:
+    """{role_criticality: the owner's weights, criticality_defaults: {role:
+    stated default} for the roles this restaurant schedules,
+    criticality_bounds: [lo, hi]} — what a blank weight means and the range
+    a weight may take (schedule_objective)."""
+    import schedule_objective as _sobj
+    import schedule_rules as _sr
+    roles = set()
+    try:
+        import staff_settings as _ss
+        roles |= {(e.get("role") or "").strip() for e in (_ss.roster(restaurant_id) or [])}
+    except Exception:
+        pass
+    roles.discard("")
+    return {"role_criticality": _sr._load_json(getattr(r, "role_criticality_json", None), {}) or {},
+            "criticality_defaults": {x: round(_sobj.default_criticality(x), 2) for x in sorted(roles)},
+            "criticality_bounds": list(_sobj.CRITICALITY_BOUNDS)}
+
+
 import json as _j_ks
 
 
@@ -2698,6 +2717,11 @@ def _do_compliance_get(u):
             # out uses the default shown beside it (shift_quality).
             "role_cross_training": _sr._load_json(getattr(r, "role_cross_training_json", None), {}),
             "cross_training_defaults": _cross_training_defaults(_rid(u)),
+            # How hard each role is to run without — the owner's weights
+            # (POST {role_criticality}), the stated default beside each of
+            # the roster's roles, and the bounds (blind re-audit 10/11/26
+            # LOGIC-24; the iOS rules screen and the web read the same).
+            **_criticality_payload(_rid(u), r),
             "cross_training_default": int(round(__import__("shift_quality").CROSS_TRAINING_DEFAULT * 100)),
             "trim_to_budget": bool(int(getattr(r, "trim_to_budget", 1) or 0)),
             # Dining sections: the most servers on the floor at once
