@@ -143,7 +143,9 @@ def test_each_half_hour_of_service_needs_its_share_of_the_usual_crew():
     needs = sc.half_hour_needs(curve, {"Server": 4}, 15 * 60, 24 * 60)
     assert 17 * 60 not in needs                           # well off the peak: the floors hold there
     assert needs[19 * 60] == {"Server": 3}                # the peak: 75% of the usual four
-    assert needs[17 * 60 + 30] == {"Server": 2}
+    # 3 x its share of the peak is 1.1 people: off the peak a fraction rounds
+    # at the newsvendor fractile, not up (blind re-audit 10/11/26 LOGIC-16)
+    assert needs[17 * 60 + 30] == {"Server": 1}
     assert max(n["Server"] for n in needs.values()) <= 3  # never more than the peak asks
     assert sc.half_hour_needs(curve, {}, 0, 1440) == {} and sc.half_hour_needs({}, {"Server": 4}, 0, 1440) == {}
 
@@ -158,7 +160,7 @@ def test_the_score_judges_the_climb_into_the_rush_not_only_the_peak():
     assert out["score"] < 100
     gap = out["facts"]["gaps"]["Server"]
     assert gap["from_curve"] and gap["worst_at"] in ("5:30pm", "6:00pm")
-    assert out["facts"]["half_hour_needs"]["Server"][0] == ["5:30pm", 2]
+    assert out["facts"]["half_hour_needs"]["Server"][0] == ["5:30pm", 1]       # rounded, not ceiled (LOGIC-16)
     assert "read to the half hour" in " ".join(out["weaknesses"])
 
 
@@ -186,9 +188,9 @@ def test_the_prompt_carries_the_half_hour_needs_compactly():
     rows = req.shift_requirements([SAT], typical_headcount={("Saturday", "night"): {"Server": 4}},
                                   demand_curve=curve, close_times={"Saturday": "11:00pm"})
     night = next(r for r in rows if r["daypart"] == "night")
-    assert night["half_hours"]["Server"][0] == (17 * 60 + 30, 2)
+    assert night["half_hours"]["Server"][0] == (17 * 60 + 30, 1)            # rounded, not ceiled (LOGIC-16)
     block = req.requirements_block(rows)
-    assert "by the half hour: Server 2 from 5:30pm, 3 from 6:30pm" in block
+    assert "by the half hour: Server 1 from 5:30pm, 2 from 6:00pm, 3 from 6:30pm" in block   # LOGIC-16
     # What "by the half hour" means is said once, in the standing
     # instructions every call shares (C1, PR-26).
     import schedule_prompt

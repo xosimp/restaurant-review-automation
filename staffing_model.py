@@ -62,6 +62,8 @@ from datetime import date, timedelta
 
 import models as _models_mod
 from models import DB_PATH
+from staffing_curve import round_need as _round_need
+
 import schedule_time as _stime_scope
 
 SLOT = 30
@@ -683,7 +685,9 @@ def needs(model, weekday, part, ratios: dict, typical_roles: dict, concurrent_ro
             if sh < MIN_SLOT_RATIO * peak_share:
                 continue
             wt = float(w["total"]) * ratio * sh
-            need = max(fixed, int(math.ceil(wt / (float(std) * 0.5) - 1e-9)), 1)
+            # the rush rounds up, every other half hour at the newsvendor
+            # fractile (staffing_curve.round_need, LOGIC-16)
+            need = max(fixed, _round_need(wt / (float(std) * 0.5), at_peak=sh >= peak_share - 1e-12), 1)
             half[t] = need
         if not half:
             continue

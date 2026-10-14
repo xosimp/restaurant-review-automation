@@ -118,14 +118,16 @@ def test_unfilled_is_the_usual_crew_left_unstaffed_and_a_busy_days_hole_costs_mo
     assert need[(WEEK[0], 660, "server")] == 1 and need[(WEEK[4], 660, "server")] == 2
     values, pricing = sb._slot_values(spec, need)
     assert pricing in ("day_sales_per_needed_person_half_hour", "schedule_objective")
-    if pricing != "schedule_objective":
-        assert values[(WEEK[4], 660, "server")] > values[(WEEK[0], 660, "server")]
+    assert values[(WEEK[4], 660, "server")] > values[(WEEK[0], 660, "server")]
     # the floors stand in when there is no history, and no sales means no dollar figure
     z = sb._spec("z", "Z", "unit", [("A", "Server", {})], [], {d: "11:00am" for d in sb.DAYS},
                  {d: "1:00pm" for d in sb.DAYS}, {}, floors={"Server": {"morning": 2, "night": 1}})
     zn = sb._need(z, WEEK)
     assert zn[(WEEK[0], 660, "server")] == 2 and len(zn) == 7 * 4
-    assert sb._slot_values(z, zn) == ({}, "no_sales_on_file")
+    # one objective (contract #1): a hole is priced at the stated rate whether
+    # or not sales are on file
+    zv, zp = sb._slot_values(z, zn)
+    assert zp == "schedule_objective" and zv and all(v > 0 for v in zv.values())
 
 
 def test_the_gate_reads_each_invariant():
@@ -189,11 +191,6 @@ def test_the_pipeline_carries_no_name_from_a_removed_one_client_rule():
 # fix makes it hold. Strict: a fix that makes one pass fails here until the
 # entry is removed — the gate only ever tightens.
 KNOWN = {
-    ("daypart_limited", "solver", "no_long_shifts"): "STRESS-1 (S): 11-12h lunch-to-close doubles",
-    ("daypart_limited", "solver", "nobody_starved"): "STRESS-2 (S): capacity ignores dayparts",
-    ("qsr_teens", "solver", "no_long_shifts"): "STRESS-1 (S): 11-12h doubles",
-    ("qsr_teens", "solver", "usual_days"): "STRESS-15 (S): the first solver draft ignores usual days",
-    ("qsr_teens", "solver", "nobody_starved"): "STRESS-6 (S): teens lose their hours to doubles and 4h shapes",
 }
 
 

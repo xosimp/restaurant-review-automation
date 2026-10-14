@@ -40,6 +40,7 @@ import schedule_time as _stime
 SLOT = 30                    # minutes in one requirement slot
 PEAK_SHARE = 0.75            # share of the usual crew the busiest half hour needs
 MIN_SLOT_RATIO = 0.3         # a half hour under this share of the peak adds no curve need
+NEED_ROUND_FRACTILE = 0.5    # off the peak, a fraction of a person past this share is one more person
 INTERPOLATED_NOTE = "interpolated to the half hour from hourly sales"
 
 
@@ -140,10 +141,22 @@ def half_hour_needs(curve: dict, typical: dict, lo: int, hi: int, peaks: dict = 
                 continue
             p = low_peaks.get(role.lower())
             top = float(p) if p else PEAK_SHARE * n
-            need[role] = max(1, int(math.ceil(top * ratio - 1e-9)))
+            need[role] = max(1, round_need(top * ratio, at_peak=ratio >= 1.0 - 1e-9))
         if need:
             out[m] = need
     return out
+
+
+def round_need(x: float, at_peak: bool = False) -> int:
+    """People for a fractional need: the busiest half hour rounds UP (the
+    rush is never planned short), every other half hour at the newsvendor
+    fractile NEED_ROUND_FRACTILE — an extra person only where more than that
+    share of one is needed (blind re-audit 10/11/26 LOGIC-16: ceil on every
+    half hour put about half a person too many of every role on each
+    shoulder, and the budget could not take it back)."""
+    if at_peak:
+        return int(math.ceil(x - 1e-9))
+    return int(math.floor(x + (1.0 - NEED_ROUND_FRACTILE) + 1e-9))
 
 
 def capped_role(role, cap_roles, families=None) -> bool:

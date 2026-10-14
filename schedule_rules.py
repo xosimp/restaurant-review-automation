@@ -1505,6 +1505,18 @@ class Constraints:
     # last weeks): what closer_need holds each role's closer to (RULES-6).
     close_roles: set = field(default_factory=set)
     early_close_roles: set = field(default_factory=set)
+    # How long each role family's last person stays past the close, and how
+    # early its first comes in before the open, as its punches show (else
+    # schedule_objective's stated defaults) — the close cap's default where
+    # the owner set nothing for the role, so no role is hard-capped at the
+    # close by default (blind re-audit 10/11/26 LOGIC-11). {family: minutes}.
+    learned_stays: dict = field(default_factory=dict)
+    learned_leads: dict = field(default_factory=dict)
+    # The owner's role weights for the solver (restaurants.role_criticality_
+    # json, {role or family: weight}) and who works doubles (staff settings'
+    # doubles: {key: True/False}; absent = their own history decides).
+    role_criticality: dict = field(default_factory=dict)
+    doubles_ok: dict = field(default_factory=dict)
     section_cap: int = 0
     role_floors: dict = field(default_factory=dict)
     open_times: dict = field(default_factory=dict)
@@ -2763,6 +2775,19 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _closers_by_role(c, _people, _flags, chosen)
     except Exception as exc:
         _input_problem(c, "closers", exc)
+    # Each role family's stay past the close and lead before the open, from
+    # the same punches (LOGIC-11), else the stated defaults.
+    try:
+        import schedule_objective as _sobj
+        c.learned_stays, c.learned_leads = _sobj.shoulder_habits(c, _hist)
+    except Exception as exc:
+        _input_problem(c, "close stays", exc)
+    try:
+        c.role_criticality = {str(k).strip(): float(v) for k, v in
+                              (_load_json(getattr(restaurant, "role_criticality_json", None), {}) or {}).items()
+                              if str(k).strip() and v is not None}
+    except (TypeError, ValueError, AttributeError) as exc:
+        _input_problem(c, "role criticality", exc)
     c.role_requirements = {str(k).strip().lower(): {cert_key(x) for x in (v or []) if str(x).strip()}
                            for k, v in (_load_json(getattr(restaurant, "role_requirements_json", None), {}) or {}).items() if k}
     foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
@@ -3544,6 +3569,10 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     # The days they work with no fixed hours (owner, 10/9/26: "any time").
     if st.get("work_days"):
         c.work_days[key] = set(st["work_days"])
+    # Whether they work doubles (LOGIC-19): the owner's word; unset, the
+    # solver reads their own history (schedule_objective.doubles_ok).
+    if st.get("doubles") is not None:
+        c.doubles_ok[key] = bool(st["doubles"])
     # In training (D-16), while it lasts this week.
     t = st.get("trainee") or None
     if isinstance(t, dict) and t.get("target_role"):
@@ -5358,6 +5387,13 @@ def close_cap_minutes(c, row):
         return None
     day = _weekday_of(row.get("date") or "")
     close_m = close_minutes(c, day) if day else None
+    if day:
+        o_24, cl_24 = open_hours(c, day)
+        if o_24 is not None and cl_24 is not None and cl_24 - o_24 >= 23 * 60:
+            # Open around the clock: no close to cap at — a graveyard shift
+            # runs across the turnover (STRESS-4); only the longest shift
+            # past the business day's end bounds it.
+            return cl_24 + int(float((c.compliance or {}).get("max_shift_hours") or 12) * 60)
     if close_m is None:
         return None
     # The larger of the role's allowance and its stay (role_close_caps): a
@@ -5367,9 +5403,18 @@ def close_cap_minutes(c, row):
     role = (row.get("role") or "").strip()
     stay = max(int(role_minutes(buffers, role, getattr(c, "role_families", None)) or 0),
                int(stays.get(c.family(role)) or 0))
+    # Where the owner set nothing for the role, how long its last person
+    # really stays (its punches, else the stated default — LOGIC-11): no
+    # role is hard-capped at the close by default. An owner's setting,
+    # even 0, is theirs.
+    learned = getattr(c, "learned_stays", None) or {}
+    if learned and role_minutes(buffers, role, getattr(c, "role_families", None), default=None) is None \
+            and c.family(role) not in stays:
+        stay = max(stay, int(learned.get(c.family(role)) or 0))
     name = (row.get("employee") or "").strip()
     if name and c.manages(name, row.get("date")):
-        stay = max([stay] + [int(v or 0) for v in list(buffers.values()) + list(stays.values())])
+        stay = max([stay] + [int(v or 0) for v in list(buffers.values()) + list(stays.values())
+                             + list(learned.values())])
     return close_m + stay
 
 
@@ -6057,7 +6102,15 @@ def open_hours(c: "Constraints", day: str):
     from the hours on file — a close in the small hours is the next
     morning's. Either end is None when it is not on file."""
     o = parse_minutes((c.open_times or {}).get(day, "") or "")
-    return o, close_minutes(c, day)
+    cl = close_minutes(c, day)
+    # Open around the clock from midnight (12:00am-12:00am, 12:00am-11:59pm):
+    # the business day runs from the small hours' end, so its first hours
+    # are the night before's tail, never a second "open" every midnight —
+    # each date asked for a manager from 12:00am and the plan put every
+    # manager on all seven days (blind re-audit 10/11/26 STRESS-4).
+    if o is not None and cl is not None and cl - o >= 23 * 60 and o < _stime.NIGHT_TAIL_BEFORE:
+        return _stime.NIGHT_TAIL_BEFORE, _stime.NIGHT_TAIL_BEFORE + 24 * 60
+    return o, cl
 
 
 def _day_offset(d: str, base: str):
