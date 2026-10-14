@@ -862,10 +862,16 @@ def frozen_inputs():
     # And one read of the client_data row and one parse of the shift history
     # for the whole generation (models.read_scope — scheduler audit 10/10/26,
     # SCALE-6): every stage re-parsed it, ~25 times per inputs build. The
-    # restaurant row stays live (restaurant_rows=False, P-41).
+    # restaurant row and the roster reads (capabilities, staff settings, the
+    # hand-added team, the held roles) are read once too (blind re-audit
+    # 10/11/26 SCALE-24: 207 reads of the row and 132 of the capabilities in
+    # one 60-person generation) — and read again, once, where the generation
+    # must see what the owner changed while it ran: the rules after the
+    # model (_rules_after_the_model → models.refresh_scope, P-41). A write
+    # through this process drops what it changed (models._note_write).
     import models as _m_frozen
     try:
-        with _m_frozen.read_scope(restaurant_rows=False):
+        with _m_frozen.read_scope(restaurant_rows=True, roster=True):
             yield store
     finally:
         _FROZEN.reset(token)
@@ -4090,6 +4096,9 @@ def solver_explain(got) -> dict:
             # the solve's own record, so a redo can be told from noise (STRESS-10)
             "seed": st.get("seed"), "budget": st.get("budget"), "phases": st.get("phases"),
             "wall_capped": bool(st.get("wall_capped")), "usual_days": st.get("usual_days"),
+            # CP-SAT's memory bound ended a stage, and how the solves ran:
+            # in a child process, the most memory one took (STRESS-11, SCALE-18)
+            "memory_capped": bool(st.get("memory_capped")), "memory": st.get("memory"),
             "priced": st.get("priced"), "history_weeks": st.get("history_weeks"),
             "terms": {k: {"label": v.get("label"), "count": v.get("count")} for k, v in (got.get("terms") or {}).items()}}
 
@@ -6084,6 +6093,12 @@ def _legal_fills(c, rows, options, date, coverage=True, limit=None) -> tuple:
     return [], refused
 
 
+# The people a top-up gap's shift is offered to, fewest hours first (SCALE-20):
+# each is judged on its day and its person's week, so a 250-person role's
+# whole pool was swept for every gap.
+TOP_UP_CANDIDATES = 40
+
+
 def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget: float,
                        hours_scheduled: float, restaurant_id: int,
                        close_times: dict, role_buffers: dict, constraints=None, scorer_for=None,
@@ -6226,6 +6241,15 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     added_dates, added_by_date = {}, {}
     exhausted = set()
     MAX_ADDS = 100  # hard safety ceiling regardless of gap size
+    # Incremental (blind re-audit 10/11/26 SCALE-20): each day's rows and its
+    # shortfall are read once and re-read only for the day a shift was added
+    # to — every pass re-swept the whole week for every date, and each add's
+    # candidates are judged on that day and that person only
+    # (change_regressions), at most TOP_UP_CANDIDATES of them per gap.
+    day_rows = {}
+    for r in preview_rows:
+        day_rows.setdefault(r.get("date"), []).append(r)
+    short_of = {}
     for _pass in range(MAX_ADDS):
         slots = {}
         for d in sorted(index):
@@ -6236,7 +6260,9 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
             cap_day = 0.25 * float(daily_target_hours.get(d) or 0)
             if cap_day and added_by_date.get(d, 0.0) >= cap_day:
                 continue
-            for (part, key, minute), n in requirement_shortfall(preview_rows, index, d, c, skip).items():
+            if d not in short_of:
+                short_of[d] = requirement_shortfall(day_rows.get(d) or [], index, d, c, skip)
+            for (part, key, minute), n in short_of[d].items():
                 if (d, part, key) in exhausted:
                     continue
                 s = slots.setdefault((d, part, key), {"count": 0, "half": 0, "minutes": []})
@@ -6307,7 +6333,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 and (e not in notes_restricted or _name_key(e) in (c.time_windows or {}))}
         ordered = sorted(pool, key=lambda e: (hours_by_employee.get(e, 0.0),
                                               float((_rel.get(e) or {}).get("no_show_rate") or 0), e))
-        legal, _refused = _legal_fills(c, preview_rows, [(e, dict(probe, employee=e)) for e in ordered],
+        legal, _refused = _legal_fills(c, preview_rows, [(e, dict(probe, employee=e))
+                                                         for e in ordered[:TOP_UP_CANDIDATES]],
                                        target_date, coverage=False)
         if not legal:
             # Nobody legal for this shift: it stays short and the review
@@ -6317,6 +6344,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
         employee, new_row = _fill_pick(scorer, preview_rows, legal)
 
         preview_rows.append(new_row)
+        day_rows.setdefault(target_date, []).append(new_row)
+        short_of.pop(target_date, None)
         hours_added += hrs
         added_dates[target_date] = added_dates.get(target_date, 0) + 1
         added_by_date[target_date] = added_by_date.get(target_date, 0.0) + hrs
@@ -6582,8 +6611,7 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
             if scorer is not None and len(legal) > 1:
                 # The tier says which cuts are the discretionary ones; the
                 # score says which of them the floor can best spare.
-                import time as _time_cap
-                if _time_cap.monotonic() - scorer.started <= FILL_SCORE_SECONDS:
+                if not _scorer_spent(scorer):
                     options = [(id(r), [x for x in preview_rows if x is not r] + ([ct] if ct is not None else []))
                                for r, ct in legal]
                     key, _val = scorer.best(options)
@@ -6731,10 +6759,22 @@ def _daypart_windows(constraints, day_name: str) -> list:
 # its own rules allow, the one that costs the week the least Shift Quality.
 # The pass's order still says which options are on the table and breaks a
 # tie; the score only chooses among them. At most this many options are
-# scored per choice, and past FILL_SCORE_SECONDS a pass goes back to its
-# own order, so a 250-person week never waits on it.
+# scored per choice, and once a scorer has read FILL_SCORE_WORK rows (all
+# of a generation's scorers FILL_SCORE_TOTAL_WORK — shift_quality.
+# LocalScorer.work) a pass goes back to its own order, so a 250-person week
+# never waits on it. Rows read, never seconds: past a wall-clock budget the
+# same week picked different people on a busy box (blind re-audit 10/11/26
+# SCALE-15). Sized at the old 6 s / 24 s: a scorer reads ~100k rows a second
+# on an M-series core (measured 10/14/26: 60 people 18k rows in 0.17 s, 250
+# people 81k rows in 0.79 s — both far under it).
 FILL_SCORE_CANDIDATES = 6
-FILL_SCORE_SECONDS = 6.0
+FILL_SCORE_WORK = int(os.getenv("SCHEDULE_FILL_SCORE_WORK", "600000"))
+FILL_SCORE_TOTAL_WORK = int(os.getenv("SCHEDULE_FILL_SCORE_TOTAL_WORK", "2400000"))
+
+
+def _scorer_spent(scorer) -> bool:
+    """Whether a pass's scorer has read its FILL_SCORE_WORK rows."""
+    return int(getattr(scorer, "work", 0) or 0) > FILL_SCORE_WORK
 
 
 def _pass_scorer(restaurant_id, result, signals=None, weights=None):
@@ -6743,7 +6783,6 @@ def _pass_scorer(restaurant_id, result, signals=None, weights=None):
     they cannot be read. Each scorer re-scores only the dates a move
     touches, so choosing between six options costs a fraction of one
     whole-week score."""
-    import time as _time
     import shift_quality as _sqp
     try:
         if signals is None:
@@ -6752,16 +6791,17 @@ def _pass_scorer(restaurant_id, result, signals=None, weights=None):
         print(f"[schedule] score-aware passes unavailable: {_sx}")
         return None
     profiles = result.get("shift_profiles") or None
-    t0 = _time.monotonic()
+    made = []
 
     def scorer_for(rows):
-        if _time.monotonic() - t0 > FILL_SCORE_SECONDS * 4:
-            return None                   # the passes as a whole are out of time
+        if sum(int(getattr(x, "work", 0) or 0) for x in made) > FILL_SCORE_TOTAL_WORK:
+            return None                   # the passes as a whole have read their rows
         try:
             sc = _sqp.LocalScorer(rows, profiles=profiles, weights=weights, **signals)
         except Exception as _lx:
             print(f"[schedule] local scorer failed: {_lx}")
             return None
+        made.append(sc)
         return sc
     return scorer_for
 
@@ -6772,8 +6812,7 @@ def _fill_pick(scorer, rows, legal):
     there is no scorer, one option, or the pass is out of time."""
     if scorer is None or len(legal) < 2:
         return legal[0]
-    import time as _time
-    if _time.monotonic() - scorer.started > FILL_SCORE_SECONDS:
+    if _scorer_spent(scorer):
         return legal[0]
     key, _val = scorer.best([(k, rows + [row]) for k, (_e, row) in enumerate(legal)])
     return legal[key] if key is not None else legal[0]
@@ -8446,14 +8485,23 @@ def _reconcile_to_roster(signals: dict, c=None, restaurant_id=None) -> None:
 # eight editors at once every drag missed. Now they are keyed on
 # models.schedule_inputs_version (it moves the moment anything they were read
 # from moves), so a save re-uses them when nothing changed and what is stored
-# is still never judged on stale inputs; the store is an LRU sized in rows
-# (STUDIO_CACHE_BUDGET_ROWS — a 1,100-row week weighs what it holds), at most
+# is still never judged on stale inputs; the store is an LRU, at most
 # STUDIO_CACHE_PER_RESTAURANT weeks per restaurant, with STUDIO_CACHE_SECONDS
 # only as a backstop for inputs the version cannot see; and one lock guards
 # it — four request threads mutated it with none.
+#
+# Sized in BYTES since the blind re-audit (10/11/26 SCALE-22): a budget of
+# 20,000 rows held ~31 weeks of 250 people or ~125 of 60, whatever each
+# weighed — the inputs, the signals, the kept sweep and the scorer, which
+# grows as the editor drags (its dates are re-measured as it fills). Each
+# entry is measured when kept (_deep_bytes) and the least recently used go
+# until the store fits STUDIO_CACHE_BUDGET_MB; studio_cache_stats() says
+# how full it is and how often it hits, misses and evicts — the figure to
+# watch before the web tier scales out and the cache moves to a shared
+# store (docs/plans/POSTGRES_AND_WORKERS_PLAN.md).
 
 STUDIO_CACHE_SECONDS = float(os.getenv("STUDIO_CACHE_SECONDS", "900"))
-STUDIO_CACHE_BUDGET_ROWS = int(os.getenv("STUDIO_CACHE_BUDGET_ROWS", "20000"))
+STUDIO_CACHE_BUDGET_MB = float(os.getenv("STUDIO_CACHE_BUDGET_MB", "512"))
 STUDIO_CACHE_PER_RESTAURANT = int(os.getenv("STUDIO_CACHE_PER_RESTAURANT", "3"))
 # The dates (in their edited variants) one week's kept scorer holds.
 STUDIO_SCORER_DATES = 96
@@ -8461,6 +8509,7 @@ import collections as _collections_studio
 _studio_cache = _collections_studio.OrderedDict()
 _studio_live = {}
 _studio_lock = threading.Lock()
+_studio_counts = {"hits": 0, "misses": 0, "evictions": 0}
 
 
 def studio_invalidate(restaurant_id=None) -> None:
@@ -8473,15 +8522,70 @@ def studio_invalidate(restaurant_id=None) -> None:
                 store.pop(k, None)
 
 
+import types as _types_sz
+# not what a kept week holds: code, modules, classes, locks
+_SKIP_SIZING = (type, _types_sz.ModuleType, _types_sz.FunctionType, _types_sz.BuiltinFunctionType,
+                _types_sz.MethodType, type(threading.Lock()), type(threading.RLock()))
+
+
+def _deep_bytes(obj, max_nodes=500000) -> int:
+    """What `obj` holds, in bytes: sys.getsizeof over everything it reaches
+    (dicts, sequences, objects' attributes), each object once; past
+    `max_nodes` objects the rest is extrapolated from what was counted."""
+    import sys as _sys_b
+    seen, stack, total, n = set(), [obj], 0, 0
+    while stack and n < max_nodes:
+        o = stack.pop()
+        i = id(o)
+        if i in seen or isinstance(o, _SKIP_SIZING):
+            continue
+        seen.add(i)
+        n += 1
+        try:
+            total += _sys_b.getsizeof(o)
+        except Exception:
+            continue
+        if isinstance(o, (str, bytes, int, float, bool)) or o is None:
+            continue
+        if isinstance(o, dict):
+            stack.extend(o.keys())
+            stack.extend(o.values())
+        elif isinstance(o, (list, tuple, set, frozenset)):
+            stack.extend(o)
+        else:
+            d = getattr(o, "__dict__", None)
+            if isinstance(d, dict):
+                stack.append(d)
+            for slot in getattr(type(o), "__slots__", ()) or ():
+                try:
+                    stack.append(getattr(o, slot))
+                except Exception:
+                    pass
+    if stack and n:
+        total = int(total * (1.0 + len(stack) / float(n)))
+    return int(total)
+
+
 def _studio_weight(entry) -> int:
-    return max(50, int(entry.get("rows") or 0))
+    return int(entry.get("bytes") or 0) + int(entry.get("scorer_bytes") or 0)
+
+
+def _studio_fit() -> None:
+    """The least recently used entries go until the store fits
+    STUDIO_CACHE_BUDGET_MB (the lock held); the newest always stays."""
+    budget = STUDIO_CACHE_BUDGET_MB * 1048576.0
+    total = sum(_studio_weight(v) for v in _studio_cache.values())
+    while total > budget and len(_studio_cache) > 1:
+        _k, old = _studio_cache.popitem(last=False)
+        total -= _studio_weight(old)
+        _studio_counts["evictions"] += 1
 
 
 def _studio_put(key, entry, now) -> None:
     """Keep `entry` under `key` (the lock held): this week's older variants
     and anything past STUDIO_CACHE_SECONDS go, the restaurant keeps at most
     STUDIO_CACHE_PER_RESTAURANT weeks, and the least recently used go until
-    the store fits STUDIO_CACHE_BUDGET_ROWS."""
+    the store fits STUDIO_CACHE_BUDGET_MB."""
     for k in [k for k, v in _studio_cache.items()
               if now - v["built"] >= STUDIO_CACHE_SECONDS or k[:3] == key[:3]]:
         _studio_cache.pop(k, None)
@@ -8489,10 +8593,32 @@ def _studio_put(key, entry, now) -> None:
     while len(mine) >= max(1, STUDIO_CACHE_PER_RESTAURANT):
         _studio_cache.pop(mine.pop(0), None)
     _studio_cache[key] = entry
-    total = sum(_studio_weight(v) for v in _studio_cache.values())
-    while total > STUDIO_CACHE_BUDGET_ROWS and len(_studio_cache) > 1:
-        _k, old = _studio_cache.popitem(last=False)
-        total -= _studio_weight(old)
+    _studio_fit()
+
+
+def studio_cache_stats() -> dict:
+    """{"entries", "bytes", "budget_bytes", "hits", "misses", "evictions"}:
+    the Studio cache's fill and traffic in this process (SCALE-22)."""
+    with _studio_lock:
+        return {"entries": len(_studio_cache), "bytes": sum(_studio_weight(v) for v in _studio_cache.values()),
+                "budget_bytes": int(STUDIO_CACHE_BUDGET_MB * 1048576), **dict(_studio_counts)}
+
+
+def _studio_reweigh(prepared) -> None:
+    """Re-measure a kept week's scorer as its dates fill (at 1, 2, 4 ... of
+    them), and fit the store to its budget again."""
+    sc = prepared.get("scorer")
+    if sc is None:
+        return
+    n = len(getattr(sc, "_cache", None) or ())
+    if n < 2 * int(prepared.get("_measured_dates") or 0) or n == int(prepared.get("_measured_dates") or -1):
+        return
+    size = _deep_bytes(sc)
+    with _studio_lock:
+        prepared["scorer_bytes"] = size
+        prepared["_measured_dates"] = max(1, n)
+        if any(v is prepared for v in _studio_cache.values()):
+            _studio_fit()
 
 
 def shifts_stamp(restaurant_id):
@@ -8562,7 +8688,9 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
         hit = _studio_cache.get(key)
         if hit is not None and version is not None and now - hit["built"] < STUDIO_CACHE_SECONDS:
             _studio_cache.move_to_end(key)
+            _studio_counts["hits"] += 1
             return hit
+        _studio_counts["misses"] += 1
     import models as _m_studio
     # One read of everything the build reads, shared by the inputs and the
     # signals (SCALE-6/SCALE-8).
@@ -8580,6 +8708,9 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     entry = {"inputs": inputs, "signals": signals, "weights": weights, "built": now,
              "sweep": _rules.IncrementalSweep(c) if c is not None else None, "scorer": None,
              "lock": _threading.Lock(), "rows": len(rows or [])}
+    # what it holds, in bytes — the week's rows too, which the kept sweep
+    # and scorer hold copies of (SCALE-22)
+    entry["bytes"] = _deep_bytes((inputs, signals, weights, entry["sweep"], rows))
     if version is not None:
         with _studio_lock:
             _studio_put(key, entry, now)
@@ -8603,6 +8734,24 @@ def in_restaurant_dayparts(fn):
 # The Studio's kept inputs and its prepared week read the restaurant's own
 # boundary too (BUGSGEN-12): its quick passes and scores ran at 3pm.
 studio_prepared = in_restaurant_dayparts(studio_prepared)
+
+
+# The what-if's bound on a request thread (blind re-audit 10/11/26
+# SCALE-21): its sixty whole-week evaluations took 98 s on a 250-person
+# week in the Studio — a request thread, one of gunicorn's four, held for a
+# minute and a half. On a request it stops at STUDIO_WHAT_IF_SECONDS and says
+# so (`cut_short`; the verdict speaks only of what was tried); a generation
+# — no request — keeps its deterministic sixty.
+STUDIO_WHAT_IF_SECONDS = float(os.getenv("STUDIO_WHAT_IF_SECONDS", "8"))
+
+
+def what_if_seconds():
+    """STUDIO_WHAT_IF_SECONDS inside a Flask request, else None (no bound)."""
+    try:
+        from flask import has_request_context
+        return STUDIO_WHAT_IF_SECONDS if has_request_context() else None
+    except Exception:
+        return None
 
 
 @in_restaurant_dayparts
@@ -8646,7 +8795,8 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
     if quality.get("checked") and not what_if.get("on_demand"):
         try:
             what_if = _sq.compare_candidates(rows, profiles=profiles, weights=weights,
-                                             rule_constraints=result.get("constraints"), **signals)
+                                             rule_constraints=result.get("constraints"),
+                                             max_seconds=what_if_seconds(), **signals)
             # The engine reports what a better arrangement WOULD have been;
             # it does not silently rewrite the schedule the owner is about
             # to read. A swap the manager did not ask for, applied without
@@ -8779,6 +8929,7 @@ def _score_prepared(restaurant_id, rows, result, prepared, extra, profiles) -> t
                                                 if k not in ("flagged", "hard_breaches")})
     quality = prepared["scorer"].evaluate(rows, flagged=signals.get("flagged") or set(),
                                           hard_breaches=signals.get("hard_breaches") or {})
+    _studio_reweigh(prepared)
     return quality, signals, weights
 
 
@@ -9491,7 +9642,11 @@ def _gate_fill_skip(result, clock):
     and the model's rewrite after it (GATE_MIN_MODEL_SECONDS) do not both fit
     the job's model time left. Either way the rewrite goes first."""
     rep = result.get("repair") or {}
-    if rep.get("converged") and not rep.get("skipped"):
+    # A search the clock or the memory bound cut short counts like one that
+    # did not run: a second pass may finish it (searches are never skipped
+    # for time since SCALE-15; `skipped` stays for drafts saved before).
+    cut = (rep.get("emergency") or {}).get("searches") or (rep.get("emergency") or {}).get("memory")
+    if rep.get("converged") and not rep.get("skipped") and not cut:
         return "converged"
     if clock is not None and clock.model_seconds_left() < GATE_MIN_MODEL_SECONDS + _gate_fill_seconds(result):
         return "time"
@@ -9562,13 +9717,17 @@ def sq_demand_rank(shift: dict) -> int:
 # or the backtracking solver's work clock (schedule_solver.WorkClock), the
 # optimizer on evaluations (REPAIR_OPTIMIZER_EVALUATIONS across the
 # generation's cycles). The wall clock is only the EMERGENCY cap:
-# REPAIR_MAX_SECONDS for the loop and the job's own clock less
-# REPAIR_RESERVE_SECONDS (RepairContext.search_seconds) for each search. When
-# it fires — a search skipped (`repair.skipped`), a search cut short or the
-# loop stopped (`repair.emergency`) — the review says so
-# (repair_emergency_line): the same week generated under load used to skip the
-# solver or the optimizer, or hand them less time, and ship a different week
-# with nothing said.
+# REPAIR_MAX_SECONDS for the loop's cycles, and for each search the job's own
+# clock less REPAIR_RESERVE_SECONDS but never less than
+# REPAIR_SEARCH_RESERVE_SECONDS (RepairContext.search_seconds): the searches'
+# time is reserved ahead of the Python stages, so however long those took a
+# search still runs to its work budget. A search is never skipped for time
+# (blind re-audit 10/11/26 SCALE-15: under a 3x slowdown the same 250-person
+# week shipped without the solver or the optimizer in 3 of 3 runs). When the
+# cap does fire — a search cut short by the clock or by CP-SAT's memory
+# bound, or the loop stopped (`repair.emergency`) — the review says so
+# (repair_emergency_line) and the platform check counts it
+# (ops.schedule_solve_capped).
 #
 # Stage order effects, deliberate and pinned (tests/test_sf10_c2_budget.py):
 # a stage ranked lower never undoes a higher one's gain (_judge); within the
@@ -9582,9 +9741,10 @@ REPAIR_MAX_CYCLES = 4
 REPAIR_MAX_SECONDS = 120.0
 # What the job's clock keeps back for the score, the what-if and the save.
 REPAIR_RESERVE_SECONDS = 75.0
-# Below this much emergency headroom the solver and the optimizer sit a cycle
-# out (said in `repair.skipped`); the hard-rule stages always run.
-REPAIR_MIN_SEARCH_SECONDS = 3.0
+# The wall clock each search is always allowed, whatever the Python stages
+# before it took (SCALE-15): their deterministic budgets end them long before
+# it on any ordinary box — the 250-person re-solve takes ~6 s.
+REPAIR_SEARCH_RESERVE_SECONDS = 90.0
 
 # (key, rank, what it is, what is left to check when it does not run). The
 # order is the order a cycle runs them in.
@@ -9733,8 +9893,10 @@ class RepairContext:
         # runs in — evaluations, its deterministic budget (ARCH-26); seconds
         # kept for the timings (P-24).
         self.search_spent = {}
-        # The searches the wall clock (the emergency cap) cut short (ARCH-26).
+        # The searches the wall clock (the emergency cap) cut short (ARCH-26),
+        # and those CP-SAT's memory bound ended (STRESS-11).
         self.wall_capped = []
+        self.memory_capped = []
         # Why a row nobody could take was left (apply_fixes), by person,
         # date and kind — the final review's `unfixed` reads it.
         self.unfixed_why = {}
@@ -9759,17 +9921,17 @@ class RepairContext:
         return time.monotonic() - self.started
 
     def search_seconds(self) -> float:
-        """What the loop may still spend: its own bound, and the job's clock
-        less what the score and the save need."""
-        left = self.max_seconds - self.loop_seconds()
-        if self.clock is not None:
-            left = min(left, self.clock.seconds_left() - REPAIR_RESERVE_SECONDS)
-        return max(0.0, left)
+        """The wall-clock cap a search runs under — an emergency cap only,
+        its work budget decides the answer: what the job's clock has left
+        less what the score and the save need, never less than
+        REPAIR_SEARCH_RESERVE_SECONDS, and never shortened by the seconds the
+        loop's other stages took (blind re-audit 10/11/26 SCALE-15)."""
+        return max(REPAIR_SEARCH_RESERVE_SECONDS, self.emergency_seconds())
 
     def emergency_seconds(self) -> float:
         """What the job's clock has left less what the score and the save
         need (no clock: the loop's configured bound, a constant — never the
-        seconds elapsed) — the only reason a search is skipped."""
+        seconds elapsed)."""
         if self.clock is None:
             return float(self.max_seconds)
         return max(0.0, self.clock.seconds_left() - REPAIR_RESERVE_SECONDS)
@@ -10240,6 +10402,12 @@ def _stage_solver(rows, x):
         summary["wall_capped"] = True
         if "solver" not in x.wall_capped:
             x.wall_capped.append("solver")
+    if (res.get("stats") or {}).get("memory_capped"):
+        # CP-SAT's memory bound (schedule_cpsat.SOLVE_MEMORY_MB) ended it:
+        # reported like the clock, never silent (STRESS-11)
+        summary["memory_capped"] = True
+        if "solver" not in x.memory_capped:
+            x.memory_capped.append("solver")
     print(f"[schedule] solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
           f"{res.get('after_score')} kept={summary['kept']} ({summary['seconds']}s)")
     return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
@@ -10414,15 +10582,10 @@ def repair_week(rows, x: RepairContext) -> dict:
             if key in _REPAIR_ON_CHANGE and ledger.setdefault("solved_sig", {}).get(key) == \
                     tuple(sorted(map(_full_sig, state))):
                 continue
-            # Skipped only when the job's own clock is nearly out (the
-            # emergency), never because the loop's wall-clock bound ran low:
-            # that read decided whether a second solver cycle ran, so the same
-            # inputs drafted different weeks (blind re-audit 10/11/26
-            # STRESS-10). Each search has its own deterministic work budget.
-            if key in _REPAIR_SEARCHES and x.emergency_seconds() < REPAIR_MIN_SEARCH_SECONDS:
-                if not any(s["stage"] == key for s in ledger["skipped"]):
-                    ledger["skipped"].append({"stage": key, "cycle": cycle, "why": "time"})
-                continue
+            # A search is never skipped for time (blind re-audit 10/11/26
+            # STRESS-10, SCALE-15): each runs on its own deterministic work
+            # budget with its wall time reserved (search_seconds); the clock
+            # only caps a runaway, and that is reported (emergency).
             ran.add(key)
             state, prof, outcome = _run_stage(key, state, prof, x, ledger)
             if key in _REPAIR_ON_CHANGE:
@@ -10478,10 +10641,34 @@ def repair_emergency_line(repair: dict) -> str:
     for k in em.get("searches") or []:
         what.append({"solver": "the assignment solver", "optimizer": "the Shift Quality optimizer"}.get(k, k)
                     + " was cut short")
+    for k in em.get("memory") or []:
+        if k not in (em.get("searches") or []):
+            what.append({"solver": "the assignment solver"}.get(k, k) + " stopped at its memory limit")
     if not what:
         return ""
     return ("The server was busy while this draft was checked, so " + "; ".join(what)
             + " — generate again for the full check.")
+
+
+def solve_capped(result) -> list:
+    """["wall:<stage>" | "memory:<stage>"] — each solve of this generation an
+    emergency cap ended rather than its work budget: the draft's solver
+    ("draft"), the repair loop's searches, the loop itself ("loop"). [] on
+    an ordinary run. Saved on the review; ops.schedule_solve_capped alerts
+    on the rate (blind re-audit 10/11/26 SCALE-15, SCALE-16)."""
+    out = []
+    solver = ((result or {}).get("draft_source") or {}).get("solver") or {}
+    if isinstance(solver, dict):
+        if solver.get("wall_capped"):
+            out.append("wall:draft")
+        if solver.get("memory_capped"):
+            out.append("memory:draft")
+    em = ((result or {}).get("repair") or {}).get("emergency") or {}
+    if em.get("loop"):
+        out.append("wall:loop")
+    out += [f"wall:{k}" for k in em.get("searches") or []]
+    out += [f"memory:{k}" for k in em.get("memory") or []]
+    return out
 
 
 def post_model_rows(rows, ctx, restaurant_id=None, gate=True, max_seconds=REPAIR_MAX_SECONDS) -> dict:
@@ -10666,6 +10853,9 @@ def _emergency_of(ledger, x) -> dict:
     capped = list(getattr(x, "wall_capped", None) or [])
     if capped:
         out["searches"] = capped
+    mem = list(getattr(x, "memory_capped", None) or [])
+    if mem:
+        out["memory"] = mem
     return out
 
 
@@ -10685,6 +10875,10 @@ def _rules_after_the_model(restaurant_id, result, restaurant=None) -> tuple:
     ones the generation started with stand (said, P-17)."""
     before = result.get("constraints")
     fresh = None
+    # what the generation froze of the restaurant and its roster is read
+    # again now, once (SCALE-24 keeps P-41)
+    import models as _m_p41
+    _m_p41.refresh_scope(restaurant_id)
     try:
         fresh = _rules.build_constraints(restaurant_id, result.get("week_dates", []), result.get("week_days", []),
                                          restaurant)

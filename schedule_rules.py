@@ -1400,8 +1400,16 @@ def trading_day(day, open_times=None, close_times=None, trading=None) -> bool:
 
 
 def _weekday_of(iso) -> str:
+    return _weekday_name_of(str(iso)[:10]) if iso is not None else ""
+
+
+@lru_cache(maxsize=4096)
+def _weekday_name_of(iso: str) -> str:
+    """A date's weekday name, remembered per date: every legality check read
+    it with strptime (188k parses building one 250-person model — blind
+    re-audit 10/11/26 SCALE-20)."""
     try:
-        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
+        return datetime.strptime(iso, "%Y-%m-%d").strftime("%A")
     except (TypeError, ValueError):
         return ""
 
@@ -1904,10 +1912,7 @@ class Constraints:
             for p in ((self.blocked_parts.get(key) or {}).get(date_str) or ()):
                 if p.get("daypart") == daypart:
                     return False, p.get("reason") or LABELS["approved_time_off"]
-        try:
-            day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
-        except (ValueError, TypeError):
-            day = ""
+        day = _weekday_name_of(date_str) if isinstance(date_str, str) else ""
         if day and day in (self.unavailable_days.get(key) or set()):
             return False, LABELS["unavailable_day"]
         choice = (self.daypart_avail.get(key) or {}).get(day)
@@ -2208,8 +2213,7 @@ class Constraints:
         # tail — last week's, a sibling site's, a draft's: a tail row is
         # never the candidate, so one at the same start is an overlap.
         mine = [(r, False) for r in other_rows if self.sweep_key(r.get("employee")) == group]
-        mine += [(r, True) for k, rs_ in self.base_rows.items() if k == self.key(name) or self.linked.get(k, k) == group
-                 for r in (rs_ or [])]
+        mine += [(r, True) for k in self._tail_keys(self.key(name), group) for r in (self.base_rows.get(k) or [])]
         for r, tail in mine:
             if r is candidate or (not tail and r.get("date") == candidate.get("date")
                                   and r.get("shift_start") == candidate.get("shift_start")):
@@ -2235,6 +2239,31 @@ class Constraints:
                 return False, (f"{LABELS['rest_gap']} ({gap:.1f}h, needs {need:g}h"
                                + (" unless they agree to it in writing" if mode == "consent_premium" else "") + ")")
         return True, ""
+
+    def _tail_keys(self, key, group) -> list:
+        """The published tail's keys whose rows rest_ok reads for `key` in
+        sweep group `group` — the key itself and every key linked to the
+        group — in base_rows' own order (the first breach found is the one
+        said). Indexed once per base_rows: rest_ok scanned every person's
+        tail on every call, 22 million key reads building one 250-person
+        model (blind re-audit 10/11/26 STRESS-11/12)."""
+        base = self.base_rows or {}
+        linked = self.linked or {}
+        # the links are few (people at two locations): read whole each call
+        sig = (len(base), tuple(linked.items()))
+        idx = getattr(self, "_tail_index", None)
+        if idx is None or idx[0] is not base or idx[1] != sig:
+            by_group, order = {}, {}
+            for i, k in enumerate(base):
+                order[k] = i
+                by_group.setdefault(linked.get(k, k), []).append(k)
+            idx = (base, sig, None, by_group, order)
+            self._tail_index = idx
+        keys = list(idx[3].get(group) or [])
+        if key in idx[4] and key not in keys:
+            keys.append(key)
+            keys.sort(key=idx[4].get)
+        return keys
 
     def rest_waived(self, name_or_key, date_str, start=None) -> bool:
         """Whether this person agreed in writing to a shorter rest before the

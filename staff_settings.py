@@ -159,7 +159,14 @@ def for_name(restaurant_id, name, db_path=DB_PATH) -> dict:
 
 
 def get_all(restaurant_id, db_path=DB_PATH) -> dict:
-    """{employee_name: settings} for everyone with a row."""
+    """{employee_name: settings} for everyone with a row — read once in a
+    generation's read scope (models.roster_read, SCALE-24)."""
+    import models as _m_rr
+    return _m_rr.roster_read(("staff_settings", int(restaurant_id), db_path),
+                             lambda: _get_all(restaurant_id, db_path))
+
+
+def _get_all(restaurant_id, db_path) -> dict:
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=?", (restaurant_id,)).fetchall()

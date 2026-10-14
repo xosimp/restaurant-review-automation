@@ -3608,7 +3608,17 @@ def remove_role(restaurant_id, name, role, db_path=None, user=None, record=True)
 
 def held_roles(restaurant_id, name=None, db_path=None, today=None) -> list:
     """[{name, role, since, primary, source}] in force (not removed, and its
-    start date reached) — one person's, or everyone's."""
+    start date reached) — one person's, or everyone's; everyone's today read
+    once in a generation's read scope (models.roster_read, SCALE-24)."""
+    if name is None and today is None:
+        import models as _m_rr
+        from datetime import date as _d0
+        return _m_rr.roster_read(("held_roles", int(restaurant_id), _d0.today().isoformat(), db_path),
+                                 lambda: _held_roles(restaurant_id, None, db_path, None))
+    return _held_roles(restaurant_id, name, db_path, today)
+
+
+def _held_roles(restaurant_id, name, db_path, today) -> list:
     from datetime import date as _d, timedelta as _td
     day = (today or _d.today()).isoformat()
     conn = _conn(db_path)

@@ -2064,6 +2064,47 @@ def schedule_input_failures(db_path=None) -> dict:
     return {"n": n, "rates": rates, "over": over, "alert_rate": SCHEDULE_INPUT_FAIL_ALERT}
 
 
+# Solves an emergency cap ended (blind re-audit 10/11/26 SCALE-15, SCALE-16):
+# each schedule generation names on its review the solves the wall clock or
+# CP-SAT's memory bound ended instead of their deterministic work budget
+# (schedule_engine.solve_capped). Such a week may differ from the one the
+# same inputs give on an idle box. Past SCHEDULE_CAPPED_ALERT of the last
+# SCHEDULE_INPUT_SAMPLE generations — with at least SCHEDULE_P95_MIN — the
+# platform check warns: the box is too busy for its generation concurrency
+# (job_queue.group_concurrency) or a tenant outgrew SCHEDULE_CPSAT_MEMORY_MB.
+SCHEDULE_CAPPED_ALERT = 0.05
+
+
+def schedule_solve_capped(db_path=None) -> dict:
+    """{"n", "capped" (generations with any capped solve), "rate", "kinds":
+    {"wall:solver": count, ...}, "over", "alert_rate"} over the recent
+    generations; {"n": 0, ...} with none on file."""
+    import json as _json
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute("SELECT review_json FROM schedule_history WHERE total_seconds IS NOT NULL "
+                            "AND generated_at >= datetime('now', ?) ORDER BY id DESC LIMIT ?",
+                            (f"-{int(SCHEDULE_P95_DAYS)} days", int(SCHEDULE_INPUT_SAMPLE))).fetchall()
+    finally:
+        conn.close()
+    kinds, n, capped = {}, 0, 0
+    for r in rows:
+        n += 1
+        try:
+            got = (_json.loads(r[0] or "null") or {}).get("solve_capped") or []
+        except Exception:
+            got = []
+        if got:
+            capped += 1
+        for k in set(str(x) for x in got if x):
+            kinds[k] = kinds.get(k, 0) + 1
+    rate = round(capped / float(n), 3) if n else 0.0
+    return {"n": n, "capped": capped, "rate": rate, "kinds": dict(sorted(kinds.items())),
+            "over": bool(n >= SCHEDULE_P95_MIN and rate > SCHEDULE_CAPPED_ALERT),
+            "alert_rate": SCHEDULE_CAPPED_ALERT}
+
+
 def _has_urgent(out, state, write_ok=True) -> bool:
     """Whether check_platform_sla's problems include one that cannot wait a
     day: the scheduler dead or stuck, a job past its SLA, the volume almost
@@ -2105,7 +2146,8 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "schedule_generation": None, "schedule_inputs": None, "queue": None, "alerted": False}
+           "schedule_generation": None, "schedule_inputs": None, "schedule_capped": None, "queue": None,
+           "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2198,6 +2240,18 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         + ", ".join(f"{k} ({int(round(gin['rates'][k] * 100))}% of the last {gin['n']})"
                                     for k in gin["over"][:4])
                         + " — each failure is in the job failures (schedule_inputs).")
+    try:
+        out["schedule_capped"] = schedule_solve_capped(db_path)
+    except Exception as e:
+        log.warning(f"schedule solve caps unavailable to the platform check: {e}")
+    gcap = out.get("schedule_capped") or {}
+    if gcap.get("over"):
+        warn_kinds.add("schedule_capped")
+        problems.append(f"Schedule solves are being cut short: {gcap['capped']} of the last {gcap['n']} generations "
+                        f"({int(round(gcap['rate'] * 100))}%) had a solve ended by the wall clock or the memory "
+                        "bound instead of its work budget ("
+                        + ", ".join(f"{k} {v}" for k, v in list(gcap["kinds"].items())[:4])
+                        + ") — lower QUEUE_GENERATION_CONCURRENCY or raise SCHEDULE_CPSAT_MEMORY_MB.")
     # The durable job queue's wait (scheduler audit 10/10/26 SCALE-21): an
     # owner's press waiting longer than QUEUE_WAIT_ALERT_SECONDS to start
     # (p95 over the last hour) is the trigger to move the queue to its own

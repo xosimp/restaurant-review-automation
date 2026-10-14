@@ -1163,12 +1163,279 @@ class _Model:
                 self.m.add_hint(self.x[(u.id, p)], 1 if p == want else 0)
 
 
-def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None, wall_cap=None):
+# ── what one solve may use: work, memory, the process (blind re-audit 10/11/26
+# STRESS-11, STRESS-12, SCALE-16, SCALE-18, SCALE-19) ─────────────────────────
+#
+# Work: a deterministic budget scaled to the model — DET_PER_KVAR
+# deterministic seconds per thousand variables, never below the caller's
+# stated budget (so a small week is solved exactly as before) and never
+# above DET_CAP. A fixed 7.5 s Stage 1 found NO week at 250 people (33k
+# variables: the draft fell back to the backtracking solver) and the repair
+# re-solve's stability phase got 3 s, less than its own presolve, so it
+# never ran. A solve still stops the moment it is proved optimal, and a
+# phase whose warm start already sits at the phase's least possible cost is
+# not solved at all (_at_bound) — that is where a small week's CPU went.
+#
+# Memory: deterministic search on 4 workers loads NINE full subsolvers, each
+# with its own copy of the model and its LP: 1.6-2.0 GB at 250 people. From
+# LEAN_MIN_VARS variables up the portfolio keeps default_lp, max_lp and
+# no_lp (and the LNS workers): measured at 250 people, Stage 1 proved the
+# same optimum in 3.9 s and 0.6 GB (was 6.4 s, 1.6 GB), the stability phase
+# proved 469 in 3.8 s and 0.6 GB where the full portfolio reached 530 in
+# 5.6 s and 1.1 GB. Every large solve runs in a forked child (`run`), so
+# what CP-SAT allocated goes back to the operating system the moment it
+# returns — a 250-person generation used to leave the process at 1.4 GB
+# for good — and CP-SAT's own max_memory_in_mb bounds it at what the
+# process already holds plus SOLVE_MEMORY_MB. A solve the memory bound
+# ended is recorded (`memory_capped`), like one the wall clock ended.
+DET_PER_KVAR = _env_float("SCHEDULE_CPSAT_DET_PER_KVAR", 0.6)
+DET_CAP = _env_float("SCHEDULE_CPSAT_DET_CAP", 120.0)
+LEAN_MIN_VARS = int(_env_float("SCHEDULE_CPSAT_LEAN_MIN_VARS", 15000))
+LEAN_IGNORE = ("core", "max_lp_sym", "pseudo_costs", "quick_restart", "quick_restart_no_lp", "reduced_costs")
+ISOLATE_MIN_VARS = int(_env_float("SCHEDULE_CPSAT_ISOLATE_MIN_VARS", 5000))
+SOLVE_MEMORY_MB = _env_float("SCHEDULE_CPSAT_MEMORY_MB", 2048.0)
+ISOLATE_GRACE_SECONDS = 30.0
+
+
+def work_budget(stated, n_vars) -> float:
+    """The deterministic budget for a model of `n_vars` variables: the
+    stated budget, raised to DET_PER_KVAR per thousand variables, at most
+    DET_CAP (never below what was stated)."""
+    stated = float(stated)
+    want = DET_PER_KVAR * float(n_vars or 0) / 1000.0
+    return round(max(stated, min(want, DET_CAP)), 2)
+
+
+def lean(s, n_vars) -> None:
+    """The memory-bounded portfolio on a large model (LEAN_MIN_VARS)."""
+    if not n_vars or n_vars < LEAN_MIN_VARS:
+        return
+    for name in LEAN_IGNORE:
+        s.parameters.ignore_subsolvers.append(name)
+
+
+def isolation() -> str:
+    """"fork" (the default where the OS has fork): a large solve runs in a
+    child process; "off" (SCHEDULE_CPSAT_ISOLATE=0): in this process."""
+    v = str(os.getenv("SCHEDULE_CPSAT_ISOLATE", "fork") or "fork").strip().lower()
+    if v in ("0", "off", "false", "no", "inline") or not hasattr(os, "fork"):
+        return "off"
+    return "fork"
+
+
+def _rss_mb() -> float:
+    """This process's resident memory now (Linux), else its peak, MB."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1048576.0
+    except Exception:
+        return _peak_mb()
+
+
+def _peak_mb() -> float:
+    try:
+        import resource
+        r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return r / 1048576.0 if os.uname().sysname == "Darwin" else r / 1024.0
+    except Exception:
+        return 0.0
+
+
+def _trim() -> None:
+    """Hand freed heap back to the OS after an in-process solve (glibc)."""
+    try:
+        import ctypes
+        import ctypes.util
+        name = ctypes.util.find_library("c")
+        if name and "libc.so" in name:
+            ctypes.CDLL(name).malloc_trim(0)
+    except Exception:
+        pass
+
+
+_RESPONSE_FIELDS = ("objective_value", "best_objective_bound", "deterministic_time", "wall_time", "user_time",
+                    "num_conflicts", "num_branches", "num_booleans")
+
+
+def _answer(status, solution, fields=None, params=None):
+    """A CpSolver holding a response built here — a forked child's answer,
+    or a phase proved at its bound with no search — read exactly like one
+    that solved in this process (value, boolean_value, objective_value,
+    status_name, response_proto)."""
+    import ortools.sat.python.cp_model_helper as _cmh
+    resp = _cmh.CpSolverResponse()
+    resp.status = _cmh.CpSolverStatus(int(status))
+    if solution:
+        resp.solution.extend([int(v) for v in solution])
+    for k, v in (fields or {}).items():
+        if v is not None:
+            setattr(resp, k, v)
+    s = _cp.CpSolver()
+    if params is not None:
+        s.parameters.copy_from(params)
+    s._CpSolver__response = resp
+    return s
+
+
+def run(s, model):
+    """s.solve(model), with what it uses bounded (see the block above): a
+    model of ISOLATE_MIN_VARS variables or more in a forked child; CP-SAT's
+    memory bound at what this process holds plus SOLVE_MEMORY_MB. The
+    answer is the same either way — the same model and parameters, a
+    deterministic search. `s.sp_info` says how it ran: {"isolated",
+    "peak_mb", "memory_capped", "note"}."""
+    n_vars = len(model.proto.variables)
+    limit = int(_rss_mb() + SOLVE_MEMORY_MB)
+    s.parameters.max_memory_in_mb = limit
+    if isolation() == "fork" and n_vars >= ISOLATE_MIN_VARS:
+        got = _run_forked(s, model, limit)
+        if got is not None:
+            return got
+    st = s.solve(model)
+    peak = _peak_mb()
+    info = dict(getattr(s, "sp_info", None) or {})
+    info.update(isolated=False, peak_mb=round(peak, 1), limit_mb=limit,
+                memory_capped=_memory_capped(s, st, peak, limit))
+    s.sp_info = info
+    _trim()
+    return st
+
+
+def _memory_capped(s, st, peak, limit) -> bool:
+    """Whether CP-SAT's memory bound, not its work budget or the clock,
+    ended a solve that did not prove its answer."""
+    if st == _cp.OPTIMAL or not limit:
+        return False
+    try:
+        det = float(s.response_proto.deterministic_time)
+        wall = float(s.response_proto.wall_time)
+    except Exception:
+        return False
+    p = s.parameters
+    return (peak >= 0.9 * limit and det < 0.95 * float(p.max_deterministic_time or 1e18)
+            and wall < 0.95 * float(p.max_time_in_seconds or 1e18))
+
+
+def _run_forked(s, model, limit):
+    """The solve in a forked child: the child inherits the model as it
+    stands (nothing is serialised on the way in), solves, writes back the
+    status, the solution and the statistics, and exits — its memory goes
+    with it. The answer is injected into `s` (_answer) and the status
+    returned. None when the child could not run or died without an answer
+    for any reason but being killed (the caller then solves in this
+    process); a child killed — the OOM killer, or past its wall clock plus
+    ISOLATE_GRACE_SECONDS — is an answerless UNKNOWN, never retried here."""
+    import pickle
+    import select
+    import signal
+    import warnings
+    try:
+        r, w = os.pipe()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            pid = os.fork()
+    except Exception as e:
+        s.sp_info = {"isolated": False, "note": f"could not fork: {e!r}"[:200]}
+        return None
+    if pid == 0:                                    # the child: solve, answer, exit
+        code = 0
+        try:
+            os.close(r)
+            st = s.solve(model)
+            resp = s.response_proto
+            ok = st in (_cp.OPTIMAL, _cp.FEASIBLE)
+            payload = {"status": int(st), "solution": list(resp.solution) if ok else [],
+                       "fields": {k: getattr(resp, k) for k in _RESPONSE_FIELDS}, "peak_mb": _peak_mb()}
+            view = memoryview(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+            while len(view):
+                view = view[os.write(w, view):]
+        except BaseException:
+            code = 1
+        finally:
+            os._exit(code)
+    os.close(w)
+    chunks, killed = [], False
+    deadline = _time.monotonic() + float(s.parameters.max_time_in_seconds or 60.0) + ISOLATE_GRACE_SECONDS
+    try:
+        while True:
+            left = deadline - _time.monotonic()
+            if left <= 0:
+                killed = True
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                break
+            ready, _w, _x = select.select([r], [], [], min(left, 5.0))
+            if not ready:
+                continue
+            b = os.read(r, 1 << 20)
+            if not b:
+                break
+            chunks.append(b)
+    finally:
+        os.close(r)
+        try:
+            _pid, wstatus = os.waitpid(pid, 0)
+        except OSError:
+            wstatus = 0
+    payload = None
+    if chunks:
+        try:
+            payload = pickle.loads(b"".join(chunks))
+        except Exception:
+            payload = None
+    if payload is None:
+        sig = os.WTERMSIG(wstatus) if os.WIFSIGNALED(wstatus) else None
+        if killed or sig == signal.SIGKILL:
+            why = "past its wall clock" if killed else "killed (out of memory?)"
+            ans = _answer(_cp.UNKNOWN, [], params=s.parameters)
+            s._CpSolver__response = ans.response_proto
+            s.sp_info = {"isolated": True, "killed": True, "memory_capped": not killed, "note": "solve " + why,
+                         "limit_mb": limit}
+            return _cp.UNKNOWN
+        s.sp_info = {"isolated": False, "note": f"child ended without an answer (status {wstatus})"}
+        return None
+    ans = _answer(payload["status"], payload["solution"], payload.get("fields"), params=None)
+    s._CpSolver__response = ans.response_proto
+    st = s.response_proto.status
+    peak = float(payload.get("peak_mb") or 0.0)
+    s.sp_info = {"isolated": True, "peak_mb": round(peak, 1), "limit_mb": limit,
+                 "memory_capped": _memory_capped(s, st, peak, limit)}
+    return st
+
+
+def _at_bound(m, hint):
+    """The objective's value at `hint` (a value per variable) when that is
+    also its least possible value over the variables' domains — the phase is
+    then proved optimal at its warm start with no search — else None."""
+    obj = m.proto.objective
+    nv = len(m.proto.variables)
+    if hint is None or len(hint) != nv:
+        return None
+    if obj.scaling_factor not in (0, 1, 0.0, 1.0):
+        return None
+    low = val = float(obj.offset)
+    variables = m.proto.variables
+    for ref, c in zip(obj.vars, obj.coeffs):
+        if ref < 0:
+            return None
+        dom = variables[ref].domain
+        lo, hi = dom[0], dom[len(dom) - 1]
+        low += c * lo if c > 0 else c * hi
+        val += c * hint[ref]
+        if val < low:                   # an infeasible hint
+            return None
+    return int(val) if val == low else None
+
+
+def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None, wall_cap=None, n_vars=0):
     s = _cp.CpSolver()
     det = DETERMINISTIC if deterministic is None else deterministic
     secs = max(0.2, float(max_seconds))
     s.parameters.random_seed = int(seed)
     s.parameters.num_workers = int(workers or WORKERS)
+    lean(s, n_vars)
     if det:
         # Same inputs, same week: a deterministic work budget instead of the
         # wall clock, workers interleaved in a fixed order. The wall clock is
@@ -1206,51 +1473,83 @@ def _phase_values(mdl, solver) -> list:
     return out
 
 
-def _solve_phases(mdl, max_seconds, seed, workers, deterministic, wall_left=None):
+def _solve_phases(mdl, max_seconds, seed, workers, deterministic, wall_left=None, start=None):
     """Solve `mdl` phase by phase (LOGIC-22): each phase minimised with
-    its share of the deterministic budget (PHASE_SHARES; what a phase did
-    not use carries to the next, read from the solver's own deterministic
-    time — so still the same on every run), then held at what it reached
-    while the next one is optimised from that week. (solver, status,
-    [{phase, status, value, seconds}], wall capped, proved, status name);
-    solver None when the first phase found nothing."""
+    its share of the deterministic budget (PHASE_SHARES of work_budget —
+    the stated budget scaled to the model's size; what a phase did not use
+    carries to the next, read from the solver's own deterministic time — so
+    still the same on every run), then held at what it reached while the
+    next one is optimised from that week. A phase whose warm start (`start`,
+    a value per variable, then each phase's answer) already sits at the
+    phase's least possible cost is proved there and not searched
+    (_at_bound) — its whole share carries on. (solver, status, [{phase,
+    status, value, seconds, budget}], wall capped, proved, status name, {how
+    the solves ran: isolated, peak_mb, memory_capped}); solver None when
+    the first phase found nothing."""
     exprs = _phase_exprs(mdl)
     det = DETERMINISTIC if deterministic is None else deterministic
+    n_vars = len(mdl.m.proto.variables)
+    total = work_budget(max_seconds, n_vars) if det else float(max_seconds)
     carry = 0.0
+    hint = list(start) if start is not None and len(start) == n_vars else None
     best, best_st, log, capped, proved, last_name = None, None, [], False, True, "UNKNOWN"
+    runs = {"isolated": False, "peak_mb": 0.0, "memory_capped": False, "budget": total}
     for i, expr in enumerate(exprs):
         if expr is None:
             continue
-        secs = max(0.2, float(max_seconds) * PHASE_SHARES[i] + carry)
+        name = ("rules", "stability", "quality")[i]
+        secs = max(0.2, total * PHASE_SHARES[i] + carry)
         if hasattr(mdl.m, "clear_objective"):
             mdl.m.clear_objective()
         mdl.m.minimize(expr)
+        at = _at_bound(mdl.m, hint) if det else None
+        if at is not None:
+            # proved at the warm start: the least this phase can cost
+            carry = secs
+            log.append({"phase": name, "status": "optimal", "value": at, "seconds": 0.0, "budget": round(secs, 2),
+                        "at_bound": True})
+            mdl.m.add(expr <= at)
+            best = _answer(_cp.OPTIMAL, hint, {"objective_value": float(at), "best_objective_bound": float(at)})
+            best_st = _cp.OPTIMAL
+            last_name = "OPTIMAL"
+            continue
         s = _solver_for(secs, seed=seed, workers=workers, deterministic=deterministic,
-                        wall_cap=wall_left() if wall_left else None)
-        st = s.solve(mdl.m)
+                        wall_cap=wall_left() if wall_left else None, n_vars=n_vars)
+        st = run(s, mdl.m)
+        info = getattr(s, "sp_info", None) or {}
+        runs["isolated"] = runs["isolated"] or bool(info.get("isolated"))
+        runs["peak_mb"] = max(runs["peak_mb"], float(info.get("peak_mb") or 0.0))
+        runs["memory_capped"] = runs["memory_capped"] or bool(info.get("memory_capped"))
+        if info.get("note"):
+            runs.setdefault("notes", []).append(info["note"])
         last_name = s.status_name(st)
         if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
             proved = False
-            log.append({"phase": ("rules", "stability", "quality")[i], "status": last_name.lower(), "value": None,
-                        "seconds": round(s.wall_time, 3)})
+            log.append({"phase": name, "status": last_name.lower(), "value": None,
+                        "seconds": round(s.wall_time, 3), "budget": round(secs, 2)})
             break
         capped = capped or _wall_capped(s, st)
         proved = proved and st == _cp.OPTIMAL
         val = int(round(s.objective_value))
-        log.append({"phase": ("rules", "stability", "quality")[i], "status": last_name.lower(), "value": val,
-                    "seconds": round(s.wall_time, 3)})
+        log.append({"phase": name, "status": last_name.lower(), "value": val,
+                    "seconds": round(s.wall_time, 3), "budget": round(secs, 2)})
         if det:
             try:
                 carry = max(0.0, secs - float(s.response_proto.deterministic_time))
             except Exception:
                 carry = 0.0
         mdl.m.add(expr <= val)
-        mdl.m.clear_hints()
-        for j in range(len(mdl.m.proto.variables)):
-            v = mdl.m.get_int_var_from_proto_index(j)
-            mdl.m.add_hint(v, s.value(v))
+        hint = list(s.response_proto.solution)
+        _set_hints(mdl.m, hint)
         best, best_st = s, st
-    return best, best_st, log, capped, proved, last_name
+    return best, best_st, log, capped, proved, last_name, runs
+
+
+def _set_hints(m, values) -> None:
+    """The model's hint: one value per variable, in proto order."""
+    m.clear_hints()
+    for j, v in enumerate(values):
+        m.add_hint(m.get_int_var_from_proto_index(j), int(v))
 
 
 def usual_week(history_rows, key, family, share=None) -> list:
@@ -1379,21 +1678,28 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     for u in live:
         greedy[u.id] = mdl.greedy.get(u.id)
     first = _fixed_eval(mdl, prob, greedy, seconds=min(5.0, max(1.0, max_seconds * 0.2)))
+    start = None
     if first is not None:
-        mdl.m.clear_hints()
-        for i in range(len(mdl.m.proto.variables)):
-            v = mdl.m.get_int_var_from_proto_index(i)
-            mdl.m.add_hint(v, first.value(v))
+        start = list(first.response_proto.solution)
+        _set_hints(mdl.m, start)
     # The whole deterministic budget, whatever building the model took on the
     # wall clock (ARCH-26: the same inputs, the same week), spent phase by
     # phase — the rule tiers, then stability, then quality, each holding the
     # one before at its optimum (LOGIC-22); what the wall clock has left is
     # only the emergency cap.
-    solver, st, phases, capped, proved, name = _solve_phases(
+    solver, st, phases, capped, proved, name, runs = _solve_phases(
         mdl, max_seconds, seed, workers, deterministic,
-        (lambda: max(0.2, float(wall_cap) - (_time.monotonic() - t0))) if wall_cap else None)
+        (lambda: max(0.2, float(wall_cap) - (_time.monotonic() - t0))) if wall_cap else None, start=start)
+    start = None
     out["wall_capped"] = capped
     out["phases"] = phases
+    # how the solves ran (SP): the deterministic budget the model's size
+    # gave, whether they ran in a child process, the most memory one took
+    # and whether CP-SAT's memory bound ended one
+    out["memory"] = {"isolated": runs["isolated"], "peak_mb": runs["peak_mb"],
+                     "memory_capped": runs["memory_capped"], "notes": runs.get("notes") or []}
+    out["budget"] = runs["budget"]
+    out["variables"] = len(mdl.m.proto.variables)
     out["seed"] = int(seed)
     out["workers"] = int(workers or WORKERS)
     out["seconds"] = round(_time.monotonic() - t0, 3)
@@ -2126,6 +2432,8 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     draft_phases = _phase_values(mdl, draft_eval) if draft_eval is not None else None
     stats = {"engine": "cp-sat", "status": solved["status"], "proved_optimal": solved["proved_optimal"],
              "wall_capped": bool(solved.get("wall_capped")),
+             "memory_capped": bool((solved.get("memory") or {}).get("memory_capped")),
+             "memory": solved.get("memory"), "budget": solved.get("budget"), "phases": solved.get("phases"),
              "seconds": solved["seconds"], "slots": solved.get("slots"), "people": solved.get("people"),
              "cost": solved["objective"], "draft_cost": draft_cost, "bound": solved["bound"],
              "terms": solved["terms"], "infeasible": solved["kept_as_drafted"][:10], "notes": solved["notes"],
@@ -2291,7 +2599,9 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                                 person_rates=ot.get("person_rates"), objective=ctx, exclude=exclude,
                                 wall_cap=wall_left())
     stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat", "seed": int(seed),
-             "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic"}}
+             "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic",
+                        # what each stage's model size raised it to (work_budget)
+                        "shapes_scaled": (shaped["stats"] or {}).get("budget")}}
     # A standby on a busy shift likely to come up short (RM-18, G2's
     # attendance_risk.standby_needed): one more of the role over the
     # daypart's core window, staffed only while the budget has room.
@@ -2318,11 +2628,16 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
         got.setdefault("notes", []).append(f"week not priced: {e!r}")
     stats.update(status=got["status"], proved_optimal=got.get("proved_optimal"), slots=got.get("slots"),
                  people=got.get("people"), objective=got.get("objective"), bound=got.get("bound"),
-                 phases=got.get("phases"), phase_cost=got.get("phase_cost"), wall_capped=got.get("wall_capped"),
+                 phases=got.get("phases"), phase_cost=got.get("phase_cost"),
+                 wall_capped=bool(got.get("wall_capped") or (shaped["stats"] or {}).get("wall_capped")),
+                 memory_capped=bool((got.get("memory") or {}).get("memory_capped")
+                                    or (shaped["stats"] or {}).get("memory_capped")),
+                 memory={"assign": got.get("memory"), "shapes": (shaped["stats"] or {}).get("memory")},
                  workers=got.get("workers"), assign_seconds=got.get("seconds"), build_seconds=got.get("build_seconds"),
                  seconds=round(_time.monotonic() - t0, 3), dollars=got.get("dollars"), notes=got.get("notes"),
                  priced=priced, usual_days=usual_days_kept(list(context_rows or []) + clean, ctx),
                  history_weeks=int((ctx.profile or {}).get("weeks") or 0))
+    stats["budget"]["assign_scaled"] = got.get("budget")
     return {"rows": clean, "unassigned": unassigned, "short": shaped["short"], "assumed": shaped.get("assumed") or [],
             "conflicts": got.get("conflicts") or [], "reasons": got.get("reasons") or [],
             "terms": got.get("terms") or {}, "stats": stats}

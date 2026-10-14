@@ -842,8 +842,21 @@ class _TrackedConnection(sqlite3.Connection):
 
     The C type can't be, and being able to hold a weak reference is what lets
     close_thread_connections() below sweep a connection that leaked without
-    keeping it alive itself.
+    keeping it alive itself. A write through it drops what an open read scope
+    froze of the table it writes (_note_write, SCALE-24).
     """
+
+    def execute(self, sql, *a, **k):
+        _note_write(sql)
+        return super().execute(sql, *a, **k)
+
+    def executemany(self, sql, *a, **k):
+        _note_write(sql)
+        return super().executemany(sql, *a, **k)
+
+    def executescript(self, sql, *a, **k):
+        _note_write(sql)
+        return super().executescript(sql, *a, **k)
 
 
 # Per-thread bag of connections handed out but not yet closed. Weak, so a
@@ -965,6 +978,19 @@ def _taints(sql) -> bool:
     return False
 
 
+def _pragma_touch(conn, sql) -> None:
+    """Mark `conn` for a PRAGMA reset at its next checkout when a borrower
+    wrote foreign_keys or busy_timeout (or ran statements unseen: sql None)."""
+    if sql is not None:
+        t = str(sql).lstrip()[:7].lower()
+        if t != "pragma " and "pragma" not in str(sql).lower():
+            return
+    try:
+        conn._cavnar_pragmas_touched = True
+    except Exception:
+        pass
+
+
 def _real_close(conn):
     try:
         conn.close()
@@ -1022,8 +1048,14 @@ def _checkout(db_path):
                     conn.row_factory = sqlite3.Row
                     conn.text_factory = str
                     conn.isolation_level = ""
-                    conn.execute("PRAGMA foreign_keys=ON")
-                    conn.execute("PRAGMA busy_timeout=30000")
+                    # Re-set only on a connection a borrower may have changed
+                    # them on (_pragma_touch): two statements per checkout,
+                    # ~2,000 a generation, were otherwise spent re-setting
+                    # what nobody touched (blind re-audit 10/11/26 SCALE-24).
+                    if getattr(conn, "_cavnar_pragmas_touched", False):
+                        conn.execute("PRAGMA foreign_keys=ON")
+                        conn.execute("PRAGMA busy_timeout=30000")
+                        conn._cavnar_pragmas_touched = False
                     return conn, key
                 except Exception:
                     _real_close(conn)
@@ -1056,19 +1088,28 @@ class _ConnHandle:
         c = self._live()
         if not self._tainted and _taints(sql):
             self._taint()
+        _pragma_touch(c, sql)
         return c.execute(sql, *a, **k)
 
     def executemany(self, sql, *a, **k):
         c = self._live()
         if not self._tainted and _taints(sql):
             self._taint()
+        _pragma_touch(c, sql)
         return c.executemany(sql, *a, **k)
 
     def executescript(self, sql, *a, **k):
         c = self._live()
         if not self._tainted and _taints(sql):
             self._taint()
+        _pragma_touch(c, sql)
         return c.executescript(sql, *a, **k)
+
+    def cursor(self, *a, **k):
+        # a cursor's statements are not seen here: reset on the next checkout
+        c = self._live()
+        _pragma_touch(c, None)
+        return c.cursor(*a, **k)
 
     def _taint(self):
         self._tainted = True
@@ -1097,9 +1138,6 @@ class _ConnHandle:
     def set_progress_handler(self, *a, **k):
         self._taint()
         return self._live().set_progress_handler(*a, **k)
-
-    def cursor(self, *a, **k):
-        return self._live().cursor(*a, **k)
 
     def commit(self):
         return self._live().commit()
@@ -1160,6 +1198,8 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     # SQLite. SQLite is the default and costs one env read here.
     if db_path == DB_PATH and _db_backend() == "postgres":
         import db_dialect
+        if _note_write not in db_dialect.WRITE_HOOKS:
+            db_dialect.WRITE_HOOKS.append(_note_write)
         return db_dialect.connect()
     if not _pool_enabled():
         conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
@@ -5770,12 +5810,70 @@ _READ_SCOPE = _ctxvars_rs.ContextVar("cavnar_read_scope", default=None)
 
 class _ReadScope(dict):
     """A read_scope's store; `restaurant_rows` says whether get_restaurant
-    is memoised in it."""
-    __slots__ = ("restaurant_rows",)
+    is memoised in it, `roster` whether the roster reads are (roster_read)."""
+    __slots__ = ("restaurant_rows", "roster")
+
+
+# The roster reads a generation freezes (blind re-audit 10/11/26 SCALE-24:
+# per 60-person generation the restaurant row was read 207 times, the
+# capabilities 132, staff_settings 30, the hand-added team 52, the held
+# roles 30 — each a round trip on Postgres). Kept in the scope only when it
+# was opened with roster=True (a generation's frozen_inputs); a write to the
+# table through this process drops the kind (_note_write), and the
+# generation drops them on purpose where it must see the owner's latest
+# (refresh_scope — the rules re-read after the model, P-41).
+_FROZEN_TABLES = {"restaurants": "restaurant", "staff_capabilities": "capabilities",
+                  "staff_settings": "staff_settings", "manual_team_members": "manual_team",
+                  "person_roles": "held_roles"}
+_WRITE_TARGET = None
+
+
+def _note_write(sql) -> None:
+    """A write statement through this process: the read scope's memo of the
+    table it writes goes (only while a scope is open; one regex)."""
+    store = _READ_SCOPE.get()
+    if not store:
+        return
+    global _WRITE_TARGET
+    if _WRITE_TARGET is None:
+        import re as _re_w
+        _WRITE_TARGET = _re_w.compile(r"\s*(?:insert(?:\s+or\s+\w+)?\s+into|replace\s+into|update(?:\s+or\s+\w+)?|"
+                                      r"delete\s+from)\s+\"?([a-z_]+)", _re_w.I)
+    for stmt in str(sql or "").split(";"):
+        m = _WRITE_TARGET.match(stmt)
+        kind = _FROZEN_TABLES.get(m.group(1).lower()) if m else None
+        if kind:
+            for k in [k for k in store if isinstance(k, tuple) and k and k[0] == kind]:
+                store.pop(k, None)
+
+
+def refresh_scope(restaurant_id=None) -> None:
+    """Drop the frozen restaurant row and roster reads (one restaurant's, or
+    all) from the open read scope: the next read is fresh and kept again."""
+    store = _READ_SCOPE.get()
+    if not store:
+        return
+    kinds = set(_FROZEN_TABLES.values())
+    for k in [k for k in store if isinstance(k, tuple) and len(k) > 1 and k[0] in kinds
+              and (restaurant_id is None or k[1] == int(restaurant_id))]:
+        store.pop(k, None)
+
+
+def roster_read(key, fn):
+    """fn() kept for the open read scope when it freezes the roster
+    (read_scope(roster=True)), a deep copy handed out each time — a caller
+    may edit what it gets; else simply fn()."""
+    store = _READ_SCOPE.get()
+    if store is None or not getattr(store, "roster", False):
+        return fn()
+    import copy as _copy_rr
+    if key not in store:
+        store[key] = fn()
+    return _copy_rr.deepcopy(store[key])
 
 
 @_ctxlib_rs.contextmanager
-def read_scope(restaurant_rows=True):
+def read_scope(restaurant_rows=True, roster=False):
     """Memoise reads for the length of the block: get_restaurant (unless
     `restaurant_rows` is False), get_client_data, the parsed shift history
     (_cached_shifts and labor.load_shifts_for_restaurant) and the reads a
@@ -5783,16 +5881,18 @@ def read_scope(restaurant_rows=True):
     store (and its rule). Scoped to ONE unit of work — never a whole job
     loop, which must see a restaurant's row change under it (the reason the
     request memo is request-only). A write through update_restaurant /
-    save_client_data drops what it changed. A generation's scope keeps the
-    restaurant row live (restaurant_rows=False): it runs for minutes, and
-    the rules it re-reads after the model call must see a setting the owner
-    changed meanwhile (P-41)."""
+    save_client_data drops what it changed. `roster` also keeps the roster
+    reads (roster_read: capabilities, staff settings, the hand-added team,
+    the held roles) — a generation's scope (SCALE-24), which re-reads them
+    and the restaurant row where it must see what the owner changed
+    meanwhile (refresh_scope, at the rules after the model — P-41)."""
     store = _READ_SCOPE.get()
     if store is not None:
         yield store
         return
     store = _ReadScope()
     store.restaurant_rows = bool(restaurant_rows)
+    store.roster = bool(roster)
     token = _READ_SCOPE.set(store)
     try:
         yield store
@@ -8426,7 +8526,13 @@ def _clear_capability(restaurant_id, employee_name, attribute, db_path):
 
 def get_capabilities(restaurant_id: int, attribute: str = None,
                      db_path: str = DB_PATH) -> dict:
-    """{employee_name: {attribute: {...}}} for one restaurant."""
+    """{employee_name: {attribute: {...}}} for one restaurant — read once in
+    a generation's read scope (roster_read, SCALE-24)."""
+    return roster_read(("capabilities", int(restaurant_id), attribute, db_path),
+                       lambda: _get_capabilities(restaurant_id, attribute, db_path))
+
+
+def _get_capabilities(restaurant_id, attribute, db_path) -> dict:
     conn = get_conn(db_path)
     sql = ("SELECT employee_name, attribute, score, flag, notes, updated_by, updated_at, authority, via "
            "FROM staff_capabilities WHERE restaurant_id=?")
@@ -9050,6 +9156,11 @@ def remove_manual_team_member(restaurant_id: int, employee_name: str, db_path: s
 
 
 def get_manual_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    return roster_read(("manual_team", int(restaurant_id), "members", db_path),
+                       lambda: _get_manual_team_members(restaurant_id, db_path))
+
+
+def _get_manual_team_members(restaurant_id, db_path) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
@@ -9065,6 +9176,11 @@ def manual_team_added(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """{name: when they were hand-added} — someone added (back) after their
     last shift is not dormant (staff_settings.dormant_people, schedule audit
     10/3/26 E-3)."""
+    return roster_read(("manual_team", int(restaurant_id), "added", db_path),
+                       lambda: _manual_team_added(restaurant_id, db_path))
+
+
+def _manual_team_added(restaurant_id, db_path) -> dict:
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT employee_name, created_at FROM manual_team_members WHERE restaurant_id=?",

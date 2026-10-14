@@ -623,6 +623,10 @@ _PRAGMA = re.compile(r"^\s*PRAGMA\s+(\w+)\s*(?:\(\s*['\"]?(\w+)['\"]?\s*\)|=\s*(
 _BEGIN = re.compile(r"^\s*BEGIN(\s+(DEFERRED|IMMEDIATE|EXCLUSIVE))?(\s+TRANSACTION)?\s*;?\s*$", re.I)
 _TRIGGER = re.compile(r"^\s*(CREATE|DROP)\s+TRIGGER\b", re.I)
 _END = re.compile(r"^\s*(COMMIT|END|ROLLBACK)(\s+TRANSACTION)?\s*;?\s*$", re.I)
+# Called with every statement before it runs (models._note_write: a write
+# drops what an open read scope froze of its table — blind re-audit 10/11/26
+# SCALE-24), as the SQLite connection does.
+WRITE_HOOKS = []
 
 
 class PgConnection:
@@ -714,6 +718,8 @@ class PgConnection:
     def execute(self, sql, params=(), _cursor=None):
         if self._closed:
             raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        for hook in WRITE_HOOKS:
+            hook(sql)
         cur = _cursor or PgCursor(self, None)
         if self._special(sql, cur):
             return cur
