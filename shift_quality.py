@@ -3807,7 +3807,7 @@ def week_preferences(contexts: list) -> DimensionResult | None:
 
 # The overtime premium the week runs up, against the week's hourly pay
 # (schedule audit 10/3/26 SQ-25). Overtime pay starts past `line`
-# (labor.OVERTIME_THRESHOLD_HOURS, 40h) in the payroll week, the hours
+# (schedule_time.OVERTIME_THRESHOLD_HOURS, 40h) in the payroll week, the hours
 # already published in that payroll week included, and costs the half of
 # time-and-a-half — the overtime forecast's own premium. Each 1% of the
 # week's hourly pay spent on premium a same-role teammate with room could

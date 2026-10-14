@@ -3098,3 +3098,57 @@ def merge_into_optimizer(optimizer: dict, solver: dict) -> dict:
                       f"from {before} to {after}. Each is listed with why.")
     opt.setdefault("unresolved", [])
     return opt
+
+
+# What one call's slots are given to be staffed, at most (the solver's own
+# budget on the background job); less when the job's model time is short.
+SHAPE_SOLVE_SECONDS = 12.0
+
+
+def assign_shape_slots(slots, context_rows, constraints, signals=None, weights=None, profiles=None,
+                       roster_roles=None, only_dates=None, max_seconds=SHAPE_SOLVE_SECONDS) -> dict:
+    """Give each shape slot (schedule_output.parse_answer on the "shape"
+    contract: a row with no employee) a person, by schedule_solver over the
+    same rules and objective the repair loop's solver stage uses — never a
+    hard rule traded for score: availability, time off, the roles a person
+    holds, hours and the overtime line, rest, days in a row, a minor's
+    limits, a manager on the floor every minute and each role's closer.
+
+    `context_rows` (every row already on the week — the planned managers,
+    the kept days, what earlier calls wrote) are held exactly as they are
+    and count toward each person's week. `only_dates` limits the solve to
+    the slots' dates (their own by default).
+
+    {"assigned": [rows with a name], "unassigned": [slots nobody can
+    legally work — kept out of the week, never filled illegally], "stats":
+    {status, seconds, slots, infeasible, notes}}. With no rule set nothing
+    is assigned."""
+    ctx = []
+    for r in context_rows or []:
+        x = dict(r)
+        x["_pinned"] = True          # never reassigned (the pinned-rows contract)
+        ctx.append(x)
+    open_rows = []
+    for r in slots or []:
+        x = {k: v for k, v in dict(r).items() if k != "_slot"}
+        x["employee"] = ""
+        x["_open"] = True            # a slot to staff: the solver counts it toward the day's close
+        open_rows.append(x)
+    out = {"assigned": [], "unassigned": [], "stats": {"status": "nothing_to_solve"}}
+    if not open_rows:
+        return out
+    if constraints is None:
+        out["unassigned"] = open_rows
+        out["stats"] = {"status": "no rule set"}
+        return out
+    dates = sorted({r.get("date") for r in open_rows if r.get("date")}) if only_dates is None else list(only_dates)
+    res = solve(ctx + open_rows, constraints, signals=signals, weights=weights, profiles=profiles,
+                        only_dates=dates, max_seconds=max(0.5, float(max_seconds or SHAPE_SOLVE_SECONDS)),
+                        roster_roles=roster_roles, pending=getattr(constraints, "pending_off", None))
+    res.pop("problem", None)
+    rows = res.get("rows") or []
+    for r in rows[len(ctx):]:
+        r = {k: v for k, v in r.items() if k not in ("_pinned", "_open")}
+        (out["assigned"] if (r.get("employee") or "").strip() else out["unassigned"]).append(r)
+    out["stats"] = {k: res.get(k) for k in ("status", "proved_optimal", "seconds", "slots", "infeasible", "notes")}
+    return out

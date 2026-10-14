@@ -960,7 +960,6 @@ def week_review_extras(restaurant_id, rows, constraints, violations=None, qualit
         asks = staffing_signals.applied(asks, rows, merged or None)
     gaps = None
     if getattr(constraints, "stations", None):
-        from schedule_engine import station_report
         gaps = (station_report(rows, constraints, list(constraints.week_dates or [])) or {}).get("gaps")
     return {"unmet": unmet_items(rows, constraints=constraints, violations=violations, quality=quality,
                                  soft_requirements=asks, hours_budget=budget, station_gaps=gaps,
@@ -1659,3 +1658,21 @@ def measured_tokens_per_row(restaurant_id=None, model=None, days=60, db_path=Non
     return {"output_tokens_per_row": round(_median(per_row), 1),
             "answer_chars_per_row": round(_median(chars), 1) if chars else None,
             "calls": len(per_row), "source": "measured"}
+
+
+def station_report(rows: list, constraints, week_dates: list) -> dict:
+    """The week's station assignment as the review and the screens read it:
+    {"stations": [...], "assigned": [{date, employee, shift_start, morning,
+    night}], "gaps": [{date, day, daypart, station}]}, or {} when the
+    restaurant has no stations set."""
+    import kitchen_stations as _ks
+    cfg = getattr(constraints, "stations", None) or {}
+    if not cfg:
+        return {}
+    w = _ks.week(rows, cfg, week_dates)
+    assigned = []
+    for i, parts in sorted(w["stations"].items()):
+        r = rows[i]
+        assigned.append({"date": r.get("date"), "employee": r.get("employee"), "shift_start": r.get("shift_start"),
+                         "role": r.get("role"), "morning": parts.get("morning"), "night": parts.get("night")})
+    return {"stations": cfg["stations"], "assigned": assigned, "gaps": w["gaps"]}

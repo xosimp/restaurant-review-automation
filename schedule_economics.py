@@ -95,7 +95,7 @@ def _minutes(t):
 
 
 def _fmt(m):
-    from schedule_engine import _format_minutes_to_time
+    from schedule_time import fmt_minutes as _format_minutes_to_time
     return _format_minutes_to_time(int(m))
 
 
@@ -304,7 +304,7 @@ def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
     live edit line's — so the saved cost, the reopened cost and an edit's
     delta agree (schedule re-audit 10/4/26 SQ-6): each person's own rate,
     else the role's, else the role's typical; overtime from the 40h line
-    (labor.OVERTIME_THRESHOLD_HOURS) per payroll week, with the hours
+    (schedule_time.OVERTIME_THRESHOLD_HOURS) per payroll week, with the hours
     already published in it (`constraints.base_hours`, `.bucket`); daily
     overtime where it applies; salaried people free (`constraints.salaried`).
     The edit line used to price a salaried GM's extra shift at the blended
@@ -2235,15 +2235,15 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
     if not hourly_profile:
         return rows, []
     import time as _time
-    import schedule_engine as _se
+    import schedule_rules as _sr
     _t0 = _time.monotonic()
     c = constraints
     only = set(only_dates) if only_dates else None
-    index = _se.requirement_index(requirements, c) if requirements else {}
-    skip = _se._will_not_stand(rows, c) if (c is not None and index) else set()
+    index = _sr.requirement_index(requirements, c) if requirements else {}
+    skip = _sr._will_not_stand(rows, c) if (c is not None and index) else set()
     groups = {}
     for i, r in enumerate(rows):
-        key = (r.get("date"), _se._role_key(r.get("role"), c), r.get("shift_start"))
+        key = (r.get("date"), _sr._role_key(r.get("role"), c), r.get("shift_start"))
         if all(key):
             groups.setdefault(key, []).append(i)
     changes = []
@@ -2276,10 +2276,10 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             if off <= 0:
                 break
             r = rows[i]
-            if not _se._changeable(r, only):
+            if not _sr._changeable(r, only):
                 continue      # kept by the owner: it still counts, it never moves
             e = _minutes(r.get("shift_end", ""))
-            sp = _se._span_minutes(r)
+            sp = _sr._span_minutes(r)
             if e is None or not sp or sp[1] <= s + off + 120:
                 continue      # would leave under two hours: not worth it
 
@@ -2291,12 +2291,12 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             def _legal(step):
                 trial = list(rows)
                 trial[i] = _moved(step)
-                if index and _se.requirement_regressions(
+                if index and _sr.requirement_regressions(
                         [x for x in rows if id(x) not in skip], [x for x in trial if id(x) not in skip],
                         index, date, c):
                     return None
-                if c is not None and _se.change_regressions(rows, trial, c, date, [r.get("employee")],
-                                                            upto=_se._rules.TIER_MIN_HOURS, hard_only=False):
+                if c is not None and _sr.change_regressions(rows, trial, c, date, [r.get("employee")],
+                                                            upto=_sr.TIER_MIN_HOURS, hard_only=False):
                     return None
                 return trial
             steps = [st for st in range(off, 0, -STAGGER_STEP_MIN)]
@@ -2489,7 +2489,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         base = float(_people.get(n) or _rates.get(str(r.get("role") or "").strip().lower()) or _blend)
         return base * (1.5 if person_hours.get(n, 0.0) > 40.05 else 1.0)
 
-    import schedule_engine as _se
+    import schedule_rules as _sr
     from schedule_rules import floor_for, TIER_MIN_HOURS
     from shift_quality import role_words as _role_words
     if not floors and c is not None:
@@ -2498,13 +2498,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     rainy = rainy_dates or set()
     patio = {p.strip().lower() for p in (patio_roles or set())}
     only = set(only_dates) if only_dates else None
-    index = _se.requirement_index(requirements, c) if requirements else {}
+    index = _sr.requirement_index(requirements, c) if requirements else {}
     # A "+1" the reviews or the nightly reports asked for (L-24's soft asks)
     # is part of what that night needs while the trim runs: its role is kept
     # at the usual number plus the ask — never the top-up's requirement.
     for ask in soft_asks or []:
         d, role = ask.get("date"), ask.get("role")
-        k = _se._role_key(role, c)
+        k = _sr._role_key(role, c)
         if not (d and k):
             continue
         try:
@@ -2525,8 +2525,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         if not learned_worse:
             return 0.0, 0.0
         wd = _day(r.get("date"))
-        fam = _se._role_key(r.get("role"), c)
-        parts = _se._present(r) or [None]
+        fam = _sr._role_key(r.get("role"), c)
+        parts = _sr._present(r) or [None]
         return (max(_rl.learned_cut_penalty(learned_worse, wd, p, fam) for p in parts),
                 max(_rl.learned_cut_penalty(learned_worse, wd, p, fam, lean=True) for p in parts))
     def _valued(r):
@@ -2540,7 +2540,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         from intelligence.staffing import family_of as _fo_v
         fam = _fo_v(r.get("role"))
         best = 0.0
-        for p in (_se._present(r) or []):
+        for p in (_sr._present(r) or []):
             v = staffing_value.get((fam, p)) or {}
             if v.get("lo") is not None and float(v["lo"]) > 0:
                 best = max(best, VALUE_KEEP_HOURS)
@@ -2576,7 +2576,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         return [x for x in rs if id(x) not in no_show]
 
     def _floor(k, day, part):
-        return max((floor_for(floors, role, day, part) for role in floors if _se._role_key(role, c) == k), default=0)
+        return max((floor_for(floors, role, day, part) for role in floors if _sr._role_key(role, c) == k), default=0)
 
     def _held_back(r):
         """Why `r` may not be changed at all, or None."""
@@ -2586,13 +2586,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             return ("salaried", None)
         if r.get("needs_review"):
             return ("review", None)
-        if not _se._changeable(r, only):
+        if not _sr._changeable(r, only):
             return ("kept", None)
         d = r.get("date")
         if not (d and (r.get("role") or "").strip()):
             return ("unreadable", None)
         wd = _day(d)
-        for part in _se._present(r):
+        for part in _sr._present(r):
             if (wd.lower(), part) in troubled:
                 return ("troubled", (wd, part))
         return None
@@ -2603,7 +2603,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         d = r.get("date")
         after = [x for x in rows if x is not r] + ([new] if new is not None else [])
         if index:
-            worse = _se.requirement_regressions(_live(rows), _live(after), index, d, c)
+            worse = _sr.requirement_regressions(_live(rows), _live(after), index, d, c)
             if worse and objective_ctx is not None:
                 # With the one objective, only the FIRM part of a requirement
                 # outranks the budget (LOGIC-3, the TIER_TABLE): a cut that
@@ -2620,7 +2620,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                                                             else spec.get("required")),
                                                "at": _fmt(minute) if minute is not None else None})
         if c is not None:
-            worse = _se.change_regressions(rows, after, c, d, [r.get("employee")],
+            worse = _sr.change_regressions(rows, after, c, d, [r.get("employee")],
                                            upto=TIER_MIN_HOURS, hard_only=False)
             if worse:
                 return False, ("rule", {"date": d, "day": _day(d), "label": worse[0]["label"]})
@@ -2630,8 +2630,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             before_v, after_v = _objective_change(r, new)
             if before_v is not None and after_v is not None and after_v >= before_v - OBJECTIVE_MIN_GAIN_USD:
                 detail = {"date": d, "day": _day(d), "role": r.get("role"), "costs": round(after_v - before_v, 2)}
-                k = _se._role_key(r.get("role"), c)
-                for part in _se._present(r):
+                k = _sr._role_key(r.get("role"), c)
+                for part in _sr._present(r):
                     spec = ((index.get(d) or {}).get(part) or {}).get(k) or {}
                     if spec.get("required"):
                         detail.update(daypart=part, required=spec["required"], role=spec.get("role") or r.get("role"))
@@ -2807,8 +2807,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             timed_out = True
             break
         live = _live(rows)
-        spans = {id(x): _se._span_minutes(x) for x in rows}
-        keys = {id(x): _se._role_key(x.get("role"), c) for x in rows}
+        spans = {id(x): _sr._span_minutes(x) for x in rows}
+        keys = {id(x): _sr._role_key(x.get("role"), c) for x in rows}
         groups, day_hours, person_hours = {}, {}, {}
         for x in live:
             groups.setdefault((x.get("date"), keys[id(x)]), []).append(x)
@@ -2884,9 +2884,9 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             timed_out = True
             break
         live = _live(rows)
-        keys = {id(x): _se._role_key(x.get("role"), c) for x in rows}
-        parts_of = {id(x): _se._present(x) for x in rows}
-        ends = {id(x): (_se._span_minutes(x) or (0, 0))[1] for x in rows}
+        keys = {id(x): _sr._role_key(x.get("role"), c) for x in rows}
+        parts_of = {id(x): _sr._present(x) for x in rows}
+        ends = {id(x): (_sr._span_minutes(x) or (0, 0))[1] for x in rows}
         day_hours, person_rows, person_hours, crew, by_person_day, last_out = {}, {}, {}, {}, {}, {}
         rate_hours = {}
         for x in live:

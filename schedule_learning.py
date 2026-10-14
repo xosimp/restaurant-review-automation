@@ -2866,10 +2866,10 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
             ceiling = (getattr(constraints, "compliance", None) or {}).get("weekly_hours_ceiling")
     # The restaurant's weekly hours ceiling is a CAP (like a person's own
     # max_hours), never the overtime line. Overtime pay starts at
-    # labor.OVERTIME_THRESHOLD_HOURS (40): a ceiling set to 35 priced "5h of
+    # schedule_time.OVERTIME_THRESHOLD_HOURS (40): a ceiling set to 35 priced "5h of
     # overtime ... saves about $50 in overtime pay" on a 40h week that owes
     # none (NS3 H5; re-audit A-4 for the personal cap).
-    from labor import OVERTIME_THRESHOLD_HOURS as _OT_LINE
+    from schedule_time import OVERTIME_THRESHOLD_HOURS as _OT_LINE
     ceil = float(ceiling or WEEKLY_HOURS_CEILING)
     ot_line = float(_OT_LINE)
 

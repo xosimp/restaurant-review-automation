@@ -13,6 +13,10 @@ import schedule_time as _stime
 from schedule_context import (  # noqa: F401
     SCHEDULE_EFFORT, SCHEDULE_MAX_TOKENS_THINKING, SCHEDULE_THINKING_MODELS, get_week_start_day,
     schedule_model_thinks)
+# The payroll week and the overtime line (schedule_time) and the owner's floors
+# read off a note or the role minimums (schedule_requirements): re-exported.
+from schedule_time import OVERTIME_MULTIPLIER, OVERTIME_THRESHOLD_HOURS, _week_key, week_hours_split  # noqa: F401
+from schedule_requirements import _role_minimums_dict, note_floors  # noqa: F401
 
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
@@ -1330,49 +1334,6 @@ def _has_actual_hours(shift: dict) -> bool:
     except (TypeError, ValueError):
         return False
 
-
-def _week_key(date_str: str, week_start_day: int = 0) -> str:
-    """The start date of the payroll week `date_str` falls in."""
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    offset = (d.weekday() - int(week_start_day or 0)) % 7
-    return (d - timedelta(days=offset)).strftime("%Y-%m-%d")
-
-
-def week_hours_split(row: dict, week_start_day: int = 0, hours: float = None) -> dict:
-    """{payroll week start: hours} for one row, by the workweek the hours
-    were WORKED in (FLSA): a shift dated the last night of a payroll week
-    that runs past midnight puts its after-midnight hours in the next week —
-    a Tuesday 10pm-2am row in a Wednesday-start week is 2h Tuesday's week, 2h
-    Wednesday's (sched re-audit 10/11/26 BUGSGEN-18); a small-hours row
-    (12:30am-4am dated Tuesday) is all the next week's. `hours` defaults to
-    the row's scheduled_hours (its real hours), shared in proportion to the
-    clock minutes either side of midnight. {} when the date is unreadable."""
-    d = str((row or {}).get("date") or "")[:10]
-    try:
-        b0 = _week_key(d, week_start_day)
-    except (TypeError, ValueError):
-        return {}
-    if hours is None:
-        try:
-            hours = float((row or {}).get("scheduled_hours") or 0)
-        except (TypeError, ValueError):
-            hours = 0.0
-    h = float(hours or 0.0)
-    sp = _stime.span(row)
-    if not h or sp is None or sp[1] <= _stime.DAY:
-        return {b0: h}
-    nxt = (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    b1 = _week_key(nxt, week_start_day)
-    if b1 == b0:
-        return {b0: h}
-    after = sp[1] - max(sp[0], _stime.DAY)
-    h1 = round(h * after / float(sp[1] - sp[0]), 2)
-    out = {b0: round(h - h1, 2), b1: h1}
-    return {b: v for b, v in out.items() if v}
-
-
-OVERTIME_THRESHOLD_HOURS = 40.0
-OVERTIME_MULTIPLIER = 1.5
 
 # A period shorter than this is reported as-is but never projected forward.
 # One Saturday over target used to become "$24,267/month in savings".
@@ -2989,44 +2950,6 @@ def _note_anchors(prompt, data_blocks=None) -> list:
     return out
 
 
-_NOTE_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-_NOTE_MORNING_RE = re.compile(r"\b(?:morning|brunch|breakfast|lunch|opening|opener|day\s*shift|am)\b", re.I)
-_NOTE_NIGHT_RE = re.compile(r"\b(?:dinner|night|evening|close|closing|closer|late|pm)\b", re.I)
-
-
-def note_floors(bullet, role_floors=None, role_minimums=None) -> dict:
-    """{role: floor} for the day and daypart one note bullet talks about,
-    from the owner's floors (schedule_rules.role_floors: per role, per
-    daypart, per-day overrides) and whole-day role minimums — the engine's
-    A2 reads {role: n}. A bullet naming no day or daypart gets the smallest
-    floor over the slots it could mean, so only a cut that is below every
-    one of them is called unsafe. The order is schedule_rules.cut_floor's:
-    the owner's floor first, the admin minimum only for a role the owner
-    set none for. A role in neither is left out — the engine holds it to
-    policy["cut_floor_default"], the restaurant's own default."""
-    from schedule_requirements import floor_for
-    text = str(bullet or "")
-    days = [d for d in _NOTE_DAYS if re.search(r"\b" + d + r"s?\b", text, re.I)] or list(_NOTE_DAYS)
-    parts = [p for p, pat in (("morning", _NOTE_MORNING_RE), ("night", _NOTE_NIGHT_RE)) if pat.search(text)] \
-        or ["morning", "night"]
-    out = {}
-    for role, spec in (role_floors or {}).items():
-        if not isinstance(spec, dict):
-            continue
-        vals = [floor_for(spec, d, p) for d in days for p in parts]
-        vals = [v for v in vals if v > 0]
-        if vals:
-            out[str(role)] = min(vals)
-    for role, n in (role_minimums or {}).items():
-        try:
-            n = int(n)
-        except (TypeError, ValueError):
-            continue
-        if n > 0 and not any(r.strip().lower() == str(role).strip().lower() for r in out):
-            out[str(role)] = n
-    return out
-
-
 def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=None, keyholders=None,
                           registry_state=None):
     """The ValidationContext each "Cavnar AI's note" bullet is checked under
@@ -3367,23 +3290,6 @@ def labor_insight_facts(analysis: dict, industry=None) -> tuple:
 def _present_dayparts(row: dict) -> list:
     from shift_quality import present_dayparts
     return present_dayparts({"shift_start": row.get("shift_start", ""), "shift_end": row.get("shift_end", "")})
-
-
-def _role_minimums_dict(raw) -> dict:
-    """restaurants.role_minimums_json as {role: people}, or {}."""
-    import json as _j
-    try:
-        data = _j.loads(raw) if isinstance(raw, str) and raw.strip() else (raw or {})
-    except Exception:
-        return {}
-    out = {}
-    for role, n in (data or {}).items() if isinstance(data, dict) else []:
-        try:
-            if int(n) > 0:
-                out[str(role)] = int(n)
-        except (TypeError, ValueError):
-            continue
-    return out
 
 
 def apply_learned_headcount(restaurant_id, typical: dict, record: dict = None) -> dict:

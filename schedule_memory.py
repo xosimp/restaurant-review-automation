@@ -1386,13 +1386,13 @@ def minutes_past_end(row, punch):
 def _learn_overtime(ctx) -> list:
     """Who keeps running into overtime (L-16: it was forecast over the draft
     and never learned). Per payroll week, from the punches: hours past the
-    line (labor.OVERTIME_THRESHOLD_HOURS) are overtime actually worked —
+    line (schedule_time.OVERTIME_THRESHOLD_HOURS) are overtime actually worked —
     observed as `ot_actual` — and beside them what the published week had
     them for. A week counts as an opportunity once they were within
     OT_NEAR_HOURS of the line, planned or worked. The memory carries the
     headroom the passes should leave them: the typical overtime, or the
     typical run past their scheduled week, whichever is larger."""
-    from labor import OVERTIME_THRESHOLD_HOURS as LINE, _week_key
+    from schedule_time import OVERTIME_THRESHOLD_HOURS as LINE, _week_key
     actual, names = {}, {}
     for r in ctx.punches():
         try:
@@ -2444,7 +2444,7 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
     confidence (scaled for overtime by how far past the headroom it goes):
     the soft cost a solver, an optimizer, the trim or the scorer charges.
     Pure; the semantics of every kind live here, once."""
-    from labor import OVERTIME_THRESHOLD_HOURS
+    from schedule_time import OVERTIME_THRESHOLD_HOURS
     line = float(line or OVERTIME_THRESHOLD_HOURS)
     out = []
     by_slot = {}

@@ -469,7 +469,7 @@ def test_the_station_pass_runs_before_the_sweep_and_the_score(db, monkeypatch):
             return rows, 0, []
         return rows + [_row(FRI, "Jo", "Line Cook")], 1, []
     monkeypatch.setattr(se, "_ensure_station_coverage", stations)
-    monkeypatch.setattr(se, "station_report", lambda *a, **k: {"gaps": []})
+    monkeypatch.setattr(se._sched_out, "station_report", lambda *a, **k: {"gaps": []})
     real_score = se._score_schedule_quality
     scored = {}
 

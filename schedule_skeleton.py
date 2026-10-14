@@ -88,11 +88,7 @@ MAX_STEPS_PER_DAY = 16
 
 # ── small helpers ──────────────────────────────────────────────────────────
 
-def _weekday(iso) -> str:
-    try:
-        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
-    except (TypeError, ValueError):
-        return ""
+_weekday = _stime.weekday_of
 
 
 _DAY_NAMES = {d[:3].lower(): d for d in _rules.DAYS}
@@ -115,15 +111,7 @@ def _clock(value):
     return _rules.parse_minutes(raw)
 
 
-def _span(row):
-    """(start, end) minutes on the row's business date's timeline
-    (schedule_time.span — the one placement, BUGSGEN-8: it applied no night
-    offset, so a 1:00-5:30am porter read as the dawn of its date while the
-    sweep put it after that night's midnight); None when unreadable or
-    longer than a day could be."""
-    sp = _stime.span(row)
-    return sp if sp is not None and 0 < sp[1] - sp[0] <= 16 * 60 else None
-
+_span = _stime.bounded_span
 
 def _night_tail(sp) -> bool:
     """Whether a placed span starts in the small hours of its night (before
@@ -137,13 +125,7 @@ def row_daypart(row) -> str:
     return _stime.primary_daypart(row)
 
 
-def _median(values):
-    xs = sorted(v for v in values if v is not None)
-    if not xs:
-        return None
-    n = len(xs)
-    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
-
+_median = _stime.median
 
 def _down(m, step=15):
     return int(m // step * step)
@@ -165,9 +147,7 @@ def _names(names) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _overlap(a, b) -> int:
-    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
-
+_overlap = _stime.overlap_minutes
 
 _EXTENSION_CLAUSES = ("stays on ", "runs on:")
 

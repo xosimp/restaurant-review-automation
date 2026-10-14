@@ -590,3 +590,81 @@ def _weekday_name(iso) -> str:
         return _date_of(iso).strftime("%A")
     except (TypeError, ValueError):
         return ""
+
+
+def _week_key(date_str: str, week_start_day: int = 0) -> str:
+    """The start date of the payroll week `date_str` falls in."""
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    offset = (d.weekday() - int(week_start_day or 0)) % 7
+    return (d - timedelta(days=offset)).strftime("%Y-%m-%d")
+
+
+def week_hours_split(row: dict, week_start_day: int = 0, hours: float = None) -> dict:
+    """{payroll week start: hours} for one row, by the workweek the hours
+    were WORKED in (FLSA): a shift dated the last night of a payroll week
+    that runs past midnight puts its after-midnight hours in the next week —
+    a Tuesday 10pm-2am row in a Wednesday-start week is 2h Tuesday's week, 2h
+    Wednesday's (sched re-audit 10/11/26 BUGSGEN-18); a small-hours row
+    (12:30am-4am dated Tuesday) is all the next week's. `hours` defaults to
+    the row's scheduled_hours (its real hours), shared in proportion to the
+    clock minutes either side of midnight. {} when the date is unreadable."""
+    d = str((row or {}).get("date") or "")[:10]
+    try:
+        b0 = _week_key(d, week_start_day)
+    except (TypeError, ValueError):
+        return {}
+    if hours is None:
+        try:
+            hours = float((row or {}).get("scheduled_hours") or 0)
+        except (TypeError, ValueError):
+            hours = 0.0
+    h = float(hours or 0.0)
+    sp = span(row)
+    if not h or sp is None or sp[1] <= DAY:
+        return {b0: h}
+    nxt = (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    b1 = _week_key(nxt, week_start_day)
+    if b1 == b0:
+        return {b0: h}
+    after = sp[1] - max(sp[0], DAY)
+    h1 = round(h * after / float(sp[1] - sp[0]), 2)
+    out = {b0: round(h - h1, 2), b1: h1}
+    return {b: v for b, v in out.items() if v}
+
+
+OVERTIME_THRESHOLD_HOURS = 40.0
+
+
+OVERTIME_MULTIPLIER = 1.5
+
+
+def bounded_span(row):
+    """(start, end) minutes on the row's business date's timeline (span, the
+    one placement), or None when unreadable or longer than a day could be
+    (over 16 hours) — the manager plan's and the standing positions' read."""
+    sp = span(row)
+    return sp if sp is not None and 0 < sp[1] - sp[0] <= 16 * 60 else None
+
+
+def median(values):
+    """The median of the values that are not None (the middle two averaged),
+    or None when there are none."""
+    xs = sorted(v for v in values if v is not None)
+    if not xs:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
+def weekday_of(iso) -> str:
+    """The weekday name of a "YYYY-MM-DD" date (strptime's reading), "" when
+    it cannot be read."""
+    try:
+        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
+    except (TypeError, ValueError):
+        return ""
+
+
+def overlap_minutes(a, b) -> int:
+    """Minutes two (start, end) spans share; 0 when they do not meet."""
+    return max(0, min(a[1], b[1]) - max(a[0], b[0]))

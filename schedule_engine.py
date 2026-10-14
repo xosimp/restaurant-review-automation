@@ -39,7 +39,19 @@ def _week_monday(today, week_start=None, start_day=0):
     """schedule_time._week_monday, read at call time: the one place the
     schedule week is decided (and the one a test pins), whoever asks."""
     return _stime._week_monday(today, week_start, start_day=start_day)
+# What a repair pass may change and what a change makes worse (the passes'
+# shared judgments) live in schedule_rules, below the passes that use them.
+from schedule_rules import (  # noqa: F401
+    _SLOT_MIN, _changeable, _name_key, _pinned, _present, _ramp_end, _ramp_slots, _role_key, _span_minutes,
+    _peak_server_overlap, _will_not_stand, change_regressions, requirement_index, requirement_regressions,
+    requirement_shortfall)
 from labor import COHORT_BLOCK_HEADER, _COHORT_METRICS, _cohort_block, cohort_comparisons, cohort_facts  # noqa: F401
+from schedule_solver import SHAPE_SOLVE_SECONDS, assign_shape_slots  # noqa: F401
+
+
+def station_report(rows: list, constraints, week_dates: list) -> dict:
+    """schedule_output.station_report, read at call time (the one seam)."""
+    return _sched_out.station_report(rows, constraints, week_dates)
 import schedule_rules as _rules
 import schedule_time as _stime
 import schedule_versions as _versions
@@ -3436,60 +3448,6 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
 
 # ── the shape contract: who works each slot, solved (AI cost audit 10/7/26 #69)
 
-# What one call's slots are given to be staffed, at most (the solver's own
-# budget on the background job); less when the job's model time is short.
-SHAPE_SOLVE_SECONDS = 12.0
-
-
-def assign_shape_slots(slots, context_rows, constraints, signals=None, weights=None, profiles=None,
-                       roster_roles=None, only_dates=None, max_seconds=SHAPE_SOLVE_SECONDS) -> dict:
-    """Give each shape slot (schedule_output.parse_answer on the "shape"
-    contract: a row with no employee) a person, by schedule_solver over the
-    same rules and objective the repair loop's solver stage uses — never a
-    hard rule traded for score: availability, time off, the roles a person
-    holds, hours and the overtime line, rest, days in a row, a minor's
-    limits, a manager on the floor every minute and each role's closer.
-
-    `context_rows` (every row already on the week — the planned managers,
-    the kept days, what earlier calls wrote) are held exactly as they are
-    and count toward each person's week. `only_dates` limits the solve to
-    the slots' dates (their own by default).
-
-    {"assigned": [rows with a name], "unassigned": [slots nobody can
-    legally work — kept out of the week, never filled illegally], "stats":
-    {status, seconds, slots, infeasible, notes}}. With no rule set nothing
-    is assigned."""
-    import schedule_solver as _solver
-    ctx = []
-    for r in context_rows or []:
-        x = dict(r)
-        x["_pinned"] = True          # never reassigned (the pinned-rows contract)
-        ctx.append(x)
-    open_rows = []
-    for r in slots or []:
-        x = {k: v for k, v in dict(r).items() if k != "_slot"}
-        x["employee"] = ""
-        x["_open"] = True            # a slot to staff: the solver counts it toward the day's close
-        open_rows.append(x)
-    out = {"assigned": [], "unassigned": [], "stats": {"status": "nothing_to_solve"}}
-    if not open_rows:
-        return out
-    if constraints is None:
-        out["unassigned"] = open_rows
-        out["stats"] = {"status": "no rule set"}
-        return out
-    dates = sorted({r.get("date") for r in open_rows if r.get("date")}) if only_dates is None else list(only_dates)
-    res = _solver.solve(ctx + open_rows, constraints, signals=signals, weights=weights, profiles=profiles,
-                        only_dates=dates, max_seconds=max(0.5, float(max_seconds or SHAPE_SOLVE_SECONDS)),
-                        roster_roles=roster_roles, pending=getattr(constraints, "pending_off", None))
-    res.pop("problem", None)
-    rows = res.get("rows") or []
-    for r in rows[len(ctx):]:
-        r = {k: v for k, v in r.items() if k not in ("_pinned", "_open")}
-        (out["assigned"] if (r.get("employee") or "").strip() else out["unassigned"]).append(r)
-    out["stats"] = {k: res.get(k) for k in ("status", "proved_optimal", "seconds", "slots", "infeasible", "notes")}
-    return out
-
 
 def shape_availability(c, roster_pairs, dates) -> dict:
     """{(date, daypart): {role: {"can", "closers", "managers"}}} — how many
@@ -5685,200 +5643,6 @@ def _row_fields_look_sane(row: dict) -> bool:
 # A row carrying "_pinned" (a day the owner kept in a redo, a planned manager
 # shift) is never removed, re-timed or handed to anybody; it still counts.
 
-_SLOT_MIN = 30
-
-
-def _pinned(row) -> bool:
-    return bool((row or {}).get("_pinned"))
-
-
-def _changeable(row, only_dates=None) -> bool:
-    """Whether a pass may change `row`: not pinned, and on a date this run
-    may touch (`only_dates`, the days a partial redo rewrites; None is every
-    day)."""
-    return not _pinned(row) and (only_dates is None or row.get("date") in only_dates)
-
-
-def _role_key(role, c=None) -> str:
-    """A role's family (shift_quality.role_family, the restaurant's own map
-    first): "Server AM" and "Server PM" are one role to every count the
-    passes make (D-13)."""
-    from shift_quality import role_family
-    return role_family(role, getattr(c, "role_families", None) if c is not None else None)
-
-
-def _name_key(name) -> str:
-    return (name or "").strip().lower()
-
-
-def _present(row) -> list:
-    """The dayparts a row is on the floor for — the rule sweep's and the
-    score's own count (shift_quality.present_dayparts)."""
-    from shift_quality import present_dayparts
-    return present_dayparts(row)
-
-
-def _span_minutes(row):
-    """(start, end) minutes past the row's own midnight, an end past
-    midnight on the next day's clock (24:30 for 12:30am); None when
-    unreadable."""
-    s, e = _rules.start_minutes(row), _rules.end_minutes(row)
-    if s is None or e is None or e <= s:
-        return None
-    return s, e
-
-
-def change_regressions(before_rows, after_rows, c, date, people=(), upto=None, hard_only=True) -> list:
-    """schedule_rules.regressions between two versions of the week that
-    differ only on `date` and in `people`'s rows, swept over what such a
-    change can touch: every row of that date (floors, a closer, a manager on
-    the floor and somebody at close are rules about the day) and each named
-    person's whole week (their hours, rest, run of days). Nothing else in the
-    week moved, so this finds exactly what the change made new or worse, at
-    a fraction of a whole-week sweep. `upto` is the lowest rank still
-    protected (schedule_rules.TIER_POLICY by default: no new hard breach —
-    the restaurant's policy limits are hard too, ranked below the manager
-    and coverage rules, sched audit 10/10/26 LOGIC-1); [] when nothing got
-    worse, or with no Constraints to judge by."""
-    if c is None:
-        return []
-    keys = {_name_key(p) for p in people or () if _name_key(p)}
-
-    def _sub(rs):
-        return [r for r in rs or [] if r.get("date") == date or _name_key(r.get("employee")) in keys]
-    return _rules.regressions(_rules.breach_profile(_sub(before_rows), c),
-                              _rules.breach_profile(_sub(after_rows), c),
-                              upto=_rules.TIER_POLICY if upto is None else upto, hard_only=hard_only)
-
-
-def _will_not_stand(rows, c) -> set:
-    """id() of each row the sweep says will not happen — time off, a double
-    booking, off the roster (schedule_rules.NO_SHOW): not coverage, and not
-    hours anybody works."""
-    if c is None:
-        return set()
-    try:
-        return {id(rows[v["index"]]) for v in _rules.violations(rows, c)
-                if v.get("no_show") and v.get("index") is not None and v["index"] < len(rows)}
-    except Exception as exc:
-        print(f"[schedule] could not read which rows will not stand: {exc}")
-        return set()
-
-
-def _ramp_end(day, part, c=None):
-    """Where a daypart's half-hour ramp stops: the 3pm changeover for lunch,
-    the close for dinner (a close in the small hours is the next morning),
-    midnight with no close on file — the service window the requirements
-    table builds the ramp over. None for any other daypart: its last step
-    holds for one half hour."""
-    split = _stime.daypart_split()
-    if part == "morning":
-        return split
-    if part == "night":
-        m = _rules.close_minutes(c, day) if (c is not None and getattr(c, "close_times", None)) else None
-        return m if (m is not None and m > split) else 24 * 60
-    return None
-
-
-def _ramp_slots(points, end) -> dict:
-    """{minute: people} for every half hour of a ramp given as the points
-    where it changes ([(minute, people)], staffing_curve.ramp_runs): each
-    step holds until the next, the last until `end`."""
-    pts = []
-    for p in points or []:
-        try:
-            pts.append((int(p[0]), int(p[1])))
-        except (TypeError, ValueError, IndexError):
-            continue
-    pts.sort()
-    out = {}
-    for k, (m, n) in enumerate(pts):
-        stop = pts[k + 1][0] if k + 1 < len(pts) else (end if end is not None and end > m else m + _SLOT_MIN)
-        for t in range(m, stop, _SLOT_MIN):
-            out[t] = n
-    return out
-
-
-def requirement_index(requirements, c=None) -> dict:
-    """{date: {daypart: {role family: {"role", "required", "typical", "half":
-    {minute: people}}}}} from the SHIFT REQUIREMENTS rows (schedule_requirements
-    .shift_requirements, week_requirements): the people each role needs on
-    each shift — the number the model was given and the coverage score
-    judges, demand-scaled where it is — and the half-hour ramp where the
-    sales curve is measured. {} without requirements."""
-    out = {}
-    for row in requirements or []:
-        d, part = row.get("date"), row.get("daypart")
-        if not (d and part):
-            continue
-        slot = out.setdefault(d, {}).setdefault(part, {})
-        for x in row.get("roles") or []:
-            key = _role_key(x.get("role"), c)
-            try:
-                n = int(x.get("required") or 0)
-            except (TypeError, ValueError):
-                n = 0
-            if not key or n <= 0:
-                continue
-            spec = slot.setdefault(key, {"role": (x.get("role") or "").strip(), "required": 0, "half": {}})
-            spec["required"] = max(spec["required"], n)
-            try:
-                spec["typical"] = max(int(spec.get("typical") or 0), int(x.get("typical") or 0))
-            except (TypeError, ValueError):
-                pass
-        end = _ramp_end(row.get("day") or _weekday_name(d), part, c)
-        for role, pts in (row.get("half_hours") or {}).items():
-            key = _role_key(role, c)
-            if not key:
-                continue
-            spec = slot.setdefault(key, {"role": str(role).strip(), "required": 0, "half": {}})
-            for t, n in _ramp_slots(pts, end).items():
-                spec["half"][t] = max(spec["half"].get(t, 0), n)
-    return out
-
-
-def requirement_shortfall(rows, index, date, c=None, skip=frozenset()) -> dict:
-    """{(daypart, role family, minute or None): people short} on `date`
-    against requirement_index. None is the shift's whole crew (people on the
-    floor for the daypart, the score's own count); a minute is one half hour
-    of its ramp. `skip` holds id() of rows that will not stand — not
-    coverage."""
-    parts = (index or {}).get(date) or {}
-    if not parts:
-        return {}
-    by_key = {}
-    for r in rows or []:
-        if r.get("date") != date or id(r) in skip or not _name_key(r.get("employee")):
-            continue
-        by_key.setdefault(_role_key(r.get("role"), c), []).append(r)
-    out = {}
-    for part, roles in parts.items():
-        for key, spec in roles.items():
-            mine = by_key.get(key) or []
-            if spec.get("required"):
-                on = {_name_key(r.get("employee")) for r in mine if part in _present(r)}
-                if len(on) < spec["required"]:
-                    out[(part, key, None)] = spec["required"] - len(on)
-            if spec.get("half"):
-                spans = [(_name_key(r.get("employee")), sp) for r in mine for sp in [_span_minutes(r)] if sp]
-                for t, need in spec["half"].items():
-                    on = len({n for n, (s, e) in spans if s <= t < e})
-                    if on < need:
-                        out[(part, key, t)] = need - on
-    return out
-
-
-def requirement_regressions(before_rows, after_rows, index, date, c=None, skip=frozenset()) -> list:
-    """[(daypart, role family, minute or None, short before, short after)]
-    wherever `after_rows` leaves `date` further under its requirement than
-    `before_rows` did — the whole crew first. [] when nothing is."""
-    if not index or date not in index:
-        return []
-    b = requirement_shortfall(before_rows, index, date, c, skip)
-    a = requirement_shortfall(after_rows, index, date, c, skip)
-    return sorted(((k[0], k[1], k[2], b.get(k, 0), n) for k, n in a.items() if n > b.get(k, 0)),
-                  key=lambda x: (x[2] is not None, x[0], x[1], x[2] or 0))
-
 
 def week_requirements(restaurant_id, result, constraints=None, curve=None) -> list:
     """The SHIFT REQUIREMENTS rows for the week being built: schedule_
@@ -6307,37 +6071,6 @@ def _row_hours_value(row) -> float:
 _WEEKLY_HOURS_CEILING = 40.0
 
 _SERVER_MAX_OVERLAP = 7
-
-
-def _peak_server_overlap(day_rows: list) -> tuple:
-    """Sweep-line peak concurrent headcount for one day's rows (the caller
-    hands it the rows the section cap counts). Returns (peak_count,
-    peak_time_minutes) — peak_time is None if there are no rows. Ends are
-    processed before starts at the same instant, so a shift ending at 3pm
-    and one starting at 3pm never count as overlapping at that exact minute.
-
-    A shift past midnight ends on the next day's clock (12:30am is 24:30,
-    schedule_rules.end_minutes): every row whose end read as before its
-    start used to be skipped, so Friday and Saturday at a 2am-close bar were
-    exactly the nights the cap went unenforced (schedule audit 10/3/26
-    E-19). peak_time can therefore be 24:00 or later."""
-    events = []
-    for r in day_rows:
-        sp = _span_minutes(r)
-        if not sp:
-            continue
-        events.append((sp[0], 1))
-        events.append((sp[1], -1))
-    events.sort(key=lambda ev: (ev[0], ev[1]))  # -1 (end) before +1 (start) at same minute
-    running = 0
-    peak = 0
-    peak_time = None
-    for t, delta in events:
-        running += delta
-        if running > peak:
-            peak = running
-            peak_time = t
-    return peak, peak_time
 
 
 def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers: dict,
@@ -7072,24 +6805,6 @@ def _ensure_station_coverage(preview_rows: list, week_dates: list, week_days: li
         hours_by_employee[name] = hours_by_employee.get(name, 0.0) + _row_hours_value(row)
         added += 1
     return preview_rows, added, unfilled
-
-
-def station_report(rows: list, constraints, week_dates: list) -> dict:
-    """The week's station assignment as the review and the screens read it:
-    {"stations": [...], "assigned": [{date, employee, shift_start, morning,
-    night}], "gaps": [{date, day, daypart, station}]}, or {} when the
-    restaurant has no stations set."""
-    import kitchen_stations as _ks
-    cfg = getattr(constraints, "stations", None) or {}
-    if not cfg:
-        return {}
-    w = _ks.week(rows, cfg, week_dates)
-    assigned = []
-    for i, parts in sorted(w["stations"].items()):
-        r = rows[i]
-        assigned.append({"date": r.get("date"), "employee": r.get("employee"), "shift_start": r.get("shift_start"),
-                         "role": r.get("role"), "morning": parts.get("morning"), "night": parts.get("night")})
-    return {"stations": cfg["stations"], "assigned": assigned, "gaps": w["gaps"]}
 
 
 def _daypart_fallback(constraints, day_name: str, part: str) -> tuple:

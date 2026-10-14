@@ -14,6 +14,7 @@ draft is written against the bar it is judged by.
 Pure: no I/O, no model call. labor.generate_optimized_schedule calls these
 while it builds the prompt; schedule_engine gathers the inputs.
 """
+import re
 from datetime import datetime
 
 import shift_quality as _sq
@@ -1212,3 +1213,61 @@ def focus_block(focus: list, dates: list = None) -> str:
     return (f"\n\nTHE PREVIOUS DRAFT OF {which} SCORED WEAK ON:\n" + "\n".join(f"  * {t}" for t in items)
             + "\n  Fix these specifically in this draft, within the PRIORITIES order — never by breaking "
             "anything ranked above the thing being fixed.")
+
+
+_NOTE_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+_NOTE_MORNING_RE = re.compile(r"\b(?:morning|brunch|breakfast|lunch|opening|opener|day\s*shift|am)\b", re.I)
+
+
+_NOTE_NIGHT_RE = re.compile(r"\b(?:dinner|night|evening|close|closing|closer|late|pm)\b", re.I)
+
+
+def note_floors(bullet, role_floors=None, role_minimums=None) -> dict:
+    """{role: floor} for the day and daypart one note bullet talks about,
+    from the owner's floors (schedule_rules.role_floors: per role, per
+    daypart, per-day overrides) and whole-day role minimums — the engine's
+    A2 reads {role: n}. A bullet naming no day or daypart gets the smallest
+    floor over the slots it could mean, so only a cut that is below every
+    one of them is called unsafe. The order is schedule_rules.cut_floor's:
+    the owner's floor first, the admin minimum only for a role the owner
+    set none for. A role in neither is left out — the engine holds it to
+    policy["cut_floor_default"], the restaurant's own default."""
+    text = str(bullet or "")
+    days = [d for d in _NOTE_DAYS if re.search(r"\b" + d + r"s?\b", text, re.I)] or list(_NOTE_DAYS)
+    parts = [p for p, pat in (("morning", _NOTE_MORNING_RE), ("night", _NOTE_NIGHT_RE)) if pat.search(text)] \
+        or ["morning", "night"]
+    out = {}
+    for role, spec in (role_floors or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        vals = [floor_for(spec, d, p) for d in days for p in parts]
+        vals = [v for v in vals if v > 0]
+        if vals:
+            out[str(role)] = min(vals)
+    for role, n in (role_minimums or {}).items():
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            continue
+        if n > 0 and not any(r.strip().lower() == str(role).strip().lower() for r in out):
+            out[str(role)] = n
+    return out
+
+
+def _role_minimums_dict(raw) -> dict:
+    """restaurants.role_minimums_json as {role: people}, or {}."""
+    import json as _j
+    try:
+        data = _j.loads(raw) if isinstance(raw, str) and raw.strip() else (raw or {})
+    except Exception:
+        return {}
+    out = {}
+    for role, n in (data or {}).items() if isinstance(data, dict) else []:
+        try:
+            if int(n) > 0:
+                out[str(role)] = int(n)
+        except (TypeError, ValueError):
+            continue
+    return out

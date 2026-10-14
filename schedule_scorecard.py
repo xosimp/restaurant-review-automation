@@ -622,7 +622,7 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
                                                    * hours.get(k, DEFAULT_SLOT_HOURS) for k in keys), 1)
         # Overtime worked against overtime planned (the hourly staff).
         try:
-            from labor import OVERTIME_THRESHOLD_HOURS as LINE
+            from schedule_time import OVERTIME_THRESHOLD_HOURS as LINE
         except Exception:
             LINE = 40.0
         worked, planned = {}, {}

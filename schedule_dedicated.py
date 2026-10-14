@@ -54,6 +54,8 @@ the label (labor.staff_facing_note strips the Cavnar AI mark).
 import json
 import re
 
+import schedule_time as _stime
+
 DEDICATED_SOURCE = "dedicated"
 NOTE_MARK = "Cavnar AI: standing position"
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -223,7 +225,6 @@ def split_waivers(text, rules, confirmed) -> tuple:
 def _part_of(row):
     """The daypart a past row is, by the one rule (schedule_time.
     primary_daypart, BUGSGEN-25) — None when its times cannot be read."""
-    import schedule_time as _stime
     part = _stime.primary_daypart(row)
     return part if part in PARTS else None
 
@@ -244,7 +245,6 @@ def _usual(history, family, day, part, c=None):
     history of the family in that daypart. A row is the family's by its
     role's family, never by the name containing it (BUGSGEN-24: "server"
     matched "Server Assistant", "cook" matched "Prep Cook")."""
-    import schedule_skeleton as sk
 
     def pick(rows):
         if not rows:
@@ -253,17 +253,17 @@ def _usual(history, family, day, part, c=None):
         for r in rows:
             roles[r.get("role") or ""] = roles.get(r.get("role") or "", 0) + 1
         role = max(sorted(roles), key=lambda k: roles[k])
-        spans = [sk._span(r) for r in rows if (r.get("role") or "") == role]
+        spans = [_stime.bounded_span(r) for r in rows if (r.get("role") or "") == role]
         spans = [s for s in spans if s]
         if not spans or not role:
             return None
         # Clock-in medians (3:56pm) written as a schedule writes them: the
         # nearest quarter hour.
         q = lambda m: int(round(float(m) / 15.0)) * 15  # noqa: E731
-        return role, q(sk._median([s[0] for s in spans])), q(sk._median([s[1] for s in spans]))
+        return role, q(_stime.median([s[0] for s in spans])), q(_stime.median([s[1] for s in spans]))
 
     mine = [r for r in history or [] if _family_of(c, r.get("role")) == family and _part_of(r) == part]
-    same_day = [r for r in mine if sk._weekday(r.get("date")) == day]
+    same_day = [r for r in mine if _stime.weekday_of(r.get("date")) == day]
     return pick(same_day) or pick(mine)
 
 
@@ -272,7 +272,6 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     date and daypart (see the module note). `prior_rows` are rows already
     fixed (the managers' plan, a redo's kept days); `roster_roles` the
     {name: role} roster. Never raises: a failure is one unfilled entry."""
-    import schedule_skeleton as sk
     import schedule_rules as _rules
     out = {"rows": [], "unfilled": [], "waived": [], "rules": [describe(r) for r in rules or []]}
     if not rules or not week_dates:
@@ -302,7 +301,7 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
         keep = in_usual(rule, week_start)
         slot_people = _slot_people(history, fam, rule, c)
         for d in week_dates:
-            day = sk._weekday(d)
+            day = _stime.weekday_of(d)
             for part in PARTS:
                 if day not in (rule["parts"].get(part) or []):
                     continue
@@ -318,13 +317,13 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
                                             "why": f"no {fam} {PART_WORDS[part]} shift on file to copy the times from"})
                     continue
                 role, s, e = usual
-                row = {"date": d, "day": day, "role": role, "shift_start": sk._fmt(s), "shift_end": sk._fmt(e % 1440),
+                row = {"date": d, "day": day, "role": role, "shift_start": _stime.fmt_minutes(s),
+                       "shift_end": _stime.fmt_minutes(e % 1440),
                        "notes": f"{rule['label']} — {NOTE_MARK}", "_pinned": DEDICATED_SOURCE,
                        "_pin_reason": rule["label"], "_in_usual": keep}
                 # As every row carries it — a string, from the real span in
                 # the restaurant's zone (BUGSGEN-6): it was a float of the
                 # wall-clock span.
-                import schedule_time as _stime
                 row["scheduled_hours"] = _stime.row_hours_text(row, getattr(c, "tz", None))
                 chosen, why_not = None, []
                 last, usual_n = slot_people.get((day, part), (None, {}))
@@ -336,7 +335,8 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
                     for n in order:
                         cand = dict(row, employee=n)
                         if any((r.get("employee") or "").strip().lower() == n.lower() and r.get("date") == d
-                               and sk._overlap(sk._span(r) or (0, 0), (s, e)) > 0 for r in fixed + out["rows"]):
+                               and _stime.overlap_minutes(_stime.bounded_span(r) or (0, 0), (s, e)) > 0
+                               for r in fixed + out["rows"]):
                             continue
                         ok, why = c.fillable(n, d)
                         if ok:
@@ -365,7 +365,6 @@ def _slot_people(history, family, rule, c) -> dict:
     from the history: who took the position in that slot most recently (a
     row marked as the position), and who works the family's shift there
     most often — the stable choice a GM makes (LOGIC-17)."""
-    import schedule_skeleton as sk
     out = {}
     marked = {}
     for r in history or []:
@@ -376,7 +375,7 @@ def _slot_people(history, family, rule, c) -> dict:
         d = str(r.get("date") or "")[:10]
         if not part or not d:
             continue
-        day = sk._weekday(d)
+        day = _stime.weekday_of(d)
         key = c.key(name) if c is not None and hasattr(c, "key") else name.lower()
         slot = out.setdefault((day, part), (None, {}))
         slot[1][key] = slot[1].get(key, 0) + 1
@@ -421,10 +420,9 @@ def prompt_block(dplan, dates=None) -> str:
     unf = [u for u in dplan.get("unfilled") or [] if want is None or u["date"] in want]
     if not rows and not unf:
         return ""
-    import schedule_skeleton as sk
-    lines = [f"  {sk._weekday(r['date'])[:3]} {r['date']}: {r['employee']} {r['shift_start']}–{r['shift_end']} "
+    lines = [f"  {_stime.weekday_of(r['date'])[:3]} {r['date']}: {r['employee']} {r['shift_start']}–{r['shift_end']} "
              f"({r['role']}) — {r['_pin_reason']}" for r in sorted(rows, key=lambda r: (r["date"], r["shift_start"]))]
-    lines += [f"  {sk._weekday(u['date'])[:3]} {u['date']} {PART_WORDS[u['part']]}: {u['label']} could not be placed "
+    lines += [f"  {_stime.weekday_of(u['date'])[:3]} {u['date']} {PART_WORDS[u['part']]}: {u['label']} could not be placed "
               f"— staff the role as usual; the owner is told" for u in unf]
     extra = any(r.get("_in_usual") is False for r in rows)
     count = ("Each is one MORE of its role on top of the usual crew, and SHIFT REQUIREMENTS already count it "
@@ -440,14 +438,13 @@ def prompt_block(dplan, dates=None) -> str:
 def review_lines(dplan) -> list:
     """What the owner reads about the positions this week: a slot nobody
     could take (with why) and a slot a note waived (with the note)."""
-    import schedule_skeleton as sk
     from time_utils import mdy
     out = []
     for u in (dplan or {}).get("unfilled") or []:
-        out.append(f"{u['label']} — {sk._weekday(u['date'])} {mdy(u['date'])} {PART_WORDS[u['part']]} has nobody: "
+        out.append(f"{u['label']} — {_stime.weekday_of(u['date'])} {mdy(u['date'])} {PART_WORDS[u['part']]} has nobody: "
                    f"{u['why']}.")
     for w in (dplan or {}).get("waived") or []:
-        out.append(f"{w['label']} — not staffed {sk._weekday(w['date'])} {mdy(w['date'])} {PART_WORDS[w['part']]}, "
+        out.append(f"{w['label']} — not staffed {_stime.weekday_of(w['date'])} {mdy(w['date'])} {PART_WORDS[w['part']]}, "
                    f"as your note says: “{w['note']}”.")
     for u in (dplan or {}).get("unconfirmed_waivers") or []:
         out.append(f"{u['label']} — your note “{u['note']}” reads as letting it off, but you haven't confirmed that, "

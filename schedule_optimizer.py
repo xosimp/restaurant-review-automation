@@ -1936,7 +1936,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                  if str(x).strip()} or {"server"}
 
     def _server_peaks(rs):
-        from schedule_engine import _peak_server_overlap
+        from schedule_rules import _peak_server_overlap
         by = {}
         for r in rs:
             if sq.role_family(r.get("role"), families) in cap_roles:

@@ -283,7 +283,7 @@ def solver_rows(dates, requirements_by_date, constraints, base_rows=None, contex
     plan) held as they are. A slot nobody can legally work is left out,
     never filled illegally."""
     import shift_templates as _tpl
-    import schedule_engine as _se
+    import schedule_solver as _solver_shape
     tpl = _tpl.templates(base_rows or [])
     slots = []
     for d in dates or []:
@@ -305,7 +305,7 @@ def solver_rows(dates, requirements_by_date, constraints, base_rows=None, contex
                                   "shift_end": end, "scheduled_hours": "", "notes": ""})
     if not slots:
         return {"rows": [], "unassigned": [], "stats": {"status": "nothing_to_solve"}}
-    got = _se.assign_shape_slots(slots, list(context_rows or []), constraints, signals=signals, weights=weights,
+    got = _solver_shape.assign_shape_slots(slots, list(context_rows or []), constraints, signals=signals, weights=weights,
                                  roster_roles=roster_roles, only_dates=list(dates or []), max_seconds=max_seconds)
     return {"rows": got["assigned"], "unassigned": got["unassigned"], "stats": got["stats"]}
 
