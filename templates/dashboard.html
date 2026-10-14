@@ -10943,7 +10943,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 /* The day row is a rounded band inside the week's card (owner, 10/14/26:
    the edge-to-edge band read as cut off at the card's sides): each day cell
    is opaque in the page's colour, the first and last round the ends. */
-.ss .swg-hr>.swg-d{background:var(--paper)}
+.ss .swg-hr>.swg-d{background:color-mix(in srgb,var(--paper),var(--surface) 55%)}
 .ss .swg-hr>.swg-d:first-child{border-radius:14px 0 0 14px}
 .ss .swg-hr>.swg-d:last-child{border-radius:0 14px 14px 0}
 /* The band stops at the week's own card (owner, 10/7/26): clipped by the
@@ -26672,7 +26672,8 @@ function swRenderGrid() {
     groups[p.role].push(p);
   }
   var hot = null; for (j = 0; j < days.length; j++) if (hot === null || (dayHrs[days[j]] || 0) > (dayHrs[hot] || 0)) hot = days[j];
-  var h = '<div class="swg-r swg-hr"><div class="swg-d" style="text-align:left"><b>Person</b><span class="dt">hours this week</span></div>';
+  /* The names column's header cell is empty (owner, 10/14/26): it holds the band's rounded start. */
+  var h = '<div class="swg-r swg-hr"><div class="swg-d" aria-label="Person"></div>';
   // The day's notes sit in a row of their own under the day row, which
   // sticks while the people scroll (owner, 10/6/26): inside it, a long
   // note held a third of the screen stuck over the week.

@@ -219,7 +219,7 @@ def test_the_studio_day_row_is_a_rounded_band_inside_the_card_with_no_blur():
     one band. 10/9/26: "no blur" - no fade and no darker shade, the page's
     own colour. 10/14/26: the edge-to-edge band read as cut off at the
     card's sides - it is a rounded band inside the card now."""
-    assert ".ss .swg-hr>.swg-d{background:var(--paper)}" in SRC
+    assert ".ss .swg-hr>.swg-d{background:color-mix(in srgb,var(--paper),var(--surface) 55%)}" in SRC
     assert ".ss .swg-hr>.swg-d:first-child{border-radius:14px 0 0 14px}" in SRC
     assert ".ss .swg-hr>.swg-d:last-child{border-radius:0 14px 14px 0}" in SRC
     assert ".ss .swg-hr>.swg-d:first-child::before{" not in SRC and "left:-100vw;right:-100vw" not in SRC
