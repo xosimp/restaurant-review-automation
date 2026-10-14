@@ -7328,6 +7328,7 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
         standard_needs=standard_needs or None, crew_answers=(patterns or {}).get("crew_answers") or None,
+        learned=(patterns or {}).get("learned_headcount") or None,
         staffing_model=staffing_model or None, concurrent=(patterns or {}).get("concurrent") or None,
         half_curve=half_curve or None, elasticity=elasticity or None, **_limit_kwargs(c))
 
