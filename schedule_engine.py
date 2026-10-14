@@ -10797,6 +10797,14 @@ def _stage_section_cap(rows, x):
     return {"rows": new, "report": {"trimmed": n, "dates": dates, "conflicts": rep.get("conflicts") or []}}
 
 
+def _objective_of(x):
+    """The repair context's one objective (RepairContext.objective_ctx), or
+    None — a context without one (a replay's, a caller's own) leaves each
+    pass on its own order."""
+    fn = getattr(x, "objective_ctx", None)
+    return (fn() or None) if callable(fn) else None
+
+
 def _stage_budget(rows, x):
     """The trim back to the hourly budget (schedule_economics.trim_to_budget):
     tails first, then whole shifts, never under the requirements, a floor, a
@@ -10827,7 +10835,7 @@ def _stage_budget(rows, x):
         # The one objective (LOGIC-6): a cut only where it lowers it, the
         # least valuable half hours first — never the coverage the solver
         # bought at the same prices.
-        objective_ctx=x.objective_ctx() or None)
+        objective_ctx=_objective_of(x))
     return {"rows": new, "trimmed": trimmed, "report": {"hours": hours, "conflict": rep.get("conflict")}}
 
 
@@ -10845,7 +10853,7 @@ def _stage_top_up(rows, x):
     new, hours, dates = _top_up_hours_gap(
         rows, x.result.get("daily_target_hours") or {}, x.budget, x.hourly(rows), x.rid, x.close_times,
         x.role_buffers, constraints=x.c, scorer_for=x.scorer_for, requirements=x.requirements,
-        only_dates=x.editable, objective_ctx=x.objective_ctx() or None)
+        only_dates=x.editable, objective_ctx=_objective_of(x))
     return {"rows": new, "report": {"hours": hours, "dates": dates}}
 
 
@@ -10895,7 +10903,7 @@ def _stage_solver(rows, x):
                            max_seconds=_cps.DEFAULT_SECONDS, wall_cap=max(0.5, x.search_seconds()),
                            hours_budget=x.budget or None,
                            # the one objective the draft was solved to (LOGIC-6)
-                           objective=x.objective_ctx() or None)
+                           objective=_objective_of(x))
         summary = _cps.summary(res)
     else:
         res = _solver.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
@@ -10963,7 +10971,7 @@ def _stage_optimizer(rows, x):
                         reassign=bool(getattr(x, "reassign_on", True)),
                         # The one objective's dollars, saved as well as added
                         # (blind re-audit 10/11/26 LOGIC-6, LOGIC-23).
-                        objective_ctx=x.objective_ctx() or None)
+                        objective_ctx=_objective_of(x))
     x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
     used = int(res.get("evaluations") or 0)
     x.search_spent["optimizer_evaluations"] = int(x.search_spent.get("optimizer_evaluations", 0)) + max(1, used)
