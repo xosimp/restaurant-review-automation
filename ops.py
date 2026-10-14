@@ -1016,6 +1016,19 @@ QUEUE_WAIT_ALERT_SECONDS = int(os.getenv("QUEUE_WAIT_ALERT_SECONDS", "120"))
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
 ASYNC_DEADLINE_GRACE_SECONDS = 90
+# A job that has SAVED its draft (async_jobs.saved_ref) and is past its
+# deadline is finishing its after-save steps, not dead: a poll waits this
+# much longer before it says so, and even then says the draft is saved —
+# provisionally, so the job's own finish still replaces it (blind re-audit
+# 10/11/26 BUGSGEN-13).
+SAVED_FINISH_GRACE_SECONDS = 5 * 60
+# The verdict a poll or the boot sweep writes over a job that saved a draft
+# but did not finish: the draft is in force, and the job's own finish (or a
+# resumed try's) may still replace this (finish_async_job).
+SAVED_UNFINISHED = {"ok": False, "saved": True, "provisional": True,
+                    "error": "Cavnar AI saved a draft for this week but didn't finish its last steps — open it "
+                             "from Schedule History and read it through before you publish."}
+_PROVISIONAL_MARK = '"provisional": true'
 
 
 def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
@@ -1048,6 +1061,13 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
             resumable = []
         conn = _async_conn()
         keep = (" AND job_id NOT IN (" + ",".join("?" * len(resumable)) + ")") if resumable else ""
+        # A dead job that had saved its draft is never "interrupted — try
+        # again": the draft is in force (BUGSGEN-13).
+        import json as _json_sweep
+        conn.execute(
+            "UPDATE async_jobs SET status='error', result_json=? "
+            "WHERE status='pending' AND saved_ref IS NOT NULL AND created_at <= datetime('now', ?)" + keep,
+            [_json_sweep.dumps(SAVED_UNFINISHED), f"-{int(older_than_minutes)} minutes"] + resumable)
         cur = conn.execute(
             "UPDATE async_jobs SET status='error', result_json=? "
             "WHERE status='pending' AND created_at <= datetime('now', ?)" + keep,
@@ -1207,7 +1227,11 @@ def finish_async_job(job_id, status, result):
     Only a job still pending is written: one already failed — swept at boot,
     or read past its own deadline (read_async_job) — keeps that verdict. A
     generation that ran on past it used to overwrite "didn't finish" with a
-    draft the owner had been told never came (schedule audit 10/3/26 P-22)."""
+    draft the owner had been told never came (schedule audit 10/3/26 P-22).
+    The one exception: a job that saved its draft and was given the
+    provisional "saved but didn't finish" verdict (SAVED_UNFINISHED) is
+    finished by its own finish — the draft it names is the one in force
+    (blind re-audit 10/11/26 BUGSGEN-13)."""
     import json
     try:
         payload = json.dumps(result)
@@ -1216,8 +1240,9 @@ def finish_async_job(job_id, status, result):
     try:
         conn = _async_conn()
         cur = conn.execute(
-            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND status='pending'",
-            (status, payload, str(job_id)),
+            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND (status='pending' OR "
+            "(status='error' AND saved_ref IS NOT NULL AND result_json LIKE ?))",
+            (status, payload, str(job_id), f"%{_PROVISIONAL_MARK}%"),
         )
         conn.commit()
         conn.close()
@@ -1421,9 +1446,14 @@ def read_async_job(job_id, restaurant_id=None):
             "SELECT job_id, restaurant_id, status, result_json, progress_json, "
             "(deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) AS overdue, "
             "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
+            "((deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) OR "
+            " (deadline_at IS NOT NULL AND deadline_at < datetime('now', ?))) AS long_past, "
+            "saved_ref, "
             "CAST(strftime('%s', deadline_at) AS INTEGER) - CAST(strftime('%s', 'now') AS INTEGER) AS seconds_left "
             "FROM async_jobs WHERE job_id=?",
-            (f"-{JOB_MAX_MINUTES} minutes", f"-{ASYNC_DEADLINE_GRACE_SECONDS} seconds", str(job_id)),
+            (f"-{JOB_MAX_MINUTES} minutes", f"-{ASYNC_DEADLINE_GRACE_SECONDS} seconds",
+             f"-{JOB_MAX_MINUTES * 60 + SAVED_FINISH_GRACE_SECONDS} seconds",
+             f"-{ASYNC_DEADLINE_GRACE_SECONDS + SAVED_FINISH_GRACE_SECONDS} seconds", str(job_id)),
         ).fetchone()
         if not row:
             conn.close()
@@ -1439,11 +1469,12 @@ def read_async_job(job_id, restaurant_id=None):
         # re-audit 10/11/26 ARCH-10): the queue row says whether it can still
         # finish. A row that expired unstarted, failed, was cancelled or
         # ended without writing a result will never write one — the owner
-        # is told now rather than polling to a timeout; a row still queued
+        # is told now rather than polling to a timeout (unless the job saved
+        # its draft: that is BUGSGEN-13's case below); a row still queued
         # (waiting its turn) or running on a live lease is never called dead
         # by its age, only by its own deadline.
         queue_state = _queue_state(job_id) if status == "pending" else None
-        if queue_state in ("expired", "failed", "cancelled", "done"):
+        if queue_state in ("expired", "failed", "cancelled", "done") and row["saved_ref"] is None:
             failed = {"ok": False, "error": _QUEUE_ENDED_MESSAGES[queue_state]}
             try:
                 conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
@@ -1453,7 +1484,25 @@ def read_async_job(job_id, restaurant_id=None):
                 log.error(f"read_async_job({job_id}) could not record the ended queue job: {e}")
             conn.close()
             return {"status": "error", "result": failed}
-        if status == "pending" and (row["past_deadline"] or (row["overdue"] and queue_state != "live")):
+        overdue = row["past_deadline"] or (row["overdue"] and queue_state != "live")
+        if status == "pending" and overdue and row["saved_ref"] is not None:
+            # The job saved its draft and is finishing (its after-save
+            # steps): not dead. The poll waits; well past that it says the
+            # draft is saved, provisionally — the job's own finish still
+            # replaces it (blind re-audit 10/11/26 BUGSGEN-13).
+            if not row["long_past"]:
+                conn.close()
+                return {"status": "pending", "result": None, "seconds_left": 0, "saved": True}
+            saved = dict(SAVED_UNFINISHED, history_id=int(row["saved_ref"]))
+            try:
+                conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                             "AND status='pending'", (json.dumps(saved), str(job_id)))
+                conn.commit()
+            except Exception as e:
+                log.error(f"read_async_job({job_id}) could not record the unfinished saved job: {e}")
+            conn.close()
+            return {"status": "error", "result": saved}
+        if status == "pending" and overdue:
             # Past any real generation (or past the job's own deadline): its
             # result was never stored (the write failed, or the process died
             # after the boot sweep ran). Polling 'pending' forever helps

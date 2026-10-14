@@ -471,7 +471,12 @@ def test_the_rules_block_states_the_rule_at_its_rank():
     block = sr.prompt_block(c)
     line = next(ln for ln in block.splitlines() if "NON-NEGOTIABLE" in ln)
     assert "above every other rule" not in line
-    assert "PRIORITIES 1a" in line and "gives way only to a manager's own availability, time off" in line
+    assert "PRIORITIES 1a" in line
+    # What the rule gives way to is said once, in PRIORITIES 1a itself
+    # (re-audit 10/11/26 AI-15: it was restated here a third time).
+    import schedule_prompt as sp
+    assert "gives way only to a manager's own availability" not in line
+    assert "It gives way only to a manager's own availability" in sp.PRIORITIES
     # the acting manager is named once, on its own line, with the date as the
     # owner reads it (schedule_rules._acting_prompt_lines, F1)
     assert "Somebody standing in as the manager counts on their dates" in line

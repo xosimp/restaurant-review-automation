@@ -6,7 +6,11 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
+# Appended, never first: scripts/ holds modules named like the root ones
+# (scripts/schedule_benchmark.py beside schedule_benchmark.py), and a
+# scripts/ entry at the front of sys.path shadowed the root module for every
+# test collected after this file in the same process.
+sys.path.append(os.path.join(ROOT, "scripts"))
 
 
 def test_every_variable_the_code_reads_is_in_the_environment_doc():

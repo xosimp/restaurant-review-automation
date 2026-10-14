@@ -1621,23 +1621,27 @@ def auto_draft_offset_seconds(restaurant_id) -> int:
     return h % span
 
 
-def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None):
+def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None):
     """One restaurant's auto-draft as a `scheduled` job_queue row: the same
     try (_claim_auto_draft_attempt) the pass claimed, keyed so the same try
-    is never queued twice. `answer` is the Message Batches answer
-    (schedule_batch.on_auto_draft, {key, text, stop_reason, usage,
-    call_id}) the draft is written from. Returns the row id."""
+    is never queued twice. `answers_job` is the Message Batches group whose
+    answers are stored by call key (schedule_batch — blind re-audit 10/11/26
+    ARCH-15): the draft runs under schedule_resume.resuming(it). `answer` is
+    the one answer an item submitted before ARCH-15 carries ({key, text,
+    stop_reason, usage, call_id}). Returns the row id."""
     import job_queue
     import time as _t
     payload = {"restaurant_id": r.id, "period": period, "target": target, "attempt": attempt,
-               "batch": bool(batch), "answer": answer,
+               "batch": bool(batch), "answer": answer, "answers_job": answers_job,
                "attribution": {"trigger": "scheduler", "actor_user_id": None,
                                "correlation_id": f"auto_draft:{r.id}:{target}"}}
-    key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if answer is not None else
+    key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if (answer is not None or answers_job) else
                                                       ":sync" if not batch else "")
-    # A first half starts at the restaurant's place in the spread; a batched
-    # answer, already paid for, is drafted as soon as a slot allows.
-    start = _t.time() + (0 if answer is not None else auto_draft_offset_seconds(r.id))
+    # The pass's own row (the first half) starts at the restaurant's place in
+    # the spread; a batched answer, already paid for, or a synchronous run
+    # after a batch fell through, is drafted as soon as a slot allows.
+    first_half = batch and answer is None and not answers_job
+    start = _t.time() + (auto_draft_offset_seconds(r.id) if first_half else 0)
     qid, _created = job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
                                       idempotency_key=key, not_before=start,
                                       deadline=start + AUTO_DRAFT_QUEUE_HOURS * 3600)
@@ -1662,7 +1666,7 @@ def run_queued_auto_draft(job):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return {"skipped": "not opted in"}
     target = p.get("target")
-    if target and p.get("answer") is not None:
+    if target and (p.get("answer") is not None or p.get("answers_job")):
         conn = get_conn(DB_PATH)
         try:
             if _week_has_schedule(conn, r.id, target):
@@ -1671,7 +1675,12 @@ def run_queued_auto_draft(job):
             conn.close()
     ctx = _cl.nullcontext()
     ans = p.get("answer")
-    if ans:
+    if p.get("answers_job"):
+        # The group's batched answers, read by call key at the call site
+        # (ARCH-15): the resume mechanism, nothing carried in the row.
+        import schedule_resume as _sres
+        ctx = _sres.resuming(p["answers_job"])
+    elif ans:
         import schedule_batch as _sbat
         import schedule_resume as _sres
         msg = _sres.StoredMessage(ans.get("text") or "", stop_reason=ans.get("stop_reason"), model=ans.get("model"))
@@ -1686,7 +1695,7 @@ def run_queued_auto_draft(job):
         ctx = _sbat.answering(ans.get("key"), msg)
     with ctx:
         _draft_one(r, DB_PATH, _se, _bump, period=p.get("period"), target=target, attempt=p.get("attempt"),
-                   batch=bool(p.get("batch", True)) and not ans)
+                   batch=bool(p.get("batch", True)) and not ans and not p.get("answers_job"))
     return counts
 
 

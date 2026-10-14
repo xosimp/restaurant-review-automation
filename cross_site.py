@@ -359,6 +359,9 @@ def respond(home_restaurant_id, name, offer_id, accept, db_path=None) -> dict:
             conn.close()
     else:
         raise CrossSiteError("the schedule kept changing while that was checked — try again")
+    # The target site's POS time clock gets the week as it now is (schedule
+    # re-audit 10/11/26 BUGSLIFE-11).
+    _srq.after_live_write(target, hist["id"], actor=name, db_path=db_path or _models_mod.DB_PATH)
     _srq._tell_managers(target, "Shift covered from another location",
                         f"{name} (from another location) took {_srq._when(req)}.", db_path or _models_mod.DB_PATH)
     return {"status": "accepted", "request_id": req["id"], "target_restaurant_id": target}

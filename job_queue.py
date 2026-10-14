@@ -107,6 +107,9 @@ KINDS = {
     "schedule_generate": ("generation", "interactive", 3),
     "auto_draft": ("generation", "scheduled", 2),
     "learner": ("bulk", "bulk", 2),
+    # The learning ablation, off the owner's wait (blind re-audit 10/11/26
+    # ARCH-14): research data, one try.
+    "schedule_ablation": ("bulk", "bulk", 1),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -114,6 +117,7 @@ HANDLERS = {
     "schedule_generate": "schedule_engine:run_queued_generation",
     "auto_draft": "strategy_jobs:run_queued_auto_draft",
     "learner": "strategy_jobs:run_queued_learner",
+    "schedule_ablation": "schedule_scorecard:run_queued_ablation",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -326,9 +330,56 @@ def init_job_queue(db_path=None):
     try:
         for stmt in _DDL:
             conn.execute(stmt)
+        # A running row waiting on the model gateway's next minute (re-audit
+        # 10/11/26 SCALE-25): until this time it does not count against its
+        # group's concurrency (parked).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "parked_until" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN parked_until REAL")
         conn.commit()
     finally:
         conn.close()
+
+
+@contextlib.contextmanager
+def parked(seconds, db_path=None):
+    """`with parked(30): sleep(30)` — the running queue job of this thread
+    gives up its group slot while it waits (the model gateway's wait for the
+    next minute, SCALE-25): claim() does not count it toward the group's
+    concurrency until `seconds` from now, so another generation can do its
+    code work instead of the slot sitting idle. Its lease, its tenant's
+    one-at-a-time rule and everything else are unchanged; the slot is taken
+    back when the wait ends (a claim made meanwhile may run one over the
+    bound for that wait — the bound is the model's tokens, which the waiting
+    call is not spending). Outside a queue job it does nothing."""
+    job = current()
+    if job is None or job.get("id") is None:
+        yield
+        return
+    def _set(value):
+        try:
+            conn = get_conn(db_path)
+            try:
+                conn.execute("UPDATE jobs SET parked_until=? WHERE id=? AND state='running'", (value, int(job["id"])))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("job %s not parked: %s", job.get("id"), e)
+    grp = job.get("grp")
+    _set(time.time() + float(seconds or 0))
+    with _pools_lock:
+        _parked_n[grp] = _parked_n.get(grp, 0) + 1
+    try:
+        try:
+            kick(grp, db_path=db_path)          # let a waiting row use the slot
+        except Exception as e:
+            log.warning("no drain started beside parked job %s: %s", job.get("id"), e)
+        yield
+    finally:
+        with _pools_lock:
+            _parked_n[grp] = max(0, _parked_n.get(grp, 0) - 1)
+        _set(None)
 
 
 # ── the job a thread is running ─────────────────────────────────────────────
@@ -637,11 +688,13 @@ def _edf_head(conn, grp, now, busy):
 def _occupancy(conn, grp, now):
     """(rows running with a live lease, {class: rows holding or awaiting a
     CPU slot}, {restaurant ids running}) of `grp`."""
-    rows = conn.execute("SELECT restaurant_id, priority_class, phase FROM jobs WHERE grp=? AND state='running' "
-                        "AND lease_until>?", (grp, now)).fetchall()
+    rows = conn.execute("SELECT restaurant_id, priority_class, phase, parked_until FROM jobs WHERE grp=? "
+                        "AND state='running' AND lease_until>?", (grp, now)).fetchall()
     held = {}
     for r in rows:
-        if (r["phase"] or "") != "model":
+        # Waiting on a model answer (model_wait) or parked on the gateway's
+        # next minute (parked, SCALE-25): no CPU slot held.
+        if (r["phase"] or "") != "model" and not (r["parked_until"] and r["parked_until"] > now):
             held[r["priority_class"]] = held.get(r["priority_class"], 0) + 1
     return len(rows), held, {r["restaurant_id"] for r in rows if r["restaurant_id"] is not None}
 
@@ -962,9 +1015,9 @@ def _take_slot(job, db_path=None) -> bool:
         if mine is None:
             conn.rollback()
             return True
-        rows = conn.execute("SELECT id, priority_class, phase FROM jobs WHERE grp=? AND state='running' "
-                            "AND lease_until>?", (grp, now)).fetchall()
-        busy = sum(1 for r in rows if not r["phase"])
+        rows = conn.execute("SELECT id, priority_class, phase, parked_until FROM jobs WHERE grp=? "
+                            "AND state='running' AND lease_until>?", (grp, now)).fetchall()
+        busy = sum(1 for r in rows if not r["phase"] and not (r["parked_until"] and r["parked_until"] > now))
         # A press coming back goes ahead of a draft coming back.
         ahead = klass != "interactive" and any(r["phase"] == "await" and r["priority_class"] == "interactive"
                                                and r["id"] != int(job["id"]) for r in rows)
@@ -1209,6 +1262,7 @@ _held = {}
 _held_lock = threading.Lock()
 _pools = {}
 _active = {}
+_parked_n = {}              # grp -> rows of this process parked on the model gateway
 _pools_lock = threading.Lock()
 
 
@@ -1241,7 +1295,10 @@ def kick(grp, db_path=None, force=False):
         return None
     with _pools_lock:
         # As many threads as rows may be in flight: a row waiting on a model
-        # answer keeps its thread but not its CPU slot (model_wait).
+        # answer (model_wait) or parked on the gateway's next minute (parked,
+        # SCALE-25) keeps its thread but not its CPU slot, so a drain may
+        # start beside it; claim() holds the group to its CPU slots and to
+        # max_running.
         size = max_running(grp)
         pool = _pools.get(grp)
         if pool is None or pool._max_workers != size:
