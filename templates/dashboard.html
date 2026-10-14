@@ -39136,7 +39136,8 @@ function sfw1RatingLine(s) {
     }
     var sk = p.skipped || [];
     for (i = 0; i < Math.min(sk.length, 3); i++) h += note('', n(sfw1SkippedLine(sk[i])));
-    h += staysHtml(S.stays || [], ed);
+    /* Closers staying late are not listed (Will, 10/14/26): a closer staying
+       with the volume is part of the job; the stay is still priced. */
     h += minHoursHtml((S.minh && S.minh.left) || []);
     if (S.start && S.start.no_history && S.startLine) h += note('', n(S.startLine.replace(/^A starting point:\s*/, '')), '', '');
     var dd = S.ddt;
@@ -39144,22 +39145,9 @@ function sfw1RatingLine(s) {
     h += setupHtml(S.setup);
     return h;
   }
-  /* Closing managers assumed to stay until the last person leaves, and
-     people left under their minimum hours: one compact list each (date,
-     who, the figure, one action) instead of a sentence per row. */
+  /* People left under their minimum hours: one compact list (who, the
+     figure) instead of a sentence per row. */
   function sfw1Day(d, day) { return e(String(day || '').slice(0, 3)) + ' ' + e(typeof mdy === 'function' ? mdy(d) : d); }
-  function staysHtml(st, ed) {
-    if (!st.length) return '';
-    var rows = '', i, hourly = false;
-    for (i = 0; i < st.length; i++) {
-      var s = st[i], sa = s.action || {};
-      if (s.hourly) hourly = true;
-      rows += '<div class="sfw1-gr"><span class="d">' + sfw1Day(s.date, s.day) + '</span><span class="nm">' + e(s.employee) + '</span>'
-        + '<span class="v">' + n('until ' + s.until) + ' <em>' + n('+' + s.minutes + 'm') + '</em></span>'
-        + (ed && sa.label ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-stay="' + i + '" title="' + e(sa.label) + '">Add to schedule</button>' : '') + '</div>';
-    }
-    return '<div class="sfw1-g"><div class="hd"><b>Closers staying late</b><span>' + (hourly ? 'Until the last person leaves, counted in labor' : 'Until the last person leaves') + '</span></div>' + rows + '</div>';
-  }
   function minHoursHtml(mh) {
     if (!mh.length) return '';
     var rows = '', i, show = Math.min(mh.length, 6);
@@ -39174,7 +39162,7 @@ function sfw1RatingLine(s) {
      action — leader rules nobody counts for ("Count them as mine", the
      account holder's), trading days with no close time (Hours). */
   function setupHtml(items) {
-    var h = '', rest = [], i;
+    var h = '', i;
     for (i = 0; i < (items || []).length; i++) {
       var it = items[i] || {};
       if (!it.text || it.line === false) continue;
@@ -39183,12 +39171,8 @@ function sfw1RatingLine(s) {
       /* The full-time line nobody confirmed (LOGIC-29): one tap makes it the
          minimum; the next draft fills and keeps it. */
       else if (it.kind === 'full_time_unconfirmed') h += note('', n(it.text), canEdit() && it.action ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-sfw1-ftmin="1">' + e(it.action.label) + '</button>' : '');
-      else rest.push(it);
-    }
-    if (rest.length) {
-      var li = '';
-      for (i = 0; i < rest.length; i++) li += '<li>' + n(rest[i].text) + '</li>';
-      h += note('', '<b>How this week was set up</b><ul>' + li + '</ul>', '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam(\'rules\')">Team &amp; rules</button>');
+      /* The quiet setup items ("How this week was set up") are not listed
+         (Will, 10/14/26): only setup that asks something of the owner shows. */
     }
     return h;
   }

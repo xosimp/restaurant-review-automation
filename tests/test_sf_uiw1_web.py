@@ -493,9 +493,10 @@ __o.usd = [sfw1Dollars(84), sfw1Dollars(-12.4), sfw1Dollars(0), sfw1Dollars(null
                   "Which days and hours do Erik and Jim work?", 'data-sfw1-wk="Erik"', 'data-sfw1-wk="Jim"',
                   "1h of the week has no manager on", "Max — on approved time off", "Kay · on that day",
                   "Make acting manager", "Erik’s standing shift", "Under their minimum hours", "1h short", "has no shift history",
-                  "Sales through", "Count them as mine", "Set the hours", "How this week was set up", "two on the patio"):
+                  "Sales through", "Count them as mine", "Set the hours"):
         assert piece in n or piece in plain["notes"], piece
     assert "Managers: Erik" not in n, "a line:false setup item stays where its payload puts it"
+    assert "How this week was set up" not in n and "two on the patio" not in n, "quiet setup items are not listed (Will, 10/14/26)"
     assert o["week_notes"] == "", "the notes show on the Summary step only, never a second copy over the grid"
     assert "Manager on" in o["day"] and "Not written" in o["day"]
     assert "Manager plan" in o["chip"] and "clocks" in o["chip"] and "Erik usually works Mondays" in o["pane"]
