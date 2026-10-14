@@ -30,11 +30,21 @@ or a projection.
                    a published week built without a draft, or a week before
                    the first Cavnar AI draft (the punches, no schedule here).
   restaurant_view() the owner's before/after: per measure, the mean of each
-                   class, the difference (Cavnar − manager) with its 90%
-                   interval (Welch), the weeks behind each — stated only with
-                   MIN_WEEKS on each side; the caveat that the weeks are
-                   different weeks (season, demand, staff), so a difference
-                   is an association, not a controlled effect.
+                   class and the SEASON-MATCHED difference (blind re-audit
+                   10/11/26 LEARNING-29: weeks compared as if independent and
+                   season-blind, a claim on any of five measures, 4 weeks a
+                   side): each Cavnar AI week against the manager's weeks of
+                   the same time of year (week of the year within
+                   SEASON_BAND_WEEKS, any year on file — WEEKS back), the
+                   mean of those paired differences with a 90% interval
+                   from both sides' variances, each widened for serially
+                   correlated weeks (season_matched), "better" or "worse"
+                   only past Holm's step-
+                   down at FAMILY_ALPHA over the five measures — stated only
+                   with MIN_WEEKS matched Cavnar AI weeks and MIN_WEEKS
+                   manager weeks behind them; the caveat that the weeks are
+                   still different weeks (demand, staff), so a difference is
+                   an association, not a controlled effect.
   platform_view()  the admin readout (RM-22): each eligible restaurant's
                    difference (restaurants that may teach — intelligence.
                    jobs.excluded_learning_ids), the restaurant-cluster mean
@@ -49,15 +59,16 @@ or a projection.
 Reads only; nothing calls a model.
 """
 import logging
-import math
 from datetime import date, timedelta
 
 log = logging.getLogger(__name__)
 
-WEEKS = 52
+WEEKS = 104                     # two years: last year's same season is a Cavnar AI week's match
 MIN_DAYS = 5
 MIN_REVIEWS = 3
-MIN_WEEKS = 4
+MIN_WEEKS = 8
+SEASON_BAND_WEEKS = 3           # a manager week matches a Cavnar AI week within this many weeks of the year
+FAMILY_ALPHA = 0.10             # Holm over the five measures
 MEASURES = {
     "labor_pct": {"label": "Hourly labor %", "better": "lower", "unit": "%"},
     "ot_hours": {"label": "Overtime hours", "better": "lower", "unit": "h"},
@@ -191,23 +202,6 @@ def _load(restaurant_id, since, until, db_path=None) -> dict:
     return data
 
 
-def _welch(a, b):
-    """(difference a − b, lo, hi) with a 90% Welch interval, or None."""
-    import metrics
-    if len(a) < 2 or len(b) < 2:
-        return None
-    ma, mb = sum(a) / len(a), sum(b) / len(b)
-    va = sum((x - ma) ** 2 for x in a) / (len(a) - 1)
-    vb = sum((x - mb) ** 2 for x in b) / (len(b) - 1)
-    se2 = va / len(a) + vb / len(b)
-    if se2 <= 0:
-        return round(ma - mb, 4), round(ma - mb, 4), round(ma - mb, 4)
-    df = se2 ** 2 / ((va / len(a)) ** 2 / (len(a) - 1) + (vb / len(b)) ** 2 / (len(b) - 1)) if (va or vb) else 1
-    half = metrics.t_ppf(0.95, max(1, int(df))) * math.sqrt(se2)
-    d = ma - mb
-    return round(d, 4), round(d - half, 4), round(d + half, 4)
-
-
 def weeks_for(restaurant_id, today=None, db_path=None) -> list:
     """[{week_start, class, history_id, measures...}] for the last WEEKS
     ended weeks that carry any measurement."""
@@ -239,24 +233,103 @@ def _scorecard(restaurant_id, db_path=None) -> dict:
         conn.close()
 
 
+def _woy(week_start):
+    d = week_start if hasattr(week_start, "isocalendar") else date.fromisoformat(str(week_start)[:10])
+    return d.isocalendar()[1]
+
+
+def _ar1_inflation(vals):
+    """(variance inflation, effective n) of a weekly series' mean for its
+    lag-1 correlation (bias-corrected, held to [0, 0.9])."""
+    n = len(vals)
+    if n < 3:
+        return 1.0, float(n)
+    m = sum(vals) / n
+    dev = [v - m for v in vals]
+    ss = sum(d * d for d in dev)
+    rho = 0.0
+    if ss > 0:
+        r = sum(dev[t] * dev[t - 1] for t in range(1, n)) / ss
+        rho = max(0.0, min(0.9, r + (1.0 + 3.0 * r) / n))
+    infl = (1.0 + rho) / (1.0 - rho)
+    return infl, n / infl
+
+
+def season_matched(weeks, m) -> dict | None:
+    """The season-matched difference for measure `m` (module doc): each
+    Cavnar AI week's value minus the mean of the manager weeks of the same
+    time of year (week of the year within SEASON_BAND_WEEKS, circular); a
+    Cavnar AI week with no such manager week is left out. Its mean equals
+    the Cavnar AI weeks' mean minus a WEIGHTED mean of the manager weeks
+    used (a manager week matched by several Cavnar AI weeks weighs more),
+    so its variance is each side's — the manager side through its weights,
+    since overlapping matches are not independent — each widened for its
+    own serial correlation. {difference, lo, hi, p, cavnar_weeks,
+    manager_weeks} or None when nothing matched."""
+    import learning_stats as _ls
+    man = sorted((w["week_start"], _woy(w["week_start"]), float(w[m])) for w in weeks
+                 if w["class"] == "manager" and w.get(m) is not None)
+    cav, weight = [], {}
+    for w in sorted((w for w in weeks if w["class"] == "cavnar" and w.get(m) is not None),
+                    key=lambda w: w["week_start"]):
+        k = _woy(w["week_start"])
+        near = [ws for ws, wk, _v in man if min(abs(wk - k), 52 - abs(wk - k)) <= SEASON_BAND_WEEKS]
+        if not near:
+            continue
+        cav.append(float(w[m]))
+        for ws in near:
+            weight[ws] = weight.get(ws, 0.0) + 1.0 / len(near)
+    if not cav:
+        return None
+    n = len(cav)
+    mvals = [v for ws, _wk, v in man if ws in weight]
+    wts = [weight[ws] / n for ws, _wk, _v in man if ws in weight]
+    mc = sum(cav) / n
+    mm = sum(w * v for w, v in zip(wts, mvals))
+    diff = mc - mm
+    out = {"difference": round(diff, 4), "lo": None, "hi": None, "p": None, "cavnar_weeks": n,
+           "manager_weeks": len(mvals)}
+    if n < 3 or len(mvals) < 3:
+        return out
+    vc = sum((v - mc) ** 2 for v in cav) / (n - 1)
+    mbar = sum(mvals) / len(mvals)
+    vm = sum((v - mbar) ** 2 for v in mvals) / (len(mvals) - 1)
+    ic, nc = _ar1_inflation(cav)
+    im, nm = _ar1_inflation(mvals)
+    se = (vc / n * ic + vm * sum(w * w for w in wts) * im) ** 0.5
+    df = max(1.0, min(nc, nm) - 1.0)
+    q = _ls.t_ppf(0.95, df)
+    out.update(lo=round(diff - q * se, 4), hi=round(diff + q * se, 4), p=_ls.t_pvalue(diff, se, df))
+    return out
+
+
 def compare(weeks) -> dict:
-    """{measure: {cavnar: {mean, n}, manager: {mean, n}, difference, lo, hi,
-    stated, verdict}} — stated only with MIN_WEEKS on each side."""
-    out = {}
+    """{measure: {cavnar: {mean, n}, manager: {mean, n}, matched, difference,
+    lo, hi, p, stated, verdict}} — the season-matched difference (module
+    doc), stated only with MIN_WEEKS matched weeks on each side, a verdict
+    only past Holm over the measures."""
+    import learning_stats as _ls
+    out, tests = {}, {}
     for m, spec in MEASURES.items():
         a = [w[m] for w in weeks if w["class"] == "cavnar" and w.get(m) is not None]
         b = [w[m] for w in weeks if w["class"] == "manager" and w.get(m) is not None]
         e = {"label": spec["label"], "better": spec["better"], "cavnar": {"n": len(a), "mean": round(sum(a) / len(a), 3) if a else None},
              "manager": {"n": len(b), "mean": round(sum(b) / len(b), 3) if b else None},
-             "difference": None, "lo": None, "hi": None, "stated": False, "verdict": None}
-        if len(a) >= MIN_WEEKS and len(b) >= MIN_WEEKS:
-            w = _welch(a, b)
-            if w:
-                e.update({"difference": w[0], "lo": w[1], "hi": w[2], "stated": True})
-                good = (w[2] < 0) if spec["better"] == "lower" else (w[1] > 0)
-                bad = (w[1] > 0) if spec["better"] == "lower" else (w[2] < 0)
-                e["verdict"] = "better" if good else ("worse" if bad else "no clear difference")
+             "matched": {"cavnar": 0, "manager": 0}, "difference": None, "lo": None, "hi": None, "p": None,
+             "stated": False, "verdict": None}
+        got = season_matched(weeks, m) or {}
+        e["matched"] = {"cavnar": got.get("cavnar_weeks", 0), "manager": got.get("manager_weeks", 0)}
+        if e["matched"]["cavnar"] >= MIN_WEEKS and e["matched"]["manager"] >= MIN_WEEKS and got.get("p") is not None:
+            e.update({"difference": got["difference"], "lo": got["lo"], "hi": got["hi"], "p": got["p"], "stated": True})
+            tests[m] = got["p"]
         out[m] = e
+    sure = _ls.holm(tests, FAMILY_ALPHA) if tests else set()
+    for m, e in out.items():
+        if not e["stated"]:
+            continue
+        lower = e["difference"] < 0
+        good = lower if MEASURES[m]["better"] == "lower" else not lower
+        e["verdict"] = ("better" if good else "worse") if m in sure else "no clear difference"
     return out
 
 
@@ -296,15 +369,18 @@ def restaurant_view(restaurant_id, today=None, db_path=None) -> dict:
         word = {"better": "better", "worse": "worse"}.get(e["verdict"], "no clear difference yet")
         lines.append(f"{e['label']}: {_fmt(m, e['cavnar']['mean'])} in the {e['cavnar']['n']} weeks Cavnar AI drafted, "
                      f"{_fmt(m, e['manager']['mean'])} in the {e['manager']['n']} weeks built without it — {word} "
-                     f"(90% range {_diff(m, e['lo'])} to {_diff(m, e['hi'])} on the difference).")
+                     f"against the same time of year ({_diff(m, e['difference'])}, 90% range {_diff(m, e['lo'])} to "
+                     f"{_diff(m, e['hi'])}, over {e['matched']['cavnar']} matched weeks).")
     n_c = sum(1 for w in weeks if w["class"] == "cavnar")
     n_m = sum(1 for w in weeks if w["class"] == "manager")
     return {"ok": True, "available": any(e["stated"] for e in comp.values()), "weeks": {"cavnar": n_c, "manager": n_m},
             "measures": comp, "lines": lines,
-            "caveat": ("Measured on what each week actually did. The weeks are different weeks — the season, the "
-                       "demand and the team change — so a difference is what went with Cavnar AI's weeks, not a "
-                       "controlled test. Nothing here is a projection or an opportunity."),
-            "floor": f"Each comparison needs {MIN_WEEKS} weeks on each side."}
+            "caveat": ("Measured on what each week actually did, each Cavnar AI week against the manager's weeks "
+                       "from the same time of year. They are still different weeks — the demand and the team "
+                       "change — so a difference is what went with Cavnar AI's weeks, not a controlled test. "
+                       "Nothing here is a projection or an opportunity."),
+            "floor": (f"Each comparison needs {MIN_WEEKS} Cavnar AI weeks with manager weeks from the same time of "
+                      f"year (within {SEASON_BAND_WEEKS} weeks), and {MIN_WEEKS} such manager weeks.")}
 
 
 def platform_view(today=None, db_path=None, restaurant_ids=None) -> dict:
@@ -364,8 +440,9 @@ def platform_view(today=None, db_path=None, restaurant_ids=None) -> dict:
             "per_restaurant": [{"restaurant_id": rid, "weeks": v["weeks"],
                                 "differences": {m: {k: v["measures"][m][k] for k in ("difference", "lo", "hi", "verdict")}
                                                 for m in MEASURES if v["measures"][m]["stated"]}} for rid, v in per.items()],
-            "method": ("Per restaurant: the difference of the as-run means (Cavnar AI's drafted weeks − weeks built "
-                       "without a draft) with a Welch 90% interval; across restaurants: the restaurant-cluster mean "
+            "method": ("Per restaurant: the season-matched difference (each Cavnar AI week minus the manager weeks "
+                       "of the same time of year) with a 90% interval widened for serially correlated weeks, Holm "
+                       "over the five measures; across restaurants: the restaurant-cluster mean "
                        "of those differences and its 90% interval. Published only above the privacy floor "
                        f"({privacy.MIN_COHORT} restaurants, {privacy.MIN_ORGS} organisations, none over a third) and "
                        "claimed only when the interval excludes no difference.")}
