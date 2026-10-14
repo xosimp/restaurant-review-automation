@@ -11433,7 +11433,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-rh b{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink)}
 .ss-crew-rh span{font-size:13px;color:var(--ink3)}
 .ss-crew-scroll{overflow-x:auto}
-.ss-crew-t{border-collapse:separate;border-spacing:4px;width:100%;min-width:720px}
+.ss-crew-t{border-collapse:separate;border-spacing:4px;width:100%;min-width:720px;table-layout:fixed}
+/* Fixed layout: the seven day columns share the width equally and never grow with what a cell says
+   (owner, 10/14/26: Add 1 this week widened Friday and shifted every column). */
+.ss-crew-t td{overflow-wrap:anywhere}
+.ss-crew-done .u{color:var(--hb-warn)}
 .ss-crew-t th{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);padding:2px;text-align:center}
 .ss-crew-t th.p{text-align:left;width:60px}
 .ss-crew-t td{background:var(--paper2);border-radius:10px;padding:8px 6px;text-align:center;vertical-align:top;border-top:3px solid transparent;min-width:84px}
@@ -28174,7 +28178,7 @@ function ssCrewCell(role, c) {
   else if (c.status === 'under') act = '<div class="ss-crew-a">' + keepBtn + addBtn + leanBtn + '</div>';
   // Under a minimum (one just kept included): the fix for this week, here.
   if (c.status === 'below_rule' && addBtn) act += '<div class="ss-crew-a">' + addBtn + '</div>';
-  if (_ssCrewAdded[ck]) act += '<div class="ss-crew-done">' + _escHtml(_ssCrewAdded[ck]) + ' · save the week to keep it</div>';
+  if (_ssCrewAdded[ck]) act += '<div class="ss-crew-done">' + _escHtml(_ssCrewAdded[ck]) + ' <span class="u">· unsaved</span></div>';
   var title = c.day + ' ' + meal + ': usually ' + c.usual + ' on at once through ' + core + (c.usual_peak ? ' (' + c.usual_peak + ' at the busiest half hour)' : '')
     + (c.status === 'usual' ? '' : ', this draft ' + c.draft + (c.draft_peak ? ' (' + c.draft_peak + ' at the busiest)' : ''))
     + (c.sales ? ', shift sales about $' + Math.round(c.sales).toLocaleString('en-US') : '');
@@ -28208,7 +28212,9 @@ document.addEventListener('click', function (e) {
         _schedRows.push(s);
         if (typeof _schedSortRows === 'function') _schedSortRows();
         if (typeof schedAfterEdit === 'function') schedAfterEdit();
-        _ssCrewAdded[payload.role + '|' + payload.day + '|' + payload.part] = d.text || ('Added ' + s.employee);
+        /* The cell's note stays short (owner, 10/14/26: the server's full sentence
+           widened its column and skewed the table); the toast keeps the sentence. */
+        _ssCrewAdded[payload.role + '|' + payload.day + '|' + payload.part] = 'Added ' + (s.employee || '') + (s.shift_start ? ' ' + s.shift_start + '\u2013' + (s.shift_end || '') : '');
         ssCrewDraw();
         toast((d.text || 'Added') + ' — save the week to keep it', 'success');
         return;
