@@ -2523,6 +2523,17 @@ def init_db(db_path: str = DB_PATH):
             attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_login_attempts_key ON login_attempts(key, attempted_at)",
+        # The /admin request ceiling's counts (security.admin_request_allowed
+        # — blind re-audit 10/11/26 ARCH-26/SCALE-23): per session and
+        # minute in the database, so N web workers share one ceiling instead
+        # of each allowing its own.
+        """CREATE TABLE IF NOT EXISTS admin_request_hits (
+            key      TEXT NOT NULL,
+            win      INTEGER NOT NULL,
+            requests INTEGER NOT NULL DEFAULT 0,
+            writes   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (key, win)
+        )""",
         # Temporary passwords are no longer persisted (security audit A3):
         # they are emailed once and a fresh one is minted at contract
         # signing. Anything still stored is a plaintext login credential.

@@ -462,6 +462,56 @@ def test_identity_reads_the_restaurants_questions_and_organization_once(db):
     assert len(_sql("SELECT id FROM person_questions WHERE restaurant_id=?", (rid,))) == 6
 
 
+# ── ARCH-26 / SCALE-23: process-local state that gated correctness ─────────
+
+def test_the_admin_ceiling_is_one_count_across_processes(db):
+    """Each web worker kept its own window, so N workers allowed N x 60
+    writes a minute. The count is in the database: another process (its
+    own in-memory window empty) sees the same ceiling."""
+    import security
+    security.reset_admin_rate_limits()
+    key = "q1-ceiling"
+    for i in range(security.ADMIN_WRITES_PER_MINUTE):
+        assert security.admin_request_allowed(key, is_write=True, now=6000.0 + i * 0.01)[0]
+    security._admin_hits.clear()                      # "another worker": nothing in its memory
+    allowed, retry = security.admin_request_allowed(key, is_write=True, now=6001.0)
+    assert not allowed and retry >= 1
+    assert _sql("SELECT requests, writes FROM admin_request_hits WHERE key LIKE ?", (f"%{key}",))[0][1] == 60
+    # The next minute weighs the last one by what is left of it.
+    assert security.admin_request_allowed(key, is_write=True, now=6000.0 + 60 + 50)[0]
+
+
+def test_a_cache_keyed_on_the_databases_stamp_drops_in_every_process(db, monkeypatch):
+    import schedule_engine as se
+    import labor
+    (rid,) = _restaurants(None, 1)
+    calls = []
+    monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
+                        lambda r: calls.append(r) or {"is_live": len(calls) > 1})
+    se.studio_invalidate()
+    assert se.studio_is_live(rid) is False
+    assert se.studio_is_live(rid) is False and len(calls) == 1         # remembered
+    models.save_client_data(rid, "shifts", "date,employee\n2026-10-01,Ana", source="upload")
+    assert se.studio_is_live(rid) is True, "the upload's stamp moved: re-read at once, not 15 minutes later"
+
+
+def test_an_admin_write_in_one_process_drops_the_fleet_memo_in_another(db):
+    import admin_ops
+    admin_ops.invalidate_fleet_cache()
+    shared = admin_ops._shared_fleet_gen()
+    assert shared
+    memo = {"recs": [], "d": {}, "meta": {"errors": []}, "at": time.monotonic(),
+            "gen": admin_ops._fleet_state["gen"], "key": admin_ops._memo_key(), "shared": shared}
+    admin_ops._fleet_state["memo"] = memo
+    try:
+        assert admin_ops._fleet_memo() is memo
+        # Another process's write moves the shared generation only.
+        _sql("UPDATE job_cursors SET value='elsewhere' WHERE key=?", (admin_ops._SHARED_FLEET_GEN,))
+        assert admin_ops._fleet_memo() is None
+    finally:
+        admin_ops._fleet_state["memo"] = None
+
+
 def test_gunicorns_master_runs_the_queue_worker_beside_the_web_process():
     import importlib.util
     import os

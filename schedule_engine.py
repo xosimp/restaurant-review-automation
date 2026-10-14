@@ -6872,9 +6872,11 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
         return store[key]
     # Eight weeks of tickets and punches change once a night: a Studio edit's
     # live rescore reuses the last read for REQUIREMENT_MODEL_TTL seconds
-    # (per process, per database file — a cache, safe to keep per worker).
+    # (per process, per database file) while the shift history's stamp is
+    # unchanged — keyed on the database's stamp, so every worker drops it
+    # the moment an upload or a sync lands (blind re-audit 10/11/26 ARCH-26).
     import time as _time_rm
-    ckey = (str(_m_rm.DB_PATH), int(restaurant_id))
+    ckey = (str(_m_rm.DB_PATH), int(restaurant_id), shifts_stamp(restaurant_id))
     hit = _REQUIREMENT_MODEL_CACHE.get(ckey)
     if hit and _time_rm.monotonic() - hit[0] < REQUIREMENT_MODEL_TTL:
         if store is not None:
@@ -8115,22 +8117,45 @@ def _studio_put(key, entry, now) -> None:
         total -= _studio_weight(old)
 
 
+def shifts_stamp(restaurant_id):
+    """The shift history's stamp in the database (client_data's updated_at
+    and size): a process-local cache keyed on it is right in EVERY process
+    the moment an upload or a POS sync lands (blind re-audit 10/11/26
+    ARCH-26 — a cache was right only in the process that wrote). None when
+    unreadable (the cache is then not used)."""
+    import models as _m_ss
+    try:
+        conn = _m_ss.get_conn()
+        try:
+            row = conn.execute("SELECT updated_at, LENGTH(shifts_csv) FROM client_data WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        return tuple(row) if row else ()
+    except Exception:
+        return None
+
+
 def studio_is_live(restaurant_id) -> bool:
     """Whether the restaurant's own shifts are on file (labor.
     analyse_shifts_for_restaurant's is_live), remembered for
-    STUDIO_CACHE_SECONDS — it reads every shift the restaurant has."""
+    STUDIO_CACHE_SECONDS while the shift history's stamp (shifts_stamp) is
+    unchanged — it reads every shift the restaurant has. It used to be
+    remembered on time alone, so an owner who uploaded shifts right after a
+    "not live" read was told to upload them for up to 15 minutes."""
     import time as _time
     now = _time.monotonic()
+    stamp = shifts_stamp(restaurant_id)
     with _studio_lock:
         hit = _studio_live.get(restaurant_id)
-    if hit is not None and now - hit[1] < STUDIO_CACHE_SECONDS:
+    if hit is not None and stamp is not None and hit[2] == stamp and now - hit[1] < STUDIO_CACHE_SECONDS:
         return hit[0]
     from labor import analyse_shifts_for_restaurant
     live = bool((analyse_shifts_for_restaurant(restaurant_id) or {}).get("is_live"))
     with _studio_lock:
         if len(_studio_live) > 4096:
             _studio_live.clear()
-        _studio_live[restaurant_id] = (live, now)
+        _studio_live[restaurant_id] = (live, now, stamp)
     return live
 
 
