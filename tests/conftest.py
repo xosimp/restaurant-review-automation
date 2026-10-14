@@ -49,6 +49,10 @@ os.environ.setdefault("AI_SHADOW_REVIEW", "0")
 # source, the draft_v1 arms and the benchmark delete or set it themselves
 # (tests/test_sf11_p_pipeline.py, test_sf10_e_fallback.py, schedule_benchmark).
 os.environ.setdefault("SCHEDULE_DRAFT_SOURCE", "model")
+# A generation's state declares every key it may hold (schedule_state, blind
+# re-audit 10/11/26 ARCH-5): in the suite an undeclared key — a misspelling, or
+# a key no stage writes — raises instead of reading None.
+os.environ.setdefault("SCHEDULE_STATE_STRICT", "1")
 # Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.

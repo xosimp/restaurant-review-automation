@@ -58,6 +58,7 @@ import traceback
 from dataclasses import dataclass, field
 
 import schedule_engine as se
+import schedule_state as _state
 import schedule_time as _stime
 
 # The quality gate's passes after the first draft: the fill in code, then the
@@ -134,7 +135,7 @@ class PassSpec:
 class Candidate:
     """One finished pass, held in memory until the job chooses what it saves."""
     spec: PassSpec
-    result: dict
+    result: _state.GenerationResult
     rows: list
     payload: dict
     timer: object
@@ -151,6 +152,11 @@ class Candidate:
     noted: bool = False          # Cavnar AI's note written (the winner only — ARCH-13)
     _rules: dict = None
 
+    def __post_init__(self):
+        # The pass's state is a GenerationResult whatever built the Candidate
+        # (its keys declared — schedule_state); one already typed is kept as is.
+        self.result = _state.GenerationResult.of(self.result)
+
     def view(self) -> dict:
         """The finished week as the gate reads it (P-43): its rows beside its
         sweep, its rules and its quality."""
@@ -158,11 +164,11 @@ class Candidate:
 
     @property
     def score(self):
-        return (self.result.get("quality") or {}).get("score")
+        return (self.result.quality or {}).get("score")
 
     @property
     def quality(self) -> dict:
-        return self.result.get("quality") or {}
+        return self.result.quality or {}
 
     def rules(self) -> dict:
         """{"hard", "unmanaged"} of the finished week (_gate_rules), read once."""
@@ -376,7 +382,7 @@ def _owner_redo(job: GenerationRun) -> Candidate:
             # stands (PIPE-2): nothing is paid twice.
             spec = PassSpec(kind="redo", dates=spec.dates, base=_read_base(req), answer=cand.answer,
                             focus=spec.focus, code_redo=False,
-                            redo_how=((cand.result.get("redo") or {}).get("how")
+                            redo_how=((cand.result.redo or {}).get("how")
                                       or ("code" if cand.code_redo_on else "model")))
 
 
@@ -464,7 +470,7 @@ def _build_pass(job: GenerationRun, spec: PassSpec) -> Candidate:
     rid = req.restaurant_id
     timer = se._StageClock()
     _boundary(job, "start")
-    result = _stage_draft(job, spec, timer)
+    result = _state.GenerationResult.of(_stage_draft(job, spec, timer))
     cand = Candidate(spec=spec, result=result, rows=[], payload={}, timer=timer, code_redo_on=spec.code_redo)
     if spec.redo:
         try:
@@ -2042,7 +2048,7 @@ def _held_base(cand: Candidate) -> Base:
     draft's would be — never saved itself (ARCH-17)."""
     text = cand.payload.get("schedule_csv") or ""
     return Base(rows=se._versions.rows_from_csv(text), csv=text, history_id=None,
-                week_start=(cand.result.get("week_dates") or [None])[0], facts=_week_facts(cand.result))
+                week_start=(cand.result.week_dates or [None])[0], facts=_week_facts(cand.result))
 
 
 # What a pass says about the whole week, beside its rows (BUGSGEN-10).
@@ -2279,7 +2285,7 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
     _t_save = time.monotonic()
     se.reach_stage("save")
     gen_box = {}
-    generation_ids = [c.result.get("generation_id") for c in job.passes if c.result.get("generation_id")]
+    generation_ids = [c.result.generation_id for c in job.passes if c.result.generation_id]
     if result.get("generation_id") and result.get("generation_id") not in generation_ids:
         generation_ids.append(result.get("generation_id"))
 
@@ -2380,16 +2386,16 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
     for c in job.passes:
         se._record_generation_metrics(
             rid, history_id, c.result, c.metrics_in, kind=_metrics_kind(c.spec),
-            kept_dates=(set(c.result.get("week_dates") or []) - set(c.spec.dates or [])) if c.spec.redo else (),
+            kept_dates=(set(c.result.week_dates or []) - set(c.spec.dates or [])) if c.spec.redo else (),
             seconds=sum(c.timer.seconds.values()), final_rows=c.rows)
     # A whole week built discharges "next week's schedule isn't built"; an
     # owner's redo of a few days does not, nor a week with days the
     # generation could not write (P-34).
     if req.redo:
-        whole = not winner.pinned and not winner.result.get("unwritten_dates")
+        whole = not winner.pinned and not winner.result.unwritten_dates
     else:
         week = next((c for c in job.passes if c.spec.kind == "week"), None)
-        whole = week is not None and not week.result.get("unwritten_dates")
+        whole = week is not None and not week.result.unwritten_dates
     if whole:
         se.mark_next_week_built(rid, history_id)
     try:
