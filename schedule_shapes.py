@@ -384,15 +384,72 @@ def demand_curves(dates, requirements, concurrent=None, demand_curve=None, open_
     return {k: v for k, v in out.items() if v}
 
 
-def _shoulders(curves, c, concurrent, requirements, profile, family):
+SHOULDER_HISTORY_MAX_MINUTES = 6 * 60      # how far before the open / after the close history is read
+
+
+def history_shoulders(hist_rows, c) -> dict:
+    """{(role lower, weekday): {minute: people}} — the median, over the
+    restaurant's own history dates of that weekday, of how many of each role
+    were on at each half hour BEFORE the open and AFTER the close (blind
+    re-audit 10/11/26, P — found by the schedule benchmark once SP let the
+    solver run at 120+ people): the staffing baseline is read between the
+    open and the close, so a prep crew of five on from 7am for an 11am open
+    was "measured" as nobody and drafted as half the first service hour's
+    count from at most three hours out (8am, three cooks), 94 of 132 hours
+    short of the usual crew. By role, never family: a prep cook's 7am is
+    not a line cook's."""
+    if c is None or not hist_rows:
+        return {}
+    by_date = defaultdict(list)
+    for r in hist_rows:
+        sp = _span(r)
+        d = str(r.get("date") or "")[:10]
+        if sp and len(d) == 10 and (r.get("employee") or "").strip() and (r.get("role") or "").strip():
+            by_date[d].append((str(r["role"]).strip().lower(), sp))
+    counts = defaultdict(lambda: defaultdict(list))        # (role, weekday) -> minute -> [people per date]
+    dates_of = defaultdict(int)
+    roles_of = defaultdict(set)
+    for d, items in by_date.items():
+        day = sq._day_name(d)
+        o, cl = _rules.open_hours(c, day)
+        if o is None or cl is None or is_24h(c, day):
+            continue
+        dates_of[day] += 1
+        on = defaultdict(lambda: defaultdict(int))
+        for role, (s, e) in items:
+            roles_of[day].add(role)
+            for t in range(s - s % SLOT, e, SLOT):
+                if _covers(s, e, t) and (o - SHOULDER_HISTORY_MAX_MINUTES <= t < o
+                                         or cl <= t < cl + SHOULDER_HISTORY_MAX_MINUTES):
+                    on[role][t] += 1
+        for role, cur in on.items():
+            for t, n in cur.items():
+                counts[(role, day)][t].append(n)
+    out = {}
+    for (role, day), cur in counts.items():
+        n_dates = dates_of[day]
+        med = {}
+        for t, vals in cur.items():
+            vals = sorted(vals + [0] * (n_dates - len(vals)))
+            v = vals[len(vals) // 2]
+            if v > 0:
+                med[t] = v
+        if med:
+            out[(role, day)] = med
+    return out
+
+
+def _shoulders(curves, c, concurrent, requirements, profile, family, measured_history=None):
     """The half hours either side of service each role really works
     (LOGIC-11, STRESS-22), in place on `curves`: the measured people on
-    before the open and after the close (the concurrent baseline's slots
-    outside service), else the family's learned lead or stay (its punches),
-    else the stated default (cooks an hour before the doors, servers half
-    an hour, the dish pit and the closers 45 minutes after the close); and a
-    role on in the last service hour is on until the close (a dishwasher no
-    longer leaves at 9:30 on a 10pm close). {(date, role): stay minutes}."""
+    before the open and after the close — the concurrent baseline's slots
+    outside service, and the restaurant's own history at each such half
+    hour (history_shoulders, `measured_history`) — else the family's learned
+    lead or stay (its punches), else the stated default (cooks an hour before
+    the doors, servers half an hour, the dish pit and the closers 45 minutes
+    after the close); and a role on in the last service hour is on until the
+    close (a dishwasher no longer leaves at 9:30 on a 10pm close).
+    {(date, role): stay minutes}."""
     stays = {}
     if c is None:
         return stays
@@ -424,6 +481,10 @@ def _shoulders(curves, c, concurrent, requirements, profile, family):
                     if v > 0:
                         cur[m] = max(cur.get(m, 0), v)
                         measured = True
+        for m, v in ((measured_history or {}).get((role.lower(), day)) or {}).items():
+            if (o is not None and m < o) or (cl is not None and m >= cl):
+                cur[m] = max(cur.get(m, 0), int(v))
+                measured = True
         first, last = min(cur), max(cur)
         if o is not None and not measured and first <= o + SLOT and first >= o:
             lead = lead_learned.get(fam)
@@ -880,7 +941,8 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     bounds = plan_bounds(context_rows, c)
     closed = set(getattr(c, "closed_dates", None) or ())
     _round_the_clock(curves, c, dates, hist_rows, family)
-    stays = _shoulders(curves, c, concurrent, requirements, prof, family)
+    stays = _shoulders(curves, c, concurrent, requirements, prof, family,
+                       measured_history=history_shoulders(hist_rows, c))
     assumed = _assumed_roles(dates, curves, c, roster_roles, prof, family, open_times, close_times)
     for fam_a, role_a in assumed:
         out["assumed"].append({"family": fam_a, "role": role_a,
