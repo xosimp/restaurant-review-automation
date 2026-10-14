@@ -108,12 +108,18 @@ def static_statements(root=ROOT):
             yield path, line, sql
 
 
+# Modules whose SQL is Postgres's own (the dialect layer's catalog reads, the
+# copy, the shadow's typed writes): never translated, so not audited as
+# SQLite.
+_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py"}
+
+
 def _nodes(root=ROOT):
     for dirpath, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".git", "tests", ".venv", "node_modules", "ios", ".claude",
                                                 "__pycache__", "scratch_scale")]
         for f in files:
-            if not f.endswith(".py"):
+            if not f.endswith(".py") or f in _NATIVE:
                 continue
             path = os.path.join(dirpath, f)
             try:
@@ -121,11 +127,28 @@ def _nodes(root=ROOT):
             except (SyntaxError, UnicodeDecodeError):
                 continue
             for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                        and node.func.attr in ("execute", "executemany") and node.args:
-                    sql = _text(node.args[0])
+                if not isinstance(node, ast.Call) or not node.args:
+                    continue
+                if isinstance(node.func, ast.Attribute) and node.func.attr in ("execute", "executemany"):
+                    cands = node.args[:1]
+                else:
+                    # SQL handed to a helper (admin_ops._rows_dict(conn, sql),
+                    # _one_dict, …): the first two positional arguments, when
+                    # they read as a whole statement.
+                    cands = [a for a in node.args[:2] if _whole_sql(_text(a))]
+                for arg in cands:
+                    sql = _text(arg)
                     if sql and _SQL_START.match(sql):
-                        yield os.path.relpath(path, root), node.lineno, sql, node.args[0]
+                        yield os.path.relpath(path, root), node.lineno, sql, arg
+
+
+def _whole_sql(sql):
+    """A string that is a statement, not a fragment or prose."""
+    if not sql or not _SQL_START.match(sql):
+        return False
+    up = sql.upper()
+    return (up.lstrip().startswith("SELECT") and " FROM " in up) or \
+        re.match(r"^\s*(INSERT\s+(OR\s+\w+\s+)?INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|WITH\s+\w+\s+AS)\b", up) is not None
 
 
 def _static(node):

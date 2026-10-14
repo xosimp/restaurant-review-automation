@@ -212,6 +212,12 @@ def schema_plan(src, today=None) -> dict:
     return {"before": out, "after": after}
 
 
+# Tables SQLite keeps append-only with a BEFORE UPDATE … RAISE(ABORT)
+# trigger (guest_marketing.SCHEMA, models.init_db); tests/test_q2_postgres.py
+# holds this list to every such trigger in the code.
+APPEND_ONLY = ("guest_consent_events", "intel_pattern_history")
+
+
 def trigger_statements(src) -> list:
     """SQLite's triggers, ported (migrations/postgres/0002_triggers.sql is
     this function's output for the current schema): the tracker's change
@@ -236,6 +242,19 @@ def trigger_statements(src) -> list:
             out.append("DROP TRIGGER IF EXISTS trg_outcomes_changed_upd ON recommendation_outcomes")
             out.append(f"CREATE TRIGGER trg_outcomes_changed_upd BEFORE UPDATE ON recommendation_outcomes "
                        f"FOR EACH ROW WHEN ({when}) EXECUTE FUNCTION cavnar_outcomes_changed()")
+    # The append-only ledgers: SQLite refuses an UPDATE with RAISE(ABORT);
+    # here a plpgsql trigger refuses it as an integrity violation (what
+    # SQLite's RAISE(ABORT) is to the app). Without it the boot's own
+    # CREATE TRIGGER was a no-op and consent evidence became editable on
+    # Postgres (found running the suite there, 10/14/26).
+    out.append("CREATE OR REPLACE FUNCTION cavnar_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ "
+               "BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = "
+               "'integrity_constraint_violation'; END $$")
+    for table in APPEND_ONLY:
+        if src.execute(f"SELECT 1 FROM sqlite_master WHERE name='{table}'").fetchone():
+            out.append(f"DROP TRIGGER IF EXISTS {table}_append_only ON {table}")
+            out.append(f"CREATE TRIGGER {table}_append_only BEFORE UPDATE ON {table} "
+                       f"FOR EACH ROW EXECUTE FUNCTION cavnar_append_only()")
     if src.execute("SELECT 1 FROM sqlite_master WHERE name='intel_features'").fetchone() and \
             "version" in {c[0] for c in table_columns(src, "intel_features")}:
         from intelligence.features import FEATURES_VERSION

@@ -113,6 +113,20 @@ def _pg_drop(name):
         pass
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "sqlite_only: reads the SQLite file itself (a snapshot, a query "
+                            "plan, a PRAGMA); skipped in the Postgres mode")
+
+
+def pytest_collection_modifyitems(config, items):
+    if not _PG_BASE:
+        return
+    skip = pytest.mark.skip(reason="reads the SQLite file itself; the Postgres mode routes the database elsewhere")
+    for item in items:
+        if "sqlite_only" in item.keywords:
+            item.add_marker(skip)
+
+
 if _PG_BASE:
     import models as _models_pg
     _PG_DEFAULT = _pg_new_database()

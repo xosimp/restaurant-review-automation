@@ -493,6 +493,132 @@ class Translator:
             i += 1
         return out
 
+    def _group_bare(self, toks) -> list:
+        """SELECT a.id, r.name, COUNT(*) … GROUP BY a.id: SQLite takes a
+        bare column beside an aggregate from some row of the group; Postgres
+        refuses it unless it is grouped (it does not see that r.name depends
+        on a.id through the join). Each such bare column becomes MIN(col)
+        under its own name — the same value when it is one per group, as
+        these are. Not when the select has a MIN()/MAX(): there SQLite takes
+        the bare columns from THAT row, which MIN cannot say — such a
+        statement is left to fail loudly and is ported by hand."""
+        out = list(toks)
+        starts = [k for k, t in enumerate(toks) if t.kind == "word" and t.upper == "SELECT"]
+        edits = []
+        for st in starts:
+            depth, frm, grp, end = 0, None, None, len(toks)
+            for k in range(st + 1, len(toks)):
+                x = toks[k]
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    if depth == 0:
+                        end = k
+                        break
+                    depth -= 1
+                elif depth == 0 and x.kind == "word":
+                    if x.upper == "FROM" and frm is None:
+                        frm = k
+                    elif x.upper == "GROUP" and frm is not None:
+                        n = _sig_index(toks, k, 1)
+                        if n is not None and toks[n].upper == "BY":
+                            grp = n
+                    elif x.upper in ("UNION", "EXCEPT", "INTERSECT"):
+                        end = k
+                        break
+            if frm is None or grp is None:
+                continue
+            gend = grp + 1
+            depth = 0
+            while gend < end:
+                x = toks[gend]
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    depth -= 1
+                elif depth == 0 and x.kind == "word" and x.upper in ("HAVING", "ORDER", "LIMIT", "WINDOW"):
+                    break
+                gend += 1
+            groups = [_render(_significant(g)).replace(" ", "").lower() for g in _split_args(toks[grp + 1:gend])]
+            if any(g.isdigit() for g in groups):
+                continue                         # positional: left as written
+            gnames = {g.split(".")[-1] for g in groups}
+            items = _split_args(toks[st + 1:frm])
+            flat = [x for it in items for x in _significant(it)]
+            if any(x.kind == "word" and x.upper in ("MIN", "MAX") and
+                   flat.index(x) + 1 < len(flat) and flat[flat.index(x) + 1].text == "(" for x in flat):
+                continue
+            pos = st + 1
+            for it in items:
+                sig = _significant(it)
+                expr, alias = sig, None
+                if len(sig) >= 3 and sig[-2].kind == "word" and sig[-2].upper == "AS":
+                    expr, alias = sig[:-2], sig[-1].text
+                elif len(sig) == 4 and sig[-1].kind == "word" and sig[-1].upper not in _SQL_KEYWORDS:
+                    expr, alias = sig[:-1], sig[-1].text
+                bare = (len(expr) == 1 and expr[0].kind in ("word", "qid") and expr[0].upper not in
+                        ("DISTINCT", "NULL", "TRUE", "FALSE", "CURRENT_TIMESTAMP")) or \
+                    (len(expr) == 3 and expr[1].text == "." and expr[2].kind in ("word", "qid"))
+                if bare and expr[-1].text != "*":
+                    text = _render(expr).replace(" ", "").lower()
+                    name = expr[-1].text.strip('"')
+                    if text not in groups and name.lower() not in gnames:
+                        a = toks.index(expr[0], pos)
+                        b = toks.index(expr[-1], a)
+                        edits.append((a, b, alias is None, name))
+                pos += len(it) + 1
+        for a, b, add_alias, name in sorted(edits, reverse=True):
+            rep_toks = [Tok("word", "MIN"), Tok("op", "(")] + out[a:b + 1] + [Tok("op", ")")]
+            if add_alias:
+                rep_toks += [Tok("ws", " "), Tok("word", "AS"), Tok("ws", " "), Tok("word", name)]
+            out[a:b + 1] = rep_toks
+        return out
+
+    def _having_alias(self, toks) -> list:
+        """HAVING n >= 8 where n is a select alias (COUNT(*) AS n): SQLite
+        reads the alias, Postgres only a column. The alias becomes its
+        expression — when the expression binds no parameter (repeating one
+        would shift every later binding)."""
+        sig = _significant(toks)
+        if not any(t.kind == "word" and t.upper == "HAVING" for t in sig):
+            return toks
+        aliases = {}
+        for k, t in enumerate(toks):
+            if t.kind == "word" and t.upper == "AS":
+                n = _sig_index(toks, k, 1)
+                p = _sig_index(toks, k, -1)
+                if n is None or p is None or toks[p].text != ")":
+                    continue
+                start = _operand_start(toks, p)
+                expr = toks[start:p + 1]
+                if not any(x.kind == "param" for x in expr):
+                    aliases[toks[n].text.lower()] = expr
+        if not aliases:
+            return toks
+        out, i, in_having, depth = [], 0, False, 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == "word" and t.upper == "HAVING":
+                in_having, depth = True, 0
+            elif in_having and t.kind == "op" and t.text == "(":
+                depth += 1
+            elif in_having and t.kind == "op" and t.text == ")":
+                depth -= 1
+                if depth < 0:
+                    in_having = False
+            elif in_having and depth == 0 and t.kind == "word" and t.upper in ("ORDER", "LIMIT", "UNION", "WINDOW"):
+                in_having = False
+            elif in_having and t.kind == "word" and t.text.lower() in aliases:
+                p = _sig_index(toks, i, -1)
+                n = _sig_index(toks, i, 1)
+                if not ((p is not None and toks[p].text == ".") or (n is not None and toks[n].text in (".", "("))):
+                    out.extend(aliases[t.text.lower()])
+                    i += 1
+                    continue
+            out.append(t)
+            i += 1
+        return out
+
     def _truthy_params(self, toks) -> list:
         """A parameter standing alone as a condition (`CASE WHEN ? THEN`,
         `AND ?`) is SQLite's truthiness of whatever it is; Postgres wants a
@@ -710,7 +836,12 @@ class Translator:
                     rep = f"{t.text}({self._agg_arg(args[0], tr)})"
                 elif up == "GROUP_CONCAT":
                     sep = tr(args[1]) if len(args) > 1 else "','"
-                    rep = f"string_agg(CAST({tr(args[0]).strip()} AS text), {sep.strip()})"
+                    first = _significant(args[0])
+                    distinct = bool(first) and first[0].kind == "word" and first[0].upper == "DISTINCT"
+                    expr = tr(args[0][args[0].index(first[0]) + 1:] if distinct else args[0]).strip()
+                    # GROUP_CONCAT(DISTINCT x): the DISTINCT leads the
+                    # aggregate's argument list, outside the cast.
+                    rep = f"string_agg({'DISTINCT ' if distinct else ''}CAST({expr} AS text), {sep.strip()})"
                 elif up in ("MAX", "MIN") and len(args) >= 2:
                     if ddl:
                         rep = ("GREATEST(" if up == "MAX" else "LEAST(") + ",".join(tr(a) for a in args) + ")"
@@ -909,6 +1040,8 @@ class Translator:
         toks = self._collate_nocase(toks)
         toks = self._is_distinct(toks)
         toks = self._truthy_params(toks)
+        toks = self._group_bare(toks)
+        toks = self._having_alias(toks)
         toks = self._qualify_upsert(toks)
         toks = self._like_escape(toks)
         toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
@@ -929,7 +1062,8 @@ class Translator:
                     out.append(t.text)                 # an alias named rowid stays rowid
                     continue
                 pk = self.pk_lookup(table) if table else None
-                col = pk[0] if pk and len(pk) == 1 else "ctid"
+                have = [c.lower() for c in (self.columns_lookup(table) or [])] if table else []
+                col = "rowid" if "rowid" in have else (pk[0] if pk and len(pk) == 1 else "ctid")
                 # Selected bare, it is still read back as row["rowid"].
                 selected = prev is not None and ((prev.kind == "word" and prev.upper in ("SELECT", "DISTINCT"))
                                                  or (prev.kind == "op" and prev.text == ","))
@@ -1050,7 +1184,34 @@ class Translator:
         # CONFLICT_REPLACE into every INSERT on the table.
         text = re.sub(r"\bON\s+CONFLICT\s+(REPLACE|IGNORE|ABORT|FAIL|ROLLBACK)\b", "", text, flags=re.I)
         text = re.sub(r"\)\s*WITHOUT\s+ROWID\s*$", ")", text.strip(), flags=re.I)
-        return text
+        return _with_rowid(text)
+
+
+ROWID_COLUMN = "rowid BIGINT GENERATED BY DEFAULT AS IDENTITY UNIQUE"
+
+
+def _with_rowid(ddl) -> str:
+    """A table with no integer primary key gains a `rowid` column on
+    Postgres. SQLite gives every such table a rowid that never changes for
+    the life of a row, and the app reads and writes rows by it (people's
+    merge and undo, the name-keyed stores); ctid, its stand-in, moves on
+    every UPDATE, so an undo recorded before a fold restored the wrong row,
+    or none (found running the suite on Postgres, 10/12/26). The column is
+    left out of a `SELECT *` that does not name rowid (PgConnection), as
+    SQLite leaves it out."""
+    if re.search(r"GENERATED\s+BY\s+DEFAULT\s+AS\s+IDENTITY\s+PRIMARY\s+KEY", ddl, re.I) or \
+            re.search(r"\bAS\s+SELECT\b", ddl, re.I):
+        return ddl
+    toks = tokenize(ddl)
+    open_i = next((i for i, t in enumerate(toks) if t.kind == "op" and t.text == "("), None)
+    if open_i is None:
+        return ddl
+    close_i = _call_end(toks, open_i)
+    names = {(_significant(a)[0].text.strip('"').lower() if _significant(a) else "")
+             for a in _split_args(toks[open_i + 1:close_i])}
+    if "rowid" in names:
+        return ddl
+    return _render(toks[:close_i]).rstrip() + ",\n    " + ROWID_COLUMN + "\n" + _render(toks[close_i:])
 
 
 def _main_table(sig):
@@ -1372,10 +1533,15 @@ class PgConnection:
             cur._load()
             return True
         if _TRIGGER.match(sql):
-            # SQLite's triggers (the boot's tracker change stamps, the intel
-            # features version) are ported as plpgsql once, by the copy
-            # (migrations/postgres/0002_triggers.sql); the boot's own
-            # DROP/CREATE TRIGGER is not Postgres's syntax.
+            # SQLite's triggers (the tracker change stamps, the intel
+            # features version, the append-only ledgers) are not Postgres's
+            # syntax. A boot's CREATE TRIGGER installs that table's plpgsql
+            # form instead (pg_copy.trigger_statements — what the copy
+            # installs too), so a table the boot creates on Postgres gets
+            # its trigger exactly where SQLite's would.
+            m = re.match(r"^\s*CREATE\s+TRIGGER\b.*?\bON\s+\"?(\w+)", sql, re.I | re.S)
+            if m:
+                self._install_triggers_for(m.group(1).lower())
             cur._load()
             return True
         m = _PRAGMA.match(sql)
@@ -1413,7 +1579,15 @@ class PgConnection:
             raise _map_error(e) from e
         self._in_tx = True
         rows = raw.fetchall() if raw.description else []
-        cur._load(rows, raw.description)
+        desc = raw.description
+        if desc and "rowid" not in sql.lower():
+            # A `SELECT *` over a table with the rowid column (_with_rowid)
+            # reads as SQLite's would: without it.
+            drop = [i for i, d in enumerate(desc) if d[0] == "rowid"]
+            if drop:
+                desc = [d for i, d in enumerate(desc) if i not in drop]
+                rows = [tuple(v for i, v in enumerate(r) if i not in drop) for r in rows]
+        cur._load(rows, desc)
         cur.rowcount = raw.rowcount
         if _DDL.match(sql):
             Catalog.forget()
@@ -1562,6 +1736,12 @@ class PgConnection:
             return
         self._closed = True
         _release(self)
+
+    def _install_triggers_for(self, table):
+        import pg_copy
+        for stmt in pg_copy.trigger_statements(self):
+            if stmt.startswith("CREATE OR REPLACE FUNCTION") or f" ON {table} " in stmt + " ":
+                self.execute_native(stmt)
 
     def execute_native(self, sql, params=()):
         """A statement in Postgres's own SQL, sent as written (no
@@ -1764,7 +1944,9 @@ class Catalog:
     def table_info(self, table):
         info = self._info(table)
         out = []
-        for i, (name, dtype, nullable, default, _pos) in enumerate(info.get("rows") or []):
+        # The rowid column (_with_rowid) is SQLite's hidden rowid: not listed.
+        for i, (name, dtype, nullable, default, _pos) in enumerate(
+                r for r in (info.get("rows") or []) if r[0] != "rowid"):
             out.append((i, name, dtype.upper(), 0 if nullable == "YES" else 1, default,
                         (info["pk"].index(name) + 1) if name in info["pk"] else 0))
         return out
