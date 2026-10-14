@@ -3943,9 +3943,11 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
             except Exception as e:
                 _soft_fail("last published week", e, rid)
         clock = current_clock()
+        # A fixed deterministic work budget, never what the clock has left
+        # (blind re-audit 10/11/26 LOGIC-9, STRESS-10: the same inputs drafted
+        # a different week on a busy box); the clock is only the emergency cap.
         budget = SOLVER_DRAFT_SECONDS
-        if clock is not None:
-            budget = max(2.0, min(budget, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS))
+        wall_cap = max(2.0, clock.seconds_left() - SCHEDULE_POST_MODEL_SECONDS) if clock is not None else None
         sig = dict(signals or {})
         if not sig.get("overtime") and c is not None and rid is not None:
             try:
@@ -3958,7 +3960,8 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
                                 history_rows=hist, context_rows=plan,
                                 last_week_rows=(last or {}).get("rows") or [], signals=sig, weights=weights,
                                 profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
-                                budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget)
+                                budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget,
+                                wall_cap=wall_cap, demand_curve=sig.get("demand_curve") or facts.get("demand_curve"))
         if got.get("rows") and rid is not None:
             _solver_standby(rid, dates, got, plan, facts, c, sig, weights)
         return got
@@ -9512,6 +9515,14 @@ class RepairContext:
             left = min(left, self.clock.seconds_left() - REPAIR_RESERVE_SECONDS)
         return max(0.0, left)
 
+    def emergency_seconds(self) -> float:
+        """What the job's clock has left less what the score and the save
+        need (no clock: the loop's configured bound, a constant — never the
+        seconds elapsed) — the only reason a search is skipped."""
+        if self.clock is None:
+            return float(self.max_seconds)
+        return max(0.0, self.clock.seconds_left() - REPAIR_RESERVE_SECONDS)
+
     def hourly(self, rows) -> float:
         return _hourly_hours_sum(rows, self.c)
 
@@ -10103,7 +10114,12 @@ def repair_week(rows, x: RepairContext) -> dict:
             if key in _REPAIR_ON_CHANGE and ledger.setdefault("solved_sig", {}).get(key) == \
                     tuple(sorted(map(_full_sig, state))):
                 continue
-            if key in _REPAIR_SEARCHES and x.search_seconds() < REPAIR_MIN_SEARCH_SECONDS:
+            # Skipped only when the job's own clock is nearly out (the
+            # emergency), never because the loop's wall-clock bound ran low:
+            # that read decided whether a second solver cycle ran, so the same
+            # inputs drafted different weeks (blind re-audit 10/11/26
+            # STRESS-10). Each search has its own deterministic work budget.
+            if key in _REPAIR_SEARCHES and x.emergency_seconds() < REPAIR_MIN_SEARCH_SECONDS:
                 if not any(s["stage"] == key for s in ledger["skipped"]):
                     ledger["skipped"].append({"stage": key, "cycle": cycle, "why": "time"})
                 continue
