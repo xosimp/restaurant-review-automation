@@ -404,12 +404,21 @@ def _row(rid, schedule_id):
     from models import get_conn
     conn = get_conn()
     try:
-        r = conn.execute("SELECT id, week_start, week_end, schedule_csv, review_json, quality_json, "
-                         "economics_json, published_at, superseded_by FROM schedule_history "
+        import models as _m_pp
+        _m_pp._ensure_history_columns(conn)
+        r = conn.execute("SELECT id, week_start, week_end, schedule_csv, review_json, review_ref, quality_json, "
+                         "quality_ref, economics_json, published_at, superseded_by FROM schedule_history "
                          "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
+        if r is None:
+            return None
+        d = dict(r)
+        # The whole review and evaluation, whatever is kept inline (SCALE-13):
+        # every reader here parses these two as before.
+        d["review_json"] = json.dumps(_m_pp.history_review(conn, d), default=str)
+        d["quality_json"] = json.dumps(_m_pp.history_quality(conn, d), default=str)
     finally:
         conn.close()
-    return dict(r) if r else None
+    return d
 
 
 def _stored_rows(row) -> list:

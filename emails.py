@@ -957,8 +957,8 @@ def restaurant_usage(restaurant_id) -> dict:
             usage["ingredient_count"] = scalar(
                 "SELECT COUNT(*) FROM ingredients WHERE restaurant_id=?", (restaurant_id,))
             has_shifts = scalar(
-                "SELECT COUNT(*) FROM client_data WHERE restaurant_id=? AND shifts_csv IS NOT NULL "
-                "AND TRIM(shifts_csv) != ''", (restaurant_id,)) > 0
+                "SELECT COUNT(*) FROM client_data WHERE restaurant_id=? AND (TRIM(COALESCE(shifts_csv, '')) != '' "
+                "OR shifts_csv_z IS NOT NULL OR COALESCE(shifts_store, '') = 'facts')", (restaurant_id,)) > 0
             marketing_used = scalar(
                 "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (restaurant_id,)) > 0
         finally:

@@ -1394,7 +1394,8 @@ def menu_sellers_block(restaurant_id, days=MENU_SELLER_DAYS, food=10, drinks=5, 
             "SELECT mi.name, COALESCE(mi.pos_category,'') AS cat, SUM(s.qty_sold) AS q "
             "FROM menu_item_sales s JOIN menu_items mi ON mi.id=s.menu_item_id AND mi.restaurant_id=s.restaurant_id "
             "WHERE s.restaurant_id=? AND s.business_date >= date('now', ?) AND COALESCE(mi.kind,'dish')='dish' "
-            "AND COALESCE(mi.is_active,1)=1 GROUP BY mi.id HAVING q > 0 ORDER BY q DESC LIMIT 200",
+            "AND COALESCE(mi.is_active,1)=1 GROUP BY mi.id, mi.name, mi.pos_category HAVING SUM(s.qty_sold) > 0 "
+            "ORDER BY q DESC LIMIT 200",
             (restaurant_id, f"-{int(days)} days")).fetchall()
     except Exception:
         rows = []

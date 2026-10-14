@@ -1173,7 +1173,10 @@ def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_
     import json
     conn = _async_conn()
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # One restaurant's jobs of one kind serialise (check-then-insert),
+        # no one else's (SCALE-12).
+        import db_dialect
+        db_dialect.begin_write(conn, "async_jobs", kind, restaurant_id)
         row = conn.execute(
             "SELECT job_id, request_json FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
             + _YOUNG + " " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
@@ -3562,14 +3565,16 @@ def _prune_inventory_history(conn, deadline=None, refused=None):
     daily_days = retention_days("inventory_daily_detail")
     if daily_days:
         # The week's figure is its latest snapshot (waste_trend.load_waste_history).
+        # An old row goes when a later snapshot of its week exists (the
+        # same rows the per-week "latest id" subquery kept, in SQL Postgres
+        # takes too — it refused that GROUP BY's ungrouped week_end).
         cur = conn.execute(
-            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND id NOT IN ("
-            "  SELECT (SELECT h2.id FROM inventory_history h2 WHERE h2.restaurant_id = h.restaurant_id"
-            "          AND date(h2.week_end, 'weekday 0', '-6 days') = date(h.week_end, 'weekday 0', '-6 days')"
-            "          ORDER BY h2.week_end DESC, h2.id DESC LIMIT 1)"
-            "  FROM inventory_history h WHERE h.week_end < date('now', ?)"
-            "  GROUP BY h.restaurant_id, date(h.week_end, 'weekday 0', '-6 days'))",
-            (f"-{daily_days} days", f"-{daily_days} days"))
+            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND EXISTS ("
+            "  SELECT 1 FROM inventory_history h2 WHERE h2.restaurant_id = inventory_history.restaurant_id"
+            "  AND date(h2.week_end, 'weekday 0', '-6 days') = date(inventory_history.week_end, 'weekday 0', '-6 days')"
+            "  AND (h2.week_end > inventory_history.week_end OR (h2.week_end = inventory_history.week_end"
+            "       AND h2.id > inventory_history.id)))",
+            (f"-{daily_days} days",))
         n += max(0, cur.rowcount or 0)
     elif refused is not None and retention_state("inventory_daily_detail")["state"] == "below_floor":
         refused.append(retention_state("inventory_daily_detail"))
@@ -3664,8 +3669,11 @@ def _thin_drafts(conn, deadline):
         for r in rows:
             if time.monotonic() > deadline:
                 break
+            # The headlines stay; the pointers to the whole go, and the
+            # stored detail with them once nothing names it (SCALE-13).
+            ref_cols = ", quality_ref=NULL, review_ref=NULL" if {"quality_ref", "review_ref"} <= cols else ""
             conn.execute("UPDATE schedule_history SET quality_json=?, review_json=?, what_if_json=NULL, "
-                         "detail_thinned_at=datetime('now') WHERE id=?",
+                         f"detail_thinned_at=datetime('now'){ref_cols} WHERE id=?",
                          (_thin_quality(r["quality_json"], today), _thin_review(r["review_json"], today), r["id"]))
             n += 1
             if n % 200 == 0:
@@ -3705,6 +3713,14 @@ def _thin_drafts(conn, deadline):
             moved = _compact_version_quality(conn, deadline)
             if moved:
                 out["schedule_versions_compacted"] = moved
+    if time.monotonic() < deadline:
+        moved = _compact_history_detail(conn, deadline)
+        if moved:
+            out["schedule_history_compacted"] = moved
+    if time.monotonic() < deadline:
+        moved = _compact_shift_exports(conn, deadline)
+        if moved:
+            out["shift_exports_compacted"] = moved
         if has_ref and time.monotonic() < deadline:
             gone = _gc_quality_blobs(conn, deadline)
             if gone:
@@ -3781,7 +3797,7 @@ def _gc_quality_blobs(conn, deadline) -> int:
             for r in conn.execute(
                     "SELECT body FROM quality_blobs WHERE created_at < datetime('now', '-1 hour') AND "
                     "substr(body, 1, ?) = ? AND NOT EXISTS (SELECT 1 FROM schedule_versions v WHERE "
-                    "v.quality_ref = quality_blobs.hash) LIMIT ?",
+                    "v.quality_ref = quality_blobs.hash) AND " + _HISTORY_UNREF + " LIMIT ?",
                     (len(blob_store.POINTER), blob_store.POINTER, int(RETENTION_CHUNK_ROWS))).fetchall():
                 blob_store.delete(r["body"])
     except Exception as e:
@@ -3789,8 +3805,88 @@ def _gc_quality_blobs(conn, deadline) -> int:
     return _chunked_delete(
         conn, "quality_blobs",
         "created_at < datetime('now', '-1 hour') AND NOT EXISTS "
-        "(SELECT 1 FROM schedule_versions v WHERE v.quality_ref = quality_blobs.hash)",
+        "(SELECT 1 FROM schedule_versions v WHERE v.quality_ref = quality_blobs.hash) AND " + _HISTORY_UNREF,
         (), deadline)
+
+
+# A stored detail a draft still names — its evaluation or its review
+# (schedule_history.quality_ref / review_ref, SCALE-13) — is never collected.
+_HISTORY_UNREF = ("NOT EXISTS (SELECT 1 FROM schedule_history h WHERE h.quality_ref = quality_blobs.hash) "
+                  "AND NOT EXISTS (SELECT 1 FROM schedule_history h2 WHERE h2.review_ref = quality_blobs.hash)")
+
+
+def _compact_shift_exports(conn, deadline) -> int:
+    """Restaurants on shift_facts whose shift file export is still stored
+    plain (written before 10/14/26): compressed (models.store_shift_file —
+    SCALE-14). Bounded; resumable (a compacted row no longer matches)."""
+    import models as _m_x
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(client_data)")}
+    if not {"shifts_store", "shifts_csv_z"} <= cols:
+        return 0
+    rids = [r[0] for r in conn.execute(
+        "SELECT restaurant_id FROM client_data WHERE shifts_store = 'facts' AND COALESCE(shifts_csv, '') <> '' "
+        "ORDER BY restaurant_id LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall()]
+    n = 0
+    for rid in rids:
+        if time.monotonic() > deadline:
+            break
+        _m_x.store_shift_file(conn, rid, _m_x.shift_file_text(conn, rid))
+        conn.commit()
+        n += 1
+    return n
+
+
+def _compact_history_detail(conn, deadline) -> int:
+    """Drafts written before 10/14/26 that still hold their whole Shift
+    Quality evaluation and review inline (SCALE-13: 0.3-0.7 MB a week):
+    the whole of each moved to quality_blobs under its hash, the headline
+    left inline — the shape a new draft is written in. Bounded by
+    RETENTION_CHUNK_ROWS and the pass's deadline; resumable without a
+    cursor because a compacted row no longer matches (its ref is set, or
+    its JSON is a headline), so the next night starts at the first row
+    still to do and nothing is starved."""
+    import models as _m_c
+    import schedule_versions as _sv_c
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+    if not {"quality_ref", "review_ref"} <= cols:
+        return 0
+    rows = conn.execute(
+        "SELECT id, restaurant_id, quality_json, quality_ref, review_json, review_ref FROM schedule_history WHERE "
+        "(quality_ref IS NULL AND quality_json IS NOT NULL AND quality_json NOT LIKE '%\"headline\": true%' "
+        " AND quality_json NOT LIKE '%\"thinned_at\"%') OR "
+        "(review_ref IS NULL AND review_json IS NOT NULL AND review_json NOT LIKE '%\"headline\": true%' "
+        " AND review_json NOT LIKE '%\"thinned_at\"%') "
+        "ORDER BY id LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall()
+    n = 0
+    for r in rows:
+        if time.monotonic() > deadline:
+            break
+        sets, args = [], []
+        if r["quality_ref"] is None and r["quality_json"]:
+            q = _m_c.history_quality(conn, r)
+            if isinstance(q, dict) and q:
+                head, ref = _sv_c.store_quality(conn, r["restaurant_id"], q)
+                sets += ["quality_json=?", "quality_ref=?"]
+                args += [head, ref]
+            else:
+                sets.append("quality_json=?")
+                args.append(json.dumps({"headline": True, "unreadable": True}))
+        if r["review_ref"] is None and r["review_json"]:
+            rv = _m_c.history_review(conn, r)
+            if rv:
+                head, ref = _m_c.store_history_review(conn, r["restaurant_id"], rv)
+                sets += ["review_json=?", "review_ref=?"]
+                args += [head, ref]
+            else:
+                sets.append("review_json=?")
+                args.append(json.dumps({"headline": True, "unreadable": True}))
+        if sets:
+            conn.execute(f"UPDATE schedule_history SET {', '.join(sets)} WHERE id=?", (*args, r["id"]))
+        n += 1
+        if n % 100 == 0:
+            conn.commit()
+    conn.commit()
+    return n
 
 
 def _prune_schedules(conn, deadline, refused=None, held=None):
@@ -4503,11 +4599,66 @@ def backup_status(db_path=None) -> dict:
     return out
 
 
+# The newest drafts a week's footprint is measured over (storage_per_week).
+STORAGE_SAMPLE_WEEKS = 200
+
+
+def storage_per_week(db_path=None) -> dict:
+    """What one generated week costs the database, measured over the newest
+    STORAGE_SAMPLE_WEEKS drafts (blind re-audit 10/11/26 SCALE-14: the
+    volume's ceiling is bytes per restaurant-week times the fleet, and
+    nothing measured it): {weeks, history_bytes, versions_bytes,
+    detail_bytes, total_bytes} — the draft row's stored text, its versions'
+    and its stored detail (quality_blobs), each an average per week.
+    {weeks: 0} with no drafts. Never raises."""
+    out = {"weeks": 0, "history_bytes": None, "versions_bytes": None, "detail_bytes": None, "total_bytes": None}
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception:
+        return out
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+        text = [c for c in ("schedule_csv", "published_csv", "quality_json", "review_json", "summary_json",
+                            "what_if_json", "economics_json", "weather_json", "stage_seconds_json") if c in cols]
+        if not text:
+            return out
+        width = " + ".join(f"COALESCE(length({c}), 0)" for c in text)
+        refs = ", quality_ref, review_ref" if {"quality_ref", "review_ref"} <= cols else ""
+        rows = conn.execute(f"SELECT id, {width} AS b{refs} FROM schedule_history ORDER BY id DESC LIMIT ?",
+                            (STORAGE_SAMPLE_WEEKS,)).fetchall()
+        if not rows:
+            return out
+        ids = [r["id"] for r in rows]
+        marks = ",".join("?" * len(ids))
+        vers = conn.execute(
+            "SELECT COALESCE(SUM(COALESCE(length(schedule_csv), 0) + COALESCE(length(quality_json), 0) "
+            "+ COALESCE(length(diff_json), 0) + COALESCE(length(delta_json), 0)), 0) FROM schedule_versions "
+            f"WHERE history_id IN ({marks})", ids).fetchone()[0] or 0
+        hashes = {h for r in rows for h in ((r["quality_ref"], r["review_ref"]) if refs else ()) if h}
+        detail = 0
+        if hashes:
+            hl = list(hashes)
+            detail = conn.execute(f"SELECT COALESCE(SUM(length(body)), 0) FROM quality_blobs "
+                                  f"WHERE hash IN ({','.join('?' * len(hl))})", hl).fetchone()[0] or 0
+        n = len(rows)
+        out.update(weeks=n, history_bytes=int(sum(int(r["b"] or 0) for r in rows) / n),
+                   versions_bytes=int(vers / n), detail_bytes=int(detail / n))
+        out["total_bytes"] = out["history_bytes"] + out["versions_bytes"] + out["detail_bytes"]
+    except Exception as e:
+        log.warning(f"storage per week not measured: {e}")
+    finally:
+        conn.close()
+    return out
+
+
 def storage_trend(days=30, db_path=None) -> dict:
     """The database, WAL and backup sizes recorded by each night's backup,
     for a days-to-full line on Engineering (#28): {rows, growth_bytes_per_day,
-    days_to_full}. Never raises."""
-    out = {"rows": [], "growth_bytes_per_day": None, "days_to_full": None}
+    days_to_full, per_week} — per_week what one generated week costs
+    (storage_per_week, SCALE-14). Never raises."""
+    out = {"rows": [], "growth_bytes_per_day": None, "days_to_full": None,
+           "per_week": storage_per_week(db_path)}
     try:
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()

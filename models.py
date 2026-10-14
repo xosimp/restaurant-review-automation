@@ -1205,11 +1205,14 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     # scheduler audit 10/10/26 RM-13): the platform's own database only; an
     # explicit other path (a test's file, a restore, a script's copy) stays
     # SQLite. SQLite is the default and costs one env read here.
-    if db_path == DB_PATH and _db_backend() == "postgres":
+    pg_url = _pg_url_for(db_path)
+    if pg_url:
         import db_dialect
         if _note_write not in db_dialect.WRITE_HOOKS:
             db_dialect.WRITE_HOOKS.append(_note_write)
-        return db_dialect.connect()
+        conn = db_dialect.connect(pg_url)
+        _track_open(conn)
+        return conn
     if not _pool_enabled():
         conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
         conn.row_factory = sqlite3.Row
@@ -1217,6 +1220,14 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     else:
         raw, key = _checkout(db_path)
         conn = _ConnHandle(raw, key)
+    _track_open(conn)
+    return conn
+
+
+def _track_open(conn):
+    """Remember `conn` for close_thread_connections (a request's teardown
+    closes what it opened and did not) — the Postgres ones too, whose pool
+    slot a leak would otherwise hold."""
     bag = getattr(_open_conns, "bag", None)
     if bag is None:
         bag = _open_conns.bag = weakref.WeakSet()
@@ -1224,7 +1235,45 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
         bag.add(conn)
     except TypeError:
         pass
-    return conn
+
+
+# Database files served by a Postgres instead ({path: url}). Empty in the
+# app: DATABASE_URL routes the platform's own database (DB_PATH). The
+# suite's Postgres mode (CAVNAR_TEST_PG_URL, tests/conftest.py) routes each
+# test's database file to a database of its own, so the same tests run
+# against both.
+_PG_ROUTES = {}
+
+
+def _pg_url_for(db_path):
+    """The Postgres URL serving `db_path`, or None for SQLite."""
+    if _PG_ROUTES:
+        url = _PG_ROUTES.get(db_path)
+        if url:
+            return url
+    if db_path == DB_PATH and _db_backend() == "postgres":
+        import db_dialect
+        return db_dialect.database_url()
+    return None
+
+
+def boot_conn(db_path: str = DB_PATH):
+    """The connection a boot migration (init_db, init_auth, the init_*
+    chain) writes through: a plain sqlite3 connection to `db_path` — or,
+    when `db_path` is the platform's database and that lives on Postgres,
+    the Postgres one (db_dialect). The boot used sqlite3.connect directly,
+    so on Postgres every CREATE / ALTER / index of init_db and init_auth
+    landed in the volume's empty SQLite file and never in the database the
+    app reads: a fresh Postgres never got its tables, and after the cutover
+    no new table or column would ever have reached it (blind re-audit
+    10/11/26, SCALE-5/SCALE-10)."""
+    if db_path is None:
+        db_path = DB_PATH
+    pg_url = _pg_url_for(db_path)
+    if pg_url:
+        import db_dialect
+        return db_dialect.connect(pg_url)
+    return sqlite3.connect(db_path)
 
 
 def _db_backend() -> str:
@@ -1405,6 +1454,13 @@ def ensure_columns(db_path: str = DB_PATH):
         ("schedule_history", "edited_by", "TEXT"),
         ("schedule_history", "quality_score", "REAL"),
         ("schedule_history", "quality_band", "TEXT"),
+        # The whole Shift Quality evaluation and generation review of a
+        # draft, stored once compressed (quality_blobs) — quality_json and
+        # review_json keep their headlines (blind re-audit 10/11/26
+        # SCALE-13: 227-582 KB of quality JSON and 88 KB of review inline
+        # per week). Read through history_quality / history_review.
+        ("schedule_history", "quality_ref", "TEXT"),
+        ("schedule_history", "review_ref", "TEXT"),
         ("schedule_history", "quality_confidence", "TEXT"),
         ("schedule_history", "what_if_json", "TEXT"),
         ("schedule_history", "republished_at", "TEXT"),
@@ -2074,8 +2130,9 @@ def ensure_tracker_change_stamps(db_path: str = DB_PATH):
     value. Boot only (models.init_db, after outcomes.init_outcomes has added
     its columns). The update trigger is re-created each boot from the
     columns that exist, so a column added later is watched too. Millisecond
-    stamps; the sync's cursor is (changed_at, id)."""
-    conn = sqlite3.connect(db_path)
+    stamps; the sync's cursor is (changed_at, id). On Postgres the
+    triggers are plpgsql (db_dialect.install_triggers)."""
+    conn = boot_conn(db_path)
     try:
         have = {r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
         if not have:
@@ -2093,6 +2150,9 @@ def ensure_tracker_change_stamps(db_path: str = DB_PATH):
         conn.execute(f"CREATE TRIGGER trg_outcomes_changed_upd AFTER UPDATE ON recommendation_outcomes "
                      f"WHEN {when} BEGIN UPDATE recommendation_outcomes SET changed_at={stamp} WHERE id=NEW.id; END")
         conn.commit()
+        import db_dialect as _dialect
+        if _dialect.is_postgres(conn):
+            _dialect.install_triggers(conn)
     finally:
         conn.close()
 
@@ -2234,7 +2294,7 @@ def _ensure_place_id_uniqueness(conn):
         dupes = conn.execute(
             "SELECT google_place_id, GROUP_CONCAT(id) AS ids, COUNT(*) AS n FROM restaurants "
             "WHERE COALESCE(google_place_id,'')<>'' AND COALESCE(is_demo,0)=0 "
-            "GROUP BY google_place_id HAVING n > 1"
+            "GROUP BY google_place_id HAVING COUNT(*) > 1"
         ).fetchall()
         if dupes:
             for d in dupes:
@@ -2304,7 +2364,12 @@ def adopt_legacy_db(db_path: str = DB_PATH):
 
 def init_db(db_path: str = DB_PATH):
     adopt_legacy_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = boot_conn(db_path)
+    import db_dialect as _dialect
+    if _dialect.is_postgres(conn):
+        # The sqlite_master view the migrations below read (a fresh
+        # Postgres has no copy to have installed it).
+        _dialect.install_compat(conn)
     conn.executescript(SCHEMA)
     # Migrate: add new columns to existing databases
     migrations = [
@@ -2367,6 +2432,11 @@ def init_db(db_path: str = DB_PATH):
         # and from then on shifts_csv is an export rebuilt on demand
         # (get_client_data) when a sync or upload left it stale.
         "ALTER TABLE client_data ADD COLUMN shifts_store TEXT",
+        # The shift file's export, compressed, for a restaurant whose
+        # record is shift_facts (blind re-audit 10/11/26 SCALE-14: the plain
+        # export duplicated the facts — 5.6 MB for two years of a 250-person
+        # restaurant). Read through shift_file_text / get_client_data.
+        "ALTER TABLE client_data ADD COLUMN shifts_csv_z BLOB",
         "ALTER TABLE client_data ADD COLUMN shifts_stale INTEGER NOT NULL DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS labor_daily_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7581,7 +7651,7 @@ def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str =
     return out
 
 def init_staff_notes(db_path: str = DB_PATH):
-    conn = sqlite3.connect(db_path)
+    conn = boot_conn(db_path)
     conn.executescript(STAFF_NOTES_SCHEMA)
     # Each constraint dated, with an optional end (memory audit 9/29/26,
     # staff_notes): "Out until 6/1 after surgery" still blocked a cook in
@@ -8633,7 +8703,8 @@ def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
         row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         h.update(repr(tuple(row) if row else ()).encode())
         try:
-            cd = conn.execute("SELECT updated_at, shifts_source, LENGTH(shifts_csv) FROM client_data "
+            cd = conn.execute("SELECT updated_at, shifts_source, COALESCE(LENGTH(shifts_csv), 0), "
+                              "COALESCE(LENGTH(shifts_csv_z), 0), shifts_stale FROM client_data "
                               "WHERE restaurant_id=?", (restaurant_id,)).fetchone()
         except sqlite3.OperationalError:
             cd = None
@@ -8961,6 +9032,14 @@ def init_schedule_versions(db_path: str = DB_PATH):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_quality_blobs_created ON quality_blobs(created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_versions_qref ON schedule_versions(quality_ref) "
                  "WHERE quality_ref IS NOT NULL")
+    # A draft's stored detail (SCALE-13): the blob collector asks whether
+    # any draft still names a blob.
+    _hcols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+    if {"quality_ref", "review_ref"} <= _hcols:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_qref ON schedule_history(quality_ref) "
+                     "WHERE quality_ref IS NOT NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_rref ON schedule_history(review_ref) "
+                     "WHERE review_ref IS NOT NULL")
     conn.commit()
     conn.close()
 
@@ -10897,19 +10976,28 @@ def move_shift_section(restaurant_id: int, date: str, shift_start: str, from_nam
         sid = str(shift_id or "").strip().lower() or None
         day = str(new_date or date or "")[:10]
         start = shift_section_start(new_start or shift_start)
+        to_key, name = _av_key(to_name), " ".join(str(to_name or "").split())
+        old = (str(date or "")[:10], _av_key(from_name), shift_section_start(shift_start))
         cur = None
-        if sid:
-            cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=?, date=?, "
+        # What UPDATE OR REPLACE did, in SQL Postgres takes too (blind
+        # re-audit SCALE-10): a row already holding the moved section's place
+        # (restaurant, date, person, start) gives way to the moving one.
+        if sid and conn.execute("SELECT 1 FROM shift_sections WHERE restaurant_id=? AND shift_id=?",
+                                (restaurant_id, sid)).fetchone():
+            conn.execute("DELETE FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? "
+                         "AND shift_start=? AND COALESCE(shift_id, '') <> ?", (restaurant_id, day, to_key, start, sid))
+            cur = conn.execute("UPDATE shift_sections SET employee_key=?, employee_name=?, date=?, "
                                "shift_start=? WHERE restaurant_id=? AND shift_id=?",
-                               (_av_key(to_name), " ".join(str(to_name or "").split()), day, start,
-                                restaurant_id, sid))
+                               (to_key, name, day, start, restaurant_id, sid))
         if cur is None or cur.rowcount == 0:
-            cur = conn.execute("UPDATE OR REPLACE shift_sections SET employee_key=?, employee_name=?, date=?, "
+            if conn.execute("SELECT 1 FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? "
+                            "AND shift_start=?", (restaurant_id, *old)).fetchone() and (day, to_key, start) != old:
+                conn.execute("DELETE FROM shift_sections WHERE restaurant_id=? AND date=? AND employee_key=? "
+                             "AND shift_start=?", (restaurant_id, day, to_key, start))
+            cur = conn.execute("UPDATE shift_sections SET employee_key=?, employee_name=?, date=?, "
                                "shift_start=?, shift_id=COALESCE(?, shift_id) "
                                "WHERE restaurant_id=? AND date=? AND employee_key=? AND shift_start=?",
-                               (_av_key(to_name), " ".join(str(to_name or "").split()), day, start, sid,
-                                restaurant_id, str(date or "")[:10], _av_key(from_name),
-                                shift_section_start(shift_start)))
+                               (to_key, name, day, start, sid, restaurant_id, *old))
         if own:
             conn.commit()
         return cur.rowcount > 0
@@ -11004,7 +11092,9 @@ def save_client_data(restaurant_id: int, data_type: str,
             # The file just written is current (SCALE-5); a restaurant on
             # shift_facts keeps reading its facts, which its callers keep
             # in step (shift_facts.ingest, rewrite_window_from_csv, replace_all).
+            # Stored as store_shift_file stores it (SCALE-14).
             conn.execute("UPDATE client_data SET shifts_stale=0 WHERE restaurant_id=?", (restaurant_id,))
+            store_shift_file(conn, restaurant_id, csv_content)
     else:
         conn.execute(f"""
             INSERT INTO client_data (restaurant_id, {data_type}_csv, {data_type}_source)
@@ -11059,13 +11149,20 @@ def get_client_data(restaurant_id: int,
     try:
         if with_shifts:
             row = conn.execute("SELECT * FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            if row is not None and not row["shifts_csv"] and _row_get(row, "shifts_csv_z"):
+                row = dict(row)
+                row["shifts_csv"] = shift_file_text(conn, restaurant_id)     # the compressed export
         else:
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(client_data)").fetchall() if r[1] != "shifts_csv"]
-            row = conn.execute(f"SELECT {', '.join(cols)}, (shifts_csv IS NOT NULL AND shifts_csv != '') "
-                               "AS has_shift_file FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(client_data)").fetchall()
+                    if r[1] not in ("shifts_csv", "shifts_csv_z")]
+            row = conn.execute(f"SELECT {', '.join(cols)}, ((shifts_csv IS NOT NULL AND shifts_csv != '') "
+                               "OR shifts_csv_z IS NOT NULL) AS has_shift_file FROM client_data WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
     finally:
         conn.close()
     out = dict(row) if row else None
+    if out is not None:
+        out.pop("shifts_csv_z", None)
     if out is not None and not with_shifts:
         out["has_shifts"] = bool(out.pop("has_shift_file", 0)) or out.get("shifts_store") == "facts"
     if out is not None and with_shifts and out.get("shifts_store") == "facts" and out.get("shifts_stale"):
@@ -11081,17 +11178,62 @@ def get_client_data(restaurant_id: int,
 
 def _refresh_shift_export(restaurant_id, db_path=DB_PATH) -> str:
     """The shift history export rebuilt from shift_facts and stored (SCALE-5):
-    only when something reads the whole file, never by a sync."""
+    only when something reads the whole file, never by a sync — compressed
+    (store_shift_file: the facts are the record, SCALE-14)."""
     import shift_facts as _sf_exp
     text = _sf_exp.export_csv(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
     conn = get_conn(db_path)
     try:
-        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_stale=0 WHERE restaurant_id=?",
-                     (text, restaurant_id))
+        store_shift_file(conn, restaurant_id, text)
+        conn.execute("UPDATE client_data SET shifts_stale=0 WHERE restaurant_id=?", (restaurant_id,))
         conn.commit()
     finally:
         conn.close()
     return text
+
+
+# A restaurant holds a shift history: a stored file, or shift_facts as its
+# record (whose export may be compressed or not built yet). The test every
+# "has shifts" query uses (SCALE-14: `shifts_csv != ''` alone missed a
+# restaurant on facts once its export was compressed).
+SHIFTS_PRESENT_SQL = ("(COALESCE(shifts_csv, '') <> '' OR shifts_csv_z IS NOT NULL "
+                      "OR COALESCE(shifts_store, '') = 'facts')")
+
+
+def shift_file_text(conn, restaurant_id) -> str:
+    """The stored shift file's text on `conn`: plain, or the compressed
+    export of a restaurant on shift_facts. '' for none. (An export left
+    stale by a sync is rebuilt by get_client_data, the readers' path.)"""
+    import zlib
+    row = conn.execute("SELECT shifts_csv, shifts_csv_z FROM client_data WHERE restaurant_id=?",
+                       (restaurant_id,)).fetchone()
+    if not row:
+        return ""
+    if row["shifts_csv"]:
+        return row["shifts_csv"]
+    z = row["shifts_csv_z"]
+    if z:
+        try:
+            return zlib.decompress(bytes(z)).decode("utf-8")
+        except Exception as e:
+            print(f"[client_data] compressed shift file unreadable for {restaurant_id}: {e}")
+    return ""
+
+
+def store_shift_file(conn, restaurant_id, text) -> None:
+    """Write the shift file on `conn` (the caller commits): compressed when
+    shift_facts is the restaurant's record (the file is then only an
+    export of it), plain otherwise (the file is the record)."""
+    import zlib
+    row = conn.execute("SELECT shifts_store FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    if row is not None and (row["shifts_store"] or "") == "facts":
+        z = zlib.compress((text or "").encode("utf-8"), 6) if text else None
+        conn.execute("UPDATE client_data SET shifts_csv=NULL, shifts_csv_z=? WHERE restaurant_id=?",
+                     (z, restaurant_id))
+    else:
+        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_csv_z=NULL WHERE restaurant_id=?",
+                     (text, restaurant_id))
+    _invalidate_shift_reads(restaurant_id)
 
 
 def reset_user_password(user_id: int, new_password: str,
@@ -11990,7 +12132,8 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
             _ops_hh.capture(e, job="schedule_history_hours", context=f"restaurant_id={restaurant_id}")
     # Serialized before the write opens, so a value JSON cannot carry fails
     # the save instead of half-writing it.
-    review_json = _json_sh.dumps(review, default=str) if review else None
+    # Serialized here for the same reason; stored compressed below (SCALE-13).
+    review_whole = _json_sh.loads(_json_sh.dumps(review, default=str)) if review else None
     weather_json = _json_sh.dumps(weather, default=str) if weather else None
     economics_json = _json_sh.dumps(economics, default=str) if economics else None
     stages_json = _json_sh.dumps(stage_seconds, default=str) if stage_seconds else None
@@ -12025,20 +12168,25 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                     prior_text = (live["schedule_csv"] or "") if live else None
             schedule_csv = _srows.to_csv(_srows.carry_ids(_srows.parse(schedule_csv),
                                                           _srows.parse(prior_text) if prior_text else []))
+            # The headlines inline, the whole evaluation and review stored
+            # once compressed — the same evaluation a `generated` version
+            # stores is the same blob (SCALE-13).
+            import schedule_versions as _sv_sh
+            quality_head, quality_ref = _sv_sh.store_quality(conn, restaurant_id, quality)
+            review_json, review_ref = store_history_review(conn, restaurant_id, review_whole)
             cur = conn.execute("""
                 INSERT INTO schedule_history
                     (restaurant_id, week_start, week_end, hours_scheduled, hours_budget,
-                     labor_target, schedule_csv, summary_json, quality_json,
+                     labor_target, schedule_csv, summary_json, quality_json, quality_ref,
                      quality_score, quality_band, quality_confidence, what_if_json,
-                     hours_hourly, hours_salaried, review_json, generation_seconds, weather_json,
+                     hours_hourly, hours_salaried, review_json, review_ref, generation_seconds, weather_json,
                      economics_json, stage_seconds_json, total_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
-                  schedule_csv, _json_sh.dumps(summary or []),
-                  _json_sh.dumps(quality) if quality else None,
+                  schedule_csv, _json_sh.dumps(summary or []), quality_head, quality_ref,
                   q.get("score"), q.get("band"), (q.get("confidence") or {}).get("level"),
                   _json_sh.dumps(what_if) if what_if else None, hours_hourly, hours_salaried,
-                  review_json, generation_seconds, weather_json, economics_json, stages_json,
+                  review_json, review_ref, generation_seconds, weather_json, economics_json, stages_json,
                   (stage_seconds or {}).get("total")))
             new_id = cur.lastrowid
             # The week's shift projection, in this transaction (ARCH-7).
@@ -12067,6 +12215,48 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
 _HISTORY_COLUMNS_OK = set()
 
 
+def _row_get(row, key):
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
+
+
+def history_quality(conn, row) -> dict:
+    """A draft's whole Shift Quality evaluation: the stored detail its
+    quality_ref names, else what quality_json holds (a row from before
+    10/14/26 holds it whole; a thinned one its headline). {} for none.
+    `row` is a schedule_history row or dict with quality_json (and
+    quality_ref when selected)."""
+    import schedule_versions as _sv_hq
+    return _sv_hq.version_quality(conn, _row_get(row, "quality_json"), _row_get(row, "quality_ref"))
+
+
+def history_review(conn, row) -> dict:
+    """A draft's whole generation review (the stored detail review_ref
+    names, else review_json). {} for none."""
+    import json as _json_hr
+    import schedule_versions as _sv_hr
+    whole = _sv_hr.load_detail(conn, _row_get(row, "review_ref"))
+    if whole is not None:
+        return whole if isinstance(whole, dict) else {}
+    try:
+        out = _json_hr.loads(_row_get(row, "review_json") or "null") or {}
+    except (TypeError, ValueError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def store_history_review(conn, restaurant_id, review) -> tuple:
+    """(review_json headline, review_ref) to write for `review`."""
+    import json as _json_sr
+    import schedule_versions as _sv_sr
+    if not review:
+        return None, None
+    return _json_sr.dumps(_sv_sr.review_headline(review), default=str), \
+        _sv_sr.store_detail(conn, restaurant_id, review)
+
+
 def _ensure_history_columns(conn):
     """Columns added to schedule_history after it first shipped.
 
@@ -12087,7 +12277,8 @@ def _ensure_history_columns(conn):
                        ("quality_confidence", "TEXT"), ("what_if_json", "TEXT"), ("superseded_by", "INTEGER"),
                        ("republished_at", "TEXT"), ("publishing_at", "TEXT"), ("economics_json", "TEXT"),
                        ("detail_thinned_at", "TEXT"), ("hours_hourly", "REAL"), ("hours_salaried", "REAL"),
-                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL"), ("published_csv", "TEXT")):
+                       ("stage_seconds_json", "TEXT"), ("total_seconds", "REAL"), ("published_csv", "TEXT"),
+                       ("quality_ref", "TEXT"), ("review_ref", "TEXT")):
         if name not in have:
             try:
                 conn.execute(f"ALTER TABLE schedule_history ADD COLUMN {name} {decl}")
@@ -12228,15 +12419,19 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
         d["summary"] = _json_sh.loads(d.pop("summary_json") or "[]")
     except Exception:
         d["summary"] = []
+    # The whole evaluation and review, from their stored detail (SCALE-13).
+    conn = get_conn(db_path)
     try:
-        d["quality"] = _json_sh.loads(d.pop("quality_json", None) or "null")
+        d["quality"] = history_quality(conn, d) or None
+        d["review"] = history_review(conn, d) or None
+    finally:
+        conn.close()
+    for col in ("quality_json", "quality_ref", "review_json", "review_ref"):
+        d.pop(col, None)
+    try:
+        d["weather_forecast"] = _json_sh.loads(d.pop("weather_json", None) or "null")
     except Exception:
-        d["quality"] = None
-    for col, key in (("review_json", "review"), ("weather_json", "weather_forecast")):
-        try:
-            d[key] = _json_sh.loads(d.pop(col, None) or "null")
-        except Exception:
-            d[key] = None
+        d["weather_forecast"] = None
     return d
 
 
@@ -12253,24 +12448,22 @@ def get_published_week_csv(history_id: int, restaurant_id: int, with_stations: b
     # never reaches staff before Send. A week that never went out reads as
     # its working copy (the callers only ever ask for live weeks).
     cols = ("id, week_start, week_end, COALESCE(published_csv, schedule_csv) AS schedule_csv, published_at, "
-            "edited_at" + (", review_json" if with_stations else ""))
+            "edited_at" + (", review_json, review_ref" if with_stations else ""))
     conn = get_conn(db_path)
     try:
+        _ensure_history_columns(conn)
         row = conn.execute(f"SELECT {cols} FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (history_id, restaurant_id)).fetchone()
+        d = dict(row) if row else None
+        if d is not None and with_stations:
+            review = history_review(conn, d)
+            d.pop("review_json", None)
+            d.pop("review_ref", None)
+            d["stations"] = review.get("stations")
     except Exception:
-        row = None
+        d = None
     finally:
         conn.close()
-    if not row:
-        return None
-    d = dict(row)
-    if with_stations:
-        try:
-            review = _json_pw.loads(d.pop("review_json", None) or "null") or {}
-        except Exception:
-            review = {}
-        d["stations"] = review.get("stations") if isinstance(review, dict) else None
     return d
 
 

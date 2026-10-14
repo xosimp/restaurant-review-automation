@@ -7193,14 +7193,15 @@ def stored_daily_targets(restaurant_id, history_id) -> dict:
         return {}
     conn = get_conn()
     try:
-        row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=? AND restaurant_id=?",
+        import models as _m_q
+        _m_q._ensure_history_columns(conn)
+        row = conn.execute("SELECT quality_json, quality_ref FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (hid, restaurant_id)).fetchone()
-    finally:
-        conn.close()
-    try:
-        q = _json.loads(row["quality_json"] or "null") or {} if row else {}
+        q = _m_q.history_quality(conn, row) if row else {}          # the whole evaluation (SCALE-13)
     except Exception:
         return {}
+    finally:
+        conn.close()
     kept = q.get("daily_target_hours")
     if isinstance(kept, dict) and kept:
         return {str(k): float(v) for k, v in kept.items() if v}
@@ -8631,8 +8632,10 @@ def shifts_stamp(restaurant_id):
     try:
         conn = _m_ss.get_conn()
         try:
-            row = conn.execute("SELECT updated_at, LENGTH(shifts_csv) FROM client_data WHERE restaurant_id=?",
-                               (restaurant_id,)).fetchone()
+            # The file's size either way it is stored (SCALE-14), and the
+            # stale mark a sync onto shift_facts leaves.
+            row = conn.execute("SELECT updated_at, COALESCE(LENGTH(shifts_csv), 0), COALESCE(LENGTH(shifts_csv_z), 0), "
+                               "shifts_stale FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
         finally:
             conn.close()
         return tuple(row) if row else ()
@@ -11609,13 +11612,16 @@ def _annotate_history(history_id, restaurant_id, review=None, seconds=None, weat
     check's p95 reads it)."""
     if not history_id:
         return
-    from models import get_conn, _ensure_history_columns
+    from models import get_conn, _ensure_history_columns, store_history_review
     conn = get_conn()
     try:
         _ensure_history_columns(conn)
-        conn.execute("UPDATE schedule_history SET review_json=?, generation_seconds=?, weather_json=?, "
+        # The review's headline inline, the whole of it stored once (SCALE-13).
+        whole = json.loads(json.dumps(review, default=_jsonable)) if review else None
+        head, ref = store_history_review(conn, restaurant_id, whole)
+        conn.execute("UPDATE schedule_history SET review_json=?, review_ref=?, generation_seconds=?, weather_json=?, "
                      "economics_json=?, stage_seconds_json=?, total_seconds=? WHERE id=? AND restaurant_id=?",
-                     (json.dumps(review, default=_jsonable) if review else None, seconds,
+                     (head, ref, seconds,
                       json.dumps(weather) if weather else None,
                       json.dumps(economics, default=str) if economics else None,
                       json.dumps(stages) if stages else None,

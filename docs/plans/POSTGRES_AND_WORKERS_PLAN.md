@@ -197,7 +197,7 @@ the queue, beside the scheduler that only enqueues.
    take the CPU and the model waits out of the web process, set
    `QUEUE_WORKER=1` with the start command in
    `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`.
-3. **Postgres — BUILT up to the cutover 10/10/26**: `db_dialect` behind
+3. **Postgres — BUILT up to the cutover 10/10/26; run against a real Postgres since 10/14/26** (CI job `postgres`; the boot, the copy, every static statement PREPAREd, 37 database-heavy test files — blind re-audit 10/11/26 SCALE-5 … SCALE-12): `db_dialect` behind
    `models.get_conn`, `scripts/pg_copy.py` (copy + verify), the normalized
    schedule model as a shadow (`PG_SHADOW_WRITE`), blobs in object storage
    (`BLOB_STORE`); migrations replace boot DDL for the new model; backups on

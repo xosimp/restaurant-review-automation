@@ -651,9 +651,13 @@ def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None,
     try:
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT review_json, COALESCE(published_csv, schedule_csv) AS schedule_csv, "
-                               "week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+            import models as _m_ss
+            row = conn.execute("SELECT * FROM schedule_history WHERE id=? AND restaurant_id=?",
                                (history_id, restaurant_id)).fetchone()
+            # The whole review (stored once, SCALE-13).
+            review = _m_ss.history_review(conn, row) if row is not None else {}
+            if row is not None:
+                row = {"schedule_csv": row["published_csv"] or row["schedule_csv"], "week_start": row["week_start"]}
         finally:
             conn.close()
     except Exception as e:
@@ -661,10 +665,6 @@ def record_published(restaurant_id, history_id, schedule_csv=None, user_id=None,
         return []
     if row is None:
         return []
-    try:
-        review = json.loads(row["review_json"] or "null") or {}
-    except (TypeError, ValueError):
-        review = {}
     reqs = [r for r in (review.get("soft_requirements") or []) if isinstance(r, dict) and r.get("key")]
     if not reqs:
         return []

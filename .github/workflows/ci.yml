@@ -50,6 +50,58 @@ jobs:
           ANTHROPIC_API_KEY: ""
           RESEND_API_KEY: ""
 
+  postgres:
+    # The Postgres path, run against a real Postgres (blind re-audit
+    # 10/11/26, SCALE-10: it had only ever run against a recording driver,
+    # and the cutover's first boot would have failed). A throwaway server
+    # with no data and no keys: the app's boot twice (in its own process),
+    # the copy then the boot, every static statement PREPAREd, and the
+    # database-heavy files with each test's database on Postgres
+    # (tests/conftest.py, CAVNAR_TEST_PG_URL).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      ANTHROPIC_API_KEY: ""
+      RESEND_API_KEY: ""
+      CAVNAR_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Install the locked dependencies
+        run: pip install --no-deps -r requirements-dev.txt
+      - name: Every static statement PREPAREs on Postgres
+        run: |
+          python -c "import psycopg; c = psycopg.connect('postgresql://postgres:postgres@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE cavnar_audit')"
+          RAILWAY_VOLUME_MOUNT_PATH=$(mktemp -d) python scripts/pg_sql_audit.py --database-url postgresql://postgres:postgres@localhost:5432/cavnar_audit
+      - name: The boot, the copy and the database-heavy files on Postgres
+        run: >-
+          pytest -n 3 --dist loadfile -q -p no:warnings
+          tests/test_q2_postgres.py tests/test_sf10_h2_postgres.py
+          tests/test_models.py tests/test_auth.py tests/test_auth_hardening.py tests/test_auth_routes.py
+          tests/test_ops.py tests/test_retention.py tests/test_scheduler_lease.py tests/test_edge_data_claims_and_lease.py
+          tests/test_sf10_h2_queue.py tests/test_sf11_q1_queue.py tests/test_sf10_h2_gateway.py tests/test_sf10_h2_versions.py
+          tests/test_publish_claim.py tests/test_staff_schedule_publish.py tests/test_schedule_publish_gate.py
+          tests/test_sf10_i1_prepublish.py tests/test_refix_r6_people.py tests/test_schedule_people_identity.py
+          tests/test_people_labelled_names.py tests/test_staff_settings_signals_versions.py tests/test_task_sheets.py
+          tests/test_home_brief.py tests/test_intelligence.py tests/test_benchmark_engine.py tests/test_event_intel.py
+          tests/test_rec_ledger.py tests/test_recommendation_trust.py tests/test_outcomes_roi.py tests/test_value_delivered.py
+          tests/test_guest_marketing.py tests/test_mkt_fix_a_consent.py tests/test_inventory_ledger.py
+          tests/test_alert_amplification.py tests/test_duplicate_delivery.py tests/test_webhook_delivery.py
+          tests/test_admin_ops_next.py
+
   audit:
     # Known-vulnerability scan of the locked dependencies. Non-blocking for
     # now (an advisory with no fix must not stop a deploy); read it.

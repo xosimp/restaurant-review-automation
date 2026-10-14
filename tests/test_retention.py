@@ -857,6 +857,7 @@ def test_every_card_with_a_question_carries_it(db_path, monkeypatch):
     assert payload["review"]["metrics"][0]["ask"] == "What moved my labor % in August 2026?"
 
 
+@pytest.mark.sqlite_only
 def test_the_restore_drill_proves_the_newest_snapshot_and_cleans_up(db_path, monkeypatch, tmp_path):
     import scheduler, emails, shutil, os
     monkeypatch.setattr(models, "DB_PATH", db_path)
@@ -878,6 +879,7 @@ def test_the_restore_drill_proves_the_newest_snapshot_and_cleans_up(db_path, mon
     assert sent["payload"]["subject"].startswith("Restore drill passed")
 
 
+@pytest.mark.sqlite_only
 def test_the_restore_drill_fails_when_the_snapshot_lost_its_tokens(db_path, monkeypatch, tmp_path):
     """The redaction bug, caught by the drill rather than by a restore."""
     import scheduler, emails, shutil, sqlite3

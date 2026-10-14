@@ -376,9 +376,9 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     conn = get_conn()
     try:
         _ensure_history_columns(conn)
-        cols = ("SELECT id, week_start, week_end, schedule_csv, review_json, quality_json, hours_scheduled, "
-                "hours_hourly, hours_salaried, hours_budget, economics_json, published_at, generated_at "
-                "FROM schedule_history ")
+        cols = ("SELECT id, week_start, week_end, schedule_csv, review_json, review_ref, quality_json, quality_ref, "
+                "hours_scheduled, hours_hourly, hours_salaried, hours_budget, economics_json, published_at, "
+                "generated_at FROM schedule_history ")
         if schedule_id:
             row = conn.execute(cols + "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
         else:
@@ -386,6 +386,12 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             # newest row — a discarded rewrite or a replaced draft (ARCH-11).
             row = conn.execute(cols + "WHERE restaurant_id=? AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
                                (restaurant_id,)).fetchone()
+        if row is not None:
+            # The whole review and evaluation, whatever is inline (SCALE-13).
+            import models as _m_sp
+            row = dict(row)
+            row["review_json"] = json.dumps(_m_sp.history_review(conn, row), default=str)
+            row["quality_json"] = json.dumps(_m_sp.history_quality(conn, row), default=str)
     finally:
         conn.close()
     if not row:

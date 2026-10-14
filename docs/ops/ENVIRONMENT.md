@@ -187,6 +187,13 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `DB_BACKEND` | — | `sqlite` pins SQLite even with `DATABASE_URL` set (the rollback). | models.py, db_dialect.py |
 | `SHADOW_DATABASE_URL` | — | The Postgres the shadow writes the normalized schedule model to while SQLite is primary. | pg_shadow.py |
 | `PG_SHADOW_WRITE` | — | `1` notes every schedule revision in `pg_shadow_outbox`; the `pg_shadow` job writes them to `SHADOW_DATABASE_URL`. | pg_shadow.py |
+| `PG_POOL_MAX` | `20` | On Postgres: connections a process may have checked out by threads holding none — the per-process cap (blind re-audit 10/11/26 SCALE-11). The web process plus `worker.py` stay under Railway's `max_connections` (100) at the defaults. | db_dialect.py |
+| `PG_POOL_OVERFLOW` | `20` | More connections, only for a thread that already holds one (a nested `get_conn`; a wait there could deadlock). Process ceiling = `PG_POOL_MAX + PG_POOL_OVERFLOW`. | db_dialect.py |
+| `PG_POOL_IDLE` | `5` | Idle Postgres connections a process keeps for reuse. | db_dialect.py |
+| `PG_POOL_MAX_LIFETIME` | `1800` | Seconds a Postgres connection lives before it is retired at its next return. | db_dialect.py |
+| `PG_POOL_IDLE_SECONDS` | `300` | Seconds an idle Postgres connection is kept. | db_dialect.py |
+| `PG_POOL_TIMEOUT` | `30` | Seconds a checkout waits for a free connection before it fails, said ("database connection pool exhausted"). | db_dialect.py |
+| `CAVNAR_TEST_PG_URL` | — | Tests only: a SCRATCH Postgres server (never production's). The suite's database runs there — every test's database its own, from a template (tests/conftest.py); `tests/test_q2_postgres.py`'s live half runs. CI's `postgres` job sets it. | tests/conftest.py, tests/test_q2_postgres.py |
 | `QUEUE_WAIT_ALERT_SECONDS` | `"120"` | The platform check warns when owners' generations wait longer than this to start (the queue's interactive p95 over the last hour, five samples at least). | ops.py |
 | `MAINTENANCE_READ_ONLY` | — | `1`: the cutover's write freeze — every write request answers 503 with a sentence, the scheduler and its sends stop (`scheduler.scheduling_allowed`); reads and `/health` still answer. | http_layer.py, scheduler.py |
 | `TARGET_DATABASE_URL` | — | `scripts/pg_copy.py`'s target when `--database-url` is not given. | scripts/pg_copy.py |

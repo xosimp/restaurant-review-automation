@@ -12,22 +12,70 @@ What exists:
 |---|---|---|
 | Postgres behind `models.get_conn` (every statement translated; sqlite3's connection surface) | `db_dialect.py` | `DATABASE_URL` names a Postgres |
 | The copy, its verification, the Postgres → SQLite export | `pg_copy.py`, `scripts/pg_copy.py` | run by hand |
-| What still needs a hand port | `scripts/pg_sql_audit.py` | — (10/10/26: 4,550 statements read, 0 untranslatable, 0 SQLite-only; 6 trigger statements ported in `migrations/postgres/0002_triggers.sql`; 2 built at run time) |
+| What still needs a hand port | `scripts/pg_sql_audit.py` (`--database-url` PREPAREs every static statement on a real Postgres) | — (10/14/26: 4,813 statements read, 0 untranslatable, 0 SQLite-only; 3,901 PREPAREd on Postgres 16, 0 failed; 2 built at run time) |
+| The boot on Postgres | `models.boot_conn`, `db_dialect.install_compat` / `install_triggers` | automatic: the boot builds or upgrades the Postgres schema itself |
+| A bounded connection pool | `db_dialect._Pool` (`PG_POOL_*`, ENVIRONMENT.md) | automatic |
+| CI against a real Postgres | `.github/workflows/ci.yml`, job `postgres` | every push |
 | The normalized schedule model, shadow-written | `pg_shadow.py`, `migrations/postgres/0001_schedule_model.sql` | `PG_SHADOW_WRITE=1` + `SHADOW_DATABASE_URL` |
 | Blobs in object storage | `blob_store.py` | `BLOB_STORE=s3` + `BLOB_S3_*` |
 | The write freeze | `http_layer.maintenance_gate`, `scheduler.scheduling_allowed`, `job_queue.claim` | `MAINTENANCE_READ_ONLY=1` |
 | The nightly backup on Postgres (an export to SQLite, then the usual scrub, encryption, off-site copy) | `scheduler._write_consistent_snapshot` → `pg_copy.export_to_sqlite` | automatic once `DATABASE_URL` is set |
 
-**Not verified against a live Postgres in this repo** (none was installed
-where it was built): the translation is tested as text, the connection
-against a recording driver, the copy and the shadow end to end against
-SQLite targets. Step 2 below is that verification — do not skip it.
+**Verified against a real Postgres (16) since 10/14/26** (blind re-audit
+10/11/26, SCALE-5 … SCALE-12 — before that it had only met a recording
+driver, and the first boot would have failed in init_db). CI's `postgres`
+job runs, on every push, against a throwaway Postgres 16 with no data and
+no keys: the app's boot twice in its own process (building SQLite's schema
+column for column, type for type), the copy then the boot (step 4), every
+static statement PREPAREd (`pg_sql_audit.py --database-url`), the dialect's
+semantics, and 37 database-heavy test files with each test's database on
+Postgres (`CAVNAR_TEST_PG_URL`, tests/conftest.py). What it does not prove
+is production's data: step 2 below is that rehearsal — do not skip it.
+
+What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
+- **A failed statement costs only itself.** Inside a transaction every
+  statement runs under a savepoint (one round trip, psycopg's pipeline), so
+  init_db's already-applied ALTERs, the try-INSERT-then-UPDATE idiom and
+  every `except sqlite3.OperationalError: pass` keep the transaction as
+  SQLite does — Postgres would otherwise abort it.
+- **The boot writes to Postgres.** init_db, init_auth and the init chain
+  used `sqlite3.connect` directly: on Postgres their tables would have
+  landed in the volume's empty file. They use `models.boot_conn`; the boot
+  installs the `sqlite_master` view and the helper functions
+  (`0000_sqlite_compat.sql`: `cavnar_ts`, `cav_name_key`,
+  `cavnar_json_array`) and the triggers' plpgsql form (the tracker stamp,
+  the intel version, the append-only ledgers); a CREATE TABLE's foreign
+  keys are added once their target exists; ALTER TABLE ADD COLUMN gets
+  CREATE TABLE's types.
+- **SQL semantics:** SUM/AVG of a predicate, `COLLATE NOCASE` (as lower()),
+  NULL ordering (NULLS FIRST ascending, LAST descending — and indexes built
+  the same way), NULL-preserving `MAX(a, b)`, `LIKE … ESCAPE ''`, typed
+  `json_extract`, NULL for a date read of `''`, `x IS ?`, a bare
+  parameter's type, ambiguous upsert columns, `ROUND(x, n)`, `json_set` /
+  `json_each` / `json_valid` (needs Postgres 16+ for `IS JSON`), bare
+  columns beside GROUP BY, HAVING aliases, a CASE mixing predicates and
+  numbers, `INSERT OR REPLACE` on the unique key the row names, a table's
+  `ON CONFLICT REPLACE`, `UPDATE OR IGNORE` (row by row), SUM of integers
+  read back as an int (not Decimal), and a stable `rowid` column for tables
+  with no integer key (left out of `SELECT *`, as SQLite does).
+- **Connections:** one bounded pool a process (`PG_POOL_MAX` 20 +
+  `PG_POOL_OVERFLOW` 20 for nested connections, 5 idle, 30-minute
+  lifetime); the web process plus `worker.py` stay under Railway's 100.
+  PgBouncer in transaction mode works too (the locks are transaction
+  scoped) — not needed at these numbers.
+- **Locks:** `BEGIN IMMEDIATE` is one advisory lock (SQLite's one writer)
+  except on the hot paths, which lock only what they serialise
+  (`db_dialect.begin_write`): a job group's claim, one kind's enqueues, one
+  gateway minute, one rate key.
 
 ## 0. Before anything
 
-1. `python scripts/pg_sql_audit.py` on the commit you will deploy. It must say
-   `untranslatable: 0` and `sqlite_only: 0`; anything new it lists is ported
-   (or `db_dialect.Translator` taught it) before going on.
+1. `python scripts/pg_sql_audit.py --database-url "$SCRATCH_PG_URL"` on the
+   commit you will deploy (a scratch Postgres with NO production keys in the
+   shell — the boot writes its schema there). It must say
+   `untranslatable: 0`, `sqlite_only: 0` and `prepare_failed: 0`; anything
+   new it lists is ported (or `db_dialect.Translator` taught it) before
+   going on. CI's `postgres` job is the same check; it must be green.
 2. The volume has room for one more copy of the database (the snapshot the
    copy reads): `/admin` → Engineering → disk, or `df -h $RAILWAY_VOLUME_MOUNT_PATH`.
 3. Optional, recommended first: move the blobs out (step 1b) — the copy and
@@ -121,8 +169,10 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
    `MAINTENANCE_READ_ONLY` in one change (Railway redeploys once). Remove
    `PG_SHADOW_WRITE` / `SHADOW_DATABASE_URL` (the primary is the model now).
    The boot runs `init_db` against Postgres (every `CREATE … IF NOT EXISTS`
-   a no-op, every guarded ALTER answered from the catalog); `/health` must
-   answer 200 inside the 120-second healthcheck.
+   a no-op, every already-applied ALTER refused under its own savepoint and
+   tolerated — the transaction goes on; proven in CI by the copy-then-boot
+   test, twice); `/health` must answer 200 inside the 120-second
+   healthcheck.
 5. **Check.** Sign in as the demo restaurant (rid 4); open Labor and save a
    draft edit; `/admin` → Engineering (write probe, jobs); the morning's jobs
    in `/admin` → Jobs the next day; the nightly backup's email (its snapshot

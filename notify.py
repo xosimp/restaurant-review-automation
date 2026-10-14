@@ -1383,7 +1383,8 @@ def sync_alert_contacts(restaurant_id: int, contacts, sms_consent=None, db_path:
         consent_at = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
     conn = models.get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        import db_dialect
+        db_dialect.begin_write(conn, "alert_contacts", restaurant_id)     # SCALE-12
         existing = {}
         for r in conn.execute("SELECT id, phone FROM alert_contacts WHERE restaurant_id=? ORDER BY id",
                               (restaurant_id,)).fetchall():

@@ -635,13 +635,15 @@ def closing_summary(restaurant_id, day=None, db_path=DB_PATH, restaurant=None):
         return {"available": False, "reason": "nothing captured from the POS today"}
     conn = get_conn(db_path)
     try:
-        # One figure per past same-weekday: that day's own last reading.
-        # The bare net_sales alongside MAX() is SQLite's documented
-        # min/max-picks-the-row behaviour, not an accident.
+        # One figure per past same-weekday: that day's own last reading —
+        # the row holding the day's latest hour, said as such (a bare
+        # column beside MAX() is SQLite-only: Postgres refuses it).
         history = [r["net_sales"] for r in conn.execute(
-            "SELECT MAX(captured_hour) AS h, net_sales FROM pos_intraday "
-            "WHERE restaurant_id=? AND weekday=? AND business_date<? "
-            "GROUP BY business_date ORDER BY business_date DESC LIMIT 8",
+            "SELECT p.business_date, p.net_sales FROM pos_intraday p "
+            "WHERE p.restaurant_id=? AND p.weekday=? AND p.business_date<? "
+            "AND p.captured_hour = (SELECT MAX(q.captured_hour) FROM pos_intraday q "
+            "WHERE q.restaurant_id = p.restaurant_id AND q.business_date = p.business_date) "
+            "ORDER BY p.business_date DESC LIMIT 8",
             (restaurant_id, weekday, day.isoformat())).fetchall()]
     finally:
         conn.close()

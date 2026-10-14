@@ -48,8 +48,14 @@ def _key(r):
 def _file(rid):
     c = models.get_conn()
     try:
-        return dict(c.execute("SELECT shifts_csv, shifts_store, shifts_stale FROM client_data WHERE restaurant_id=?",
-                              (rid,)).fetchone())
+        d = dict(c.execute("SELECT shifts_csv, shifts_csv_z, shifts_store, shifts_stale FROM client_data "
+                           "WHERE restaurant_id=?", (rid,)).fetchone())
+        # On shift_facts the file is the facts' export, stored compressed
+        # (blind re-audit SCALE-14): read back as text.
+        d["plain_stored"] = bool(d.pop("shifts_csv"))
+        d.pop("shifts_csv_z")
+        d["shifts_csv"] = models.shift_file_text(c, rid)
+        return d
     finally:
         c.close()
 

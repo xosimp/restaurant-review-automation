@@ -255,7 +255,10 @@ def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, 
     minute = _minute(now)
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # One minute's windows are read and reserved together; other
+        # minutes and every other writer are not held (SCALE-12).
+        import db_dialect
+        db_dialect.begin_write(conn, "model_gateway", minute)
         rows = conn.execute("SELECT klass, input_tokens, output_tokens FROM model_token_windows WHERE minute=?",
                             (minute,)).fetchall()
         out_use = {r["klass"]: int(r["output_tokens"]) for r in rows}
