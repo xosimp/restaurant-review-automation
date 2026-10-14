@@ -25165,7 +25165,7 @@ function _schedRecheck() {
     if (window.prStale) prStale();
     // Kept only for the rows still on screen: a late answer for rows since
     // edited (or another week's) waits for the next recheck.
-    if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); }
+    if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); if (typeof swRenderGrid === 'function') swRenderGrid(); }
     _schedRenderCost(d && d.ok ? d.cost : null);
   }).catch(function () { _schedRecheckSettled(false); _schedRenderCost(null); });
 }
@@ -26682,9 +26682,17 @@ function swRenderGrid() {
     var d = days[j], np = 0, k; for (k in (dayPpl[d] || {})) if (dayPpl[d].hasOwnProperty(k)) np++;
     // Understaffed / overstaffed against the forecast's hours for the day,
     // past a tenth either way.
+    // The day's target is HOURLY (the hourly budget's hours): it is held
+    // against the server's hourly split of the day (_swHours.v.by_date),
+    // never every row - the salaried managers' 19-46h a day read as "Over"
+    // on every day at Simple EJ's (owner, 10/14/26). No pill until the
+    // split is known.
+    var _hv = (typeof _swHours !== 'undefined' && _swHours) ? _swHours.v : null;
     var want = +(_swTargets()[d] || 0), got = dayHrs[d] || 0, st = '';
-    if (want && got < want * 0.9) st = '<span class="st short">Short <span class="hb-num">' + _schedHrs(want - got) + 'h</span></span>';
-    else if (want && got > want * 1.1) st = '<span class="st over">Over <span class="hb-num">' + _schedHrs(got - want) + 'h</span></span>';
+    var hrly = (_hv && _hv.by_date && _hv.by_date[d] != null) ? +_hv.by_date[d] : null;
+    var stTip = hrly != null && want ? ' title="' + _escAttr('Hourly staff ' + _schedHrs(hrly) + 'h against the ' + _schedHrs(want) + 'h this day\u2019s forecast calls for (salaried managers not counted)') + '"' : '';
+    if (want && hrly != null && hrly < want * 0.9) st = '<span class="st short"' + stTip + '>Short <span class="hb-num">' + _schedHrs(want - hrly) + 'h</span></span>';
+    else if (want && hrly != null && hrly > want * 1.1) st = '<span class="st over"' + stTip + '>Over <span class="hb-num">' + _schedHrs(hrly - want) + 'h</span></span>';
     h += '<div class="swg-d' + (d === hot && dayHrs[d] ? ' hot" title="The busiest day this week: the most scheduled hours' : '') + '"><b>' + _escHtml(_schedDayOf(d).slice(0, 3)) + '</b><span class="dt hb-num">' + _escHtml(mdy(d)) + '</span>'
        + '<span class="dh"><span class="hb-num">' + np + '</span> on · <span class="hb-num">' + _schedHrs(got) + 'h</span></span>' + st + _schedHolidayMark(d)
        + '</div>';
