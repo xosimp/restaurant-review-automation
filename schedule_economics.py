@@ -2745,6 +2745,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         mates = [(x, spans[id(x)]) for x in groups.get((d, k), []) if x is not r and spans.get(id(x))
                  and (x.get("employee") or "").strip().lower() != me]
         st = getattr(c, "stations", None) if c is not None else None
+        best = None
         for n in range(steps, 0, -1):
             new_end = e - n * TRIM_TAIL_STEP_MIN
             # Somebody else in the role stays through every hour cut: the
@@ -2776,8 +2777,17 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             if not ok:
                 refusals[id(r)] = why
                 continue
-            return new, round(n * TRIM_TAIL_STEP_MIN / 60.0, 2)
-        return None
+            got = (new, round(n * TRIM_TAIL_STEP_MIN / 60.0, 2))
+            if not objective_on:
+                return got
+            # With the one objective every legal length of the cut is priced
+            # and the cheapest week kept (LOGIC-6): not the longest cut that
+            # passes — a cut that would take its person under half their
+            # usual week by its last half hour stops short of it.
+            _b, v = _objective_change(r, new)
+            if v is not None and (best is None or v < best[0] - 1e-9):
+                best = (v, got)
+        return best[1] if best is not None else None
 
     def _saved(r, new):
         """What changing `r` into `new` (None: removed) takes off the week's

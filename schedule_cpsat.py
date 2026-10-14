@@ -2495,7 +2495,8 @@ def _stime_hours(row, c):
 # ── the repair loop's stage (replaces schedule_solver.improve when it can) ──
 
 def improve(rows, inputs=None, signals=None, weights=None, constraints=None, only_dates=None,
-            max_seconds=None, min_gain=0.0, hours_budget=None, last_week=None, wall_cap=None) -> dict:
+            max_seconds=None, min_gain=0.0, hours_budget=None, last_week=None, wall_cap=None,
+            objective=None) -> dict:
     """schedule_solver.improve's contract, solved with CP-SAT over the joint
     objective (LOGIC-19: the objective is the model's separable costs, never
     the Shift Quality score — the score is computed for the owner's report
@@ -2521,7 +2522,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
                     max_seconds=secs, mode="improve", budget_dollars=inputs.get("labor_budget_dollars"),
                     roster_roles=inputs.get("roster_roles") or signals.get("roster_roles"),
                     pending=inputs.get("pending_time_off") or getattr(constraints, "pending_off", None),
-                    explain=False, wall_cap=wall_cap)
+                    explain=False, wall_cap=wall_cap, objective=objective)
     if solved["status"] not in ("optimal", "time_limit"):
         # The backtracking fallback on its own work budget (WorkClock); the
         # wall clock still left is its emergency cap (ARCH-26).

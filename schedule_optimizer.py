@@ -1452,14 +1452,17 @@ def _surplus_moves(state, objective_ctx, limit=None) -> list:
         head = 0
         while head < len(spare) and spare[head]:
             head += 1
-        if tail >= 2:
-            new_e = max(sp[0] + shortest, sp[1] - tail * STEP)
+        # every cut of the surplus run by the hour, not only the whole run:
+        # the value (week_value) picks how far — a cut that would take its
+        # person under half their usual week is priced so (the objective)
+        for k in range(tail, 1, -2):
+            new_e = max(sp[0] + shortest, sp[1] - k * STEP)
             if new_e < sp[1] and _can_cut(state, i, (sp[1] - new_e) / 60.0):
-                scored.append((tail, _retime_move(state, i, sp[0], new_e, why)))
-        if head >= 2:
-            new_s = min(sp[1] - shortest, sp[0] + head * STEP)
+                scored.append((k, _retime_move(state, i, sp[0], new_e, why)))
+        for k in range(head, 1, -2):
+            new_s = min(sp[1] - shortest, sp[0] + k * STEP)
             if new_s > sp[0] and _can_cut(state, i, (new_s - sp[0]) / 60.0):
-                scored.append((head, _retime_move(state, i, new_s, sp[1], why)))
+                scored.append((k, _retime_move(state, i, new_s, sp[1], why)))
     scored.sort(key=lambda t: -t[0])
     out = [m for _n, m in scored if m is not None]
     return out[:limit] if limit else out

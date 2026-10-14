@@ -10893,7 +10893,9 @@ def _stage_solver(rows, x):
     if assign_engine() == "cpsat":
         res = _cps.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
                            max_seconds=_cps.DEFAULT_SECONDS, wall_cap=max(0.5, x.search_seconds()),
-                           hours_budget=x.budget or None)
+                           hours_budget=x.budget or None,
+                           # the one objective the draft was solved to (LOGIC-6)
+                           objective=x.objective_ctx() or None)
         summary = _cps.summary(res)
     else:
         res = _solver.improve(rows, x.result, signals=sig, weights=x.weights, constraints=x.c, only_dates=x.editable,
