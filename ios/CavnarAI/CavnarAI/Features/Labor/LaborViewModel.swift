@@ -4959,12 +4959,17 @@ final class LaborViewModel {
         var instruction: String? = nil
         var reasonChip: String? = nil
         var reasonText: String? = nil
+        /// The readings of the instruction the owner ticked on "Is this what
+        /// you meant?" (blind re-audit 10/11/26 AI-7, contract #6): held as
+        /// rules for this week; an unticked one is a preference only.
+        var confirmRules: [[String: LooseValue]] = []
         enum CodingKeys: String, CodingKey {
             case dates, instruction
             case weekStart = "week_start"
             case historyId = "history_id"
             case reasonChip = "reason_chip"
             case reasonText = "reason_text"
+            case confirmRules = "confirm_rules"
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -4974,12 +4979,129 @@ final class LaborViewModel {
             try c.encodeIfPresent(instruction, forKey: .instruction)
             try c.encodeIfPresent(reasonChip, forKey: .reasonChip)
             try c.encodeIfPresent(reasonText, forKey: .reasonText)
+            if !confirmRules.isEmpty { try c.encode(confirmRules, forKey: .confirmRules) }
         }
     }
 
     /// "Anything for this week?" — the owner's words for the next draft,
     /// sent once as `instruction` and cleared when the job starts.
     var generateInstruction = ""
+
+    /// The instruction's readings the owner ticked, sent with the next
+    /// Generate as `confirm_rules` and cleared once it starts.
+    var confirmRules: [[String: LooseValue]] = []
+
+    /// One rule Cavnar AI read from the owner's words for this draft, said
+    /// back before anything is generated ("I read: Maria Lopez closes,
+    /// 10/16/26") — POST /labor/schedule-instruction/read.
+    struct InstructionReading: Identifiable, Equatable {
+        let id: Int
+        let readsAs: String
+        let rule: [String: LooseValue]
+        /// Already a rule this week: shown ticked, not sent again.
+        let confirmed: Bool
+    }
+
+    private struct InstructionReadBody: Encodable {
+        let instruction: String
+        var weekStart: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case instruction
+            case weekStart = "week_start"
+        }
+    }
+
+    struct InstructionReadResponse: Decodable {
+        var ok = false
+        var error: String? = nil
+        var sentences: [Sentence] = []
+
+        struct Sentence: Decodable {
+            var text = ""
+            var rules: [Reading] = []
+            var waiver: Waiver? = nil
+            enum CodingKeys: String, CodingKey { case text, rules, waiver }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                text = c.sfText(.text) ?? ""
+                rules = c.setupList(Reading.self, .rules)
+                waiver = (try? c.decodeIfPresent(Waiver.self, forKey: .waiver)) ?? nil
+            }
+        }
+        struct Reading: Decodable {
+            var rule: [String: LooseValue] = [:]
+            var readsAs: String? = nil
+            var words: String? = nil
+            var confirmed = false
+            enum CodingKeys: String, CodingKey {
+                case rule, words, confirmed
+                case readsAs = "reads_as"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                if case .object(let o)? = (try? c.decodeIfPresent(LooseValue.self, forKey: .rule)) ?? nil { rule = o }
+                readsAs = c.sfText(.readsAs)
+                words = c.sfText(.words)
+                confirmed = c.sfBool(.confirmed) ?? false
+            }
+        }
+        struct Waiver: Decodable {
+            var words: String? = nil
+            var confirmed = false
+            enum CodingKeys: String, CodingKey { case words, confirmed }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                words = c.sfText(.words)
+                confirmed = c.sfBool(.confirmed) ?? false
+            }
+        }
+        enum CodingKeys: String, CodingKey { case ok, error, sentences }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.sfBool(.ok) ?? false
+            error = c.sfText(.error)
+            sentences = c.setupList(Sentence.self, .sentences)
+        }
+    }
+
+    /// The readings of the instruction, as the web's Generate press shows
+    /// them: each typed rule ("I read: …") and each standing position the
+    /// words let off (a waiver, sent back as {kind: "waiver", quote}).
+    nonisolated static func readings(_ sentences: [InstructionReadResponse.Sentence]) -> [InstructionReading] {
+        var out: [InstructionReading] = []
+        for s in sentences {
+            for r in s.rules where !r.rule.isEmpty {
+                out.append(InstructionReading(id: out.count, readsAs: r.readsAs ?? r.words ?? s.text,
+                                              rule: r.rule, confirmed: r.confirmed))
+            }
+            if let w = s.waiver {
+                out.append(InstructionReading(id: out.count, readsAs: "I read: " + (w.words ?? s.text),
+                                              rule: ["kind": .string("waiver"), "quote": .string(s.text)],
+                                              confirmed: w.confirmed))
+            }
+        }
+        return out
+    }
+
+    /// Reads the instruction BEFORE generating (AI-7). Nil readings with an
+    /// error when it could not be read — Generate then goes ahead and every
+    /// reading stays a preference, as the web does.
+    func readInstruction() async -> (readings: [InstructionReading], error: String?) {
+        let words = generateInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return ([], nil) }
+        do {
+            let r: InstructionReadResponse = try await client.send(
+                "/mobile/api/labor/schedule-instruction/read", method: .post,
+                body: InstructionReadBody(instruction: String(words.prefix(500)), weekStart: generateWeek.weekStart),
+                hapticOnError: false, retryTransient: false)
+            guard r.ok else { return ([], r.error) }
+            return (Self.readings(r.sentences), nil)
+        } catch let e as APIClient.APIError {
+            return ([], e.message)
+        } catch {
+            return ([], nil)
+        }
+    }
 
     /// Which week the next generation is for. Any date inside the wanted
     /// week is enough; the server snaps it to the week's start.
@@ -5070,7 +5192,9 @@ final class LaborViewModel {
                                    dates: redo, historyId: redo == nil ? nil : historyId,
                                    instruction: words.isEmpty ? nil : String(words.prefix(500)),
                                    reasonChip: reasonChip,
-                                   reasonText: (note?.isEmpty ?? true) ? nil : String(note!.prefix(300))))
+                                   reasonText: (note?.isEmpty ?? true) ? nil : String(note!.prefix(300)),
+                                   confirmRules: redo == nil && !words.isEmpty ? confirmRules : []))
+            if response.ok { confirmRules = [] }
             guard response.ok, let jobId = response.jobId else {
                 scheduleError = response.error ?? "Couldn't start schedule generation."
                 isGeneratingSchedule = false
