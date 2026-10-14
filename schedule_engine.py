@@ -9657,17 +9657,49 @@ def _stage_gained(tier, before_prof, after) -> bool:
     return False
 
 
-def _kept_rows_moved(before, after, editable) -> str:
+def _plan_extended(before, after) -> bool:
+    """Whether every manager-plan row of `before` that is not exactly in
+    `after` is still there as the same person's plan row that day, in the
+    same role, covering at least its old span — the plan pinned on WHO, the
+    manager stage free to bring them in earlier or keep them on (sched
+    re-audit 10/11/26 BUGSGEN-17: an abutting 7:00-7:30am stub instead)."""
+    from collections import Counter
+    full_a = Counter(_full_sig(r) for r in after if r.get("_pinned"))
+    plan_a = {}
+    for r in after:
+        if r.get("_pinned") == _rules.PLAN_PIN:
+            plan_a.setdefault(((r.get("employee") or "").strip().lower(), r.get("date"), r.get("role")), []).append(r)
+    for r in before:
+        if r.get("_pinned") != _rules.PLAN_PIN:
+            continue
+        sig = _full_sig(r)
+        if full_a[sig] > 0:
+            full_a[sig] -= 1
+            continue
+        sp = _stime.span(r)
+        mates = plan_a.get(((r.get("employee") or "").strip().lower(), r.get("date"), r.get("role"))) or []
+        if not sp or not any((_stime.span(x) or (1, 0))[0] <= sp[0] and (_stime.span(x) or (0, -1))[1] >= sp[1]
+                             for x in mates):
+            return False
+    return True
+
+
+def _kept_rows_moved(before, after, editable, tier=None) -> str:
     """'' when every row a partial redo keeps and every pinned row (the
     manager plan's, the owner's) is exactly as it was and nothing was added
-    on a kept day; else what moved."""
+    on a kept day; else what moved. At the manager rank a manager-plan row
+    may be extended — the same person, date and role, its old span still
+    covered (_plan_extended, BUGSGEN-17); an owner's locked or kept row never
+    moves."""
     from collections import Counter
     if editable is not None:
         kb = sorted(_full_sig(r) for r in before if r.get("date") not in editable)
         ka = sorted(_full_sig(r) for r in after if r.get("date") not in editable)
         if kb != ka:
             return "a day you kept"
-    pb = Counter(_full_sig(r) for r in before if r.get("_pinned"))
+    plan_ok = tier == _rules.TIER_MANAGER and _plan_extended(before, after)
+    pb = Counter(_full_sig(r) for r in before if r.get("_pinned")
+                 and not (plan_ok and r.get("_pinned") == _rules.PLAN_PIN))
     pa = Counter(_full_sig(r) for r in after if r.get("_pinned"))
     if any(pa[k] < n for k, n in pb.items()):
         return "a shift the manager plan or you kept"
@@ -9678,7 +9710,7 @@ def _judge(tier, before_rows, after_rows, before_prof, x) -> tuple:
     """(worse, after_profile): what a stage's change made worse that ranks
     above the stage, and any hard breach it made new or worse anywhere — []
     when the change may be kept."""
-    moved = _kept_rows_moved(before_rows, after_rows, x.editable)
+    moved = _kept_rows_moved(before_rows, after_rows, x.editable, tier=tier)
     if moved:
         return [{"id": ("kept",), "label": f"changed {moved}", "tier": -1, "before": 0, "after": 1}], None
     after = _rules.breach_profile(after_rows, x.c)

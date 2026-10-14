@@ -168,6 +168,20 @@ def test_the_filler_extends_the_planned_managers_own_row():
     assert sr.PLAN_PIN == sk.PLAN_SOURCE
 
 
+def test_the_loop_keeps_a_plan_row_the_manager_stage_extended_and_nothing_else_moves_it():
+    import schedule_engine as se
+    plan = dict(_row(WEEK[5], "Dana", "7:30am", "6:00pm", "Manager"), _pinned=sr.PLAN_PIN)
+    longer = dict(plan, shift_start="7:00am")
+    shorter = dict(plan, shift_start="8:00am")
+    other = dict(plan, employee="Luis")
+    assert se._kept_rows_moved([plan], [longer], None, tier=sr.TIER_MANAGER) == ""
+    assert se._kept_rows_moved([plan], [longer], None, tier=sr.TIER_COVERAGE)        # only the manager rank
+    assert se._kept_rows_moved([plan], [shorter], None, tier=sr.TIER_MANAGER)        # never shortened
+    assert se._kept_rows_moved([plan], [other], None, tier=sr.TIER_MANAGER)          # never another person
+    locked = dict(plan, _pinned="locked")
+    assert se._kept_rows_moved([locked], [dict(locked, shift_start="7:00am")], None, tier=sr.TIER_MANAGER)
+
+
 def test_a_plan_reason_keeps_one_extension_clause():
     r = sk._one_extension_reason("covers open — stays on 8:00am–10:00am, less than a shift for anybody else",
                                  " — stays on 8:00am–9:00am, less than a shift for anybody else")
