@@ -175,6 +175,16 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
             notes = str(r.get("notes") or "")
             if _skel.is_plan_note(notes) and d in plan_dates:
                 continue                   # the plan's own row is merged by the job
+            # On a date the manager plan covers, EVERY carried row of
+            # somebody who manages that date goes — the plan places the
+            # managers. Only rows with the plan's note used to go, so last
+            # week's hand-written or punched manager shifts sat beside the
+            # plan's: two closing managers, 51.5h and 11.5h of manager
+            # overtime when the model was down (sched re-audit 10/11/26
+            # BUGSGEN-8). Constraints.manages is the manager role, the
+            # floor-manager certificate, and an acting manager's dates.
+            if d in plan_dates and constraints is not None and constraints.manages(name, d):
+                continue
             key = constraints.key(name) if constraints is not None else name.lower()
             if roster is not None and key not in roster:
                 dropped.append({"employee": name, "date": d, "why": "not on the roster now"})

@@ -36987,8 +36987,14 @@ window._cuRole=window.CAV_BOOT.role;
     // The shortest shift (schedule audit 10/3/26 A2 E-16; blank is no rule)
     // and what full time means for anyone with no minimum of their own
     // (F2 D-41; 0 is no minimum, blank the default shown).
-    ['min_shift_hours','Shortest shift','hours, 1\u201312 \u2014 blank: no shortest'],
-    ['full_time_min_hours','Full-time means at least','hours a week \u2014 0: no minimum']];
+    // The one shortest shift every pass holds (contract #2, sched re-audit
+    // 10/11/26 BUGSGEN-6): blank is the 3h default, never no shortest.
+    ['min_shift_hours','Shortest shift','hours, 1\u201312 \u2014 blank: 3h, the default'],
+    ['full_time_min_hours','Full-time means at least','hours a week \u2014 0: no minimum'],
+    // The owner's two allowances to the manager-every-minute rule, per
+    // restaurant (LOGIC-12): 0 turns each off.
+    ['closing_manager_stays_minutes','Closing manager stays after the last person','minutes \u2014 0: they leave at their scheduled end'],
+    ['opening_manager_lead_minutes','Prep before the opening manager is fine when they arrive','minutes before open, at least \u2014 0: never']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
     jget('/api/labor/rules',function(d){
@@ -37168,6 +37174,16 @@ window._cuRole=window.CAV_BOOT.role;
     h+='</div>';
     // Not a setting (owner, 10/2/26): stated, never switched.
     h+='<div class="rul-sw"><div class="t">A manager on the floor, always<small>Every minute anybody is on, a manager or owner is on too. Drafts are built to it and a gap blocks Publish.</small></div></div>';
+    /* Where the roster makes a limit unavoidable (one manager open every
+       day, STRESS-18), said once here rather than as a weekly blocker; and
+       what this restaurant's own punches say about the two manager
+       allowances above (LOGIC-12), for the owner to take or leave. */
+    var mst=d.manager_structure||[],mal=d.manager_allowances_learned||{},mi;
+    for(mi=0;mi<mst.length;mi++)h+='<div class="cmp-box" style="color:var(--amber)">'+esc(mst[mi].text)+'</div>';
+    var mls=[];
+    if(mal.closing_stay)mls.push('your closing manager is usually out '+esc(mal.closing_stay.minutes)+' min after the last person ('+esc(mal.closing_stay.dates)+' nights)');
+    if(mal.opening_lead&&mal.opening_lead.minutes>0)mls.push('prep starts before a manager who is in '+esc(mal.opening_lead.minutes)+' min before open ('+esc(mal.opening_lead.dates)+' mornings)');
+    if(mls.length)h+='<div class="cmp-src">From your punches: '+mls.join('; ')+'. Set the two manager fields above to match if that is how you run.</div>';
     /* On by default (NS5 M8): once anyone is marked a closer, one of them
        stays until close every open day. A closer is chosen to close (the
        last of their role to leave), not a key holder (owner, 10/2/26). */

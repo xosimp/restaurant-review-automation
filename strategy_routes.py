@@ -2554,6 +2554,31 @@ def _kitchen_stations_payload(restaurant_id, r) -> dict:
             "kitchen_people": sorted(people, key=str.lower)}
 
 
+def _manager_setup(restaurant_id, r) -> dict:
+    """{"manager_structure": [{name, text}], "manager_allowances_learned":
+    {closing_stay, opening_lead}} for the rules screen — the coming week's
+    roster read once; {} parts on any failure (the screen still loads)."""
+    out = {"manager_structure": [], "manager_allowances_learned": {}}
+    try:
+        import schedule_rules as _sr
+        import schedule_engine as _se
+        from datetime import datetime as _dt, timedelta as _td
+        ws = _se.default_week_start(r, _dt.now())
+        ws = _dt(ws.year, ws.month, ws.day)
+        dates = [(ws + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+        c = _sr.build_constraints(restaurant_id, dates, [_dt.strptime(d, "%Y-%m-%d").strftime("%A") for d in dates],
+                                  restaurant=r)
+        out["manager_structure"] = [{"name": v["name"], "text": v["text"]}
+                                    for _k, v in sorted(_sr.manager_structure(c).items())]
+        import shift_facts as _sf
+        since = (ws - _td(weeks=8)).strftime("%Y-%m-%d")
+        rows = _sf.person_rows(restaurant_id, since=since)
+        out["manager_allowances_learned"] = _sr.learn_manager_allowances(rows, c.manages, c.open_times)
+    except Exception as e:
+        print(f"[rules] manager setup not read rid={restaurant_id}: {e!r}")
+    return out
+
+
 def _do_compliance_get(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the rules.")
@@ -2564,7 +2589,14 @@ def _do_compliance_get(u):
     r = get_restaurant(_rid(u))
     rules = _sr.compliance(r)
     pack = rules.pop("_pack", None)
-    return {"ok": True, "rules": rules, "defaults": dict(_sr.DEFAULTS),
+    return {"ok": True, "rules": rules,
+            # The shortest shift's default is the one rule's (contract #2).
+            "defaults": dict(_sr.DEFAULTS, min_shift_hours=_sr.DEFAULT_MIN_SHIFT_MINUTES / 60.0),
+            # Where the roster makes a policy limit unavoidable (one manager
+            # open every day — STRESS-18), said once here; and what the
+            # restaurant's own punches say about the two manager allowances
+            # (LOGIC-12), for the owner to take or leave.
+            **_manager_setup(_rid(u), r),
             "role_floors": _sr.role_floors(r), "can_edit": _principal(u),
             "jurisdiction": getattr(r, "jurisdiction", None), "pack": pack, "packs": compliance_packs.available(),
             # Minutes before their OWN shift each role clocks in

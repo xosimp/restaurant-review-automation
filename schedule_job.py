@@ -824,7 +824,9 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     for _v in _viols:
         # A breach about a DAY (no manager on, a floor short) is shown on the
         # day (review.hard_days), never as "needs review" on a row (E-13).
-        if not _v["hard"] or _v.get("day_level"):
+        # A policy limit that is not law is "over your limit" to the owner
+        # (LOGIC-20), never a NEEDS REVIEW row the gate holds as must-fix.
+        if not se._rules.owner_hard(_v) or _v.get("day_level"):
             continue
         _r = preview_rows[_v["index"]]
         _r["needs_review"] = True

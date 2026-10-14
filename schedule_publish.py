@@ -425,6 +425,20 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             k = f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}"
+            if v.get("policy"):
+                # The restaurant's own limit, not law, crossed to cover a
+                # higher rule (LOGIC-20): "over your limit", acknowledged —
+                # never a MUST-FIX asking the owner to justify a choice the
+                # tier order made. A limit the roster cannot keep at all (one
+                # manager open every day) is named once in setup and here
+                # only as a note (STRESS-18).
+                if v.get("structural"):
+                    note(f"structural:{v['kind']}:{(v.get('employee') or '').strip().lower()}",
+                         v.get("structural_text") or _sr.policy_text(v))
+                else:
+                    add(k, _sr.policy_text(v), tier=DECIDE, rank=rank, date=v.get("date"))
+                breaches.setdefault(k, v)
+                continue
             add(k, f"{v['employee']} — {where}: {v['detail']}", rank=rank, date=v.get("date"))
             breaches.setdefault(k, v)
         if keep is not None:

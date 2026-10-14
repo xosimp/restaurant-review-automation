@@ -136,7 +136,7 @@ def _window(c, role, d, day, plan_bounds):
         mlo, mhi, prep_ok = b
         if not prep_ok:
             lo = max(lo, mlo)
-        hi = min(hi, mhi + _rules.CLOSING_MANAGER_STAYS_MINUTES)
+        hi = min(hi, mhi + _rules.closing_stay_minutes(c))
     return lo, hi
 
 
@@ -158,7 +158,8 @@ def plan_bounds(context_rows, c) -> dict:
         out[d] = (min(lo, sp[0]), max(hi, sp[1]), False)
     for d, (lo, hi, _p) in list(out.items()):
         o, _cl = _rules.open_hours(c, sq._day_name(d))
-        out[d] = (lo, hi, o is not None and lo <= o - _rules.OPENING_MANAGER_LEAD_MINUTES)
+        lead = _rules.opening_lead_minutes(c)
+        out[d] = (lo, hi, lead > 0 and o is not None and lo <= o - lead)
     return out
 
 

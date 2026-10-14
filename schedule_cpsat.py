@@ -647,12 +647,13 @@ class _Model:
                     continue
                 # the owner's two allowances (the closing manager's stay,
                 # the prep before an opening manager) — the verdict's own
-                if mgr_end is not None and a >= mgr_end and b <= last_end and last_end - mgr_end <= \
-                        _rules.CLOSING_MANAGER_STAYS_MINUTES:
+                # — each restaurant's own (LOGIC-12)
+                stay_m, lead_m = _rules.closing_stay_minutes(c), _rules.opening_lead_minutes(c)
+                if mgr_end is not None and a >= mgr_end and b <= last_end and last_end - mgr_end <= stay_m:
                     continue
-                if _rules.opening_prep((a, b), mgr_starts, o) or (
-                        mgr_starts and b <= min(mgr_starts) and o is not None
-                        and min(mgr_starts) <= o - _rules.OPENING_MANAGER_LEAD_MINUTES):
+                if _rules.opening_prep((a, b), mgr_starts, o, lead_m) or (
+                        lead_m > 0 and mgr_starts and b <= min(mgr_starts) and o is not None
+                        and min(mgr_starts) <= o - lead_m):
                     continue
                 lits = [self.x[(u.id, p)] for u in live for p in prob.dom[u.id] if self.mgr(p, d)]
                 gap = m.new_bool_var(f"mg{d}_{a}")

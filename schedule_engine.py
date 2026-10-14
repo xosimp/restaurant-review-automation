@@ -10982,7 +10982,7 @@ _COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "
 # and why, the owner's rules it could not check, the over-budget line —
 # vanished at the first save. refresh_review keeps all of it and refreshes
 # only what the rows decide.
-_REVIEW_RULE_KEYS = ("hard", "soft", "by_kind", "hard_rows", "hard_days")
+_REVIEW_RULE_KEYS = ("hard", "soft", "over_limit", "by_kind", "hard_rows", "hard_days")
 
 
 def _fix_sig(r) -> tuple:
