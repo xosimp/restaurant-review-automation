@@ -96,7 +96,11 @@ def world(seed, dates=None):
                   "close_times": c.close_times,
                   "typical_headcount": {(sq._day_name(r["date"]), r["daypart"]): {e["role"]: e["required"]
                                                                                   for e in r["roles"]}
-                                        for r in reqs}}
+                                        for r in reqs},
+                  # as schedule_engine.objective_floor_hours gives the score
+                  "objective_floor_hours": {k: ctx.usual_hours(k) * so.STARVED_SHARE
+                                            for k in (ctx.profile.get("people") or {})
+                                            if ctx.usual_hours(k) >= so.STARVED_MIN_USUAL_HOURS}}
     return {"rows": got["rows"], "ctx": ctx, "signals": sq_signals, "c": c, "names": names, "roles": roles,
             "dates": dates, "reqs": reqs, "hist": hist}
 
@@ -186,7 +190,7 @@ def test_a_person_under_half_their_usual_week_costs_more_than_any_budget_saving(
 
 # ── Shift Quality and the objective agree ────────────────────────────────
 
-@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("seed", list(range(1, 11)))
 def test_shift_quality_and_the_objective_agree_on_random_legal_moves(seed):
     """LOGIC-6: one cost model. On random legal single moves from the
     solver's week (seeded), a move the one objective prefers by more than a

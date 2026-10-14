@@ -5756,14 +5756,20 @@ def _breach_from_id(bid) -> dict:
     return {}
 
 
-def _need_met_by_date(rows, need_text, families=None, flagged=frozenset(), salaried=frozenset()):
+def _need_met_by_date(rows, need_text, families=None, flagged=frozenset(), salaried=frozenset(),
+                      floor_hours=None):
     """({date: every half hour of the objective's need met}, {date: hourly
     hours above that need}) from signals["objective_need"] ({"date|role":
     {"minute": people}} — schedule_cpsat.need_text: the demand the week is
     priced against, one objective — blind re-audit 10/11/26 LOGIC-6),
     counting each role's family as one crew; a family with no need on file
     that day counts every hour above it (as before: no need is not a need).
-    (None, None) when the week carries no such need."""
+    `floor_hours` ({person key: hours} — signals["objective_floor_hours"],
+    half the usual week of somebody who lives on 15h or more: the objective
+    never takes a person under it for the budget, schedule_objective.
+    starved_hour_usd) — a shift whose removal would take its person under
+    it is not surplus either: the objective keeps it, so the score does not
+    call it waste. (None, None) when the week carries no such need."""
     if not need_text:
         return None, None
     need = {}
@@ -5774,6 +5780,14 @@ def _need_met_by_date(rows, need_text, families=None, flagged=frozenset(), salar
         cur = need.setdefault((d, role_family(role, families)), {})
         for t, n in (curve or {}).items():
             cur[int(t)] = cur.get(int(t), 0) + int(n or 0)
+    floors = {name_key(k): float(v) for k, v in (floor_hours or {}).items() if v}
+    week_h = {}
+    if floors:
+        for r in rows or []:
+            sp = _row_span(r)
+            nk = name_key(r.get("employee"))
+            if sp is not None and nk:
+                week_h[nk] = week_h.get(nk, 0.0) + (sp[1] - sp[0]) / 60.0
     on, hourly_on = {}, {}
     for r in rows or []:
         sp = _row_span(r)
@@ -5783,7 +5797,10 @@ def _need_met_by_date(rows, need_text, families=None, flagged=frozenset(), salar
         key = (r.get("date"), role_family(r.get("role"), families))
         cur = on.setdefault(key, {})
         hcur = hourly_on.setdefault(key, {})
-        paid = name_key(name) not in salaried
+        nk = name_key(name)
+        # a shift whose removal would take its person under the floor
+        paid = nk not in salaried and not (nk in floors and week_h.get(nk, 0.0) - (sp[1] - sp[0]) / 60.0
+                                           < floors[nk] - 0.01)
         for t in range(sp[0] - sp[0] % 30, sp[1], 30):
             if sp[0] <= t and t + 30 <= sp[1]:
                 cur[t] = cur.get(t, 0) + 1
@@ -5913,7 +5930,8 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
 
     targets = signals.get("daily_target_hours") or {}
     need_met, surplus_by = _need_met_by_date(rows, signals.get("objective_need"), signals.get("role_families"),
-                                             signals.get("flagged") or set(), salaried)
+                                             signals.get("flagged") or set(), salaried,
+                                             signals.get("objective_floor_hours"))
     open_times = signals.get("open_times") or {}
     close_times = signals.get("close_times") or {}
     role_floors_all = signals.get("role_floors") or {}

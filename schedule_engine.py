@@ -8393,8 +8393,37 @@ def _quality_signals(restaurant_id, result, **extra):
     # passes them); without it the scorer is told nothing, never a stale
     # sweep of other rows.
     signals.setdefault("hard_breaches", {})
+    # Half the usual week of everybody who lives on 15h or more (schedule_
+    # objective.STARVED_SHARE — LOGIC-6): the objective never takes a person
+    # under it for the budget, so the score's cost measure does not call
+    # those hours waste either.
+    if signals.get("objective_need") and "objective_floor_hours" not in signals:
+        signals["objective_floor_hours"] = objective_floor_hours(
+            restaurant_id, result, c, signals)
     signals.update(extra)
     return signals, weights
+
+
+def objective_floor_hours(restaurant_id, result, c, signals) -> dict:
+    """{person key: hours} — STARVED_SHARE of the usual week of each person
+    who usually works STARVED_MIN_USUAL_HOURS or more, by the one
+    objective's own history (objective_context); {} on any failure."""
+    try:
+        import schedule_objective as _obj_f
+        ctx = objective_context(restaurant_id, list((result or {}).get("week_dates") or []), c, signals,
+                                (result or {}).get("requirements") if isinstance((result or {}).get("requirements"),
+                                                                                 list) else [])
+        if not ctx:
+            return {}
+        out = {}
+        for k in ((ctx.profile or {}).get("people") or {}):
+            uh = float(ctx.usual_hours(k) or 0.0)
+            if uh >= _obj_f.STARVED_MIN_USUAL_HOURS:
+                out[k] = round(uh * _obj_f.STARVED_SHARE, 2)
+        return out
+    except Exception as e:
+        print(f"[schedule] objective floor hours unavailable: {e!r}")
+        return {}
 
 
 def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -> None:
