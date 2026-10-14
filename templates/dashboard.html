@@ -27579,7 +27579,13 @@ function ssRenderSummary() {
   // lines that put most weeks in amber; the reason a cap bit leads (TRUST-29).
   var qcls = pq.grade === 'good' ? 'good' : (pq.grade === 'weak' ? 'warn' : '');
   h += tile(sc == null ? '' : qcls, 'Shift quality', sc == null ? '—' : '<span class="hb-num">' + Math.round(sc) + '</span>',
-            pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week')),
+            (pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week')))
+              // What the score stands on and what it has meant here (blind
+              // re-audit 10/11/26 LOGIC-15, TRUST-31): the server's words,
+              // a dash below the sample floor with the floor in its title.
+              + (pq.measured_text ? '<br>' + _numText(pq.measured_text) : '')
+              + (sc == null ? '' : (pq.outcome_text ? '<br>' + _numText(pq.outcome_text)
+                : '<br><span title="' + _escHtml((pq.outcome_link && pq.outcome_link.note) || '') + '">Your high- against low-scoring weeks: —</span>')),
             sc == null ? '' : '<svg class="ring" viewBox="0 0 74 74" aria-hidden="true"><circle class="tr" cx="37" cy="37" r="30"/><circle class="fg" cx="37" cy="37" r="30" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 37 37)"/></svg>');
   // One grade with iOS (TRUST-7): the server's - over at any amount past the
   // target, neutral with none; the basis named on the tile (TRUST-30).

@@ -175,6 +175,84 @@ def test_managers_days_are_not_scored_but_their_load_past_their_own_usual_is_sai
     assert sl2["facts"]["manager_load"] == []
 
 
+# ── TRUST-31 / STRESS-14: the score against how the restaurant's weeks ran ──
+
+def _scored_weeks(db, rid, weeks):
+    """weeks: [(quality_score, issues on each of 7 nights, unchanged_share)] —
+    returns the acceptance weeks to stand in for schedule_versions."""
+    acc, saved = [], []
+    for i, (score, issues, kept) in enumerate(weeks):
+        ws = (date(2026, 6, 1) + timedelta(days=7 * i))
+        saved.append((ws, models.save_schedule_history(
+            rid, ws.isoformat(), (ws + timedelta(days=6)).isoformat(), 10, 0, 30,
+            "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n", [], db_path=db)))
+    conn = models.get_conn()
+    for (score, issues, kept), (ws, hid) in zip(weeks, saved):
+        conn.execute("UPDATE schedule_history SET quality_score=? WHERE id=?", (score, hid))
+        for k in range(7):
+            conn.execute("INSERT INTO schedule_outcomes (restaurant_id, history_id, date, daypart, issues) "
+                         "VALUES (?,?,?,?,?)", (rid, hid, (ws + timedelta(days=k)).isoformat(), "night",
+                                                issues if k == 0 else 0))
+        acc.append({"history_id": hid, "week_start": ws.isoformat(), "unchanged_share": kept})
+    conn.commit()
+    conn.close()
+    return acc
+
+
+def test_the_score_is_shown_against_how_the_weeks_ran(db, monkeypatch):
+    import schedule_calibration as cal
+    import schedule_intel
+    import schedule_versions as sv
+    rid = _rid(db)
+    acc = _scored_weeks(db, rid, [(85, 1, 0.9)] * 3 + [(55, 4, 0.6)] * 3 + [(70, 9, 0.1)])
+    monkeypatch.setattr(sv, "acceptance", lambda r, weeks=26, **k: {"weeks": acc})
+    monkeypatch.setattr(schedule_intel, "watched_dates",
+                        lambda r, a, b, **k: {(date(2026, 6, 1) + timedelta(days=i)).isoformat() for i in range(60)})
+    link = cal.score_outcome_link(rid)
+    assert link["ready"] and link["predicts"] is True
+    assert link["high"]["weeks"] == 3 and link["low"]["weeks"] == 3          # the 70 sits between
+    assert link["high"]["issues_per_week"] == 1 and link["low"]["issues_per_week"] == 4
+    assert link["text"] == ("Your weeks scoring 78+: 1 coverage or no-show issues a week and 10% of shifts "
+                            "changed before sending; under 65: 4 and 40% (over 3 and 3 weeks).")
+
+
+def test_below_the_floor_it_is_a_dash_with_the_count(db, monkeypatch):
+    import schedule_calibration as cal
+    import schedule_intel
+    import schedule_versions as sv
+    rid = _rid(db)
+    acc = _scored_weeks(db, rid, [(85, 1, 0.9)] * 3 + [(55, 4, 0.6)] * 2)
+    monkeypatch.setattr(sv, "acceptance", lambda r, weeks=26, **k: {"weeks": acc})
+    monkeypatch.setattr(schedule_intel, "watched_dates", lambda r, a, b, **k: set())
+    link = cal.score_outcome_link(rid)
+    assert not link["ready"] and link["text"] is None
+    assert "(3 and 2 so far)" in link["note"]
+
+
+def test_a_score_that_does_not_track_the_weeks_says_so(db, monkeypatch):
+    import schedule_calibration as cal
+    import schedule_intel
+    import schedule_versions as sv
+    rid = _rid(db)
+    acc = _scored_weeks(db, rid, [(90, 5, 0.5)] * 3 + [(50, 1, 0.9)] * 3)
+    monkeypatch.setattr(sv, "acceptance", lambda r, weeks=26, **k: {"weeks": acc})
+    monkeypatch.setattr(schedule_intel, "watched_dates",
+                        lambda r, a, b, **k: {(date(2026, 6, 1) + timedelta(days=i)).isoformat() for i in range(60)})
+    link = cal.score_outcome_link(rid)
+    assert link["predicts"] is False and "have not yet meant better weeks" in link["text"]
+
+
+def test_the_review_carries_the_link_and_the_measured_share(db, monkeypatch):
+    import schedule_calibration as cal
+    rid = _rid(db)
+    hid = _priced_week(db, rid)
+    monkeypatch.setattr(cal, "score_outcome_link", lambda r: {"ready": True, "text": "Your weeks scoring 78+: x."})
+    q = prepublish._quality(rid, {"id": hid}, {"checked": True, "score": 92, "band": "fair",
+                                              "measured": {"share": 0.3, "text": "Scored on 30% …"}})
+    assert q["outcome_text"] == "Your weeks scoring 78+: x." and q["measured_share"] == 0.3
+    assert q["measured_text"].startswith("Scored on 30%")
+
+
 # ── LOGIC-15: knowing less never makes a week look better ───────────────────
 
 def test_the_band_is_held_by_the_share_measured():

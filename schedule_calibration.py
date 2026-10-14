@@ -334,6 +334,119 @@ def shadow_run(restaurant_id, cohort=None, db_path=None) -> dict:
     return dict(base, status="promoted", reason=why, run_id=run_id, moves=moves)
 
 
+# ── Does the score predict better weeks here? (blind re-audit 10/11/26
+# TRUST-31, STRESS-14) ──────────────────────────────────────────────────────
+# The ring compared a score with the restaurant's last twelve scores only:
+# graded against itself, its meaning asserted, never shown. Here the
+# restaurant's own published weeks are split by the score their draft got —
+# OUTCOME_HIGH and over (the "good" band) against under OUTCOME_LOW — and
+# each side's measured outcomes stated: the coverage and no-show issues a
+# week on the nights the coverage check watched (a night nobody watched is
+# not a clean one), and the share of the draft's shifts managers changed
+# before sending (schedule_versions.acceptance — the score calibrated
+# against the managers' own edits). Each figure needs OUTCOME_MIN_WEEKS weeks
+# on BOTH sides, else it is "—" with how many there are so far.
+OUTCOME_HIGH = 78
+OUTCOME_LOW = 65
+OUTCOME_MIN_WEEKS = 3
+OUTCOME_WEEKS = 26
+
+
+def score_outcome_link(restaurant_id, db_path=None, weeks: int = OUTCOME_WEEKS) -> dict:
+    """{"ready", "high": {"min", "weeks", "issues_per_week", "issue_weeks",
+    "changed_share", "edit_weeks"}, "low": {...  "max" ...}, "predicts":
+    True | False | None, "text" | None, "note"} — never raises (an
+    unreadable record is not ready)."""
+    out = {"ready": False, "predicts": None, "text": None, "floor": OUTCOME_MIN_WEEKS,
+           "high": {"min": OUTCOME_HIGH, "weeks": 0, "issues_per_week": None, "issue_weeks": 0,
+                    "changed_share": None, "edit_weeks": 0},
+           "low": {"max": OUTCOME_LOW - 1, "weeks": 0, "issues_per_week": None, "issue_weeks": 0,
+                   "changed_share": None, "edit_weeks": 0}, "note": None}
+    try:
+        import schedule_versions as _sv
+        acc = _sv.acceptance(restaurant_id, weeks=weeks, **({"db_path": db_path} if db_path else {}))
+        wk = [w for w in acc.get("weeks") or [] if w.get("history_id")]
+        if not wk:
+            out["note"] = _outcome_note(out)
+            return out
+        ids = [int(w["history_id"]) for w in wk]
+        marks = ",".join("?" for _ in ids)
+        conn = get_conn(db_path)
+        try:
+            scores = {r["id"]: r["quality_score"] for r in conn.execute(
+                f"SELECT id, quality_score FROM schedule_history WHERE restaurant_id=? AND id IN ({marks})",
+                (restaurant_id, *ids)).fetchall()}
+            outs = conn.execute(
+                f"SELECT history_id, date, SUM(issues) AS issues FROM schedule_outcomes WHERE restaurant_id=? "
+                f"AND history_id IN ({marks}) GROUP BY history_id, date", (restaurant_id, *ids)).fetchall()
+        finally:
+            conn.close()
+        dates = sorted(str(o["date"])[:10] for o in outs if o["date"])
+        watched = set()
+        if dates:
+            from schedule_intel import watched_dates
+            watched = watched_dates(restaurant_id, dates[0], dates[-1],
+                                    **({"db_path": db_path} if db_path else {}))
+        per_week = {}
+        for o in outs:
+            d = str(o["date"] or "")[:10]
+            if d not in watched:
+                continue
+            e = per_week.setdefault(o["history_id"], {"issues": 0.0, "nights": 0})
+            e["issues"] += float(o["issues"] or 0)
+            e["nights"] += 1
+    except Exception as e:
+        log.warning("[calibration] score outcome link unavailable for %s: %s", restaurant_id, e)
+        out["note"] = _outcome_note(out)
+        return out
+    groups = {"high": [], "low": []}
+    for w in wk:
+        s = scores.get(int(w["history_id"]))
+        if s is None:
+            continue
+        side = "high" if float(s) >= OUTCOME_HIGH else ("low" if float(s) < OUTCOME_LOW else None)
+        if side:
+            groups[side].append(w)
+    for side, ws in groups.items():
+        g = out[side]
+        g["weeks"] = len(ws)
+        iss = [per_week[w["history_id"]] for w in ws if (per_week.get(w["history_id"]) or {}).get("nights")]
+        g["issue_weeks"] = len(iss)
+        if iss:
+            g["issues_per_week"] = round(sum(e["issues"] / e["nights"] * 7.0 for e in iss) / len(iss), 1)
+        ed = [1.0 - float(w["unchanged_share"]) for w in ws if w.get("unchanged_share") is not None]
+        g["edit_weeks"] = len(ed)
+        if ed:
+            g["changed_share"] = round(sum(ed) / len(ed), 3)
+    hi, lo = out["high"], out["low"]
+    issues_ok = hi["issue_weeks"] >= OUTCOME_MIN_WEEKS and lo["issue_weeks"] >= OUTCOME_MIN_WEEKS
+    edits_ok = hi["edit_weeks"] >= OUTCOME_MIN_WEEKS and lo["edit_weeks"] >= OUTCOME_MIN_WEEKS
+    if not (issues_ok or edits_ok):
+        out["note"] = _outcome_note(out)
+        return out
+    out["ready"] = True
+    hi_bits, lo_bits, better = [], [], []
+    if issues_ok:
+        hi_bits.append(f"{hi['issues_per_week']:g} coverage or no-show issues a week")
+        lo_bits.append(f"{lo['issues_per_week']:g}")
+        better.append(hi["issues_per_week"] < lo["issues_per_week"])
+    if edits_ok:
+        hi_bits.append(f"{int(round(100 * hi['changed_share']))}% of shifts changed before sending")
+        lo_bits.append(f"{int(round(100 * lo['changed_share']))}%")
+        better.append(hi["changed_share"] < lo["changed_share"])
+    out["predicts"] = all(better)
+    out["text"] = (f"Your weeks scoring {OUTCOME_HIGH}+: " + " and ".join(hi_bits) + f"; under {OUTCOME_LOW}: "
+                   + " and ".join(lo_bits) + f" (over {hi['weeks']} and {lo['weeks']} weeks)."
+                   + ("" if out["predicts"] else " Here the higher scores have not yet meant better weeks."))
+    return out
+
+
+def _outcome_note(out) -> str:
+    return (f"How the score tracks your weeks is shown once {OUTCOME_MIN_WEEKS} of your published weeks score "
+            f"{OUTCOME_HIGH}+ and {OUTCOME_MIN_WEEKS} score under {OUTCOME_LOW} ({out['high']['weeks']} and "
+            f"{out['low']['weeks']} so far).")
+
+
 def latest_promotion(restaurant_id, db_path=None) -> dict:
     """The newest promotion still in force, as the owner is told it:
     {run_id, when (M/D/YY), changes: [{dimension, before, after}], reason,

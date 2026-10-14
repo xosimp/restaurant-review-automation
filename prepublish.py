@@ -768,7 +768,8 @@ def _labor_target(rid):
 
 def _empty_quality() -> dict:
     return {"score": None, "band": None, "grade": "ungraded", "percentile": None, "weeks_compared": 0,
-            "lead": None, "text": None}
+            "lead": None, "text": None, "measured_share": None, "measured_text": None, "outcome_link": None,
+            "outcome_text": None}
 
 
 def _quality(rid, row, quality) -> dict:
@@ -802,6 +803,17 @@ def _quality(rid, row, quality) -> dict:
             lead = (f"Capped by {(b.get('day') or '')[:3]} {_mdy(b.get('date'))} {_st.part_word(b.get('daypart'), False)}"
                     f": {b.get('reason')}")
     out["lead"] = lead
+    # What the score stands on (blind re-audit 10/11/26 LOGIC-15) and what
+    # it has meant here (TRUST-31): the measured share and the band it held
+    # back, and the restaurant's own high- and low-scoring weeks' outcomes
+    # ("—" below the sample floor, with how many weeks so far). Additive.
+    m = quality.get("measured") or {}
+    out["measured_share"] = m.get("share")
+    out["measured_text"] = m.get("text")
+    import schedule_calibration as _cal
+    link = _safe(lambda: _cal.score_outcome_link(rid), None, "score_outcome_link", rid)
+    out["outcome_link"] = link
+    out["outcome_text"] = (link or {}).get("text") if (link or {}).get("ready") else None
     if score is None or len(prior) < QUALITY_MIN_WEEKS:
         out["text"] = (f"{score}/100 — graded once {QUALITY_MIN_WEEKS} of your weeks are scored "
                        f"({len(prior)} so far)." if score is not None else None)
