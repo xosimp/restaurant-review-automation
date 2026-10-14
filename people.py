@@ -26,6 +26,7 @@ Also here: which channel reaches a person when their week is published
 import re
 
 from models import DB_PATH
+import schedule_time as _stime_scope
 
 
 def _db(db_path):
@@ -3814,6 +3815,7 @@ def cover_verdicts(gaps, asked, punches, own_rows=None, offers=None) -> dict:
     return out
 
 
+@_stime_scope.scoped
 def record_cover_signals(restaurant_id, days=7, db_path=None, today=None) -> int:
     """From the coverage issues the live check opened: each ask, resolved
     by cover_verdicts — the person who covered took it (cover_accepted);

@@ -102,6 +102,13 @@ W_POLICY_RUN_DAY = 2 * 10 ** 9      # a day past the restaurant's days-in-a-row 
 W_OT_HOUR = 10 ** 8                 # an hour past a person's overtime line (plus its premium in dollars)
 W_MIN_HOUR = 3 * 10 ** 7            # an hour under someone's minimum
 W_REQ_HOUR = 10 ** 7                # an hour of a requirement shift left unfilled
+# A habit the manager taught by hand, broken (schedule_memory tier "bound" —
+# re-audit 10/11/26 LEARNING-12): its own tier, lexicographically above every
+# soft quality term (a whole week's quality is ~10^6 units at most: a hundred
+# shifts of 100 points at Q) and below the requirement tier, so coverage,
+# overtime and the minimums still win. It used to be a soft cost scaled by
+# the habit's confidence, tradeable for a modest fairness or preference gain.
+W_HABIT = 2 * 10 ** 6
 W_CHANGE_RESOLVE = 5 * 10 ** 6      # a re-solve changing a person on a shift that stays
 BUDGET_OVER_FACTOR = 3              # a dollar past the budget costs this many dollars of quality
 K_CHANGE_IMPROVE = 0.02             # points: the repair loop's tie-break toward the draft
@@ -128,6 +135,7 @@ TERM_LABELS = {
     "strength": "strength against target",
     "preferences": "staff preferences",
     "memory": "what the scheduling memory learned",
+    "habit": "a habit the manager taught by hand, broken",
     "reliability": "reliability",
     "role": "a fill-in from another role",
     "pending": "a day someone asked off",
@@ -810,7 +818,7 @@ class _Model:
         putting on a weekday's daypart, one of the people they keep putting
         on a role's slot — a cost while they are not on it."""
         prob, m, book = self.prob, self.m, self.book
-        if not prob.k_miss:
+        if not prob.k_miss and not any(mem.get("tier") == "bound" for mem in prob.mem):
             return
         for key, g in prob.groups.items():
             if g.get("kind") != "S" or not g.get("learned"):
@@ -819,8 +827,14 @@ class _Model:
             units = [prob.units[i] for i in prob._all_units(key)]
             first = [u for u in units if part in u.primary]
             for mem in g["learned"]:
+                bound = mem.get("tier") == "bound"
+                if not bound and not prob.k_miss:
+                    continue
                 if mem["kind"] == "moved_on":
                     want = {prob.pidx.get(prob.key(mem.get("person")))} - {None}
+                    # Their own pending day-off ask that date outranks the habit.
+                    if g["date"] in prob.pending.get(prob.key(mem.get("person")), ()):
+                        continue
                     fams = None
                 else:
                     want = {prob.pidx.get(prob.key(n)) for n in (_solver._val(mem).get("names") or [])} - {None}
@@ -833,7 +847,10 @@ class _Model:
                 lits = [self.x[(u.id, p)] for u in pool if not u.fixed for p in prob.dom[u.id] if p in want]
                 miss = m.new_bool_var(f"mem{len(book.terms)}")
                 m.add(sum(lits) + miss >= 1)
-                book.add("memory", miss, mem["confidence"] * prob.k_miss * Q, {"shift": key, "kind": mem["kind"]})
+                if bound:
+                    book.add("habit", miss, W_HABIT, {"shift": key, "kind": mem["kind"]})
+                else:
+                    book.add("memory", miss, mem["confidence"] * prob.k_miss * Q, {"shift": key, "kind": mem["kind"]})
 
     def _static_and_stability(self):
         prob, book = self.prob, self.book
@@ -856,7 +873,10 @@ class _Model:
                     # retention and tip rotation, and whatever comes next);
                     # dollars, stability and change are this model's own
                     term = None if k in _OWN_TERMS else _STATIC_TERMS.get(k, k)
-                    if term and val:
+                    if term == "habit" and val:
+                        # Its own tier (LEARNING-12): misses x W_HABIT.
+                        book.add("habit", v, round(val / _solver.K_HABIT) * W_HABIT, {"unit": u.id, "person": p})
+                    elif term and val:
                         book.add(term, v, val * Q, {"unit": u.id, "person": p})
                 if stab and p in self.last[u.id]:
                     book.add("stability", v, -stab * Q, {"unit": u.id, "person": p})
@@ -1303,6 +1323,7 @@ def _marginal(prob, mdl, u, p, q, hours, on_date):
              "preference": f"{prob.names[q]} prefers the other half of the day",
              "learned_preference": f"{prob.names[q]} keeps dropping that shift",
              "learned": f"it is what the managers keep doing on that shift",
+             "habit": "it is what the manager has taught the draft by hand on that shift",
              "reliability": f"{prob.names[q]} has a reliability risk on it",
              "role": f"it is {prob.names[p]}'s own role",
              "rotation_weekend": f"{prob.names[q]} is due a weekend off",

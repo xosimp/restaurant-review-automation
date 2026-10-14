@@ -14,6 +14,18 @@ import schedule_versions as sv
 import staff_settings as ss
 from models import create_restaurant, Restaurant, get_conn
 
+
+@pytest.fixture(autouse=True)
+def _two_edit_candidates(monkeypatch):
+    """These tests are about their own subject, built on two-edit fixtures
+    from before the candidacy floor (schedule re-audit 10/11/26
+    LEARNING-10: three opportunities and a Wilson lower bound of 0.3 —
+    tests/test_sf11_g2_habits.py holds it). The old floor keeps each test
+    about its subject; enforcement is still earned by hand
+    (schedule_versions.habit_enforceable)."""
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_OPPORTUNITIES", 2)
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_LOWER", 0.0)
+
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 
 

@@ -3396,14 +3396,18 @@ def _role_minimums_dict(raw) -> dict:
     return out
 
 
-def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
+def apply_learned_headcount(restaurant_id, typical: dict, record: dict = None) -> dict:
     """Typical headcount with the manager's settled adjustments on top: a
     role the manager has added a person to on Friday dinner week after week
     (schedule_learning.learned_headcount_adjustments) is required at that
     level in the prompt AND by the scorer, so the next draft starts where
     the manager keeps ending up rather than being marked short against it.
     Never below zero; a role the history never ran is added only when the
-    adjustment is positive."""
+    adjustment is positive. `record` (a dict) is filled with what was
+    applied — {(weekday, daypart): {role: {delta, settled, base, applied}}}
+    — so the requirements table can take it back out of a driven figure and
+    apply it as a LEVEL after the driver (re-audit 10/11/26 LEARNING-18).
+    On learning_v2's off week (LEARNING-14) nothing is applied or recorded."""
     import learning_stats as _ls_gate
     if _ls_gate.learning_off():
         return typical  # learning_v2's off week (LEARNING-14)
@@ -3423,7 +3427,12 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
             # punches carry the extra server, the baseline already asks for
             # them, and the delta on top asked for one more than the manager
             # ever wanted — kept by the trim until they cut it twice.
-            n = base + headcount_to_apply(base, (learned or {}).get("delta"), (learned or {}).get("settled"))
+            applied = headcount_to_apply(base, (learned or {}).get("delta"), (learned or {}).get("settled"))
+            n = base + applied
+            if record is not None:
+                record.setdefault(tuple(key), {})[match] = {
+                    "delta": (learned or {}).get("delta"), "settled": (learned or {}).get("settled"),
+                    "base": base, "applied": applied if n > 0 else -base}
             if n > 0:
                 slot[match] = n
             else:
@@ -3431,6 +3440,37 @@ def apply_learned_headcount(restaurant_id, typical: dict) -> dict:
         if not slot:
             out.pop(tuple(key), None)
     return out
+
+
+def apply_learned_to_patterns(restaurant_id, patterns: dict) -> dict:
+    """The staffing baseline with the manager's learned headcount on it, in
+    place (re-audit 10/11/26 LEARNING-18): typical_headcount raised as
+    apply_learned_headcount raises it, the people ON AT ONCE (`concurrent`
+    peak) kept in step with the different people added or cut — an added
+    server is on at the peak — and `learned_headcount` recording what was
+    applied, so the requirements table applies it as a level AFTER a labor
+    standard's driven figure instead of letting the driver's stagger
+    (usual different people / usual peak) amplify it (+1 settled read as +2
+    required). Returns `patterns`."""
+    if not restaurant_id or patterns is None:
+        return patterns
+    rec = {}
+    patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"),
+                                                            record=rec)
+    conc = patterns.get("concurrent")
+    if isinstance(conc, dict):
+        for key, roles in rec.items():
+            slot = conc.get(key)
+            if not isinstance(slot, dict):
+                continue
+            for role, e in roles.items():
+                cur = next((k for k in slot if str(k).strip().lower() == str(role).strip().lower()), None)
+                if cur is None or not isinstance(slot[cur], dict) or not e.get("applied"):
+                    continue
+                peak = int(slot[cur].get("peak") or 0)
+                slot[cur] = dict(slot[cur], peak=max(0, peak + int(e["applied"])))
+    patterns["learned_headcount"] = rec
+    return patterns
 
 
 # How many of the latest occurrences of a weekday typical headcount reads.
@@ -4069,7 +4109,7 @@ def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
                                    salaried=salaried, close_times=close_times or {},
                                    open_times=open_times if isinstance(open_times, dict) else {},
                                    families=families or None, trend_guard=_trend_guard(restaurant_id))
-    patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, patterns.get("typical_headcount"))
+    apply_learned_to_patterns(restaurant_id, patterns)
     if r is not None:
         try:
             import crew_matrix as _cm
@@ -5120,7 +5160,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     else:
         _patterns = historical_patterns(shifts, close_times=close_times or None, open_times=open_times or None)
         if restaurant_id:
-            _patterns["typical_headcount"] = apply_learned_headcount(restaurant_id, _patterns.get("typical_headcount"))
+            apply_learned_to_patterns(restaurant_id, _patterns)
             # The owner's Crew answers bind here too, as staffing_baseline
             # binds them (LOGIC-6): no path builds a requirement without them.
             try:
@@ -5820,6 +5860,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # usual crew above is already held to it (crew_matrix.bind_answers);
         # this names it as the reason.
         crew_answers=_patterns.get("crew_answers") or None,
+        # The manager's learned headcount, applied as a level after the
+        # driver (re-audit 10/11/26 LEARNING-18, the ledger LEARNING-27).
+        learned=_patterns.get("learned_headcount") or None,
         # The work-driven requirement (scheduler audit 10/10/26 RM-17,
         # LOGIC-11): each family's half-hour work ÷ its labor standard at the
         # rush, the usual crew's half-hour peak in people on at once, each

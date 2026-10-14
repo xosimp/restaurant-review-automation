@@ -55,6 +55,7 @@ import logging
 from datetime import date, datetime, timedelta
 
 import models as _models_mod
+import schedule_time as _stime_scope
 
 log = logging.getLogger(__name__)
 
@@ -345,6 +346,7 @@ def roles_without_clock_in(restaurant_id, restaurant=None, db_path=None) -> list
     return sorted(r for r, flags in by_role.items() if flags and all(flags))
 
 
+@_stime_scope.scoped
 def join_published(restaurant_id, day, db_path=None) -> dict:
     """The published week's `day` against the POS punches for it — the
     night after, and only for a night whose POS day is final
