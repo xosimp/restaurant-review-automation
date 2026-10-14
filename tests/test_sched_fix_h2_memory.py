@@ -22,6 +22,7 @@ L-14  a strong calibration waits in the action queue; the dead constants and
       the stale comments are gone
 """
 import inspect
+import schedule_scorecard
 import json
 import sys
 from datetime import date, timedelta
@@ -991,8 +992,8 @@ def test_the_week_is_scored_as_it_ran_beside_its_planned_score(monkeypatch):
         scored["rows"] = rows
         return {"checked": True, "score": 60, "shifts": [{"date": fri, "daypart": "night", "scored": True, "score": 60,
                                                          "dimensions": [{"key": "coverage", "score": 50}]}]}
-    monkeypatch.setattr(schedule_intel, "score_as_run", fake_score)
-    assert schedule_intel.record_as_run_quality(rid) == 1
+    monkeypatch.setattr(schedule_scorecard, "score_as_run", fake_score)
+    assert schedule_scorecard.record_as_run_quality(rid) == 1
     assert [r["employee"] for r in scored["rows"]] == ["Ana"], "the plan was scored, not the punches"
     obs = {o["kind"]: o for o in sm.observations(rid, kinds=("sq_as_run", "sq_planned")) if o.get("date")}
     assert obs["sq_as_run"]["value"]["dims"]["coverage"] == 50 and obs["sq_planned"]["value"]["dims"]["coverage"] == 100

@@ -718,7 +718,8 @@ def run_queued_generation(job):
         # A try that saved settles the job from its checkpoint, the owner's
         # Stop after the save honoured and no later draft touched (blind
         # re-audit 10/11/26 BUGSGEN-11).
-        if _sres.finish_from_checkpoint(job):
+        import schedule_job as _sjob
+        if _sjob.finish_from_checkpoint(job):
             _settle_rejection(job_id, restaurant_id, p.get("rejection"))
             notify_generation_watchers(job_id, restaurant_id)
             return {"resumed": "saved"}

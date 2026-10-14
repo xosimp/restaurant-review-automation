@@ -2018,12 +2018,13 @@ def schedule_outcomes_one(rid, db_path=DB_PATH) -> dict:
     the outcomes themselves could not be recorded; a later step that fails
     is captured and reported as `broke`."""
     import schedule_intel
+    import schedule_scorecard
     written = schedule_intel.record_outcomes(rid, db_path=db_path, only_changed=True).get("written", 0)
     broke = False
     # The ended weeks as they ran, then each carried-out recommendation
     # read against them (rec_ledger outcome), now that the nights are
     # recorded — each on its own, a failure captured and counted.
-    for step, fn in (("as_run_quality", lambda r, db_path: schedule_intel.record_as_run_quality(
+    for step, fn in (("as_run_quality", lambda r, db_path: schedule_scorecard.record_as_run_quality(
                          r, db_path=db_path, only_changed=True)),
                      ("as_run_recommendations", schedule_intel.measure_recommendations_as_run),
                      ("accepted_recommendations", schedule_intel.measure_accepted_recommendations)):

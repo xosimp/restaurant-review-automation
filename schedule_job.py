@@ -2497,3 +2497,44 @@ def run_queued_ablation(job, db_path=None) -> dict:
            "rows_off": _ssc.compact(loop.get("rows")), "seconds": round(_t.monotonic() - t0, 2), "offline": True}
     _ssc.record_ablation(hid, out, db_path=db_path)
     return {"ran": True, "history_id": hid, "seconds": out["seconds"]}
+
+
+# ── a resumed try that had saved (schedule_resume's saved stage) ─────────────
+
+def finish_from_checkpoint(job) -> bool:
+    """A resumed try whose earlier try reached the saved stage: the job is
+    finished with that try's payload (`resumed: true`) — `done`, or, when
+    the owner pressed Stop after the save, as the Stop says
+    (schedule_engine._finish_stopped puts back the draft in force before the
+    press). Nothing else is touched: the saved draft is never put back over
+    a later draft (BUGSGEN-11). A job a poll or the boot sweep already
+    finished keeps its verdict, unless that verdict is the provisional
+    "saved but didn't finish" (ops.SAVED_UNFINISHED), which this replaces.
+    True when the job was settled here (nothing to generate again). Here,
+    above schedule_engine (whose _finish_stopped it calls), not in
+    schedule_resume below it."""
+    import ops
+    import schedule_resume as _sres
+    cp = job.checkpoint if hasattr(job, "checkpoint") else (job.get("checkpoint") or {})
+    if "saved" not in (cp.get("stages") or []) or not cp.get("payload_z"):
+        return False
+    payload = _sres.unpack(cp["payload_z"])
+    if not isinstance(payload, dict):
+        return False
+    p = job.payload if hasattr(job, "payload") else (job.get("payload") or {})
+    job_id, rid = p.get("job_id"), p.get("restaurant_id")
+    hid = cp.get("history_id") or payload.get("history_id")
+    payload = dict(payload, resumed=True)
+    review = dict(payload.get("review") or {})
+    review["lines"] = list(review.get("lines") or []) + [_sres.RESUMED_SAVED_LINE]
+    payload["review"] = review
+    state = ops.job_stop_state(job_id) if job_id else "running"
+    if state == "stop_requested":
+        # The owner's Stop landed after the save: what is in force is the
+        # Stop's to say, as the job itself would have said it.
+        import types
+        clock = types.SimpleNamespace(prior_draft_id=p.get("prior_draft_id"))
+        se._finish_stopped(job_id, rid, clock, int(hid) if hid else None, payload)
+        return True
+    ops.finish_async_job(job_id, "done", payload)
+    return True

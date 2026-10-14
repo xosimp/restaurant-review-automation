@@ -9,6 +9,7 @@ how its redo was drafted (BUGSGEN-15), a redo stays in its draft's week
 No model is called: labor.generate_optimized_schedule is stubbed as in
 test_schedule_b2_calls, and the note's model call is stubbed or off."""
 import datetime as dt
+import schedule_job
 import json
 import types
 
@@ -197,7 +198,7 @@ def test_a_resumed_saved_try_never_supersedes_a_newer_draft(db, monkeypatch):
     old = _save(db, rid, "Ana")
     newer = _save(db, rid, "Bo")
     ops.claim_async_job("j-res", "schedule", rid)
-    assert sres.finish_from_checkpoint(_job(old, "j-res", rid)) is True
+    assert schedule_job.finish_from_checkpoint(_job(old, "j-res", rid)) is True
     by_id = {h["id"]: h for h in _history(db, rid)}
     assert by_id[newer]["superseded_by"] is None and by_id[old]["superseded_by"] == newer
     got = ops.read_async_job("j-res", restaurant_id=rid)
@@ -217,7 +218,7 @@ def test_an_owners_stop_after_the_save_is_honoured_by_the_resumed_try(db, monkey
     conn.commit()
     conn.close()
     assert ops.stop_async_job("j-stop", {"ok": False, "stopped": True, "error": se.STOPPED_MESSAGE}) == "stopping"
-    assert sres.finish_from_checkpoint(_job(saved, "j-stop", rid, prior=prior)) is True
+    assert schedule_job.finish_from_checkpoint(_job(saved, "j-stop", rid, prior=prior)) is True
     got = ops.read_async_job("j-stop", restaurant_id=rid)
     assert got["status"] == "error" and got["result"]["restored_history_id"] == prior
     in_force = [h["id"] for h in _history(db, rid) if h["superseded_by"] is None]

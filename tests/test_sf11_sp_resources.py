@@ -53,7 +53,7 @@ def solver_process(monkeypatch):
     """Solves of any size go to a solver process; spares a test started are
     killed after it."""
     monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "process")
-    monkeypatch.setattr(cps, "ISOLATE_MIN_VARS", 1)
+    monkeypatch.setattr(cps._rt, "ISOLATE_MIN_VARS", 1)
     yield
     with cps._SPARE_LOCK:
         for proc in cps._SPARE:
@@ -85,13 +85,13 @@ def test_a_large_solve_runs_in_a_solver_process_and_answers_exactly_as_in_this_o
 def test_the_solver_process_is_exec_d_never_forked_from_this_one():
     import inspect
     src = inspect.getsource(cps._start_process) + inspect.getsource(cps._run_in_process)
-    assert "subprocess.Popen" in src and "os.fork" not in inspect.getsource(cps)
+    assert "subprocess.Popen" in src and "os.fork" not in inspect.getsource(cps) + inspect.getsource(cps._rt)
 
 
 def test_a_hung_solver_process_is_killed_and_the_solve_runs_here_on_the_same_budget(monkeypatch, solver_process):
     m, xs = _model()
-    monkeypatch.setattr(cps, "_SOLVER_CODE", "import time; time.sleep(60)")
-    monkeypatch.setattr(cps, "ISOLATE_GRACE_SECONDS", 0.5)
+    monkeypatch.setattr(cps._rt, "_SOLVER_CODE", "import time; time.sleep(60)")
+    monkeypatch.setattr(cps._rt, "ISOLATE_GRACE_SECONDS", 0.5)
     want = _solver()
     cps.run(want, m, isolate=False)
     s = _solver()
@@ -106,7 +106,7 @@ def test_a_hung_solver_process_is_killed_and_the_solve_runs_here_on_the_same_bud
 
 def test_a_solver_process_that_dies_is_said_and_the_solve_runs_here(monkeypatch, solver_process):
     m, _xs = _model()
-    monkeypatch.setattr(cps, "_SOLVER_CODE", "import sys; sys.exit(3)")
+    monkeypatch.setattr(cps._rt, "_SOLVER_CODE", "import sys; sys.exit(3)")
     s = _solver()
     assert cps.run(s, m) == cps._cp.OPTIMAL
     assert s.sp_info["fallback"] is True and "exited 3" in s.sp_info["note"]
@@ -142,7 +142,7 @@ def test_a_solve_started_while_another_thread_is_mid_solve_completes(solver_proc
 def test_the_kill_switch_solves_here(monkeypatch):
     m, _xs = _model()
     monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "0")
-    monkeypatch.setattr(cps, "ISOLATE_MIN_VARS", 1)
+    monkeypatch.setattr(cps._rt, "ISOLATE_MIN_VARS", 1)
     s = _solver()
     assert cps.run(s, m) == cps._cp.OPTIMAL and s.sp_info["isolated"] is False and not s.sp_info["fallback"]
 
@@ -150,8 +150,8 @@ def test_the_kill_switch_solves_here(monkeypatch):
 # ── SCALE-19: work scaled to the model, never below what was stated ──────────
 
 def test_the_work_budget_scales_with_the_model_and_never_falls_below_the_stated_one(monkeypatch):
-    monkeypatch.setattr(cps, "DET_PER_KVAR", 0.6)
-    monkeypatch.setattr(cps, "DET_CAP", 120.0)
+    monkeypatch.setattr(cps._rt, "DET_PER_KVAR", 0.6)
+    monkeypatch.setattr(cps._rt, "DET_CAP", 120.0)
     assert cps.work_budget(7.5, 2_000) == 7.5                       # a small week: exactly as before
     assert cps.work_budget(7.5, 33_208) == pytest.approx(19.92)      # 250 people's Stage 1
     assert cps.work_budget(20.0, 1_000_000) == 120.0                 # the cap
@@ -159,7 +159,7 @@ def test_the_work_budget_scales_with_the_model_and_never_falls_below_the_stated_
 
 
 def test_the_memory_bounded_portfolio_is_only_for_a_large_model(monkeypatch):
-    monkeypatch.setattr(cps, "LEAN_MIN_VARS", 15_000)
+    monkeypatch.setattr(cps._rt, "LEAN_MIN_VARS", 15_000)
     small = cps._solver_for(5.0, n_vars=2_000)
     large = cps._solver_for(5.0, n_vars=40_000)
     assert list(small.parameters.ignore_subsolvers) == []
@@ -184,8 +184,8 @@ def test_the_solver_draft_records_its_scaled_budgets_and_how_it_ran(monkeypatch)
     """Stage 1 and Stage 2 each read the budget their model's size gives and
     say how they ran (SP: a fixed 7.5 s Stage 1 found no week at all at 250
     people, and the draft silently fell back to the backtracking solver)."""
-    monkeypatch.setattr(cps, "DET_PER_KVAR", 1000.0)                 # any model: past its stated budget
-    monkeypatch.setattr(cps, "DET_CAP", 9.0)
+    monkeypatch.setattr(cps._rt, "DET_PER_KVAR", 1000.0)                 # any model: past its stated budget
+    monkeypatch.setattr(cps._rt, "DET_CAP", 9.0)
     c = sr.Constraints(restaurant_id=None, week_dates=WEEK[:2], week_days=DAYS[:2],
                        roster_names=["Ann", "Bo", "Cy"], active={"ann", "bo", "cy"})
     c.roster_roles = {"Ann": "Server", "Bo": "Server", "Cy": "Server"}

@@ -22,7 +22,7 @@ again. This module is what that next try does differently:
     one: the job saved nothing after it, so any later draft is somebody's
     newer work (blind re-audit 10/11/26 BUGSGEN-11 — it used to supersede
     them), and an owner's Stop after the save is honoured
-    (schedule_engine._finish_stopped).
+    (schedule_engine._finish_stopped, through schedule_job.finish_from_checkpoint).
   * EACH MODEL ANSWER. Every schedule call is recorded with its queue job
     and call key (schedule_output.record_call: model, dates, output schema —
     schedule_batch.call_key). Under resuming() the call site
@@ -69,43 +69,6 @@ def checkpoint_saved(history_id, payload, week_start=None) -> bool:
 # try saved it and a restart cut the try off before it said so.
 RESUMED_SAVED_LINE = ("Cavnar AI restarted just after it saved this draft; the draft is exactly as it was "
                       "saved.")
-
-
-def finish_from_checkpoint(job) -> bool:
-    """A resumed try whose earlier try reached the saved stage: the job is
-    finished with that try's payload (`resumed: true`) — `done`, or, when
-    the owner pressed Stop after the save, as the Stop says
-    (schedule_engine._finish_stopped puts back the draft in force before the
-    press). Nothing else is touched: the saved draft is never put back over
-    a later draft (BUGSGEN-11). A job a poll or the boot sweep already
-    finished keeps its verdict, unless that verdict is the provisional
-    "saved but didn't finish" (ops.SAVED_UNFINISHED), which this replaces.
-    True when the job was settled here (nothing to generate again)."""
-    import ops
-    cp = job.checkpoint if hasattr(job, "checkpoint") else (job.get("checkpoint") or {})
-    if "saved" not in (cp.get("stages") or []) or not cp.get("payload_z"):
-        return False
-    payload = unpack(cp["payload_z"])
-    if not isinstance(payload, dict):
-        return False
-    p = job.payload if hasattr(job, "payload") else (job.get("payload") or {})
-    job_id, rid = p.get("job_id"), p.get("restaurant_id")
-    hid = cp.get("history_id") or payload.get("history_id")
-    payload = dict(payload, resumed=True)
-    review = dict(payload.get("review") or {})
-    review["lines"] = list(review.get("lines") or []) + [RESUMED_SAVED_LINE]
-    payload["review"] = review
-    state = ops.job_stop_state(job_id) if job_id else "running"
-    if state == "stop_requested":
-        # The owner's Stop landed after the save: what is in force is the
-        # Stop's to say, as the job itself would have said it.
-        import types
-        import schedule_engine
-        clock = types.SimpleNamespace(prior_draft_id=p.get("prior_draft_id"))
-        schedule_engine._finish_stopped(job_id, rid, clock, int(hid) if hid else None, payload)
-        return True
-    ops.finish_async_job(job_id, "done", payload)
-    return True
 
 
 def extend_deadline(job_id, seconds=RESUME_GRACE_SECONDS) -> None:

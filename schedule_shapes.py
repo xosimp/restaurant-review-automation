@@ -1404,7 +1404,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     # portfolio on a large model, and the solve in a child process whose
     # memory goes back to the OS when it returns (schedule_cpsat.run; blind
     # re-audit 10/11/26 STRESS-11, SCALE-18, SCALE-19).
-    import schedule_cpsat as _rt
+    import schedule_cpsat_runtime as _rt
     n_vars = len(m.proto.variables)
     budget = _rt.work_budget(max(0.5, float(max_seconds)), n_vars)
     s = _cp.CpSolver()

@@ -2,6 +2,7 @@
 (SCALE-6, SCALE-7, LEARNING-23), the batched observation log (SCALE-26) and
 the incremental as-run / outcomes reads (SCALE-15, SCALE-16, LEARNING-22)."""
 import json
+import schedule_scorecard
 import sys
 from datetime import date, timedelta
 
@@ -208,7 +209,7 @@ def scored(monkeypatch):
         calls.append(hid_)
         return {"checked": True, "score": 70, "shifts": [{"date": r["date"], "daypart": "night", "scored": True,
                                                          "score": 70, "dimensions": []} for r in rows]}
-    monkeypatch.setattr(schedule_intel, "score_as_run", fake)
+    monkeypatch.setattr(schedule_scorecard, "score_as_run", fake)
     return calls
 
 
@@ -218,14 +219,14 @@ def test_an_ended_week_is_scored_as_run_once_and_again_only_when_its_punches_cha
     fri = (mon + timedelta(days=4)).isoformat()
     hid = _published_week(rid, mon, [_row(fri, "Ana"), _row(fri, "Bo")])
     _punch(rid, fri, "Ana")
-    assert schedule_intel.record_as_run_quality(rid, only_changed=True) == 1
-    assert schedule_intel.record_as_run_quality(rid, only_changed=True) == 0      # was re-scored every Monday
+    assert schedule_scorecard.record_as_run_quality(rid, only_changed=True) == 1
+    assert schedule_scorecard.record_as_run_quality(rid, only_changed=True) == 0      # was re-scored every Monday
     assert scored == [hid]
     _punch(rid, fri, "Bo")                                                           # a late punch arrives
-    assert schedule_intel.record_as_run_quality(rid, only_changed=True) == 2        # both shifts now
+    assert schedule_scorecard.record_as_run_quality(rid, only_changed=True) == 2        # both shifts now
     assert scored == [hid, hid]
     # The direct call (a re-run by hand, the tests) still reads every week.
-    assert schedule_intel.record_as_run_quality(rid) == 2
+    assert schedule_scorecard.record_as_run_quality(rid) == 2
 
 
 def test_a_week_whose_last_pos_day_is_not_final_waits(scored):
@@ -240,9 +241,9 @@ def test_a_week_whose_last_pos_day_is_not_final_waits(scored):
         _sql("UPDATE labor_daily_history SET final=0 WHERE restaurant_id=? AND date=?", rid, last)
     except Exception:
         pytest.skip("no final column on labor_daily_history")
-    assert schedule_intel.record_as_run_quality(rid, only_changed=True) == 0 and scored == []
+    assert schedule_scorecard.record_as_run_quality(rid, only_changed=True) == 0 and scored == []
     _sql("UPDATE labor_daily_history SET final=1 WHERE restaurant_id=? AND date=?", rid, last)
-    assert schedule_intel.record_as_run_quality(rid, only_changed=True) == 1
+    assert schedule_scorecard.record_as_run_quality(rid, only_changed=True) == 1
 
 
 def test_outcomes_reread_a_settling_week_and_leave_a_settled_unchanged_one():

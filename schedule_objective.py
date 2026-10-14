@@ -144,7 +144,7 @@ def _low(s) -> str:
 
 
 def _family(role, families=None) -> str:
-    from shift_quality import role_family
+    from schedule_roles import role_family
     return role_family(role, families)
 
 

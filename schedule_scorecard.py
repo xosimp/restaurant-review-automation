@@ -75,6 +75,11 @@ from datetime import date, datetime, timedelta
 
 log = logging.getLogger(__name__)
 
+from models import DB_PATH, live_csv_sql as _live_csv, live_where as _live_where  # noqa: E402
+import schedule_time as _stime_scope  # noqa: E402
+from schedule_intel import (  # noqa: E402
+    _mark_week_read, _unrated, _week_read, get_conn as _intel_conn, week_fingerprint)
+
 # The Draft Rework Rate and a generation's tags are read by the experiments and
 # the memory below this module (schedule_experiments, layer S3); re-exported.
 from schedule_experiments import (  # noqa: E402,F401
@@ -1115,3 +1120,174 @@ def admin_view(db_path=None) -> dict:
             "method": ("within-restaurant slope over weeks since the first scored week, restaurant-cluster 90% "
                        "interval (t on restaurants - 1), over a stratified weekly-rotated sample of at most "
                        f"{ADMIN_MAX_RESTAURANTS} restaurants")}
+
+
+# ── the week as it ran, scored (moved from schedule_intel, ARCH-3: the learner
+# imported the engine's signal builder; the scorecard sits above it) ──
+# A week whose POS days are not marked final in labor_daily_history is read
+# as run this many days after it ended (an upload with no daily history).
+AS_RUN_FINAL_AFTER_DAYS = 2
+
+
+AS_RUN_WEEKS = 4
+
+
+def as_run_rows(restaurant_id, week_start, week_end, plan_rows, db_path=DB_PATH) -> list:
+    """The week as it ran: each punch with its hours (shift_facts, worked
+    hours as the row's hours), plus the salaried people's planned rows. []
+    when the week has no punch at all — never the plan passed off as what
+    happened."""
+    import shift_facts
+    from models import get_restaurant, salaried_staff, salaried_name_key
+    try:
+        sal = {salaried_name_key(x["name"]) for x in salaried_staff(get_restaurant(restaurant_id))}
+    except Exception:
+        sal = set()
+    out = []
+    for p in shift_facts.rows(restaurant_id, since=week_start, until=week_end,
+                              db_path=None if db_path in (None, DB_PATH) else db_path):
+        if p.get("actual_hours") in (None, "") or salaried_name_key(p.get("employee")) in sal:
+            continue
+        d = str(p["date"])[:10]
+        out.append({"date": d, "day": datetime.strptime(d, "%Y-%m-%d").strftime("%A"), "employee": p["employee"],
+                    "role": p.get("role") or "", "shift_start": p.get("shift_start") or "",
+                    "shift_end": p.get("shift_end") or "", "scheduled_hours": str(p.get("actual_hours")), "notes": ""})
+    if not out:
+        return []
+    out += [dict(r) for r in plan_rows or [] if salaried_name_key(r.get("employee")) in sal]
+    return out
+
+
+def _planned_quality(conn, history_id):
+    """The quality the published week carried when it was first sent (the
+    first `published` version's), else the latest stored for the week."""
+    from schedule_versions import version_quality
+    row = conn.execute("SELECT quality_json, quality_ref FROM schedule_versions WHERE history_id=? AND "
+                       "reason='published' AND quality_json IS NOT NULL ORDER BY version LIMIT 1",
+                       (history_id,)).fetchone()
+    if row is not None:
+        # The whole evaluation (its detail is stored by reference — SCALE-4).
+        return version_quality(conn, row["quality_json"], row["quality_ref"])
+    import models as _m_si
+    _m_si._ensure_history_columns(conn)
+    row = conn.execute("SELECT quality_json, quality_ref FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+    return _m_si.history_quality(conn, row) if row else {}
+
+
+def _shift_reading(s) -> dict:
+    return {"score": s.get("score"), "capped_by": s.get("capped_by"),
+            "dims": {d["key"]: d.get("score") for d in s.get("dimensions") or [] if d.get("key")},
+            "hard_breaches": len(s.get("hard_breaches") or []), "unrated": _unrated(s)}
+
+
+def _pos_week_final(conn, restaurant_id, week_end, today) -> bool:
+    """Whether the week's last POS day is final: its labor_daily_history row
+    is (FINAL_SQL), or — a restaurant with no daily history for it —
+    AS_RUN_FINAL_AFTER_DAYS have passed since the week ended."""
+    try:
+        row = conn.execute("SELECT COALESCE(final, 1) AS f FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                           (restaurant_id, week_end)).fetchone()
+    except Exception:
+        row = None
+    if row is not None:
+        return bool(row["f"])
+    try:
+        ended = datetime.strptime(str(week_end)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return True
+    return (today - ended).days >= AS_RUN_FINAL_AFTER_DAYS
+
+
+@_stime_scope.scoped
+def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_RUN_WEEKS, only_changed=False) -> int:
+    """Each published week that has ended (the newest `weeks`), scored as it
+    ran, beside its planned score — per shift into the observation log
+    (sq_as_run, sq_planned; phase as_run; keyed by week, date and daypart,
+    so a re-read replaces them), the week-level measures too. Returns the
+    shifts recorded; a week with no punch records nothing.
+
+    `only_changed` (the daily outcomes job — scheduler audit 10/10/26,
+    SCALE-16): a week is scored once its last POS day is final, and again
+    only when its punches or its plan change (week_fingerprint) — it was
+    re-scored on four Mondays in a row with the same inputs. Every week of
+    one restaurant reads one inputs snapshot (models.read_scope, SCALE-6)
+    and its observations are written in one transaction (SCALE-26)."""
+    import schedule_memory as _sm
+    import models as _models_rq
+    today = today or date.today()
+    conn = _intel_conn(db_path)
+    marks = {}
+    try:
+        hist = conn.execute(
+            "SELECT id, week_start, week_end, " + _live_csv("h") + " AS schedule_csv FROM schedule_history h "
+            "WHERE restaurant_id=? AND week_end < ? AND " + _live_where("h") + " ORDER BY week_start DESC LIMIT ?",
+            (restaurant_id, today.isoformat(), int(weeks))).fetchall()
+        if only_changed:
+            kept = []
+            for h in hist:
+                if not _pos_week_final(conn, restaurant_id, h["week_end"], today):
+                    continue
+                fp = week_fingerprint(conn, restaurant_id, h["week_start"], h["week_end"], h["schedule_csv"], "as_run")
+                if _week_read(conn, h["id"], "as_run") != fp:
+                    kept.append(h)
+                    marks[h["id"]] = fp
+            hist = kept
+        planned = {h["id"]: _planned_quality(conn, h["id"]) for h in hist}
+        # Each week's published rows from the shift table (schedule_shifts,
+        # ARCH-7).
+        import schedule_shifts
+        week_rows = schedule_shifts.rows_by_week([h["id"] for h in hist], "live", conn=conn)
+    finally:
+        conn.close()
+    n = 0
+    db = None if db_path in (None, DB_PATH) else db_path
+    with _models_rq.read_scope(), _sm.observe_batch(restaurant_id, db_path=db):
+        n = _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, week_rows)
+    for hid, fp in marks.items():
+        _mark_week_read(restaurant_id, hid, "as_run", fp, db_path)
+    return n
+
+
+def _record_as_run_weeks(restaurant_id, hist, planned, db_path, db, _sm, week_rows) -> int:
+    n = 0
+    for h in hist:
+        rows = as_run_rows(restaurant_id, h["week_start"], h["week_end"], week_rows.get(int(h["id"])) or [],
+                           db_path)
+        if not rows:
+            continue
+        quality = score_as_run(restaurant_id, h["id"], rows)
+        if not quality.get("checked"):
+            continue
+        common = dict(week_start=h["week_start"], history_id=h["id"], origin="system", phase="as_run",
+                      authority="system", source="as_run_score", db_path=db)
+        plan_by = {(s.get("date"), s.get("daypart")): s for s in (planned.get(h["id"]) or {}).get("shifts") or []
+                   if s.get("scored")}
+        for s in quality.get("shifts") or []:
+            if not s.get("scored"):
+                continue
+            key = (s.get("date"), s.get("daypart"))
+            _sm.observe(restaurant_id, "sq_as_run", date=s.get("date"), daypart=s.get("daypart"),
+                        value=_shift_reading(s), fact_key=f"sq_as_run|{h['id']}|{key[0]}|{key[1]}", **common)
+            if key in plan_by:
+                _sm.observe(restaurant_id, "sq_planned", date=s.get("date"), daypart=s.get("daypart"),
+                            value=_shift_reading(plan_by[key]), fact_key=f"sq_planned|{h['id']}|{key[0]}|{key[1]}",
+                            **common)
+            n += 1
+        _sm.observe(restaurant_id, "sq_as_run", value={
+            "score": quality.get("score"),
+            "week_dims": {d.get("key"): d.get("score") for d in quality.get("week_dimensions") or []
+                          if isinstance(d, dict) and d.get("key")},
+            "confidence": (quality.get("confidence") or {}).get("level") if isinstance(quality.get("confidence"), dict)
+            else quality.get("confidence")}, fact_key=f"sq_as_run|{h['id']}|week", **common)
+    return n
+
+
+def score_as_run(restaurant_id, history_id, rows) -> dict:
+    """The Shift Quality of `rows` (the week as it ran) on the inputs a live
+    rescore of that week uses — never a what-if, never a showing."""
+    import shift_quality as _sq
+    from schedule_engine import quality_inputs_from_db, stored_daily_targets, _quality_signals
+    inputs = quality_inputs_from_db(restaurant_id, daily_target_hours=stored_daily_targets(restaurant_id, history_id),
+                                    week_rows=rows)
+    signals, weights = _quality_signals(restaurant_id, inputs)
+    return _sq.score_rows(rows, profiles=inputs.get("shift_profiles") or None, weights=weights, **signals)

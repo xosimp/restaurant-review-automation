@@ -2018,7 +2018,7 @@ def _calibration_samples(restaurant_id, db_path):
             watched = set()
     # The week AS IT RAN where it was scored so (schedule audit 10/10/26
     # LEARNING-8: the planned week was fitted against what the run week
-    # did) — the as-run dimensions (schedule_intel.record_as_run_quality,
+    # did) — the as-run dimensions (schedule_scorecard.record_as_run_quality,
     # sq_as_run); the planned ones only for a shift never scored as run.
     as_run = {}
     try:
