@@ -227,10 +227,14 @@ def _boot_on(url):
     runs) against `url`, through db_dialect."""
     import contextlib
     import io
+    import models
     old = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = url
+    # The platform's database is `url` for this boot, whatever a caller had
+    # routed it to (the suite's Postgres mode routes it per process).
+    old_route = models._PG_ROUTES.get(models.DB_PATH)
+    models._PG_ROUTES[models.DB_PATH] = url
     try:
-        import models
         with contextlib.redirect_stdout(io.StringIO()):
             models.init_db()
             for mod, fn in (("auth", "init_auth"), ("platform_monitor", "init_platform_tables"),
@@ -245,6 +249,10 @@ def _boot_on(url):
                        "init_capability_changes", "init_ask_memory"):
                 getattr(models, fn)()
     finally:
+        if old_route is None:
+            models._PG_ROUTES.pop(models.DB_PATH, None)
+        else:
+            models._PG_ROUTES[models.DB_PATH] = old_route
         if old is None:
             os.environ.pop("DATABASE_URL", None)
         else:

@@ -118,6 +118,14 @@ def table_ddl(name, sql, partition_col=None) -> tuple:
                 out.append(f"id BIGINT NOT NULL DEFAULT nextval('{seq}')")
                 out.append(f"PRIMARY KEY (id, {partition_col})")
                 continue
+            if e == db_dialect.ROWID_COLUMN:
+                # The stable rowid (db_dialect._with_rowid) of a partitioned
+                # table: a sequence (no identity on a partitioned table) and
+                # its uniqueness carrying the partition column.
+                pre.append(f"CREATE SEQUENCE IF NOT EXISTS {name}_rowid_seq")
+                out.append(f"rowid BIGINT NOT NULL DEFAULT nextval('{name}_rowid_seq')")
+                out.append(f"UNIQUE (rowid, {partition_col})")
+                continue
             m = re.match(r"((?:CONSTRAINT\s+\S+\s+)?(?:PRIMARY\s+KEY|UNIQUE)\s*)\(([^)]*)\)(.*)$", e, re.I | re.S)
             if m:
                 cols = [c.strip() for c in m.group(2).split(",")]
