@@ -7277,12 +7277,11 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
         return False
     try:
         from schedule_publish import publish_review
-        from labor import employees_in_schedule
         from models import get_conn as _gc
         import people
         conn = _gc()
         try:
-            row = conn.execute("SELECT id, published_at, superseded_by, schedule_csv FROM schedule_history "
+            row = conn.execute("SELECT id, published_at, superseded_by FROM schedule_history "
                                "WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
         finally:
             conn.close()
@@ -7295,7 +7294,10 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
             review = publish_review(rid, row["id"], unattended=True) or {}
         if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
             return False
-        reach = people.reach_summary(people.reach(rid, employees_in_schedule(row["schedule_csv"] or "")))
+        import schedule_shifts as _ss_ot
+        from labor import employees_in_rows as _eir_ot
+        reach = people.reach_summary(people.reach(rid, _eir_ot(_ss_ot.rows_of(row["id"], "working",
+                                                                             restaurant_id=rid))))
         return int(reach.get("total") or 0) > 0
     except Exception as e:
         import ops
@@ -7419,7 +7421,6 @@ def _do_publish_check(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can see the schedule.")
     from schedule_publish import publish_review, notice_status
-    from labor import employees_in_schedule
     from models import get_conn as _gc
     import people
     rid = _rid(u)
@@ -7428,8 +7429,12 @@ def _do_publish_check(u):
         return {"ok": True, "schedule_id": None}, 200
     conn = _gc()
     try:
-        row = conn.execute("SELECT id, week_start, week_end, published_at, schedule_csv, superseded_by "
+        row = conn.execute("SELECT id, week_start, week_end, published_at, superseded_by "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?", (sid, rid)).fetchone()
+        # The week's WORKING rows from the shift table, read beside the row
+        # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_pc
+        week_rows = _ss_pc.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
     if not row:
@@ -7445,7 +7450,8 @@ def _do_publish_check(u):
         _ops_pc.capture(e, job="publish_check", context=f"restaurant_id={rid} schedule_id={row['id']}")
         items = [{"key": "check_failed", "text": "The publish check couldn't run just now — try again before sending"}]
     blockers = [b["text"] for b in items]
-    names = employees_in_schedule(row["schedule_csv"] or "")
+    from labor import employees_in_rows as _eir_pc
+    names = _eir_pc(week_rows)
     unsent = None
     if row["published_at"]:
         # A week staff already have: Send tells only the people a saved
@@ -7463,8 +7469,7 @@ def _do_publish_check(u):
     if not row["published_at"]:
         try:
             import schedule_learning as _sl_l
-            import schedule_versions as _sv_l
-            likely = _sl_l.likely_to_change(rid, _sv_l.rows_from_csv(row["schedule_csv"] or ""))
+            likely = _sl_l.likely_to_change(rid, week_rows)
         except Exception as _lx:
             import ops
             ops.capture(_lx, job="likely_to_change", context=f"restaurant_id={rid}")

@@ -1416,34 +1416,28 @@ def _live_rows_of(conn, history_id, restaurant_id, row) -> tuple:
 def draft_rows(history_id, restaurant_id=None, db_path=DB_PATH) -> list:
     """The Studio's rows of one week — its WORKING copy (schedule_csv): the
     draft, or a sent week with the manager's unsent changes (contract #3)."""
-    conn = get_conn(db_path)
-    try:
-        if restaurant_id is None:
-            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=?", (history_id,)).fetchone()
-        else:
-            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
-                               (history_id, restaurant_id)).fetchone()
-    finally:
-        conn.close()
-    return rows_from_csv(row["schedule_csv"] if row else "")
+    import schedule_shifts
+    return schedule_shifts.rows_of(history_id, "working", db_path=db_path, restaurant_id=restaurant_id)
 
 
 def published_rows(history_id, restaurant_id=None, db_path=DB_PATH):
     """The rows staff were sent for one week (its published copy), or None
     when the week was never published."""
+    import schedule_shifts
     conn = get_conn(db_path)
     try:
-        q = "SELECT published_at, COALESCE(published_csv, schedule_csv) AS live FROM schedule_history WHERE id=?"
+        q = "SELECT published_at FROM schedule_history WHERE id=?"
         args = [history_id]
         if restaurant_id is not None:
             q += " AND restaurant_id=?"
             args.append(restaurant_id)
         row = conn.execute(q, args).fetchone()
+        if not row or not row["published_at"]:
+            return None
+        # The copy staff have, from the shift table (schedule_shifts, ARCH-7).
+        return schedule_shifts.rows_of(history_id, "live", conn=conn)
     finally:
         conn.close()
-    if not row or not row["published_at"]:
-        return None
-    return rows_from_csv(row["live"])
 
 
 def _week_dates(week_start, week_end) -> list:

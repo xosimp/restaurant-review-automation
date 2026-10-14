@@ -17333,11 +17333,8 @@ def live_week_rows(restaurant_id, on_date, db_path: str = DB_PATH) -> list:
     for staff on `on_date` — its published copy — or [] when no published
     week covers the date. The one read for "the week in force" (contract
     #3)."""
-    w = live_week_for(restaurant_id, on_date, db_path=db_path)
-    if not w:
-        return []
-    import schedule_rows
-    return schedule_rows.parse(w.get("schedule_csv") or "")
+    import schedule_shifts
+    return schedule_shifts.live_week_rows(restaurant_id, on_date, db_path=db_path)
 
 
 def week_draft(conn, restaurant_id, week_start):

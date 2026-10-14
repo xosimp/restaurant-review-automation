@@ -147,27 +147,13 @@ def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
             "direction": "behind" if (pct or 0) < 0 else "ahead"}
 
 
-def _published_csv(restaurant_id, day, db_path=DB_PATH):
-    """The schedule staff were actually SENT for `day`: the published copy
-    of the live week containing it (models.live_week_for — the one rule,
-    schedule audit 10/10/26 ARCH-11) — or "" when none is.
-
-    This read the newest schedule_history row whose CSV contained today's
-    date, whatever it was: a draft nobody published, an auto-draft, or a
-    week superseded by a re-publish. So a no-show issue could name someone
-    who was never told they were on (#13). A draft is not a commitment —
-    nor is a manager's saved edit to a sent week before Send (ARCH-1)."""
-    try:
-        import models as _m
-        w = _m.live_week_for(restaurant_id, day, db_path=db_path)
-    except Exception:
-        w = None
-    return (w or {}).get("schedule_csv") or ""
-
-
 def published_rows(restaurant_id, day, db_path=DB_PATH):
     """[{employee, role, shift_start, shift_end, scheduled_hours}] for `day`
-    from the published week (see _published_csv) — read from the shift
+    — the schedule staff were actually SENT: the published copy of the live
+    week containing it (models.live_week_for — the one rule, schedule audit
+    10/10/26 ARCH-11; this read the newest row whose CSV held the date, so a
+    no-show issue could name someone never told they were on, #13) — read
+    from the shift
     projection (schedule_shifts.live_shifts_on: one indexed read of the
     day, no week parsed — schedule re-audit 10/11/26 ARCH-7), from the
     week's text while that week has no current projection."""

@@ -6764,13 +6764,30 @@ def break_window(shift_start: str, shift_end: str, meal_break_after_hours) -> st
 
 def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_after_hours=None,
                              restaurant_id=None, spellings=None) -> list:
-    """One employee's own shifts, pulled out of the generated schedule CSV.
+    """employee_shifts_from_rows over a schedule's text (one the caller
+    holds — a share link's, a test's). A stored week's rows are read through
+    schedule_shifts (schedule re-audit 10/11/26 ARCH-7) and passed to
+    employee_shifts_from_rows."""
+    if not schedule_csv:
+        return []
+    import schedule_rows as _srows_es
+    try:
+        rows = _srows_es.parse(schedule_csv)
+    except Exception:
+        return []
+    return employee_shifts_from_rows(rows, employee_name, meal_break_after_hours=meal_break_after_hours,
+                                     restaurant_id=restaurant_id, spellings=spellings)
 
-    The CSV is the schedule's source of truth (see generate_optimized_schedule's
-    header: date,day,employee,role,shift_start,shift_end,scheduled_hours,notes),
-    so a staff-facing view reads from it rather than from a second copy that
-    could drift. Matching is case- and whitespace-insensitive because names
-    arrive from POS exports with inconsistent spacing.
+
+def employee_shifts_from_rows(rows, employee_name: str, meal_break_after_hours=None,
+                              restaurant_id=None, spellings=None) -> list:
+    """One employee's own shifts out of a week's rows (schedule_rows shape —
+    schedule_shifts.rows_of), each with its `shift_id`.
+
+    The stored week is the schedule's source of truth, so a staff-facing
+    view reads from it rather than from a second copy that could drift.
+    Matching is case- and whitespace-insensitive because names arrive from
+    POS exports with inconsistent spacing.
 
     With `restaurant_id`, a shift a manager put in a floor section carries
     `section` ("Patio" — models.shift_sections, employee audit V12); a
@@ -6781,11 +6798,8 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     rename too (schedule audit 10/10/26 BUGSLIFE-4: the person's live week
     read as all days off).
     """
-    import csv as _csv
-    import io as _io
-
     target = (employee_name or "").strip().lower()
-    if not schedule_csv or not target:
+    if not rows or not target:
         return []
     names = {" ".join(target.split())} | {" ".join(str(s or "").lower().split()) for s in (spellings or ())}
     sections = {}
@@ -6798,8 +6812,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
             sections = {}
     shifts = []
     try:
-        reader = _csv.DictReader(_io.StringIO(schedule_csv))
-        for row in reader:
+        for row in rows:
             name = (row.get("employee") or "").strip()
             if " ".join(name.lower().split()) not in names:
                 continue
@@ -6816,6 +6829,7 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
                 "hours": round(hours, 2),
                 "notes": staff_facing_note(row.get("notes")),
                 "break": break_window(row.get("shift_start"), row.get("shift_end"), meal_break_after_hours),
+                "shift_id": (row.get("shift_id") or "").strip().lower(),
             })
             if sections:
                 from models import shift_section_start
@@ -6855,6 +6869,18 @@ def timed_shifts_from_csv(schedule_csv: str) -> list:
                     "start": start.strftime("%Y-%m-%dT%H:%M:%S"), "end": end.strftime("%Y-%m-%dT%H:%M:%S")})
     out.sort(key=lambda s: (s["start"], s["employee"].lower()))
     return out
+
+
+def employees_in_rows(rows) -> list:
+    """Every distinct employee named in a week's rows (schedule_rows shape —
+    schedule_shifts.rows_of), in the order a person would read them
+    (alphabetical)."""
+    seen = {}
+    for row in rows or []:
+        name = (row.get("employee") or "").strip()
+        if name and name.lower() not in seen:
+            seen[name.lower()] = name
+    return sorted(seen.values(), key=lambda n: n.lower())
 
 
 def employees_in_schedule(schedule_csv: str) -> list:

@@ -236,16 +236,18 @@ def published_conflicts(restaurant_id, employee_name, start, end, db_path=None, 
     week staff already have used to leave them scheduled with nobody told
     (SCHED-22 / MOD-EMP-8). `part` (a row's start_time / end_time /
     daypart): only the shifts that reach into that part of the day."""
-    from schedule_versions import rows_from_csv
     s, e = _as_date(start).isoformat(), _as_date(end).isoformat()
     key = " ".join((employee_name or "").split()).casefold()
     # The live weeks' PUBLISHED copies (models.live_weeks, ARCH-11): the
     # shifts this person was told about.
     import models as _m
     weeks = _m.live_weeks(restaurant_id, lo=s, hi=e, db_path=db_path or _m.DB_PATH)
+    # Their rows from the shift table, by shift_id (schedule_shifts, ARCH-7).
+    import schedule_shifts
+    by_week = schedule_shifts.rows_by_week([w["id"] for w in weeks], "live", db_path=db_path)
     out = []
     for w in weeks:
-        for r in rows_from_csv(w["schedule_csv"]):
+        for r in by_week.get(int(w["id"])) or []:
             if " ".join(r["employee"].split()).casefold() == key and s <= r["date"] <= e:
                 if is_partial(part) and not shift_hits_part(r, part):
                     continue

@@ -206,12 +206,12 @@ def ladder(restaurant_id, rows, forecasts=None, db_path=None) -> dict:
 
 
 def _published(restaurant_id, history_id, db_path=None):
-    """The row's PUBLISHED copy (models.live_csv_sql: what staff were sent,
-    never the working draft with unsent changes — contract #3)."""
-    import models
+    """The row, when it is PUBLISHED (its published copy — what staff were
+    sent, never the working draft with unsent changes, contract #3 — is
+    read by id from the shift table)."""
     conn = get_conn(db_path)
     try:
-        return conn.execute(f"SELECT h.id, h.week_start, h.week_end, {models.live_csv_sql('h')} AS schedule_csv, "
+        return conn.execute("SELECT h.id, h.week_start, h.week_end, "
                             "h.published_at FROM schedule_history h WHERE h.id=? AND h.restaurant_id=? AND "
                             "h.published_at IS NOT NULL", (int(history_id), restaurant_id)).fetchone()
     finally:
@@ -221,12 +221,15 @@ def _published(restaurant_id, history_id, db_path=None):
 def ensure(restaurant_id, history_id, today=None, db_path=None) -> dict:
     """Record a published week's commitments (module doc). Returns
     {committed, changed}. Days already past are left as they were."""
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     today = today or date.today()
     h = _published(restaurant_id, history_id, db_path)
     if not h:
         return {"committed": 0, "changed": 0}
-    rows = [r for r in rows_from_csv(h["schedule_csv"] or "") if str(r.get("date") or "")[:10] >= today.isoformat()]
+    # The published copy's rows from the shift table, each by its shift_id
+    # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+    rows = [r for r in schedule_shifts.rows_of(h["id"], "live", db_path=db_path, restaurant_id=restaurant_id)
+            if str(r.get("date") or "")[:10] >= today.isoformat()]
     conn = get_conn(db_path)
     try:
         have = {(r["date"], r["name_key"], r["shift_start"]): dict(r) for r in conn.execute(

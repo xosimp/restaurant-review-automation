@@ -10470,7 +10470,7 @@ def staff_schedule_page(token):
     ever existed. A link to a week that was re-published shows the copy staff
     are on now, with a line saying it changed (SEC-09 / LG-18); a link whose
     holder was deactivated reads as expired."""
-    from labor import employee_shifts_from_csv
+    from labor import employee_shifts_from_rows
 
     share, refused = _share_lookup(token)
     if refused:
@@ -10485,7 +10485,11 @@ def staff_schedule_page(token):
     from models import get_staff_availability, mark_schedule_share_viewed
     import json as _json_av
 
-    shifts = employee_shifts_from_csv(share.get("schedule_csv") or "", share["employee_name"])
+    # The live week's rows from the shift table (schedule_shifts, ARCH-7).
+    import schedule_shifts as _ss_share
+    shifts = employee_shifts_from_rows(
+        _ss_share.rows_of(share.get("schedule_id"), "live", restaurant_id=share.get("restaurant_id")),
+        share["employee_name"])
     mark_schedule_share_viewed(token)
 
     # Whatever they last told us — days and note — so the form comes back

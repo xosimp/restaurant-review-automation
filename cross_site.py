@@ -162,15 +162,16 @@ def _request(restaurant_id, request_id, db_path=None):
 def _target_week(restaurant_id, req, db_path=None):
     """(hist, rows, idx) of the live week here holding the open shift."""
     import shift_requests as _srq
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     conn = get_conn(db_path)
     try:
         hist = _srq._live_hist(conn, restaurant_id, req)
+        live_rows = schedule_shifts.rows_of(hist["id"], "live", conn=conn) if hist else []
     finally:
         conn.close()
     if not hist:
         return None, None, None
-    rows, idx = _srq._locate(rows_from_csv(hist["schedule_csv"]), req)
+    rows, idx = _srq._locate(live_rows, req)
     return hist, rows, idx
 
 

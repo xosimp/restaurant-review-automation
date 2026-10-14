@@ -536,18 +536,19 @@ def rank_takers(restaurant_id, req, db_path=DB_PATH, limit=OFFER_CANDIDATES) -> 
     import schedule_engine as _se
     import schedule_rules as _rules
     import shift_requests as _srq
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     legal = _srq._who_could_take(restaurant_id, req, db_path)[:limit]
     if not legal:
         return []
     conn = get_conn(db_path)
     try:
         hist = _srq._live_hist(conn, restaurant_id, req)
+        live_rows = schedule_shifts.rows_of(hist["id"], "live", conn=conn) if hist else []
     finally:
         conn.close()
     if not hist:
         return []
-    rows, idx = _srq._locate(rows_from_csv(hist["schedule_csv"]), req)
+    rows, idx = _srq._locate(live_rows, req)
     if idx is None:
         return []
     c = _srq._week_constraints(restaurant_id, rows)
