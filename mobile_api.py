@@ -3699,6 +3699,20 @@ def mobile_generate_schedule(current_user):
     # nothing starts: Generate for one week used to join a redo of another,
     # show that as the answer, and lose the owner's instruction.
     _req = _se.generation_request(rid, week_start, dates, base_history_id, instruction)
+    # The readings of the owner's words they ticked before generating — the
+    # Generate sheet's "I read: …" (POST /labor/schedule-instruction/read),
+    # or Ask Cavnar's card, read from the owner's own words (blind re-audit
+    # 10/11/26 AI-7, AI-25, contract #6): checked here before anything
+    # starts, stored as one-week rules once this press starts a job. A
+    # reading nobody ticked is a preference only.
+    import owner_rules as _owr_gen
+    _confirm = [r for r in (body.get("confirm_rules") or []) if isinstance(r, dict)][:20] \
+        if isinstance(body.get("confirm_rules"), list) else []
+    if _confirm:
+        try:
+            _owr_gen.confirm_for_week(rid, _confirm, _req["week_start"], user=current_user, dry_run=True)
+        except ValueError as _cex:
+            return jsonify(ok=False, error=_cex.args[0]), 400
     _running, _running_req = _ops.running_job("schedule", rid)
     if _running:
         if _running_req == _req:
@@ -3758,6 +3772,12 @@ def mobile_generate_schedule(current_user):
         _rejection.update(reason_chip=_chip if isinstance(_chip, str) else None,
                           reason_text=_words if isinstance(_words, str) else None,
                           user=dict(current_user))
+    if _confirm:
+        try:
+            _owr_gen.confirm_for_week(rid, _confirm, _req["week_start"], user=current_user)
+        except ValueError as _cex:
+            _ops.finish_async_job(job_id, "error", {"ok": False, "error": _cex.args[0]})
+            return jsonify(ok=False, error=_cex.args[0]), 400
     _job_kw = {"week_start": week_start or _req["week_start"], "dates": dates, "base_history_id": base_history_id}
     if instruction:
         _job_kw["instruction"] = instruction

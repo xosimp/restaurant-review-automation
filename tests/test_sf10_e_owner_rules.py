@@ -57,10 +57,13 @@ def test_a_proposed_rule_is_held_only_when_every_part_can_be_stood_on():
     assert orr.validate(_rule("floor", role="Server", value=40), "40 servers", NAMES, ROLES) is None  # out of range
     assert orr.validate(_rule("person_off", person="Ana Ruiz", dates=["2026-12-25"]), "Ana off 12/25", NAMES, ROLES,
                         week_dates=WEEK) is None                                                       # not this week
-    assert orr.validate(_rule("weight", value=-0.9, days=["Monday"]), "light Monday", NAMES, ROLES) is None
+    # A weight is a direction; the step is code's (blind re-audit 10/11/26 AI-9).
+    assert orr.validate(_rule("weight", value=-0.9, days=["Monday"]), "light Monday", NAMES, ROLES)["value"] == \
+        -orr.WEIGHT_STEP
+    assert orr.validate(_rule("weight", value=0, days=["Monday"]), "light Monday", NAMES, ROLES) is None
     w = orr.validate(_rule("weight", value=-0.2, days=["Monday"], quote="invented words"), "keep Monday light",
                      NAMES, ROLES)
-    assert w["value"] == -0.2 and w["quote"] == "keep Monday light"            # never words the owner did not write
+    assert w["value"] == -orr.WEIGHT_STEP and w["quote"] == "keep Monday light"  # never words the owner did not write
     assert orr.validate(_rule("avoid", person="Ana Ruiz", person2="Ana Ruiz"), "x", NAMES, ROLES) is None
 
 
@@ -79,7 +82,11 @@ def test_each_sentence_is_read_once_and_cached(rid):
 
     def call(req):
         calls.append(req)
-        assert req["model"] == "claude-haiku-5-5" and req["output_config"]["format"]["type"] == "json_schema"
+        # The rule extraction's model honours the T1 canary (re-audit 10/11/26
+        # AI-26): Haiku 5.5 inside it, the tier's previous model outside.
+        import ai_utils
+        assert req["model"] == ai_utils.model_for_run("schedule_rules", rid)
+        assert req["output_config"]["format"]["type"] == "json_schema"
         assert "UNTRUSTED_GUEST_TEXT" in req["messages"][0]["content"]       # the owner's words, fenced as data
         return _Msg({"sentences": [{"index": 0, "rules": [_rule("close", person="Maria Lopez", days=["Friday"],
                                                                    quote="Maria closes Friday")]},
@@ -128,13 +135,14 @@ def test_rules_land_in_the_constraints_every_pass_reads():
              confirmed=False)])
     ok, why = c.can_work("Ana Ruiz", WEEK[4], "night")
     assert not ok and why.startswith("your rule:")                                  # confirmed: hard
-    assert c.can_work("Ben Cole", WEEK[5], "night")[0]                              # a proposal: never hard...
-    assert not c.fillable("Ben Cole", WEEK[5])[0]                                   # ...but code never picks them
+    assert c.can_work("Ben Cole", WEEK[5], "night")[0]                              # a proposal: never hard,
+    assert c.fillable("Ben Cole", WEEK[5])[0]                                       # nor a fill exclusion (AI-8)
+    assert {p["kind"] for p in c.owner_proposals} == {"person_off", "weight", "floor"}
     assert {"kind": "avoid", "a": "Ana Ruiz", "b": "Ben Cole"}.items() <= c.owner_pairs[0].items()
     assert c.role_caps["server"][0]["max"] == 4
     assert c.role_times[("bartender", "Friday", "night")]["start"] == 16 * 60 + 30
     assert c.owner_person_close[0]["hard"] and c.owner_person_close[0]["dates"] == [WEEK[4]]
-    assert c.owner_weights[0]["value"] == -0.2
+    assert not c.owner_weights                                                      # an unconfirmed weight moves nothing
     assert sr.floor_for(c.role_floors, "Server", "Saturday", "night") == 0          # an unconfirmed floor is not held
     assert len(c.typed_rules) == 8 and all(r.get("words") for r in c.typed_rules)
 
@@ -175,9 +183,14 @@ def test_a_person_on_rule_is_put_right_or_named():
 
 
 def test_a_weight_moves_the_days_hours_target():
+    # Confirmed: Monday moves by the stated step and Tuesday takes the hours,
+    # the week's total unchanged (AI-9, BUGSGEN-23); unconfirmed: nothing moves.
     c = _c()
-    orr.apply(c, [dict(_rule("weight", value=-0.2, days=["Monday"], quote="keep Monday light"), confirmed=False)])
-    assert orr.apply_weights({WEEK[0]: 50.0, WEEK[1]: 40.0}, c) == {WEEK[0]: 40.0, WEEK[1]: 40.0}
+    orr.apply(c, [dict(_rule("weight", value=-1, days=["Monday"], quote="keep Monday light"), confirmed=True)])
+    assert orr.apply_weights({WEEK[0]: 50.0, WEEK[1]: 40.0}, c) == {WEEK[0]: 45.0, WEEK[1]: 45.0}
+    c2 = _c()
+    orr.apply(c2, [dict(_rule("weight", value=-1, days=["Monday"], quote="keep Monday light"), confirmed=False)])
+    assert orr.apply_weights({WEEK[0]: 50.0, WEEK[1]: 40.0}, c2) == {WEEK[0]: 50.0, WEEK[1]: 40.0}
 
 
 def test_the_drafts_instruction_comes_back_as_chips_held_or_not():
@@ -217,7 +230,7 @@ def test_a_confirmed_rule_is_stored_with_its_kind_and_held_hard(rid, db_path, mo
     assert any(p["kind"] == "avoid" for p in c.owner_pairs)
 
 
-def test_the_generation_reads_the_instruction_and_holds_it_hard(rid, monkeypatch):
+def test_the_generation_reads_the_instruction_and_holds_it_only_once_confirmed(rid, monkeypatch):
     import staff_settings
     monkeypatch.setattr(staff_settings, "roster", lambda r, db_path=None: [{"name": n, "role": "Server"} for n in NAMES])
 
@@ -226,9 +239,19 @@ def test_the_generation_reads_the_instruction_and_holds_it_hard(rid, monkeypatch
                                                                    quote="Maria closes Friday")]}]})
     got = orr.prepare(rid, WEEK, instruction="Maria closes Friday", call=call)
     (r,) = got["instruction"]
-    assert r["confirmed"] and r["scope"] == "week" and r["source"] == "instruction" and r["dates"] == [WEEK[4]]
-    # cached: the contract's reader returns it with no model
-    assert [x["kind"] for x in orr.typed_rules(rid, WEEK, instruction="Maria closes Friday")] == ["close"]
+    # Read, never held until the owner confirms the reading (blind re-audit
+    # 10/11/26 AI-7): a preference meanwhile.
+    assert not r["confirmed"] and r["scope"] == "week" and r["source"] == "instruction" and r["dates"] == [WEEK[4]]
+    (t,) = orr.typed_rules(rid, WEEK, instruction="Maria closes Friday")
+    assert t["kind"] == "close" and not t["confirmed"]
+    # Confirmed for the week (the Generate sheet's tick): hard, from the
+    # confirmed rules — and the instruction's reading matches it.
+    monkeypatch.setattr(se, "check_week_start", lambda r_, w: (w, None))
+    orr.confirm_for_week(rid, [r], WEEK[0])
+    (r2,) = orr.prepare(rid, WEEK, instruction="Maria closes Friday", call=call)["instruction"]
+    assert r2["confirmed"]
+    (t2,) = orr.typed_rules(rid, WEEK, instruction="Maria closes Friday")
+    assert t2["confirmed"] and t2["source"] == "confirmed"
 
 
 def test_the_note_rules_screen_offers_each_reading_to_confirm(rid, db_path, monkeypatch):

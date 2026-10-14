@@ -7649,6 +7649,13 @@ def save_staff_note(restaurant_id: int, employee_name: str,
         raise
     finally:
         conn.close()
+    # The note is read into typed rules now, off the request (owner_rules —
+    # blind re-audit 10/11/26 AI-22): never in a generation's critical path.
+    try:
+        import owner_rules as _owr_save
+        _owr_save.queue_read(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
+    except Exception:
+        pass
     return {"id": note_id, "notes": _join_parts(parts), "appended": appended, "expires_on": ends}
 
 

@@ -2263,13 +2263,23 @@ def _typed_readings(rid, sentences, extract=False) -> int:
         return 0
     unread = 0
     for item in sentences or []:
-        if item.get("rule_id") or item.get("kind") not in ("unchecked", "guidance", "person"):
+        if item.get("rule_id") or item.get("kind") == "waiver":
             continue
         got = state.get(" ".join(str(item.get("text") or "").split()))
+        # Every reading is a preference until the owner confirms it — said
+        # on the row (blind re-audit 10/11/26 AI-10: an owner believed
+        # "Always 2 bartenders Friday night" was a rule).
+        item["enforced"] = False
+        if got == "dismissed":
+            item["dismissed"] = True
+            continue
+        if item.get("kind") not in ("unchecked", "guidance", "person"):
+            continue
         if got is None:
             unread += 1
             continue
-        item["typed"] = [{"rule": r, "words": _owr.words(r)} for r in got if r.get("kind") != "floor"]
+        item["typed"] = [{"rule": r, "words": _owr.words(r), "reads_as": _owr.reads_as(r)}
+                         for r in got if r.get("kind") != "floor"]
     return unread
 
 
@@ -2286,6 +2296,72 @@ def _do_note_rules_read(u):
     sentences = snr.read_notes(_rid(u), notes)
     unread = _typed_readings(_rid(u), sentences, extract=True)
     return {"ok": True, "sentences": sentences, "unread": unread}, 200
+
+
+def _do_note_rule_dismiss(u):
+    """{text, dismissed?: true|false} — the owner's "not what I meant" on
+    Cavnar AI's reading of one sentence of their notes (owner_rules.dismiss
+    — blind re-audit 10/11/26 AI-10): neither held nor proposed, the
+    sentence guidance; `dismissed: false` restores the reading. Owner only,
+    as every note rule is."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can set a reading aside.")
+    import owner_rules as _owr
+    b = _body()
+    text = " ".join(str(b.get("text") or "").split())[:500]
+    if not text:
+        return {"ok": False, "error": "Which sentence?"}, 400
+    if not _owr.dismiss(_rid(u), text, dismissed=b.get("dismissed") is not False, user=u):
+        return {"ok": False, "error": "That sentence isn't in your notes any more."}, 404
+    return {"ok": True}, 200
+
+
+def _do_note_rule_waiver(u):
+    """{source_text, scope: every|week, week_start?} — the owner confirms
+    that a sentence of their notes lets a standing position off
+    (schedule_note_rules.add_waiver — blind re-audit 10/11/26 BUGSGEN-4):
+    until then the position is staffed. Owner only."""
+    if not _principal(u):
+        return _forbidden("Only the account owner can let a standing position off.")
+    from client_api import log_account_event
+    import schedule_note_rules as snr
+    b = _body()
+    try:
+        rule = snr.add_waiver(_rid(u), b.get("source_text"), scope=b.get("scope") or "every",
+                              week_start=b.get("week_start"), user=u)
+    except ValueError as e:
+        return {"ok": False, "error": e.args[0]}, 400
+    if not rule.get("existing"):
+        log_account_event(_rid(u), "schedule_note_rule_added", current_user=u, detail=str(rule.get("words"))[:200])
+    return {"ok": True, "rule": rule}, 200
+
+
+def _do_schedule_instruction_read(u):
+    """{instruction, week_start?} — what the owner typed for this draft, read
+    and said back BEFORE it is generated (owner_rules.instruction_readings —
+    blind re-audit 10/11/26 AI-7, contract #6): each sentence with the rules
+    Cavnar AI reads from it ("I read: Maria Lopez closes, Fri"), each with
+    its `rule` to send back in Generate's `confirm_rules` when the owner
+    ticks it. Unticked readings are preferences only. A login that may draft
+    (the instruction is theirs); the model reads each sentence once."""
+    if not (_principal(u) or _may_draft(u)):
+        return _forbidden("Your login can view labor but not draft a schedule.")
+    import owner_rules as _owr
+    import schedule_engine as _se
+    b = _body()
+    text = " ".join(str(b.get("instruction") or "").split())[:500]
+    if not text:
+        return {"ok": True, "sentences": []}, 200
+    week = (str(b.get("week_start") or "").strip()[:10]) or None
+    week, err = _se.check_week_start(_rid(u), week)
+    if err:
+        return {"ok": False, "error": err}, 400
+    if _limited(u, "instruction_read", 10, 60):
+        return {"ok": False, "error": "Too many reads at once — wait a moment."}, 429
+    monday = _se.generation_request(_rid(u), week)["week_start"]
+    dates = _se.week_dates_from(_se._date_of(monday))
+    sentences = _owr.instruction_readings(_rid(u), dates, text, extract=True)
+    return {"ok": True, "week_start": monday, "sentences": sentences}, 200
 
 
 def _do_note_rule_typed_add(u):
@@ -7686,6 +7762,12 @@ def _do_targets_set(u):
     if changed:
         log_account_event(_rid(u), "targets_changed", current_user=u,
                           detail=", ".join(k.replace("_json", "").replace("_", " ") for k in changed))
+    if "sched_notes" in changed:
+        # Read into typed rules now, off the request — never in a
+        # generation's critical path (owner_rules, blind re-audit 10/11/26
+        # AI-22); the AI tab shows each reading to confirm or dismiss (AI-10).
+        import owner_rules as _owr_save
+        _owr_save.queue_read(_rid(u), user=u)
     # Pay changed (a rate, a salary): every stored labor day and payroll
     # week is re-costed now, not at the next POS sync (models.recost_labor_history).
     from models import PAY_FIELDS, recost_labor_history
@@ -7814,6 +7896,9 @@ _ROUTES = [
     ("/labor/note-rules", ["POST"], _do_note_rule_add, "note_rule_add"),
     ("/labor/note-rules/read", ["POST"], _do_note_rules_read, "note_rules_read"),
     ("/labor/note-rules/typed", ["POST"], _do_note_rule_typed_add, "note_rule_typed_add"),
+    ("/labor/note-rules/dismiss", ["POST"], _do_note_rule_dismiss, "note_rule_dismiss"),
+    ("/labor/note-rules/waiver", ["POST"], _do_note_rule_waiver, "note_rule_waiver"),
+    ("/labor/schedule-instruction/read", ["POST"], _do_schedule_instruction_read, "schedule_instruction_read"),
     ("/labor/note-rules/<int:rule_id>/remove", ["POST"], _do_note_rule_remove, "note_rule_remove"),
     ("/labor/rules", ["GET"], _do_compliance_get, "schedule_rules_get"),
     ("/labor/rules", ["POST"], _do_compliance_set, "schedule_rules_set"),
