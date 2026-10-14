@@ -34,6 +34,13 @@ from datetime import date, datetime, timedelta
 
 # The default's summer: June 1 through July 31. August is term by default.
 DEFAULT_SUMMER = ((6, 1), (7, 31))
+# The hours school is in session on a school day, when the calendar names
+# none: the federal rule keeps 14-15 year olds out of work DURING school
+# hours (29 CFR 570.35(a)(1)), and a school day's 7:30am-3:30pm covers the
+# usual US bell schedule (sched re-audit 10/11/26 STRESS-5: a 14-year-old on
+# 11am-2pm on a school Tuesday raised nothing). A district's own bell times
+# go in the calendar ({"hours": {"start": "8:00am", "end": "3:10pm"}}).
+DEFAULT_SCHOOL_HOURS = ("7:30am", "3:30pm")
 # A year entry may be at most this long (a typo of a year is refused).
 MAX_TERM_DAYS = 330
 MAX_YEARS = 6
@@ -88,7 +95,32 @@ def clean_calendar(data) -> dict:
     for a, b in zip(out, out[1:]):
         if b["start"] <= a["end"]:
             raise ValueError("Two school years overlap — check their dates.")
-    return {"district": str(data.get("district") or "").strip()[:80], "years": out}
+    clean = {"district": str(data.get("district") or "").strip()[:80], "years": out}
+    hrs = data.get("hours")
+    if hrs:
+        if not isinstance(hrs, dict):
+            raise ValueError("School hours need a start and an end time.")
+        import schedule_time as _st
+        s_m, e_m = _st.parse_minutes(hrs.get("start")), _st.parse_minutes(hrs.get("end"))
+        if s_m is None or e_m is None:
+            raise ValueError("School hours need a start and an end time, like 8:00am and 3:10pm.")
+        if not (5 * 60 <= s_m < e_m <= 18 * 60):
+            raise ValueError("School hours must start after 5am and end after they start, by 6pm.")
+        clean["hours"] = {"start": _st.fmt_minutes(s_m), "end": _st.fmt_minutes(e_m)}
+    return clean
+
+
+def school_hours(cal) -> tuple:
+    """(start, end) minutes school is in session on a school day: the
+    calendar's own bell times where the owner entered them, else
+    DEFAULT_SCHOOL_HOURS — the window a 14-15 year old may not work in on a
+    school day (29 CFR 570.35(a)(1); sched re-audit 10/11/26 STRESS-5)."""
+    import schedule_time as _st
+    hrs = (cal or {}).get("hours") or {}
+    s_m, e_m = _st.parse_minutes(hrs.get("start")), _st.parse_minutes(hrs.get("end"))
+    if s_m is None or e_m is None or e_m <= s_m:
+        s_m, e_m = (_st.parse_minutes(x) for x in DEFAULT_SCHOOL_HOURS)
+    return s_m, e_m
 
 
 def calendar_of(restaurant) -> dict:
@@ -112,7 +144,7 @@ def save_calendar(restaurant_id, data, by=None, db_path=None) -> dict:
     clean["updated_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     if by:
         clean["updated_by"] = str(by)[:120]
-    update_restaurant(restaurant_id, {"school_calendar_json": json.dumps(clean) if clean["years"] else None},
+    update_restaurant(restaurant_id, {"school_calendar_json": json.dumps(clean) if (clean["years"] or clean.get("hours")) else None},
                       db_path=db_path or DB_PATH)
     return clean
 

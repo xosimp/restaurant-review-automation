@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from ai_utils import CallDeadlineExceeded, create_with_retry, extract_text, get_client, model_for
 import response_validation as rv
+import schedule_time as _stime
 
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
@@ -1349,6 +1350,39 @@ def _week_key(date_str: str, week_start_day: int = 0) -> str:
     return (d - timedelta(days=offset)).strftime("%Y-%m-%d")
 
 
+def week_hours_split(row: dict, week_start_day: int = 0, hours: float = None) -> dict:
+    """{payroll week start: hours} for one row, by the workweek the hours
+    were WORKED in (FLSA): a shift dated the last night of a payroll week
+    that runs past midnight puts its after-midnight hours in the next week —
+    a Tuesday 10pm-2am row in a Wednesday-start week is 2h Tuesday's week, 2h
+    Wednesday's (sched re-audit 10/11/26 BUGSGEN-18); a small-hours row
+    (12:30am-4am dated Tuesday) is all the next week's. `hours` defaults to
+    the row's scheduled_hours (its real hours), shared in proportion to the
+    clock minutes either side of midnight. {} when the date is unreadable."""
+    d = str((row or {}).get("date") or "")[:10]
+    try:
+        b0 = _week_key(d, week_start_day)
+    except (TypeError, ValueError):
+        return {}
+    if hours is None:
+        try:
+            hours = float((row or {}).get("scheduled_hours") or 0)
+        except (TypeError, ValueError):
+            hours = 0.0
+    h = float(hours or 0.0)
+    sp = _stime.span(row)
+    if not h or sp is None or sp[1] <= _stime.DAY:
+        return {b0: h}
+    nxt = (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    b1 = _week_key(nxt, week_start_day)
+    if b1 == b0:
+        return {b0: h}
+    after = sp[1] - max(sp[0], _stime.DAY)
+    h1 = round(h * after / float(sp[1] - sp[0]), 2)
+    out = {b0: round(h - h1, 2), b1: h1}
+    return {b: v for b, v in out.items() if v}
+
+
 OVERTIME_THRESHOLD_HOURS = 40.0
 OVERTIME_MULTIPLIER = 1.5
 
@@ -1519,11 +1553,12 @@ def analyse_shifts(shifts: list[dict],
         d_ = s.get("date") or ""
         if not d_:
             continue
-        try:
-            wk = _week_key(d_, week_start_day)
-        except (ValueError, TypeError):
-            continue
-        _emp_week_rows[(emp, wk)].append(s)
+        # By the workweek the hours were worked in (week_hours_split,
+        # BUGSGEN-18): an overnight row on a payroll week's last night is
+        # shared with the next week, each part costed at the row's rate.
+        _h = _shift_hours(s)
+        for wk, h_ in week_hours_split(s, week_start_day, _h).items():
+            _emp_week_rows[(emp, wk)].append(s if abs(h_ - _h) < 1e-9 else dict(s, actual_hours=h_))
 
     overtime_premium = 0.0
     overtime_hours_total = 0.0
@@ -1628,13 +1663,12 @@ def analyse_shifts(shifts: list[dict],
     for s in shifts:
         emp    = s.get("employee") or "Unknown"
         actual = _shift_hours(s)
-        try:
-            week_key = _week_key(s["date"], week_start_day)
-        except Exception:
-            week_key = s.get("date", "unknown")
+        # By the workweek the hours were worked in (BUGSGEN-18).
+        split = week_hours_split(s, week_start_day, actual) or {s.get("date", "unknown"): actual}
         if emp not in weekly_hours:
             weekly_hours[emp] = {}
-        weekly_hours[emp][week_key] = weekly_hours[emp].get(week_key, 0) + actual
+        for week_key, h_ in split.items():
+            weekly_hours[emp][week_key] = weekly_hours[emp].get(week_key, 0) + h_
 
     def _wk_label(wk):
         # M/D/YY: the week label reaches the owner and the labor note's
@@ -3721,7 +3755,7 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         latest = {}
         for s in rows:
             date_ = (s.get("date") or "").strip()[:10]
-            e = _late_end(s)
+            e = _stime.end_of(s)
             if date_ and e is not None:
                 latest[date_] = max(latest.get(date_, 0), e)
         late_dates = {}                       # day -> {date: window}
@@ -3747,7 +3781,11 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
                 # there — the requirement and the measurement must agree.
                 for part in _present_dayparts(s):
                     by_role_date[day][part][role][date_].add(name)
-                close_m = _close_m((close_times or {}).get(day))
+                # The day's close read against its open — the one close
+                # rule (schedule_time.close_on_timeline): a 5:30am close is
+                # the next morning only where the day opens after it
+                # (sched re-audit 10/11/26 ARCH-12, BUGSGEN-25).
+                close_m = _stime.day_hours((open_times or {}).get(day), (close_times or {}).get(day))[1]
                 window = late_window(close_m if close_m is not None else latest.get(date_))
                 if window:
                     late_dates.setdefault(day, {})[date_] = window
@@ -3849,11 +3887,10 @@ def historical_patterns(shifts: list, published_rows: list = None, salaried=None
         for t in range(window[0], window[1], 30):
             on = 0
             for _n, st, en in spans:
-                a, b = _clock_minutes(st), _clock_minutes(en)
-                if a is None or b is None:
+                sp = _stime.place(_stime.parse_minutes(st), _stime.parse_minutes(en))
+                if sp is None:
                     continue
-                if b <= a:
-                    b += 24 * 60
+                a, b = sp
                 if a <= t < b:
                     on += 1
             counts.append(on)
@@ -3960,37 +3997,12 @@ def _recent_rows(rows, weeks=None) -> list:
     return out
 
 
-def _close_m(value):
-    """A close time as minutes past its own day's midnight (a small-hours
-    close past 24h), or None."""
-    m = _clock_minutes(value)
-    if m is None:
-        return None
-    return m + 24 * 60 if m < 5 * 60 else m
-
-
-def _late_end(row):
-    """A row's end on its own date's clock (an end at or before the start
-    crosses midnight), or None."""
-    s, e = _clock_minutes(row.get("shift_start")), _clock_minutes(row.get("shift_end"))
-    if e is None:
-        return None
-    if s is not None and e <= s:
-        e += 24 * 60
-    return e
-
-
-def _clock_minutes(value):
-    raw = str(value or "").strip().lower().replace(" ", "")
-    if not raw:
-        return None
-    for fmt in ("%I:%M%p", "%I%p", "%H:%M", "%H:%M:%S"):
-        try:
-            t = datetime.strptime(raw, fmt)
-            return t.hour * 60 + t.minute
-        except ValueError:
-            continue
-    return None
+# The staffing baseline reads clock times, closes and a row's end through
+# schedule_time, the one notion of a shift's time (sched re-audit 10/11/26
+# ARCH-12, BUGSGEN-25): labor's private strptime parser read "noon",
+# "midnight", "12:00 a.m." and "5p" as nothing, put a close before 5am (not
+# 6am, and never relative to the open) after midnight, and gave a row's end
+# no night offset. tests/test_sf11_r_rules.py bans a private clock parser.
 
 
 def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL_WEEKS) -> list:

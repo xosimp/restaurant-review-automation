@@ -187,9 +187,13 @@ def night_offset(start_m) -> int:
 
 def place(start_m, end_m):
     """(start, end) minutes on the business date's timeline for clock
-    minutes `start_m`-`end_m`: the start placed by night_offset, an end at
-    or before the start past midnight. None when either is None."""
-    if start_m is None or end_m is None:
+    minutes `start_m`-`end_m`: the start placed by night_offset, an end
+    before the start past midnight. None when either is None — and when the
+    two are the SAME time: "5:00pm-5:00pm" is a typo, not a 24-hour shift
+    (25h on the fall-back night); read as one it became a day-long shift
+    before the close cap re-timed it (sched re-audit 10/11/26 BUGSGEN-19).
+    The parser drops such a row and counts it, like any unreadable line."""
+    if start_m is None or end_m is None or start_m % DAY == end_m % DAY:
         return None
     off = night_offset(start_m)
     end = end_m if end_m > start_m else end_m + DAY

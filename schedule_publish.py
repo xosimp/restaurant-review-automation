@@ -257,7 +257,7 @@ COVER_KINDS = ("rule:no_manager", "roster:no_manager_roster")
 #            one tap — the owner's own number (TRUST-8).
 #   check    a check that could not vouch for the week: a reason.
 LAW, MANAGER, PERSON, COVERAGE, POLICY, CHECK = "law", "manager", "person", "coverage", "policy", "check"
-MINOR_KINDS = frozenset({"minor_late", "minor_hours", "minor_early", "minor_week_hours"})
+MINOR_KINDS = frozenset({"minor_late", "minor_hours", "minor_early", "minor_week_hours", "minor_school_hours"})
 # Who may send past the one law no edit can fix (TRUST-4).
 LEGAL_ACK_AUTHORITIES = ("principal", "admin")
 
@@ -537,7 +537,19 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 continue
             where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
             k = f"rule:{v['kind']}:{(v.get('employee') or '').strip().lower()}:{v.get('date')}:{v.get('shift_start')}"
-            add(k, f"{v['employee']} — {where}: {v['detail']}", tier=tier, rank=rank, date=v.get("date"), **meta)
+            if v.get("structural"):
+                # A limit the roster cannot keep at all (one manager open
+                # every day): named once in setup, here only as a note —
+                # never a weekly decision about the engine's own choice
+                # (sched re-audit 10/11/26 STRESS-18).
+                note(f"structural:{v['kind']}:{(v.get('employee') or '').strip().lower()}",
+                     v.get("structural_text") or _sr.policy_text(v))
+                breaches.setdefault(k, v)
+                continue
+            # The restaurant's own limit, not law, crossed to cover a higher
+            # rule reads "over your limit" (LOGIC-20), a decision (TRUST-4).
+            text = _sr.policy_text(v) if v.get("policy") else f"{v['employee']} — {where}: {v['detail']}"
+            add(k, text, tier=tier, rank=rank, date=v.get("date"), **meta)
             breaches.setdefault(k, v)
         if keep is not None:
             keep["breaches"] = breaches

@@ -144,9 +144,12 @@ def test_the_section_cap_trim_reads_a_floor_as_people_on_at_once(no_avail):
     rep = {}
     out, n, _dates = se._trim_server_overlap_cap([dict(r) for r in rows], {}, {}, max_overlap=2, constraints=c,
                                                  floors=floors, report=rep)
-    assert n == 0
-    held = rep["conflicts"][0]["held_by"]
-    assert held == [{"kind": "floor", "role": "Server", "daypart": "night", "floor": 2}]
+    # Ending C at the peak (6:30pm) would leave nothing and break the floor;
+    # starting C once A leaves (7:30pm) keeps the floor of two all night and
+    # C a workable 3.5h shift (sched re-audit 10/11/26 BUGSGEN-7).
+    assert n == 1 and not rep["conflicts"]
+    cc = next(r for r in out if r["employee"] == "C")
+    assert (cc["shift_start"], cc["shift_end"]) == ("7:30pm", "11:00pm")
 
 
 def test_the_owners_most_on_at_once_holds_the_half_hours_not_the_crew():

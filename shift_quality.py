@@ -6553,6 +6553,7 @@ PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_bo
                             "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere",
                             "outside_window", "missing_cert", "over_max_hours", "rest_gap",
                             "minor_late", "minor_hours", "long_run", "minor_week_hours", "minor_early",
+                            "minor_school_hours",
                             "role_not_held", "note_unavailable"})
 
 
