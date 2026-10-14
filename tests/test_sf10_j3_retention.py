@@ -36,16 +36,18 @@ def _weeks(name, start, end, hours_fn):
     return out
 
 
-def _data(n_quit=8, n_stay=22):
-    """People who left had their hours halved in the month before; the rest
-    held steady. One current regular is being cut now."""
+def _data(n_quit=14, n_stay=26):
+    """People who left had their hours halved in the six weeks before —
+    from well before any notice (the model reads only the weeks NOTICE_DAYS
+    and more before a departure: blind re-audit 10/11/26 LEARNING-25); the
+    rest held steady. One current regular is being cut now."""
     start = TODAY - dt.timedelta(weeks=70)
     data = {"shifts": [], "drops": {}, "attendance": {}, "left": {}, "broken": {}, "avoids": {}, "stated": {}}
     for i in range(n_quit):
         name = f"Quit{i}"
-        left = TODAY - dt.timedelta(weeks=8 + i * 4)
+        left = TODAY - dt.timedelta(weeks=8 + i * 3)
         data["left"][name.casefold()] = [left.isoformat()]
-        data["shifts"] += _weeks(name, start, left, lambda d, left=left: 12 if (left - d).days <= 28 else 30)
+        data["shifts"] += _weeks(name, start, left, lambda d, left=left: 12 if (left - d).days <= 42 else 30)
     for i in range(n_stay):
         name = f"Stay{i}"
         data["shifts"] += _weeks(name, start, TODAY, lambda d, i=i: 28 + (i % 4))
@@ -67,7 +69,7 @@ def test_the_signals_read_an_hours_cut_against_the_persons_own_usual():
 def test_a_model_is_used_only_when_it_predicts_departures_out_of_sample():
     data = _data()
     m = rr.model(1, today=TODAY, data=data)
-    assert m["available"] and m["auc"] >= rr.MIN_AUC and m["quits"] == 8
+    assert m["available"] and m["auc"] >= rr.MIN_AUC and m["quits"] == 14 and m["auc_lo"] > 0.5
     cut = rr._prob(m["model"], [float(rr.signals(data, "cut", TODAY)[f]) for f in rr.FEATURES])
     steady = rr._prob(m["model"], [float(rr.signals(data, "stay0", TODAY)[f]) for f in rr.FEATURES])
     assert cut > steady and cut >= rr.HIGH_PROB
@@ -121,3 +123,45 @@ def test_the_solver_keeps_a_protected_persons_shift_against_a_soft_pull():
     assert [r["employee"] for r in moved["rows"] if r["date"] == WEEK[4]] != ["Ann"]
     kept = ss.improve(rows, {}, signals=dict(sig, retention={"Ann": {"protect": True, "avoid": []}}), constraints=c)
     assert [r["employee"] for r in kept["rows"] if r["date"] == WEEK[4]] == ["Ann"]
+
+
+def test_the_weeks_a_notice_may_already_shape_are_never_examples():
+    # Hours cut only in the two weeks before leaving (the notice period):
+    # nothing before the notice predicts it, so no model is kept.
+    start = TODAY - dt.timedelta(weeks=70)
+    data = {"shifts": [], "drops": {}, "attendance": {}, "left": {}, "broken": {}, "avoids": {}, "stated": {}}
+    for i in range(14):
+        name = f"Quit{i}"
+        left = TODAY - dt.timedelta(weeks=8 + i * 3)
+        data["left"][name.casefold()] = [left.isoformat()]
+        data["shifts"] += _weeks(name, start, left, lambda d, left=left: 12 if (left - d).days <= 13 else 30)
+    for i in range(26):
+        data["shifts"] += _weeks(f"Stay{i}", start, TODAY, lambda d, i=i: 28 + (i % 4))
+    by = {}
+    for r in data["shifts"]:
+        by.setdefault(r["employee"].casefold(), []).append(r)
+    data["by_person"] = by
+    ex = rr._examples(data, TODAY)
+    for key, mon, _x, _y in ex:
+        for d in data["left"].get(key) or []:
+            assert not (mon.isoformat() <= d < (mon + dt.timedelta(days=rr.NOTICE_DAYS)).isoformat())
+    assert rr.model(3, today=TODAY, data=data)["available"] is False
+
+
+def test_noise_is_not_kept_as_a_model():
+    import random as _r
+    rng = _r.Random(5)
+    kept = 0
+    for _ in range(25):
+        ex = []
+        leavers = set(rng.sample(range(40), rr.MIN_QUITS))
+        for p in range(40):
+            base = [rng.random() for _ in rr.FEATURES]
+            lw = rng.randint(8, 47) if p in leavers else None
+            for w in range(48):
+                if lw is not None and w > lw:
+                    break
+                ex.append((f"p{p}", w, [max(0.0, b + rng.gauss(0, 0.2)) for b in base],
+                           1 if (lw is not None and lw - 4 < w <= lw) else 0))
+        kept += rr.gate(ex)["ok"]
+    assert kept <= 3, kept          # about 4% expected; 6 quits / 0.65 alone kept 7%

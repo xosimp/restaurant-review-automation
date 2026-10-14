@@ -61,8 +61,12 @@ def test_new_years_day_never_reads_new_years_eve():
     _row(rid, date(2025, 12, 31), "holiday:new_years_eve", 80.0, kind="holiday")
     _row(rid, date(2026, 1, 1), "holiday:new_years_day", -30.0, kind="holiday")
     nyd = em.measured_effect(rid, "holiday:new_years_day")
-    assert nyd["n"] == 1 and nyd["median_lift_pct"] == -30.0 and nyd["applies"] is True
-    assert em.measured_effect(rid, "holiday:new_years_eve")["median_lift_pct"] == 80.0
+    # One night of a holiday is applied shrunk toward the restaurant's typical
+    # holiday (none measured twice here: no change) and says n=1 (blind
+    # re-audit 10/11/26 LEARNING-28); its own night is kept as measured.
+    assert nyd["n"] == 1 and nyd["raw_median_lift_pct"] == -30.0 and nyd["applies"] is True
+    assert nyd["median_lift_pct"] == -15.0 and "n=1" in nyd["basis"]
+    assert em.measured_effect(rid, "holiday:new_years_eve")["raw_median_lift_pct"] == 80.0
     # An event's words never match a holiday's record.
     assert em.measured_effect(rid, "New Year's party") is None
 

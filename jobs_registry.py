@@ -172,9 +172,10 @@ JOBS = {
         # the memory have read the week.
         cadence="Mon 7am CT", sla_minutes=_W, sends=False, runnable=True,
         label="Schedule Learning Scorecard",
-        description="Score each ended published week: the draft's rework rate, requirement error, labor against "
-                    "the hourly target, overtime, unmanaged minutes, shortfall, uncovered no-shows, forecast "
-                    "error, row origins and the learning ablation (bounded, resumable)",
+        description="Score each ended published week: the draft's rework rate (unreviewed publishes left out), "
+                    "requirement error, labor against the hourly target, overtime, unmanaged minutes, shortfall, "
+                    "uncovered no-shows, forecast error, row origins and the learned memory's influence - one "
+                    "queue row per restaurant when the job queue is on, else bounded and resumable",
         target=("schedule_scorecard", "run_scorecard"), max_minutes=20, retry=True),
     "schedule_bench": dict(
         # Scheduler audit 10/10/26 MARKET-26, -27, -28: after event_sync (5am)
@@ -194,8 +195,10 @@ JOBS = {
         # the owner's ratings screen, never computed on a request.
         cadence="Mon 8am CT", sla_minutes=_W, sends=False, runnable=True,
         label="Staffing learning",
-        description="Estimate what one more person of each role is worth on each meal and each person's measured "
-                    "productivity, from tickets, punches and attendance (bounded, resumable)",
+        description="Estimate what one more person of each role is worth on each meal (uncovered no-shows; a "
+                    "Holm family over the run; a move binds after two agreeing weeks) and each person's measured "
+                    "productivity - one queue row per restaurant when the job queue is on, else bounded and "
+                    "resumable",
         target=("staffing_elasticity", "run_elasticity"), max_minutes=15, retry=True),
     "schedule_memory": dict(
         # Schedule audit 10/3/26 L-29: the scheduling memory rebuilt from its
@@ -241,7 +244,13 @@ JOBS = {
         target=("reservation_feeds", "run_reservation_sync"), run_kwargs=_chi_weekday, max_minutes=30, retry=True),
     "quality_calibration": dict(
         cadence="Sun 5am CT", sla_minutes=_W, sends=False, runnable=True,
-        label="Quality calibration", description="Suggest Shift Quality weights (calibrate_weights, what Apply writes)",
+        label="Quality calibration",
+        # Blind re-audit 10/11/26 LEARNING-2: it said "suggest" while it
+        # also moved the weights. It does both, and says so.
+        description=("Suggest Shift Quality weights (calibrate_weights, what Apply writes) AND run the automatic "
+                     "calibration: a candidate fitted on older weeks, checked on held-out weeks and then on new "
+                     "ones, WRITTEN to the weights only when SCHEDULE_CALIBRATION_AUTOPROMOTE=1 (off by default) - "
+                     "one queue row per restaurant when the job queue is on"),
         target=("strategy_jobs", "run_quality_calibration"), max_minutes=20, retry=True),
     "data_health_daily": dict(
         cadence="6am CT daily, after the snapshots (sweep lane)", sla_minutes=_D, sends=False, runnable=True,

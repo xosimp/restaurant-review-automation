@@ -206,7 +206,12 @@ def test_the_draft_ranks_the_owners_notes():
     import schedule_prompt
     src = inspect.getsource(labor.generate_optimized_schedule)
     assert ("Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT "
-            "first") in schedule_prompt.PRIORITIES and "Follow each one" in src
+            "first") in schedule_prompt.PRIORITIES
+    # Each sentence as the one reader holds it (blind re-audit 10/11/26
+    # ARCH-16, AI-10): "Follow each one" told the model an unconfirmed note
+    # was a rule; now a rule is HELD BY CODE and the rest are preferences.
+    assert "Follow each one" not in src and "HELD BY CODE is a rule the owner confirmed" in src
+    assert "NOT CONFIRMED and NOT ENFORCED lines are preferences" in src
 
 
 # ── the routes ─────────────────────────────────────────────────────────────

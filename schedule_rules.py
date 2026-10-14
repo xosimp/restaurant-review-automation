@@ -122,7 +122,11 @@ SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "und
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
                   "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max",
                   # the same words read from the notes, not yet confirmed
-                  "owner_ask_on", "owner_ask_close"})
+                  "owner_ask_on", "owner_ask_close",
+                  # a reading of the owner's words nobody confirmed, kept as a
+                  # preference only (blind re-audit 10/11/26 AI-8): never a
+                  # cap, a time, a fill exclusion or a blocked day
+                  "owner_ask_off", "owner_ask_max", "owner_ask_time", "owner_ask_floor"})
 # Soft flags about the roster, not the week, that still hold every publish:
 # with nobody counted as a floor manager the highest rule is unmet on every
 # shift and no draft can mend it, so the week waits until the owner names
@@ -190,6 +194,10 @@ LABELS = {
     "owner_word_close": "not closing or opening when your own words say they do",
     "owner_ask_on": "not on when your notes ask for them",
     "owner_ask_close": "not closing or opening when your notes ask for it",
+    "owner_ask_off": "on when your notes may mean they're off (not confirmed)",
+    "owner_ask_max": "more of a role on at once than your notes may mean (not confirmed)",
+    "owner_ask_time": "starts or ends off a time your notes may mean (not confirmed)",
+    "owner_ask_floor": "fewer of a role on than your notes may mean (not confirmed)",
 }
 
 
@@ -1386,6 +1394,11 @@ class Constraints:
     # not (D-8): [{"source", "name", "detail"}] — the review names each,
     # so a fact typed under a spelling nobody goes by is never silent.
     unmatched: list = field(default_factory=list)
+    # What the shift history says about who is who (people.identity_concerns,
+    # schedule re-audit 10/11/26 STRESS-7/8): one name worn by two people,
+    # one person under two names — said in the review; a handoff pair is
+    # also joined in `linked`.
+    identity_concerns: list = field(default_factory=list)
     # Every role a person can be scheduled in (F1, D-15): their roster role,
     # the roles they hold (held_roles) and every role they have worked here.
     # {lower: set(role lower)}; holds() reads it by family. A role written
@@ -1448,6 +1461,12 @@ class Constraints:
     owner_person_close: list = field(default_factory=list)
     owner_weights: list = field(default_factory=list)
     typed_rules: list = field(default_factory=list)
+    # The readings of the owner's words nobody confirmed (blind re-audit
+    # 10/11/26 AI-8, contract #6): a preference only — swept as soft
+    # owner_ask_* breaches at the quality rank (owner_rules.
+    # proposal_violations), never a floor, cap, time, blocked day, fill
+    # exclusion or moved target. [typed rule + {"words"}].
+    owner_proposals: list = field(default_factory=list)
 
     # ── lookups ────────────────────────────────────────────────────────
     def key(self, name) -> str:
@@ -1950,20 +1969,21 @@ class Constraints:
                 continue
             if need and gap < need:
                 later = r if rs >= e else candidate      # the shift that starts inside the rest window
-                if mode == "consent_premium" and self.rest_waived(name, later.get("date")):
+                if mode == "consent_premium" and self.rest_waived(name, later.get("date"), later.get("shift_start")):
                     continue
                 return False, (f"{LABELS['rest_gap']} ({gap:.1f}h, needs {need:g}h"
                                + (" unless they agree to it in writing" if mode == "consent_premium" else "") + ")")
         return True, ""
 
-    def rest_waived(self, name_or_key, date_str) -> bool:
-        """Whether this person agreed in writing to a shorter rest before a
-        shift on `date_str` — a standing agreement, or one for that date
-        (staff_consent; MARKET-3)."""
-        w = (self.rest_waivers or {}).get(self.key(name_or_key))
-        if not w:
-            return False
-        return bool(w.get("standing")) or str(date_str or "")[:10] in (w.get("dates") or ())
+    def rest_waived(self, name_or_key, date_str, start=None) -> bool:
+        """Whether this person agreed in writing to a shorter rest before the
+        shift on `date_str` starting at `start` — a standing agreement, or
+        one for that very shift (staff_consent; MARKET-3). A waiver is bound
+        to the shift it was given for (schedule re-audit 10/11/26
+        BUGSLIFE-7): one for Tuesday's 7am never makes another Tuesday
+        turnaround read as consented."""
+        from staff_consent import waiver_allows
+        return waiver_allows((self.rest_waivers or {}).get(self.key(name_or_key)), date_str, start)
 
 
 def cert_key(cert) -> str:
@@ -2692,6 +2712,40 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
         c.linked = dict(idx.get("linked") or {})
     except Exception as exc:
         _input_problem(c, "who is who on the roster", exc)
+    # What the shift history itself says about who is who (schedule
+    # re-audit 10/11/26 STRESS-7, STRESS-8), read every build — not only
+    # once a question was filed: a name that took over another's role and
+    # days is one person to the sweep (hours, overtime, rest, days in a row)
+    # until the owner answers; one name worn by two people is said. Both
+    # reach the review (identity_concerns).
+    try:
+        import people
+        from models import _cached_shifts
+        _since = (min(c.week_dates) if c.week_dates else "")
+        try:
+            _since = (datetime.strptime(_since, "%Y-%m-%d") - timedelta(days=120)).strftime("%Y-%m-%d")
+        except ValueError:
+            _since = ""
+        found = people.identity_concerns([s for s in (_cached_shifts(restaurant_id) or [])
+                                          if str(s.get("date") or "")[:10] >= _since])
+    except Exception as exc:
+        found = []
+        print(f"[schedule_rules] identity concerns unread rid={restaurant_id}: {exc!r}")
+    c.identity_concerns = []
+    for f in found:
+        if f["kind"] == "handoff":
+            a, b = c.key(f["old"]), c.key(f["new"])
+            if a not in c.display or b not in c.display:
+                continue                       # one of them is not on the roster any more
+            ra, rb = c.linked.get(a, a), c.linked.get(b, b)
+            rep = min(ra, rb)
+            for k, v in list(c.linked.items()):
+                if v in (ra, rb):
+                    c.linked[k] = rep
+            c.linked[a] = c.linked[b] = c.linked[ra] = c.linked[rb] = rep
+        elif c.key(f["name"]) not in c.display:
+            continue
+        c.identity_concerns.append(f)
 
 
 def _file_under(c: "Constraints", source: str, name, detail: str = "") -> str:
@@ -4058,14 +4112,20 @@ def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
             return pair
         return frozenset(c.key(x) for x in pair)
     out = {k: {q for q in (_one(p) for p in ((pairs or {}).get(k) or ())) if len(q) == 2}
-           for k in ("prefer", "avoid", "private")}
+           for k in ("prefer", "avoid", "private", "proposed")}
     for p in (getattr(c, "owner_pairs", None) or []) if c is not None else []:
         pair = frozenset((p["a"].lower(), p["b"].lower()))
         out.setdefault(p["kind"], set()).add(pair)
         if p.get("private"):
             out["private"].add(pair)
-    if not out["private"]:
-        out.pop("private")
+        # A reading of the owner's words nobody confirmed (AI-8): scored as
+        # the pairing it reads as, said as not confirmed - never as the
+        # owner's own pairing.
+        if p.get("proposed"):
+            out["proposed"].add(pair)
+    for k in ("private", "proposed"):
+        if not out[k]:
+            out.pop(k)
     return out
 
 
@@ -4578,6 +4638,12 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
     if (getattr(c, "owner_person_on", None) or getattr(c, "owner_person_close", None)) and not person_only:
         import owner_rules as _owr
         out.extend(_owr.violations(rows, c, only_dates=({r.get("date") for r in rows or []} if day_only else None)))
+    # The readings nobody confirmed, kept as preferences (AI-8): soft, the
+    # quality rank.
+    if getattr(c, "owner_proposals", None) and not person_only:
+        import owner_rules as _owr_p
+        out.extend(_owr_p.proposal_violations(rows, c, only_dates=({r.get("date") for r in rows or []}
+                                                                    if day_only else None)))
 
     # coverage the owner set and the defaults every trading day needs
     # (NS5 M8): the role floors are hard, a keyholder stays until close
@@ -4851,7 +4917,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                         # for the hours of the later shift inside the rest
                         # window (MARKET-3, LOGIC-21): a priced soft flag.
                         if _rmode == "consent_premium" and c.rest_waived(r_cur.get("employee") or name,
-                                                                         r_cur.get("date")):
+                                                                         r_cur.get("date"), r_cur.get("shift_start")):
                             inside = round(max(0.0, min(need - gap, (e_cur - s_cur).total_seconds() / 3600)), 2)
                             out.append(_v("rest_premium", own_i, own_r,
                                           f"{gap:.1f}h {said}{_tail_note(other)}, under the {need:g}h rule — "
@@ -5994,8 +6060,7 @@ TIER_TABLE = (
      "availability and time off and the legal limits in 1b; overtime and the restaurant's own scheduling limits "
      "(2b) give way to it when no manager can cover a stretch inside them. Where MANAGER COVERAGE plans the "
      "managers' shifts, code adds those rows to your answer: do not write them, and write no other shift for "
-     "those managers on those dates; a stretch it says no manager can legally cover is staffed as usual, and the "
-     "owner is told."),
+     "those managers on those dates;"),
     (TIER_COVERAGE, "coverage", "First the staffing rules: the staffing floors, each role's closer and somebody "
      "on until close, and the hours a role may start and end by the RESTAURANT HOURS & SHIFT RULES (all [HARD]), "
      "and the owner's standing rules (OWNER_RULE, as their tags say)."),
@@ -6003,8 +6068,7 @@ TIER_TABLE = (
      "ceiling, the longest shift, days in a row and rest between shifts as the rules give them. They hold for "
      "everything below; 1a and 2a may go past them only for a shift nobody can cover inside them."),
     (TIER_OVERTIME, "overtime", "Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the "
-     "same role has room: overtime is a cost the owner does not want, only for a shift nobody else in the role "
-     "can legally work. Code holds it after you write — a bound, never a sum to work out."),
+     "same role has room: overtime only for a shift nobody else in the role can legally work."),
     # Bounds, never a fill order (scheduler audit 10/10/26 AI-12): the
     # min-hours and overtime stages hold them; the model was told to fill
     # "from the people still under their minimum hours first", a running
@@ -6015,9 +6079,8 @@ TIER_TABLE = (
     (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS, the people each role needs on each shift, with the "
      "floors the hard minimum inside them — met even when that costs more than the hours budget (4): the "
      "owner is told the overrun."),
-    (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling) — the code holds the week to its dollars "
-     "at each person's own rate, overtime at its premium: code trims to it after you write, never through 1-3; "
-     "it never adds hours."),
+    (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling), in dollars at each person's own rate: "
+     "code trims to it after you write, never through 1-3; it never adds hours."),
     (TIER_QUALITY, "quality", "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S "
      "REQUEST FOR THIS DRAFT first, then leadership (every shift that needs somebody to run it has one and every "
      "SHIFT LEADER REQUIREMENT is met — by WHO works the shifts 3 calls for, never by hours past the budget), "
@@ -6069,6 +6132,9 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "owner_word_off": TIER_COVERAGE, "owner_word_on": TIER_COVERAGE,
                "owner_word_close": TIER_COVERAGE,
                "owner_ask_on": TIER_QUALITY, "owner_ask_close": TIER_QUALITY,
+               # A reading nobody confirmed (AI-8): a preference, the quality rank.
+               "owner_ask_off": TIER_QUALITY, "owner_ask_max": TIER_QUALITY, "owner_ask_time": TIER_QUALITY,
+               "owner_ask_floor": TIER_QUALITY,
                # More servers on at once than there are sections — the
                # owner's own "most on at once", ranked with over_role_max:
                # with no tier no stage's judge saw a pass push a night past
@@ -6792,15 +6858,16 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         # The same rule PRIORITIES 1a states, in the same rank: it used to
         # call itself "above every other rule" — above the availability and
         # time off PRIORITIES puts first (schedule audit 10/3/26 PR-1).
+        # The rule itself is PRIORITIES 1a's (re-audit 10/11/26 AI-15: it was
+        # restated here at length, a third time); this line names who.
         lines.append(_rule("no_manager",
-                           "NON-NEGOTIABLE — PRIORITIES 1a, the owner's highest staffing rule: at every minute anybody "
-                           f"is on the schedule, at least ONE manager is on too. The managers: {_mg}."
+                           "NON-NEGOTIABLE — PRIORITIES 1a: at least ONE manager on at every minute anybody is on. "
+                           f"The managers: {_mg}."
                            + (" Somebody standing in as the manager counts on their dates (below)." if c.acting_managers else "")
-                           + " It gives way only to a manager's own availability, time off and legal limits. Every "
-                             "trading day has a manager from the first shift's start to the last shift's end — overlap "
-                             "them so there is never a gap, not even a few minutes."
                            + (" Their shifts are already planned: MANAGER COVERAGE, at the top, is fixed."
-                              if (manager_plan or {}).get("rows") else ""),
+                              if (manager_plan or {}).get("rows") else
+                              " Overlap them so there is never a gap from the first shift's start to the last "
+                              "shift's end."),
                            why="the owner's non-negotiable: somebody is always in charge of the floor"))
     if c.acting_managers:
         lines.extend(_acting_prompt_lines(c))
@@ -6914,8 +6981,11 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                     {"morning": " at lunch/day", "night": " at dinner/night"}.get(cap.get("daypart") or "", "")
                 bits.append(f"{_family_label(c, fam)} at most {int(cap['max'])} on at once{when}")
         lines.append(_rule("over_role_max", "Most of a role on at once: " + "; ".join(bits) + "."))
+    # A bound code holds, never a fill order (AI-12 10/10/26; re-audit
+    # 10/11/26 AI-15 — this line still said "fill from the people below
+    # theirs first" beside PRIORITIES 3b saying the opposite).
     lines.append(_rule("under_min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
-                       "full-time line): fill from the people below theirs first."))
+                       "full-time line)."))
     if c.stations:
         import kitchen_stations as _ks
         lines.extend(("- [SOFT] " + ln[2:]) if ln.startswith("- ") else ("- [SOFT] " + ln)

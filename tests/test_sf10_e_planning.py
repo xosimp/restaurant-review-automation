@@ -110,14 +110,21 @@ def test_the_planned_calls_stop_at_the_cap_and_keep_the_days_written(monkeypatch
 
 def test_routing_reads_the_evals_verdict_for_the_roster_size(db_path):
     assert schedule_eval.route_evidence(250, db_path=db_path) is None
-    schedule_eval.record_verdict("published_f1", "T4", "T3", (180, 10000),
-                                 {"diff": 0.04, "ci90": (0.01, 0.07), "weeks": 30, "restaurants": 11}, db_path=db_path)
+    # On the routing metric (pre-repair defects, fewer is better — re-audit
+    # 10/11/26 AI-3/AI-4): T4 below T3 is T4 better.
+    schedule_eval.record_verdict(schedule_eval.ROUTE_METRIC, "T4", "T3", (180, 10000),
+                                 {"diff": -0.4, "ci90": (-0.7, -0.1), "weeks": 30, "restaurants": 11},
+                                 db_path=db_path)
     why = schedule_eval.route_evidence(250, db_path=db_path)
     assert why and "T4 better for rosters of 180-10000" in why
     assert schedule_eval.route_evidence(67, db_path=db_path) is None          # another band: no evidence there
     # An interval that crosses zero names no winner, so it routes nothing.
-    schedule_eval.record_verdict("published_f1", "T4", "T3", (180, 10000),
+    schedule_eval.record_verdict(schedule_eval.ROUTE_METRIC, "T4", "T3", (180, 10000),
                                  {"diff": 0.01, "ci90": (-0.02, 0.04), "weeks": 30, "restaurants": 11}, db_path=db_path)
+    assert schedule_eval.route_evidence(250, db_path=db_path) is None
+    # Agreement with the published week no longer routes (it is anchored).
+    schedule_eval.record_verdict("published_f1", "T4", "T3", (180, 10000),
+                                 {"diff": 0.04, "ci90": (0.01, 0.07), "weeks": 30, "restaurants": 11}, db_path=db_path)
     assert schedule_eval.route_evidence(250, db_path=db_path) is None
 
 

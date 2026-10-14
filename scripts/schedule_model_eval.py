@@ -539,8 +539,14 @@ def estimate(weeks, arms) -> dict:
 
 # ── the frozen golden set (scheduler audit 10/10/26 RM-1) ──────────────────
 
-SET_METRICS = ("published_f1", "published_precision", "published_recall", "hours_l1_share", "hard",
-               "manager_minutes", "quality", "cost")
+# The pre-repair outcome first (schedule_eval.ROUTE_METRIC — re-audit 10/11/26
+# AI-3, AI-4: what the arm itself wrote, before the repair flattens it),
+# then how much the repair changed and the week after it, then agreement
+# with the published week (secondary: read in a pair only on weeks neither
+# arm drafted, schedule_eval.anchored).
+SET_METRICS = ("pre_repair_defects", "hard_before", "unmet_before", "manager_minutes_before", "rows_repaired",
+               "repair_seconds", "hard", "manager_minutes", "quality", "hours_over_budget_share", "cost",
+               "published_f1", "published_precision", "published_recall", "hours_l1_share")
 
 
 def _item_ctx(item) -> dict:
@@ -572,11 +578,19 @@ def arm_rows(item, arm, call_model=None) -> tuple:
             rows = se_.code_arm_rows("solver", item)
             ctx = item.get("context") or {}
             got = _scr.review(item.get("restaurant_id"), rows, ctx.get("constraints"),
-                              last_week_rows=(item.get("base") or {}).get("rows"),
+                              last_week_rows=(item.get("base") or {}).get("rows"), signals=ctx.get("signals"),
                               call=(lambda req: call_model(req)) if call_model is not None else None)
-            return got["rows"], 0.0, round(time.time() - t0, 1), got.get("error")
+            # The critic's calls as metered (AI-6: it was reported free, which
+            # flattered the code+critic arm's cost per week).
+            cost = round(_cost(got.get("model") or "", got.get("usage") or {}), 4) if got.get("calls") else 0.0
+            return got["rows"], cost, round(time.time() - t0, 1), got.get("error")
         except Exception as e:
             return [], 0.0, round(time.time() - t0, 1), f"{type(e).__name__}: {e}"[:300]
+    if arm["name"] == se_.NO_LEARNING_ARM:
+        # The stored answers, scored with nothing learned (run_set scores this
+        # arm against schedule_eval.without_learning(item) — LEARNING-14).
+        rows = _merge_rows(calls, production_result(calls))
+        return rows, 0.0, round(time.time() - t0, 1), None
     results = production_result(calls) if arm["name"] == PRODUCTION else \
         [replay_call(call, arm, call_model or default_call_model) for call in calls]
     rows = _merge_rows(calls, results)
@@ -600,16 +614,18 @@ def run_set(items, arms, runs=None, call_model=None, live=False, run_key=None, v
     "pairs": {arm: {metric: diff vs baseline}}, "short": [...], "runs": [...]}."""
     import schedule_eval as se_
     runs = int(runs or se_.RUNS_PER_ARM)
-    plan = [a for a in arms if a["name"] in (PRODUCTION,) + se_.CODE_ARMS or live or call_model is not None]
+    plan = [a for a in arms if a["name"] in (PRODUCTION, se_.NO_LEARNING_ARM) + se_.CODE_ARMS or live
+            or call_model is not None]
     out_runs = []
     for item in items:
         for arm in plan:
             for i in range(runs):
                 rows, cost, secs, err = arm_rows(item, arm, call_model=call_model)
-                m = se_.score_arm(rows, item) if not err or rows else {"error": err}
+                scored_on = se_.without_learning(item) if arm["name"] == se_.NO_LEARNING_ARM else item
+                m = se_.score_arm(rows, scored_on) if not err or rows else {"error": err}
                 m.update(cost=cost, seconds=secs, error=err)
                 rec = {"arm": arm["name"], "item_key": item["item_key"], "restaurant_id": item.get("restaurant_id"),
-                       "run_index": i, "metrics": m}
+                       "run_index": i, "metrics": m, "drafted_by": item.get("drafted_by") or ""}
                 out_runs.append(rec)
                 if store and run_key:
                     se_.record_run(run_key, version, item["item_key"], arm["name"], i, m, cost_usd=cost,
@@ -622,11 +638,15 @@ def run_set(items, arms, runs=None, call_model=None, live=False, run_key=None, v
     return report
 
 
-def record_verdicts(report, items, arm_a, arm_b, metric=None, version=None, run_key=None, db_path=None) -> list:
-    """One schedule_eval verdict per roster-size band the items span, of
+def record_verdicts(report, items, arm_a, arm_b, metric=None, version=None, run_key=None, tags=(),
+                    db_path=None) -> list:
+    """One schedule_eval verdict per roster-size band the items span — and
+    one per ROUTE_TAG in `tags` over the items carrying it (AI-27) — of
     arm_a against arm_b on `metric` (schedule_eval.ROUTE_METRIC by default):
     what the router reads (AI-3). Not recorded while any arm is short of
-    its runs."""
+    its runs; a band or tag under the floors (schedule_eval.
+    MIN_VERDICT_WEEKS / MIN_VERDICT_RESTAURANTS) is stored with no winner
+    and says why (AI-5)."""
     import schedule_eval as se_
     if report.get("short"):
         raise ValueError("not every arm ran RUNS_PER_ARM times on every item — no verdict")
@@ -650,15 +670,25 @@ def record_verdicts(report, items, arm_a, arm_b, metric=None, version=None, run_
         runs = [r for r in report["runs"] if r["item_key"] in keys]
         out.append(se_.record_verdict(metric, arm_a, arm_b, band, se_.summarize_pair(runs, name_a, name_b, metric),
                                       version=version, run_key=run_key, db_path=db_path))
+    for tag in tags or ():
+        if tag not in se_.ROUTE_TAGS:
+            raise ValueError(f"unknown tag {tag!r} (one of {', '.join(se_.ROUTE_TAGS)})")
+        keys = {it["item_key"] for it in items if tag in (it.get("tags") or [])}
+        runs = [r for r in report["runs"] if r["item_key"] in keys]
+        out.append(se_.record_verdict(metric, arm_a, arm_b, (0, 10000),
+                                      se_.summarize_pair(runs, name_a, name_b, metric), version=version,
+                                      run_key=run_key, tag=tag, db_path=db_path))
     return out
 
 
+_SET_COLUMNS = ("pre_repair_defects", "rows_repaired", "hard", "quality", "cost", "published_f1")
+
+
 def _print_set(report):
-    print("arm".ljust(28) + "".join(f"{k:>22}" for k in ("published_f1", "hours_l1_share", "hard", "quality",
-                                                           "cost")))
+    print("arm".ljust(28) + "".join(f"{k:>22}" for k in _SET_COLUMNS))
     for name, s in report["arms"].items():
         cells = []
-        for k in ("published_f1", "hours_l1_share", "hard", "quality", "cost"):
+        for k in _SET_COLUMNS:
             v = s.get(k) or {}
             ci = v.get("ci90")
             cells.append(("-" if v.get("mean") is None else f"{v['mean']:.3f}")
@@ -708,10 +738,13 @@ def main(argv=None):
     ap.add_argument("--set", metavar="VERSION", help="run the arms on the frozen set VERSION instead of stored weeks")
     ap.add_argument("--tags", help="only the set's items carrying all these tags (comma-separated)")
     ap.add_argument("--runs", type=int, help="runs per arm per week (default schedule_eval.RUNS_PER_ARM, 3)")
-    ap.add_argument("--code-arms", default="carry_forward,solver,solver_v0",
-                    help="no-model arms to run on the set (schedule_eval.CODE_ARMS)")
+    ap.add_argument("--code-arms", default="carry_forward,solver,solver_v0,production_no_learning",
+                    help="no-model arms to run on the set (schedule_eval.CODE_ARMS, and production_no_learning: "
+                         "the stored answers scored with nothing learned - LEARNING-14)")
     ap.add_argument("--store", action="store_true", help="keep each run in schedule_eval_runs")
     ap.add_argument("--verdict", help="A,B: record A against B per roster-size band (the router reads T4,T3)")
+    ap.add_argument("--verdict-tags", help="also record A against B for these kinds of week "
+                                           "(schedule_eval.ROUTE_TAGS, comma-separated: holiday,first_week,...)")
     args = ap.parse_args(argv)
 
     if args.freeze:
@@ -729,6 +762,12 @@ def main(argv=None):
         items = se_.load_items(args.set, tags=[t for t in (args.tags or "").split(",") if t.strip()] or None)
         if not items:
             ap.error(f"no items in the frozen set {args.set!r}")
+        ready = se_.set_readiness(items)
+        print(f"set {args.set}: {len(items)} week(s); a verdict needs {ready['need']['weeks']} weeks from "
+              f"{ready['need']['restaurants']} restaurants per band or tag")
+        for label, cell in list(ready["bands"].items()) + list(ready["tags"].items()):
+            print(f"  {label}: {cell['weeks']} weeks, {cell['restaurants']} restaurants"
+                  + ("" if cell["ready"] else " — not enough for a verdict"))
         prompts = [p.strip() for p in args.prompts.split(",") if p.strip()]
         arms = [{"name": PRODUCTION}] + [{"name": a.strip()} for a in args.code_arms.split(",") if a.strip()]
         if args.tiers:
@@ -742,8 +781,12 @@ def main(argv=None):
         _print_set(report)
         if args.verdict:
             a, _, b = args.verdict.partition(",")
-            for v in record_verdicts(report, items, a.strip(), b.strip(), version=args.set, run_key=run_key):
-                print(f"verdict {v['arm_a']} vs {v['arm_b']} {v['band_lo']}-{v['band_hi']}: {v['winner'] or 'none'}")
+            vtags = [t.strip() for t in (args.verdict_tags or "").split(",") if t.strip()]
+            for v in record_verdicts(report, items, a.strip(), b.strip(), version=args.set, run_key=run_key,
+                                     tags=vtags):
+                where = v.get("tag") or f"{v['band_lo']}-{v['band_hi']}"
+                print(f"verdict {v['arm_a']} vs {v['arm_b']} {where}: {v['winner'] or 'none'}"
+                      + (f" ({v['note']})" if v.get("note") else ""))
         if args.json:
             with open(args.json, "w") as f:
                 json.dump(report, f, indent=1, default=str)

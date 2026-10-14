@@ -39,6 +39,7 @@ from datetime import date, datetime, timedelta
 
 from models import DB_PATH
 import models as _models
+import schedule_rows as _srows
 
 STATUSES = ("pending", "approved", "open", "denied", "declined", "covered", "withdrawn",
             "cancelled", "expired")
@@ -76,6 +77,17 @@ class RestConsentNeeded(ShiftRequestError):
     def __init__(self, consent):
         super().__init__(consent.get("text") or "this needs your written consent to a short turnaround")
         self.consent = consent
+
+
+class ManagerGapRefused(ShiftRequestError):
+    """Approving the drop leaves part of the day with no manager on the
+    floor — the owner's highest rule (schedule re-audit 10/11/26 STRESS-16).
+    It is approved only with a named cover (`replacement`) or the person who
+    runs the floor instead (`covered_by`, the owner counts). `gap` is the
+    sentence to show."""
+    def __init__(self, gap):
+        super().__init__(gap)
+        self.gap = gap
 
 
 class NotOnApp(ShiftRequestError):
@@ -193,6 +205,57 @@ def _find(rows, name, day, start, spellings=None):
                  and " ".join(r["employee"].lower().split()) in keys), None)
 
 
+def _by_id(rows, shift_id):
+    """The index of the row carrying `shift_id`, or None."""
+    sid = str(shift_id or "").strip().lower()
+    if not _srows.valid_id(sid):
+        return None
+    return next((i for i, r in enumerate(rows) if str(r.get("shift_id") or "").strip().lower() == sid), None)
+
+
+def _holds(row, name, person_id=None, spellings=None) -> bool:
+    """Whether `row` is held by the person `name` means: by people id when
+    both carry one, else by the name (case and spacing ignored) or one of
+    the person's spellings (a rename)."""
+    pid = str(row.get("person_id") or "").strip()
+    if person_id not in (None, "") and pid:
+        try:
+            return int(pid) == int(person_id)
+        except (TypeError, ValueError):
+            pass
+    k = _key(row.get("employee"))
+    if k and k == _key(name):
+        return True
+    return bool(k) and k in {_key(s) for s in spellings or ()}
+
+
+def _leg_index(rows, req, target=False, spellings=None):
+    """The index in `rows` of one leg of a request — the holder's shift, or
+    (`target`) a swap colleague's — by the shift's id while that shift is
+    still the person's (schedule re-audit 10/11/26 ARCH-6: a retime, a
+    rename or a re-publish no longer loses it); a request from before ids,
+    or one whose id the week no longer has, by (name, date, start). None
+    when the shift is gone or now somebody else's."""
+    p = "target_" if target else ""
+    name = req.get("target_name" if target else "employee_name")
+    pid = req.get("target_person_id" if target else "person_id")
+    i = _by_id(rows, req.get(p + "shift_id"))
+    if i is not None:
+        return i if _holds(rows[i], name, pid, spellings) else None
+    return _find(rows, name, req.get(p + "date"), req.get("target_start" if target else "shift_start"),
+                 spellings=spellings)
+
+
+def _id_of(row):
+    """A row's (shift id or None, person id or None) for a request to keep."""
+    sid = str(row.get("shift_id") or "").strip().lower()
+    try:
+        pid = int(row.get("person_id")) if str(row.get("person_id") or "").strip() else None
+    except (TypeError, ValueError):
+        pid = None
+    return (sid if _srows.valid_id(sid) else None), pid
+
+
 def _spellings(restaurant_id, name, db_path=None) -> set:
     """Every spelling of the one person `name` means (people.spellings), or
     just the name. Never raises."""
@@ -209,15 +272,24 @@ def _clean(text, n=200):
     return " ".join(str(text or "").split())[:n] or None
 
 
-def _live_on_shift(conn, restaurant_id, name, day, start, exclude_id=None):
+def _live_on_shift(conn, restaurant_id, name, day, start, exclude_id=None, shift_id=None):
     """Live requests about one person's shift: as the holder, or as the
-    colleague's side of a swap."""
+    colleague's side of a swap — by the shift's id (ARCH-6: whatever
+    spelling a request was stored under, a swap's target leg included), and
+    by the row's (name, date, start) for requests from before ids. Callers
+    pass the ROW's spelling, never the login's (BUGSLIFE-18)."""
+    sid = str(shift_id or "").strip().lower()
+    by_id = ""
+    args = [restaurant_id, int(exclude_id or 0), (name or "").strip().lower(), day, start,
+            (name or "").strip().lower(), day, start]
+    if _srows.valid_id(sid):
+        by_id = " OR shift_id=? OR (kind='swap' AND target_shift_id=?)"
+        args += [sid, sid]
     rows = conn.execute(
         "SELECT * FROM shift_change_requests WHERE restaurant_id=? AND id<>? AND status IN " + _LIVE_SQL + " AND "
         "((lower(trim(employee_name))=? AND date=? AND shift_start=?) OR "
-        "(kind='swap' AND lower(trim(target_name))=? AND target_date=? AND target_start=?))",
-        (restaurant_id, int(exclude_id or 0), (name or "").strip().lower(), day, start,
-         (name or "").strip().lower(), day, start)).fetchall()
+        "(kind='swap' AND lower(trim(target_name))=? AND target_date=? AND target_start=?)" + by_id + ")",
+        tuple(args)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -278,12 +350,15 @@ def request_drop(restaurant_id, employee_name, day, shift_start, reason=None, db
         # keys on the shift, not the published row: a republish gave the
         # week a new id and the same shift could carry two requests (LG-09).
         conn.execute("BEGIN IMMEDIATE")
-        if _live_on_shift(conn, restaurant_id, name, d.isoformat(), mine_["shift_start"]):
+        # The row's own spelling and the shift's id (BUGSLIFE-18, ARCH-6):
+        # the login's spelling missed a pending swap stored under the row's.
+        sid, pid = _id_of(mine_)
+        if _live_on_shift(conn, restaurant_id, mine_["employee"], d.isoformat(), mine_["shift_start"], shift_id=sid):
             raise ShiftRequestError("you already asked about that shift")
         rid_ = _insert_request(conn, {
             "restaurant_id": restaurant_id, "history_id": pub["id"], "employee_name": mine_["employee"],
             "date": d.isoformat(), "shift_start": mine_["shift_start"], "shift_end": mine_["shift_end"],
-            "role": mine_["role"], "reason": _clean(reason)})
+            "role": mine_["role"], "reason": _clean(reason), "shift_id": sid, "person_id": pid})
         conn.commit()
         row = conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (rid_,)).fetchone()
     except BaseException:
@@ -350,15 +425,19 @@ def request_swap(restaurant_id, employee_name, day, shift_start, target_name, ta
         # The duplicate check and the insert are one write transaction: a
         # double tap used to pass the check twice (DATA-35 / MOD-EMP-9).
         conn.execute("BEGIN IMMEDIATE")
-        if _live_on_shift(conn, restaurant_id, name, d.isoformat(), mine_["shift_start"]):
+        sid, pid = _id_of(mine_)
+        tsid, tpid = _id_of(theirs)
+        if _live_on_shift(conn, restaurant_id, mine_["employee"], d.isoformat(), mine_["shift_start"], shift_id=sid):
             raise ShiftRequestError("you already asked about that shift")
-        if _live_on_shift(conn, restaurant_id, theirs["employee"], td.isoformat(), theirs["shift_start"]):
+        if _live_on_shift(conn, restaurant_id, theirs["employee"], td.isoformat(), theirs["shift_start"],
+                          shift_id=tsid):
             raise ShiftRequestError(f"{theirs['employee']}'s shift already has a request on it")
         rid_ = _insert_request(conn, {
             "restaurant_id": restaurant_id, "history_id": pub["id"], "employee_name": mine_["employee"],
             "date": d.isoformat(), "shift_start": mine_["shift_start"], "shift_end": mine_["shift_end"],
             "role": mine_["role"], "reason": _clean(reason), "kind": "swap", "target_name": theirs["employee"],
-            "target_date": td.isoformat(), "target_start": theirs["shift_start"], "target_end": theirs["shift_end"]})
+            "target_date": td.isoformat(), "target_start": theirs["shift_start"], "target_end": theirs["shift_end"],
+            "shift_id": sid, "person_id": pid, "target_shift_id": tsid, "target_person_id": tpid})
         conn.commit()
         row = dict(conn.execute("SELECT * FROM shift_change_requests WHERE id=?", (rid_,)).fetchone())
     except BaseException:
@@ -637,14 +716,30 @@ def shift_release(restaurant_id, day, db_path=DB_PATH, restaurant=None) -> list:
     conn = get_conn(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, kind, status, employee_name, shift_start, shift_end, replacement_name, decided_at, "
-            "created_at FROM shift_change_requests WHERE restaurant_id=? AND date=? "
+            "SELECT id, kind, status, employee_name, date, shift_start, shift_end, replacement_name, decided_at, "
+            "created_at, shift_id, target_name, target_date, target_start, target_shift_id "
+            "FROM shift_change_requests WHERE restaurant_id=? AND date=? "
             "AND status IN ('covered','open','expired','pending','denied') ORDER BY id DESC",
             (restaurant_id, iso)).fetchall()]
     finally:
         conn.close()
+    # A cover counts only while the week staff have still shows it (schedule
+    # re-audit 10/11/26 BUGSLIFE-2): the holder back on the shift — a
+    # replacement publish, a trade back, a reassign sent to staff — is the
+    # holder expected, never "covered by" someone who is not on it.
+    live_rows = None
+    if any(r.get("status") == "covered" for r in rows):
+        try:
+            import schedule_shifts
+            live_rows, _hid = schedule_shifts.live_shifts_on(restaurant_id, iso,
+                                                            db_path=None if db_path == DB_PATH else db_path)
+        except Exception as e:
+            print(f"[shift_requests] live week unread for releases rid={restaurant_id}: {e!r}")
+            live_rows = None
     out = []
     for r in rows:
+        if r.get("status") == "covered" and live_rows is not None and not _cover_holds(live_rows, r):
+            continue
         holder = " ".join(str(r.get("employee_name") or "").split())
         if not holder:
             continue                       # an extra shift nobody held
@@ -728,13 +823,16 @@ def _clock(iso_dt) -> str:
     return f"{(t.hour % 12) or 12}:{t.minute:02d}{'am' if t.hour < 12 else 'pm'}"
 
 
-def release_marks(restaurant_id, rows, db_path=DB_PATH) -> dict:
+def release_marks(restaurant_id, rows, db_path=DB_PATH, include_time_off=True) -> dict:
     """{index into rows: shift_release entry} for every row of a live week
     whose holder is excused from it — an approved drop nobody has claimed,
     a shift a manager posted open before it began, approved time off over
     it. One reading of who is really on, for every reader that counts the
     live week (schedule audit 10/10/26 BUGSLIFE-12). A covered shift is
-    already the taker's row. Never raises: {} when it can't be read."""
+    already the taker's row. `include_time_off` False leaves a row under
+    approved time off as it is — the publish gate's sweep names that as the
+    breach it is (schedule re-audit 10/11/26 STRESS-16). Never raises: {}
+    when it can't be read."""
     out, by_day = {}, {}
     for i, r in enumerate(rows or []):
         if (r.get("employee") or "").strip() and r.get("date"):
@@ -750,17 +848,18 @@ def release_marks(restaurant_id, rows, db_path=DB_PATH) -> dict:
         for i in idxs:
             r = rows[i]
             hit = released_for(rel, r.get("employee"), r.get("shift_start"), r.get("shift_end"))
-            if hit and hit["outcome"] == "excused":
+            if hit and hit["outcome"] == "excused" and (include_time_off or hit.get("kind") != "time_off"):
                 out[i] = hit
     return out
 
 
-def effective_rows(restaurant_id, rows, db_path=DB_PATH) -> list:
+def effective_rows(restaurant_id, rows, db_path=DB_PATH, include_time_off=True) -> list:
     """The live week as it will really run: each row whose holder is excused
     (release_marks) left unheld — employee "" with `released_holder` and
     `release` ({kind, status, request_id}) — every other row as it is.
-    Copies; the stored week is never changed here (BUGSLIFE-12)."""
-    marks = release_marks(restaurant_id, rows, db_path=db_path)
+    Copies; the stored week is never changed here (BUGSLIFE-12). The publish
+    gate sweeps these (STRESS-16), with `include_time_off` False."""
+    marks = release_marks(restaurant_id, rows, db_path=db_path, include_time_off=include_time_off)
     out = []
     for i, r in enumerate(rows or []):
         hit = marks.get(i)
@@ -822,9 +921,29 @@ def _vanished(restaurant_id, row, db_path):
     finally:
         conn.close()
     rows = rows_from_csv(hist["schedule_csv"]) if hist else []
-    if _find(rows, row["employee_name"], row["date"], row["shift_start"]) is None:
+    i = _leg_index(rows, row)
+    if i is None:
         raise ShiftRequestError("that shift is no longer on the schedule — the week changed after this was asked. "
                                 "Deny it to close it")
+    # The same shift by its id, retimed since it was asked (schedule
+    # re-audit 10/11/26 ARCH-6): the request follows it — the decision is
+    # about the shift as it is now, and every notice names that time.
+    r = rows[i]
+    moved = {k: v for k, v in (("date", r.get("date")), ("shift_start", r.get("shift_start")),
+                               ("shift_end", r.get("shift_end"))) if str(row.get(k) or "") != str(v or "")}
+    if moved:
+        conn = get_conn(db_path)
+        try:
+            conn.execute("UPDATE shift_change_requests SET " + ", ".join(f"{k}=?" for k in moved)
+                         + " WHERE id=? AND status=?", (*moved.values(), row["id"], row["status"]))
+            conn.commit()
+        except Exception as e:
+            if "UNIQUE" not in str(e).upper():
+                raise
+            raise ShiftRequestError("that shift moved onto another request — deny this one to close it")
+        finally:
+            conn.close()
+        row.update(moved)
 
 
 def drop_warning(restaurant_id, req, db_path=DB_PATH, rows=None, constraints=None):
@@ -888,7 +1007,7 @@ def drop_manager_gap(restaurant_id, req, db_path=DB_PATH):
 
 
 def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None, note=None, db_path=DB_PATH,
-           now=None, today=None, decided_how="manager"):
+           now=None, today=None, decided_how="manager", covered_by=None):
     """The manager's answer. Approving makes the shift open (or covers it
     outright when a replacement is named — checked before anything changes,
     so an illegal name leaves the request pending, SCHED-20); denying leaves
@@ -906,7 +1025,16 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
     what lets them off it: the live clock-in check and the attendance record
     read it as excused, never a no-show (shift_release, schedule audit
     10/3/26 E-5). decided_at is that approval's mark, kept when the open
-    shift later expires."""
+    shift later expires.
+
+    A drop that would leave part of the day with no manager on the floor is
+    never approved on a warning (schedule re-audit 10/11/26 STRESS-16): one
+    tap opened an 11-hour manager gap that every later check read as
+    covered. It needs a named cover (`replacement`, judged like any cover)
+    or `covered_by` — who runs the floor instead, the owner included — kept
+    on the request (floor_covered_by); else ManagerGapRefused, and nothing
+    changes. The automatic approval never names one, so it leaves such a
+    drop with a manager."""
     who = (decided_by or "").strip()[:120] or None
     note = _clean(note)
     conn = get_conn(db_path)
@@ -946,12 +1074,20 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
     # (RULES-15 asked the manager rule alone; BUGSLIFE-13): said with the
     # answer and to the managers, never silently.
     gap, gap_kind = drop_warning(restaurant_id, row, db_path) if approve else (None, None)
+    floor = (covered_by or "").strip()[:120] or None
+    if gap and gap_kind == "no_manager" and not floor:
+        # The owner's highest rule (STRESS-16): never on a warning alone.
+        said = gap[:1].upper() + gap[1:]
+        raise ManagerGapRefused(said.replace("— name a manager to cover it",
+                                             "— name a manager to cover it, or who runs the floor instead"))
     status = "open" if approve else "denied"
     conn = get_conn(db_path)
     try:
         cur = conn.execute("UPDATE shift_change_requests SET status=?, decided_by=?, decided_at=datetime('now'), "
-                           "decision_note=?, decided_how=? WHERE id=? AND restaurant_id=? AND status='pending'",
-                           (status, who, note, decided_how, row["id"], restaurant_id))
+                           "decision_note=?, decided_how=?, floor_covered_by=? WHERE id=? AND restaurant_id=? "
+                           "AND status='pending'",
+                           (status, who, note, decided_how, floor if gap_kind == "no_manager" else None, row["id"],
+                            restaurant_id))
         conn.commit()
         if cur.rowcount != 1:
             return None
@@ -966,7 +1102,10 @@ def decide(restaurant_id, request_id, approve, decided_by=None, replacement=None
         said = gap[:1].upper() + gap[1:]
         out = dict(out, drop_warning=said, drop_warning_kind=gap_kind)
         if gap_kind == "no_manager":
-            out["manager_gap"] = said
+            # Approved only because the decider named who runs the floor.
+            gap = gap.replace(" — name a manager to cover it", "") + f"; {floor} runs the floor instead"
+            said = gap[:1].upper() + gap[1:]
+            out = dict(out, drop_warning=said, manager_gap=said, floor_covered_by=floor)
         _tell_managers(restaurant_id, "No manager on" if gap_kind == "no_manager" else "Shift left short",
                        f"{out.get('employee_name')}'s drop of {_when(out)} is approved — {gap}.", db_path)
     return out
@@ -982,12 +1121,13 @@ def decide_held_claim(restaurant_id, row, approve, decided_by=None, note=None, d
     if approve:
         out = _cover(restaurant_id, row, claimant, actor=decided_by or "manager", from_status="open",
                      check_role=True, db_path=db_path, now=now, today=today, note=note,
-                     until="end" if (row.get("kind") or "") == "post" else "start")
+                     until="end" if (row.get("kind") or "") == "post" else "start",
+                     consent_rest=True if row.get("held_consent_rest") else None)
         return dict(out, held_claim_approved=claimant)
     conn = get_conn(db_path)
     try:
         cur = conn.execute("UPDATE shift_change_requests SET held_claimant=NULL, held_claim_at=NULL, "
-                           "held_claim_note=NULL WHERE id=? AND restaurant_id=? AND status='open' "
+                           "held_claim_note=NULL, held_consent_rest=NULL WHERE id=? AND restaurant_id=? AND status='open' "
                            "AND lower(trim(held_claimant))=?", (row["id"], restaurant_id, claimant.lower()))
         conn.commit()
         if cur.rowcount != 1:
@@ -1055,12 +1195,20 @@ def trade_back(restaurant_id, back: dict, actor=None, db_path=DB_PATH, now=None)
                 conn.rollback()
                 continue
             rows = [dict(r) for r in judged]
-            rows[a] = dict(rows[a], employee=back["target_name"])
-            rows[b] = dict(rows[b], employee=back["employee_name"])
+            rows[a] = dict(rows[a], employee=back["target_name"], person_id="")
+            rows[b] = dict(rows[b], employee=back["employee_name"], person_id="")
+            # The swap traded back no longer covers anything (BUGSLIFE-2):
+            # closed in this write, so shift_release never reads either
+            # person as covered by the other; "swapped_back" tells them.
+            if back.get("id"):
+                conn.execute("UPDATE shift_change_requests SET status='cancelled', decided_at=datetime('now'), "
+                             "decision_note=? WHERE id=? AND restaurant_id=? AND status='covered'",
+                             (f"Traded back by {(actor or 'your manager')[:60]}.", int(back["id"]), restaurant_id))
             write_on(conn, restaurant_id, hist["id"], "swap", _rows_to_csv_text(rows), saved_by=(actor or "manager"))
-            _move_section(conn, restaurant_id, back["date"], back["shift_start"], back["employee_name"], back["target_name"])
+            _move_section(conn, restaurant_id, back["date"], back["shift_start"], back["employee_name"], back["target_name"],
+                          shift_id=rows[a].get("shift_id"))
             _move_section(conn, restaurant_id, back["target_date"], back["target_start"], back["target_name"],
-                          back["employee_name"])
+                          back["employee_name"], shift_id=rows[b].get("shift_id"))
             conn.commit()
             break
         except BaseException:
@@ -1070,6 +1218,7 @@ def trade_back(restaurant_id, back: dict, actor=None, db_path=DB_PATH, now=None)
             conn.close()
     else:
         raise ShiftRequestError("the schedule kept changing — try again")
+    after_live_write(restaurant_id, hist["id"], actor=actor, db_path=db_path)
     _refresh_task_sheets(restaurant_id, [back["date"], back["target_date"]])
     _notify(restaurant_id, "swapped_back", back, db_path=db_path)
     return True
@@ -1124,7 +1273,7 @@ def _locate(rows, row):
     if _is_extra(row):
         trial = [dict(r) for r in rows] + [_extra_row(row)]
         return trial, len(trial) - 1
-    return rows, _find(rows, row["employee_name"], row["date"], row["shift_start"])
+    return rows, _leg_index(rows, row)
 
 
 COVER_CANDIDATES_LIMIT = 60
@@ -1204,8 +1353,12 @@ def _rest_consent(restaurant_id, rows, idx, name, db_path=None):
     if not short:
         return None
     gap, later, earlier = short
-    w = c.rest_waivers.setdefault(c.key(name), {"standing": False, "dates": set()})
-    w["dates"] = set(w.get("dates") or ()) | {later.get("date")}
+    # The waiver the person would give binds to the one shift that starts
+    # inside the rest window (BUGSLIFE-7) — judged here in memory only;
+    # nothing is recorded until the claim writes the week (_cover).
+    w = c.rest_waivers.setdefault(c.key(name), {"standing": False, "dates": set(), "shifts": {}})
+    later_m = _sr.parse_minutes(later.get("shift_start") or "")
+    w.setdefault("shifts", {}).setdefault(later.get("date"), set()).add(later_m)
     ok, _why = _se.replacement_is_legal(restaurant_id, rows, idx, name, constraints=c)
     if not ok:
         return None
@@ -1216,15 +1369,29 @@ def _rest_consent(restaurant_id, rows, idx, name, db_path=None):
             f"{gap:.1f} hours' rest after my {earlier.get('shift_start')}–{earlier.get('shift_end')} shift on "
             f"{mdy(earlier.get('date'))}, less than the {need:g} hours the rest rule gives me, paid at {premium}.")
     return {"kind": "rest_waiver", "date": later.get("date"), "text": text, "gap_hours": round(gap, 2),
-            "need_hours": need, "premium": premium}
+            "need_hours": need, "premium": premium,
+            # the one shift it is for: the later of the two (it starts inside the rest window)
+            "shift": {"date": later.get("date"), "start": later.get("shift_start"), "end": later.get("shift_end"),
+                      "shift_id": (str(later.get("shift_id") or "").lower() or None)}}
 
 
-def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep=None, consent_rest=None):
+def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep=None, consent_rest=None,
+           consent_out=None, visitor_home=None):
     """(hist, rows, idx): raise unless `name` may take this request's shift
     on the live week — the claim's own check, shared by the offer, the open
     board's label and the claim itself. With `keep` (a dict) the week's
     Constraints and prepared sweep are left in it ("constraints",
-    "prepared") for a caller that asks more of the same week."""
+    "prepared") for a caller that asks more of the same week.
+
+    `consent_rest` True: the claimant agrees in writing to a short
+    turnaround the rest rule allows with consent — judged with that waiver
+    bound to the one shift, in memory; the consent to record is left in
+    `consent_out["consent"]` for the caller to write INSIDE the transaction
+    that writes the week (BUGSLIFE-7). Nothing is recorded here.
+
+    `visitor_home`: the claimant is from that sibling location (a
+    cross-site yes, BUGSLIFE-10) — judged by cross_site.judge, this site's
+    rules with their own facts and hours at home."""
     from schedule_versions import rows_from_csv
     import schedule_engine as _se
     if name.lower() == (row["employee_name"] or "").strip().lower():
@@ -1243,6 +1410,13 @@ def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep
         ok, why = _role_ok(restaurant_id, rows, rows[idx], name, db_path)
         if not ok:
             raise ShiftRequestError(why)
+    if visitor_home is not None:
+        import cross_site
+        ok, why = cross_site.judge(restaurant_id, row, visitor_home, name, rows=rows, idx=idx,
+                                   db_path=None if db_path == DB_PATH else db_path)
+        if not ok:
+            raise ShiftRequestError(f"you can't take it now: {why}")
+        return hist, rows, idx
     prepared = None
     if keep is not None:
         try:
@@ -1257,21 +1431,18 @@ def _judge(restaurant_id, row, name, check_role, db_path, constraints=None, keep
     if not ok:
         # Under a consent rest rule a claim refused only for a short
         # turnaround asks for the claimant's written consent
-        # (RestConsentNeeded), unless `consent_rest` is True — then it is
-        # recorded (staff_consent, time-stamped) and the claim goes through:
-        # one tap (schedule audit 10/10/26 MARKET-3).
+        # (RestConsentNeeded), unless `consent_rest` is True — then the claim
+        # is legal with the waiver bound to that one shift, and the consent
+        # is handed back to be recorded in the same transaction as the cover
+        # (schedule audit 10/10/26 MARKET-3; re-audit 10/11/26 BUGSLIFE-7:
+        # it used to be written here, before the claim had won, so a lost
+        # race or an overtime hold left an agreed waiver behind).
         if consent_rest is not None:
             consent = _rest_consent(restaurant_id, rows, idx, name, db_path=db_path)
             if consent and consent_rest is True:
-                import staff_consent as _consent
-                _consent.record(restaurant_id, name, "rest_waiver", consent["text"], subject_date=consent["date"],
-                                subject={"gap_hours": consent["gap_hours"], "need_hours": consent["need_hours"],
-                                         "request_id": row.get("id")},
-                                channel="app", source_ref=f"request:{row.get('id')}",
-                                db_path=None if db_path == DB_PATH else db_path)
-                ok, why = _se.replacement_is_legal(restaurant_id, rows, idx, name)
-                if ok:
-                    return hist, rows, idx
+                if consent_out is not None:
+                    consent_out["consent"] = consent
+                return hist, rows, idx
             elif consent:
                 raise RestConsentNeeded(consent)
         raise ShiftRequestError(why or f"{name} cannot take that shift")
@@ -1356,12 +1527,15 @@ def claim(restaurant_id, request_id, claimant, actor=None, db_path=DB_PATH, toda
 def _cancel_dependents(conn, restaurant_id, moved, except_id):
     """Every other live request about a shift that just changed hands is
     void — it named a shift its holder no longer has (LG-10). `moved` is
-    [(holder, date, start)]. Returns the cancelled rows (to be told)."""
+    [(holder, date, start[, shift_id])] — by the shift's id too (ARCH-6).
+    Returns the cancelled rows (to be told)."""
     out = []
-    for holder, day, start in moved:
+    for m in moved:
+        holder, day, start = m[0], m[1], m[2]
+        sid = m[3] if len(m) > 3 else None
         if not (holder or "").strip():
             continue
-        for r in _live_on_shift(conn, restaurant_id, holder, day, start, exclude_id=except_id):
+        for r in _live_on_shift(conn, restaurant_id, holder, day, start, exclude_id=except_id, shift_id=sid):
             cur = conn.execute("UPDATE shift_change_requests SET status='cancelled', decided_at=datetime('now'), "
                                "decision_note=? WHERE id=? AND status=?",
                                ("That shift changed hands before this was answered, so it no longer applies.",
@@ -1411,13 +1585,36 @@ def _follow_week(conn, restaurant_id, rows, dates=None):
         (restaurant_id, *days, *days)).fetchall()]
     n = 0
     for req in live:
-        legs = [("", req.get("employee_name"), req.get("date"), req.get("shift_start"))]
+        legs = [("", req.get("employee_name"), req.get("date"), req.get("shift_start"), req.get("shift_id"))]
         if (req.get("kind") or "") == "swap":
-            legs.append(("target_", req.get("target_name"), req.get("target_date"), req.get("target_start")))
+            legs.append(("target_", req.get("target_name"), req.get("target_date"), req.get("target_start"),
+                         req.get("target_shift_id")))
         changes, gone = {}, None
-        for prefix, who, day, start in legs:
-            if not (who or "").strip() or day not in days:
-                continue                       # an extra shift nobody holds, or another week's leg
+        for prefix, who, day, start, sid in legs:
+            if not (who or "").strip():
+                continue                       # an extra shift nobody holds
+            i = _by_id(rows, sid)
+            if i is not None:
+                # By the shift's id (schedule re-audit 10/11/26 ARCH-6): the
+                # same shift, wherever it moved. Still the person's — its
+                # time, date or spelling followed; somebody else's — closed.
+                r = rows[i]
+                if not _holds(r, who, req.get("target_person_id" if prefix else "person_id")):
+                    gone = (f"Your manager gave that shift to {r.get('employee')}, so this request no longer "
+                            "applies.")
+                    break
+                for col, val in (("date", r.get("date")), ("start", r.get("shift_start")),
+                                 ("end", r.get("shift_end"))):
+                    key = (prefix + col) if prefix else {"date": "date", "start": "shift_start",
+                                                          "end": "shift_end"}[col]
+                    if str(req.get(key) or "") != str(val or ""):
+                        changes[key] = val
+                name_col = "target_name" if prefix else "employee_name"
+                if (r.get("employee") or "").strip() and req.get(name_col) != r.get("employee"):
+                    changes[name_col] = r.get("employee")
+                continue
+            if day not in days:
+                continue                       # another week's leg
             if _find(rows, who, day, start) is not None:
                 continue
             mine = [r for r in rows if r.get("date") == day and _key(r.get("employee")) == _key(who)]
@@ -1426,6 +1623,9 @@ def _follow_week(conn, restaurant_id, rows, dates=None):
                 changes[f"{prefix}date" if prefix else "date"] = day
                 changes[(prefix + "start") if prefix else "shift_start"] = moved.get("shift_start")
                 changes[(prefix + "end") if prefix else "shift_end"] = moved.get("shift_end")
+                msid, _mpid = _id_of(moved)
+                if msid:
+                    changes[(prefix + "shift_id") if prefix else "shift_id"] = msid
                 continue
             took = next((r for r in rows if r.get("date") == day and parse_minutes(r.get("shift_start") or "")
                          == parse_minutes(start or "") and _key(r.get("employee")) != _key(who)
@@ -1442,10 +1642,13 @@ def _follow_week(conn, restaurant_id, rows, dates=None):
                              "WHERE request_id=? AND status='offered'", (req["id"],))
                 n += 1
         elif changes:
+            # A spelling alone is no move to tell anybody about.
+            moved_ = any(k not in ("employee_name", "target_name", "shift_id", "target_shift_id") for k in changes)
             sets = ", ".join(f"{k}=?" for k in changes)
             try:
-                cur = conn.execute(f"UPDATE shift_change_requests SET {sets}, notice_pending='moved' "
-                                   "WHERE id=? AND status=?", (*changes.values(), req["id"], req["status"]))
+                cur = conn.execute(f"UPDATE shift_change_requests SET {sets}"
+                                   + (", notice_pending='moved'" if moved_ else "") + " WHERE id=? AND status=?",
+                                   (*changes.values(), req["id"], req["status"]))
                 n += cur.rowcount
             except Exception as e:
                 # Another live request already on the new time (the unique
@@ -1457,6 +1660,120 @@ def _follow_week(conn, restaurant_id, rows, dates=None):
                              ("That shift moved onto another request, so this one no longer applies.",
                               req["id"], req["status"]))
                 n += 1
+    return n
+
+
+# ── a cover holds only while the week still shows it (BUGSLIFE-2) ───────────
+#
+# A 'covered' request said the holder was off the shift and the taker on it,
+# for good: shift_release read status='covered' alone. A replacement publish,
+# a manager trading an automatic swap back, or a Studio reassign sent to
+# staff could put the holder back on the shift while the request still said
+# covered — a no-show then read as "covered by Cy" in attendance and the
+# live coverage check, with nobody on the floor. Now a covered request is
+# valid only while the published copy shows the taker on the shift
+# (_cover_holds, read by shift_release on every read), and every write of
+# the published copy closes the covers it undid through the ONE closing
+# path — staff_changes_vs + close_reverted: the publish stamp's (BUGSLIFE-1)
+# and schedule_versions.write_on's for a live write (a trade back).
+
+def _cover_holds(rows, req, spellings_of=None) -> bool:
+    """Whether the live rows still show this covered request's cover: for
+    a drop or a posted shift, its taker (replacement_name) on the shift;
+    for a swap, each person on the other's shift. By the shift's id, else
+    by (date, start) for a request from before ids. Unknown — a shift not
+    on these rows at all — counts as holding (nothing to contradict it)."""
+    from schedule_rules import parse_minutes
+    sp = spellings_of or (lambda n: None)
+
+    def _leg(sid, day, start, taker):
+        i = _by_id(rows, sid)
+        if i is not None:
+            return _holds(rows[i], taker, spellings=sp(taker))
+        if _srows.valid_id(sid):
+            return True               # the shift is gone from these rows: nothing says otherwise
+        on = [r for r in rows if r.get("date") == day and parse_minutes(r.get("shift_start") or "")
+              == parse_minutes(start or "")]
+        if not on:
+            return True
+        return any(_holds(r, taker, spellings=sp(taker)) for r in on)
+    if (req.get("kind") or "") == "swap":
+        return (_leg(req.get("shift_id"), req.get("date"), req.get("shift_start"), req.get("target_name"))
+                and _leg(req.get("target_shift_id"), req.get("target_date"), req.get("target_start"),
+                         req.get("employee_name")))
+    return _leg(req.get("shift_id"), req.get("date"), req.get("shift_start"), req.get("replacement_name"))
+
+
+def backfill_shift_ids(db_path=None, max_seconds: float = 10.0) -> int:
+    """At boot: every live or covered request from before requests kept
+    their shift's id (schedule re-audit 10/11/26 ARCH-6) is matched ONCE to
+    its shift on the live week by (name, date, start) — a covered one by
+    its taker, who holds the shift now — and keeps the shift's id (and a
+    swap its colleague's) from then on. Bounded; resumable by its own
+    filter (a row matched is never read again); one that matches nothing
+    keeps the old lookup. Returns rows matched."""
+    import time as _t
+    from schedule_versions import rows_from_csv
+    stop = _t.monotonic() + float(max_seconds)
+    conn = get_conn(db_path)
+    try:
+        try:
+            todo = [dict(r) for r in conn.execute(
+                "SELECT * FROM shift_change_requests WHERE (shift_id IS NULL OR shift_id='') AND employee_name<>'' "
+                "AND status IN ('pending','approved','open','covered') ORDER BY id DESC LIMIT 5000").fetchall()]
+        except Exception as e:
+            if "no such" in str(e).lower():
+                return 0
+            raise
+    finally:
+        conn.close()
+    n = 0
+    weeks = {}
+    for req in todo:
+        if _t.monotonic() > stop:
+            break
+        rid = req["restaurant_id"]
+        conn = get_conn(db_path)
+        try:
+            key = (rid, req["date"])
+            if key not in weeks:
+                hist = _live_hist(conn, rid, req)
+                weeks[key] = rows_from_csv(hist["schedule_csv"]) if hist else []
+            rows = weeks[key]
+            covered = req["status"] == "covered"
+            holder = (req.get("target_name") if (req.get("kind") or "") == "swap" else req.get("replacement_name")) \
+                if covered else req["employee_name"]
+            i = _find(rows, holder, req["date"], req["shift_start"])
+            if i is None:
+                continue
+            sid, pid = _id_of(rows[i])
+            sets, args = ["shift_id=?"], [sid]
+            if not covered and pid and not req.get("person_id"):
+                sets.append("person_id=?")
+                args.append(pid)
+            if (req.get("kind") or "") == "swap" and not req.get("target_shift_id"):
+                trows = rows if req.get("target_date") == req["date"] else rows_from_csv(
+                    (_live_hist(conn, rid, {"date": req.get("target_date"), "history_id": req["history_id"]})
+                     or {"schedule_csv": ""})["schedule_csv"])
+                j = _find(trows, req["employee_name"] if covered else req.get("target_name"), req.get("target_date"),
+                          req.get("target_start"))
+                if j is not None:
+                    sets.append("target_shift_id=?")
+                    args.append(_id_of(trows[j])[0])
+            if not sid:
+                continue
+            try:
+                n += conn.execute(f"UPDATE shift_change_requests SET {', '.join(sets)} WHERE id=? "
+                                  "AND (shift_id IS NULL OR shift_id='')", (*args, req["id"])).rowcount
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                if "UNIQUE" not in str(e).upper():
+                    raise
+        except Exception as e:
+            print(f"[shift_requests] shift id not matched for request {req.get('id')}: {e!r}")
+        finally:
+            conn.close()
     return n
 
 
@@ -1556,6 +1873,186 @@ def overwritten_by_manager(restaurant_id, slots, actor=None, db_path=DB_PATH) ->
     return n
 
 
+# ── staff changes a send would undo (schedule re-audit 10/11/26 BUGSLIFE-1) ──
+#
+# A cover, claim or swap is written to the copy staff have (a LIVE write).
+# A regenerated draft of the week, or a manager's working copy, can still hold
+# the shift as it was: sending it put the person whose drop was approved
+# back on the shift, took the colleague who took it off, and left the request
+# reading `covered`. The pending drafts now carry each live change as it
+# lands (schedule_versions.write_on), and every Send compares what goes out
+# with the covered requests on the week: one it would undo is a must-fix line
+# on the gate, and a send past it closes the request and tells both people.
+
+def _overlaps(rows, name, day, span) -> bool:
+    """Whether `name` holds a shift on `day` overlapping `span` in `rows`."""
+    k = _key(name)
+    if not k or span[0] is None:
+        return False
+    s0, e0 = span[0], span[1] or span[0] + timedelta(minutes=1)
+    for r in rows or []:
+        if str(r.get("date") or "")[:10] != day or _key(r.get("employee")) != k:
+            continue
+        s, e = shift_span(day, r.get("shift_start"), r.get("shift_end"))
+        if s is None:
+            continue
+        e = e or s + timedelta(minutes=1)
+        if s < e0 and s0 < e:
+            return True
+    return False
+
+
+def _clock_label(day, start) -> str:
+    from schedule_rules import parse_minutes, _fmt_minutes
+    from time_utils import mdy
+    m = parse_minutes(start or "")
+    try:
+        wd = datetime.strptime(str(day)[:10], "%Y-%m-%d").strftime("%A")
+    except (TypeError, ValueError):
+        wd = ""
+    return f"{wd} {mdy(day)}" + (f" {_fmt_minutes(m % 1440)}" if m is not None else "")
+
+
+def staff_changes_vs(restaurant_id, told_rows, out_rows, dates=None, db_path=DB_PATH) -> dict:
+    """{"reverted": [...], "kept": [...]} — the covered requests (covers,
+    claims, swaps that went through) on the week staff have (`told_rows`),
+    read against the rows about to go out (`out_rows`):
+
+      reverted  the send would undo it — the person let off the shift is on
+                it again ("holder_back"), or the person who took it is off
+                it ("taker_off");
+      kept      it goes out as staff agreed.
+
+    Each item {request_id, kind, how, giver, taker, date, shift_start,
+    shift_end, decided_at, text}. A change the week staff have no longer
+    shows (undone before, or the shift moved) is neither. Never raises:
+    {"reverted": [], "kept": []} when it can't be read."""
+    out = {"reverted": [], "kept": []}
+    try:
+        days = sorted(set(dates or {str(r.get("date") or "")[:10] for r in list(told_rows or []) + list(out_rows or [])
+                                    if r.get("date")}))
+        if not days:
+            return out
+        conn = get_conn(db_path)
+        try:
+            marks = ",".join("?" * len(days))
+            reqs = [dict(r) for r in conn.execute(
+                "SELECT * FROM shift_change_requests WHERE restaurant_id=? AND status='covered' AND "
+                f"(date IN ({marks}) OR (kind='swap' AND target_date IN ({marks}))) ORDER BY id",
+                (restaurant_id, *days, *days)).fetchall()]
+        finally:
+            conn.close()
+        for req in reqs:
+            kind = req.get("kind") or "drop"
+            # By the shift's id first (schedule re-audit 10/11/26 ARCH-6):
+            # the taker still on the very shift they took is never "undone",
+            # however the times around it read — the giver free to take an
+            # overlapping shift since is not "back on" theirs.
+            if _by_id(out_rows or [], req.get("shift_id")) is not None and _cover_holds(out_rows or [], req):
+                if _overlaps(told_rows, req.get("target_name") if kind == "swap" else req.get("replacement_name"),
+                             req["date"], shift_span(req["date"], req["shift_start"], req.get("shift_end"))):
+                    taker = req.get("target_name") if kind == "swap" else req.get("replacement_name")
+                    out["kept"].append({"request_id": req["id"], "kind": kind, "how": "kept",
+                                        "giver": req.get("employee_name"), "taker": taker, "date": req["date"],
+                                        "shift_start": req["shift_start"], "shift_end": req.get("shift_end"),
+                                        "decided_at": req.get("decided_at"),
+                                        "text": (f"{taker} stays on {_clock_label(req['date'], req['shift_start'])}"
+                                                 + (f" for {req.get('employee_name')}"
+                                                    if (req.get("employee_name") or "").strip() else "")
+                                                 + (" — their swap" if kind == "swap"
+                                                    else " — the cover staff agreed"))})
+                continue
+            if kind == "swap":
+                legs = [(req["date"], req["shift_start"], req.get("shift_end"), req.get("target_name"),
+                         req.get("employee_name")),
+                        (req.get("target_date"), req.get("target_start"), req.get("target_end"),
+                         req.get("employee_name"), req.get("target_name"))]
+            else:
+                legs = [(req["date"], req["shift_start"], req.get("shift_end"), req.get("replacement_name"),
+                         req.get("employee_name"))]
+            item = None
+            on_week = False
+            for day, start, end, taker, giver in legs:
+                if day not in days or not (taker or "").strip():
+                    continue
+                span = shift_span(day, start, end)
+                if not _overlaps(told_rows, taker, day, span):
+                    continue                  # not on the week staff have: undone before, or moved
+                on_week = True
+                back = bool((giver or "").strip()) and _overlaps(out_rows, giver, day, span) \
+                    and not _overlaps(told_rows, giver, day, span)
+                off = not _overlaps(out_rows, taker, day, span)
+                if not (back or off):
+                    continue
+                when = _clock_label(day, start)
+                what = ("swap" if kind == "swap" else "cover")
+                if back:
+                    text = (f"{giver} is back on {when}, the shift {taker} took over from them"
+                            + (" in their swap" if kind == "swap" else " when their drop was approved")
+                            + f" — sending this undoes that {what}"
+                            + ("" if off else f" ({taker} stays on it too)"))
+                else:
+                    text = (f"{taker} comes off {when}, the shift they took over from {giver or 'an open shift'}"
+                            f" — sending this undoes that {what}")
+                item = {"request_id": req["id"], "kind": kind, "how": "holder_back" if back else "taker_off",
+                        "giver": giver, "taker": taker, "date": day, "shift_start": start, "shift_end": end,
+                        "decided_at": req.get("decided_at"), "text": text}
+                break
+            if item:
+                out["reverted"].append(item)
+            elif on_week:
+                day, start, end, taker, giver = legs[0]
+                out["kept"].append({"request_id": req["id"], "kind": kind, "how": "kept", "giver": giver,
+                                    "taker": taker, "date": day, "shift_start": start, "shift_end": end,
+                                    "decided_at": req.get("decided_at"),
+                                    "text": (f"{taker} stays on {_clock_label(day, start)}"
+                                             + (f" for {giver}" if (giver or "").strip() else "")
+                                             + (" — their swap" if kind == "swap" else " — the cover staff agreed"))})
+    except Exception as e:
+        print(f"[shift_requests] staff changes unread rid={restaurant_id}: {e!r}")
+        return {"reverted": [], "kept": []}
+    return out
+
+
+def close_reverted(conn, restaurant_id, items, actor=None) -> int:
+    """Close each covered request a send undid (`items` from
+    staff_changes_vs' "reverted"), on the caller's connection inside its
+    write transaction (the publish stamp): status cancelled — shift_release
+    stops reading the holder as covered — with why, and a notice owed to both
+    people (flush_notices, after the commit). Returns requests closed."""
+    n = 0
+    who = (actor or "Your manager")[:60]
+    for it in items or []:
+        note = (f"{who} sent a new schedule for the week that changes this back: "
+                + ("you're on that shift again" if it.get("how") == "holder_back"
+                   else f"{it.get('taker') or 'the person who took it'} is no longer on it")
+                + " — check the schedule in the app.")
+        cur = conn.execute("UPDATE shift_change_requests SET status='cancelled', decided_at=datetime('now'), "
+                           "decision_note=?, notice_pending='cancelled' WHERE id=? AND restaurant_id=? "
+                           "AND status='covered'", (note, int(it["request_id"]), restaurant_id))
+        n += cur.rowcount
+    return n
+
+
+def after_live_write(restaurant_id, history_id, actor=None, db_path=DB_PATH):
+    """What every LIVE write (a cover, claim, swap, trade-back, a cross-site
+    take, a live labor change) owes once it has committed: the week to the
+    POS time clock where the owner turned that on (pos_schedule_push — it
+    coalesces to one queued push per week). Only the publish used to queue
+    it, so the POS still held the dropper's shift (schedule re-audit 10/11/26
+    BUGSLIFE-11). Never raises, never waits on the POS."""
+    try:
+        import pos_schedule_push as _psp
+        _psp.enqueue(restaurant_id, history_id, actor=actor, reason="live_change",
+                     db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="pos_schedule_push", context=f"restaurant_id={restaurant_id} live write")
+        except Exception:
+            print(f"[shift_requests] POS push not queued rid={restaurant_id}: {e!r}")
+
+
 def _close_offers(conn, request_id, accepted_offer_id=None):
     """When the shift is taken, the accepted offer is marked and the other
     people it was offered to are released. Returns the released offers."""
@@ -1571,7 +2068,8 @@ def _close_offers(conn, request_id, accepted_offer_id=None):
 
 
 def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path, today=None, now=None,
-           until="start", note=None, offer_id=None, hold_overtime=False, consent_rest=None):
+           until="start", note=None, offer_id=None, hold_overtime=False, consent_rest=None, visitor_home=None,
+           tag=None, in_transaction=None):
     """The shift changes hands to `claimant`, written into the live week as a
     `swap` version in one transaction with the request's status.
 
@@ -1587,7 +2085,22 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
     the owner's rule (BUGSLIFE-14) — so instead of covering, the claim is
     held for a decider's answer (status stays open, `held_claimant`); the
     claimant and the deciders are told. Returns the request row (`held`
-    True on a hold)."""
+    True on a hold).
+
+    Consent is written only by the claim that writes the week (schedule
+    re-audit 10/11/26 BUGSLIFE-7): a rest waiver (`consent_rest` True) and
+    the added-hours consent of a posted shift are recorded inside this
+    transaction, bound to the shift; a claim that is held, refused or lost
+    records none (a held claim keeps the claimant's yes to the waiver for
+    the decider's answer).
+
+    The one body every cover runs through — a claim, an accepted offer, a
+    decider's yes to a held claim and a cross-site yes (`visitor_home`, the
+    claimant's own location: judged by cross_site.judge; BUGSLIFE-10): the
+    shift's start or end gate, the holder told, the other live requests on
+    the shift cancelled, the floor section and task sheets moved, the
+    predictability-pay record. `tag` replaces the row's note tag;
+    `in_transaction(conn)` runs inside the write before it commits."""
     from schedule_versions import write_on
     import schedule_engine as _se
     import schedule_rules as _rules
@@ -1600,9 +2113,11 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
         if not _status_is(restaurant_id, row["id"], from_status, db_path):
             raise ShiftRequestError("somebody else just took that shift" if from_status == "open"
                                     else "that request was already answered")
-        keep = {}
-        hist, rows, idx = _judge(restaurant_id, row, name, check_role, db_path, keep=keep if hold_overtime else None,
-                                 consent_rest=consent_rest)
+        keep, consent_out = {}, {}
+        hist, rows, idx = _judge(restaurant_id, row, name, check_role, db_path,
+                                 keep=keep if (hold_overtime and visitor_home is None) else None,
+                                 consent_rest=consent_rest, consent_out=consent_out, visitor_home=visitor_home)
+        consent = consent_out.get("consent")
         if hold_overtime and keep.get("constraints") is not None:
             c = keep["constraints"]
             extra = _rules.overtime_added(c, name, rows[idx], rows)
@@ -1610,7 +2125,7 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
                 room = teammates_with_room(restaurant_id, rows, idx, c, exclude=(name, row.get("employee_name")),
                                            prepared=keep.get("prepared"))
                 if room:
-                    return _hold_claim(restaurant_id, row, name, extra, room, db_path)
+                    return _hold_claim(restaurant_id, row, name, extra, room, db_path, consent_rest=bool(consent))
         conn = get_conn(db_path)
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -1627,14 +2142,24 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
                 raise ShiftRequestError("somebody else just took that shift" if from_status == "open"
                                         else "that request was already answered")
             fresh = [dict(r) for r in rows]
-            tag = f"(covered for {row['employee_name']})" if not _is_extra(row) else "(extra shift)"
-            fresh[idx] = dict(fresh[idx], employee=name, notes=((fresh[idx].get("notes") or "").strip() + " " + tag).strip())
+            tag_ = tag or (f"(covered for {row['employee_name']})" if not _is_extra(row) else "(extra shift)")
+            fresh[idx] = dict(fresh[idx], employee=name, person_id="",
+                              notes=((fresh[idx].get("notes") or "").strip() + " " + tag_).strip())
             write_on(conn, restaurant_id, hist["id"], "swap", _se._rows_to_csv_text(fresh), saved_by=(actor or name))
+            # The request keeps the shift it is about by id (ARCH-6): an
+            # extra shift has one only now that it is on the week.
+            sid = _taken_shift_id(conn, restaurant_id, hist["id"], row, name, fresh[idx])
+            if sid and sid != (row.get("shift_id") or ""):
+                conn.execute("UPDATE shift_change_requests SET shift_id=? WHERE id=?", (sid, row["id"]))
             if not _is_extra(row):
-                _move_section(conn, restaurant_id, row["date"], row["shift_start"], row["employee_name"], name)
-            cancelled = _cancel_dependents(conn, restaurant_id, [(row["employee_name"], row["date"], row["shift_start"])],
-                                           row["id"])
+                _move_section(conn, restaurant_id, row["date"], row["shift_start"], row["employee_name"], name,
+                              shift_id=sid)
+            cancelled = _cancel_dependents(conn, restaurant_id,
+                                           [(row["employee_name"], row["date"], row["shift_start"], sid)], row["id"])
             released = _close_offers(conn, row["id"], offer_id)
+            _record_consents(conn, restaurant_id, row, name, consent, sid, offer_id, visitor_home)
+            if in_transaction is not None:
+                in_transaction(conn)
             conn.commit()
             out = _get(conn, row["id"])
             break
@@ -1648,26 +2173,13 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
             conn.close()
     else:
         raise ShiftRequestError("the schedule kept changing while that was checked — try again")
+    after_live_write(restaurant_id, hist["id"], actor=actor or name, db_path=db_path)
     _refresh_task_sheets(restaurant_id, [row["date"]])
     # On the predictability-pay record (schedule audit 10/10/26 MARKET-2):
     # a shift its holder asked to drop, taken by a colleague, is a trade
     # between employees (exempt). A shift the manager posted (an extra one,
-    # or someone's put on the board) is the employer's change: the claimant's
-    # accepting it is their written, time-stamped consent to the added hours
-    # (staff_consent), which exempts it where that law accepts consent.
-    if (row.get("kind") or "") == "post":
-        try:
-            import staff_consent as _consent
-            _consent.record(restaurant_id, name, "added_hours",
-                            f"I'll take the {row.get('shift_start')}–{row.get('shift_end') or ''} "
-                            f"{row.get('role') or ''} shift on {row['date']}.".replace("  ", " "),
-                            subject_date=row["date"],
-                            subject={"after": {"start": row.get("shift_start"), "end": row.get("shift_end")}},
-                            channel="offer" if offer_id else "app",
-                            source_ref=f"offer:{offer_id}" if offer_id else f"request:{row['id']}",
-                            db_path=None if db_path == DB_PATH else db_path)
-        except Exception as _cx:
-            print(f"[shift requests] consent not recorded rid={restaurant_id}: {_cx!r}")
+    # or someone's put on the board) is the employer's change, consented to
+    # by the claimant's accepting it (_record_consents, in the write above).
     _record_compliance_change(restaurant_id, hist["id"], rows, fresh,
                               "extra" if (row.get("kind") or "") == "post" else "trade", actor or name, db_path)
     _notify(restaurant_id, "covered", out, db_path=db_path)
@@ -1678,7 +2190,53 @@ def _cover(restaurant_id, row, claimant, actor, from_status, check_role, db_path
         _notify(restaurant_id, "cancelled", c, db_path=db_path)
     for o in released:
         _notify_offer(restaurant_id, "offer_taken", o, out, db_path)
+    # A cover the write closed (write_on: one it undid on the same shift)
+    # is told now that the write has committed.
+    flush_notices(restaurant_id, db_path=db_path)
     return out
+
+
+def _taken_shift_id(conn, restaurant_id, history_id, row, name, taken):
+    """The shift id the taken row carries in the published copy just
+    written: its own id, else (an extra shift, new to the week) the id the
+    write gave it — found by its date, taker and start."""
+    sid = str(taken.get("shift_id") or "").strip().lower()
+    if _srows.valid_id(sid):
+        return sid
+    got = conn.execute("SELECT published_csv, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                       (history_id, restaurant_id)).fetchone()
+    live = _srows.parse((got["published_csv"] if got and got["published_csv"] is not None
+                         else (got["schedule_csv"] if got else "")) or "")
+    i = _find(live, name, row["date"], row["shift_start"])
+    return str(live[i].get("shift_id") or "").lower() if i is not None else None
+
+
+def _record_consents(conn, restaurant_id, row, name, consent, shift_id, offer_id, visitor_home):
+    """The consents this cover carries, on its own transaction (BUGSLIFE-7):
+    the claimant's rest waiver (`consent`, bound to the one shift it is
+    for) and, for a shift the manager posted, their written, time-stamped
+    yes to the added hours (MARKET-2). A cross-site taker's rest is judged
+    at their home rules and asks for no waiver here."""
+    import staff_consent as _consent
+    src = f"offer:{offer_id}" if offer_id else f"request:{row['id']}"
+    if consent:
+        sh = dict(consent.get("shift") or {})
+        if sh.get("date") == row["date"] and not sh.get("shift_id"):
+            sh["shift_id"] = shift_id
+        _consent.record_on(conn, restaurant_id, name, "rest_waiver", consent["text"], subject_date=consent["date"],
+                           subject={"gap_hours": consent["gap_hours"], "need_hours": consent["need_hours"],
+                                    "request_id": row.get("id"), "shift": sh},
+                           channel="offer" if offer_id else "app", source_ref=src,
+                           shift_id=sh.get("shift_id"))
+    if (row.get("kind") or "") == "post":
+        _consent.record_on(conn, restaurant_id, name, "added_hours",
+                           f"I'll take the {row.get('shift_start')}–{row.get('shift_end') or ''} "
+                           f"{row.get('role') or ''} shift on {row['date']}.".replace("  ", " "),
+                           subject_date=row["date"],
+                           subject={"after": {"start": row.get("shift_start"), "end": row.get("shift_end")},
+                                    "shift": {"date": row["date"], "start": row.get("shift_start"),
+                                              "end": row.get("shift_end"), "shift_id": shift_id}},
+                           channel="offer" if offer_id else "app", source_ref=src, shift_id=shift_id)
 
 
 def _record_compliance_change(restaurant_id, history_id, before_rows, after_rows, kind, actor, db_path):
@@ -1692,20 +2250,23 @@ def _record_compliance_change(restaurant_id, history_id, before_rows, after_rows
         print(f"[shift requests] compliance record skipped rid={restaurant_id}: {e!r}")
 
 
-def _hold_claim(restaurant_id, row, name, extra_hours, room, db_path):
+def _hold_claim(restaurant_id, row, name, extra_hours, room, db_path, consent_rest=False):
     """An employee's claim that would create overtime while a teammate has
     room: kept on the open shift for a decider (BUGSLIFE-14). A later claim
     by someone without overtime still takes the shift; a decider's yes
-    (decide on the open request) covers it with this person."""
+    (decide on the open request) covers it with this person. A yes the
+    claimant gave to a short rest is kept with the hold (`held_consent_rest`)
+    and recorded only if the decider's yes covers it (BUGSLIFE-7)."""
     who = ", ".join(room[:-1]) + (" and " if len(room) > 1 else "") + room[-1]
     why = (f"{name} would go {extra_hours:g}h into overtime taking it, while {who} "
            f"{'has' if len(room) == 1 else 'have'} room")
     conn = get_conn(db_path)
     try:
         cur = conn.execute("UPDATE shift_change_requests SET held_claimant=?, held_claim_at=datetime('now'), "
-                           "held_claim_note=? WHERE id=? AND restaurant_id=? AND status='open' "
+                           "held_claim_note=?, held_consent_rest=? WHERE id=? AND restaurant_id=? AND status='open' "
                            "AND (held_claimant IS NULL OR held_claimant='' OR lower(trim(held_claimant))=?)",
-                           (name[:120], why[:300], row["id"], restaurant_id, name.strip().lower()))
+                           (name[:120], why[:300], 1 if consent_rest else None, row["id"], restaurant_id,
+                            name.strip().lower()))
         conn.commit()
         if cur.rowcount != 1:
             raise ShiftRequestError("someone else already asked for that shift — your manager is deciding it")
@@ -1717,13 +2278,11 @@ def _hold_claim(restaurant_id, row, name, extra_hours, room, db_path):
     return out
 
 
-def _move_section(conn, restaurant_id, day, start, from_name, to_name):
+def _move_section(conn, restaurant_id, day, start, from_name, to_name, shift_id=None):
     """A shift that changes hands keeps its dining-room section
-    (models.move_shift_section, inside the caller's write transaction).
-    Guarded: it lands with the sections fix (employee audit B8)."""
-    fn = getattr(_models, "move_shift_section", None)
-    if fn:
-        fn(restaurant_id, day, start, from_name, to_name, conn=conn)
+    (models.move_shift_section, inside the caller's write transaction) —
+    found by the shift's id when it has one (ARCH-6)."""
+    _models.move_shift_section(restaurant_id, day, start, from_name, to_name, conn=conn, shift_id=shift_id)
 
 
 def _refresh_task_sheets(restaurant_id, days):
@@ -1860,8 +2419,8 @@ def swap_rows(rows, req):
     """(after, a, b): `rows` with the swap's two names exchanged — the week as
     it would be — and the two rows' indexes; (None, a, b) when either shift is
     not on `rows`."""
-    a = _find(rows, req["employee_name"], req["date"], req["shift_start"])
-    b = _find(rows, req["target_name"], req["target_date"], req["target_start"])
+    a = _leg_index(rows, req)
+    b = _leg_index(rows, req, target=True)
     if a is None or b is None:
         return None, a, b
     after = [dict(r) for r in rows]
@@ -2004,11 +2563,20 @@ def _execute_swap(restaurant_id, req: dict, actor, from_status, db_path, accepte
             rows[a] = dict(rows[a], employee=req["target_name"], notes=((rows[a].get("notes") or "").strip() + f" (swapped with {req['employee_name']})").strip())
             rows[b] = dict(rows[b], employee=req["employee_name"], notes=((rows[b].get("notes") or "").strip() + f" (swapped with {req['target_name']})").strip())
             write_on(conn, restaurant_id, hist["id"], "swap", _rows_to_csv_text(rows), saved_by=(actor or "swap"))
-            _move_section(conn, restaurant_id, req["date"], req["shift_start"], req["employee_name"], req["target_name"])
-            _move_section(conn, restaurant_id, req["target_date"], req["target_start"], req["target_name"], req["employee_name"])
+            sid_a, sid_b = rows[a].get("shift_id"), rows[b].get("shift_id")
+            _move_section(conn, restaurant_id, req["date"], req["shift_start"], req["employee_name"], req["target_name"],
+                          shift_id=sid_a)
+            _move_section(conn, restaurant_id, req["target_date"], req["target_start"], req["target_name"],
+                          req["employee_name"], shift_id=sid_b)
+            # The request keeps both shifts by id (ARCH-6) — so a later
+            # write that trades them back closes it (BUGSLIFE-2).
+            conn.execute("UPDATE shift_change_requests SET shift_id=COALESCE(shift_id, ?), "
+                         "target_shift_id=COALESCE(target_shift_id, ?) WHERE id=?",
+                         (_id_of(rows[a])[0], _id_of(rows[b])[0], req["id"]))
             cancelled = _cancel_dependents(conn, restaurant_id,
-                                           [(req["employee_name"], req["date"], req["shift_start"]),
-                                            (req["target_name"], req["target_date"], req["target_start"])], req["id"])
+                                           [(req["employee_name"], req["date"], req["shift_start"], sid_a),
+                                            (req["target_name"], req["target_date"], req["target_start"], sid_b)],
+                                           req["id"])
             conn.commit()
             out = _get(conn, req["id"])
             break
@@ -2022,6 +2590,7 @@ def _execute_swap(restaurant_id, req: dict, actor, from_status, db_path, accepte
             conn.close()
     else:
         raise ShiftRequestError("the schedule kept changing while that swap was checked — try again")
+    after_live_write(restaurant_id, hist["id"], actor=actor, db_path=db_path)
     _refresh_task_sheets(restaurant_id, [req["date"], req["target_date"]])
     # A trade two employees made: on the predictability-pay record as
     # employee-initiated, exempt everywhere (schedule audit 10/10/26 MARKET-2).
@@ -2125,7 +2694,9 @@ def post_open_shift(restaurant_id, day, shift_start, shift_end=None, role=None, 
             if i is None:
                 raise ShiftRequestError(f"{holder} has no {start} shift on the published schedule that day")
             held = rows[i]
-            values = {"employee_name": held["employee"], "shift_end": held["shift_end"], "role": held["role"]}
+            _sid, _pid = _id_of(held)
+            values = {"employee_name": held["employee"], "shift_end": held["shift_end"], "role": held["role"],
+                      "shift_id": _sid, "person_id": _pid}
         else:
             end = (shift_end or "").strip()
             if parse_minutes(end) is None or not (role or "").strip():
@@ -2133,10 +2704,13 @@ def post_open_shift(restaurant_id, day, shift_start, shift_end=None, role=None, 
             values = {"employee_name": "", "shift_end": end, "role": (role or "").strip()[:60]}
         _gate(d.isoformat(), start, values["shift_end"], now, until="end")
         conn.execute("BEGIN IMMEDIATE")
-        existing = _live_on_shift(conn, restaurant_id, values["employee_name"], d.isoformat(), start) if holder else []
+        existing = (_live_on_shift(conn, restaurant_id, values["employee_name"], d.isoformat(), start,
+                                   shift_id=values.get("shift_id")) if holder else [])
         reuse = None
         for r in existing:
-            if r["status"] == "open" and r["employee_name"].strip().lower() == holder.lower():
+            if r["status"] == "open" and (r["employee_name"].strip().lower() == holder.lower()
+                                          or (values.get("shift_id") and r.get("shift_id") == values["shift_id"]
+                                              and (r.get("kind") or "drop") != "swap")):
                 reuse = r
             else:
                 raise ShiftRequestError(f"{holder} already has a request on that shift — answer it in Waiting on you")

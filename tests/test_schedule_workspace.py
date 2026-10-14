@@ -264,7 +264,9 @@ def test_publish_is_the_pre_publish_review_of_the_rows_on_screen():
     pub = _fn("ssRenderPublish")
     assert "prRender()" in pub and "All kept" not in pub and "Your edits are saved" not in pub
     assert 'id="ss-pub-alerts"' not in s and '<div id="pr-review" class="pr" aria-live="polite"></div>' in s
-    assert "'/api/labor/publish-review'" in s and "body: JSON.stringify({schedule_id: hid, rows: _schedRows})" in s
+    # The rows on screen, what Send needs first (re-audit 10/11/26 TRUST-26).
+    assert "'/api/labor/publish-review'" in s and \
+        "body: JSON.stringify({schedule_id: hid, rows: _schedRows, sections: 'core'})" in s
     assert ".ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch}" in s
     assert ".ss-pub-go{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;justify-content:center}" in s
     assert ".ss-pub-go .cbtn{height:50px;width:240px;" in s

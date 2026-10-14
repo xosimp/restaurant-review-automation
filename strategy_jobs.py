@@ -25,6 +25,7 @@ and the cadence all live in the loop.
   run_coverage_check        service — scheduled staff who have not clocked in
 """
 import logging
+import os
 import threading
 import config
 import uuid
@@ -1135,106 +1136,148 @@ CALIBRATION_STRONG_EVIDENCE = 0.2
 
 
 def run_quality_calibration(db_path=DB_PATH):
-    """Weekly: record the Shift Quality suggestion for each Labor restaurant,
-    once per new published week, as capability changes — the weights
-    (quality_weights_suggested) and, since SQ-22, each profile's floors and
-    bar (quality_profiles_suggested), shown in the change history — and
-    into the scheduling memory's log (`calibration_suggested`, with its
-    evidence), which the action queue reads to put a STRONG suggestion
-    (CALIBRATION_STRONG_EVIDENCE) in front of the owner (L-14: the loop
-    closed only if somebody opened the right screen). Nothing is written to
-    the weights, floors or bars until the owner applies it.
+    """Weekly, for each Labor restaurant (quality_calibration_one), in two
+    parts that do different things — said here as the code does them (blind
+    re-audit 10/11/26 LEARNING-2: this said "nothing is written" while the
+    weights were being moved):
 
-    ONE algorithm: the suggestion is schedule_learning.calibrate_weights,
-    exactly what "Apply" (strategy_routes._do_calibration_apply) writes.
-    This job used to run its own clean-versus-troubled-weeks rule, so the
-    history said one set of weights was suggested and Apply wrote a
-    different one (re-audit A-26)."""
-    import json as _j
+      1. the AUTOMATIC calibration (schedule_calibration.shadow_run): a
+         candidate fitted on older weeks, checked on held-out weeks, then on
+         weeks published after it was proposed — and, only when
+         SCHEDULE_CALIBRATION_AUTOPROMOTE=1 and the restaurant learns for
+         itself, WRITTEN to the Shift Quality weights (one bounded step, the
+         owner told with an Undo). Off (the default), a confirmed candidate
+         is recorded `held` and nothing is written;
+      2. the SUGGESTION (schedule_learning.calibrate_weights, exactly what
+         "Apply" — strategy_routes._do_calibration_apply — writes), once per
+         new published week, as capability changes — the weights
+         (quality_weights_suggested) and, since SQ-22, each profile's floors
+         and bar (quality_profiles_suggested) — and into the scheduling
+         memory's log (`calibration_suggested`), which the action queue
+         reads to put a STRONG suggestion (CALIBRATION_STRONG_EVIDENCE) in
+         front of the owner (L-14). Nothing of the suggestion is written to
+         the weights, floors or bars until the owner applies it.
+
+    The platform's pooled cohort is read once first. With the job queue on,
+    the scheduler fans the restaurants out as `learner` rows instead
+    (quality_calibration_pass) and each row reads this week's kept cohort."""
     import ops as _ops_cal
-    import schedule_learning as _sl
-    import shift_quality as _sq
-    from models import get_quality_weights, record_capability_change
-    changed = {"n": 0}
-    # The weights calibrated where nobody presses Apply (schedule audit
-    # 10/10/26 LEARNING-9): the platform's pooled reading once, then each
-    # restaurant's shadow run — promoted within the bounded steps only when
-    # it beats the weights now on held-out weeks; the owner is told and can
-    # undo (schedule_calibration).
     import schedule_calibration as _scal
     try:
         cohort = _scal.cohort_evidence(db_path=None if db_path == DB_PATH else db_path)
     except Exception as _cx:
         _ops_cal.capture(_cx, job="quality_calibration", context="cohort evidence")
         cohort = {}
+    changed = {"n": 0}
 
     def _one(r):
         if not getattr(r, "module_labor", 0):
             return
-        try:
-            if _scal.shadow_run(r.id, cohort=cohort, db_path=None if db_path == DB_PATH else db_path).get(
-                    "status") == "promoted":
-                changed["n"] += 1
-        except Exception as _sx:
-            _ops_cal.capture(_sx, job="quality_calibration", context=f"restaurant_id={r.id} shadow run")
-        cal = _sl.calibrate_weights(r.id, db_path=db_path)
-        if not cal.get("ready") or not (cal.get("suggested_weights") or cal.get("suggested_profiles")):
-            return
-        current = get_quality_weights(r.id) or {}
-        merged = dict(_sq.DEFAULT_WEIGHTS)
-        merged.update(current)
-        after = dict(merged)
-        after.update({k: float(v) for k, v in (cal.get("suggested_weights") or {}).items()})
-        weights_move = any(abs(float(after[k]) - float(merged.get(k, 0) or 0)) >= 0.05 for k in after)
-        if not weights_move and not cal.get("suggested_profiles"):
-            return                                 # nothing to suggest
-        # Once per new published week: the same evidence read again next
-        # week is not a new suggestion.
-        conn = get_conn(db_path)
-        try:
-            row = conn.execute("SELECT MAX(week_start) AS w FROM schedule_history WHERE restaurant_id=? "
-                               "AND published_at IS NOT NULL", (r.id,)).fetchone()
-        finally:
-            conn.close()
-        newest = row["w"] if row else None
-        # A once-ever marker per (restaurant, published week), in a table
-        # that is never pruned (#157): in the 45-day claims table a
-        # restaurant that stopped publishing got the same suggestion again
-        # every 45 days. Existing claims were carried over at boot.
-        if newest and not _ops_cal.claim_marker("quality_calibration", f"{r.id}:{newest}"):
-            return
-        # Suggested, never applied: "Apply" is one tap and writes these same
-        # numbers (_do_calibration_apply over calibrate_weights).
-        if weights_move:
-            record_capability_change(r.id, "quality_weights_suggested", subject="weights",
-                                     before=_j.dumps(current), after=_j.dumps(after),
-                                     changed_by="Cavnar AI (calibration)")
-        if cal.get("suggested_profiles"):
-            prof = cal.get("profiles") or {}
-            before_p = {k: {"min_quality": ((prof.get(k) or {}).get("bar") or {}).get("current"),
-                            "floors": {d: e.get("current") for d, e in ((prof.get(k) or {}).get("floors") or {}).items()
-                                       if d in ((cal["suggested_profiles"].get(k) or {}).get("floors") or {})}}
-                        for k in cal["suggested_profiles"]}
-            record_capability_change(r.id, "quality_profiles_suggested", subject="profiles",
-                                     before=_j.dumps(before_p), after=_j.dumps(cal["suggested_profiles"]),
-                                     changed_by="Cavnar AI (calibration)")
-        # How strong it is, kept where the action queue reads it: the largest
-        # fitted effect behind a weight that moves, and whether a floor or a
-        # bar moves (its own evidence floor is 0.5 SD, past which it is strong).
-        dims = cal.get("dimensions") or {}
-        evidence = max((abs(float(dims[k].get("evidence") or 0)) for k in (cal.get("moving") or []) if k in dims),
-                       default=0.0)
-        import schedule_memory as _smem_cal
-        _smem_cal.observe(r.id, "calibration_suggested", week_start=newest, value={
-            "evidence": round(evidence, 3), "moving": list(cal.get("moving") or []),
-            "profiles": sorted(cal.get("suggested_profiles") or {}),
-            "strong": evidence >= CALIBRATION_STRONG_EVIDENCE or bool(cal.get("suggested_profiles"))},
-            origin="system", phase="as_run", authority="system", source="calibration",
-            db_path=None if db_path == DB_PATH else db_path, fact_key=f"calibration_suggested|{newest}")
-        changed["n"] += 1
+        got = quality_calibration_one(r.id, db_path=db_path, cohort=cohort)
+        changed["n"] += int(got.get("changed") or 0)
 
     attempted, failed, hit = _bounded_each("quality_calibration", _one, db_path)
     return _counts(attempted, attempted - failed, failed, hit_bound=hit, restaurants_changed=changed["n"])
+
+
+def quality_calibration_one(restaurant_id, db_path=DB_PATH, cohort=None) -> dict:
+    """One restaurant's weekly calibration (run_quality_calibration's two
+    parts). `cohort` None: this ISO week's kept cohort
+    (schedule_calibration.stored_cohort — the queued row's read). Returns
+    {"status" (the automatic run's), "suggested", "changed"}."""
+    import json as _j
+    import ops as _ops_cal
+    import schedule_calibration as _scal
+    import schedule_learning as _sl
+    import shift_quality as _sq
+    from models import get_quality_weights, record_capability_change
+    if cohort is None:
+        cohort = _scal.stored_cohort(db_path=None if db_path == DB_PATH else db_path)
+    out = {"status": None, "suggested": False, "changed": 0}
+    try:
+        out["status"] = _scal.shadow_run(restaurant_id, cohort=cohort,
+                                         db_path=None if db_path == DB_PATH else db_path).get("status")
+        if out["status"] == "promoted":
+            out["changed"] += 1
+    except Exception as _sx:
+        _ops_cal.capture(_sx, job="quality_calibration", context=f"restaurant_id={restaurant_id} shadow run")
+    cal = _sl.calibrate_weights(restaurant_id, db_path=db_path)
+    if not cal.get("ready") or not (cal.get("suggested_weights") or cal.get("suggested_profiles")):
+        return out
+    current = get_quality_weights(restaurant_id) or {}
+    merged = dict(_sq.DEFAULT_WEIGHTS)
+    merged.update(current)
+    after = dict(merged)
+    after.update({k: float(v) for k, v in (cal.get("suggested_weights") or {}).items()})
+    weights_move = any(abs(float(after[k]) - float(merged.get(k, 0) or 0)) >= 0.05 for k in after)
+    if not weights_move and not cal.get("suggested_profiles"):
+        return out                                 # nothing to suggest
+    # Once per new published week: the same evidence read again next
+    # week is not a new suggestion.
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT MAX(week_start) AS w FROM schedule_history WHERE restaurant_id=? "
+                           "AND published_at IS NOT NULL", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    newest = row["w"] if row else None
+    # A once-ever marker per (restaurant, published week), in a table
+    # that is never pruned (#157): in the 45-day claims table a
+    # restaurant that stopped publishing got the same suggestion again
+    # every 45 days. Existing claims were carried over at boot.
+    if newest and not _ops_cal.claim_marker("quality_calibration", f"{restaurant_id}:{newest}"):
+        return out
+    # Suggested, never applied: "Apply" is one tap and writes these same
+    # numbers (_do_calibration_apply over calibrate_weights).
+    if weights_move:
+        record_capability_change(restaurant_id, "quality_weights_suggested", subject="weights",
+                                 before=_j.dumps(current), after=_j.dumps(after),
+                                 changed_by="Cavnar AI (calibration)")
+    if cal.get("suggested_profiles"):
+        prof = cal.get("profiles") or {}
+        before_p = {k: {"min_quality": ((prof.get(k) or {}).get("bar") or {}).get("current"),
+                        "floors": {d: e.get("current") for d, e in ((prof.get(k) or {}).get("floors") or {}).items()
+                                   if d in ((cal["suggested_profiles"].get(k) or {}).get("floors") or {})}}
+                    for k in cal["suggested_profiles"]}
+        record_capability_change(restaurant_id, "quality_profiles_suggested", subject="profiles",
+                                 before=_j.dumps(before_p), after=_j.dumps(cal["suggested_profiles"]),
+                                 changed_by="Cavnar AI (calibration)")
+    # How strong it is, kept where the action queue reads it: the largest
+    # fitted effect behind a weight that moves, and whether a floor or a
+    # bar moves (its own evidence floor is 0.5 SD, past which it is strong).
+    dims = cal.get("dimensions") or {}
+    evidence = max((abs(float(dims[k].get("evidence") or 0)) for k in (cal.get("moving") or []) if k in dims),
+                   default=0.0)
+    import schedule_memory as _smem_cal
+    _smem_cal.observe(restaurant_id, "calibration_suggested", week_start=newest, value={
+        "evidence": round(evidence, 3), "moving": list(cal.get("moving") or []),
+        "profiles": sorted(cal.get("suggested_profiles") or {}),
+        "strong": evidence >= CALIBRATION_STRONG_EVIDENCE or bool(cal.get("suggested_profiles"))},
+        origin="system", phase="as_run", authority="system", source="calibration",
+        db_path=None if db_path == DB_PATH else db_path, fact_key=f"calibration_suggested|{newest}")
+    out["suggested"] = True
+    out["changed"] += 1
+    return out
+
+
+def quality_calibration_pass():
+    """What scheduler_loop runs for quality_calibration: with the job queue
+    on, the platform's cohort once (kept for the week) and one `learner` row
+    per Labor restaurant (blind re-audit 10/11/26 — a fleet sweep is queue
+    work); else the bounded inline sweep."""
+    import job_queue
+    if not job_queue.enabled():
+        return run_quality_calibration
+
+    def _fan():
+        import ops as _ops_cal
+        import schedule_calibration as _scal
+        try:
+            _scal.cohort_evidence()
+        except Exception as _cx:
+            _ops_cal.capture(_cx, job="quality_calibration", context="cohort evidence")
+        return fan_out_learner("quality_calibration")
+    return _fan
 
 
 def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
@@ -1250,7 +1293,8 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     whose draft day it is is read from it, so the pass and the loop agree on
     the clock. Without it, each restaurant's own wall clock now.
 
-    `enqueue` (the scheduler passes job_queue.enabled() — scheduler audit
+    `enqueue` (the scheduler passes True — the queue is the one path since
+    blind re-audit 10/11/26 ARCH-10; scheduler audit
     10/10/26 SCALE-13, RM-7): each restaurant's draft is a `scheduled` row
     on the job queue (enqueue_auto_draft), run by the queue's consumers
     under its fairness and the generation group's slots, never inside this
@@ -1434,7 +1478,7 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
     with batch=False and the answer handed to the call. A gate's refusal
     drafts nothing; batches off here or nothing to batch, it runs now."""
     import ops
-    from schedule_engine import generation_scope, generation_request, GEN_PRIORITY_BACKGROUND
+    from schedule_engine import generation_scope, generation_request
     # What it asks, as an owner's press of Generate for next week would: an
     # owner's identical press joins it, and it never joins (or is joined by)
     # a generation of anything else (re-audit 10/4/26 UI-8).
@@ -1477,24 +1521,14 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
     import schedule_engine as _watch
     told = set()
     try:
-        # Behind any owner's press (AI cost audit 10/7/26 #5): an owner who
-        # presses Generate takes the next free slot ahead of queued drafts.
-        try:
-            with generation_scope(job_id, priority=GEN_PRIORITY_BACKGROUND, restaurant_id=r.id):
-                # The week it claimed, resolved before the wait for a slot
-                # (up to GEN_BACKGROUND_WAIT_SECONDS): across midnight it
-                # built the week after (BUGSGEN-11).
-                _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
-        except _se.GenerationSlotTimeout:
-            # Every slot stayed busy (owners' presses first): the job is closed,
-            # the day handed back, and the next hourly pass tries again.
-            ops.finish_async_job(job_id, "error", {"ok": False, "error": "No generation slot came free — "
-                                                                         "it will try again within the hour."})
-            if period:
-                ops.release_period(f"auto_draft:{r.id}", period)
-            _release_auto_draft_attempt(r.id, target, attempt)  # no model call was made
-            _bump("skipped")
-            return
+        # Its slot is its auto_draft queue row (scheduled class: behind any
+        # owner's press, its own reserved slot while drafts wait — job_queue;
+        # blind re-audit 10/11/26 ARCH-10, SCALE-28). A row no slot took in
+        # AUTO_DRAFT_QUEUE_HOURS expires and hands its day back
+        # (on_auto_draft_expired). The week it claimed was resolved before
+        # it ran: across midnight it built the week after (BUGSGEN-11).
+        with generation_scope(job_id, restaurant_id=r.id):
+            _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
         # _run_schedule_job reports its own failures into the job row rather
         # than raising, so the push below must wait on that verdict — telling
         # an owner a draft is waiting when none was saved is worse than silence.
@@ -1611,24 +1645,48 @@ def _tell_auto_draft_gave_up(r, db_path, target):
 # enqueues it again. Its deadline also orders the scheduled class (earliest
 # first).
 AUTO_DRAFT_QUEUE_HOURS = 6
+# A timezone's drafts start spread over this many minutes from the pass that
+# queued them (blind re-audit 10/11/26 SCALE-28): every restaurant of a zone
+# used to become claimable at one instant at 6am local.
+AUTO_DRAFT_SPREAD_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MINUTES", "120"))
 
 
-def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None):
+def auto_draft_offset_seconds(restaurant_id) -> int:
+    """The restaurant's fixed place in its zone's draft spread: the same
+    every week (a stable hash of its id), so an owner sees the draft land at
+    the same time of the morning."""
+    span = max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
+    if span <= 0 or restaurant_id is None:
+        return 0
+    import hashlib
+    h = int(hashlib.sha256(f"auto_draft:{int(restaurant_id)}".encode()).hexdigest()[:8], 16)
+    return h % span
+
+
+def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None):
     """One restaurant's auto-draft as a `scheduled` job_queue row: the same
     try (_claim_auto_draft_attempt) the pass claimed, keyed so the same try
-    is never queued twice. `answer` is the Message Batches answer
-    (schedule_batch.on_auto_draft, {key, text, stop_reason, usage,
-    call_id}) the draft is written from. Returns the row id."""
+    is never queued twice. `answers_job` is the Message Batches group whose
+    answers are stored by call key (schedule_batch — blind re-audit 10/11/26
+    ARCH-15): the draft runs under schedule_resume.resuming(it). `answer` is
+    the one answer an item submitted before ARCH-15 carries ({key, text,
+    stop_reason, usage, call_id}). Returns the row id."""
     import job_queue
     import time as _t
     payload = {"restaurant_id": r.id, "period": period, "target": target, "attempt": attempt,
-               "batch": bool(batch), "answer": answer,
+               "batch": bool(batch), "answer": answer, "answers_job": answers_job,
                "attribution": {"trigger": "scheduler", "actor_user_id": None,
                                "correlation_id": f"auto_draft:{r.id}:{target}"}}
-    key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if answer is not None else
+    key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if (answer is not None or answers_job) else
                                                       ":sync" if not batch else "")
+    # The pass's own row (the first half) starts at the restaurant's place in
+    # the spread; a batched answer, already paid for, or a synchronous run
+    # after a batch fell through, is drafted as soon as a slot allows.
+    first_half = batch and answer is None and not answers_job
+    start = _t.time() + (auto_draft_offset_seconds(r.id) if first_half else 0)
     qid, _created = job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
-                                      idempotency_key=key, deadline=_t.time() + AUTO_DRAFT_QUEUE_HOURS * 3600)
+                                      idempotency_key=key, not_before=start,
+                                      deadline=start + AUTO_DRAFT_QUEUE_HOURS * 3600)
     return qid
 
 
@@ -1650,7 +1708,7 @@ def run_queued_auto_draft(job):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return {"skipped": "not opted in"}
     target = p.get("target")
-    if target and p.get("answer") is not None:
+    if target and (p.get("answer") is not None or p.get("answers_job")):
         conn = get_conn(DB_PATH)
         try:
             if _week_has_schedule(conn, r.id, target):
@@ -1659,7 +1717,12 @@ def run_queued_auto_draft(job):
             conn.close()
     ctx = _cl.nullcontext()
     ans = p.get("answer")
-    if ans:
+    if p.get("answers_job"):
+        # The group's batched answers, read by call key at the call site
+        # (ARCH-15): the resume mechanism, nothing carried in the row.
+        import schedule_resume as _sres
+        ctx = _sres.resuming(p["answers_job"])
+    elif ans:
         import schedule_batch as _sbat
         import schedule_resume as _sres
         msg = _sres.StoredMessage(ans.get("text") or "", stop_reason=ans.get("stop_reason"), model=ans.get("model"))
@@ -1674,7 +1737,7 @@ def run_queued_auto_draft(job):
         ctx = _sbat.answering(ans.get("key"), msg)
     with ctx:
         _draft_one(r, DB_PATH, _se, _bump, period=p.get("period"), target=target, attempt=p.get("attempt"),
-                   batch=bool(p.get("batch", True)) and not ans)
+                   batch=bool(p.get("batch", True)) and not ans and not p.get("answers_job"))
     return counts
 
 
@@ -1698,6 +1761,12 @@ LEARNERS = {
     "schedule_outcomes": "strategy_jobs:schedule_outcomes_one",
     "schedule_memory": "strategy_jobs:schedule_memory_one",
     "people_nightly": "strategy_jobs:people_nightly_one",
+    # The weekly learning sweeps (blind re-audit 10/11/26 LEARNING-24,
+    # SCALE-26): serial 15-minute passes could not cover the fleet, so a
+    # restaurant's estimates went weeks stale.
+    "staffing_learning": "staffing_elasticity:estimate_one",
+    "schedule_scorecard": "schedule_scorecard:score_one",
+    "quality_calibration": "strategy_jobs:quality_calibration_one",
 }
 
 
@@ -1729,13 +1798,13 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     return _counts(created, created, 0, len(items) - created, False, queued=created)
 
 
-def learner_pass(name, fn):
+def learner_pass(name, fn=None):
     """What scheduler_loop runs for a nightly learner: its fan-out onto the
-    job queue when the queue is on, else `fn` (the bounded inline sweep)."""
-    import job_queue
-    if job_queue.enabled():
-        return lambda: fan_out_learner(name)
-    return fn
+    job queue — the one path (blind re-audit 10/11/26 ARCH-10; JOB_QUEUE=0
+    and its inline sweep in the scheduler thread are gone). `fn`, the
+    bounded sweep body, is what a direct call (a script, a test) runs; the
+    scheduler never does."""
+    return lambda: fan_out_learner(name)
 
 
 def run_queued_learner(job):

@@ -207,9 +207,15 @@ A deletion is only "verified" when the trace is written down alongside it.
   service — see `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. Background work
   (schedule generations, auto-drafts, the per-restaurant nightly learners) is
   the durable job queue (`job_queue.py`, `jobs` rows with leases, priority
-  classes and per-tenant fairness): consumed in the web process by default,
-  by `worker.py` in the SAME service with `QUEUE_WORKER=1`; `JOB_QUEUE=0` is
-  the old in-process path. A deploy hands running rows back and the next
+  classes and per-tenant fairness) — the one path (`JOB_QUEUE=0` and the
+  in-process `GenerationSlots` are gone, 10/11/26): consumed by default by
+  the queue worker process `worker.py --queue`, which gunicorn's master
+  starts beside the web worker in the SAME container (`gunicorn.conf.py`; the
+  start command is unchanged) and restarts after it recycles itself
+  (`QUEUE_WORKER_MAX_JOBS` / `QUEUE_WORKER_MAX_RSS_MB`); the web process
+  consumes only while no worker heartbeat is fresh, or with
+  `QUEUE_WORKER=0`. A generation gives its CPU slot back while the model
+  writes (`job_queue.model_wait`). A deploy hands running rows back and the next
   process resumes them from their checkpoints (`schedule_resume`), never
   paying for a model answer twice. The single-runner guarantee is
   `ops.acquire_scheduler_lease()`, and the lease lives in the SQLite file:
@@ -220,23 +226,27 @@ A deletion is only "verified" when the trace is written down alongside it.
   or a `/health` that is not 200 within the 120-second healthcheck, is
   downtime until a rollback — `/health` answers 200 for a degraded platform
   on purpose and must stay read-only.
-- **Do not raise gunicorn `--workers` past 1** until the process-local
-  state that still multiplies with workers is moved into the database:
-  `security._admin_hits` (the admin request ceiling), the console's fleet memo
-  (`admin_ops._fleet_state`) and the bounded pools (`ASK_MAX_CONCURRENT`,
-  the two admin pools — `ops.run_admin_task` and
-  `admin_routes._submit_admin_job` — the webhook and push delivery
-  pools, the owner AI job pool `ai_async`,
-  the interactive AI slots `ai_utils._INTERACTIVE_SLOTS` and the AI
-  background pools — Ask's read and summary pools, the shadow-review and
-  scoring pools), the schedule model-call pool — one per process,
+- **Do not raise gunicorn `--workers` past 1** until the bounded pools
+  that still multiply with workers are sized for it: the two admin pools —
+  `ops.run_admin_task` and `admin_routes._submit_admin_job` — the webhook
+  and push delivery pools, the owner AI job pool `ai_async`, the AI
+  background pools (Ask's read and summary pools, the shadow-review and
+  scoring pools) and the schedule model-call pool — one per process,
   `schedule_engine._call_pool`, `SCHEDULE_CALL_POOL_WORKERS` (default
-  `SCHEDULE_GEN_WORKERS` x `SCHEDULE_PARALLEL_CALLS`) — and the schedule Studio's kept inputs
-  (`schedule_engine._studio_cache` / `_studio_live`) and the requirement
-  model cache (`_REQUIREMENT_MODEL_CACHE`) — caches, safe to keep per
-  worker; the inventory and order are in
-  `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`. Each worker gets its own copy,
-  so two workers silently double every limit. (Already durable: the login
+  `job_queue.max_running("generation")` x `SCHEDULE_PARALLEL_CALLS`, in the
+  queue worker process). Each worker gets its own copy, so two workers
+  double each bound on outbound work; the inventory and order are in
+  `docs/plans/POSTGRES_AND_WORKERS_PLAN.md`. Per process BY DESIGN (each
+  guards that process's own four request threads, so it is right per
+  worker): `ASK_MAX_CONCURRENT` and `ai_utils._INTERACTIVE_SLOTS`. Caches
+  keyed on a database stamp, so right in every worker: the Studio's kept
+  inputs (`_studio_cache`, on `models.schedule_inputs_version`), its live
+  check (`_studio_live`) and the requirement model cache
+  (`_REQUIREMENT_MODEL_CACHE`) on `schedule_engine.shifts_stamp`. (Moved
+  into the database 10/11/26, blind re-audit ARCH-26/SCALE-23: the admin
+  request ceiling — `admin_request_hits`, `security._admin_hits` only its
+  fallback; the console's fleet memo — dropped in every worker through the
+  shared generation `job_cursors['admin_fleet_gen']`. Already durable: the login
   limiter — `security.login_throttled` on `login_attempts`,
   `auth_routes._login_attempts` only its fail-closed fallback; the
   supplier-email cooldown — `ops.claim_cooldown` rows,

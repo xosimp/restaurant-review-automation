@@ -41,11 +41,12 @@ def _week(i):
     return [(start + dt.timedelta(days=k)).isoformat() for k in range(7)]
 
 
-def _world(rid, weeks, shift_fn):
-    """shift_fn(week, k, rng) -> (date index, cov, issues): one shift."""
-    rng = random.Random(11)
+def _world(rid, weeks, shift_fn, start=0, seed=11):
+    """shift_fn(week, k, rng) -> (date index, cov, issues): one shift.
+    `start`: the first week's index (later published weeks)."""
+    rng = random.Random(seed)
     conn = models.get_conn()
-    for i in range(weeks):
+    for i in range(start, start + weeks):
         days = _week(i)
         shifts, outs = [], []
         for k in range(6):
@@ -132,10 +133,18 @@ def test_a_floor_line_found_by_chance_does_not_move():
 
 def test_the_weights_move_on_their_own_within_the_step_and_the_owner_can_undo(monkeypatch):
     # Auto-promotion is OFF by default since the blind re-audit (10/11/26);
-    # this test is about what it does when switched on.
+    # this test is about what it does when switched on. A candidate that
+    # passes the held-out weeks waits (pending) for new published weeks it
+    # never saw, and is promoted only when they confirm it (LEARNING-1).
     monkeypatch.setenv(scal.AUTOPROMOTE_ENV, "1")
     rid = _rid()
-    _world(rid, 12, _helps)
+    _world(rid, 16, _helps)
+    first = scal.shadow_run(rid)
+    assert first["status"] == "pending", first
+    assert not models.get_quality_weights(rid), "nothing moves on the retrospective check alone"
+    # The same evidence read again says nothing new (LEARNING-3).
+    assert scal.shadow_run(rid)["status"] == "no_new_data"
+    _world(rid, 2, _helps, start=16, seed=12)
     out = scal.shadow_run(rid)
     assert out["status"] == "promoted", out
     w = models.get_quality_weights(rid)
@@ -143,11 +152,14 @@ def test_the_weights_move_on_their_own_within_the_step_and_the_owner_can_undo(mo
     assert w["coverage"] == round(default * (1 + sl.CALIBRATION_MAX_STEP), 1), "more than one bounded step"
     prom = scal.latest_promotion(rid)
     assert prom["can_undo"] and any(c["dimension"] == "coverage" for c in prom["changes"])
-    assert "held-out" in prom["reason"]
+    assert "held-out" in prom["reason"] and "published since" in prom["reason"]
     scal.revert(rid, user={"username": "owner"})
     assert (models.get_quality_weights(rid) or {}).get("coverage") in (None, default)
     assert scal.latest_promotion(rid) is None
     # For eight weeks after the owner's undo, nothing is promoted again.
+    _world(rid, 2, _helps, start=18, seed=13)
+    assert scal.shadow_run(rid)["status"] == "pending"
+    _world(rid, 2, _helps, start=20, seed=14)
     again = scal.shadow_run(rid)
     assert again["status"] == "held" and "undid" in again["reason"]
     with pytest.raises(ValueError):
@@ -156,11 +168,17 @@ def test_the_weights_move_on_their_own_within_the_step_and_the_owner_can_undo(mo
 
 def test_a_demo_is_never_promoted_and_the_switch_keeps_runs_in_shadow(monkeypatch):
     rid = _rid()
-    _world(rid, 12, _helps)
+    _world(rid, 16, _helps)
     monkeypatch.setenv(scal.AUTOPROMOTE_ENV, "0")
-    assert scal.shadow_run(rid)["status"] == "held"
+    assert scal.shadow_run(rid)["status"] == "pending"
+    _world(rid, 2, _helps, start=16, seed=12)
+    held = scal.shadow_run(rid)
+    assert held["status"] == "held" and "switched off" in held["reason"]
     monkeypatch.delenv(scal.AUTOPROMOTE_ENV)
     monkeypatch.setattr(models, "learns_for_itself", lambda *a, **k: False)
+    _world(rid, 2, _helps, start=18, seed=13)
+    assert scal.shadow_run(rid)["status"] == "pending"
+    _world(rid, 2, _helps, start=20, seed=14)
     out = scal.shadow_run(rid)
     assert out["status"] == "held" and "does not learn" in out["reason"]
     assert not models.get_quality_weights(rid)
