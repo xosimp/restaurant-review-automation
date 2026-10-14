@@ -223,7 +223,7 @@ def test_sq15_a_restaurant_with_no_ratings_and_no_profiles_is_judged_on_its_own_
 
 def test_sq15_the_generation_builds_them_always_and_keeps_the_prompt_as_it_was():
     import inspect
-    src = inspect.getsource(se._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in se.INPUT_STEPS)
     assert "_profiles = _sq.profiles_from_config(" in src and "if _stored_profiles or _op_scores:\n" not in src
     assert 'result["shift_profiles"] = _profiles' in src
     assert "shift_profiles=_prompt_profiles" in src

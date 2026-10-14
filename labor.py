@@ -4792,7 +4792,8 @@ def _roles_worked(restaurant_id, shifts, employees):
 
 
 def _usual_crew(
-        staffing_patterns, shifts, close_times, open_times, restaurant_id, call_kind, week_slice, tz_name, week_start, week_start_day):
+        staffing_patterns, shifts, close_times, open_times, restaurant_id, call_kind, week_slice, tz_name,
+        week_start, week_start_day):
     """The staffing baseline (the engine's, else this history's) and the TYPICAL HEADCOUNT block; a redo's day-
     only scope."""
     import schedule_prompt as _sp
@@ -4922,7 +4923,8 @@ def _the_week(tz_name, week_start, week_start_day, closed_dates):
 
 
 def _owner_rules_block(
-        hours_notes, hours_rule_reads, owner_rules_text, owner_rule_reads, staff_notes, availability_table, contract, sched_notes, restaurant_id, week_dates, instruction):
+        hours_notes, hours_rule_reads, owner_rules_text, owner_rule_reads, staff_notes, availability_table, contract,
+        sched_notes, restaurant_id, week_dates, instruction):
     """THE OWNER'S STANDING RULES: the hours rules, the standing rules, the staff constraints, the notes and this
     draft's request, each at its rank in PRIORITIES."""
     import schedule_rules as _sr_p
@@ -5069,7 +5071,8 @@ def _owner_rules_block(
 
 
 def _context_blocks(
-        yoy_context, _slim_dates, upcoming_events, today, week_dates, weather_forecast, restaurant_id, _slim, prior_schedule_summary, week_days, _slim_days, prior_week):
+        yoy_context, _slim_dates, upcoming_events, today, week_dates, weather_forecast, restaurant_id, _slim,
+        prior_schedule_summary, week_days, _slim_days, prior_week):
     """The week's context blocks: year over year, the week's holidays, the weather forecast, the demand by
     weekday and the last published week."""
     import schedule_prompt as _sp
@@ -5218,11 +5221,14 @@ def _context_blocks(
                 + "\n  A comparison, never a template: whatever went wrong in it is not to be repeated. The summary "
                 "says what is actually different this time; where a day is essentially unchanged it says so plainly "
                 "rather than inventing a change.")
-    return _demand_block, _prior_schedule_block, _w_lines, _weather_block, holidays_block, weather_forecast, yoy_block
+    return (_demand_block, _prior_schedule_block, _w_lines, _weather_block, holidays_block, weather_forecast,
+            yoy_block)
 
 
 def _budget_blocks(
-        analysis, week_dates, labor_target, hourly_rate, yoy_context, projected_revenue_override, monthly_revenue_target, salaried_week, closed_dates, date_demand, role_rates, section_count, section_cap_roles, daypart_split, delivery_pct, role_minimums_json):
+        analysis, week_dates, labor_target, hourly_rate, yoy_context, projected_revenue_override,
+        monthly_revenue_target, salaried_week, closed_dates, date_demand, role_rates, section_count,
+        section_cap_roles, daypart_split, delivery_pct, role_minimums_json):
     """The hours plan (PAR, its dollars, each day's hours), the role rates, the section cap, the owner's revenue
     split and off-premise share, and the role minimums."""
     import schedule_rules as _sr_p
@@ -5303,7 +5309,8 @@ def _budget_blocks(
     if _rm_parsed:
         _role_minimums_extra = ("\n\nROLE MINIMUMS (the owner's whole-day minimums, already inside SHIFT "
                                 "REQUIREMENTS): " + ", ".join(f"{r} {n}" for r, n in sorted(_rm_parsed.items())) + ".")
-    return _budget_basis, _daily_target_map, _daypart_block, _delivery_block, _plan, _role_minimums_extra, _section_block, hours_budget, labor_budget_dollars, projected_revenue, role_rates_block
+    return (_budget_basis, _daily_target_map, _daypart_block, _delivery_block, _plan, _role_minimums_extra,
+            _section_block, hours_budget, labor_budget_dollars, projected_revenue, role_rates_block)
 
 
 def _people_notes(restaurant_id, roster_facts, week_dates, staff_availability):
@@ -5348,7 +5355,8 @@ def _people_notes(restaurant_id, roster_facts, week_dates, staff_availability):
 
 
 def _strength_blocks(
-        operational_scores, employees, _emp_roles, leader_rules, leader_flags, _families, strength_thresholds, _slim_days, shift_profiles):
+        operational_scores, employees, _emp_roles, leader_rules, leader_flags, _families, strength_thresholds,
+        _slim_days, shift_profiles):
     """OPERATIONAL SCORE, the strength targets and the leader rules the roster can meet, and the shift profiles
     the week is scored against."""
     # ── Operational Score ─────────────────────────────────────────────────
@@ -5424,7 +5432,8 @@ def _strength_blocks(
 
 
 def _par_block(
-        _budget_basis, projected_revenue, labor_target, labor_budget_dollars, hourly_rate, _daily_target_map, _plan, hours_budget):
+        _budget_basis, projected_revenue, labor_target, labor_budget_dollars, hourly_rate, _daily_target_map, _plan,
+        hours_budget):
     """PAR HOURS CEILING: the week's hourly ceiling and how it was set, or why there is none."""
     # A labor target is a CEILING, not a quota. Under budget is a good
     # outcome once every shift meets its SHIFT REQUIREMENTS; a day's target
@@ -5478,7 +5487,11 @@ def _par_block(
 
 
 def _requirements_and_managers(
-        week_dates, week_slice, _closed_set, week_days, employees, _emp_roles, _patterns, borrowed_headcount, manager_plan, requirement_adjustments, role_floors, _daily_target_map, shift_profiles, demand_by_day, demand_by_date, _leader_rules_here, _scores, leader_flags, role_minimums_json, closed_dates, hourly_profile, open_times, close_times, section_count, section_cap_roles, date_demand, splh_hold, labor_standards, role_windows, role_caps, hours_rule_reads, pinned_rows, rules_block, focus):
+        week_dates, week_slice, _closed_set, week_days, employees, _emp_roles, _patterns, borrowed_headcount,
+        manager_plan, requirement_adjustments, role_floors, _daily_target_map, shift_profiles, demand_by_day,
+        demand_by_date, _leader_rules_here, _scores, leader_flags, role_minimums_json, closed_dates, hourly_profile,
+        open_times, close_times, section_count, section_cap_roles, date_demand, splh_hold, labor_standards,
+        role_windows, role_caps, hours_rule_reads, pinned_rows, rules_block, focus):
     """The dates this call writes, SHIFT REQUIREMENTS (this call's and the whole week's), the managers' planned
     shifts, the standing positions and the focus of a regeneration."""
     # The dates to write rows for. A big roster is generated in parts; the
@@ -5618,7 +5631,8 @@ def _requirements_and_managers(
 
 
 def _roster_table(
-        experienced, roster_facts, employees, staff_availability, _time_off, _scores, tenure, leader_flags, prior_pattern, _families, _role_counts, _held_by_name, week_dates, _closed_set, manager_plan):
+        experienced, roster_facts, employees, staff_availability, _time_off, _scores, tenure, leader_flags,
+        prior_pattern, _families, _role_counts, _held_by_name, week_dates, _closed_set, manager_plan):
     """The ROSTER: one line per person (role, hours, availability, time off, scores, reliability)."""
     import schedule_prompt as _sp
     # ── The ROSTER: one line per person (schedule audit 10/3/26 PR-33) ────
@@ -5640,7 +5654,8 @@ def _roster_table(
 
 
 def _request_parts(
-        _gen_dates, week_dates, _closed_set, hours_budget, _daily_target_map, prior_rows, shift_profiles, demand_by_day, demand_by_date, roster_facts, employees, payroll_weeks):
+        _gen_dates, week_dates, _closed_set, hours_budget, _daily_target_map, prior_rows, shift_profiles,
+        demand_by_day, demand_by_date, roster_facts, employees, payroll_weeks):
     """THIS REQUEST: the dates to write, a slice's share of the hours, and the seam with the days already
     written."""
     import schedule_prompt as _sp
@@ -5733,7 +5748,12 @@ def _record_lines(
 
 
 def _texts(
-        _closed_set, week_dates, restaurant_name, holidays_block, _slim_dates, week_slice, _history_lines, _demand_block, yoy_block, _weather_block, _prior_schedule_block, par_block, role_rates_block, _headcount_block, _section_block, _daypart_block, _delivery_block, _role_minimums_extra, _noshows_block, contract, availability_table, _owner_block, _manager_block, _standing_block, rules_block, _roster_block, _staff_notes_block, _strength_block, _profile_block, extra_blocks, _request_head, _requirements_block, _slice_budget, _seam_block, call_notes, _focus_block):
+        _closed_set, week_dates, restaurant_name, holidays_block, _slim_dates, week_slice, _history_lines,
+        _demand_block, yoy_block, _weather_block, _prior_schedule_block, par_block, role_rates_block,
+        _headcount_block, _section_block, _daypart_block, _delivery_block, _role_minimums_extra, _noshows_block,
+        contract, availability_table, _owner_block, _manager_block, _standing_block, rules_block, _roster_block,
+        _staff_notes_block, _strength_block, _profile_block, extra_blocks, _request_head, _requirements_block,
+        _slice_budget, _seam_block, call_notes, _focus_block):
     """The two prompt texts in reading order: THIS RESTAURANT'S WEEK and THIS REQUEST."""
     import schedule_prompt as _sp
     # The week part, in reading order: the restaurant and its dates, the
@@ -5767,7 +5787,8 @@ def _texts(
 
 
 def _contract_and_content(
-        employees, _emp_roles, held_roles, contract, schema_enums, week_dates, _closed_set, open_times, close_times, hours_notes, structured, restaurant_id, week_text, request_text, cache_ttls):
+        employees, _emp_roles, held_roles, contract, schema_enums, week_dates, _closed_set, open_times, close_times,
+        hours_notes, structured, restaurant_id, week_text, request_text, cache_ttls, _ready_sched):
     """The output contract (the generation's schema and its words), the readiness gate's data state and the
     request's content blocks."""
     import schedule_prompt as _sp
@@ -5795,18 +5816,9 @@ def _contract_and_content(
     _note_words = ", ".join(v for v in _sched_out.NOTE_VALUES if v)
     static_text = _sp.static_block(structured, _note_words, enums=schema_enums, contract=_cbase)
 
-    # The readiness gate before the call (DH5-2): a schedule rests on the
-    # shifts, the POS, sales and the weather. The owner asked for it, so a
-    # source that is down caveats (the DATA STATE block tells the model how
-    # current each is — it closes THIS RESTAURANT'S WEEK) rather than
-    # refusing the schedule.
-    import data_health as _dh_sched
+    # The DATA STATE block closes THIS RESTAURANT'S WEEK: how current each
+    # source is (the readiness the call asked for, `_ready_sched`).
     from ai_utils import with_data_state as _with_ds_sched
-    # Once per generation (P-36): every call re-ran the readiness checks.
-    from schedule_context import frozen_read as _frozen_rd
-    _ready_sched = (_frozen_rd(("readiness", restaurant_id, "schedule"),
-                               lambda: _dh_sched.readiness(restaurant_id, "schedule")) if restaurant_id
-                    else _dh_sched.NOT_APPLICABLE)
     # Every date the model reads in one format, weekday and ISO (PR-20):
     # code-built M/D/YY in a shared line becomes it; people's own words
     # inside a fence stay theirs.
@@ -5814,7 +5826,7 @@ def _contract_and_content(
     request_text = _sp.iso_dates(request_text)
     _content = _sp.request_content(static_text, week_text, request_text, ttls=cache_ttls)
     prompt = _sp.prompt_text(_content)
-    return _cbase, _content, _ready_sched, _schema, prompt
+    return _cbase, _content, _schema, prompt
 
 
 def _call_request(_content, restaurant_id, deadline, structured, _schema, schema_enums, _cbase):
@@ -5890,7 +5902,9 @@ def _call_request(_content, restaurant_id, deadline, structured, _schema, schema
 
 
 def _week_facts_of(
-        week_dates, week_days, projected_revenue, hours_budget, labor_budget_dollars, labor_target, _daily_target_map, _plan, _week_requirements, employees, _scores, strength_thresholds, leader_rules, shift_profiles, _patterns):
+        week_dates, week_days, projected_revenue, hours_budget, labor_budget_dollars, labor_target,
+        _daily_target_map, _plan, _week_requirements, employees, _scores, strength_thresholds, leader_rules,
+        shift_profiles, _patterns):
     """The week's figures every answer carries back (and a draft made without the model needs)."""
     import schedule_requirements as _req
     # The week's figures every answer carries back (and a draft made without
@@ -5939,7 +5953,8 @@ def _week_facts_of(
 
 
 def _read_answer(
-        _t0, msg, _cut, restaurant_id, _call, _call_args, _rec, structured, _gen_dates, _cbase, week_slice, _closed_set):
+        _t0, msg, _cut, restaurant_id, _call, _call_args, _rec, structured, _gen_dates, _cbase, week_slice,
+        _closed_set):
     """The answer read: a refusal raised, the rows parsed (typed on the structured contract, lines on CSV) and
     the model's summary bullets."""
     _seconds = round(time.time() - _t0, 1)
@@ -6091,7 +6106,8 @@ def _merge_planned_managers(_data_rows, _pins, roster, employees, _gen_dates, _t
 
 
 def _record_and_cost(
-        EXPECTED_HEADER, _data_rows, _parse, _model_line_count, _truncated, restaurant_id, _call, _call_args, raw, msg, _seconds, _rec, _model, _oc, _contract, call_kind, _route, _stop):
+        EXPECTED_HEADER, _data_rows, _parse, _model_line_count, _truncated, restaurant_id, _call, _call_args, raw,
+        msg, _seconds, _rec, _model, _oc, _contract, call_kind, _route, _stop):
     """The answer's CSV, the call recorded (schedule_model_calls) and what it cost and wrote."""
     csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
     _rows_written = len(_parse["rows"]) if _parse is not None else _model_line_count
@@ -6116,7 +6132,9 @@ def _record_and_cost(
 
 
 def _checked_note_bullets(
-        csv_clean, hours_budget, summary_bullets, prompt, restaurant_id, yoy_block, holidays_block, _demand_block, weather_forecast, _w_lines, _prior_schedule_block, _headcount_block, _requirements_block, _noshows_block, _roster_block, _manager_block, role_floors, role_minimums_json, leader_flags, _ready_sched):
+        csv_clean, hours_budget, summary_bullets, prompt, restaurant_id, yoy_block, holidays_block, _demand_block,
+        weather_forecast, _w_lines, _prior_schedule_block, _headcount_block, _requirements_block, _noshows_block,
+        _roster_block, _manager_block, role_floors, role_minimums_json, leader_flags, _ready_sched):
     """The model's note bullets, each checked against the prompt's data (a failing one dropped) and its dates in
     the owner's format."""
     import schedule_prompt as _sp
@@ -6370,248 +6388,114 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # budget, and a slice lost the rows already written (SCHED-3).
     _call_args = dict(locals())
     w = WeekInputs(**_call_args)
+    # 1. The request: every block of the three parts, built from the call's inputs.
     dow, employees, overstaffed, understaffed = _roster_of(shifts=w.shifts, roster=w.roster, analysis=w.analysis)
     _noshows_block = _no_show_block(restaurant_id=w.restaurant_id, shifts=w.shifts)
     _emp_roles, _families, _held_by_name, _role_counts = _roles_worked(
-        restaurant_id=w.restaurant_id,
-        shifts=w.shifts,
-        employees=employees)
+        restaurant_id=w.restaurant_id, shifts=w.shifts, employees=employees)
     _headcount_block, _patterns, _slim, _slim_dates, _slim_days = _usual_crew(
-        staffing_patterns=w.staffing_patterns,
-        shifts=w.shifts,
-        close_times=w.close_times,
-        open_times=w.open_times,
-        restaurant_id=w.restaurant_id,
-        call_kind=w.call_kind,
-        week_slice=w.week_slice,
-        tz_name=w.tz_name,
-        week_start=w.week_start,
-        week_start_day=w.week_start_day)
+        staffing_patterns=w.staffing_patterns, shifts=w.shifts, close_times=w.close_times, open_times=w.open_times,
+        restaurant_id=w.restaurant_id, call_kind=w.call_kind, week_slice=w.week_slice, tz_name=w.tz_name,
+        week_start=w.week_start, week_start_day=w.week_start_day)
     _closed_set, today, week_dates, week_days = _the_week(
-        tz_name=w.tz_name,
-        week_start=w.week_start,
-        week_start_day=w.week_start_day,
-        closed_dates=w.closed_dates)
+        tz_name=w.tz_name, week_start=w.week_start, week_start_day=w.week_start_day, closed_dates=w.closed_dates)
     _owner_block = _owner_rules_block(
-        hours_notes=w.hours_notes,
-        hours_rule_reads=w.hours_rule_reads,
-        owner_rules_text=w.owner_rules_text,
-        owner_rule_reads=w.owner_rule_reads,
-        staff_notes=w.staff_notes,
-        availability_table=w.availability_table,
-        contract=w.contract,
-        sched_notes=w.sched_notes,
-        restaurant_id=w.restaurant_id,
-        week_dates=week_dates,
+        hours_notes=w.hours_notes, hours_rule_reads=w.hours_rule_reads, owner_rules_text=w.owner_rules_text,
+        owner_rule_reads=w.owner_rule_reads, staff_notes=w.staff_notes, availability_table=w.availability_table,
+        contract=w.contract, sched_notes=w.sched_notes, restaurant_id=w.restaurant_id, week_dates=week_dates,
         instruction=w.instruction)
     (_demand_block, _prior_schedule_block, _w_lines, _weather_block, holidays_block, weather_forecast,
      yoy_block) = _context_blocks(
-        yoy_context=w.yoy_context,
-        _slim_dates=_slim_dates,
-        upcoming_events=w.upcoming_events,
-        today=today,
-        week_dates=week_dates,
-        weather_forecast=w.weather_forecast,
-        restaurant_id=w.restaurant_id,
-        _slim=_slim,
-        prior_schedule_summary=w.prior_schedule_summary,
-        week_days=week_days,
-        _slim_days=_slim_days,
+        yoy_context=w.yoy_context, _slim_dates=_slim_dates, upcoming_events=w.upcoming_events, today=today,
+        week_dates=week_dates, weather_forecast=w.weather_forecast, restaurant_id=w.restaurant_id, _slim=_slim,
+        prior_schedule_summary=w.prior_schedule_summary, week_days=week_days, _slim_days=_slim_days,
         prior_week=w.prior_week)
     (_budget_basis, _daily_target_map, _daypart_block, _delivery_block, _plan, _role_minimums_extra,
      _section_block, hours_budget, labor_budget_dollars, projected_revenue, role_rates_block) = _budget_blocks(
-        analysis=w.analysis,
-        week_dates=week_dates,
-        labor_target=w.labor_target,
-        hourly_rate=w.hourly_rate,
-        yoy_context=w.yoy_context,
-        projected_revenue_override=w.projected_revenue_override,
-        monthly_revenue_target=w.monthly_revenue_target,
-        salaried_week=w.salaried_week,
-        closed_dates=w.closed_dates,
-        date_demand=w.date_demand,
-        role_rates=w.role_rates,
-        section_count=w.section_count,
-        section_cap_roles=w.section_cap_roles,
-        daypart_split=w.daypart_split,
-        delivery_pct=w.delivery_pct,
+        analysis=w.analysis, week_dates=week_dates, labor_target=w.labor_target, hourly_rate=w.hourly_rate,
+        yoy_context=w.yoy_context, projected_revenue_override=w.projected_revenue_override,
+        monthly_revenue_target=w.monthly_revenue_target, salaried_week=w.salaried_week, closed_dates=w.closed_dates,
+        date_demand=w.date_demand, role_rates=w.role_rates, section_count=w.section_count,
+        section_cap_roles=w.section_cap_roles, daypart_split=w.daypart_split, delivery_pct=w.delivery_pct,
         role_minimums_json=w.role_minimums_json)
     _staff_notes_block, _time_off = _people_notes(
-        restaurant_id=w.restaurant_id,
-        roster_facts=w.roster_facts,
-        week_dates=week_dates,
+        restaurant_id=w.restaurant_id, roster_facts=w.roster_facts, week_dates=week_dates,
         staff_availability=w.staff_availability)
     _leader_rules_here, _profile_block, _scores, _strength_block = _strength_blocks(
-        operational_scores=w.operational_scores,
-        employees=employees,
-        _emp_roles=_emp_roles,
-        leader_rules=w.leader_rules,
-        leader_flags=w.leader_flags,
-        _families=_families,
-        strength_thresholds=w.strength_thresholds,
-        _slim_days=_slim_days,
-        shift_profiles=w.shift_profiles)
+        operational_scores=w.operational_scores, employees=employees, _emp_roles=_emp_roles,
+        leader_rules=w.leader_rules, leader_flags=w.leader_flags, _families=_families,
+        strength_thresholds=w.strength_thresholds, _slim_days=_slim_days, shift_profiles=w.shift_profiles)
     par_block = _par_block(
-        _budget_basis=_budget_basis,
-        projected_revenue=projected_revenue,
-        labor_target=w.labor_target,
-        labor_budget_dollars=labor_budget_dollars,
-        hourly_rate=w.hourly_rate,
-        _daily_target_map=_daily_target_map,
-        _plan=_plan,
-        hours_budget=hours_budget)
+        _budget_basis=_budget_basis, projected_revenue=projected_revenue, labor_target=w.labor_target,
+        labor_budget_dollars=labor_budget_dollars, hourly_rate=w.hourly_rate, _daily_target_map=_daily_target_map,
+        _plan=_plan, hours_budget=hours_budget)
     (_focus_block, _gen_dates, _manager_block, _pins, _requirements_block, _standing_block,
      _week_requirements) = _requirements_and_managers(
-        week_dates=week_dates,
-        week_slice=w.week_slice,
-        _closed_set=_closed_set,
-        week_days=week_days,
-        employees=employees,
-        _emp_roles=_emp_roles,
-        _patterns=_patterns,
-        borrowed_headcount=w.borrowed_headcount,
-        manager_plan=w.manager_plan,
-        requirement_adjustments=w.requirement_adjustments,
-        role_floors=w.role_floors,
-        _daily_target_map=_daily_target_map,
-        shift_profiles=w.shift_profiles,
-        demand_by_day=w.demand_by_day,
-        demand_by_date=w.demand_by_date,
-        _leader_rules_here=_leader_rules_here,
-        _scores=_scores,
-        leader_flags=w.leader_flags,
-        role_minimums_json=w.role_minimums_json,
-        closed_dates=w.closed_dates,
-        hourly_profile=w.hourly_profile,
-        open_times=w.open_times,
-        close_times=w.close_times,
-        section_count=w.section_count,
-        section_cap_roles=w.section_cap_roles,
-        date_demand=w.date_demand,
-        splh_hold=w.splh_hold,
-        labor_standards=w.labor_standards,
-        role_windows=w.role_windows,
-        role_caps=w.role_caps,
-        hours_rule_reads=w.hours_rule_reads,
-        pinned_rows=w.pinned_rows,
-        rules_block=w.rules_block,
-        focus=w.focus)
+        week_dates=week_dates, week_slice=w.week_slice, _closed_set=_closed_set, week_days=week_days,
+        employees=employees, _emp_roles=_emp_roles, _patterns=_patterns, borrowed_headcount=w.borrowed_headcount,
+        manager_plan=w.manager_plan, requirement_adjustments=w.requirement_adjustments, role_floors=w.role_floors,
+        _daily_target_map=_daily_target_map, shift_profiles=w.shift_profiles, demand_by_day=w.demand_by_day,
+        demand_by_date=w.demand_by_date, _leader_rules_here=_leader_rules_here, _scores=_scores,
+        leader_flags=w.leader_flags, role_minimums_json=w.role_minimums_json, closed_dates=w.closed_dates,
+        hourly_profile=w.hourly_profile, open_times=w.open_times, close_times=w.close_times,
+        section_count=w.section_count, section_cap_roles=w.section_cap_roles, date_demand=w.date_demand,
+        splh_hold=w.splh_hold, labor_standards=w.labor_standards, role_windows=w.role_windows,
+        role_caps=w.role_caps, hours_rule_reads=w.hours_rule_reads, pinned_rows=w.pinned_rows,
+        rules_block=w.rules_block, focus=w.focus)
     _roster_block = _roster_table(
-        experienced=w.experienced,
-        roster_facts=w.roster_facts,
-        employees=employees,
-        staff_availability=w.staff_availability,
-        _time_off=_time_off,
-        _scores=_scores,
-        tenure=w.tenure,
-        leader_flags=w.leader_flags,
-        prior_pattern=w.prior_pattern,
-        _families=_families,
-        _role_counts=_role_counts,
-        _held_by_name=_held_by_name,
-        week_dates=week_dates,
-        _closed_set=_closed_set,
-        manager_plan=w.manager_plan)
+        experienced=w.experienced, roster_facts=w.roster_facts, employees=employees,
+        staff_availability=w.staff_availability, _time_off=_time_off, _scores=_scores, tenure=w.tenure,
+        leader_flags=w.leader_flags, prior_pattern=w.prior_pattern, _families=_families, _role_counts=_role_counts,
+        _held_by_name=_held_by_name, week_dates=week_dates, _closed_set=_closed_set, manager_plan=w.manager_plan)
     _request_head, _seam_block, _slice_budget = _request_parts(
-        _gen_dates=_gen_dates,
-        week_dates=week_dates,
-        _closed_set=_closed_set,
-        hours_budget=hours_budget,
-        _daily_target_map=_daily_target_map,
-        prior_rows=w.prior_rows,
-        shift_profiles=w.shift_profiles,
-        demand_by_day=w.demand_by_day,
-        demand_by_date=w.demand_by_date,
-        roster_facts=w.roster_facts,
-        employees=employees,
-        payroll_weeks=w.payroll_weeks)
+        _gen_dates=_gen_dates, week_dates=week_dates, _closed_set=_closed_set, hours_budget=hours_budget,
+        _daily_target_map=_daily_target_map, prior_rows=w.prior_rows, shift_profiles=w.shift_profiles,
+        demand_by_day=w.demand_by_day, demand_by_date=w.demand_by_date, roster_facts=w.roster_facts,
+        employees=employees, payroll_weeks=w.payroll_weeks)
     _history_lines = _record_lines(
-        tz_name=w.tz_name,
-        analysis=w.analysis,
-        hourly_rate=w.hourly_rate,
-        _budget_basis=_budget_basis,
-        labor_target=w.labor_target,
-        overstaffed=overstaffed,
-        understaffed=understaffed,
-        dow=dow,
+        tz_name=w.tz_name, analysis=w.analysis, hourly_rate=w.hourly_rate, _budget_basis=_budget_basis,
+        labor_target=w.labor_target, overstaffed=overstaffed, understaffed=understaffed, dow=dow,
         week_days=week_days)
     _roster_block, request_text, week_text = _texts(
-        _closed_set=_closed_set,
-        week_dates=week_dates,
-        restaurant_name=w.restaurant_name,
-        holidays_block=holidays_block,
-        _slim_dates=_slim_dates,
-        week_slice=w.week_slice,
-        _history_lines=_history_lines,
-        _demand_block=_demand_block,
-        yoy_block=yoy_block,
-        _weather_block=_weather_block,
-        _prior_schedule_block=_prior_schedule_block,
-        par_block=par_block,
-        role_rates_block=role_rates_block,
-        _headcount_block=_headcount_block,
-        _section_block=_section_block,
-        _daypart_block=_daypart_block,
-        _delivery_block=_delivery_block,
-        _role_minimums_extra=_role_minimums_extra,
-        _noshows_block=_noshows_block,
-        contract=w.contract,
-        availability_table=w.availability_table,
-        _owner_block=_owner_block,
-        _manager_block=_manager_block,
-        _standing_block=_standing_block,
-        rules_block=w.rules_block,
-        _roster_block=_roster_block,
-        _staff_notes_block=_staff_notes_block,
-        _strength_block=_strength_block,
-        _profile_block=_profile_block,
-        extra_blocks=w.extra_blocks,
-        _request_head=_request_head,
-        _requirements_block=_requirements_block,
-        _slice_budget=_slice_budget,
-        _seam_block=_seam_block,
-        call_notes=w.call_notes,
-        _focus_block=_focus_block)
-    _cbase, _content, _ready_sched, _schema, prompt = _contract_and_content(
-        employees=employees,
-        _emp_roles=_emp_roles,
-        held_roles=w.held_roles,
-        contract=w.contract,
-        schema_enums=w.schema_enums,
-        week_dates=week_dates,
-        _closed_set=_closed_set,
-        open_times=w.open_times,
-        close_times=w.close_times,
-        hours_notes=w.hours_notes,
-        structured=w.structured,
-        restaurant_id=w.restaurant_id,
-        week_text=week_text,
-        request_text=request_text,
-        cache_ttls=w.cache_ttls)
+        _closed_set=_closed_set, week_dates=week_dates, restaurant_name=w.restaurant_name,
+        holidays_block=holidays_block, _slim_dates=_slim_dates, week_slice=w.week_slice,
+        _history_lines=_history_lines, _demand_block=_demand_block, yoy_block=yoy_block,
+        _weather_block=_weather_block, _prior_schedule_block=_prior_schedule_block, par_block=par_block,
+        role_rates_block=role_rates_block, _headcount_block=_headcount_block, _section_block=_section_block,
+        _daypart_block=_daypart_block, _delivery_block=_delivery_block, _role_minimums_extra=_role_minimums_extra,
+        _noshows_block=_noshows_block, contract=w.contract, availability_table=w.availability_table,
+        _owner_block=_owner_block, _manager_block=_manager_block, _standing_block=_standing_block,
+        rules_block=w.rules_block, _roster_block=_roster_block, _staff_notes_block=_staff_notes_block,
+        _strength_block=_strength_block, _profile_block=_profile_block, extra_blocks=w.extra_blocks,
+        _request_head=_request_head, _requirements_block=_requirements_block, _slice_budget=_slice_budget,
+        _seam_block=_seam_block, call_notes=w.call_notes, _focus_block=_focus_block)
+    # The readiness gate before the call (DH5-2): a schedule rests on the
+    # shifts, the POS, sales and the weather. The owner asked for it, so a
+    # source that is down caveats (the DATA STATE block tells the model how
+    # current each is) rather than refusing the schedule. Once per generation
+    # (P-36): every call re-ran the readiness checks.
+    import data_health as _dh_sched
+    from schedule_context import frozen_read as _frozen_rd
+    _ready_sched = (_frozen_rd(("readiness", restaurant_id, "schedule"),
+                               lambda: _dh_sched.readiness(restaurant_id, "schedule")) if restaurant_id
+                    else _dh_sched.NOT_APPLICABLE)
+    _cbase, _content, _schema, prompt = _contract_and_content(
+        employees=employees, _emp_roles=_emp_roles, held_roles=w.held_roles, contract=w.contract,
+        schema_enums=w.schema_enums, week_dates=week_dates, _closed_set=_closed_set, open_times=w.open_times,
+        close_times=w.close_times, hours_notes=w.hours_notes, structured=w.structured,
+        restaurant_id=w.restaurant_id, week_text=week_text, request_text=request_text, cache_ttls=w.cache_ttls,
+        _ready_sched=_ready_sched)
     EXPECTED_HEADER, _call, _contract, _cut, _model, _oc, _route, _t0 = _call_request(
-        _content=_content,
-        restaurant_id=w.restaurant_id,
-        deadline=w.deadline,
-        structured=w.structured,
-        _schema=_schema,
-        schema_enums=w.schema_enums,
-        _cbase=_cbase)
+        _content=_content, restaurant_id=w.restaurant_id, deadline=w.deadline, structured=w.structured,
+        _schema=_schema, schema_enums=w.schema_enums, _cbase=_cbase)
     _week_facts = _week_facts_of(
-        week_dates=week_dates,
-        week_days=week_days,
-        projected_revenue=projected_revenue,
-        hours_budget=hours_budget,
-        labor_budget_dollars=labor_budget_dollars,
-        labor_target=w.labor_target,
-        _daily_target_map=_daily_target_map,
-        _plan=_plan,
-        _week_requirements=_week_requirements,
-        employees=employees,
-        _scores=_scores,
-        strength_thresholds=w.strength_thresholds,
-        leader_rules=w.leader_rules,
-        shift_profiles=w.shift_profiles,
+        week_dates=week_dates, week_days=week_days, projected_revenue=projected_revenue, hours_budget=hours_budget,
+        labor_budget_dollars=labor_budget_dollars, labor_target=w.labor_target, _daily_target_map=_daily_target_map,
+        _plan=_plan, _week_requirements=_week_requirements, employees=employees, _scores=_scores,
+        strength_thresholds=w.strength_thresholds, leader_rules=w.leader_rules, shift_profiles=w.shift_profiles,
         _patterns=_patterns)
+    # 2. The call: nothing sent for a prepared-only request, a batch's or a resumed
+    # try's stored answer when there is one, else the model.
     if prepare_only:
         # Nothing is sent (scheduler audit 10/10/26): the inputs and the
         # exact request, for schedule_fallback and schedule_batch.
@@ -6687,68 +6571,28 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                        detail="structured output refused by the API; the CSV contract was used")
             return generate_optimized_schedule(**dict(_call_args, structured=False))
         raise
+    # 3. The answer: read, the planned managers joined, recorded, the note checked.
     (_data_rows, _left_out, _parse, _seconds, _shape_rows, _stop, _truncated, _typed_rows, raw,
      summary_bullets) = _read_answer(
-        _t0=_t0,
-        msg=msg,
-        _cut=_cut,
-        restaurant_id=w.restaurant_id,
-        _call=_call,
-        _call_args=_call_args,
-        _rec=_rec,
-        structured=w.structured,
-        _gen_dates=_gen_dates,
-        _cbase=_cbase,
-        week_slice=w.week_slice,
+        _t0=_t0, msg=msg, _cut=_cut, restaurant_id=w.restaurant_id, _call=_call, _call_args=_call_args, _rec=_rec,
+        structured=w.structured, _gen_dates=_gen_dates, _cbase=_cbase, week_slice=w.week_slice,
         _closed_set=_closed_set)
     _data_rows, _model_line_count, _pin_dropped, _pins_here, _typed_rows = _merge_planned_managers(
-        _data_rows=_data_rows,
-        _pins=_pins,
-        roster=w.roster,
-        employees=employees,
-        _gen_dates=_gen_dates,
-        _typed_rows=_typed_rows,
-        restaurant_id=w.restaurant_id)
+        _data_rows=_data_rows, _pins=_pins, roster=w.roster, employees=employees, _gen_dates=_gen_dates,
+        _typed_rows=_typed_rows, restaurant_id=w.restaurant_id)
     _model_call, csv_clean = _record_and_cost(
-        EXPECTED_HEADER=EXPECTED_HEADER,
-        _data_rows=_data_rows,
-        _parse=_parse,
-        _model_line_count=_model_line_count,
-        _truncated=_truncated,
-        restaurant_id=w.restaurant_id,
-        _call=_call,
-        _call_args=_call_args,
-        raw=raw,
-        msg=msg,
-        _seconds=_seconds,
-        _rec=_rec,
-        _model=_model,
-        _oc=_oc,
-        _contract=_contract,
-        call_kind=w.call_kind,
-        _route=_route,
-        _stop=_stop)
+        EXPECTED_HEADER=EXPECTED_HEADER, _data_rows=_data_rows, _parse=_parse, _model_line_count=_model_line_count,
+        _truncated=_truncated, restaurant_id=w.restaurant_id, _call=_call, _call_args=_call_args, raw=raw, msg=msg,
+        _seconds=_seconds, _rec=_rec, _model=_model, _oc=_oc, _contract=_contract, call_kind=w.call_kind,
+        _route=_route, _stop=_stop)
     summary_bullets = _checked_note_bullets(
-        csv_clean=csv_clean,
-        hours_budget=hours_budget,
-        summary_bullets=summary_bullets,
-        prompt=prompt,
-        restaurant_id=w.restaurant_id,
-        yoy_block=yoy_block,
-        holidays_block=holidays_block,
-        _demand_block=_demand_block,
-        weather_forecast=weather_forecast,
-        _w_lines=_w_lines,
-        _prior_schedule_block=_prior_schedule_block,
-        _headcount_block=_headcount_block,
-        _requirements_block=_requirements_block,
-        _noshows_block=_noshows_block,
-        _roster_block=_roster_block,
-        _manager_block=_manager_block,
-        role_floors=w.role_floors,
-        role_minimums_json=w.role_minimums_json,
-        leader_flags=w.leader_flags,
-        _ready_sched=_ready_sched)
+        csv_clean=csv_clean, hours_budget=hours_budget, summary_bullets=summary_bullets, prompt=prompt,
+        restaurant_id=w.restaurant_id, yoy_block=yoy_block, holidays_block=holidays_block,
+        _demand_block=_demand_block, weather_forecast=weather_forecast, _w_lines=_w_lines,
+        _prior_schedule_block=_prior_schedule_block, _headcount_block=_headcount_block,
+        _requirements_block=_requirements_block, _noshows_block=_noshows_block, _roster_block=_roster_block,
+        _manager_block=_manager_block, role_floors=w.role_floors, role_minimums_json=w.role_minimums_json,
+        leader_flags=w.leader_flags, _ready_sched=_ready_sched)
 
     return {
         "schedule_csv": csv_clean,

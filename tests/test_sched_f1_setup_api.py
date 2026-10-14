@@ -154,7 +154,7 @@ def test_too_many_closers_is_a_warning_and_the_punches_suggest_who_closes():
 
 def test_leader_rules_are_loaded_whatever_the_ratings():
     import inspect
-    src = inspect.getsource(schedule_engine._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in schedule_engine.INPUT_STEPS)
     assert "_leader_rules = get_shift_leader_rules(restaurant_id)\n" in src
     src = inspect.getsource(schedule_engine.quality_inputs_from_db)
     assert "leader_rules = get_shift_leader_rules(restaurant_id)\n" in src

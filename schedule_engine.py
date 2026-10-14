@@ -1698,51 +1698,13 @@ def locked_rows_of(restaurant_id, week_start, dates=None) -> list:
             if _srows_lk.is_locked(r) and (want is None or r.get("date") in want)]
 
 
-def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None,
-                           instruction=None, code_redo=False, keep_locked=True, started_week=False):
-    """Shared logic for both schedule endpoints.
-
-    keep_locked — keep the owner's locked shifts of the week's working copy
-    exactly (TRUST-17; locked_rows_of, schedule_skeleton.with_locked). The
-    Generate button's "Start fresh" passes False.
-
-    code_redo — an owner's redo of `dates` drafted in code first (scheduler
-    audit 10/10/26 AI-28): the days re-shaped from SHIFT REQUIREMENTS on the
-    restaurant's usual shifts and solved against every rule — the reason
-    they gave read as typed rules — with no model call; the job sends the
-    days to the model only when that changes nothing.
-
-    started_week — `dates` are the days of a whole-week Generate still
-    ahead of today's business date (blind re-audit 10/11/26 BUGSGEN-24): the
-    week is drafted as a week (the code drafts what the model cannot, the
-    review says the days not written) but only from today; the days already
-    worked keep the rows in `prior_rows` (the week's working copy), and a
-    past day with none is closed to every pass.
-
-    focus — named weaknesses of the previous draft (a list of strings), for
-    a regeneration of chosen dates; rendered into the prompt as "THE
-    PREVIOUS DRAFT OF <those dates> SCORED WEAK ON" (schedule_requirements
-    .focus_block). None for an ordinary generation.
-
-    dates, prior_rows — a redo of some days (the owner's chosen days, or the
-    quality gate's weakest): only these dates are written, and the rows of
-    the days the owner keeps are handed to every call as the rest of the
-    week, never rewritten (schedule audit 10/3/26 P-9, E-21, PR-18 — the
-    whole week used to be generated again blind to the kept days, and all
-    but the chosen dates thrown away). The manager plan covers only those
-    dates, with the kept rows' hours, rest and runs counted.
-    instruction — what the owner asked for with this draft (Ask Cavnar's
-    generate_schedule, the generate route's `instruction`, and their reason
-    for a redo — schedule_engine.with_redo_reason), handed to every model
-    call of the generation (schedule audit 10/3/26 PR-19, PR-18)."""
-    from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
-                       generate_optimized_schedule, get_hourly_rate,
-                       build_demand_forecast)
-    from models import get_restaurant, get_staff_notes, get_yoy_schedule_context, get_client_data
-    from datetime import datetime as _dt, timedelta as _td
-    import uuid as _uuid_gen
-    _generation_id = _uuid_gen.uuid4().hex
-
+def _read_history(restaurant_id):
+    """The restaurant, its shift history and its hourly analysis; a week that has nothing to be built from, or
+    whose sales stopped being current, is refused with the owner's sentence."""
+    from models import get_restaurant
+    from labor import load_shifts_for_restaurant
+    from labor import analyse_shifts_for_restaurant
+    from models import get_client_data
     restaurant = get_restaurant(restaurant_id)
     shifts = load_shifts_for_restaurant(restaurant_id)
     # Hourly: the schedule's hours budget is sales x target / the hourly rate.
@@ -1772,6 +1734,14 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     freshness = _demand_data_through(restaurant_id, restaurant=restaurant)
     if freshness.get("blocked"):
         raise ScheduleGenerationError(freshness["message"])
+    return analysis, freshness, no_history, restaurant, shifts
+
+
+def _read_week_basics(analysis, restaurant_id, restaurant, week_start):
+    """The blended rate, the labor target, the owner, the staff notes and availability, the week's dates in the
+    restaurant's own week, and the learning switchback's off week."""
+    from labor import get_hourly_rate
+    from models import get_staff_notes
     # Use blended rate from per-role rates if available, otherwise flat rate
     rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
     from notify import labor_target_for as _labor_target_for
@@ -1809,6 +1779,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
             _ls_lo.switch_learning_off()
     except Exception as _lox:
         _soft_fail("experiment arm", _lox, restaurant_id)
+    return (_start_day, monday, next_week_dates, owner, rate, staff_availability, staff_notes, target, today,
+            week_days)
+
+
+def _read_rules_and_roster(restaurant_id, next_week_dates, instruction, week_days, restaurant, no_history, dates):
+    """The owner's words read into typed rules, the week's Constraints, the roster (the dormant left out), the
+    generation's model route and the days nobody can work."""
     # Everything the rules need to know about who can work when, gathered
     # once and shared by the prompt, the backstops, the swap search, the
     # review panel and the publish gate.
@@ -1857,6 +1834,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # and named for the owner.
     unstaffable = _nobody_can_work(constraints, [n for n, _r in roster_pairs],
                                    [d for d in next_week_dates if d not in constraints.closed_dates])
+    return _dormant, _owner_words, constraints, roster_pairs, unstaffable
+
+
+def _read_demand_inputs(restaurant_id, shifts, next_week_dates, constraints, restaurant, today):
+    """The staffing baseline, the revenue target, the salaried share, last year's week, the week's events, the
+    weather, and the last published week."""
+    from models import get_yoy_schedule_context
     # The staffing baseline the requirements, the score and the soft-ask
     # check all read (labor.staffing_baseline): the punches less the
     # salaried (D-4), the published weeks for the people who never punch
@@ -1943,7 +1927,14 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail("prior_week", _sfx, restaurant_id)
         prior_schedule_summary = None
+    return (monthly_rev_target, prior_published_rows, prior_schedule_summary, prior_week_row, salaried_week,
+            staffing, upcoming_events, weather_forecast, yoy_ctx)
 
+
+def _read_profiles(restaurant_id):
+    """Operational scores, strength thresholds, leader rules, demand by weekday and the shift profiles the week
+    is scored against."""
+    from labor import build_demand_forecast
     # Operational Score, its targets, and any shift leader rules. The score
     # targets judge nobody until somebody is rated. The leader rules load
     # whatever the ratings: a closing rule needs no score at all, and an
@@ -2001,7 +1992,15 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # settles every shift's demand through the same re-levelled set either
     # way (shift_quality.profile_set).
     _prompt_profiles = _profiles if (_stored_profiles or _op_scores) else []
+    return _demand_by_day, _leader_rules, _op_scores, _profiles, _prompt_profiles, _role_scores, _strength_thresholds
 
+
+def _read_signals(
+        restaurant_id, next_week_dates, constraints, weather_forecast, upcoming_events, restaurant, roster_pairs,
+        shifts, target, staffing):
+    """The week's dated demand, pairings, reliability, learned patterns, the memory's consolidation, holidays and
+    date demand, SPLH, outcomes, the fairness ledger, the learning inputs, preferences, who could hold a role
+    and the revenue projection."""
     # Dated facts, pairings, reliability and what the manager keeps
     # changing — rendered here from the engine's own data and handed to the
     # prompt as text, so the same facts are what the code checks afterwards.
@@ -2119,6 +2118,15 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         # The budget is then built on the forecast instead of the owner's
         # own week, and the review says so (P-17: this was a silent pass).
         _soft_fail("revenue", _sfx, restaurant_id)
+    return (could_hold, date_demand, holiday, learned, learned_prefs, learning, ledger, outcomes, pairs,
+            pattern_conflicts, reliability, revenue, signals_by_date, splh, stated_prefs)
+
+
+def _read_people_and_memory(
+        restaurant_id, constraints, roster_pairs, next_week_dates, today, staffing, date_demand, restaurant, shifts,
+        week_days):
+    """Tenure, leader flags and usual patterns, role scores, last nights and the staffing asks, the labor
+    standards and the requirement model, and the memory and owner-rules blocks."""
     # Who is experienced, who can run a shift and who usually works when —
     # the same reads the quality pass makes (_quality_signals), handed to
     # the prompt so the model is told the facts it is scored on. Any one of
@@ -2200,6 +2208,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                           + _rest)
     except Exception as _sfx:
         _soft_fail('memory_context', _sfx, restaurant_id)
+    return _people, last_nights_blk, memory_blk, owner_rules_text, soft_reqs, standards_for_week
+
+
+def _identity_and_plan(
+        restaurant_id, roster_pairs, constraints, _op_scores, _role_scores, _people, reliability, stated_prefs,
+        learned_prefs, staff_availability, staff_notes, next_week_dates, shifts, dates, prior_rows, instruction,
+        keep_locked, outcomes, week_days, learning, ledger, splh, signals_by_date, restaurant):
+    """Every person under the roster's spelling, the managers' plan (with the owner's locked shifts) and the
+    learned block."""
+    import schedule_memory as _smem
+    import schedule_intel as _intel
+    import schedule_economics as _econ
     _disp = None
     # One person, one key in the prompt too (schedule audit 10/3/26 D-8):
     # availability, notes, ratings, tenure, closers, usual patterns,
@@ -2285,6 +2305,18 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                       ("starting", learning["starting_block"])])
     except Exception as _sfx:
         _soft_fail('learned prompt block', _sfx, restaurant_id)
+    return (_disp, _op_scores, _role_scores, learned_blk, learned_prefs, manager_plan, reliability,
+            staff_availability, staff_notes, stated_prefs)
+
+
+def _prompt_inputs(
+        constraints, manager_plan, roster_pairs, restaurant_id, _disp, reliability, stated_prefs, learned_prefs,
+        could_hold, _role_scores, dates, focus, next_week_dates, week_days, signals_by_date, last_nights_blk,
+        soft_reqs, memory_blk, pairs, learned_blk, prior_week_row, prior_published_rows, restaurant, no_history,
+        learning):
+    """The rules block, each person's roster facts, how the code reads the owner's and the hours rules, the shape
+    contract's availability, the last published week's verdict and the role minimums."""
+    import staffing_signals as _stsig
     # The rules block is kept apart from the rest so a department call can be
     # given the rules for its own people only (E-29, PR-17: a kitchen-only
     # call was told every manager's name and the whole roster's floors, then
@@ -2373,7 +2405,19 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     _role_mins = _parse_role_minimums(getattr(restaurant, "role_minimums_json", None))
     if no_history and not (constraints.role_floors or _role_mins or learning.get("borrowed_headcount")):
         raise ScheduleGenerationError(_no_shift_data_message(restaurant_id, restaurant, missing="basis"))
+    return (_availability, _contract_now, _role_mins, extra_rest, hours_rule_reads, owner_rule_reads, prior_week,
+            roster_facts, rules_block)
 
+
+def _generation_kwargs(
+        restaurant, rate, owner, staff_notes, target, yoy_ctx, upcoming_events, monthly_rev_target, analysis,
+        restaurant_id, staff_availability, _start_day, weather_forecast, prior_schedule_summary, _op_scores,
+        _strength_thresholds, _leader_rules, _prompt_profiles, roster_pairs, extra_rest, rules_block, roster_facts,
+        owner_rules_text, owner_rule_reads, prior_week, next_week_dates, constraints, revenue, monday,
+        hours_rule_reads, signals_by_date, _demand_by_day, _people, focus, learning, manager_plan, salaried_week,
+        date_demand, soft_reqs, staffing, standards_for_week, _generation_id, _contract_now, _availability,
+        instruction, dates, prior_rows, unstaffable):
+    """The keyword arguments every model call of this generation is made with."""
     _gen_kwargs = dict(
         restaurant_name=restaurant.name if restaurant else "Restaurant",
         hourly_rate=rate,
@@ -2478,6 +2522,13 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
         unstaffable_dates=unstaffable,
         rules_constraints=constraints,
     )
+    return _gen_kwargs
+
+
+def _draft_choice(
+        restaurant_id, next_week_dates, code_redo, dates, started_week, constraints, roster_pairs, manager_plan,
+        instruction, restaurant, _gen_kwargs):
+    """The week's experiment arms and where its draft comes from (the solver, carry-forward or the model)."""
     # This week's arms, read before the draft (contract #7): where the draft
     # comes from is one of them (schedule_fallback.draft_source — the
     # SCHEDULE_DRAFT_SOURCE switch, else the draft_v1 arm, else the solver,
@@ -2519,9 +2570,17 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     # Handed in the kwargs and popped there, like the rules (the call's own
     # keyword arguments never carry it to labor).
     _gen_kwargs["draft_fallback"] = _fallback
-    result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
-    if result.get("planned_calls") is not None:
-        return result                     # schedule_batch.plan_requests: the calls, nothing more
+    return _arms
+
+
+def _result_facts(
+        _arms, result, _owner_words, _generation_id, manager_plan, _profiles, learned_prefs, dates, next_week_dates,
+        unstaffable, no_history, constraints, _role_mins, learning, restaurant, date_demand, standards_for_week,
+        holiday, splh, outcomes, ledger, could_hold, revenue, restaurant_id, _role_scores, freshness, _demand_by_day,
+        signals_by_date, roster_pairs, _dormant, _people, pairs, reliability, learned, pattern_conflicts, soft_reqs,
+        staffing, prior_published_rows, weather_forecast, _leader_rules):
+    """What the drafted week carries beside its rows: the arms, the plan, the profiles, the notes, the demand,
+    the learned inputs and the inputs the passes read."""
     result["experiment_arms"] = _arms
     # The instruction's typed rules, for the review's chips (owner_rules.chips).
     result["instruction_rules"] = list(_owner_words.get("instruction") or [])
@@ -2626,7 +2685,132 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _lsx:
         _soft_fail('leader_rules_status', _lsx, restaurant_id)
         result["leader_rules_status"] = None
+
+
+
+def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=None, prior_rows=None,
+                           instruction=None, code_redo=False, keep_locked=True, started_week=False):
+    """Shared logic for both schedule endpoints.
+
+    keep_locked — keep the owner's locked shifts of the week's working copy
+    exactly (TRUST-17; locked_rows_of, schedule_skeleton.with_locked). The
+    Generate button's "Start fresh" passes False.
+
+    code_redo — an owner's redo of `dates` drafted in code first (scheduler
+    audit 10/10/26 AI-28): the days re-shaped from SHIFT REQUIREMENTS on the
+    restaurant's usual shifts and solved against every rule — the reason
+    they gave read as typed rules — with no model call; the job sends the
+    days to the model only when that changes nothing.
+
+    started_week — `dates` are the days of a whole-week Generate still
+    ahead of today's business date (blind re-audit 10/11/26 BUGSGEN-24): the
+    week is drafted as a week (the code drafts what the model cannot, the
+    review says the days not written) but only from today; the days already
+    worked keep the rows in `prior_rows` (the week's working copy), and a
+    past day with none is closed to every pass.
+
+    focus — named weaknesses of the previous draft (a list of strings), for
+    a regeneration of chosen dates; rendered into the prompt as "THE
+    PREVIOUS DRAFT OF <those dates> SCORED WEAK ON" (schedule_requirements
+    .focus_block). None for an ordinary generation.
+
+    dates, prior_rows — a redo of some days (the owner's chosen days, or the
+    quality gate's weakest): only these dates are written, and the rows of
+    the days the owner keeps are handed to every call as the rest of the
+    week, never rewritten (schedule audit 10/3/26 P-9, E-21, PR-18 — the
+    whole week used to be generated again blind to the kept days, and all
+    but the chosen dates thrown away). The manager plan covers only those
+    dates, with the kept rows' hours, rest and runs counted.
+    instruction — what the owner asked for with this draft (Ask Cavnar's
+    generate_schedule, the generate route's `instruction`, and their reason
+    for a redo — schedule_engine.with_redo_reason), handed to every model
+    call of the generation (schedule audit 10/3/26 PR-19, PR-18)."""
+    import uuid as _uuid_gen
+    _generation_id = _uuid_gen.uuid4().hex
+    # The inputs, each read by its own step (blind re-audit 10/11/26 ARCH-4:
+    # this was one 929-line function); each step returns what the later ones
+    # read, and a failure costs only its own input (_soft_fail).
+    analysis, freshness, no_history, restaurant, shifts = _read_history(restaurant_id=restaurant_id)
+    (_start_day, monday, next_week_dates, owner, rate, staff_availability, staff_notes, target, today,
+     week_days) = _read_week_basics(
+        analysis=analysis, restaurant_id=restaurant_id, restaurant=restaurant, week_start=week_start)
+    _dormant, _owner_words, constraints, roster_pairs, unstaffable = _read_rules_and_roster(
+        restaurant_id=restaurant_id, next_week_dates=next_week_dates, instruction=instruction, week_days=week_days,
+        restaurant=restaurant, no_history=no_history, dates=dates)
+    (monthly_rev_target, prior_published_rows, prior_schedule_summary, prior_week_row, salaried_week,
+     staffing, upcoming_events, weather_forecast, yoy_ctx) = _read_demand_inputs(
+        restaurant_id=restaurant_id, shifts=shifts, next_week_dates=next_week_dates, constraints=constraints,
+        restaurant=restaurant, today=today)
+    (_demand_by_day, _leader_rules, _op_scores, _profiles, _prompt_profiles, _role_scores,
+     _strength_thresholds) = _read_profiles(
+        restaurant_id=restaurant_id)
+    (could_hold, date_demand, holiday, learned, learned_prefs, learning, ledger, outcomes, pairs,
+     pattern_conflicts, reliability, revenue, signals_by_date, splh, stated_prefs) = _read_signals(
+        restaurant_id=restaurant_id, next_week_dates=next_week_dates, constraints=constraints,
+        weather_forecast=weather_forecast, upcoming_events=upcoming_events, restaurant=restaurant,
+        roster_pairs=roster_pairs, shifts=shifts, target=target, staffing=staffing)
+    _people, last_nights_blk, memory_blk, owner_rules_text, soft_reqs, standards_for_week = _read_people_and_memory(
+        restaurant_id=restaurant_id, constraints=constraints, roster_pairs=roster_pairs,
+        next_week_dates=next_week_dates, today=today, staffing=staffing, date_demand=date_demand,
+        restaurant=restaurant, shifts=shifts, week_days=week_days)
+    (_disp, _op_scores, _role_scores, learned_blk, learned_prefs, manager_plan, reliability,
+     staff_availability, staff_notes, stated_prefs) = _identity_and_plan(
+        restaurant_id=restaurant_id, roster_pairs=roster_pairs, constraints=constraints, _op_scores=_op_scores,
+        _role_scores=_role_scores, _people=_people, reliability=reliability, stated_prefs=stated_prefs,
+        learned_prefs=learned_prefs, staff_availability=staff_availability, staff_notes=staff_notes,
+        next_week_dates=next_week_dates, shifts=shifts, dates=dates, prior_rows=prior_rows, instruction=instruction,
+        keep_locked=keep_locked, outcomes=outcomes, week_days=week_days, learning=learning, ledger=ledger,
+        splh=splh, signals_by_date=signals_by_date, restaurant=restaurant)
+    (_availability, _contract_now, _role_mins, extra_rest, hours_rule_reads, owner_rule_reads, prior_week,
+     roster_facts, rules_block) = _prompt_inputs(
+        constraints=constraints, manager_plan=manager_plan, roster_pairs=roster_pairs, restaurant_id=restaurant_id,
+        _disp=_disp, reliability=reliability, stated_prefs=stated_prefs, learned_prefs=learned_prefs,
+        could_hold=could_hold, _role_scores=_role_scores, dates=dates, focus=focus, next_week_dates=next_week_dates,
+        week_days=week_days, signals_by_date=signals_by_date, last_nights_blk=last_nights_blk, soft_reqs=soft_reqs,
+        memory_blk=memory_blk, pairs=pairs, learned_blk=learned_blk, prior_week_row=prior_week_row,
+        prior_published_rows=prior_published_rows, restaurant=restaurant, no_history=no_history, learning=learning)
+    _gen_kwargs = _generation_kwargs(
+        restaurant=restaurant, rate=rate, owner=owner, staff_notes=staff_notes, target=target, yoy_ctx=yoy_ctx,
+        upcoming_events=upcoming_events, monthly_rev_target=monthly_rev_target, analysis=analysis,
+        restaurant_id=restaurant_id, staff_availability=staff_availability, _start_day=_start_day,
+        weather_forecast=weather_forecast, prior_schedule_summary=prior_schedule_summary, _op_scores=_op_scores,
+        _strength_thresholds=_strength_thresholds, _leader_rules=_leader_rules, _prompt_profiles=_prompt_profiles,
+        roster_pairs=roster_pairs, extra_rest=extra_rest, rules_block=rules_block, roster_facts=roster_facts,
+        owner_rules_text=owner_rules_text, owner_rule_reads=owner_rule_reads, prior_week=prior_week,
+        next_week_dates=next_week_dates, constraints=constraints, revenue=revenue, monday=monday,
+        hours_rule_reads=hours_rule_reads, signals_by_date=signals_by_date, _demand_by_day=_demand_by_day,
+        _people=_people, focus=focus, learning=learning, manager_plan=manager_plan, salaried_week=salaried_week,
+        date_demand=date_demand, soft_reqs=soft_reqs, staffing=staffing, standards_for_week=standards_for_week,
+        _generation_id=_generation_id, _contract_now=_contract_now, _availability=_availability,
+        instruction=instruction, dates=dates, prior_rows=prior_rows, unstaffable=unstaffable)
+    _arms = _draft_choice(
+        restaurant_id=restaurant_id, next_week_dates=next_week_dates, code_redo=code_redo, dates=dates,
+        started_week=started_week, constraints=constraints, roster_pairs=roster_pairs, manager_plan=manager_plan,
+        instruction=instruction, restaurant=restaurant, _gen_kwargs=_gen_kwargs)
+    # The draft: every model call (or none — a code draft), in parts.
+    result = _generate_in_parts(analysis, shifts, roster_pairs, _gen_kwargs)
+    if result.get("planned_calls") is not None:
+        return result                     # schedule_batch.plan_requests: the calls, nothing more
+    _result_facts(
+        _arms=_arms, result=result, _owner_words=_owner_words, _generation_id=_generation_id,
+        manager_plan=manager_plan, _profiles=_profiles, learned_prefs=learned_prefs, dates=dates,
+        next_week_dates=next_week_dates, unstaffable=unstaffable, no_history=no_history, constraints=constraints,
+        _role_mins=_role_mins, learning=learning, restaurant=restaurant, date_demand=date_demand,
+        standards_for_week=standards_for_week, holiday=holiday, splh=splh, outcomes=outcomes, ledger=ledger,
+        could_hold=could_hold, revenue=revenue, restaurant_id=restaurant_id, _role_scores=_role_scores,
+        freshness=freshness, _demand_by_day=_demand_by_day, signals_by_date=signals_by_date,
+        roster_pairs=roster_pairs, _dormant=_dormant, _people=_people, pairs=pairs, reliability=reliability,
+        learned=learned, pattern_conflicts=pattern_conflicts, soft_reqs=soft_reqs, staffing=staffing,
+        prior_published_rows=prior_published_rows, weather_forecast=weather_forecast, _leader_rules=_leader_rules)
     return result
+
+
+# The input builder's steps in the order _build_schedule_result runs them (the
+# builder itself last): what a reader, or a test of what the inputs are, reads as one.
+INPUT_STEPS = (
+    _read_history, _read_week_basics, _read_rules_and_roster, _read_demand_inputs, _read_profiles, _read_signals,
+    _read_people_and_memory, _identity_and_plan, _prompt_inputs, _generation_kwargs, _draft_choice, _result_facts,
+    _build_schedule_result,)
 
 
 # Days a restaurant commonly closes. When the model writes nothing for one

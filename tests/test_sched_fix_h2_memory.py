@@ -870,7 +870,7 @@ def test_a_fact_the_passes_hold_is_one_short_line_and_a_candidate_says_its_evide
 
 def test_the_generation_routes_its_learned_blocks_through_the_one_budget():
     import schedule_engine
-    src = inspect.getsource(schedule_engine._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in schedule_engine.INPUT_STEPS)
     assert "_smem.prompt_lines(" in src and "budget_chars=_smem.LEARNED_PROMPT_BUDGET_CHARS" in src
     assembled = src[src.index("rules_block = _rules.prompt_block("):src.index("_gen_kwargs = dict(")]
     assert "+ learned_blk" in assembled

@@ -151,7 +151,7 @@ def test_the_generate_press_checks_the_ticked_readings_before_anything_starts(ri
 
 
 def test_the_engine_holds_only_unconfirmed_instruction_readings_softly():
-    src = inspect.getsource(se._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in se.INPUT_STEPS)
     assert 'if not r.get("confirmed")' in src
 
 

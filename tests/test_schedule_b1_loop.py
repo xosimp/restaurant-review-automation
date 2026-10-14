@@ -330,7 +330,7 @@ def test_an_input_the_draft_went_without_is_named_in_the_review(db, monkeypatch)
 
 
 def test_the_input_build_says_every_input_it_goes_without():
-    src = inspect.getsource(se._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in se.INPUT_STEPS)
     for what in ("upcoming_events", "weather", "prior_week", "demand_forecast", "revenue", "labor_target_source",
                  "reservation_feed", "shifts_file"):
         assert f'_soft_fail("{what}"' in src, what

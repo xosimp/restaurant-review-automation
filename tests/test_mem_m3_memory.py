@@ -286,5 +286,5 @@ def test_the_labor_read_names_whose_target_it_judges_against(monkeypatch):
 def test_the_schedule_prompt_reads_the_memory_as_the_team_does():
     import inspect
     import schedule_engine
-    src = inspect.getsource(schedule_engine._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in schedule_engine.INPUT_STEPS)
     assert 'memory_context(restaurant_id, "schedule", viewer=_team_viewer' in src

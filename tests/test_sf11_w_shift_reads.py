@@ -291,7 +291,7 @@ STILL_ON_TEXT = {
     # In flight in another workstream this wave (P: the draft sources and
     # the engine) — to move once it lands.
     "schedule_engine.py::locked_rows_of": (1, "P's file this wave"),
-    "schedule_engine.py::_build_schedule_result": (1, "P's file this wave"),
+    "schedule_engine.py::_read_demand_inputs": (1, "P's file this wave (split out of _build_schedule_result, ARCH-4)"),
     "schedule_engine.py::_summarize_schedule_csv_by_day_role": (1, "P's file; the model's answer"),
     "schedule_engine.py::_prior_week_assignments": (1, "P's file this wave"),
     "schedule_engine.py::load_ledger": (1, "P's file this wave"),

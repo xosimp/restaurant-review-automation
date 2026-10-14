@@ -125,7 +125,7 @@ def test_the_quality_signals_carry_the_cap_the_rules_hold(monkeypatch):
 def test_the_prompt_names_the_capped_roles_and_the_generator_passes_the_curve():
     params = inspect.signature(labor.generate_optimized_schedule).parameters
     assert {"hourly_profile", "section_cap_roles", "open_times", "close_times"} <= set(params)
-    src = inspect.getsource(se._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in se.INPUT_STEPS)
     assert "hourly_profile=_safe_hourly_profile(restaurant_id)" in src
     assert "section_cap_roles=" in src
 
