@@ -116,7 +116,7 @@ def test_sq4_owner_sees_all_in_labor_against_the_all_in_target(monkeypatch):
     _salaried_week(monkeypatch)
     lv = E.labor_view(1, {"total": 4500.0}, 18000.0, labor_target=30, labor_budget_dollars=2800,
                       week_dates=WEEK, restaurant=object(), sees_salaries=True,
-                      recent={"pct": 39.4, "days": 14, "includes_salaries": True})
+                      recent={"pct": 39.4, "days": 14, "includes_salaries": True}, last_plan={})
     assert lv["basis"] == "all_in" and lv["cost"] == 7100 and lv["pct"] == 39.4
     assert lv["target_pct"] == 30 and lv["salaried_cost"] == 2600
     # The recent all-in % is this week's: no saving, never the salaries.
@@ -128,11 +128,17 @@ def test_sq4_savings_need_the_recent_percent_on_the_same_basis(monkeypatch):
     _salaried_week(monkeypatch)
     # An hourly recent % beside an all-in week is not compared at all.
     lv = E.labor_view(1, {"total": 4500.0}, 18000.0, labor_target=30, week_dates=WEEK, restaurant=object(),
-                      sees_salaries=True, recent={"pct": 45.0, "days": 14, "includes_salaries": False})
+                      sees_salaries=True, recent={"pct": 45.0, "days": 14, "includes_salaries": False},
+                      last_plan={})
     assert lv["recent_pct"] is None and lv["savings"] is None
+    # A measured recent % is never set against a scheduled one any more
+    # (blind re-audit 10/11/26 TRUST-7): the comparison is the last
+    # published week's PLAN on this view's basis (vs_last_plan).
     lv = E.labor_view(1, {"total": 4500.0}, 18000.0, labor_target=30, week_dates=WEEK, restaurant=object(),
-                      sees_salaries=True, recent={"pct": 42.0, "days": 14, "includes_salaries": True})
-    assert lv["savings"] == round((42.0 - 39.4) / 100 * 18000.0)
+                      sees_salaries=True, recent={"pct": 42.0, "days": 14, "includes_salaries": True},
+                      last_plan={"pct": 42.0, "week_start": "2026-10-05"})
+    assert lv["savings"] is None
+    assert lv["vs_last_plan"]["value"] == round((42.0 - 39.4) / 100 * 18000.0)
 
 
 def test_sq4_a_manager_sees_hourly_labor_against_the_hourly_budget_and_no_salary(monkeypatch):
@@ -140,10 +146,12 @@ def test_sq4_a_manager_sees_hourly_labor_against_the_hourly_budget_and_no_salary
     _salaried_week(monkeypatch)
     lv = E.labor_view(1, {"total": 4500.0}, 18000.0, labor_target=30, labor_budget_dollars=2800,
                       week_dates=WEEK, restaurant=object(), sees_salaries=False,
-                      recent={"pct": 30.0, "days": 14, "includes_salaries": False})
+                      recent={"pct": 30.0, "days": 14, "includes_salaries": False},
+                      last_plan={"pct": 30.0, "week_start": "2026-10-05"})
     assert lv["basis"] == "hourly" and lv["pct"] == 25.0
     assert lv["target_pct"] == round(2800 / 18000 * 100, 1) and lv["target_basis"] == "hourly"
-    assert "salaried_cost" not in lv and lv["savings"] == round((30.0 - 25.0) / 100 * 18000)
+    assert "salaried_cost" not in lv and lv["savings"] is None
+    assert lv["vs_last_plan"]["value"] == round((30.0 - 25.0) / 100 * 18000) and lv["vs_last_plan"]["basis"] == "hourly"
 
 
 # ── SQ-5: the hours panel's figures are hourly ─────────────────────────────
@@ -300,7 +308,7 @@ def _js_fn(src, name):
 def test_web_studio_reads_labor_view_and_the_hourly_split():
     s = _read("templates", "dashboard.html")
     summary = _js_fn(s, "ssRenderSummary")
-    assert "d.labor_view" in summary and "lv.target_pct" in summary and "lv.savings" in summary
+    assert "d.labor_view" in summary and "lv.target_pct" in summary and "lv.vs_last_plan" in summary  # TRUST-7
     assert "window._SS_RECENT" not in summary and "pc.total / rev" not in s
     live = _js_fn(s, "swLive")
     assert "_swHours" in live and "hv.by_date" in live and "hv.by_role" in live and "hv.over" in live

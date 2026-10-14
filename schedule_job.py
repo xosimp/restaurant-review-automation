@@ -1166,9 +1166,16 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     if _over_d:
         review["over_budget_dollars"] = round(_cost - _lbd, 0)
         review["over_budget_hours"] = round(max(0.0, _hs - _hb), 1)
+        # Which budget binds (blind re-audit 10/11/26 BUGSGEN-22): the dollar
+        # budget prices each person at their own rate, the hours budget the
+        # same dollars at the blended rate — "$298 over (988h scheduled
+        # against 988h)" read as a contradiction.
+        _bind = _econ.binding_budget(_cost, _lbd, _hs, _hb,
+                                     ((result.get("projected_cost") or {}).get("overtime_premium")))
+        review["budget_binds"] = _bind.get("binds")
         _budget_lines.append(
-            f"⚠ ${_cost:,.0f} of hourly pay against a ${_lbd:,.0f} hourly budget — ${_cost - _lbd:,.0f} over "
-            f"({_hs:,.0f}h scheduled against {_hb:,.0f}h)")
+            f"⚠ ${_cost:,.0f} of hourly pay against a ${_lbd:,.0f} hourly budget — ${_cost - _lbd:,.0f} over"
+            + (f" ({_bind['note']})" if _bind.get("note") else ""))
     elif (_lbd <= 0 or not _cost) and _hb > 0 and _hs > _hb * 1.02:
         review["over_budget_hours"] = round(_hs - _hb, 1)
         _budget_lines.append(
@@ -2169,6 +2176,9 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
         weather=se._json_safe(result.get("weather_forecast")),
         economics={"projected_revenue": result.get("projected_revenue"),
                    "projected_revenue_source": result.get("projected_revenue_source"),
+                   # The sales the crew was sized on and what Home states
+                   # (ARCH-28).
+                   "forecast_basis": se._json_safe(result.get("forecast_basis")),
                    "labor_budget_dollars": result.get("labor_budget_dollars"),
                    # The rate the week was priced at (SQ-6).
                    "blended_rate": result.get("blended_rate"),
