@@ -4051,7 +4051,12 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     added = [{k: v for k, v in r.items() if k not in ("_pinned", "_standby", "_open")}
              for r in res.get("rows", [])[len(kept):] if (r.get("employee") or "").strip()]
     got["rows"] = got["rows"] + added
-    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added)}
+    # The standby lever in the requirement ledger's own shape (re-audit
+    # 10/11/26 LEARNING-27): what it added, where, and on what evidence.
+    got.setdefault("stats", {})["standby"] = {
+        "needed": len(slots), "staffed": len(added),
+        "ledger": [{"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "lever": "standby", "delta": 1,
+                    "evidence": _ar.words(x), "provenance": "attendance"} for x in need[:7]]}
 
 
 def solver_explain(got) -> dict:
