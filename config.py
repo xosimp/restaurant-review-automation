@@ -41,6 +41,28 @@ def on_railway() -> bool:
     return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
 
 
+def scheduling_allowed() -> bool:
+    """Whether this process may run scheduled jobs and send what only the
+    scheduler's process may send (scheduler.scheduling_allowed delegates
+    here). Only on Railway, unless ALLOW_LOCAL_SCHEDULER=1 says otherwise;
+    never while a restore (RESTORE_FROM) or the Postgres cutover's write
+    freeze (MAINTENANCE_READ_ONLY) is in force.
+
+    Here, not only in scheduler.py, so a gate read from a generation stage
+    (push.native_push_allowed, reached through live_activities) never
+    imports the scheduler: importing it used to load the production .env
+    into a keyless process (blind re-audit 10/11/26 BUGSGEN-3, SCALE-29)."""
+    if (os.getenv("RESTORE_FROM") or "").strip():
+        return False
+    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return False
+    if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    # Railway sets all of these on every deploy; any one is enough.
+    return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
+                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+
+
 def google_places_key() -> str:
     """The Google Places key. Two variable names have been used over time;
     either works, GOOGLE_PLACES_API_KEY first."""

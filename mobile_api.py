@@ -9031,8 +9031,15 @@ def mobile_schedule_replacements(current_user):
         try:
             import prepublish as _pp_w
             from models import get_prior_shift_pattern as _gpsp
-            weighed = _pp_w.weigh_one(rid, rows, index, c, scores, _gpsp(rid) or {},
-                                      runner=(out[0]["name"] if out else None))
+            # The engine's own reason for this shift when the saved draft
+            # recorded one (schedule re-audit 10/11/26 TRUST-2), else the
+            # comparison — which never argues against the pick (TRUST-1).
+            try:
+                _sid_w = int(data.get("schedule_id") or 0) or None
+            except (TypeError, ValueError):
+                _sid_w = None
+            weighed = _pp_w.shift_why(rid, rows, index, c, scores, _gpsp(rid) or {},
+                                      runner=(out[0]["name"] if out else None), schedule_id=_sid_w)
         except Exception as _wx:
             print(f"[replacements] weighed line unavailable rid={rid}: {_wx!r}")
         return jsonify(ok=True, replacements=out, weighed=weighed,

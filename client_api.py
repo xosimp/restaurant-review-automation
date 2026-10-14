@@ -12075,7 +12075,7 @@ def _publish_schedule_request(current_user):
         # imports): this path ran client_api's bound copy while every other
         # Send ran schedule_publish's.
         review = _schedule_publish.publish_review(rid, row["id"])
-        acked, unacked = _schedule_publish._ack_gate(review, acknowledge, reasons)
+        acked, unacked = _schedule_publish._ack_gate(review, acknowledge, reasons, actor=current_user)
         if unacked:
             out, status = _schedule_publish._needs_ack(review, unacked, row["id"])
             return jsonify(**out), status
