@@ -120,3 +120,20 @@ def test_no_invoices_says_so(db):
     rid = _rid(db)
     out = bc.build(rid, db_path=db)
     assert out["available"] is False and "Fintech" in out["why_not"]
+
+
+def test_a_distributor_gone_quiet_is_said_and_its_category_not_judged(db):
+    """EJ's history was Fintech's PAID-invoice export (10/14/26): the spirits
+    house's last weeks were missing and liquor read 7%."""
+    rid = _rid(db)
+    rows = ""
+    for i, d in enumerate(("08/04", "08/11", "08/18", "08/25", "09/01", "09/08")):
+        rows += _row("Breakthru Beverage", f"B{i}", d + "/2026", "300.00", "9031", "TITOS VDK 1L", "CA", 1, "300.00")
+    rows += _row("Chicago Beverage", "C1", "10/05/2026", "229.00", "13682", "DAISY CUTTER K 1/2BB", "KE", 1, "229.00")
+    fi.ingest_file(rid, "x.csv", (HEAD + rows).encode(), db_path=db)
+    for d in ("2026-09-20", "2026-10-01", "2026-10-05"):
+        _sales(db, rid, d, beer=500, liquor=900, wine=0)
+    pc = bc.build(rid, db_path=db, today=date(2026, 10, 6))["pour_cost"]
+    assert pc["complete"] is False and pc["gaps"][0]["distributor"] == "Breakthru Beverage"
+    liq = next(c for c in pc["categories"] if c["key"] == "liquor")
+    assert liq.get("incomplete") is True and liq["tone"] is None

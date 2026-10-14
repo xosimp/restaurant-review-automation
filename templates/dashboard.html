@@ -44973,16 +44973,26 @@ function sfw2RuleCheck(chk) {
       h += '<div class="br-tile ' + (c.tone || '') + '"><div class="k"><i></i>' + esc2(c.label) + '</div>'
         + '<div class="v">' + (c.pct == null ? '—' : hn(c.pct) + '<small>%</small>') + '</div>'
         + '<div class="s">' + (c.pct == null ? (c.sales ? 'No ' + esc2(c.label.toLowerCase()) + ' invoices in this window' : 'No sales in this category') : 'Bought ' + hn(money(c.purchases)) + ' · sold ' + hn(money(c.sales))) + '</div>'
-        + '<div class="r">Rule of thumb ' + hn(c.range[0] + '–' + c.range[1] + '%') + (c.tone === 'warn' ? ' · above it' : (c.tone === 'low' ? ' · below it' : (c.tone === 'good' ? ' · inside it' : ''))) + '</div></div>';
+        + '<div class="r">' + (c.incomplete ? 'Invoices missing — not judged yet' : 'Rule of thumb ' + hn(c.range[0] + '–' + c.range[1] + '%') + (c.tone === 'warn' ? ' · above it' : (c.tone === 'low' ? ' · below it' : (c.tone === 'good' ? ' · inside it' : '')))) + '</div></div>';
     }
     return '<div class="br-tiles">' + h + '</div>';
+  }
+  /* Invoices a distributor normally sends that aren't on file: said, and the
+     categories they supply aren't judged until they arrive (10/14/26). */
+  function gapsHtml(gs) {
+    if (!gs.length) return '';
+    var li = '', i;
+    for (i = 0; i < gs.length; i++) {
+      li += '<li><b>' + esc2(gs[i].distributor) + '</b> — nothing on file ' + hn(gs[i].from_mdy) + '–' + hn(gs[i].to_mdy) + (gs[i].categories.length ? ' (' + esc2(gs[i].categories.join(', ')) + ')' : '') + '</li>';
+    }
+    return '<div class="br-empty" style="margin-top:18px"><b>Some invoices aren’t on file yet.</b> These distributors usually invoice more often, so what they supply reads low until the missing invoices arrive — forward Fintech’s invoice detail for those dates to fill them in.<ul style="margin:8px 0 0;padding-left:18px">' + li + '</ul></div>';
   }
   function months(pc) {
     var rows = '', i, j;
     for (i = pc.months.length - 1; i >= 0; i--) {
       var m = pc.months[i];
       rows += '<tr><td><b>' + esc2(m.label) + '</b>' + (m.partial ? '<span class="m">' + hn(m.from_mdy) + '–' + hn(m.to_mdy) + '</span>' : '') + '</td>';
-      for (j = 0; j < m.categories.length; j++) { var c = m.categories[j]; rows += '<td class="n">' + (c.pct == null ? '—' : hn(c.pct + '%')) + '<span class="m">' + hn(money(c.purchases)) + ' / ' + hn(money(c.sales)) + '</span></td>'; }
+      for (j = 0; j < m.categories.length; j++) { var c = m.categories[j]; rows += '<td class="n">' + (c.pct == null ? '—' : hn(c.pct + '%')) + (c.incomplete ? ' <span class="br-tag" title="Invoices missing for part of this month">incomplete</span>' : '') + '<span class="m">' + hn(money(c.purchases)) + ' / ' + hn(money(c.sales)) + '</span></td>'; }
       rows += '</tr>';
     }
     return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Month</th><th class="n">Beer &amp; seltzer</th><th class="n">Liquor</th><th class="n">Wine</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
@@ -45033,6 +45043,7 @@ function sfw2RuleCheck(chk) {
       var t = pc.total || {};
       h += '<h1 class="dn-read" style="font-size:clamp(26px,3vw,40px)">' + (t.pct != null ? 'The bar’s pour cost is <em>' + hn(t.pct + '%') + '</em> over the last four weeks.' : 'Pour cost needs both invoices and sales in the same weeks.') + '</h1>'
         + '<p class="dn-sub">' + hn(pc.window.from_mdy) + '–' + hn(pc.window.to_mdy) + ': ' + hn(money(t.purchases)) + ' bought from distributors against ' + hn(money(t.sales)) + ' in beer, liquor and wine sales.</p>'
+        + gapsHtml(pc.gaps || [])
         + '<div style="margin-top:26px">' + tiles(pc) + '</div>'
         + '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Month by month</div><h2 class="dn-h2">Pour cost by month</h2>' + months(pc) + '</section>';
     } else {

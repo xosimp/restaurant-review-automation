@@ -248,6 +248,41 @@ def _window(lines, sales, start, end) -> dict:
     return out
 
 
+def _gaps(lines, start, end) -> list:
+    """Distributors whose invoices stop inside [start, end] for much longer
+    than their own rhythm: [{distributor, from, to, from_mdy, to_mdy,
+    categories}]. Simple EJ's history came from Fintech's payment-activity
+    export (10/14/26) — only invoices already PAID — so the spirits and wine
+    houses, paid about 30 days out, were missing their last weeks and liquor
+    read 7%. A window with a gap is said, never judged."""
+    by = defaultdict(set)
+    cats = defaultdict(lambda: defaultdict(float))
+    for l in lines:
+        by[l["distributor"]].add(str(l["invoice_date"])[:10])
+        if l["category"] in POUR_CATEGORIES:
+            cats[l["distributor"]][l["category"]] += abs(l["net"])
+    out = []
+    for dist, days in by.items():
+        ds = sorted(days)
+        if len(ds) < 4:
+            continue
+        steps = sorted((date.fromisoformat(b) - date.fromisoformat(a)).days for a, b in zip(ds, ds[1:]))
+        typical = steps[len(steps) // 2] or 1
+        limit = max(14, int(typical * 2.5))
+        inside = [d for d in ds if start <= d <= end]
+        before = [d for d in ds if d < start]
+        marks = ([before[-1]] if before else [start]) + inside + [end]
+        for a, b in zip(marks, marks[1:]):
+            gap = (date.fromisoformat(b) - date.fromisoformat(a)).days
+            if gap > limit:
+                lo = max(start, (date.fromisoformat(a) + timedelta(days=1)).isoformat())
+                hi = (date.fromisoformat(b) - timedelta(days=1)).isoformat() if b != end else end
+                mine = sorted(cats[dist], key=lambda c: -cats[dist][c])
+                out.append({"distributor": dist, "from": lo, "to": hi, "from_mdy": _mdy(lo), "to_mdy": _mdy(hi),
+                            "categories": [c for c in mine if cats[dist][c] > 0], "typical_days": typical})
+    return out
+
+
 def _pour_cost(lines, sales, today) -> dict:
     inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines})
     sale_dates = sorted({d for c in sales.values() for d in c})
@@ -262,6 +297,12 @@ def _pour_cost(lines, sales, today) -> dict:
     end = hi
     start = max(lo, (date.fromisoformat(end) - timedelta(days=WINDOW_DAYS - 1)).isoformat())
     cur = _window(lines, sales, start, end)
+    gaps = _gaps(lines, start, end)
+    for g in gaps:
+        for c in g["categories"]:
+            if c in cur:
+                cur[c]["incomplete"] = True
+                cur[c]["tone"] = None
     bought = sum(c["purchases"] for c in cur.values())
     sold = sum(c["sales"] for c in cur.values())
     months = []
@@ -270,6 +311,11 @@ def _pour_cost(lines, sales, today) -> dict:
         nxt = (m.replace(day=28) + timedelta(days=4)).replace(day=1)
         a, b = max(lo, m.isoformat()), min(hi, (nxt - timedelta(days=1)).isoformat())
         w = _window(lines, sales, a, b)
+        for g in _gaps(lines, a, b):
+            for c in g["categories"]:
+                if c in w:
+                    w[c]["incomplete"] = True
+                    w[c]["tone"] = None
         full = a == m.isoformat() and b == (nxt - timedelta(days=1)).isoformat()
         months.append({"month": m.strftime("%Y-%m"), "label": m.strftime("%b %Y"), "from": a, "to": b,
                        "partial": not full, "from_mdy": _mdy(a), "to_mdy": _mdy(b),
@@ -280,7 +326,8 @@ def _pour_cost(lines, sales, today) -> dict:
             "categories": [cur[c] for c in POUR_CATEGORIES],
             "total": {"purchases": round(bought, 2), "sales": round(sold, 2),
                       "pct": round(bought / sold * 100, 1) if sold > 0 and bought > 0 else None},
-            "months": months, "overlap": {"from_mdy": _mdy(lo), "to_mdy": _mdy(hi)}}
+            "months": months, "overlap": {"from_mdy": _mdy(lo), "to_mdy": _mdy(hi)},
+            "gaps": gaps, "complete": not gaps}
 
 
 def _price_watch(lines, today) -> dict:
