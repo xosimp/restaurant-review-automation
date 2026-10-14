@@ -9982,6 +9982,19 @@ def stage_failure_line(key, blocks=None) -> str:
 OBJECTIVE_HISTORY_DAYS = 56
 
 
+def solver_drafted_dates(result) -> set:
+    """The dates of a generation the solver-first draft (Stage 1 shapes +
+    Stage 2 CP-SAT) wrote — draft_source's code dates when its code source
+    is the solver and its engine shapes+cp-sat — else an empty set (the
+    model's days, a carried week, the v0 code draft)."""
+    ds = (result or {}).get("draft_source") or {}
+    if (ds.get("code_source") or ds.get("source")) != "solver":
+        return set()
+    if ((ds.get("solver") or {}).get("engine")) != "shapes+cp-sat":
+        return set()
+    return set(ds.get("code_dates") or ())
+
+
 def requirement_need(dates, requirements, c=None, concurrent=None) -> dict:
     """The one objective's need from SHIFT REQUIREMENTS rows, read exactly as
     Stage 1 reads its demand (schedule_shapes.demand_curves: the row's own
@@ -10155,6 +10168,12 @@ class RepairContext:
         # LOGIC-6, ARCH-2): built once, read by the trim, the top-up and the
         # optimizer, as the solver drafted to it.
         self._objective = None
+        # The dates the solver-first draft wrote (ARCH-9): the passes that
+        # only exist to correct a model's draft — the staggered starts, the
+        # assignment re-solve on the week as drafted — have nothing to do
+        # there: Stage 1 drew the shapes from the curve and Stage 2 solved
+        # who works them, with every rule.
+        self.solver_dates = solver_drafted_dates(result)
 
     def new_rid(self, stage=None) -> str:
         self._n += 1
@@ -10637,10 +10656,19 @@ def _stage_top_up(rows, x):
 def _stage_stagger(rows, x):
     if not x.curve:
         return {"rows": rows}
+    # Not on a day the solver drew from the curve itself (ARCH-9): Stage 1
+    # placed each start on the curve's own steps; spreading them again would
+    # undo what it priced.
+    only = x.editable
+    if x.solver_dates:
+        days = set(only if only is not None else (x.week_dates or {r.get("date") for r in rows}))
+        only = days - x.solver_dates
+        if not only:
+            return {"rows": rows, "report": {"staggered": [], "skipped": "solver"}}
     import schedule_economics as _econ
     sc = x.scorer_for(rows) if x.scorer_for else None
     new, changes = _econ.stagger_same_starts(rows, x.curve, score_fn=sc.score if sc is not None else None,
-                                             constraints=x.c, only_dates=x.editable, requirements=x.requirements)
+                                             constraints=x.c, only_dates=only, requirements=x.requirements)
     return {"rows": new, "report": {"staggered": changes}}
 
 
@@ -10844,6 +10872,12 @@ def repair_week(rows, x: RepairContext) -> dict:
     seen = {tuple(sorted(map(_full_sig, state)))}
     failed, ran = set(), set()
     converged = False
+    editable_dates = set(x.editable) if x.editable is not None else {r.get("date") for r in state if r.get("date")}
+    if x.solver_dates and editable_dates and editable_dates <= x.solver_dates:
+        # The week IS the solver's answer (ARCH-9): its assignment stage
+        # would re-solve exactly the model CP-SAT just solved. It runs again
+        # only once a pass has changed the week (_REPAIR_ON_CHANGE).
+        ledger.setdefault("solved_sig", {})["solver"] = tuple(sorted(map(_full_sig, state)))
     for cycle in range(1, REPAIR_MAX_CYCLES + 1):
         ledger["cycle"] = ledger["cycles"] = cycle
         changed = False

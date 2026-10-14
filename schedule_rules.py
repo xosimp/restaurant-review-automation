@@ -6486,7 +6486,9 @@ TIER_TABLE = (
      "ceiling, the longest shift, days in a row and rest between shifts as the rules give them. They hold for "
      "everything below; 1a and 2a may go past them only for a shift nobody can cover inside them."),
     (TIER_OVERTIME, "overtime", "Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the "
-     "same role has room: overtime only for a shift nobody else in the role can legally work."),
+     "same role has room: overtime is a cost the owner does not want — only for a shift nobody else in the role "
+     "can legally work. It outranks SHIFT REQUIREMENTS (3c): a shift is left short before it is filled with "
+     "overtime a teammate could have avoided."),
     # Bounds, never a fill order (scheduler audit 10/10/26 AI-12): the
     # min-hours and overtime stages hold them; the model was told to fill
     # "from the people still under their minimum hours first", a running
@@ -6494,11 +6496,20 @@ TIER_TABLE = (
     (TIER_MIN_HOURS, "min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
      "full-time line) and their room before the overtime line are held by code after you write — bounds, never "
      "a fill order to work out."),
-    (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS, the people each role needs on each shift, with the "
-     "floors the hard minimum inside them — met even when that costs more than the hours budget (4): the "
-     "owner is told the overrun."),
+    # Only the FIRM part of a requirement ranks here (blind re-audit 10/11/26
+    # LOGIC-3, LOGIC-6, P): the solver, the trim and the top-up hold the
+    # first person of a role the restaurant is never without above the
+    # budget, and price the rest of the demand against it — the prompt says
+    # the same thing, so the model and code no longer draft to different
+    # weeks (LOGIC-4).
+    (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS' firm part: a role this restaurant is never without "
+     "(on at that hour on almost every one of its weekdays) keeps its first person even when that costs more "
+     "than the hours budget (4), and the floors are the hard minimum (2a). The rest of the people each shift "
+     "needs is weighed against the budget in dollars: a busy half hour's extra person is worth more than a quiet "
+     "one's, and where the budget binds the quietest half hours are the first to go."),
     (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling), in dollars at each person's own rate: "
-     "code trims to it after you write, never through 1-3; it never adds hours."),
+     "code trims to it after you write, the least valuable half hours first and never through 1, 2 or a "
+     "requirement's firm part; it never adds hours."),
     (TIER_QUALITY, "quality", "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S "
      "REQUEST FOR THIS DRAFT first, then leadership (every shift that needs somebody to run it has one and every "
      "SHIFT LEADER REQUIREMENT is met — by WHO works the shifts 3 calls for, never by hours past the budget), "

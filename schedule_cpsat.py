@@ -110,7 +110,7 @@ REQ_VALUE_BOUNDS = (0.1, 8.0)       # its demand x criticality against average: 
 # fairness can never again decide which shift goes empty.
 PHASE_RULES = frozenset({"manager", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
                          "min_hours", "requirement", "budget", "habit", "leadership", "pending", "memory",
-                         "commitment"})
+                         "commitment", "starved"})
 PHASE_STABILITY = frozenset({"stability", "change", "usual"})
 PHASE_SHARES = (0.6, 0.15, 0.25)    # each phase's share of the deterministic work budget
 # A habit the manager taught by hand, broken (schedule_memory tier "bound" —
@@ -138,6 +138,7 @@ TERM_LABELS = {
     "min_hours": "hours under someone's minimum",
     "requirement": "a requirement shift, unfilled",
     "budget": "dollars past the hourly budget",
+    "starved": "somebody under half their usual week",
     "dollars": "labor dollars",
     "stability": "a shift changed from last published week",
     "change": "a shift changed from the week as it stands",
@@ -635,6 +636,21 @@ class _Model:
                 m.add(dev >= lo - wexpr)
                 m.add(dev >= wexpr - hi)
                 book.add("hours_wanted", dev, item / max(1.0, want * H) * 2, {"person": p})
+            # Under half the week somebody lives on (schedule_objective.
+            # starved_hour_usd — one objective, blind re-audit 10/11/26 P):
+            # priced in the budget's own currency and phase, so no dollar the
+            # budget saves ever pays for it (price_week says the same).
+            if self.ctx is not None:
+                uh = float(self.ctx.usual_hours(name) or 0.0)
+                half = int(round(uh * _obj.STARVED_SHARE * H))
+                if uh >= _obj.STARVED_MIN_USUAL_HOURS and wbase < half:
+                    pc = self._pc if hasattr(self, "_pc") else self._per_cent()
+                    self._pc = pc
+                    if pc > 0:
+                        st = m.new_int_var(0, half - wbase, f"stv{p}")
+                        m.add(st >= half - wexpr)
+                        book.add("starved", st, _obj.starved_hour_usd(self.ctx, name) * 100 * pc / H,
+                                 {"person": p})
             # rest and overlap between consecutive dates, one linear
             # constraint per pair of days: the next start less the last end,
             # whenever both days are worked (an overlap is always refused;
