@@ -3790,7 +3790,8 @@ def _prune_schedules(conn, deadline, refused=None, held=None):
                 "AND NOT EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id = h.id) "
                 "LIMIT ?", (f"-{drafts_days} days", int(RETENTION_CHUNK_ROWS))).fetchall()]
             dependents = [t for t in ("schedule_versions", "schedule_experiment_weeks",
-                                      "shift_change_requests", "schedule_outcomes")
+                                      "shift_change_requests", "schedule_outcomes",
+                                      "schedule_shifts", "schedule_shift_weeks")
                           if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                                           (t,)).fetchone()]
             deleted = 0
@@ -3801,7 +3802,8 @@ def _prune_schedules(conn, deadline, refused=None, held=None):
                 if any(conn.execute(f"SELECT 1 FROM {t} WHERE history_id=? LIMIT 1", (hid,)).fetchone()
                        for t in ("shift_change_requests", "schedule_outcomes") if t in dependents):
                     continue
-                for t in ("schedule_versions", "schedule_experiment_weeks"):
+                for t in ("schedule_versions", "schedule_experiment_weeks", "schedule_shifts",
+                          "schedule_shift_weeks"):
                     if t in dependents:
                         conn.execute(f"DELETE FROM {t} WHERE history_id=?", (hid,))
                 deleted += max(0, conn.execute("DELETE FROM schedule_history WHERE id=?", (hid,)).rowcount or 0)

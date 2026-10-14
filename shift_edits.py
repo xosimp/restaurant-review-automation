@@ -52,12 +52,26 @@ def _iso(value, what="date") -> str:
 
 
 def week_for(restaurant_id, on_date, db_path=None):
-    """The copy of the week holding `on_date` the Studio edits: the newest
-    copy nobody replaced (superseded_by IS NULL) — {id, week_start,
-    week_end, published_at} — or None."""
+    """The copy of the week holding `on_date` a one-shift edit lands on —
+    {id, week_start, week_end, published_at} — or None: the LIVE copy (the
+    week staff have, models.live_week_for) when the date is in a published
+    week, else the newest copy nobody replaced (the draft). A regenerated,
+    unsent draft of a live week used to outrank the live copy, so "move
+    Maria to close Friday" landed in a draft staff never get (schedule
+    re-audit 10/11/26 BUGSLIFE-16); a caller that means the draft names
+    its history id."""
     iso = _iso(on_date)
+    try:
+        live = _models_mod.live_week_for(restaurant_id, iso, db_path=db_path or _models_mod.DB_PATH)
+    except Exception:
+        live = None
     conn = get_conn(db_path)
     try:
+        if live:
+            r = conn.execute("SELECT id, week_start, week_end, published_at FROM schedule_history WHERE id=? "
+                             "AND restaurant_id=? AND superseded_by IS NULL", (live["id"], restaurant_id)).fetchone()
+            if r:
+                return dict(r)
         r = conn.execute("SELECT id, week_start, week_end, published_at FROM schedule_history WHERE restaurant_id=? "
                          "AND superseded_by IS NULL AND substr(week_start,1,10) <= ? AND substr(week_end,1,10) >= ? "
                          "ORDER BY id DESC LIMIT 1", (restaurant_id, iso, iso)).fetchone()
@@ -235,7 +249,16 @@ def plan(restaurant_id, op, args, history_id=None, db_path=None) -> dict:
         cost = _econ.cost_delta(rows, after, pricing=_econ.week_pricing(restaurant_id, c))
     except Exception:
         cost = None
-    late = _premium(restaurant_id, rows, after, published, touched)
+    # Priced against what staff were TOLD (the published copy), never the
+    # working copy with unsent edits (BUGSLIFE-16).
+    told = None
+    if published:
+        try:
+            import schedule_versions as _sv_t
+            told = _sv_t.published_rows(int(hist["id"]), restaurant_id, db_path=db_path or _models_mod.DB_PATH)
+        except Exception as e:
+            print(f"[shift_edits] published copy unread rid={restaurant_id}: {e!r}")
+    late = _premium(restaurant_id, told if told is not None else rows, after, published, touched)
     return {"ok": True, "op": op, "args": dict(args or {}), "history_id": int(hist["id"]), "version": version,
             "published": published, "summary": summary, "legal": not problems,
             "problems": [p.get("label") for p in problems], "cost": cost, "late_change": late, "dates": dates,

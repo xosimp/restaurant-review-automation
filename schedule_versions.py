@@ -1058,6 +1058,49 @@ def apply_locks(rows, stored_rows, step=None, explicit=None) -> list:
     return rows
 
 
+# The schedule_history columns store_week may set besides the two copies'
+# text: the stamps a save, a Send or a rename writes with them.
+_WEEK_SETS = frozenset({"quality_json", "hours_scheduled", "hours_hourly", "hours_salaried", "edited_at",
+                        "edited_by", "published_at", "published_by", "publishing_at", "republished_at"})
+_SET_RE = re.compile(r"^\s*([a-z_]+)\s*=")
+
+
+def store_week(conn, restaurant_id, history_id, working=None, published=None, sets=(), args=()) -> int:
+    """THE write of a stored week's text (schedule re-audit 10/11/26 ARCH-7,
+    ARCH-24): the working copy (`working` → schedule_csv), the published
+    copy (`published` → published_csv), any of the week's stamps beside
+    them (`sets`: "col=<sql>" fragments over _WEEK_SETS, `args` their
+    parameters in order) — and the week's shift projection
+    (schedule_shifts.project) rewritten from the result, on the caller's
+    connection inside its write transaction. Every writer of a week's text
+    calls this (tests/test_sf11_d_shift_identity.py holds the code to it),
+    so the rows table never disagrees with the text and the week's
+    invariants live in one place. A caller that appends a version appends
+    it FIRST, so the projection carries its revision. Returns the rows the
+    UPDATE touched (1, or 0 when the week is gone)."""
+    parts, vals = [], []
+    if working is not None:
+        parts.append("schedule_csv=?")
+        vals.append(working)
+    if published is not None:
+        parts.append("published_csv=?")
+        vals.append(published)
+    for frag in sets or ():
+        m = _SET_RE.match(frag or "")
+        if not m or m.group(1) not in _WEEK_SETS:
+            raise ValueError(f"store_week cannot set {frag!r}")
+        parts.append(frag)
+    vals.extend(args or ())
+    n = 1
+    if parts:
+        cur = conn.execute(f"UPDATE schedule_history SET {', '.join(parts)} WHERE id=? AND restaurant_id=?",
+                           (*vals, history_id, restaurant_id))
+        n = cur.rowcount
+    import schedule_shifts
+    schedule_shifts.project(conn, restaurant_id, history_id)
+    return n
+
+
 def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=None, quality=None,
              expected_version=None, saved_authority=None, row_origins=None) -> int:
     """Write one change to a stored week AND append its version row, on the
@@ -1138,16 +1181,24 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         # Unknown, never a guess: a reader falls back to the all-in figure.
         print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
         split = {"hourly": None, "salaried": None}
-    cur = conn.execute(
-        "UPDATE schedule_history SET schedule_csv=?, quality_json=COALESCE(?, quality_json), hours_scheduled=?, "
-        "hours_hourly=?, hours_salaried=?, edited_at=datetime('now'), edited_by=?, "
-        "published_csv=CASE WHEN ? IS NULL THEN published_csv ELSE ? END WHERE id=? AND restaurant_id=?",
-        (draft_text, json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
-         (saved_by or "").strip()[:120] or None, live_text, live_text, history_id, restaurant_id))
-    if cur.rowcount != 1:
-        raise LookupError("that schedule is gone")
+    # The version first, so the week's shift projection carries its
+    # revision (store_week); one transaction either way.
     _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, draft_text, quality, saved_by,
                                        saved_authority, row_origins=row_origins)
+    if store_week(conn, restaurant_id, history_id, working=draft_text, published=live_text,
+                  sets=("quality_json=COALESCE(?, quality_json)", "hours_scheduled=?", "hours_hourly=?",
+                        "hours_salaried=?", "edited_at=datetime('now')", "edited_by=?"),
+                  args=(json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
+                        (saved_by or "").strip()[:120] or None)) != 1:
+        raise LookupError("that schedule is gone")
+    # A change to the copy staff have closes every cover it undid — the
+    # holder back on a shift a request still called covered (schedule
+    # re-audit 10/11/26 BUGSLIFE-2); in this transaction, told after it.
+    if live_write:
+        import shift_requests as _srq_c
+        _rev = _srq_c.staff_changes_vs(restaurant_id, old_live, new_live, db_path=db or DB_PATH)["reverted"]
+        if _rev:
+            _srq_c.close_reverted(conn, restaurant_id, _rev, actor=saved_by)
     if live_write:
         # Every draft of the week waiting to replace this copy carries the
         # change too (schedule re-audit 10/11/26 BUGSLIFE-1): a regenerated
@@ -1165,6 +1216,89 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
             if "no such table" not in str(e).lower():
                 raise
     return version
+
+
+class WeekReplaced(Exception):
+    """The week a save names was replaced by a newer copy: read-only."""
+
+    def __init__(self, superseded_by, message):
+        super().__init__(message)
+        self.superseded_by = superseded_by
+
+
+def save_studio_week(restaurant_id, history_id, csv_text, *, raw_rows=None, explicit_locks=None,
+                     expected_version=None, saved_by=None, saved_authority=None, quality=None,
+                     cavnar_changes=None, review=None, violations=None, rows=None, constraints=None,
+                     review_extras=None, db_path=DB_PATH) -> dict:
+    """A manager's Studio save of one week — the week service the save
+    route calls (schedule re-audit 10/11/26 ARCH-24; it lived in the route
+    and wrote schedule_history itself). In ONE write transaction:
+
+    * a copy a newer one replaced is read-only (WeekReplaced; UI-3);
+    * the same rows saved again — a retry of a save that committed, a
+      double press — write no second version and teach nothing (`unchanged`);
+    * otherwise the version check is repeated inside the lock (StaleVersion
+      on a conflict, SCHED-19), each changed row's origin is read
+      (step_origins, L-5), the rows the manager changed lock (apply_locks,
+      contract #4), and the week is written through write_on (the working
+      copy only on a week staff have; the version; the shift projection);
+    * the generation's review is kept and only what the edited rows decide
+      is refreshed (schedule_engine.refresh_review, P-26) — `review` and
+      `violations` from the save's sweep; a sweep that could not run
+      (`review` None) leaves the stored review as it was.
+
+    Returns {"history_id", "version", "unchanged", "published" (whether the
+    week was already with staff), "step", "csv_text" (as stored),
+    "review"}. Raises WeekReplaced, StaleVersion or LookupError (the week
+    is gone); nothing is written then."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        own = conn.execute("SELECT superseded_by, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+        if own is None:
+            raise LookupError("that schedule is gone")
+        replaced = replaced_error(own)
+        if replaced:
+            raise WeekReplaced(own["superseded_by"], replaced)
+        published = bool(own["published_at"])
+        unchanged = same_rows(latest_rows(conn, history_id), rows_from_csv(csv_text), explicit_locks=explicit_locks)
+        step = None
+        if unchanged:
+            version = latest_version(conn, history_id) or None
+        else:
+            changed = rows_changed_since(conn, history_id, expected_version)
+            if changed:
+                raise StaleVersion(changed)
+            prev = latest_rows(conn, history_id)
+            step = step_origins(prev, rows_from_csv(csv_text), raw_rows,
+                                cavnar_changes if isinstance(cavnar_changes, list) else None)
+            csv_text = _srows.to_csv(apply_locks(rows_from_csv(csv_text), prev, step, explicit=explicit_locks))
+            version = write_on(conn, restaurant_id, history_id, "edited", csv_text, saved_by=saved_by,
+                               quality=quality, expected_version=expected_version,
+                               saved_authority=saved_authority, row_origins=step["stored"])
+        if review is not None and violations is not None:
+            was = conn.execute("SELECT review_json, hours_budget FROM schedule_history WHERE id=? AND restaurant_id=?",
+                               (history_id, restaurant_id)).fetchone()
+            try:
+                saved_rv = json.loads((was["review_json"] if was else None) or "null") or {}
+            except ValueError:
+                saved_rv = {}
+            from schedule_engine import refresh_review
+            review = refresh_review(saved_rv, violations, rows if rows is not None else rows_from_csv(csv_text),
+                                    constraints, hours_budget=(was["hours_budget"] if was else None),
+                                    extras=review_extras or {})
+        if review is not None:
+            conn.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
+                         (json.dumps(review, default=str), history_id, restaurant_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"history_id": history_id, "version": version, "unchanged": unchanged, "published": published,
+            "step": step, "csv_text": csv_text, "review": review}
 
 
 def in_id_space(old_live, new_live, target_rows) -> tuple:
@@ -1216,12 +1350,13 @@ def carry_live_into_drafts(conn, restaurant_id, history_id, old_live, new_live, 
         except Exception as e:
             print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
             split = {"hourly": None, "salaried": None}
-        conn.execute("UPDATE schedule_history SET schedule_csv=?, hours_scheduled=?, hours_hourly=?, hours_salaried=? "
-                     "WHERE id=? AND restaurant_id=?",
-                     (text, round(sum(_hours(r) for r in merged), 1), split["hourly"], split["salaried"], d["id"],
-                      restaurant_id))
+        # The version first, then the draft's text through the one week
+        # write (store_week: its shift projection with it — ARCH-7).
         if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (d["id"],)).fetchone():
             _insert_version(conn, restaurant_id, d["id"], LIVE_REASON, text, None, saved_by, None)
+        store_week(conn, restaurant_id, d["id"], working=text,
+                   sets=("hours_scheduled=?", "hours_hourly=?", "hours_salaried=?"),
+                   args=(round(sum(_hours(r) for r in merged), 1), split["hourly"], split["salaried"]))
         changed.append(d["id"])
     return changed
 
@@ -1447,9 +1582,11 @@ def backfill_published_copies(db_path=DB_PATH, max_seconds: float = 10.0) -> int
             break
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND published_csv IS NULL",
-                               (hid,)).fetchone()
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT restaurant_id, schedule_csv FROM schedule_history WHERE id=? "
+                               "AND published_csv IS NULL", (hid,)).fetchone()
             if row is None:
+                conn.rollback()
                 continue
             versions = materialize(conn, conn.execute(
                 "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
@@ -1461,11 +1598,12 @@ def backfill_published_copies(db_path=DB_PATH, max_seconds: float = 10.0) -> int
             # rewritten only to carry them; its rows are unchanged).
             draft_ids = _srows.carry_ids(draft, [], known_ids=[r.get("shift_id") for r in draft])
             told_ids = _srows.carry_ids(told, draft_ids, known_ids=[r.get("shift_id") for r in told])
-            conn.execute("UPDATE schedule_history SET published_csv=?, schedule_csv=? WHERE id=? "
-                         "AND published_csv IS NULL", (_srows.to_csv(told_ids), _srows.to_csv(draft_ids), hid))
+            store_week(conn, row["restaurant_id"], hid, working=_srows.to_csv(draft_ids),
+                       published=_srows.to_csv(told_ids))
             conn.commit()
             done += 1
         except Exception as e:
+            conn.rollback()
             log.warning("published copy not backfilled for week %s: %s", hid, e)
         finally:
             conn.close()
