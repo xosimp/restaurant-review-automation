@@ -1184,6 +1184,59 @@ def station_logins(entries: list, people: dict) -> dict:
     return {mid: nm for mid, nm in cands.items() if mid not in paid}
 
 
+def _name_tag(emp: dict) -> str:
+    """What sets a record apart from another of the same name: its middle
+    name, else the part after a second comma of `name` ("Avelar, Oscar, J" -
+    Simple EJ's two Oscar Avelars, 10/14/26), else ''."""
+    mid = _tidy_name(emp.get("mname"))
+    if mid:
+        return mid
+    parts = [p.strip() for p in str(emp.get("name") or "").split(",")]
+    return _tidy_name(parts[2]) if len(parts) > 2 else ""
+
+
+def distinct_employee_names(records) -> dict:
+    """{mid: display name} for RPOWER employee records, with two people who
+    would read the same name told apart (owner, 10/14/26: two "Oscar
+    Avelar"s - different records, pay and jobs - were one person to every
+    schedule, overtime and rating check, a 68.6h week). A record with a
+    distinguishing middle part reads "Oscar J. Avelar"; the one without
+    keeps the plain name; records still alike all carry their payroll id. A
+    name only one record has is unchanged, so nobody else is renamed."""
+    base, groups = {}, {}
+    for e in records or []:
+        m = str(e.get("mid") or "").strip()
+        name = employee_display_name(e)
+        if not (m and name):
+            continue
+        base[m] = (name, e)
+        groups.setdefault(name.lower(), []).append(m)
+    out = {m: v[0] for m, v in base.items()}
+    for key, mids in groups.items():
+        if len(mids) < 2:
+            continue
+        named = {}
+        for m in mids:
+            name, e = base[m]
+            tag = _name_tag(e)
+            if tag:
+                first, _, last = name.partition(" ")
+                tag = tag + "." if len(tag) == 1 else tag
+                name = f"{first} {tag} {last}".strip() if last else f"{name} {tag}"
+            named[m] = name
+        counts = {}
+        for n in named.values():
+            counts[n.lower()] = counts.get(n.lower(), 0) + 1
+        for m in mids:
+            # Still alike after the middle part: every one of them carries its
+            # payroll id - the plain name stays nobody's, so a schedule sent to
+            # the POS never picks one of two identical records by guess.
+            if counts[named[m].lower()] > 1:
+                named[m] = f"{named[m]} ({str(base[m][1].get('payroll_id') or m)[-6:]})"
+            out[m] = named[m]
+    return out
+
+
 def fetch_people(restaurant_id: int) -> dict:
     """{"jobs": {job_mid: name}, "employees": {emp_mid: "First Last"},
     "station_names": {emp_mid: POS name}} for this store's consolidation
@@ -1196,8 +1249,10 @@ def fetch_people(restaurant_id: int) -> dict:
         name = _tidy_name(j.get("name"))
         if j.get("mid") and name:
             jobs[str(j["mid"])] = name
-    for e in _paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}):
-        name = employee_display_name(e)
+    emp_recs = list(_paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}))
+    distinct = distinct_employee_names(emp_recs)
+    for e in emp_recs:
+        name = distinct.get(str(e.get("mid") or "").strip())
         if e.get("mid") and name:
             emps[str(e["mid"])] = name
             # the POS's own full name ("To Go AM"; fname+lname lost the "Go")
@@ -1551,9 +1606,11 @@ def pos_employees(restaurant_id: int) -> list:
     2000-01-01 for "none")."""
     token, base = _ctx(restaurant_id)
     out = []
-    for e in _paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+    recs = list(_paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}))
+    distinct = distinct_employee_names(recs)
+    for e in recs:
         term = str(e.get("term_date") or "")
-        out.append({"mid": _id(e.get("mid")), "name": employee_display_name(e),
+        out.append({"mid": _id(e.get("mid")), "name": distinct.get(str(e.get("mid") or "").strip()) or employee_display_name(e),
                     "payroll_id": str(e.get("payroll_id") or "").strip(),
                     "current": not term or term[:4] <= "2000"})
     return out

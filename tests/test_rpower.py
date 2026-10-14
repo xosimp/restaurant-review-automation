@@ -934,3 +934,21 @@ def test_an_error_correct_line_is_a_void_in_the_days_sales():
     types = {"E": {"type_error": 1}, "S": {"type_sale": 1}}
     assert rpower._line_kind({"slstype_mid": "E"}, types) == "void"
     assert rpower._loss_kind({"slstype_mid": "E"}, types) == "void"
+
+
+def test_two_employees_with_one_name_are_told_apart():
+    """Simple EJ's, 10/14/26: two RPOWER records read "Oscar Avelar" (one in
+    Kitchen at $24, one in Training/Utility at $9) and were one person to
+    every check. The record with a distinguishing part is renamed; a name
+    only one record has is untouched."""
+    import rpower
+    recs = [{"mid": "2256", "fname": "Oscar", "lname": "Avelar", "name": "Avelar, Oscar"},
+            {"mid": "2267", "fname": "Oscar", "lname": "Avelar", "name": "Avelar, Oscar, J"},
+            {"mid": "3000", "fname": "Katie", "lname": "Royer", "name": "Royer, Katie"},
+            {"mid": "4001", "fname": "Ana", "lname": "Diaz", "name": "Diaz, Ana", "payroll_id": "AAA111"},
+            {"mid": "4002", "fname": "Ana", "lname": "Diaz", "name": "Diaz, Ana", "payroll_id": "BBB222"}]
+    out = rpower.distinct_employee_names(recs)
+    assert out["2256"] == "Oscar Avelar" and out["2267"] == "Oscar J. Avelar"
+    assert out["3000"] == "Katie Royer"
+    assert out["4001"] == "Ana Diaz (AAA111)" and out["4002"] == "Ana Diaz (BBB222)"
+    assert len(set(out.values())) == len(out)
