@@ -38716,6 +38716,7 @@ window._cuRole=window.CAV_BOOT.role;
 .sfw1-gr.more{color:var(--ink3);font-size:13px}
 @media (max-width:640px){.sfw1-gr{flex-wrap:wrap;gap:6px 12px}.sfw1-gr .d{width:auto}}
 .sfw1-n .tx{flex:1;min-width:0}
+.sfw1-n.pending .pend{color:var(--ink3)}
 .sfw1-n .tx b{color:var(--ink);font-weight:600}
 .sfw1-n .tx small{display:block;margin-top:3px;font-size:13.5px;color:var(--ink3)}
 .sfw1-n .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex-shrink:0}
@@ -39519,11 +39520,25 @@ function sfw1RatingLine(s) {
      budget's assumed wage (E-24) with where to fix it. */
   var _freshKey = null, _freshHtml = '', _availHtml = '';
   function freshPaint() { var el = $id('sfw1-gen-fresh'); if (el) el.innerHTML = _freshHtml + _availHtml; }
+  /* The read takes a few seconds (the forecast's own request), and the card
+     grew when it landed (owner, 10/14/26). The last answer for the week is
+     painted at once from this browser's memory, else a quiet placeholder of
+     the same height holds the place; the fresh answer replaces it in place. */
+  function freshMemo(ws, html) {
+    var m = document.querySelector && document.querySelector('meta[name="cavnar-restaurant-id"]');
+    var k = 'cavnar_sfw1_fresh:' + (m ? m.getAttribute('content') : '') + ':' + ws;
+    try { if (html === undefined) return localStorage.getItem(k) || ''; localStorage.setItem(k, html); } catch (err) {}
+    return '';
+  }
   window.sfw1LoadFresh = function (force) {
     var el = $id('sfw1-gen-fresh'); if (!el) return;
     var ws = (window._schedWeekStart && _schedWeekStart()) || '';
     if (!force && _freshKey === ws) return;
     _freshKey = ws;
+    if (!_freshHtml) {
+      _freshHtml = freshMemo(ws) || note('pending', '<span class="pend">Checking how recent your sales are\u2026</span>');
+      freshPaint();
+    }
     jget('/api/labor/schedule-forecast' + (ws ? '?week_start=' + encodeURIComponent(ws) : ''), function (d) {
       if (_freshKey !== ws) return;
       if (!d.ok) { _freshKey = null; _freshHtml = ''; freshPaint(); return; }
@@ -39532,6 +39547,7 @@ function sfw1RatingLine(s) {
       else if (dd && dd.line) h += note(dd.blind || dd.stale ? 'warn' : '', n(dd.line));
       if (bb.caveat) h += note(bb.trim_ok === false ? 'bad' : 'warn', n(bb.caveat), '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-nav-go="account/restaurant">Set pay rates</button>');
       _freshHtml = h;
+      freshMemo(ws, h);
       freshPaint();
     });
     sfw1LoadAvailChanges();
