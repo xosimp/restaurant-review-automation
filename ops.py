@@ -2724,6 +2724,9 @@ _RETENTION_DAYS = {
     # The publish warnings a send went out past, by key (TRUST-28): the
     # override rate per kind reads 180 days of them.
     "schedule_publish_overrides": int(os.getenv("RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS", "400")),
+    # The owner's answers to the pre-publish suggestions (schedule re-audit
+    # 10/11/26 TRUST-17): read for DISMISS_MAX_DAYS at most.
+    "schedule_review_dismissals": int(os.getenv("RETAIN_SCHED_REVIEW_DISMISSALS_DAYS", "200")),
     # What made each draft (RM-4, AI-29): its commit, arms, row origins and
     # the learning ablation's two drafts — read until the week's scorecard
     # row is frozen; the frozen row keeps what was measured from it.
@@ -3023,6 +3026,7 @@ _RETENTION_COLUMN = {
     "staff_consents": "created_at", "compliance_pay_ledger": "created_at", "good_faith_estimates": "created_at",
     "fww_requests": "created_at", "fww_access_offers": "created_at",
     "schedule_publish_overrides": "shown_at",
+    "schedule_review_dismissals": "dismissed_at",
     "schedule_calibration_runs": "run_at",
     "offer_response_platforms": "answered_at",
 }
@@ -3094,6 +3098,7 @@ _RETENTION_FLOOR_DAYS = {
     # The kept week records (SCALE-33): the learners' own 24-week window.
     "schedule_learning_records": 168,
     "schedule_publish_overrides": 180,
+    "schedule_review_dismissals": 180,
     "schedule_generation_tags": 120,
     "schedule_calibration_runs": 90,
     "offer_response_platforms": 90,
@@ -3256,6 +3261,7 @@ _RETENTION_READERS = {
     "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
+    "schedule_review_dismissals": (("schedule_overrides.dismissals", "schedule_overrides.DISMISS_MAX_DAYS", None),),
     "schedule_generation_tags": (("schedule_scorecard.compute_week", "schedule_scorecard.TAGS_READ_DAYS", None),),
     "offer_response_platforms": (("staff_pwa.response_times", "staff_pwa.RESPONSE_DAYS", None),),
     "schedule_calibration_runs": (("schedule_calibration._quiet", "schedule_calibration.REVERT_QUIET_DAYS", None),),
