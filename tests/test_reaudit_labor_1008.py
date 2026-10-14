@@ -138,7 +138,9 @@ def test_a_queued_one_tap_send_runs_the_unattended_gate_when_its_window_ends(db,
     c, h, _ = _client(db, rid, monkeypatch)
     monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: True)
     queued = []
-    monkeypatch.setattr(delayed, "schedule", lambda rid_, kind, payload, delay, **k: queued.append(payload)
+    # The week's send is queued through queue_schedule_send since BUGSLIFE-9
+    # (one pending send per week); this test patched the old delayed.schedule.
+    monkeypatch.setattr(delayed, "queue_schedule_send", lambda rid_, kind, payload, delay, **k: queued.append(payload)
                         or {"id": 1, "execute_at": "2026-10-08 12:00:00"})
     body = c.post("/mobile/api/labor/publish-schedule", headers=h,
                   json={"schedule_id": hid, "one_tap": True}).get_json()
