@@ -281,7 +281,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                        adjustments: list = None, late_headcount: dict = None, standard_needs: dict = None,
                        role_windows: dict = None, role_caps: dict = None, crew_answers: dict = None,
                        staffing_model: dict = None, concurrent: dict = None, half_curve: dict = None,
-                       elasticity: dict = None) -> list:
+                       elasticity: dict = None, learned: dict = None) -> list:
     """One entry per date × daypart that needs anybody.
 
     Each role's number is the larger of the owner's floor and what this
@@ -371,10 +371,32 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 measured with an interval clear of zero (RM-20, LEARNING-6,
                 MARKET-23) — never past `target` (the level it was measured
                 above plus the move) and only on `weekdays` when given
-                (blind re-audit 10/11/26 LEARNING-6, -7).
+                (blind re-audit 10/11/26 LEARNING-6, -7); entered in the
+                ledger like every lever, and held by the arbiter where the
+                manager's own learned level already moved the role.
+    learned — {(weekday, daypart): {role: {"delta", "settled", "base",
+                "applied"}}} (labor.apply_learned_to_patterns): what the
+                manager's learned headcount added to the usual crew. It is
+                taken back out of the baseline and applied as a LEVEL after
+                the driver, the standard and the demand — headcount_to_apply
+                on the figure the table reached — so a labor standard's
+                stagger never amplifies it (re-audit 10/11/26 LEARNING-18:
+                settled 5 read as required 8).
     Each row also carries `half_need` — {minute: {role: people on}}, every
     half hour's full need after the caps — the one the score judges
     (half_hours_map).
+
+    THE LEDGER (re-audit 10/11/26 LEARNING-27): every lever that moves a
+    role's number — the usual crew, the date's demand, the labor standard
+    (driver or the owner's), the manager's learned level, the measured
+    elasticity, the owner's floors and minimums, the asks (events, reviews,
+    reports), the owner's hours and ceilings — proposes its move here, in
+    this one function, and each role entry carries `ledger`: [{lever, delta,
+    to, evidence, provenance, applied, held_by}] in the order applied. One
+    arbiter rule holds across them: an automatic lever (elasticity) never
+    moves a slot the manager's own learned level already moved the same way
+    (the two used to stack), and explain_role() says why a shift asks for
+    what it asks.
     """
     import staffing_curve as _curve
     from shift_quality import shift_role_requirements
@@ -400,7 +422,21 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             # daypart, and the profile's critical positions — the largest of
             # each per role.
             profile_here = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
-            typical_raw = raw_by_part[part]
+            # The usual crew less what the manager's learned headcount added
+            # to it (LEARNING-18): that comes back as a level at the end.
+            learned_here = {str(k).strip().lower(): v for k, v in ((learned or {}).get((day, part)) or {}).items()
+                            if isinstance(v, dict)}
+
+            def _applied(r):
+                return int((learned_here.get(r.strip().lower()) or {}).get("applied") or 0)
+            typical_raw = {r: max(0, int(n or 0) - _applied(r)) for r, n in raw_by_part[part].items()}
+            typical_raw = {r: n for r, n in typical_raw.items() if n > 0 or not _applied(r)}
+            ledger = {}
+
+            def _log(role_, lever, before, after, evidence="", provenance="", applied=True, held_by=None):
+                ledger.setdefault(role_.strip().lower(), []).append(
+                    {"lever": lever, "delta": int(after) - int(before), "to": int(after), "evidence": evidence,
+                     "provenance": provenance, "applied": applied, "held_by": held_by})
             hold = ((splh_hold or {}).get(day) or {}).get(part)
             # The meal's own demand and each role's (LOGIC-9, LEARNING-20):
             # a dinner game never lifts lunch, a bar night never the dish pit.
@@ -413,6 +449,13 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 return demand_factor(rr, hold, measured) if rr is not None else factor
             typical_here = {r: (_scaled(n, _role_factor(r)) if _role_factor(r) != 1.0 else int(n or 0))
                             for r, n in typical_raw.items()}
+            for r, n in typical_raw.items():
+                _log(r, "usual", 0, int(n or 0), "what this restaurant usually runs on this weekday and meal",
+                     "history")
+                if typical_here[r] != int(n or 0):
+                    _log(r, "demand", int(n or 0), typical_here[r],
+                         "; ".join(why_date + [w for w in why_part if w not in why_date]) or
+                         f"this date's demand x{_role_factor(r):.2f}", "forecast")
             # Driver-based (RM-17): a family with a labor standard is asked
             # for the work it will carry, not its habit. The hold is not
             # applied — the budget is priced in dollars elsewhere (LOGIC-10).
@@ -422,15 +465,51 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 lo_d, hi_d = _service_window(day, part, open_times, close_times)
                 ratios_d = {r: demand_factor(role_ratios.get(r.strip().lower(), p_ratio), 1.0, True)
                             for r in typical_raw}
-                driven = _sm.needs(staffing_model, day, part, ratios_d, typical_raw,
-                                   (concurrent or {}).get((day, part)) or {}, window=(lo_d, hi_d))
+                # The stagger reads the usual crew as it was before the
+                # learned headcount (people on at once taken back in step).
+                conc_base = {}
+                for k_c, v_c in ((concurrent or {}).get((day, part)) or {}).items():
+                    if isinstance(v_c, dict) and v_c.get("peak") is not None:
+                        conc_base[k_c] = dict(v_c, peak=max(0, int(v_c["peak"] or 0) - _applied(str(k_c))))
+                    else:
+                        conc_base[k_c] = v_c
+                driven = _sm.needs(staffing_model, day, part, ratios_d, typical_raw, conc_base, window=(lo_d, hi_d))
                 for r, dn in driven.items():
+                    _log(r, "driver", typical_here.get(r, 0), int(dn["distinct"]), dn.get("reason") or "",
+                         "yours" if dn.get("source") == "yours" else "measured")
                     typical_here[r] = int(dn["distinct"])
             standard_here = (standard_needs or {}).get((d, part)) or {}
             for r in list(typical_here):
                 std = standard_here.get(r.strip().lower())
                 if std and std.get("people") is not None and r not in driven:
+                    _log(r, "standard", typical_here[r], int(std["people"]), str(std.get("reason") or ""), "owner")
                     typical_here[r] = int(std["people"])
+            # The manager's learned headcount, as a LEVEL on the figure the
+            # table reached (LEARNING-18): only while that figure is short of
+            # (an add) or over (a cut) the level they settled on.
+            from schedule_learning import headcount_to_apply as _h2a
+            learned_moved = {}
+            for key_l, e_l in learned_here.items():
+                r_l = next((r for r in typical_here if r.strip().lower() == key_l), None)
+                if r_l is None:
+                    disp = next((r for r in raw_by_part[part] if r.strip().lower() == key_l), key_l)
+                    r_l = disp
+                    typical_here[r_l] = 0
+                now_l = int(typical_here[r_l] or 0)
+                step_l = _h2a(now_l, e_l.get("delta"), e_l.get("settled"))
+                settled_l = e_l.get("settled")
+                ev_l = (f"the manager has {'added' if (e_l.get('delta') or 0) > 0 else 'cut'} "
+                        f"{abs(int(round(float(e_l.get('delta') or 0))))} by hand"
+                        + (f", settling on {float(settled_l):g}" if settled_l is not None else ""))
+                if step_l:
+                    _log(r_l, "learned", now_l, now_l + step_l, ev_l, "manager")
+                    typical_here[r_l] = max(0, now_l + step_l)
+                    learned_moved[key_l] = 1 if step_l > 0 else -1
+                elif e_l.get("delta"):
+                    _log(r_l, "learned", now_l, now_l, ev_l, "manager", applied=False,
+                         held_by="the table already asks for the level the manager settled on")
+                if not typical_here[r_l]:
+                    typical_here.pop(r_l, None)
             # What one more (or one fewer) of a role on this meal measured
             # here, where its interval cleared zero (staffing_elasticity,
             # RM-20): one person, on the role of the family the restaurant
@@ -454,6 +533,12 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     step = int(mv["move"])
                     if step < 0 and int(typical_here[r_e]) <= 1:
                         continue
+                    # The arbiter (LEARNING-27): an automatic lever never
+                    # stacks on the manager's own level moving the same way.
+                    if learned_moved.get(r_e.strip().lower()) == (1 if step > 0 else -1):
+                        _log(r_e, "elasticity", typical_here[r_e], typical_here[r_e], str(mv.get("reason") or ""),
+                             "measured", applied=False, held_by="the manager's own learned level already moved it")
+                        continue
                     # A target LEVEL (LEARNING-6, like schedule_learning.
                     # headcount_to_apply): the level one more was measured
                     # above plus the move — a baseline that already absorbed
@@ -462,7 +547,12 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                         gap = int(mv["target"]) - int(typical_here[r_e])
                         step = max(0, min(step, gap)) if step > 0 else min(0, max(step, gap))
                     if not step:
+                        _log(r_e, "elasticity", typical_here[r_e], typical_here[r_e], str(mv.get("reason") or ""),
+                             "measured", applied=False,
+                             held_by=f"already at the level it was measured for ({int(mv['target'])})")
                         continue
+                    _log(r_e, "elasticity", typical_here[r_e], int(typical_here[r_e]) + step,
+                         str(mv.get("reason") or ""), "measured")
                     typical_here[r_e] = int(typical_here[r_e]) + step
                     moved_by[r_e.strip().lower()] = dict(mv, move=step)
             floors_here = {}
@@ -491,6 +581,15 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                                                  if key in role_ratios and abs(rf - factor) >= 0.005 else ""))
                 if key in moved_by and moved_by[key].get("reason"):
                     why.append(f"{int(moved_by[key]['move']):+d}: {moved_by[key]['reason']}")
+                lv = next((e for e in reversed(ledger.get(key) or []) if e["lever"] == "learned" and e["applied"]),
+                          None)
+                if lv:
+                    why.append(f"{lv['delta']:+d}: {lv['evidence']}")
+                had = max([int(v) for r2, v in typical_here.items() if r2.strip().lower() == key] or [0])
+                if int(n) != had:
+                    _log(role, {"your staffing floors": "floor", "your role minimums": "minimum",
+                                "the shift profile": "critical"}.get(str(_src), "minimum"), had, int(n),
+                         str(_src), "owner")
                 need[key] = [role.strip(), int(n), floor, typ, 0, why]
             # Asks folded in (PR-7): +1 of a role, with its reason.
             for key, word, a in _adjust_for(adjustments, d, part, need, raw_by_part):
@@ -502,6 +601,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     key = word
                     need[key] = [str(a.get("role_display") or a.get("role") or word).strip().title(), 0, 0, 0, 0, []]
                 v = need[key]
+                _log(v[0], "ask", v[1], v[1] + delta, str(a.get("reason") or ""), str(a.get("source") or "ask"))
                 v[1] += delta
                 if not a.get("firm", False):
                     v[4] += delta
@@ -516,7 +616,11 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 if a.get("reason"):
                     v[5].append(f"{delta:+d} {a['reason']}" if delta else str(a["reason"]))
             # Held to the owner's hours and ceilings by role (PROMPT-1).
+            _before_lim = {k: v[1] for k, v in need.items()}
             _apply_limits(need, day, part, role_windows, role_caps)
+            for k, v in need.items():
+                if v[1] != _before_lim.get(k, v[1]):
+                    _log(v[0], "cap", _before_lim[k], v[1], "your hours & shift rules for the role", "owner")
             # A shift the owner said "leaner is fine" about in Crew carries
             # it as its reason (crew_matrix.bind_answers already held the
             # usual crew to what they accepted).
@@ -632,6 +736,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             lent = (borrowed or {}).get((day, part)) or set()
             for _k, (name, required, floor, typical, asked, why) in sorted(need.items(), key=lambda kv: (-kv[1][1], kv[1][0].lower())):
                 entry = {"role": name, "required": required, "floor": floor, "typical": typical}
+                if ledger.get(_k):
+                    entry["ledger"] = ledger[_k]
                 if asked:
                     entry["asked"] = asked
                     entry["firm"] = required - asked
@@ -671,6 +777,32 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
         if late:
             out.append(late)
     return out
+
+
+LEVER_WORDS = {"usual": "usual", "demand": "demand", "driver": "the work at the rush", "standard": "your standard",
+               "learned": "the manager's own level", "elasticity": "measured value of one more",
+               "floor": "your floor", "minimum": "your minimum", "critical": "the shift profile",
+               "ask": "asked", "cap": "your ceiling"}
+
+
+def explain_role(entry: dict) -> str:
+    """The owner's sentence for why one role on one shift asks for what it
+    asks (LEARNING-27), from its ledger: "8: usual 6; demand +1 (game
+    night); the manager's own level +1 (added 1 by hand, settling on 8)".
+    The requirement's own number with no ledger."""
+    entry = entry or {}
+    parts = []
+    for e in entry.get("ledger") or []:
+        word = LEVER_WORDS.get(e.get("lever"), e.get("lever"))
+        if e.get("lever") == "usual":
+            parts.append(f"usual {e['to']}")
+            continue
+        if not e.get("applied"):
+            parts.append(f"{word} not applied ({e.get('held_by')})")
+            continue
+        if e.get("delta"):
+            parts.append(f"{word} {e['delta']:+d}" + (f" ({e['evidence']})" if e.get("evidence") else ""))
+    return f"{entry.get('required')}: " + "; ".join(parts) if parts else str(entry.get("required"))
 
 
 def _row_reasons(factor, ratio, hold, why_date, held, bounded_by=None) -> list:

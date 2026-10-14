@@ -4572,6 +4572,11 @@ def init_db(db_path: str = DB_PATH):
     init_staffing_elasticity(db_path)
     from staff_productivity import init_staff_productivity
     init_staff_productivity(db_path)
+    # The pre-go-live labor standard each family is capped at until outcomes
+    # validate a leaner one (staffing_model, schedule re-audit 10/11/26
+    # LEARNING-8).
+    from staffing_model import init_staffing_model
+    init_staffing_model(db_path)
     # The weights' shadow runs and promotions (schedule_calibration, LEARNING-9).
     from schedule_calibration import init_schedule_calibration
     init_schedule_calibration(db_path)

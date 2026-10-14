@@ -47,6 +47,7 @@ from datetime import datetime
 
 import models as _models_mod
 from models import DB_PATH
+import schedule_time as _stime_scope
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ def _display(counter: dict) -> str:
 
 # ── the weeks the manager edited ──────────────────────────────────────────
 
+@_stime_scope.scoped
 def learning_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
     """Every week a person of the restaurant finished with in the last
     `weeks` weeks — schedule_versions.learning_weeks: the ORIGINAL draft
@@ -204,6 +206,13 @@ def _min_rate():
     return PATTERN_MIN_RATE
 
 
+def _candidate(n, of, hits_w, opp_w, min_repeats, min_rate) -> bool:
+    """schedule_versions.candidate_ok — the one candidacy rule every edit
+    learner reads (re-audit 10/11/26 LEARNING-10)."""
+    from schedule_versions import candidate_ok
+    return candidate_ok(n, of, hits_w, opp_w, min_repeats, min_rate)
+
+
 def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """Per role × weekday × daypart, the start or end the manager keeps
     moving shifts to — counted once per week, so three servers retimed on
@@ -256,11 +265,11 @@ def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
             return bool(slot) and times != {when}
         hits_w, opp_w, ids, of, _seg = _since_onset([w for w, _at in drafted], kind, set(e["weeks"]), _opp)
         n = len(ids)
-        if n < min_repeats:
+        # A minimum of opportunities and a Wilson lower bound (re-audit
+        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
-            continue
         role = _display(e["role"])
         verb = "starting" if kind == "retime_start" else "ending"
         out.append({"kind": kind, "employee": "", "role": role, "day": day, "daypart": part, "time": when, "times": n,
@@ -361,9 +370,9 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         side = sorted(d_ for d_, h, _w, _s in pairs if h in ids)
         delta = side[len(side) // 2]
         hits = [p for p in pairs if p[1] in ids]
-        rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
+        if not _candidate(len(ids), of, hits_w, opp_w, min_repeats, min_rate):
             continue
+        rate, conf = _strength(hits_w, opp_w)
         role = _display(spellings.get(rl, {})) or rl.title()
         n = len(side)
         if delta > 0:
@@ -412,11 +421,11 @@ def role_change_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list
                        for r in w.get("base") or [])
         hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "role_change", set(e["weeks"]), _there)
         n = len(ids)
-        if n < min_repeats:
+        # A minimum of opportunities and a Wilson lower bound (re-audit
+        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
-            continue
         name, old, new = _display(e["name"]), _display(e["old"]), _display(e["new"])
         out.append({"kind": "role_change", "employee": name, "role": new, "was_role": old, "day": day, "daypart": part,
                     "times": n, "last_week": max(ids), "last_week_start": max(e["weeks"][h][1] for h in ids),
@@ -478,11 +487,11 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
                        and _part(r.get("shift_start")) == part for r in w.get("base") or [])
         hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "leader_swap", set(e["weeks"]), _there)
         n = len(ids)
-        if n < min_repeats:
+        # A minimum of opportunities and a Wilson lower bound (re-audit
+        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
-        if rate < min_rate:
-            continue
         role = _display(e["role"])
         names = [k for k, _v in sorted(e["names"].items(), key=lambda kv: (-kv[1], kv[0]))][:3]
         out.append({"kind": "leader_swap", "employee": "", "role": role, "day": day, "daypart": part, "times": n,
@@ -494,6 +503,7 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
     return out
 
 
+@_stime_scope.scoped
 def edit_patterns(restaurant_id, weeks=EDIT_WEEKS, min_repeats=2, db_path=DB_PATH, week_edits=None,
                   min_rate=None) -> list:
     """Every new pattern kind, strongest first, capped at NEW_PATTERN_CAP.
@@ -569,6 +579,7 @@ def _settled(levels, key, since=""):
     return vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2.0
 
 
+@_stime_scope.scoped
 def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_PATH) -> dict:
     """{(weekday, daypart): {role: {delta, settled}}} — learned_headcount_
     adjustments with, beside each delta, the level the manager settled on
@@ -891,6 +902,24 @@ def _edited_keys(d: dict) -> set:
     return keys
 
 
+def _edited_kinds(d: dict) -> dict:
+    """{(date, lower name, start): "move" | "retime" | "role"} — what the
+    net diff did to each draft row it changed (schedule re-audit 10/11/26
+    LEARNING-20): a person taken off or swapped is a move, a start or end
+    changed a retime, a role changed a role change. A row changed two ways is
+    its move first."""
+    out = {}
+    for rc in d.get("role_changed") or []:
+        out[(rc.get("date") or "", (rc.get("employee") or "").strip().lower(), rc.get("shift_start") or "")] = "role"
+    for rt in d.get("retimed") or []:
+        out[(rt.get("date") or "", (rt.get("employee") or "").strip().lower(), rt.get("old_start") or "")] = "retime"
+    for r in d.get("removed") or []:
+        out[(r.get("date") or "", (r.get("employee") or "").strip().lower(), r.get("shift_start") or "")] = "move"
+    for m in d.get("moved") or []:
+        out[(m.get("date") or "", (m.get("from") or "").strip().lower(), m.get("shift_start") or "")] = "move"
+    return out
+
+
 def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> list:
     """One entry per calendar week whose draft reached a person's final
     word — edited, or sent as it stood by a person (a week sent out
@@ -912,6 +941,7 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
         if not w["base"]:
             continue
         keys = _edited_keys(w["diff"])
+        kinds = _edited_kinds(w["diff"])
         rej = list(w["rejected"])
         rows = list(w["base"]) + rej
         edited = [(r.get("date") or "", (r.get("employee") or "").strip().lower(), r.get("shift_start") or "") in keys
@@ -923,8 +953,11 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
             redo = set(w["redo_dates"])
             orig = [r for r in w["base"] if (r.get("date") or "")[:10] not in redo] + rej
             feats += row_features(orig)[-len(rej):]
+        kind_of = [kinds.get((r.get("date") or "", (r.get("employee") or "").strip().lower(),
+                              r.get("shift_start") or "")) if e else None for r, e in zip(w["base"], edited)] + \
+            ["move"] * len(rej)
         out.append({"history_id": w["history_id"], "week_start": w["week_start"], "rows": rows, "edited": edited,
-                    "features": feats, "rejected": len(rej),
+                    "kinds": kind_of, "features": feats, "rejected": len(rej),
                     "weight": _sv.recency_weight(w["age_days"], _sv.PERSON_HALF_LIFE_DAYS)})
     out.sort(key=lambda w: (w["week_start"] or "", w["history_id"]))
     return out
@@ -1049,7 +1082,7 @@ def edit_predictor(restaurant_id, db_path=DB_PATH, weeks=None) -> dict:
 
 # The per-row "% likely you'll change it" is a naive-Bayes score, not a
 # calibrated probability (CA1 L15). It stays a percentage (owner decision,
-# 9/24/26) but is shown only once this restaurant's own leave-one-out
+# 9/24/26) but is shown only once this restaurant's own rolling-origin
 # backtest covers PREDICT_MIN_BACKTEST_WEEKS held-out weeks, and every row
 # carries that backtest's hit rate beside it: "flags like this were right
 # 5 of 8 times on your past drafts".
@@ -1081,8 +1114,8 @@ def predict_row_edits(restaurant_id, rows: list, db_path=DB_PATH, model=None) ->
 
 def edit_prediction_summary(restaurant_id, db_path=DB_PATH) -> dict:
     """What the record panel says about the predictor: ready or why not,
-    and how it would have done on your own past drafts (held out one at a
-    time)."""
+    and how it would have done on your own past drafts (each predicted from the
+    weeks before it)."""
     weeks = prediction_weeks(restaurant_id, db_path=db_path)
     model = fit_edit_model(weeks)
     out = {k: model.get(k) for k in ("ready", "weeks", "rows", "edited", "reason")}
@@ -1093,15 +1126,20 @@ def edit_prediction_summary(restaurant_id, db_path=DB_PATH) -> dict:
 
 
 def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
-    """Leave one week out: fit on every other week, predict the held-out
-    draft, and count. hit_rate is the share of flagged rows the manager did
-    change; recall the share of changed rows that were flagged; base_rate
-    what flagging at random would hit. Weeks whose training set is under
-    the minimum are skipped, and said."""
+    """Rolling origin (schedule re-audit 10/11/26 LEARNING-20): each week
+    is predicted from the weeks BEFORE it only — fit on weeks[:i], predict
+    week i, count — as the predictor will be used. It was leave-one-out, so
+    later weeks predicted earlier ones and the >=60% gate that lets the
+    predictor steer drafts was read on a backtest no draft ever faces.
+    `weeks` oldest first (prediction_weeks). hit_rate is the share of
+    flagged rows the manager did change; recall the share of changed rows
+    that were flagged; base_rate what flagging at random would hit. Weeks
+    whose history is under the minimum are skipped, and said."""
     flagged = hits = edited = rows = skipped = 0
     per_week = []
+    weeks = sorted(weeks or [], key=lambda w: (str(w.get("week_start") or ""), int(w.get("history_id") or 0)))
     for i, w in enumerate(weeks):
-        model = fit_edit_model(weeks[:i] + weeks[i + 1:])
+        model = fit_edit_model(weeks[:i])
         if not model.get("ready"):
             skipped += 1
             continue
@@ -1127,7 +1165,7 @@ def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
 #
 # The edit predictor was display-only: rows the manager changes at 50% or
 # more on their own backtest were written into the draft anyway. Once its
-# leave-one-out backtest on this restaurant's own drafts is right at least
+# rolling-origin (LEARNING-20) backtest on this restaurant's own drafts is right at least
 # PREDICT_ACTIONABLE_HIT_RATE of the time, its flags are (a) a pre-publish
 # "likely to change" review (strategy_routes._do_publish_check) and (b)
 # soft-cost signals for the solver, the optimizer and the scorer
@@ -1159,16 +1197,56 @@ def likely_edit_signals(restaurant_id, rows: list, db_path=DB_PATH, weeks=None) 
         return {"ready": False, "reason": why, "hit_rate": hr, "backtest_weeks": n, "flags": []}
     base = bt.get("base_rate") or 0.0
     feats = row_features(rows)
+    by_person, by_slot = _edit_kind_tallies(weeks)
     flags = []
     for p in predict_edits(model, rows, limit=len(rows or [])):
         r = rows[p["index"]]
+        f = feats[p["index"]]
+        kind = _edit_kind_for(f, by_person, by_slot)
+        w = round(max(0.0, p["likelihood"] - base) * hr, 3)
+        # The cost has a direction (LEARNING-20): only a row the manager
+        # moves people off costs keeping that PERSON there; a row they retime
+        # costs its time, one they change the role of its role — never the
+        # person, who only needed a different start.
         flags.append({"index": p["index"], "employee": p["employee"], "date": p["date"],
                       "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"), "role": r.get("role"),
-                      "likelihood": p["likelihood"], "features": p["features"], "origin": feats[p["index"]]["origin"],
-                      "weight": round(max(0.0, p["likelihood"] - base) * hr, 3), "reason": p["reason"],
-                      "text": p["text"]})
+                      "likelihood": p["likelihood"], "features": p["features"], "origin": f["origin"],
+                      "edit_kind": kind, "weight": w if kind == "move" else 0.0,
+                      "time_weight": w if kind == "retime" else 0.0, "role_weight": w if kind == "role" else 0.0,
+                      "reason": p["reason"], "text": p["text"]})
     return {"ready": True, "reason": None, "hit_rate": hr, "backtest_weeks": n, "base_rate": base,
             "hits": bt.get("hits"), "flagged": bt.get("flagged"), "flags": flags}
+
+
+EDIT_KIND_MIN = 2                 # a person's own edits that name their kind of change, before the slot's
+
+
+def _edit_kind_tallies(weeks) -> tuple:
+    """({person: {kind: n}}, {slot: {kind: n}}) over the changed rows of the
+    weeks (prediction_weeks' `kinds`)."""
+    by_person, by_slot = {}, {}
+    for w in weeks or []:
+        kinds = w.get("kinds") or []
+        for feats, kind in zip(w.get("features") or row_features(w["rows"]), kinds):
+            if not kind:
+                continue
+            if feats.get("person"):
+                t = by_person.setdefault(feats["person"], {})
+                t[kind] = t.get(kind, 0) + 1
+            if feats.get("slot"):
+                t = by_slot.setdefault(feats["slot"], {})
+                t[kind] = t.get(kind, 0) + 1
+    return by_person, by_slot
+
+
+def _edit_kind_for(feats, by_person, by_slot) -> str:
+    """The kind of change the manager makes to rows like this one: the
+    person's own record once it has EDIT_KIND_MIN changes, else the slot's,
+    else a move."""
+    for tally in ((by_person.get(feats.get("person")) or {}), (by_slot.get(feats.get("slot")) or {})):
+        if sum(tally.values()) >= EDIT_KIND_MIN:
+            return max(sorted(tally), key=lambda k: tally[k])
+    return "move"
 
 
 def likely_to_change(restaurant_id, rows: list, db_path=DB_PATH, limit=PREDICT_MAX_FLAGS) -> dict:
@@ -1347,15 +1425,16 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         except Exception as e:
             import ops
             ops.capture(e, job="schedule_cavnar_credit", context=f"restaurant_id={restaurant_id} history={history_id}")
-    # The one-tap why (L-35): every big change in the first weeks, and from
-    # then on the SECOND time any change repeats, at any age (schedule audit
-    # 10/10/26 LEARNING-2 — it used to be asked only in the first four
-    # published weeks, so a habit a new manager started in month six took
-    # ten weeks to reach the prompt and eighteen to bind).
+    # The one-tap why (L-35): every big change, from its FIRST occurrence, at
+    # any age (schedule re-audit 10/11/26 LEARNING-10 — past the first four
+    # weeks it was asked only from the second repeat, so two one-off edits
+    # were already a habit candidate before anyone could say "just this
+    # week"; LEARNING-2 before that asked only in the first weeks). A repeat
+    # is still asked first; at most WHY_MAX_QUESTIONS a save. "Always" binds
+    # it at once (the owner's word), a one-off keeps it out of the habits.
     try:
-        cold = in_cold_start(restaurant_id, db_path)
         out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path,
-                                             repeats_only=not cold)
+                                             repeats_only=False)
     except Exception as e:
         import ops
         ops.capture(e, job="schedule_edit_why", context=f"restaurant_id={restaurant_id} history={history_id}")

@@ -457,8 +457,9 @@ def generation_scope(job_id, restaurant_id=None):
     try:
         # The restaurant's own lunch/dinner boundary (restaurants.
         # daypart_boundary — schedule_time.daypart_scope, ARCH-12) for
-        # every daypart question the generation asks.
-        with _stime.daypart_scope(_restaurant_split(restaurant_id)):
+        # every daypart question the generation asks — the same scope the
+        # nightly learners enter (restaurant_scope, re-audit 10/11/26 ARCH-11).
+        with _stime.restaurant_scope(restaurant_id):
             yield clock
     finally:
         _CLOCK.reset(token)
@@ -1829,7 +1830,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "standby prices": "what a standby is worth against what it costs", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
     "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
@@ -3946,6 +3947,64 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
         return None
 
 
+def _standby_prices(rid, dates, c, sig) -> tuple:
+    """(value_of, cost_of) for attendance_risk.standby_needed (schedule
+    re-audit 10/11/26 LEARNING-19): what one person short costs a shift — the
+    one objective's slot value summed over the daypart's core window
+    (schedule_objective.slot_value, cross-workstream contract #1) — and what
+    the standby costs (the role's rate x the window's hours, the overtime
+    inputs' rates). (None, None) while either cannot be read: the crew-scaled
+    threshold alone decides."""
+    try:
+        import schedule_objective as _obj
+    except ImportError:
+        return None, None
+    try:
+        ctx = _obj.ObjectiveContext.build(rid, sorted(dates))
+    except Exception as e:
+        _soft_fail("standby prices", e, rid)
+        return None, None
+    ot = (sig or {}).get("overtime") or {}
+    rates = {str(k).strip().lower(): v for k, v in (ot.get("rates") or {}).items()}
+    default = ot.get("default_rate") or rates.get("_default")
+    sq_ = __import__("shift_quality")
+
+    def window(x):
+        o, cl = _rules.open_hours(c, _weekday_name(x["date"]))
+        return sq_.floor_window(x["daypart"], o, cl)
+
+    def value_of(x):
+        w = window(x)
+        if not w:
+            return None
+        return sum(float(_obj.slot_value(ctx, x["date"], m, x["role"]) or 0) for m in range(w[0], w[1], 30))
+
+    pol = _standby_policy(rid)
+
+    def cost_of(x):
+        w = window(x)
+        rate = rates.get(str(x.get("role") or "").lower(), default)
+        if pol.get("stated"):
+            # On call (LEARNING-19): the owner's standby pay, not a shift.
+            if pol.get("flat_pay") is not None:
+                return float(pol["flat_pay"])
+            return float(rate) * float(pol.get("pay_hours") or 0) if rate else None
+        if not w or not rate:
+            return None
+        return float(rate) * (w[1] - w[0]) / 60.0
+    return value_of, cost_of
+
+
+def _standby_policy(rid) -> dict:
+    """The owner's on-call standby policy (standby_insurance.policy), {} on
+    a failed read."""
+    try:
+        import standby_insurance as _sbi
+        return _sbi.policy(rid) or {}
+    except Exception:
+        return {}
+
+
 def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     """A standby on each busy shift the drafted week is likely to come up
     short on (scheduler audit 10/10/26 RM-18 — attendance_risk.standby_
@@ -3960,9 +4019,22 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
         busy = _req_sb.busy_shifts(sorted(dates), facts.get("shift_profiles") or None,
                                    facts.get("demand_by_day") or {}, facts.get("demand_by_date") or {})
         risks = _ar.shift_risks(list(plan) + got["rows"], reqs, _ar.rates(rid), busy=busy)
-        need = _ar.standby_needed(risks)
+        value_of, cost_of = _standby_prices(rid, dates, c, sig)
+        need = _ar.standby_needed(risks, value_of=value_of, cost_of=cost_of)
     except Exception as e:
         _soft_fail("solver-first draft", e, rid)
+        return
+    ledger = [{"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "lever": "standby", "delta": 1,
+               "evidence": _ar.words(x), "provenance": "attendance"} for x in need[:7]]
+    # On call first (re-audit 10/11/26 LEARNING-19): a restaurant with a
+    # standby policy gets each need as an on-call suggestion (standby_
+    # insurance: a consented, paid-to-be-available person called only if
+    # somebody does not turn up) — never a paid extra shift in the draft.
+    if need and _standby_policy(rid).get("stated"):
+        got.setdefault("stats", {})["standby"] = {
+            "needed": len(need[:7]), "staffed": 0, "on_call": [
+                {"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "p_short_by": x.get("p_short_by"),
+                 "text": _ar.words(x)} for x in need[:7]], "ledger": ledger}
         return
     slots = []
     for x in need[:7]:
@@ -3987,7 +4059,9 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     added = [{k: v for k, v in r.items() if k not in ("_pinned", "_standby", "_open")}
              for r in res.get("rows", [])[len(kept):] if (r.get("employee") or "").strip()]
     got["rows"] = got["rows"] + added
-    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added)}
+    # The standby lever in the requirement ledger's own shape (re-audit
+    # 10/11/26 LEARNING-27): what it added, where, and on what evidence.
+    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added), "ledger": ledger}
 
 
 def solver_explain(got) -> dict:
@@ -7336,6 +7410,7 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
         standard_needs=standard_needs or None, crew_answers=(patterns or {}).get("crew_answers") or None,
+        learned=(patterns or {}).get("learned_headcount") or None,
         staffing_model=staffing_model or None, concurrent=(patterns or {}).get("concurrent") or None,
         half_curve=half_curve or None, elasticity=elasticity or None, **_limit_kwargs(c))
 
@@ -8471,10 +8546,7 @@ def in_restaurant_dayparts(fn):
 
     @functools.wraps(fn)
     def wrapper(restaurant_id, *a, **k):
-        split = _restaurant_split(restaurant_id)
-        if split is None or split == _stime.daypart_split():
-            return fn(restaurant_id, *a, **k)
-        with _stime.daypart_scope(split):
+        with _stime.restaurant_scope(restaurant_id):
             return fn(restaurant_id, *a, **k)
     return wrapper
 
