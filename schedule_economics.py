@@ -470,7 +470,7 @@ def labor_grade(pct, target) -> str:
 
 def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_target=None,
                labor_budget_dollars=None, week_dates=None, restaurant=None, sees_salaries: bool = None,
-               recent: dict = None) -> dict:
+               recent: dict = None, quality: dict = None, last_plan: dict = None) -> dict:
     """The week's labor % on ONE stated basis, for the Studio's Labor tile,
     its "Labor % as drafted" and its estimated savings (schedule re-audit
     10/4/26 SQ-4). `projected_cost` is hourly pay only (salaried people are
@@ -489,13 +489,23 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
     salaries are left out. With nobody salaried the two are one.
 
     `recent` overrides the recent-labor read ({pct, days, includes_salaries})
-    — for a caller that already has it. Savings are a projection (CLAUDE.md:
-    value delivered is only what was measured): shown only when the recent
-    % is measured on the same basis and above this week's.
+    — for a caller that already has it.
+
+    `vs_last_plan` (blind re-audit 10/11/26 TRUST-7) replaces the old
+    "savings": the recent MEASURED labor % against this draft's SCHEDULED %
+    showed savings for an identical schedule (actual labor runs above the
+    plan) and more for a draft cut below need — the number grew as the week
+    got thinner. Now it is scheduled against scheduled: the last published
+    week's plan priced the same way over its own forecast sales
+    (last_plan_labor, or `last_plan`), on this view's basis, times this
+    week's forecast sales — and withheld while the draft is short of the
+    people its shifts need (`quality`: coverage_short_shifts). A projection,
+    never a result. `savings` stays in the payload, always None (shipped
+    clients decode it; nothing computes it).
 
     Returns {basis, cost, hourly_cost, salaried_cost (owner only), pct,
-    target_pct, target_basis, recent_pct, recent_days, savings, text} or
-    None without a priced week and a forecast."""
+    target_pct, target_basis, recent_pct, recent_days, savings (None),
+    vs_last_plan, text} or None without a priced week and a forecast."""
     try:
         rev = float(projected_revenue or 0)
         hourly = float((projected_cost or {}).get("total") or 0)
@@ -566,10 +576,32 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
         same = bool(recent.get("includes_salaries")) == (basis == "all_in" and anyone_salaried)
         if same:
             r_pct, r_days = round(float(recent["pct"]), 1), int(recent.get("days") or 14)
-    savings = round((r_pct - pct) / 100 * rev, 0) if (r_pct is not None and r_pct > pct) else None
+    on_all_in = basis == "all_in" and anyone_salaried
+    if last_plan is None:
+        last_plan = last_plan_labor(restaurant_id, week_dates, on_all_in, restaurant=restaurant)
+    vs = None
+    if last_plan and last_plan.get("pct"):
+        lp_pct = float(last_plan["pct"])
+        short = coverage_short_shifts(quality) if quality else 0
+        from time_utils import mdy as _mdy
+        when = _mdy(last_plan.get("week_start")) if last_plan.get("week_start") else "last week"
+        vs = {"last_pct": round(lp_pct, 1), "week_start": last_plan.get("week_start"), "basis": basis,
+              "short_shifts": short, "projected": True, "value": None, "text": None, "withheld": None}
+        if short:
+            vs["withheld"] = (f"Not shown: {short} {'shift is' if short == 1 else 'shifts are'} short of the people "
+                              "they need — a thinner week is not a saving.")
+        else:
+            diff = round((lp_pct - pct) / 100 * rev, 0)
+            vs["value"] = diff
+            vs["text"] = (f"{'Under' if diff >= 0 else 'Over'} the week of {when}'s plan by "
+                          f"${abs(diff):,.0f} — its {lp_pct:g}% scheduled against this draft's {pct:g}%, "
+                          f"on this week's ${rev:,.0f} forecast. A projection, earned only if the week runs "
+                          "as drafted.")
     out = {"basis": basis, "cost": round(cost, 0), "hourly_cost": round(hourly, 0), "pct": pct,
            "target_pct": target_pct, "target_basis": target_basis, "recent_pct": r_pct, "recent_days": r_days,
-           "savings": savings, "text": text,
+           # Never computed since TRUST-7 (kept for the clients that decode
+           # it): scheduled against scheduled is vs_last_plan.
+           "savings": None, "vs_last_plan": vs, "text": text,
            # One grade both clients colour the tile by (schedule audit
            # 10/10/26 TRUST-7): the target is a ceiling, so any amount over
            # it — the % as shown, one place — is over; no target is neutral,
@@ -586,6 +618,90 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
     if sal_cost is not None:
         out["salaried_cost"] = round(sal_cost, 0)
     return out
+
+
+def coverage_short_shifts(quality) -> int:
+    """The scored shifts of a Shift Quality week short of the people they
+    need (the coverage dimension's `missing`) — TRUST-7's condition: a week
+    thinner than its requirement is not cheaper, it is short."""
+    n = 0
+    for s in (quality or {}).get("shifts") or []:
+        if not s.get("scored"):
+            continue
+        for d in s.get("dimensions") or []:
+            if d.get("key") == "coverage" and int((d.get("facts") or {}).get("missing") or 0) > 0:
+                n += 1
+                break
+    return n
+
+
+def last_plan_labor(restaurant_id, week_dates, all_in: bool, restaurant=None) -> dict:
+    """The last PUBLISHED week before `week_dates`, priced the way this draft
+    is (week_pricing, salaried people free, hourly) over its own forecast
+    sales (its economics' projected revenue), on the same basis — all-in
+    adds that week's salaried share (blind re-audit 10/11/26 TRUST-7: the
+    hero compared a measured actual labor % with a scheduled one, so an
+    identical schedule showed "savings" and a thinner one showed more).
+    {"pct", "cost", "revenue", "week_start"} or None when there is no
+    published week with a priced forecast."""
+    import json as _json
+    import models as _m
+    dates = sorted(str(d)[:10] for d in (week_dates or ()) if d)
+    if not dates:
+        return None
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT h.id, h.week_start, h.week_end, " + _m.live_csv_sql("h") + " AS csv, h.economics_json "
+                "FROM schedule_history h WHERE h.restaurant_id=? AND " + _m.live_where("h") + " AND h.week_end < ? "
+                "ORDER BY h.week_end DESC, h.id DESC LIMIT 1", (restaurant_id, dates[0])).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[schedule_economics] last plan unreadable for {restaurant_id}: {e}")
+        return None
+    if row is None:
+        return None
+    try:
+        econ = _json.loads(row["economics_json"] or "null") or {}
+        rev = float(econ.get("projected_revenue") or 0)
+    except (TypeError, ValueError):
+        return None
+    if rev <= 0:
+        return None
+    from schedule_versions import rows_from_csv
+    rows = rows_from_csv(row["csv"] or "")
+    if not rows:
+        return None
+    if restaurant is None:
+        try:
+            restaurant = _m.get_restaurant(restaurant_id)
+        except Exception:
+            restaurant = None
+    try:
+        sal_names = [p.get("name") for p in (_m.salaried_staff(restaurant) if restaurant is not None else [])]
+    except Exception:
+        sal_names = []
+    pricing = week_pricing(restaurant_id, None, blended_rate=econ.get("blended_rate") or None)
+    pricing["salaried"] = {" ".join(str(n or "").lower().split()) for n in sal_names if n}
+    if not pricing.get("blended_rate"):
+        pricing["blended_rate"] = getattr(restaurant, "hourly_rate", None) or 15.0
+    cost = float((price_week(rows, pricing) or {}).get("total") or 0)
+    if all_in and sal_names:
+        try:
+            import schedule_rules as _rules
+            a = date.fromisoformat(str(row["week_start"])[:10])
+            b = date.fromisoformat(str(row["week_end"])[:10])
+            wk = [(a + timedelta(days=i)).isoformat() for i in range((b - a).days + 1)]
+            share = _m.salaried_week_share(restaurant, wk, _rules.closed_in(restaurant, wk))
+            cost += float((share or {}).get("cost") or 0)
+        except Exception:
+            return None
+    if cost <= 0:
+        return None
+    return {"pct": round(cost / rev * 100, 1), "cost": round(cost, 0), "revenue": round(rev, 0),
+            "week_start": row["week_start"]}
 
 
 def _recent_labor(restaurant_id, all_in: bool) -> dict:

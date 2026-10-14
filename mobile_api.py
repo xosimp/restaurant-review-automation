@@ -3940,7 +3940,8 @@ def mobile_schedule_history_detail(history_id, current_user):
                                          (economics or {}).get("projected_revenue"),
                                          labor_target=detail.get("labor_target"),
                                          labor_budget_dollars=(economics or {}).get("labor_budget_dollars"),
-                                         week_dates=_week_dates_of(detail.get("week_start")))
+                                         week_dates=_week_dates_of(detail.get("week_start")),
+                                         quality=detail.get("quality"))
     except Exception as e:
         print(f"[schedule history] labor view failed for {history_id}: {e!r}")
     # The aids a fresh draft carries — overtime moves, standby, likely edits

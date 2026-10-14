@@ -91,13 +91,15 @@ def test_the_summary_states_its_six_figures_and_labels_savings_a_projection():
     f = _fn("ssRenderSummary")
     # Decisions, not raw breaches (schedule audit 10/10/26 TRUST-22): the
     # fifth tile counts what must be fixed or decided, from the review.
-    for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'To fix or decide'", "'Estimated savings'"):
+    for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'To fix or decide'",
+              "Under last week"):
         assert k in f
-    # The savings are the server's, on one basis with the draft's labor %
-    # (schedule re-audit 10/4/26 SQ-4): the page's own "rec.pct > lp" put an
-    # all-in recent % against the hourly-only draft, and the "savings" were
-    # the salaries.
-    assert "Projection · not yet earned" in f and "lv.savings" in f and "rec.pct > lp" not in f
+    # Scheduled against scheduled, the server's, on one basis (blind re-audit
+    # 10/11/26 TRUST-7): the "Estimated savings" hero set the recent measured
+    # % against this draft's scheduled one and grew as the week got thinner;
+    # it is an ordinary tile now, never the hero, and never a page figure.
+    assert "Projection · not yet earned" in f and "lv.vs_last_plan" in f and "rec.pct > lp" not in f
+    assert "'Estimated savings'" not in f and "tile('hero'" not in f and "lv.savings" not in f
     for b in ("View the schedule", "Optimize again", ">Review &amp; send<"):
         assert b in f
     # One verdict, the server's (TRUST-4, TRUST-6): never "The week is built".

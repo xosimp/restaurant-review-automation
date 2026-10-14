@@ -253,6 +253,55 @@ def test_the_review_carries_the_link_and_the_measured_share(db, monkeypatch):
     assert q["measured_text"].startswith("Scored on 30%")
 
 
+# ── TRUST-7: scheduled against scheduled, never rewarding a thin week ───────
+
+def _published_week(db, rid, week_start, csv_lines, revenue):
+    ws = date.fromisoformat(week_start)
+    csv = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n" + "\n".join(csv_lines)
+    hid = models.save_schedule_history(rid, week_start, (ws + timedelta(days=6)).isoformat(), 10, 0, 30, csv, [],
+                                       db_path=db)
+    conn = models.get_conn()
+    conn.execute("UPDATE schedule_history SET published_at=datetime('now'), economics_json=? WHERE id=?",
+                 (json.dumps({"projected_revenue": revenue, "blended_rate": 20}), hid))
+    conn.commit()
+    conn.close()
+    return hid
+
+
+def test_an_identical_schedule_is_not_a_saving(db, monkeypatch):
+    rid = _rid(db)
+    monkeypatch.setattr(E, "week_pricing", lambda r, c=None, blended_rate=None: {
+        "role_rates": {}, "blended_rate": 20.0, "person_rates": {}, "role_typical": {}, "ceiling": 40.0,
+        "salaried": set(), "base_hours": {}, "bucket": None})
+    _published_week(db, rid, "2026-10-05", ["2026-10-05,Monday,Ana,Server,4:00pm,10:00pm,6,"], 1000)
+    lp = E.last_plan_labor(rid, ["2026-10-12"], all_in=False, restaurant=object())
+    assert lp["pct"] == 12.0 and lp["week_start"] == "2026-10-05"
+    # The same plan this week, on the same forecast: no figure to advertise —
+    # however far the recent MEASURED % ran above it.
+    lv = E.labor_view(rid, {"total": 120.0}, 1000, week_dates=["2026-10-12"], restaurant=object(),
+                      sees_salaries=False, recent={"pct": 19.0, "days": 14, "includes_salaries": False})
+    assert lv["savings"] is None and lv["vs_last_plan"]["value"] == 0
+
+
+def test_a_draft_short_of_its_requirement_shows_no_saving():
+    quality = {"shifts": [{"scored": True, "dimensions": [{"key": "coverage", "facts": {"missing": 2}}]},
+                          {"scored": True, "dimensions": [{"key": "coverage", "facts": {"missing": 0}}]}]}
+    assert E.coverage_short_shifts(quality) == 1
+    lv = E.labor_view(1, {"total": 80.0}, 1000, week_dates=["2026-10-12"], restaurant=object(),
+                      sees_salaries=False, recent=None, quality=quality,
+                      last_plan={"pct": 12.0, "week_start": "2026-10-05"})
+    vp = lv["vs_last_plan"]
+    assert vp["value"] is None and vp["short_shifts"] == 1
+    assert vp["withheld"].startswith("Not shown: 1 shift is short of the people they need")
+
+
+def test_a_fuller_draft_than_last_week_says_over_its_plan():
+    lv = E.labor_view(1, {"total": 150.0}, 1000, week_dates=["2026-10-12"], restaurant=object(),
+                      sees_salaries=False, recent=None, last_plan={"pct": 12.0, "week_start": "2026-10-05"})
+    vp = lv["vs_last_plan"]
+    assert vp["value"] == -30 and vp["text"].startswith("Over the week of 10/5/26's plan by $30")
+
+
 # ── LOGIC-15: knowing less never makes a week look better ───────────────────
 
 def test_the_band_is_held_by_the_share_measured():

@@ -160,7 +160,7 @@ def review(restaurant_id, schedule_id, rows=None, user=None, today=None, can_pub
     left_off = _safe(lambda: left_off_reasons(rid, week_rows, c, scores, dates), [], "left_off", rid)
     out["decide"] = _safe(lambda: _decide(rid, gate, keep, crew, left_off), [], "decide", rid)
     out["fyi"] = _safe(lambda: _fyi(gate, viols), [], "fyi", rid)
-    out["numbers"] = _safe(lambda: _numbers(rid, row, week_rows, c, dates), _empty_numbers(), "numbers", rid)
+    out["numbers"] = _safe(lambda: _numbers(rid, row, week_rows, c, dates, quality), _empty_numbers(), "numbers", rid)
     out["quality"] = _safe(lambda: _quality(rid, row, quality), _empty_quality(), "quality", rid)
     out["changed"] = _safe(lambda: _changed(rid, row, week_rows, crew, saved_review, rows is not None),
                            {"vs_last_week": [], "vs_usual": [], "vs_last_draft": [], "cavnar_changes": []},
@@ -592,7 +592,7 @@ def _fyi(gate, viols) -> list:
 def _empty_numbers() -> dict:
     return {"labor_pct": None, "cost": None, "overtime_hours": None,
             "overtime": {"hours": None, "premium": None, "priced": False, "text": "Priced once the week can be priced"},
-            "forecast_sales": None, "savings": None, "last_week": None}
+            "forecast_sales": None, "savings": None, "vs_last_plan": None, "last_week": None}
 
 
 def price_rows(rid, row, rows, c) -> tuple:
@@ -683,7 +683,7 @@ def forecast_has_skill(rec) -> bool:
     return rec.get("skill") is None or float(rec["skill"]) > 0
 
 
-def _numbers(rid, row, rows, c, dates) -> dict:
+def _numbers(rid, row, rows, c, dates, quality=None) -> dict:
     import schedule_economics as _econ
     econ, cost = price_rows(rid, row, rows, c)
     out = _empty_numbers()
@@ -702,7 +702,8 @@ def _numbers(rid, row, rows, c, dates) -> dict:
     lv = None
     if cost and rev:
         lv = _econ.labor_view(rid, cost, rev, labor_target=_labor_target(rid),
-                              labor_budget_dollars=econ.get("labor_budget_dollars"), week_dates=dates)
+                              labor_budget_dollars=econ.get("labor_budget_dollars"), week_dates=dates,
+                              quality=quality)
     rec = _safe(lambda: forecast_record(rid), None, "forecast_record", rid)
     if lv:
         pct = lv.get("pct")
@@ -732,11 +733,12 @@ def _numbers(rid, row, rows, c, dates) -> dict:
         out["cost"] = {"hourly": lv.get("hourly_cost"), "salaried": lv.get("salaried_cost"), "total": lv.get("cost"),
                        "text": (f"${lv.get('hourly_cost'):,.0f} hourly"
                                 + (f" + ${lv['salaried_cost']:,.0f} salaried" if lv.get("salaried_cost") else ""))}
-        if lv.get("savings") is not None:
-            out["savings"] = {"value": lv["savings"], "projected": True, "recent_pct": lv.get("recent_pct"),
-                              "recent_days": lv.get("recent_days"),
-                              "basis": (f"against your last {lv.get('recent_days') or 14} days at {lv.get('recent_pct')}%"
-                                        " — a projection, earned only if the week runs as drafted")}
+        # Scheduled against scheduled (blind re-audit 10/11/26 TRUST-7):
+        # `savings` stays null (shipped clients decode it); the comparison
+        # with the last published week's plan is `vs_last_plan`, withheld
+        # while the draft is short of what its shifts need.
+        if lv.get("vs_last_plan"):
+            out["vs_last_plan"] = lv["vs_last_plan"]
     elif cost:
         out["cost"] = {"hourly": cost.get("total"), "salaried": None, "total": cost.get("total"),
                        "text": f"${cost.get('total') or 0:,.0f} hourly"}

@@ -4775,7 +4775,8 @@ def attach_labor_view(rid, result):
         result["labor_view"] = _econ_lv.labor_view(rid, result.get("projected_cost"), result.get("projected_revenue"),
                                                    labor_target=result.get("labor_target"),
                                                    labor_budget_dollars=result.get("labor_budget_dollars"),
-                                                   week_dates=result.get("week_dates") or [])
+                                                   week_dates=result.get("week_dates") or [],
+                                                   quality=result.get("quality"))
     except Exception as e:
         print(f"[schedule] labor view unavailable rid={rid}: {e!r}")
     return result
