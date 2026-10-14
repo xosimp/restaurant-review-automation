@@ -444,11 +444,15 @@ def test_an_availability_note_is_quoted_as_untrusted_text_not_a_hard_constraint(
                                       week_start="2026-10-05", staff_availability=avail, structured=False)
     prompt = prompts[-1]
     assert _INJECTION in prompt, "the note is still visible to the model, as data"
-    # The hard availability is the ROSTER's AVAILABLE column (C1, PR-33);
-    # the person's own words sit in their own fenced block, never in it.
+    # The availability is the ROSTER's AVAILABLE column (C1, PR-33), ranked
+    # hard in PRIORITIES 1b; its rule is the rules block's one [HARD] line
+    # (schedule re-audit 10/11/26 AI-15 — the engine always passes that
+    # block; this direct call has none). The person's own words sit in
+    # their own fenced block, never in the column.
     start = prompt.index("ROSTER — ")
     roster = prompt[start:prompt.index("\n\n", start + 1)]
-    assert "approved time off (all [HARD])" in roster
+    assert "approved time off" in roster and "[HARD]" not in roster
+    assert "1b. Employee availability and approved time off (the person cannot be there)" in prompt
     assert _INJECTION not in roster
     notes = prompt[prompt.index("NOTES STAFF WROTE ABOUT THEIR OWN AVAILABILITY"):]
     fenced = notes[notes.index("<<<UNTRUSTED_GUEST_TEXT"):notes.index("UNTRUSTED_GUEST_TEXT>>>")]

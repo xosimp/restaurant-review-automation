@@ -11,9 +11,13 @@ import schedule_prompt as sp
 import schedule_rules as sr
 from test_schedfix_c1_prompt import NOTE_WORDS, WEEK
 
-# Measured 10/14/26 (40 people, sr.DEFAULTS): static 11,781 + ROSTER head
-# 1,771 chars before; 11,721 + 1,675 after.
-STATIC_BEFORE, HEAD_BEFORE = 11781, 1771
+# Measured 10/14/26 (40 people, sr.DEFAULTS), before P's wave-3 PRIORITIES
+# wording merged in: static 11,781 + ROSTER head 1,771 chars before; 11,721
+# + 1,673 after. The ROSTER head is held to its own figure; the static block
+# to the line this round took out of it (other workstreams change it too).
+HEAD_BEFORE = 1771
+OLD_ROLES_LINE = "- Roles: code keeps each person to the roles their CAN WORK lists; each role is paid its own rate.\n"
+NEW_PAY_LINE = "- Pay: each role is paid its own rate.\n"
 
 
 def _blocks():
@@ -47,4 +51,6 @@ def test_the_roles_a_person_may_work_are_stated_once_as_a_rule():
 
 def test_the_standing_text_is_smaller_for_it():
     static, _rules, head = _blocks()
-    assert len(static) < STATIC_BEFORE and len(head) < HEAD_BEFORE
+    assert len(head) < HEAD_BEFORE
+    assert NEW_PAY_LINE in static and OLD_ROLES_LINE not in static
+    assert len(static) < len(static.replace(NEW_PAY_LINE, OLD_ROLES_LINE))
