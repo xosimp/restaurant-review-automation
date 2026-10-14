@@ -96,11 +96,10 @@ ADMIN_MAX_RESTAURANTS = 500
 # Engagement (blind re-audit 10/11/26 LEARNING-16): a week sent with no
 # edit counts as reviewed only when a person of the restaurant had the draft
 # open (the week's detail or the pre-publish review — schedule_draft_views)
-# at least ENGAGED_MIN_SECONDS before it went out. Views are recorded from
-# VIEW_TRACKING_SINCE; a week published before then reads unknown (None),
-# as it always did.
+# at least ENGAGED_MIN_SECONDS before it went out. A week published before
+# the restaurant's first recorded view (views were not recorded yet) reads
+# unknown (None), as it always did.
 ENGAGED_MIN_SECONDS = 90
-VIEW_TRACKING_SINCE = "2026-10-12"
 # The owner's trend (LEARNING-17): at least this many scored weeks, a
 # serial-correlation-robust interval (learning_stats.trend_slope_ci).
 TREND_MIN_WEEKS = 8
@@ -754,9 +753,9 @@ def engagement(restaurant_id, history_id, published_at, edited, by_person, db_pa
     """True / False / None: whether a person reviewed the week before it went
     out (module constants). Edited: yes. Sent by a person with no edit: yes
     when the draft was open ENGAGED_MIN_SECONDS or more before the publish;
-    no when it was opened only seconds before, or never (from
-    VIEW_TRACKING_SINCE); None before tracking began or when nobody of the
-    restaurant sent it."""
+    no when it was opened only seconds before, or never while views were
+    being recorded (the restaurant has a view from before this publish);
+    None before then or when nobody of the restaurant sent it."""
     if edited:
         return True
     if not by_person or not published_at:
@@ -767,12 +766,14 @@ def engagement(restaurant_id, history_id, published_at, edited, by_person, db_pa
         try:
             v = conn.execute("SELECT first_viewed_at FROM schedule_draft_views WHERE history_id=? AND restaurant_id=?",
                              (int(history_id), restaurant_id)).fetchone()
+            first = conn.execute("SELECT MIN(first_viewed_at) FROM schedule_draft_views WHERE restaurant_id=?",
+                                 (restaurant_id,)).fetchone()[0] if v is None else None
         finally:
             conn.close()
     except Exception:
         return None
     if v is None:
-        return None if pub[:10] < VIEW_TRACKING_SINCE else False
+        return False if (first and str(first)[:19] < pub) else None
     try:
         dwell = (datetime.strptime(pub, "%Y-%m-%d %H:%M:%S")
                  - datetime.strptime(str(v["first_viewed_at"])[:19], "%Y-%m-%d %H:%M:%S")).total_seconds()
