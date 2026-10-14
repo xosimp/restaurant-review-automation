@@ -121,3 +121,20 @@ def test_the_person_is_told_what_the_draft_learned_they_avoid(monkeypatch):
     got = staff_routes._learned_avoids(1, "kim  lo")
     assert got and got[0]["slot"] == "Sunday night" and "dropped 3 of the 4" in got[0]["text"]
     assert staff_routes._learned_avoids(1, "Someone Else") == []
+
+
+def test_with_a_standby_policy_a_standby_is_on_call_not_an_extra_shift(monkeypatch):
+    import schedule_engine as se
+    import schedule_requirements as sreq
+    x = dict(_risk(4, 0.15), date="2026-10-16", day="Friday", daypart="night", role="server", expected=3.4,
+             people=[])
+    monkeypatch.setattr(sreq, "busy_shifts", lambda *a, **k: {("2026-10-16", "night")})
+    monkeypatch.setattr(ar, "rates", lambda rid, **k: {})
+    monkeypatch.setattr(ar, "shift_risks", lambda *a, **k: [x])
+    monkeypatch.setattr(se, "_standby_prices", lambda *a, **k: (None, None))
+    monkeypatch.setattr(se, "_standby_policy", lambda rid: {"stated": True, "pay_hours": 2.0})
+    got = {"rows": [{"date": "2026-10-16", "employee": "Ana", "role": "Server"}]}
+    se._solver_standby(1, ["2026-10-16"], got, [], {}, None, {}, None)
+    st = got["stats"]["standby"]
+    assert st["staffed"] == 0 and len(st["on_call"]) == 1 and len(got["rows"]) == 1
+    assert st["ledger"][0]["lever"] == "standby" and st["ledger"][0]["provenance"] == "attendance"

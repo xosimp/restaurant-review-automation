@@ -4000,13 +4000,30 @@ def _standby_prices(rid, dates, c, sig) -> tuple:
             return None
         return sum(float(_obj.slot_value(ctx, x["date"], m, x["role"]) or 0) for m in range(w[0], w[1], 30))
 
+    pol = _standby_policy(rid)
+
     def cost_of(x):
         w = window(x)
         rate = rates.get(str(x.get("role") or "").lower(), default)
+        if pol.get("stated"):
+            # On call (LEARNING-19): the owner's standby pay, not a shift.
+            if pol.get("flat_pay") is not None:
+                return float(pol["flat_pay"])
+            return float(rate) * float(pol.get("pay_hours") or 0) if rate else None
         if not w or not rate:
             return None
         return float(rate) * (w[1] - w[0]) / 60.0
     return value_of, cost_of
+
+
+def _standby_policy(rid) -> dict:
+    """The owner's on-call standby policy (standby_insurance.policy), {} on
+    a failed read."""
+    try:
+        import standby_insurance as _sbi
+        return _sbi.policy(rid) or {}
+    except Exception:
+        return {}
 
 
 def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
@@ -4027,6 +4044,18 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
         need = _ar.standby_needed(risks, value_of=value_of, cost_of=cost_of)
     except Exception as e:
         _soft_fail("solver-first draft", e, rid)
+        return
+    ledger = [{"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "lever": "standby", "delta": 1,
+               "evidence": _ar.words(x), "provenance": "attendance"} for x in need[:7]]
+    # On call first (re-audit 10/11/26 LEARNING-19): a restaurant with a
+    # standby policy gets each need as an on-call suggestion (standby_
+    # insurance: a consented, paid-to-be-available person called only if
+    # somebody does not turn up) — never a paid extra shift in the draft.
+    if need and _standby_policy(rid).get("stated"):
+        got.setdefault("stats", {})["standby"] = {
+            "needed": len(need[:7]), "staffed": 0, "on_call": [
+                {"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "p_short_by": x.get("p_short_by"),
+                 "text": _ar.words(x)} for x in need[:7]], "ledger": ledger}
         return
     slots = []
     for x in need[:7]:
@@ -4053,10 +4082,7 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     got["rows"] = got["rows"] + added
     # The standby lever in the requirement ledger's own shape (re-audit
     # 10/11/26 LEARNING-27): what it added, where, and on what evidence.
-    got.setdefault("stats", {})["standby"] = {
-        "needed": len(slots), "staffed": len(added),
-        "ledger": [{"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "lever": "standby", "delta": 1,
-                    "evidence": _ar.words(x), "provenance": "attendance"} for x in need[:7]]}
+    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added), "ledger": ledger}
 
 
 def solver_explain(got) -> dict:
