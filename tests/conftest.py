@@ -68,6 +68,79 @@ os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = _TEST_VOLUME
 
 from models import init_db, ensure_columns, create_restaurant, save_reviews, Restaurant, Review
 
+# ── Postgres mode (blind re-audit 10/11/26, SCALE-10) ───────────────────────
+# CAVNAR_TEST_PG_URL=postgresql://user@host:port/postgres (a SCRATCH server —
+# never production's) runs the suite's database on Postgres: the default
+# database and every test's db_path are routed (models._PG_ROUTES) to a
+# database of their own, built by the same boot (init_db through db_dialect)
+# and copied per test from a template, then dropped. The files the SQLite
+# mode uses still exist, so a test that opens one with sqlite3.connect
+# directly reads an empty schema — those files are not in the CI list.
+# CI runs tests/test_q2_postgres_live.py and the database-heavy files this
+# way (.github/workflows/ci.yml, job `postgres`).
+_PG_BASE = (os.getenv("CAVNAR_TEST_PG_URL") or "").strip()
+
+
+def _pg_url(name):
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(_PG_BASE)
+    return urlunsplit((parts.scheme, parts.netloc, "/" + name, parts.query, parts.fragment))
+
+
+def _pg_admin(sql):
+    import psycopg
+    with psycopg.connect(_PG_BASE, autocommit=True, connect_timeout=10) as c:
+        c.execute(sql)
+
+
+_PG_SEQ = [0]
+
+
+def _pg_new_database(template=None):
+    """A fresh database on the scratch server (from `template` when
+    given); its URL."""
+    import db_dialect
+    _PG_SEQ[0] += 1
+    name = f"cavnar_t{os.getpid()}_{_PG_SEQ[0]}"
+    _pg_admin(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    if template:
+        db_dialect.close_idle(_pg_url(template))
+        _pg_admin(f"CREATE DATABASE {name} TEMPLATE {template}")
+    else:
+        _pg_admin(f"CREATE DATABASE {name}")
+    return name
+
+
+def _pg_drop(name):
+    import db_dialect
+    db_dialect.close_idle(_pg_url(name))
+    try:
+        _pg_admin(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+    except Exception:
+        pass
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "sqlite_only: reads the SQLite file itself (a snapshot, a query "
+                            "plan, a PRAGMA); skipped in the Postgres mode")
+
+
+def pytest_collection_modifyitems(config, items):
+    if not _PG_BASE:
+        return
+    skip = pytest.mark.skip(reason="reads the SQLite file itself; the Postgres mode routes the database elsewhere")
+    for item in items:
+        if "sqlite_only" in item.keywords:
+            item.add_marker(skip)
+
+
+if _PG_BASE:
+    import models as _models_pg
+    _PG_DEFAULT = _pg_new_database()
+    _models_pg._PG_ROUTES[_models_pg.DB_PATH] = _pg_url(_PG_DEFAULT)
+    import atexit as _atexit
+    _atexit.register(_pg_drop, _PG_DEFAULT)
+
 
 def _build_default_schema():
     """Give the throwaway default database the same schema hosted_dashboard
@@ -445,6 +518,7 @@ def _send_gate_reviewer_offline(monkeypatch):
 
 
 _DB_TEMPLATE = None
+_PG_TEMPLATE = None
 
 
 def _db_template():
@@ -458,6 +532,13 @@ def _db_template():
     if _DB_TEMPLATE is None:
         import sqlite3
         path = os.path.join(_tempfile.mkdtemp(prefix="cavnar-test-template-"), "template.db")
+        if _PG_BASE:
+            import models
+            global _PG_TEMPLATE
+            _PG_TEMPLATE = _pg_new_database()
+            models._PG_ROUTES[path] = _pg_url(_PG_TEMPLATE)
+            import atexit
+            atexit.register(_pg_drop, _PG_TEMPLATE)
         init_db(db_path=path)
         ensure_columns(db_path=path)
         conn = sqlite3.connect(path)
@@ -474,7 +555,17 @@ def db_path(tmp_path):
     import shutil
     path = str(tmp_path / "test_reviews.db")
     shutil.copyfile(_db_template(), path)
-    return path
+    if not _PG_BASE:
+        yield path
+        return
+    import models
+    name = _pg_new_database(template=_PG_TEMPLATE)
+    models._PG_ROUTES[path] = _pg_url(name)
+    try:
+        yield path
+    finally:
+        models._PG_ROUTES.pop(path, None)
+        _pg_drop(name)
 
 
 def stamp_scheduler_heartbeat(db_path, minutes_ago, loop_minutes_ago=None, running=None, running_minutes=None):

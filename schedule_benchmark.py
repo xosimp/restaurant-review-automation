@@ -657,6 +657,7 @@ def generate(rid, week_start, arm) -> dict:
     ops.finish_async_job = lambda j, s, r: done.update(status=s, result=r)
     os.environ["SCHEDULE_DRAFT_SOURCE"] = arm
     t0 = time.monotonic()
+    c0 = cpu_seconds()
     try:
         se._run_schedule_job(None, rid, week_start=week_start)
     finally:
@@ -666,7 +667,18 @@ def generate(rid, week_start, arm) -> dict:
         else:
             os.environ["SCHEDULE_DRAFT_SOURCE"] = prev
     return {"status": done.get("status"), "result": done.get("result") or {},
-            "seconds": round(time.monotonic() - t0, 2)}
+            "seconds": round(time.monotonic() - t0, 2), "cpu_seconds": round(cpu_seconds() - c0, 1)}
+
+
+def cpu_seconds() -> float:
+    """CPU this process and its finished children have used (user + system):
+    a solve run in its own process (schedule_cpsat.isolated) counts too."""
+    import resource
+    tot = 0.0
+    for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN):
+        ru = resource.getrusage(who)
+        tot += ru.ru_utime + ru.ru_stime
+    return tot
 
 
 def saved_rows(history_id) -> list:
@@ -1004,11 +1016,12 @@ def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
     out = {"key": key, "label": spec["label"], "why": spec["why"], "people": len(spec["people"]),
            "scale": scale, "week_start": built["week_start"], "arms": {}, "failed": {}}
     for arm in arms:
-        sigs, secs, first = [], [], None
+        sigs, secs, cpus, first = [], [], [], None
         for i in range(runs):
             got = generate(built["rid"], built["week_start"], arm)
             res = got["result"] or {}
             secs.append(got["seconds"])
+            cpus.append(got.get("cpu_seconds") or 0.0)
             if got["status"] != "done" or not res.get("history_id"):
                 first = first or {"status": got["status"], "error": str(res.get("error") or "")[:300]}
                 sigs.append(None)
@@ -1026,7 +1039,8 @@ def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
                      # one run proves nothing about the next press
                      deterministic=(None if runs < 2 else
                                     bool(sigs) and sigs[0] is not None and all(s == sigs[0] for s in sigs)),
-                     seconds=round(sum(secs) / len(secs), 2) if secs else None, seconds_max=max(secs or [0]))
+                     seconds=round(sum(secs) / len(secs), 2) if secs else None, seconds_max=max(secs or [0]),
+                     cpu_seconds=round(sum(cpus) / len(cpus), 1) if cpus else None)
         out["arms"][arm] = first
         out["failed"][arm] = failed_invariants(first)
     return out
@@ -1077,7 +1091,8 @@ COLUMNS = (("people", "people"), ("hard", "hard_total"), ("indep", "independent_
            ("unfilled $", "unfilled_value"), ("labor $", "labor_dollars"), ("budget $", "budget_dollars"),
            ("OT h", "overtime_hours"), (">10h", "long_shifts"), ("usual %", "usual_days_kept_pct"),
            ("starved", "starved"), ("empty role-days", "empty_role_days"), ("det", "identical_runs"),
-           ("sec", "seconds"), ("RSS MB", "peak_rss_mb"), ("quality", "quality"), ("gate", "gate"))
+           ("sec", "seconds"), ("CPU s", "cpu_seconds"), ("RSS MB", "peak_rss_mb"),
+           ("solve RSS MB", "child_peak_rss_mb"), ("quality", "quality"), ("gate", "gate"))
 
 
 def _cell(m, key, people):
@@ -1112,9 +1127,10 @@ def table(results) -> str:
     return "\n".join(lines)
 
 
-def peak_rss_mb() -> float:
+def peak_rss_mb(children=False) -> float:
     """This process's peak resident memory, MB (ru_maxrss is bytes on macOS,
-    kilobytes on Linux)."""
+    kilobytes on Linux) — or, `children`, the largest finished child's (a
+    solve run in its own process, schedule_cpsat.isolated)."""
     import resource
-    r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    r = resource.getrusage(resource.RUSAGE_CHILDREN if children else resource.RUSAGE_SELF).ru_maxrss
     return round(r / (1024.0 * 1024.0) if sys.platform == "darwin" else r / 1024.0, 1)

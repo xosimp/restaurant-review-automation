@@ -488,8 +488,10 @@ def test_the_job_saves_what_the_week_misses_with_its_review(db, monkeypatch):
     assert any(u["kind"] == "manager" and u["date"] == WEEK[4] for u in unmet), unmet
     conn = models.get_conn(db)
     try:
-        stored = json.loads(conn.execute("SELECT review_json FROM schedule_history WHERE restaurant_id=?",
-                                         (rid,)).fetchone()["review_json"])
+        # The whole review is stored once by reference (blind re-audit
+        # SCALE-13); models.history_review reads it back.
+        stored = models.history_review(conn, conn.execute(
+            "SELECT review_json, review_ref FROM schedule_history WHERE restaurant_id=?", (rid,)).fetchone())
     finally:
         conn.close()
     assert stored["unmet"] == unmet
@@ -541,8 +543,8 @@ def test_an_edited_week_keeps_its_list_of_what_it_misses_and_its_asks(db, monkey
         assert {"manager", "ask", "budget"} <= kinds, review["unmet"]
         assert review["soft_requirements"][0]["applied"] is False     # re-read against the edited rows
         conn = models.get_conn(db)
-        stored = json.loads(conn.execute("SELECT review_json FROM schedule_history WHERE id=?",
-                                         (hid,)).fetchone()["review_json"])
+        stored = models.history_review(conn, conn.execute(
+            "SELECT review_json, review_ref FROM schedule_history WHERE id=?", (hid,)).fetchone())
         conn.close()
         assert stored["unmet"] == review["unmet"] and stored["soft_requirements"]
     # the re-check route after an edit says the same

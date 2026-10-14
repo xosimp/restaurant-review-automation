@@ -58,6 +58,7 @@ def test_a_healthy_claim_is_granted_once_per_job_and_period(db_path):
     assert ops.claim_period("daily_alerts", "2026-09-23") is True
 
 
+@pytest.mark.sqlite_only
 def test_a_claim_that_cannot_be_written_is_logged_and_memoised(db_path, monkeypatch):
     errors = []
     monkeypatch.setattr(ops.log, "error", lambda msg, *a, **k: errors.append(str(msg)))
@@ -145,6 +146,7 @@ def _ensure_ledger_tables(db_path):
     conn.close()
 
 
+@pytest.mark.sqlite_only
 def test_every_retention_delete_uses_an_index(db_path):
     import sqlite3
     _ensure_ledger_tables(db_path)

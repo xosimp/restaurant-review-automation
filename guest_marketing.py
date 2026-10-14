@@ -1078,12 +1078,12 @@ def _pending_answers(phone, db_path=DB_PATH) -> list:
         confirms = conn.execute(
             "SELECT q.restaurant_id AS rid, r.name, MAX(q.requested_at) AS at FROM guest_optin_requests q "
             "JOIN restaurants r ON r.id = q.restaurant_id WHERE q.phone=? AND q.status='pending' "
-            "AND q.requested_at >= datetime('now', ?) GROUP BY q.restaurant_id",
+            "AND q.requested_at >= datetime('now', ?) GROUP BY q.restaurant_id, r.name",
             (phone, f"-{JOIN_CONFIRM_HOURS} hours")).fetchall()
         invites = conn.execute(
             "SELECT i.restaurant_id AS rid, r.name, MAX(i.sent_at) AS at FROM sms_optin_invites i "
             "JOIN restaurants r ON r.id = i.restaurant_id WHERE i.phone=? AND i.responded_at IS NULL "
-            "AND i.sent_at >= datetime('now', ?) GROUP BY i.restaurant_id",
+            "AND i.sent_at >= datetime('now', ?) GROUP BY i.restaurant_id, r.name",
             (phone, f"-{_INVITE_REPLY_WINDOW_DAYS} days")).fetchall()
     finally:
         conn.close()

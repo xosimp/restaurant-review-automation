@@ -1371,6 +1371,15 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     _emergency = se.repair_emergency_line((result.get("repair") or {}))
     if _emergency:
         review["lines"].append(_emergency)
+    # Every solve an emergency cap ended — the clock or CP-SAT's memory
+    # bound, in the draft or the repair loop — named on the week, so the
+    # platform check can alert on their rate (ops.schedule_solve_capped;
+    # blind re-audit 10/11/26 SCALE-15, SCALE-16).
+    _capped = se.solve_capped(result)
+    review["solve_capped"] = _capped
+    if any(k.endswith(":draft") for k in _capped):
+        review["lines"].append("The server was busy while this draft was built, so the solver stopped before "
+                               "finishing — generate again for the full search.")
     _ddt = (result.get("demand_data_through") or {}).get("line")
     if _ddt:
         review["lines"].append(_ddt)

@@ -78,7 +78,14 @@ def _elements(ddl):
             db_dialect._render(toks[close_i + 1:]))
 
 
-_REF = re.compile(r"\bREFERENCES\b.*$", re.I | re.S)
+# A column's REFERENCES clause: the table, its columns, and the actions that
+# belong to the clause — never what follows it (`… REFERENCES restaurants(id)
+# UNIQUE` keeps its UNIQUE on the column: the whole tail was taken, so the
+# copied client_data lost the one-row-per-restaurant key and an upsert
+# inserted a second row — found running the suite on Postgres, 10/12/26).
+_REF = re.compile(r"\bREFERENCES\s+\"?\w+\"?\s*(\([^)]*\))?"
+                  r"(\s+ON\s+(DELETE|UPDATE)\s+(CASCADE|RESTRICT|NO\s+ACTION|SET\s+NULL|SET\s+DEFAULT))*"
+                  r"(\s+(NOT\s+)?DEFERRABLE(\s+INITIALLY\s+(DEFERRED|IMMEDIATE))?)?", re.I)
 
 
 def table_ddl(name, sql, partition_col=None) -> tuple:
@@ -99,7 +106,7 @@ def table_ddl(name, sql, partition_col=None) -> tuple:
         if m and not re.match(r"(CONSTRAINT|PRIMARY|UNIQUE|CHECK)\b", e, re.I):
             col = e.split()[0]
             fks.append(f"FOREIGN KEY ({col}) {m.group(0).strip()}")
-            e = e[:m.start()].rstrip()
+            e = (e[:m.start()].rstrip() + " " + e[m.end():].strip()).strip()
         keep.append(e)
     pre = []
     if partition_col:
@@ -110,6 +117,14 @@ def table_ddl(name, sql, partition_col=None) -> tuple:
                 pre.append(f"CREATE SEQUENCE IF NOT EXISTS {seq}")
                 out.append(f"id BIGINT NOT NULL DEFAULT nextval('{seq}')")
                 out.append(f"PRIMARY KEY (id, {partition_col})")
+                continue
+            if e == db_dialect.ROWID_COLUMN:
+                # The stable rowid (db_dialect._with_rowid) of a partitioned
+                # table: a sequence (no identity on a partitioned table) and
+                # its uniqueness carrying the partition column.
+                pre.append(f"CREATE SEQUENCE IF NOT EXISTS {name}_rowid_seq")
+                out.append(f"rowid BIGINT NOT NULL DEFAULT nextval('{name}_rowid_seq')")
+                out.append(f"UNIQUE (rowid, {partition_col})")
                 continue
             m = re.match(r"((?:CONSTRAINT\s+\S+\s+)?(?:PRIMARY\s+KEY|UNIQUE)\s*)\(([^)]*)\)(.*)$", e, re.I | re.S)
             if m:
@@ -205,6 +220,12 @@ def schema_plan(src, today=None) -> dict:
     return {"before": out, "after": after}
 
 
+# Tables SQLite keeps append-only with a BEFORE UPDATE … RAISE(ABORT)
+# trigger (guest_marketing.SCHEMA, models.init_db); tests/test_q2_postgres.py
+# holds this list to every such trigger in the code.
+APPEND_ONLY = ("guest_consent_events", "intel_pattern_history")
+
+
 def trigger_statements(src) -> list:
     """SQLite's triggers, ported (migrations/postgres/0002_triggers.sql is
     this function's output for the current schema): the tracker's change
@@ -229,6 +250,19 @@ def trigger_statements(src) -> list:
             out.append("DROP TRIGGER IF EXISTS trg_outcomes_changed_upd ON recommendation_outcomes")
             out.append(f"CREATE TRIGGER trg_outcomes_changed_upd BEFORE UPDATE ON recommendation_outcomes "
                        f"FOR EACH ROW WHEN ({when}) EXECUTE FUNCTION cavnar_outcomes_changed()")
+    # The append-only ledgers: SQLite refuses an UPDATE with RAISE(ABORT);
+    # here a plpgsql trigger refuses it as an integrity violation (what
+    # SQLite's RAISE(ABORT) is to the app). Without it the boot's own
+    # CREATE TRIGGER was a no-op and consent evidence became editable on
+    # Postgres (found running the suite there, 10/14/26).
+    out.append("CREATE OR REPLACE FUNCTION cavnar_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ "
+               "BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = "
+               "'integrity_constraint_violation'; END $$")
+    for table in APPEND_ONLY:
+        if src.execute(f"SELECT 1 FROM sqlite_master WHERE name='{table}'").fetchone():
+            out.append(f"DROP TRIGGER IF EXISTS {table}_append_only ON {table}")
+            out.append(f"CREATE TRIGGER {table}_append_only BEFORE UPDATE ON {table} "
+                       f"FOR EACH ROW EXECUTE FUNCTION cavnar_append_only()")
     if src.execute("SELECT 1 FROM sqlite_master WHERE name='intel_features'").fetchone() and \
             "version" in {c[0] for c in table_columns(src, "intel_features")}:
         from intelligence.features import FEATURES_VERSION

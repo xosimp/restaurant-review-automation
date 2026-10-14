@@ -779,7 +779,11 @@ def test_a_studio_save_keeps_the_generations_review_and_refreshes_what_the_rows_
     r = _mobile_app(db).test_client().post("/mobile/api/labor/schedule/score", headers=_bearer(db, rid),
                                            json={"rows": edited, "save": True, "history_id": hid, "version": 1})
     assert r.status_code == 200, r.get_json()
-    stored = json.loads(_history(db, hid)["review_json"])
+    _c = models.get_conn(db)
+    try:
+        stored = models.history_review(_c, _history(db, hid))          # stored once by reference (SCALE-13)
+    finally:
+        _c.close()
     assert stored["fixes"][0]["index"] == 0                     # re-pointed at Cy's Friday, where it is now
     assert stored["trimmed"] == review["trimmed"] and stored["owner_rules_unchecked"] == ["2 servers on Friday"]
     assert stored["stage_failures"] == review["stage_failures"]

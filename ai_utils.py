@@ -3558,7 +3558,9 @@ def ai_rate_limited(key, max_calls=6, window_secs=60):
     except Exception:
         return _memory_rate_limited(key, max_calls, window_secs, now)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # One key's window is counted and written together (SCALE-12).
+        import db_dialect
+        db_dialect.begin_write(conn, "ai_rate", key)
         n = conn.execute("SELECT COUNT(*) FROM ai_rate_events WHERE key=? AND at > ?",
                          (key, now - window_secs)).fetchone()[0]
         if n >= max_calls:

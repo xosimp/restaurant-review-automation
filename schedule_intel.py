@@ -2013,11 +2013,10 @@ def _planned_quality(conn, history_id):
     if row is not None:
         # The whole evaluation (its detail is stored by reference — SCALE-4).
         return version_quality(conn, row["quality_json"], row["quality_ref"])
-    row = conn.execute("SELECT quality_json FROM schedule_history WHERE id=?", (history_id,)).fetchone()
-    try:
-        return json.loads(row["quality_json"] or "null") or {} if row else {}
-    except (TypeError, ValueError):
-        return {}
+    import models as _m_si
+    _m_si._ensure_history_columns(conn)
+    row = conn.execute("SELECT quality_json, quality_ref FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+    return _m_si.history_quality(conn, row) if row else {}
 
 
 def _unrated(s) -> bool:

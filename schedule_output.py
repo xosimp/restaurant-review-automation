@@ -939,16 +939,15 @@ def week_review_extras(restaurant_id, rows, constraints, violations=None, qualit
     if history_id:
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT hours_budget, review_json FROM schedule_history WHERE id=? AND restaurant_id=?",
-                               (history_id, restaurant_id)).fetchone()
+            import models as _m_so
+            row = conn.execute("SELECT hours_budget, review_json, review_ref FROM schedule_history "
+                               "WHERE id=? AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
+            review = _m_so.history_review(conn, row) if row else {}       # stored once (SCALE-13)
         finally:
             conn.close()
         if row:
             budget = row["hours_budget"]
-            try:
-                asks = (json.loads(row["review_json"] or "{}") or {}).get("soft_requirements") or []
-            except (TypeError, ValueError):
-                asks = []
+            asks = review.get("soft_requirements") or []
     if asks:
         # Judged against the usual crew the generation judged them by (each
         # ask keeps its own `typical`), today's typical where it kept none.

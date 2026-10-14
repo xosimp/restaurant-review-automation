@@ -1337,19 +1337,33 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
         obj.append((max(1, int(round(_obj.BUDGET_OVER_FACTOR))), over))
     m.minimize(sum(int(w) * v for w, v in obj if int(w)))
     _usual_hint(m, z, z_by_pd, people, pats, hist_rows, c, family)
+    # The deterministic budget scaled to the model (schedule_cpsat.work_budget
+    # — a fixed 7.5 s found no week at all at 250 people), the memory-bounded
+    # portfolio on a large model, and the solve in a child process whose
+    # memory goes back to the OS when it returns (schedule_cpsat.run; blind
+    # re-audit 10/11/26 STRESS-11, SCALE-18, SCALE-19).
+    import schedule_cpsat as _rt
+    n_vars = len(m.proto.variables)
+    budget = _rt.work_budget(max(0.5, float(max_seconds)), n_vars)
     s = _cp.CpSolver()
     s.parameters.random_seed = int(seed)
     s.parameters.num_workers = int(workers or WORKERS)
     s.parameters.interleave_search = s.parameters.num_workers > 1
-    s.parameters.max_deterministic_time = max(0.5, float(max_seconds))
-    cap_s = max(1.0, float(max_seconds) * 4)
+    s.parameters.max_deterministic_time = budget
+    _rt.lean(s, n_vars)
+    cap_s = max(1.0, budget * 4)
     if wall_cap:
         cap_s = min(cap_s, max(0.5, float(wall_cap)))
     s.parameters.max_time_in_seconds = cap_s
-    st = s.solve(m)
+    st = _rt.run(s, m)
+    info = getattr(s, "sp_info", None) or {}
+    memory = {"isolated": bool(info.get("isolated")), "peak_mb": info.get("peak_mb"),
+              "memory_capped": bool(info.get("memory_capped")), "notes": [info["note"]] if info.get("note") else []}
     if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
         out["short"] = short_meta
-        out["stats"] = {"status": s.status_name(st).lower(), "patterns": len(n), "people": len(people)}
+        out["stats"] = {"status": s.status_name(st).lower(), "patterns": len(n), "people": len(people),
+                        "variables": n_vars, "budget": budget, "memory": memory,
+                        "memory_capped": memory["memory_capped"], "wall_capped": _rt._wall_capped(s, st)}
         return out
     rows = []
     chosen = []
@@ -1386,6 +1400,8 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                     "seconds": round(s.wall_time, 3),
                     "deterministic_time": round(float(s.response_proto.deterministic_time), 3),
                     "objective": s.objective_value, "bound": s.best_objective_bound, "seed": int(seed),
+                    "variables": n_vars, "budget": budget, "memory": memory,
+                    "memory_capped": memory["memory_capped"], "wall_capped": _rt._wall_capped(s, st),
                     "workers": int(workers or WORKERS), "min_shift_minutes": int(round(min_h * 60)),
                     "assumed": [a["family"] for a in out["assumed"]]}
     return out

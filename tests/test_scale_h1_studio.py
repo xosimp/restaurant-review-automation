@@ -55,17 +55,25 @@ def test_the_kept_inputs_follow_the_inputs_version_not_a_save(fake_build):
     assert fake_build["built"] == [7, 7]
 
 
-def test_one_restaurant_keeps_a_few_weeks_and_a_large_week_weighs_its_rows(fake_build, monkeypatch):
+def test_one_restaurant_keeps_a_few_weeks_and_a_large_week_weighs_its_bytes(fake_build, monkeypatch):
     monkeypatch.setattr(se, "STUDIO_CACHE_PER_RESTAURANT", 2)
     for wk in ("2026-10-05", "2026-10-12", "2026-10-19"):
         se.studio_prepared(3, _rows(day=wk), history_id=None)
     assert sum(1 for k in se._studio_cache if k[0] == 3) == 2
-    monkeypatch.setattr(se, "STUDIO_CACHE_BUDGET_ROWS", 1200)
     se.studio_invalidate()
+    big = se.studio_prepared(1, _rows(1100), history_id=1)
+    small = se.studio_prepared(2, _rows(150), history_id=2)
+    # Sized in bytes (blind re-audit 10/11/26 SCALE-22): a 1,100-row week
+    # weighs several times a 150-row one, measured, not counted in rows.
+    assert big["bytes"] > 5 * small["bytes"] > 0
+    se.studio_invalidate()
+    monkeypatch.setattr(se, "STUDIO_CACHE_BUDGET_MB", (big["bytes"] + small["bytes"] - 1) / 1048576.0)
     se.studio_prepared(1, _rows(1100), history_id=1)
     se.studio_prepared(2, _rows(150), history_id=2)
-    # 1,100 + 150 rows is over the budget: the least recently used went.
+    # Over the budget together: the least recently used went, and it says so.
     assert [k[0] for k in se._studio_cache] == [2]
+    stats = se.studio_cache_stats()
+    assert stats["entries"] == 1 and stats["evictions"] >= 1 and 0 < stats["bytes"] <= stats["budget_bytes"]
 
 
 def test_the_kept_inputs_survive_many_threads_at_once(fake_build):

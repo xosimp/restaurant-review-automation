@@ -55,13 +55,14 @@ def evaluate(history_id: int, optimize: bool = False, solve: bool = False, secon
 
     conn = get_conn()
     try:
-        row = conn.execute("SELECT id, restaurant_id, week_start, schedule_csv, quality_json FROM schedule_history "
-                           "WHERE id=?", (history_id,)).fetchone()
+        import models as _m_ev
+        row = conn.execute("SELECT id, restaurant_id, week_start, schedule_csv, quality_json, quality_ref "
+                           "FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+        stored = _m_ev.history_quality(conn, row) if row else {}       # stored once (SCALE-13)
     finally:
         conn.close()
     if not row:
         return {"id": history_id, "error": "not found"}
-    stored = json.loads(row["quality_json"] or "null") or {}
     rows = sv.rows_from_csv(row["schedule_csv"])
     inputs = quality_inputs_from_db(row["restaurant_id"], daily_target_hours=_stored_targets(stored), week_rows=rows)
     signals, weights = _quality_signals(row["restaurant_id"], inputs)

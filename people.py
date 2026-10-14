@@ -2265,8 +2265,8 @@ def _rewrite_shifts_csv(conn, rid, keys, into_name, ext_map=None, record=None) -
     [date, start, end, role] and its name before, for an undo."""
     import csv as _csv
     import io as _io
-    row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
-    text = (row["shifts_csv"] if row else "") or ""
+    import models as _models_t
+    text = _models_t.shift_file_text(conn, rid)
     if not text.strip():
         return 0
     rows = list(_csv.DictReader(_io.StringIO(text)))
@@ -2301,7 +2301,8 @@ def _write_shifts_csv(conn, rid, rows):
     w = _csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     w.writeheader()
     w.writerows(rows)
-    conn.execute("UPDATE client_data SET shifts_csv=? WHERE restaurant_id=?", (buf.getvalue(), rid))
+    import models as _models_w
+    _models_w.store_shift_file(conn, rid, buf.getvalue())       # plain, or compressed on facts (SCALE-14)
     # A read memo (models.read_scope, the request's shift cache) must not
     # hand back the history this just rewrote.
     import models as _models_inv
@@ -2608,8 +2609,8 @@ def unmerge_people(restaurant_id, merge_id, user=None, db_path=None) -> dict:
         if sigs:
             import csv as _csv
             import io as _io
-            row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
-            rows = list(_csv.DictReader(_io.StringIO((row["shifts_csv"] if row else "") or "")))
+            import models as _models_t
+            rows = list(_csv.DictReader(_io.StringIO(_models_t.shift_file_text(conn, restaurant_id))))
             n = 0
             for r in rows:
                 k = tuple(_shift_sig(r))
@@ -2820,8 +2821,8 @@ def erase_person(restaurant_id, person_id, user=None, db_path=None) -> dict:
         # The shift file.
         import csv as _csv
         import io as _io
-        row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
-        text = (row["shifts_csv"] if row else "") or ""
+        import models as _models_t
+        text = _models_t.shift_file_text(conn, restaurant_id)
         if text.strip():
             rows = list(_csv.DictReader(_io.StringIO(text)))
             kept = [r for r in rows if _nk(r.get("employee")) not in keys]
@@ -3388,7 +3389,8 @@ def backfill_people(db_path=None, max_seconds=20.0) -> int:
     try:
         rids = [r[0] for r in conn.execute(
             "SELECT id FROM restaurants WHERE id NOT IN (SELECT DISTINCT restaurant_id FROM people) "
-            "AND (id IN (SELECT restaurant_id FROM client_data WHERE shifts_csv IS NOT NULL AND shifts_csv != '') "
+            "AND (id IN (SELECT restaurant_id FROM client_data WHERE (shifts_csv IS NOT NULL AND shifts_csv != '') "
+            "              OR shifts_csv_z IS NOT NULL) "
             "     OR id IN (SELECT restaurant_id FROM staff_settings) "
             "     OR id IN (SELECT restaurant_id FROM staff_capabilities))").fetchall()]
     finally:
@@ -3404,10 +3406,10 @@ def backfill_people(db_path=None, max_seconds=20.0) -> int:
             from labor import load_shifts
             c2 = _conn(db_path)
             try:
-                got = c2.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+                import models as _models_t
+                text = _models_t.shift_file_text(c2, rid)
             finally:
                 c2.close()
-            text = (got[0] if got else "") or ""
             rows = [dict(r) for r in (load_shifts(csv_string=text) if text.strip() else [])]
             # The stored history's own POS ids, when it carries them, link
             # each person to their provider id from the first pass.
@@ -3608,7 +3610,17 @@ def remove_role(restaurant_id, name, role, db_path=None, user=None, record=True)
 
 def held_roles(restaurant_id, name=None, db_path=None, today=None) -> list:
     """[{name, role, since, primary, source}] in force (not removed, and its
-    start date reached) — one person's, or everyone's."""
+    start date reached) — one person's, or everyone's; everyone's today read
+    once in a generation's read scope (models.roster_read, SCALE-24)."""
+    if name is None and today is None:
+        import models as _m_rr
+        from datetime import date as _d0
+        return _m_rr.roster_read(("held_roles", int(restaurant_id), _d0.today().isoformat(), db_path),
+                                 lambda: _held_roles(restaurant_id, None, db_path, None))
+    return _held_roles(restaurant_id, name, db_path, today)
+
+
+def _held_roles(restaurant_id, name, db_path, today) -> list:
     from datetime import date as _d, timedelta as _td
     day = (today or _d.today()).isoformat()
     conn = _conn(db_path)

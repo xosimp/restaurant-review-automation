@@ -707,25 +707,64 @@ def _quality_text(quality) -> str:
         return json.dumps(quality, default=str)
 
 
-def store_quality(conn, restaurant_id, quality) -> tuple:
-    """(headline JSON, ref) for one evaluation: the whole of it stored once,
+def store_detail(conn, restaurant_id, obj) -> str:
+    """The ref of `obj` (an evaluation, a draft's review) stored once,
     compressed, under the hash of its content (the restaurant's own — two
     restaurants never share a row), on the caller's connection and
-    transaction. (None, None) for no evaluation."""
-    if not quality:
-        return None, None
+    transaction; in object storage when BLOB_STORE says so (blob_store —
+    RM-14), the row then a pointer. None for nothing."""
+    if not obj:
+        return None
     import hashlib
     import zlib
-    raw = _quality_text(quality)
+    raw = _quality_text(obj)
     ref = hashlib.sha256(f"{int(restaurant_id)}:{raw}".encode("utf-8")).hexdigest()[:40]
     if conn.execute("SELECT 1 FROM quality_blobs WHERE hash=?", (ref,)).fetchone() is None:
-        # In object storage when BLOB_STORE says so (blob_store — RM-14):
-        # the row keeps a pointer; an identical evaluation is stored once.
         import blob_store
         body = blob_store.store("quality", f"{int(restaurant_id)}/{ref}", zlib.compress(raw.encode("utf-8"), 6))
         conn.execute("INSERT OR IGNORE INTO quality_blobs (hash, restaurant_id, body, raw_bytes) VALUES (?,?,?,?)",
                      (ref, int(restaurant_id), body, len(raw)))
-    return json.dumps(quality_headline(quality)), ref
+    return ref
+
+
+def load_detail(conn, ref):
+    """What store_detail stored under `ref`, or None (gone, unreadable)."""
+    if not ref:
+        return None
+    try:
+        import zlib
+        row = conn.execute("SELECT body FROM quality_blobs WHERE hash=?", (ref,)).fetchone()
+        if row is not None:
+            import blob_store
+            return json.loads(zlib.decompress(blob_store.resolve(row[0])).decode("utf-8"))
+    except Exception as e:
+        log.warning("stored detail %s unreadable: %s", ref, e)
+    return None
+
+
+def store_quality(conn, restaurant_id, quality) -> tuple:
+    """(headline JSON, ref) for one evaluation: the whole of it stored once
+    (store_detail), the headline kept inline. (None, None) for none."""
+    if not quality:
+        return None, None
+    return json.dumps(quality_headline(quality)), store_detail(conn, restaurant_id, quality)
+
+
+# What a draft (schedule_history) keeps of its generation review inline: the
+# breach counts the history list and the thinning read, the inputs a run
+# went without (the platform check samples them) and the stations staff
+# read on every portal load; the whole review
+# (assignment reasons, stations, soft requirements, stage failures — ~88 KB
+# a 60-person week) is stored once under review_ref (blind re-audit
+# 10/11/26 SCALE-13). Read it through models.history_review.
+REVIEW_HEAD_KEYS = ("hard", "soft", "ok", "inputs_missing", "stations")
+
+
+def review_headline(review) -> dict:
+    r = review if isinstance(review, dict) else {}
+    out = {k: r[k] for k in REVIEW_HEAD_KEYS if k in r}
+    out["headline"] = True
+    return out
 
 
 def version_quality(conn, quality_json, quality_ref=None) -> dict:
@@ -733,14 +772,9 @@ def version_quality(conn, quality_json, quality_ref=None) -> dict:
     else what quality_json holds (a version from before 10/10/26 holds it
     whole; a thinned one only its headline). {} for none."""
     if quality_ref:
-        try:
-            import zlib
-            row = conn.execute("SELECT body FROM quality_blobs WHERE hash=?", (quality_ref,)).fetchone()
-            if row is not None:
-                import blob_store
-                return json.loads(zlib.decompress(blob_store.resolve(row[0])).decode("utf-8")) or {}
-        except Exception as e:
-            log.warning("quality detail %s unreadable: %s", quality_ref, e)
+        whole = load_detail(conn, quality_ref)
+        if whole is not None:
+            return whole or {}
     try:
         return json.loads(quality_json or "null") or {}
     except (TypeError, ValueError):
@@ -1278,20 +1312,20 @@ def save_studio_week(restaurant_id, history_id, csv_text, *, raw_rows=None, expl
             version = write_on(conn, restaurant_id, history_id, "edited", csv_text, saved_by=saved_by,
                                quality=quality, expected_version=expected_version,
                                saved_authority=saved_authority, row_origins=step["stored"])
+        import models as _m_rv
         if review is not None and violations is not None:
-            was = conn.execute("SELECT review_json, hours_budget FROM schedule_history WHERE id=? AND restaurant_id=?",
-                               (history_id, restaurant_id)).fetchone()
-            try:
-                saved_rv = json.loads((was["review_json"] if was else None) or "null") or {}
-            except ValueError:
-                saved_rv = {}
+            was = conn.execute("SELECT review_json, review_ref, hours_budget FROM schedule_history "
+                               "WHERE id=? AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
+            # The whole saved review (stored once by reference, SCALE-13).
+            saved_rv = _m_rv.history_review(conn, was) if was else {}
             from schedule_engine import refresh_review
             review = refresh_review(saved_rv, violations, rows if rows is not None else rows_from_csv(csv_text),
                                     constraints, hours_budget=(was["hours_budget"] if was else None),
                                     extras=review_extras or {})
         if review is not None:
-            conn.execute("UPDATE schedule_history SET review_json=? WHERE id=? AND restaurant_id=?",
-                         (json.dumps(review, default=str), history_id, restaurant_id))
+            head, ref = _m_rv.store_history_review(conn, restaurant_id, json.loads(json.dumps(review, default=str)))
+            conn.execute("UPDATE schedule_history SET review_json=?, review_ref=? WHERE id=? AND restaurant_id=?",
+                         (head, ref, history_id, restaurant_id))
         conn.commit()
     except BaseException:
         conn.rollback()

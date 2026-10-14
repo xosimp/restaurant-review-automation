@@ -305,7 +305,7 @@ def active_lockouts(db_path=DB_PATH) -> list:
     try:
         since = _utc(datetime.now(timezone.utc) - timedelta(hours=24))
         rows = conn.execute(
-            "SELECT key, kind, MAX(attempted_at) AS last_at FROM login_attempts "
+            "SELECT key, MIN(kind) AS kind, MAX(attempted_at) AS last_at FROM login_attempts "
             "WHERE kind IN ('account', 'account_ip') AND attempted_at >= ? GROUP BY key ORDER BY last_at DESC",
             (since,)).fetchall()
         names = set()

@@ -44,6 +44,26 @@ python3 scripts/check_colors.py
 python3 -m pytest tests/test_frontend_rules.py -q
 ```
 
+## On Postgres (`CAVNAR_TEST_PG_URL`, blind re-audit 10/11/26 SCALE-10)
+
+The same tests run with their database on Postgres when `CAVNAR_TEST_PG_URL`
+names a scratch server (never production's; a throwaway local cluster or CI's
+service): `tests/conftest.py` routes the default database and every
+`db_path` to a database of its own (`models._PG_ROUTES`), copied per test
+from a template the real boot built, and dropped after. A test that reads the
+SQLite file itself (a snapshot, `EXPLAIN QUERY PLAN`, `PRAGMA query_only`, a
+direct `sqlite3.connect`) is marked `@pytest.mark.sqlite_only` and skipped
+there. `tests/test_q2_postgres.py`'s live half (the boot twice in its own
+process, the copy then the boot, every static statement PREPAREd, the
+dialect's semantics) runs only in this mode. CI's `postgres` job runs it and
+the database-heavy files listed in `.github/workflows/ci.yml`; locally:
+
+```
+CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55432/postgres \
+    python -m pytest -q -p no:warnings -n 3 --dist loadfile tests/test_q2_postgres.py tests/test_models.py
+python scripts/pg_sql_audit.py --database-url postgresql://postgres@127.0.0.1:55432/scratch
+```
+
 ## A gotcha worth knowing about before you distrust a revert-check
 
 Editing a `.py` file, running its tests, restoring the original content, and re-running **in the same second** can read stale `__pycache__` bytecode instead of the restored source — a revert-check can falsely show "still passes" when the fix is actually back in place, because Python never re-read the file. If a revert-check result looks wrong, `find . -name __pycache__ -exec rm -rf {} +` and re-run before concluding anything. This has produced a real false negative in this codebase's history — see the git log around the Ask Cavnar re-audit.

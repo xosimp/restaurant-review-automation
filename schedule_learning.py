@@ -2001,17 +2001,16 @@ def _calibration_samples(restaurant_id, db_path):
         for i in range(0, len(ids), 200):
             chunk = ids[i:i + 200]
             marks = ",".join("?" for _ in chunk)
-            for h in conn.execute(f"SELECT id, quality_json, labor_target FROM schedule_history WHERE restaurant_id=? "
-                                  f"AND id IN ({marks})", (restaurant_id, *chunk)).fetchall():
-                hist[h["id"]] = h
+            import models as _m_sl
+            for h in conn.execute(f"SELECT id, quality_json, quality_ref, labor_target FROM schedule_history "
+                                  f"WHERE restaurant_id=? AND id IN ({marks})", (restaurant_id, *chunk)).fetchall():
+                # The whole evaluation (stored once, SCALE-13): its shifts.
+                hist[h["id"]] = {"labor_target": h["labor_target"], "quality": _m_sl.history_quality(conn, h)}
     finally:
         conn.close()
     dims_by, meta_by = {}, {}
     for hid, h in hist.items():
-        try:
-            q = json.loads(h["quality_json"] or "null") or {}
-        except (TypeError, ValueError):
-            continue
+        q = h["quality"] or {}
         for s in q.get("shifts") or []:
             if not s.get("scored"):
                 continue

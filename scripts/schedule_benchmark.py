@@ -65,6 +65,7 @@ def child(key, arm, runs, scale):
     import schedule_benchmark as sb
     res = sb.run_archetype(key, arms=(arm,), runs=runs, scale=scale)
     res["arms"][arm]["peak_rss_mb"] = sb.peak_rss_mb()
+    res["arms"][arm]["child_peak_rss_mb"] = sb.peak_rss_mb(children=True) or None
     print("BENCHMARK-RESULT " + json.dumps(res, default=str))
 
 
@@ -137,8 +138,8 @@ def main(argv=None):
             m["arms"][arm] = res["arms"][arm]
             m["failed"][arm] = res["failed"].get(arm, [])
             mm = res["arms"][arm]
-            print(f"{key:20s} {arm:13s} {mm.get('status')}  {mm.get('seconds')}s  "
-                  f"{mm.get('peak_rss_mb')} MB  fails: {', '.join(res['failed'].get(arm) or []) or 'none'}",
+            print(f"{key:20s} {arm:13s} {mm.get('status')}  {mm.get('seconds')}s  {mm.get('cpu_seconds')} CPU-s  "
+                  f"{mm.get('peak_rss_mb')} MB (solve {mm.get('child_peak_rss_mb')} MB)  fails: {', '.join(res['failed'].get(arm) or []) or 'none'}",
                   flush=True)
             import shutil
             shutil.rmtree(vol, ignore_errors=True)

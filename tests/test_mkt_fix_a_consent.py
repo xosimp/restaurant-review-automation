@@ -709,6 +709,7 @@ def test_cs19_sql_segments_match_the_python_filter_everywhere(db_path):
         assert gm.audience_size(rid, seg, db_path=db_path) == len(not_recent), seg
 
 
+@pytest.mark.sqlite_only
 def test_mb21_phone_lookups_use_an_index(db_path):
     conn = get_conn(db_path)
     try:

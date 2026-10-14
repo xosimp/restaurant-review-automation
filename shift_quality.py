@@ -6379,7 +6379,13 @@ class LocalScorer:
         self._cache = {}
         self.evaluations = 0
         self.dates_built = 0
-        self.started = _time.monotonic()      # a pass may stop consulting it past its own time budget
+        # Rows read, in deterministic work units: each score reads the whole
+        # week's frame and rebuilds the dates it has not kept. A pass budgets
+        # its consultations in these, never in seconds — the same inputs
+        # choose the same rows on an idle box and a busy one (blind re-audit
+        # 10/11/26 SCALE-15).
+        self.work = 0
+        self.started = _time.monotonic()
         self.baseline = self.score(rows)
 
     def _cross_keys(self, frame: dict, rows_by_date: dict, sig: dict) -> dict:
@@ -6486,6 +6492,7 @@ class LocalScorer:
         cross = self._cross_keys(frame, rows_by_date, sig) if self.exact else {}
         rules = tuple(sorted(repr(sorted((k, repr(v)) for k, v in r.items())) for r in sig.get("leader_rules") or []
                              if isinstance(r, dict)))
+        self.work += len(rows or [])
         keys, misses = {}, set()
         for date in rows_by_date:
             key = (date, self._signature(rows_by_date[date]), tuple(sorted(flags.get(date, ()))),
@@ -6498,6 +6505,7 @@ class LocalScorer:
             for c in build_contexts(rows, profiles=self.profiles, only_dates=misses, **sig):
                 built.setdefault(c.date, []).append(c)
             self.dates_built += len(misses)
+            self.work += sum(len(rows_by_date[d]) for d in misses)
         contexts, shifts = [], []
         for date in sorted(rows_by_date):
             key = keys[date]
@@ -6877,9 +6885,13 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
     was tried."""
     import time as _time
     t0 = _time.monotonic()
+    timed = []
 
     def out_of_time() -> bool:
-        return max_seconds is not None and _time.monotonic() - t0 > max_seconds
+        if max_seconds is not None and _time.monotonic() - t0 > max_seconds:
+            timed.append(True)
+            return True
+        return False
     baseline = score_rows(rows, profiles=profiles, weights=weights, **signals)
     if not baseline.get("checked"):
         return {"ran": False, "reason": baseline.get("reason"), "baseline": baseline,
@@ -7019,7 +7031,13 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
         # Whether each swap was held to every rule the week is, or only to the
         # swap index's person checks (no rule set given).
         "checked_with": "every rule" if c is not None else "availability and hours",
-        "verdict": _candidate_verdict(baseline, current, swaps, evaluated, legal_total),
+        # The clock (max_seconds — a request thread's bound, blind re-audit
+        # 10/11/26 SCALE-21), not the evaluations, ended the search: the
+        # verdict speaks only of what was tried.
+        "cut_short": bool(timed),
+        "seconds": round(_time.monotonic() - t0, 2),
+        "verdict": _candidate_verdict(baseline, current, swaps, evaluated, legal_total)
+        + (" The search stopped at its time limit." if timed else ""),
     }
 
 

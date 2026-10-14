@@ -185,10 +185,9 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
     merged = list(new_rows)
     conn = get_conn(db_path)
     try:
-        prior_row = conn.execute("SELECT shifts_csv FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+        prior = _models_mod.shift_file_text(conn, restaurant_id)
     finally:
         conn.close()
-    prior = ((prior_row["shifts_csv"] if prior_row else "") or "")
     if dates and prior.strip():
         lo, hi = dates[0], dates[-1]
         kept = [r for r in load_shifts(csv_string=prior) if not (lo <= (r.get("date") or "") <= hi)]
@@ -273,8 +272,8 @@ def _release(restaurant_id, db_path=None) -> None:
     text = export_csv(restaurant_id, db_path=db_path)
     conn = get_conn(db_path)
     try:
-        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_store=NULL, shifts_stale=0 WHERE restaurant_id=?",
-                     (text, restaurant_id))
+        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_csv_z=NULL, shifts_store=NULL, shifts_stale=0 "
+                     "WHERE restaurant_id=?", (text, restaurant_id))
         conn.commit()
     finally:
         conn.close()
@@ -371,11 +370,11 @@ def adopt(restaurant_id, rows_=None, source="upload", db_path=None) -> dict:
     if rows_ is None:
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT shifts_csv, shifts_source FROM client_data WHERE restaurant_id=?",
+            row = conn.execute("SELECT shifts_source FROM client_data WHERE restaurant_id=?",
                                (restaurant_id,)).fetchone()
+            text = _models_mod.shift_file_text(conn, restaurant_id)
         finally:
             conn.close()
-        text = (row["shifts_csv"] if row else "") or ""
         source = str((row["shifts_source"] if row else "") or source or "upload").lower() or "upload"
         rows_ = load_shifts(csv_string=text) if text.strip() else []
     if not rows_:
@@ -413,6 +412,10 @@ def adopt(restaurant_id, rows_=None, source="upload", db_path=None) -> dict:
         if not cur.rowcount:
             conn.execute("INSERT INTO client_data (restaurant_id, shifts_store, shifts_stale, shifts_source) "
                          "VALUES (?, 'facts', 0, ?)", (restaurant_id, source))
+        else:
+            # The facts are the record now: the file kept only as their
+            # compressed export (SCALE-14).
+            _models_mod.store_shift_file(conn, restaurant_id, _models_mod.shift_file_text(conn, restaurant_id))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -623,8 +626,8 @@ def backfill_from_csv(db_path=None, max_seconds=15.0) -> int:
             break
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT shifts_csv, shifts_source FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
-            text = (row["shifts_csv"] if row else "") or ""
+            row = conn.execute("SELECT shifts_source FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+            text = _models_mod.shift_file_text(conn, rid)
             src = str((row["shifts_source"] if row else "") or "upload").lower() or "upload"
             rows = load_shifts(csv_string=text) if text.strip() else []
             pid_of = {}
