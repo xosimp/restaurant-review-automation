@@ -1996,7 +1996,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         # hold (shift_quality.week_held) already keeps the score under any
         # sane target; a target set at or below the hold still may not stop
         # the search before the breach's own moves are tried.
-        if (current.get("score") or 0) >= target and not memory_misses(current) and not current.get("held_by"):
+        at_target = (current.get("score") or 0) >= target and not memory_misses(current) \
+            and not current.get("held_by")
+        if at_target and objective_ctx is None:
             stopped = "target reached"
             break
         if _time.monotonic() - t0 > max_seconds or evaluations >= max_evaluations:
@@ -2005,7 +2007,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         state = _State(current_rows, signals, inputs, constraints=c)
         state.viols = viols or []
         accepted = False
-        for phase in ("weak", "surplus", "what_if"):
+        # At the score's target only the hours above the objective's need are
+        # still looked at (LOGIC-23): a week scored 100 can still carry two
+        # servers nobody needs.
+        for phase in (("surplus",) if at_target else ("weak", "surplus", "what_if")):
             if phase == "what_if" and not what_if:
                 break
             candidates, seen = [], set()
@@ -2092,6 +2097,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 accepted = True
                 break
         if not accepted:
+            if at_target:
+                stopped = "target reached"
             break
     out.update(rows=current_rows, after_score=current.get("score"), quality=current,
                evaluations=evaluations, seconds=round(_time.monotonic() - t0, 1), stopped=stopped)
