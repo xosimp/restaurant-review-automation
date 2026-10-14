@@ -5,6 +5,7 @@ import json
 import os
 import types
 
+import ai_utils
 import schedule_narrative as sn
 
 WEEK = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"]
@@ -45,7 +46,10 @@ def test_the_note_is_written_from_the_final_week(monkeypatch):
                    roster=["Ana Ruiz", "Ben Cole", "Cy Dee"], call=call)
     text = seen["req"]["messages"][0]["content"]
     assert "Fri: Line Cook Cy Dee; Server Ben Cole" in text and "Ana moved from Friday to Saturday" in text
-    assert seen["req"]["model"] == "claude-haiku-5-5"
+    # Haiku 5.5 on the T1 canary only (re-audit 10/11/26 AI-26): restaurant
+    # 5 is outside it while AI_TIER_CANARY holds T1, so its note keeps T1's
+    # previous model.
+    assert seen["req"]["model"] == ai_utils.model_for_run("schedule_note", 5)
     assert out["source"] == "final_week" and out["bullets"] == ["Ben and Cy hold Friday dinner"]
     assert out["dropped"] and "Friday" in out["dropped"][0]["why"]
 

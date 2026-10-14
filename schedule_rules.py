@@ -68,6 +68,18 @@ DEFAULTS = {
     # on until close every trading day — enforced whenever anyone on the
     # roster is a keyholder (NS5 M8). The owner can switch it off.
     "keyholder_until_close": True,
+    # Whether owners and managers set their own hours (blind re-audit
+    # 10/11/26 ARCH-22: a per-restaurant setting, never a rule compiled in
+    # for one client). On (the default): the shift-length maximum holds
+    # neither an owner nor a manager, and the hours rules (the weekly
+    # ceiling, days in a row, rest, daily overtime, minimums) hold neither an
+    # owner nor a salaried manager — the people who run the floor choose how
+    # long they stay, and a salaried leader owes no overtime. Off: they are
+    # held to the restaurant's limits like everyone (a group whose managers
+    # are hourly shift leads, a fine-dining room with a strict 10-hour day).
+    # Overlaps, time off, availability, roles and the minor rules hold
+    # everyone either way.
+    "leaders_set_own_hours": True,
     # What "full-time" means when the owner set no minimum for the person
     # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
     # the field said nothing): at least this many hours a week. 30 is the
@@ -529,6 +541,8 @@ def compliance(restaurant) -> dict:
     out["manager_on_duty"] = False
     if "keyholder_until_close" in data:
         out["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    if "leaders_set_own_hours" in data and data["leaders_set_own_hours"] not in (None, ""):
+        out["leaders_set_own_hours"] = bool(data["leaders_set_own_hours"])
     out["full_time_min_confirmed"] = bool(data.get("full_time_min_confirmed"))
     if data.get("rest_mode") in REST_MODES:
         out["rest_mode"] = data["rest_mode"]
@@ -758,6 +772,8 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
         clean["manager_on_duty"] = bool(data["manager_on_duty"])
     if "keyholder_until_close" in data:
         clean["keyholder_until_close"] = bool(data["keyholder_until_close"])
+    if "leaders_set_own_hours" in data:
+        clean["leaders_set_own_hours"] = bool(data["leaders_set_own_hours"])
     if "full_time_min_confirmed" in data:
         clean["full_time_min_confirmed"] = bool(data["full_time_min_confirmed"])
     if "rest_mode" in data:
@@ -5556,8 +5572,19 @@ def max_shift_applies(c, name_or_key) -> bool:
     """Whether the shift-length maximum holds this person: everyone but an
     owner or a manager (Constraints.managers - a manager or owner role, or
     the floor-manager certificate). Someone only standing in as a manager
-    on a date is still held to it."""
+    on a date is still held to it. Only where the restaurant lets its
+    leaders set their own hours (compliance leaders_set_own_hours, on by
+    default — ARCH-22); off, it holds everyone."""
+    if not leaders_set_own_hours(c):
+        return True
     return c.key(name_or_key) not in (c.managers or {})
+
+
+def leaders_set_own_hours(c) -> bool:
+    """The restaurant's leaders_set_own_hours setting (DEFAULTS: on)."""
+    comp = getattr(c, "compliance", None) or {}
+    v = comp.get("leaders_set_own_hours", DEFAULTS["leaders_set_own_hours"])
+    return True if v is None else bool(v)
 
 
 def hours_rules_apply(c, name_or_key) -> bool:
@@ -5565,9 +5592,11 @@ def hours_rules_apply(c, name_or_key) -> bool:
     payroll-week ceiling, days in a row, consecutive days off, rest between
     shifts, daily overtime, the overtime-line reserve and their minimum hours.
     The owners and salaried managers max_shift_applies sets free are at the
-    store as long as they choose (Simple EJ's, 10/7/26: "erik is
-    always at the store and most managers work over 40 hours anyways since
-    they are salaried"). Overlaps, time off, availability, roles and the
+    store as long as they choose — where the restaurant's
+    leaders_set_own_hours setting is on, the default (it came from Simple
+    EJ's, 10/7/26: "erik is always at the store and most managers work over
+    40 hours anyways since they are salaried"; since ARCH-22 a setting, not
+    a rule for every restaurant). Overlaps, time off, availability, roles and the
     minor rules still hold them. An hourly manager stays held - their
     overtime is real money - and a cap the owner set is still theirs
     (violations keeps it)."""
@@ -5995,8 +6024,7 @@ TIER_TABLE = (
      "availability and time off and the legal limits in 1b; overtime and the restaurant's own scheduling limits "
      "(2b) give way to it when no manager can cover a stretch inside them. Where MANAGER COVERAGE plans the "
      "managers' shifts, code adds those rows to your answer: do not write them, and write no other shift for "
-     "those managers on those dates; a stretch it says no manager can legally cover is staffed as usual, and the "
-     "owner is told."),
+     "those managers on those dates;"),
     (TIER_COVERAGE, "coverage", "First the staffing rules: the staffing floors, each role's closer and somebody "
      "on until close, and the hours a role may start and end by the RESTAURANT HOURS & SHIFT RULES (all [HARD]), "
      "and the owner's standing rules (OWNER_RULE, as their tags say)."),
@@ -6004,8 +6032,7 @@ TIER_TABLE = (
      "ceiling, the longest shift, days in a row and rest between shifts as the rules give them. They hold for "
      "everything below; 1a and 2a may go past them only for a shift nobody can cover inside them."),
     (TIER_OVERTIME, "overtime", "Nobody goes past their overtime line (OT in the ROSTER) while a teammate in the "
-     "same role has room: overtime is a cost the owner does not want, only for a shift nobody else in the role "
-     "can legally work. Code holds it after you write — a bound, never a sum to work out."),
+     "same role has room: overtime only for a shift nobody else in the role can legally work."),
     # Bounds, never a fill order (scheduler audit 10/10/26 AI-12): the
     # min-hours and overtime stages hold them; the model was told to fill
     # "from the people still under their minimum hours first", a running
@@ -6016,9 +6043,8 @@ TIER_TABLE = (
     (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS, the people each role needs on each shift, with the "
      "floors the hard minimum inside them — met even when that costs more than the hours budget (4): the "
      "owner is told the overrun."),
-    (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling) — the code holds the week to its dollars "
-     "at each person's own rate, overtime at its premium: code trims to it after you write, never through 1-3; "
-     "it never adds hours."),
+    (TIER_BUDGET, "budget", "The hourly budget (the PAR hours ceiling), in dollars at each person's own rate: "
+     "code trims to it after you write, never through 1-3; it never adds hours."),
     (TIER_QUALITY, "quality", "Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S "
      "REQUEST FOR THIS DRAFT first, then leadership (every shift that needs somebody to run it has one and every "
      "SHIFT LEADER REQUIREMENT is met — by WHO works the shifts 3 calls for, never by hours past the budget), "
@@ -6819,15 +6845,16 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         # The same rule PRIORITIES 1a states, in the same rank: it used to
         # call itself "above every other rule" — above the availability and
         # time off PRIORITIES puts first (schedule audit 10/3/26 PR-1).
+        # The rule itself is PRIORITIES 1a's (re-audit 10/11/26 AI-15: it was
+        # restated here at length, a third time); this line names who.
         lines.append(_rule("no_manager",
-                           "NON-NEGOTIABLE — PRIORITIES 1a, the owner's highest staffing rule: at every minute anybody "
-                           f"is on the schedule, at least ONE manager is on too. The managers: {_mg}."
+                           "NON-NEGOTIABLE — PRIORITIES 1a: at least ONE manager on at every minute anybody is on. "
+                           f"The managers: {_mg}."
                            + (" Somebody standing in as the manager counts on their dates (below)." if c.acting_managers else "")
-                           + " It gives way only to a manager's own availability, time off and legal limits. Every "
-                             "trading day has a manager from the first shift's start to the last shift's end — overlap "
-                             "them so there is never a gap, not even a few minutes."
                            + (" Their shifts are already planned: MANAGER COVERAGE, at the top, is fixed."
-                              if (manager_plan or {}).get("rows") else ""),
+                              if (manager_plan or {}).get("rows") else
+                              " Overlap them so there is never a gap from the first shift's start to the last "
+                              "shift's end."),
                            why="the owner's non-negotiable: somebody is always in charge of the floor"))
     if c.acting_managers:
         lines.extend(_acting_prompt_lines(c))
@@ -6941,8 +6968,11 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                     {"morning": " at lunch/day", "night": " at dinner/night"}.get(cap.get("daypart") or "", "")
                 bits.append(f"{_family_label(c, fam)} at most {int(cap['max'])} on at once{when}")
         lines.append(_rule("over_role_max", "Most of a role on at once: " + "; ".join(bits) + "."))
+    # A bound code holds, never a fill order (AI-12 10/10/26; re-audit
+    # 10/11/26 AI-15 — this line still said "fill from the people below
+    # theirs first" beside PRIORITIES 3b saying the opposite).
     lines.append(_rule("under_min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
-                       "full-time line): fill from the people below theirs first."))
+                       "full-time line)."))
     if c.stations:
         import kitchen_stations as _ks
         lines.extend(("- [SOFT] " + ln[2:]) if ln.startswith("- ") else ("- [SOFT] " + ln)

@@ -103,6 +103,24 @@ def test_carry_forward_maps_weekdays_and_drops_who_left_or_is_off():
     assert whys["Gone"] == "not on the roster now" and "time off" in whys["Cy"]
 
 
+def test_carry_forward_never_carries_a_shared_person_onto_a_shift_another_location_published():
+    """Schedule benchmark, multi_location_org (10/11/26): North's published
+    Friday dinner (a row of the tail, Constraints.base_rows) is a legal
+    clash for South's carried Friday dinner — the repair loop cannot move
+    North's shift, so the overlap reached the saved week. Dropped and said;
+    a carried row clear of it stays."""
+    base = {"source": "published", "week_start": LAST[0], "rows": [
+        {"date": LAST[4], "employee": "Hana", "role": "Line Cook", "shift_start": "4:00pm", "shift_end": "10:00pm"},
+        {"date": LAST[3], "employee": "Hana", "role": "Line Cook", "shift_start": "4:00pm", "shift_end": "10:00pm"}]}
+    c = _c(roster_names=["Hana"], active={"hana"}, display={"hana": "Hana"})
+    c.base_rows = {"hana": [{"date": WEEK[4], "employee": "Hana", "role": "Line Cook", "shift_start": "5:00pm",
+                             "shift_end": "9:00pm", "_site": "North"}]}
+    got = fb.carry_forward_rows(base, [WEEK[3], WEEK[4]], c, roster_names=["Hana"])
+    assert [(r["employee"], r["date"]) for r in got["rows"]] == [("Hana", WEEK[3])]
+    assert [(d["employee"], d["date"]) for d in got["dropped"]] == [("Hana", WEEK[4])]
+    assert got["dropped"][0]["why"]
+
+
 # ── the fallback inside the generation ────────────────────────────────────
 
 def _fallback(source="model", roster=("Ana",)):

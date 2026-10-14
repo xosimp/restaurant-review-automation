@@ -8847,7 +8847,10 @@ def init_shift_requests(db_path: str = DB_PATH):
                        # request, sent after the write commits (ARCH-9).
                        ("held_claimant", "TEXT"), ("held_claim_at", "TEXT"), ("held_claim_note", "TEXT"),
                        ("decided_how", "TEXT"), ("auto_reasons_json", "TEXT"),
-                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT")):
+                       ("reversed_at", "TEXT"), ("reversed_by", "TEXT"), ("notice_pending", "TEXT"),
+                       # schedule re-audit 10/11/26 STRESS-16: who runs the
+                       # floor when an approved drop leaves no manager on.
+                       ("floor_covered_by", "TEXT")):
         if name not in have:
             conn.execute(f"ALTER TABLE shift_change_requests ADD COLUMN {name} {decl}")
     # An open shift offered to one named person (shift_requests.offer_shift):

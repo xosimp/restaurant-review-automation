@@ -220,7 +220,10 @@ def test_a_week_already_under_way_says_when_it_started(db_path, rid):
     hid = _history(db_path, rid, CLEAN)
     [b] = client_api.publish_review(rid, hid, today=dt.date(2026, 10, 7))["blockers"]
     assert b["key"] == "notice_short"
-    assert b["text"] == ("Less notice than your 14-day schedule notice rule: the week of 10/5/26 started 2 days ago")
+    # The owner's own notice rule says so (re-audit 10/11/26 TRUST-8); a law's is said as the law.
+    assert b["text"] == ("Less notice than your own 14-day schedule notice rule: the week of 10/5/26 started 2 "
+                         "days ago")
+    assert b["tier"] == "decide" and not b["law"]
     [b] = client_api.publish_review(rid, hid, today=dt.date(2026, 10, 5))["blockers"]
     assert b["text"].endswith("the week of 10/5/26 starts today")
 

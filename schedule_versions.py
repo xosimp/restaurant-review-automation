@@ -1149,6 +1149,12 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         raise LookupError("that schedule is gone")
     _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, draft_text, quality, saved_by,
                                        saved_authority, row_origins=row_origins)
+    if live_write:
+        # Every draft of the week waiting to replace this copy carries the
+        # change too (schedule re-audit 10/11/26 BUGSLIFE-1): a regenerated
+        # draft held the shift as it was, and sending it put the person
+        # whose drop was approved back on and took their cover off.
+        carry_live_into_drafts(conn, restaurant_id, history_id, old_live, new_live, saved_by=saved_by, db=db)
     # A shift that changed hands keeps its floor section — on the copy
     # staff read: a cover or swap on the published week, any save of a week
     # never sent. A Studio swap on a sent week moves the section when Send
@@ -1160,6 +1166,65 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
             if "no such table" not in str(e).lower():
                 raise
     return version
+
+
+def in_id_space(old_live, new_live, target_rows) -> tuple:
+    """(old, new): a live change (`old_live` -> `new_live`) re-keyed into the
+    shift ids of another copy of the same week (`target_rows`, a draft made
+    from it or regenerated beside it) — each live shift takes the target's id
+    for the same shift (schedule_rows.carry_ids: its key, its slot, its
+    person's day), a shift the target does not hold keeps its own. What lets
+    merge_live_change carry a cover into a copy whose ids were never the
+    live copy's. Pure."""
+    old_in = _srows.carry_ids(old_live, target_rows)
+    remap = {str(o.get("shift_id") or "").lower(): n["shift_id"] for o, n in zip(old_live, old_in)
+             if _srows.valid_id(o.get("shift_id"))}
+    new_in = [dict(r, shift_id=remap.get(str(r.get("shift_id") or "").lower(), r.get("shift_id")))
+              for r in new_live]
+    return old_in, new_in
+
+
+def carry_live_into_drafts(conn, restaurant_id, history_id, old_live, new_live, saved_by=None, db=None) -> list:
+    """Carry one LIVE change (a cover, claim or swap on the copy staff have,
+    `old_live` -> `new_live`) into every draft of the same week waiting to
+    replace it — unpublished, not replaced — shift by shift, three-way
+    (schedule_rows.merge_live_change: a shift the draft still holds as staff
+    had it takes the change; one the draft changed keeps the draft's), each
+    with a `swap` version saying whose change it was. On the caller's
+    connection, inside its write transaction. edited_at is left alone: a
+    staff change is not the owner taking the draft over. Returns the draft
+    ids changed (schedule re-audit 10/11/26 BUGSLIFE-1)."""
+    row = conn.execute("SELECT week_start FROM schedule_history WHERE id=? AND restaurant_id=?",
+                       (history_id, restaurant_id)).fetchone()
+    if not row or not row["week_start"]:
+        return []
+    drafts = conn.execute("SELECT id, schedule_csv FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                          "AND id<>? AND published_at IS NULL AND superseded_by IS NULL",
+                          (restaurant_id, row["week_start"], history_id)).fetchall()
+    changed = []
+    for d in drafts:
+        d_rows = rows_from_csv(d["schedule_csv"] or "")
+        if not d_rows:
+            continue
+        old_in, new_in = in_id_space(old_live, new_live, d_rows)
+        merged = _srows.merge_live_change(d_rows, old_in, new_in)
+        if same_rows(d_rows, merged):
+            continue
+        merged = prepare_rows(restaurant_id, merged, d_rows, db_path=db)
+        text = _srows.to_csv(merged)
+        try:
+            split = _models_mod.history_hours(restaurant_id, text)
+        except Exception as e:
+            print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
+            split = {"hourly": None, "salaried": None}
+        conn.execute("UPDATE schedule_history SET schedule_csv=?, hours_scheduled=?, hours_hourly=?, hours_salaried=? "
+                     "WHERE id=? AND restaurant_id=?",
+                     (text, round(sum(_hours(r) for r in merged), 1), split["hourly"], split["salaried"], d["id"],
+                      restaurant_id))
+        if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (d["id"],)).fetchone():
+            _insert_version(conn, restaurant_id, d["id"], LIVE_REASON, text, None, saved_by, None)
+        changed.append(d["id"])
+    return changed
 
 
 def _live_rows_of(conn, history_id, restaurant_id, row) -> tuple:
