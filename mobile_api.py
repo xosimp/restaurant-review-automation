@@ -2485,7 +2485,7 @@ def mobile_publish_schedule(current_user):
 def mobile_schedule_share_status(current_user):
     """Who has actually opened the schedule — the difference between "I sent
     it" and "the closing server has seen it"."""
-    from models import get_schedule_share_status, get_conn as _gc
+    from models import get_conn as _gc
     rid = current_user["restaurant_id"]
     schedule_id = request.args.get("schedule_id", type=int)
     if not schedule_id:
@@ -2500,10 +2500,13 @@ def mobile_schedule_share_status(current_user):
         return jsonify(ok=True, status=[])
     # Who was told and how it went, per person, from the publish outbox
     # (schedule_publish.notice_status — BUGSLIFE-9): still sending, failed
-    # (retried), unreachable.
+    # (retried), unreachable. Both read across every copy of the week staff
+    # were sent: a replacement tells only the people it changed, and the
+    # rest have it — and their opens — from the copy before (re-audit
+    # 10/11/26 BUGSLIFE-8).
     import schedule_publish as _sp_st
     return jsonify(ok=True, schedule_id=schedule_id,
-                   status=get_schedule_share_status(rid, schedule_id),
+                   status=_sp_st.week_share_status(rid, schedule_id),
                    delivery=_sp_st.notice_status(rid, schedule_id))
 
 
