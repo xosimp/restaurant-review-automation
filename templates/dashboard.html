@@ -3616,11 +3616,9 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
    amber a watch, dashed the still-learning. dn- is the prefix. */
 body.dn-open{overflow:hidden}
 body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
-.dn{position:fixed;inset:0;z-index:980;display:flex;flex-direction:column;color:var(--ink);background-color:var(--paper);background-image:radial-gradient(1200px 560px at 78% -200px,rgba(212,88,58,.22) 0%,rgba(212,88,58,.185) 12%,rgba(212,88,58,.145) 24%,rgba(212,88,58,.105) 36%,rgba(212,88,58,.07) 48%,rgba(212,88,58,.042) 60%,rgba(212,88,58,.02) 72%,rgba(212,88,58,.006) 84%,rgba(212,88,58,0) 96%),radial-gradient(900px 600px at -12% 38%,rgba(232,149,106,.055) 0%,rgba(232,149,106,.035) 30%,rgba(232,149,106,.015) 60%,rgba(232,149,106,0) 90%)}
-/* The tint is eased over many stops and a fine grain sits over it (owner,
-   10/9/26: the glow banded) - grain breaks the 8-bit steps a dark gradient
-   falls into. Under the content, never over it. */
-.dn:before{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:.05;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");background-size:180px 180px}
+/* The app's one flat page tone, like every other page (owner, 10/14/26): the ember glow and its grain are gone. */
+.dn{position:fixed;inset:0;z-index:980;display:flex;flex-direction:column;color:var(--ink);background:var(--bg-base)}
+.dn:before{content:none}
 .dn-scroll{position:relative;z-index:1}
 .dn[hidden]{display:none}
 .dn-bar{flex:0 0 60px;display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid var(--hb-line2);background:rgba(20,17,15,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);position:relative;z-index:2}
