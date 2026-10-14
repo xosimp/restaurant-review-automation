@@ -12998,9 +12998,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-side" id="ss-team">
         <div class="ss-kick">Team &amp; rules</div>
         <h1>Your team, and the rules every draft keeps</h1>
-        <!-- Who the week on screen leaves off, each with the first reason
-             (schedule audit 10/10/26 TRUST-13; the pre-publish review's why.left_off). -->
-        <div id="ss-team-leftoff"></div>
   {# Team inbox (employee audit fix B5, staff_comms): what staff say from
      the app - running late, a message to the manager on duty - and the
      announcements you send them, each with who has tapped Got it. One
@@ -27315,7 +27312,7 @@ function studioGo(stage) {
   else if (stage === 'crew') ssRenderCrew();
   else if (stage === 'bench') ssRenderBench();
   else if (stage === 'schedule') { swRenderGrid(); swActive(); }
-  else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; if (window.prTeamRender) prTeamRender(true); }
+  else if (stage === 'team') { var dt = document.getElementById('lb2-team'); if (dt) dt.open = true; }
   var m = document.getElementById('ss-main'); if (m) m.scrollTop = 0;
 }
 function ssTopbar() {
@@ -27832,13 +27829,15 @@ function ssRenderSummary() {
   if (plp.track_record) tr.push(_numText(plp.track_record));
   if (pn.last_week && pn.last_week.text) tr.push(_numText(pn.last_week.text));
   if (tr.length) h += '<div class="pr-meta" style="margin-top:12px">' + tr.join(' ') + '</div>';
-  h += '<div class="sfw1-notes" id="sfw1-sum"></div><div class="ss-sum-go">'
+  /* Who the week leaves off (TRUST-13; why.left_off) sits on the Summary, not Team (owner, 10/14/26). */
+  h += '<div class="sfw1-notes" id="sfw1-sum"></div><div id="ss-team-leftoff"></div><div class="ss-sum-go">'
     + '<button type="button" class="cbtn cbtn-primary cbtn-lg" data-ss-go="schedule">View the schedule</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" onclick="ssOptimize(this)">Optimize again</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" data-ss-go="publish">Review &amp; send</button></div>'
     + '<div class="ss-sum-note">Optimize again makes legal changes that raise the score and lists each one; nothing is kept until you save.</div>';
   el.innerHTML = h;
   if (window.sfw1RenderNotes) sfw1RenderNotes();
+  if (window.prTeamRender) prTeamRender(true);
 }
 function ssOptimize(btn) {
   if (typeof improveScheduleWithCavnar !== 'function') return;
@@ -41270,14 +41269,14 @@ window.cavPalette = cavPalette;
     prChangedBlock(d);
     prTeamRender(false);
   };
-  // The Team step's "Left off this week": the same reasons, beside the team.
+  // "Left off the week" on the Summary step: the same reasons (owner, 10/14/26: moved from Team).
   window.prTeamRender = function (fetchIfMissing) {
     var el = $id('ss-team-leftoff'), d = prFor(), i, h = '';
     if (!el) return;
     if (!d) { el.innerHTML = ''; if (fetchIfMissing && _schedHistoryId && !S.busy) prRefresh(); return; }
     var l = (d.why || {}).left_off || [];
     if (!l.length) { el.innerHTML = ''; return; }
-    h += '<section class="pr-sec" style="margin:14px 0 6px"><div class="pr-k">Left off the week of <span class="hb-num">' + e(mdy(d.week_start)) + '</span></div>';
+    h += '<section class="pr-sec" style="margin:0 0 22px"><div class="pr-k">Left off the week of <span class="hb-num">' + e(mdy(d.week_start)) + '</span></div>';
     for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> \u2014 ' + nt(l[i].reason) + '</div>';
     el.innerHTML = h + '</section>';
   };
