@@ -232,7 +232,12 @@ def test_pr4_minimum_hours_are_ranked_counted_and_carried_across_the_seam():
     assert "bounds, never a fill order to work out" in static
     assert "Fill shifts from the people still under their minimum hours first" not in static
     assert "Fill them from the people still under their minimum hours first" not in static
-    assert "[SOFT] minimum, [HARD] maximum" in sp.ROSTER_HEAD
+    # The minimum's rank is PRIORITIES 3b's and the maximum is the rules
+    # block's line; the ROSTER head says only what HOURS holds (schedule
+    # re-audit 10/11/26 AI-15: each rule stated once).
+    assert "[SOFT] minimum, [HARD] maximum" not in sp.ROSTER_HEAD
+    assert "HOURS: MIN-MAX for the week" in sp.ROSTER_HEAD
+    assert "Each person's minimum hours (MIN in the ROSTER" in static
     prior = [{"date": WEEK[4], "day": "Friday", "employee": "S0", "role": "Server", "shift_start": "5:00pm",
               "shift_end": "11:00pm", "scheduled_hours": "6"}]
     lines = req.seam_lines(prior, limits={"S0": {"min": 30.0, "ot": 40.0, "carried": {}}},

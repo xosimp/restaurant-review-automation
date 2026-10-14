@@ -221,9 +221,12 @@ def _coverage_text() -> str:
 
 # Each default says what shapes the judgement; a rule code already holds is
 # one clause naming that it is held (scheduler audit 10/10/26 AI-13): the
-# stagger stage spreads starts along the ramp, the replace stage and the
-# solver's domains keep everyone to CAN WORK, the overtime and minimum-hours
-# stages and the budget trim hold the hours.
+# stagger stage spreads starts along the ramp, the overtime and minimum-hours
+# stages and the budget trim hold the hours. Each RULE is stated once, in
+# the restaurant's rules block (schedule_rules.prompt_block, [HARD]/[SOFT]
+# with why); the ROSTER head only says what its columns hold (schedule
+# re-audit 10/11/26 AI-15: availability and the roles a person may work were
+# stated in the ROSTER head, the rules and here).
 DEFAULTS = (
     "HOW TO WRITE SHIFTS — defaults. They apply only where this restaurant's own data (SHIFT REQUIREMENTS, its "
     "RESTAURANT HOURS & SHIFT RULES, its ROSTER and history) says nothing, and they rank last (PRIORITIES 5).\n"
@@ -234,7 +237,7 @@ DEFAULTS = (
     "through. This is about length, never headcount: each daypart keeps its full number.\n"
     "- Somebody the ROSTER shows missing shifts or arriving late: pair them with a dependable teammate of their "
     "role, never the only one who opens or closes a day, never a person added for it.\n"
-    "- Roles: code keeps each person to the roles their CAN WORK lists; each role is paid its own rate.\n"
+    "- Pay: each role is paid its own rate.\n"
     "- Hours: each date's hours target in SHIFT REQUIREMENTS is the one hours figure to plan a date by; every other "
     "hours figure here (sales per labor hour, past weeks, peers) is context, never a target.\n"
     "- With no RESTAURANT HOURS & SHIFT RULES, base start and end times on this restaurant's own history: prep "
@@ -579,14 +582,13 @@ ROSTER_HEAD = (
     "ROSTER — one line per person on this draft's roster, the only names to write ({n} people). Columns, \"-\" for "
     "nothing known:\n"
     "  " + " | ".join(ROSTER_COLUMNS) + "\n"
-    "ROLE is their own job code; (manager) marks somebody who counts for the manager rule. CAN WORK is every role "
+    "ROLE is their own job code; (manager) marks somebody who counts for the manager rule. CAN WORK lists the roles "
     "they may be scheduled in — their own, the roles they hold, roles they have worked here on {held}+ shifts and "
-    "stations they hold — and nothing else; a role that needs a certificate they lack is left out. AVAILABLE is "
-    "every day they can work unless it says otherwise: a weekday off, a daypart only, a time window, approved time "
-    "off (all [HARD]), and a day they asked off that the owner has not decided ([SOFT]: avoid it if the day can be "
-    "covered). HOURS: MIN-MAX for the week ([SOFT] minimum, [HARD] maximum), OT where overtime starts below that "
-    "maximum, hours already published in a payroll week this week shares and the room it leaves; \"-\" is the "
-    "restaurant's default — up to {ceiling}h, overtime past {ot}h. SCORE is the owner's 1-5 "
+    "stations they hold (a role that needs a certificate they lack is left out). AVAILABLE lists what limits "
+    "their days — a weekday off, a daypart only, a time window, approved time off, and \"asked off\": a day they "
+    "asked off that the owner has not decided; \"-\" is every day. HOURS: MIN-MAX for the week, OT where overtime "
+    "starts below that maximum, hours already published in a payroll week this week shares and the room it "
+    "leaves; \"-\" is the restaurant's default — up to {ceiling}h, overtime past {ot}h. SCORE is the owner's 1-5 "
     "rating (\"-\" unrated: unknown, neither strong nor weak — never a reason to leave them off). EXPERIENCE: "
     "experienced ({exp}+ shifts here or marked by the owner) or developing (under {dev}): put a developing person on "
     "with an experienced hand of their role, never two developing together on a busy shift. CLOSES: the roles they "
