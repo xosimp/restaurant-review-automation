@@ -978,6 +978,15 @@ def _taints(sql) -> bool:
     return False
 
 
+def forget_inherited_connections() -> None:
+    """In a forked child (schedule_cpsat's isolated solves): never reuse a
+    pooled connection the parent opened — SQLite connections must not cross
+    a fork. A read in the child opens its own."""
+    global _pool_local, _open_conns
+    _pool_local = threading.local()
+    _open_conns = threading.local()
+
+
 def _pragma_touch(conn, sql) -> None:
     """Mark `conn` for a PRAGMA reset at its next checkout when a borrower
     wrote foreign_keys or busy_timeout (or ran statements unseen: sql None)."""

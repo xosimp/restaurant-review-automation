@@ -83,6 +83,43 @@ def test_a_child_past_its_wall_clock_is_killed_and_answers_nothing_never_retried
     assert calls == []
 
 
+def _square_in_child(x):
+    return {"pid": os.getpid(), "value": x * x, "in_child": cps._IN_CHILD, "nested": cps.isolation()}
+
+
+def _boom():
+    raise ValueError("the same error here")
+
+
+def _sleep_forever():
+    time.sleep(60)
+
+
+def test_stage_one_runs_in_a_child_that_answers_what_this_process_would(monkeypatch):
+    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
+    got = cps.isolated(_square_in_child, 7)
+    assert got["value"] == 49 and got["pid"] != os.getpid()
+    # inside the child everything solves inline: no grandchildren
+    assert got["in_child"] is True and got["nested"] == "off"
+    assert cps._IN_CHILD is False
+    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "0")
+    assert cps.isolated(_square_in_child, 7)["pid"] == os.getpid()
+
+
+def test_a_child_that_raises_is_run_here_so_the_caller_sees_what_it_always_did(monkeypatch):
+    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
+    with pytest.raises(ValueError, match="the same error here"):
+        cps.isolated(_boom)
+
+
+def test_a_child_past_its_time_is_killed_and_said_never_rerun_here(monkeypatch):
+    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
+    t0 = time.monotonic()
+    with pytest.raises(cps.IsolatedKilled, match="wall clock"):
+        cps.isolated(_sleep_forever, timeout=0.3)
+    assert time.monotonic() - t0 < 10
+
+
 # ── SCALE-19: work scaled to the model, never below what was stated ──────────
 
 def test_the_work_budget_scales_with_the_model_and_never_falls_below_the_stated_one(monkeypatch):
