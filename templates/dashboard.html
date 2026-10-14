@@ -11265,8 +11265,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-weekhead #sched-week-label{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:500;color:var(--ink)!important}
 .ss .swg-t{--swg-name:190px;--swg-min:108px}
 .ss .swg-c{min-height:54px}
-.ss .swg-chip{padding:8px 9px}
-.ss .swg-chip .t{font-size:13px}
+.ss .swg-chip,.ss .swg-c .swg-add{padding:8px 9px}
+.ss .swg-chip .t,.ss .swg-add .t{font-size:13px}
+/* The add box takes the chip's box exactly, so in a row it lines up with the shifts beside it: the Studio's
+   larger padding and time, and none of the button lift (.cbtn:hover moves 1px up, and the box only shows on hover). */
+.swg-c .swg-add,.swg-c .swg-add:hover,.swg-c .swg-add:active{transform:none;letter-spacing:normal}
 .ss-rtabs{display:flex;gap:4px;padding:12px 0 6px;position:sticky;top:0;background:var(--surface);z-index:2}
 .ss-rtabs button{border:0;background:none;border-radius:999px;padding:6px 13px;font:inherit;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .ss-rtabs button.on{background:var(--hb-tint2);color:var(--ember)}
