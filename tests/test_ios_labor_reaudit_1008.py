@@ -29,7 +29,12 @@ def test_the_scorecard_labor_tile_is_over_at_any_amount_above_target():
 
 def test_a_queued_publish_is_decoded_and_never_read_as_sent():
     s = _src("PublishScheduleSheet.swift")
-    for key in ('case actionId = "action_id"', 'case undoMinutes = "undo_minutes"', "case ok, sent, unreachable, failed, error, status, acknowledged, note, version, queued"):
+    # `status` is no longer read as a String (the server sends the share
+    # list there; re-audit 10/11/26 BUGSLIFE-21) — `sending` and `delivery`
+    # are, so the rest still going out is said.
+    for key in ('case actionId = "action_id"', 'case undoMinutes = "undo_minutes"',
+                "case ok, sent, unreachable, failed, error, acknowledged, note, version, queued, sending, delivery",
+                'case portalOnly = "portal_only"', 'case staffChangesUndone = "staff_changes_undone"'):
         assert key in s
     assert "var hasSent: Bool { lastResult?.ok == true && lastResult?.queued != true }" in s
     assert "client.undoQueuedAction(id)" in s

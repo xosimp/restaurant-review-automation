@@ -1469,6 +1469,9 @@ struct ProposalCard: View {
     @State private var doneNote: String?
     /// The route's warning beside its ok (the web's `d.warning`).
     @State private var doneWarning: String?
+    /// The "I read: …" readings the owner unticked (AI-25): left out of the
+    /// rules this week holds — preferences only.
+    @State private var declinedRules: Set<Int> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1512,6 +1515,27 @@ struct ProposalCard: View {
                 }
             }
 
+            // The rules the draft will HOLD, read from the owner's own words
+            // this turn (blind re-audit 10/11/26 AI-25): each "I read: …"
+            // confirmed on its own — unticked, it is only aimed for.
+            if let rules = proposal.rulesRead, !rules.isEmpty {
+                VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                    CavnarKicker("Held as rules for this week")
+                    ForEach(Array(rules.enumerated()), id: \.offset) { i, r in
+                        Toggle(isOn: Binding(get: { !declinedRules.contains(i) },
+                                             set: { on in if on { declinedRules.remove(i) } else { declinedRules.insert(i) } })) {
+                            CavnarMixedText(r.readsAs.isEmpty ? (r.quote ?? "") : r.readsAs, role: .secondary,
+                                            color: .cavnarInk)
+                        }
+                        .tint(Color.cavnarEmber)
+                        .frame(minHeight: 44)
+                        .disabled(phase == .done || phase == .working)
+                    }
+                    Text("Untick one to leave it as something the draft only aims for.")
+                        .cavnarText(.caption)
+                }
+            }
+
             switch phase {
             case .done:
                 // A teammate's goal waits for the owner (M2): said, not
@@ -1537,7 +1561,9 @@ struct ProposalCard: View {
                     Button {
                         Task {
                             phase = .working
-                            let ok = await viewModel?.confirm(proposal) ?? false
+                            var confirmed = proposal
+                            confirmed.declinedRules = declinedRules
+                            let ok = await viewModel?.confirm(confirmed) ?? false
                             failure = ok ? nil : viewModel?.errorBanner
                             doneNote = ok ? viewModel?.lastConfirmNote : nil
                             doneWarning = ok ? viewModel?.lastConfirmWarning : nil

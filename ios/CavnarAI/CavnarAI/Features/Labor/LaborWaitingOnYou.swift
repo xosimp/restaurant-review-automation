@@ -109,6 +109,13 @@ struct LaborWaitingOnYou: View {
             .sheet(item: $choosingCover) { req in
                 ReplacementPickerSheet(viewModel: setupViewModel, request: req)
             }
+            // An Approve the server refused because it leaves no manager on
+            // the floor (409 needs_cover, STRESS-16): who runs it instead.
+            // The cover picker asks it in place, so only when it is shut.
+            .sheet(item: Binding(get: { choosingCover == nil ? setupViewModel.needsCover : nil },
+                                 set: { if $0 == nil { setupViewModel.needsCover = nil } })) { need in
+                NeedsCoverSheet(viewModel: setupViewModel, need: need)
+            }
             .confirmationDialog(confirmingDeny?.title ?? "Deny this request?",
                                 isPresented: Binding(get: { confirmingDeny != nil },
                                                      set: { if !$0 { confirmingDeny = nil } }),

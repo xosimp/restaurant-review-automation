@@ -187,12 +187,13 @@ def test_settings_the_rules_could_not_read_are_named_in_the_gate(db_path, rid, m
     monkeypatch.setattr(sr, "_person_settings", _broken)
     hid = _history(db_path, rid, CLEAN)
     blockers = client_api.publish_review(rid, hid)["blockers"]
-    # Each blocker also carries its override record (kind, hard, overridden_before — TRUST-28).
+    # Each blocker also carries its override record (kind, demotable, overridden_before — TRUST-28;
+    # `demotable` was `hard` until the re-audit's TRUST-24: it is not the tier).
     assert {"key": "input:settings:bob",
             "text": "Settings for Bob couldn't be read — fix them in Team; this week wasn't checked against "
                     "their rules"} in [{"key": b["key"], "text": b["text"]} for b in blockers]
     bob = next(b for b in blockers if b["key"] == "input:settings:bob")
-    assert bob["kind"] == "input:settings" and bob["hard"] is True
+    assert bob["kind"] == "input:settings" and bob["demotable"] is False and "hard" not in bob
     assert client_api._input_problem_text({"source": "time off"}) == \
         "Time off couldn't be read, so approved days off weren't checked"
     assert client_api._input_problem_text({"source": "something new"}) == \

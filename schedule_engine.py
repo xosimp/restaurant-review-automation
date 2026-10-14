@@ -1770,6 +1770,11 @@ def _soft_fail(what, exc, restaurant_id):
 # the review's one line about what the draft was made without (P-17). An
 # input not named here reads as its own name.
 _INPUT_WORDS = {
+    # The sales the crew was sized on, said beside Home's (ARCH-28), and how
+    # long the restaurant's people usually work a day (STRESS-14).
+    "forecast basis": "which sales forecast the week was sized on",
+    "shift length norms": "how long your people usually work a day",
+    "length_norms": "how long your people usually work a day",
     # The closing manager's assumed stay, said and priced (TRUST-21).
     "assumed stays": "the closing manager's assumed stay",
     # The owner's pinned shifts a regenerate keeps (TRUST-17), and the standby
@@ -2791,6 +2796,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue_source_words(result.get("revenue_basis"), revenue.get("source"))
+    # The sales the crew was sized on, beside the week's stated revenue and
+    # what Home and the nightly report state for the same days (blind
+    # re-audit 10/11/26 ARCH-28) — one sentence, kept with the draft.
+    try:
+        import schedule_economics as _econ_fb
+        result["forecast_basis"] = _econ_fb.forecast_basis(date_demand, result.get("projected_revenue"),
+                                                           result.get("projected_revenue_source"))
+    except Exception as _fbx:
+        _soft_fail("forecast basis", _fbx, restaurant_id)
+        result["forecast_basis"] = None
     # Where a cut measurably went worse here, for the optimizer (memory
     # audit 9/29/26, "what_worked").
     result["learned_worse"] = learned_worse_levers(restaurant_id)
@@ -7633,6 +7648,27 @@ def load_ledger(restaurant_id, before: str, weeks: int = LOAD_LEDGER_WEEKS) -> d
     return out
 
 
+LENGTH_NORM_WEEKS = 8
+
+
+def length_norms_for(restaurant_id, before: str, families=None, weeks: int = LENGTH_NORM_WEEKS) -> dict:
+    """shift_quality.length_norms over the restaurant's punched shifts in the
+    `weeks` before `before` (shift_facts.person_rows) — what its people in
+    each role actually work a day (STRESS-14). {} on any failure (shift
+    length then judges against its default)."""
+    from datetime import datetime as _dt, timedelta as _td
+    import shift_facts as _sf
+    import shift_quality as _sq
+    try:
+        start = (_dt.strptime(str(before)[:10], "%Y-%m-%d") - _td(weeks=int(weeks))).strftime("%Y-%m-%d")
+        end = (_dt.strptime(str(before)[:10], "%Y-%m-%d") - _td(days=1)).strftime("%Y-%m-%d")
+        rows = _sf.person_rows(restaurant_id, since=start, until=end) or []
+    except Exception as _lx:
+        _soft_fail("length_norms", _lx, restaurant_id)
+        return {}
+    return _sq.length_norms(rows, families)
+
+
 def _breach_dayparts(v: dict, row: dict = None) -> list:
     """The dayparts a hard breach is about: a floor's own daypart, the
     stretch an unmanaged gap covers, else the row's."""
@@ -7945,6 +7981,17 @@ def _quality_signals(restaurant_id, result, **extra):
             signals["last_published_rows"] = _versions.rows_from_csv(_lp.get("schedule_csv") or "") if _lp else None
     except Exception as _sx:
         _soft_fail("last published week", _sx, restaurant_id)
+    # How long this restaurant's people work a day, per role (blind re-audit
+    # 10/11/26 STRESS-14): Shift Quality's shift-length norm, from the
+    # punches of the LENGTH_NORM_WEEKS before the week.
+    try:
+        _first_n = (_sig_week or [None])[0]
+        if _first_n:
+            signals["length_norms"] = frozen_read(
+                ("length_norms", restaurant_id, _first_n),
+                lambda: length_norms_for(restaurant_id, _first_n, (c.role_families if c is not None else None)))
+    except Exception as _sx:
+        _soft_fail("shift length norms", _sx, restaurant_id)
     try:
         signals["experienced"] = frozen_read(("experienced", restaurant_id),
                                              lambda: _staff.experienced_names(restaurant_id))

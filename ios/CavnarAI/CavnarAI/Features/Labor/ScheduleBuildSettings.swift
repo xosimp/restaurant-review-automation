@@ -182,6 +182,74 @@ final class ScheduleBuildSettings {
         }
     }
 
+    // MARK: Readings the owner confirms or sets aside (blind re-audit 10/11/26)
+
+    private struct DismissBody: Encodable { let text: String; let dismissed: Bool }
+    private struct TypedBody: Encodable {
+        let rule: [String: LooseValue]
+        let sourceText: String
+        let scope: String
+        let weekStart: String
+        enum CodingKeys: String, CodingKey {
+            case rule, scope
+            case sourceText = "source_text"
+            case weekStart = "week_start"
+        }
+    }
+    private struct WaiverBody: Encodable {
+        let sourceText: String
+        let scope: String
+        let weekStart: String
+        enum CodingKeys: String, CodingKey {
+            case scope
+            case sourceText = "source_text"
+            case weekStart = "week_start"
+        }
+    }
+
+    /// "Not what I meant" (AI-10): Cavnar AI's reading of the sentence is
+    /// neither held nor proposed — the sentence is guidance. `dismissed:
+    /// false` shows the reading again. Nil when saved, else why not.
+    func setReadingDismissed(_ text: String, dismissed: Bool) async -> String? {
+        await post("/mobile/api/labor/note-rules/dismiss", DismissBody(text: text, dismissed: dismissed),
+                   key: "dismiss:\(text)",
+                   done: dismissed ? "Set aside \u{2014} the draft reads it as guidance only" : "The reading is back")
+    }
+
+    /// The owner confirms one typed reading ("I read: …") — a rule from now
+    /// on, or for the week of `week_of` only (owner_rules.confirm, RM-9).
+    func confirmTyped(_ reading: NoteSentence.TypedReading, source: String, everyWeek: Bool) async -> String? {
+        await post("/mobile/api/labor/note-rules/typed",
+                   TypedBody(rule: reading.rule, sourceText: source, scope: everyWeek ? "every" : "week",
+                             weekStart: noteRules?.weekOf ?? ""),
+                   key: "typed:\(source)", done: "Rule made \u{2014} every draft is checked against it")
+    }
+
+    /// The owner confirms a note lets a standing position off (BUGSGEN-4):
+    /// until then the position is staffed.
+    func confirmWaiver(source: String, everyWeek: Bool) async -> String? {
+        await post("/mobile/api/labor/note-rules/waiver",
+                   WaiverBody(sourceText: source, scope: everyWeek ? "every" : "week", weekStart: noteRules?.weekOf ?? ""),
+                   key: "waiver:\(source)", done: "Allowance made \u{2014} the draft lets it off as your note says")
+    }
+
+    private func post<B: Encodable>(_ path: String, _ body: B, key: String, done: String) async -> String? {
+        saving = key
+        defer { saving = nil }
+        do {
+            let r: RuleResponse = try await client.send(path, method: .post, body: body)
+            guard r.ok else { return r.error ?? "Couldn\u{2019}t save that." }
+            status = done
+            Haptic.success()
+            await loadNoteRules(weekStart: noteRules?.weekOf)
+            return nil
+        } catch let e as APIClient.APIError {
+            return e.message
+        } catch {
+            return "Couldn\u{2019}t save that."
+        }
+    }
+
     // MARK: The automation
 
     func setAutoDraft(_ on: Bool) async {
@@ -440,11 +508,77 @@ struct GenerateScheduleSheet: View {
     /// Dismisses this sheet, then generates (asking first over unsaved edits).
     let onGenerate: () -> Void
     @State private var showingNotes = false
+    /// "Is this what you meant?" (blind re-audit 10/11/26 AI-7, contract
+    /// #6): the rules Cavnar AI reads from the owner's words for this draft,
+    /// said back BEFORE it is generated — ticked ones are held as rules for
+    /// this week (`confirm_rules`); unticked ones are preferences only.
+    @State private var readings: [LaborViewModel.InstructionReading]?
+    @State private var ticked: Set<Int> = []
+    @State private var reading = false
+
+    private func press() {
+        Haptic.medium()
+        let words = viewModel.generateInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty, readings == nil else {
+            go()
+            return
+        }
+        reading = true
+        Task {
+            let got = await viewModel.readInstruction()
+            reading = false
+            // Nothing read as a rule (or the read failed): the draft goes,
+            // and every word of the instruction is a preference only.
+            if got.readings.isEmpty {
+                viewModel.confirmRules = []
+                onGenerate()
+            } else {
+                ticked = []
+                readings = got.readings
+            }
+        }
+    }
+
+    private func go() {
+        viewModel.confirmRules = (readings ?? []).filter { ticked.contains($0.id) && !$0.confirmed }.map(\.rule)
+        onGenerate()
+    }
+
+    private func confirmStep(_ items: [LaborViewModel.InstructionReading]) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            CavnarKicker("Before Cavnar AI drafts")
+            Text("Is this what you meant?").cavnarText(.headline)
+            Text("Tick each one to hold it as a rule for this week. Anything you leave unticked, the draft only aims for.")
+                .cavnarText(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(items) { item in
+                Toggle(isOn: Binding(get: { item.confirmed || ticked.contains(item.id) },
+                                     set: { on in if on { ticked.insert(item.id) } else { ticked.remove(item.id) } })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        CavnarMixedText(item.readsAs, role: .body, color: .cavnarInk)
+                        if item.confirmed { Text("Already a rule this week").cavnarText(.caption) }
+                    }
+                }
+                .tint(Color.cavnarEmber)
+                .disabled(item.confirmed)
+                .frame(minHeight: 44)
+            }
+            Button {
+                readings = nil
+                ticked = []
+            } label: { Text("Change what I typed").frame(maxWidth: .infinity) }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+        }
+        .cavnarCard()
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: CavnarSpace.l) {
+                    if let items = readings {
+                        confirmStep(items)
+                    }
                     VStack(alignment: .leading, spacing: CavnarSpace.s) {
                         CavnarKicker("Which week")
                         GenerateWeekPicker(viewModel: viewModel)
@@ -466,19 +600,24 @@ struct GenerateScheduleSheet: View {
                              ? "Off for this week until newer sales arrive." : nil,
                              noteTone: .warning) {
                 Button {
-                    Haptic.medium()
-                    onGenerate()
+                    press()
                 } label: {
                     HStack(spacing: CavnarSpace.xs) {
-                        Image(systemName: "sparkles").font(.cavnar(.secondary))
-                        Text(title)
+                        if reading {
+                            CavnarShimmerText(text: "Reading what you typed\u{2026}")
+                        } else {
+                            Image(systemName: "sparkles").font(.cavnar(.secondary))
+                            Text(readings == nil ? title : "Generate")
+                        }
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.generateBlocked
-                                                      || viewModel.isGeneratingSchedule))
-                .disabled(viewModel.generateBlocked || viewModel.isGeneratingSchedule)
+                                                      || viewModel.isGeneratingSchedule || reading))
+                .disabled(viewModel.generateBlocked || viewModel.isGeneratingSchedule || reading)
             }
+            // A changed instruction is read again.
+            .onChange(of: viewModel.generateInstruction) { _, _ in readings = nil; ticked = [] }
             .accountSheetChrome("Generate a week")
         }
         .presentationDetents([.large])
@@ -499,6 +638,8 @@ struct ScheduleNotesSheet: View {
     @State private var seeded = false
     @State private var ruleFor: RuleTarget?
     @State private var removing: NoteRule?
+    /// What a reading's tap said back, by sentence (a refusal).
+    @State private var rowNotes: [String: String] = [:]
 
     struct RuleTarget: Identifiable {
         let id: Int
@@ -615,23 +756,18 @@ struct ScheduleNotesSheet: View {
             ruleRow(source: s.text, words: s.enforced ?? rule?.words ?? "", stale: s.stale ?? rule?.stale,
                     rule: rule ?? NoteRule(id: id, words: s.enforced ?? ""), canEdit: canEdit)
         } else {
-            let (tone, head, body): (Color, String, String) = {
-                switch s.kind {
-                case "rule": return (.cavnarEmber2, "Cavnar AI can hold this as a minimum.",
-                                     (s.why.map { $0 + " " } ?? "") + "Until you make it a rule, the draft only aims for it.")
-                case "unchecked": return (.cavnarAmber, "Not checked.",
-                                          (s.why ?? "") + " The draft aims for it; check the draft against it yourself.")
-                case "person": return (.cavnarAmber, "About one person.", s.why ?? "")
-                default: return (.cavnarInk3, "Guidance.", "The draft aims for it; nothing checks it.")
-                }
-            }()
+            let (tone, head, body) = Self.rowWords(s)
             VStack(alignment: .leading, spacing: 6) {
                 HomeMixedText.make("\u{201C}\(s.text)\u{201D}", size: CavnarType.secondary, weight: 600, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 (Text(head + " ").font(.cavnarBody(CavnarType.caption, weight: 700)).foregroundStyle(tone)
                  + Text(body).font(.cavnar(.caption)).foregroundStyle(Color.cavnarInk2))
                     .fixedSize(horizontal: false, vertical: true)
-                if canEdit, s.kind == "rule" || s.kind == "unchecked" {
+                readingActions(s, canEdit: canEdit)
+                if let note = rowNotes[s.text] {
+                    CavnarMixedText(note, role: .caption, color: .cavnarRedText)
+                }
+                if canEdit, !s.dismissed, s.typed.isEmpty, s.kind == "rule" || s.kind == "unchecked" {
                     Button {
                         Haptic.light()
                         ruleFor = RuleTarget(id: s.id, source: s.text,
@@ -649,6 +785,109 @@ struct ScheduleNotesSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.03)))
         }
+    }
+
+    /// The row's tone, its head and its line — every sentence not held as a
+    /// rule says it is NOT enforced (blind re-audit 10/11/26 AI-10: an owner
+    /// believed "Always 2 bartenders Friday night" was a rule), as the web's
+    /// rows do.
+    static func rowWords(_ s: NoteSentence) -> (Color, String, String) {
+        if s.dismissed {
+            return (.cavnarInk3, "Not enforced.",
+                    "You set Cavnar AI\u{2019}s reading aside, so the draft reads it as guidance only.")
+        }
+        if s.kind == "waiver" {
+            return s.confirmed
+                ? (.cavnarGreen, "Allowance in force:", s.why ?? "")
+                : (.cavnarAmber, "Not applied yet \u{2014} the position is staffed.",
+                   "Cavnar AI reads it as: " + (s.why ?? ""))
+        }
+        if !s.typed.isEmpty {
+            return (.cavnarEmber2, "Not enforced yet.",
+                    "Cavnar AI reads it as below \u{2014} until you make it a rule, the draft only treats it as a preference.")
+        }
+        switch s.kind {
+        case "rule": return (.cavnarEmber2, "Not enforced yet \u{2014} Cavnar AI can hold this as a minimum.",
+                             (s.why.map { $0 + " " } ?? "") + "Until you make it a rule, the draft only aims for it.")
+        case "unchecked": return (.cavnarAmber, "Not enforced.",
+                                  (s.why ?? "") + " The draft aims for it; check the draft against it yourself.")
+        case "person": return (.cavnarAmber, "About one person.", s.why ?? "")
+        default: return (.cavnarInk3, "Not enforced \u{2014} guidance.", "The draft aims for it; nothing checks it.")
+        }
+    }
+
+    /// Each typed reading with its Confirm (every week, or the picked week
+    /// only), "Not what I meant" to set the reading aside, "Show the reading
+    /// again" for one set aside, and a waiver's "Let it off as it says".
+    @ViewBuilder
+    private func readingActions(_ s: NoteSentence, canEdit: Bool) -> some View {
+        let busy = settings.saving != nil
+        let week = settings.noteRules?.weekOf.map { CavnarDate.mdy($0) }
+        if s.dismissed {
+            if canEdit {
+                textButton("Show the reading again", busy: busy) {
+                    rowNotes[s.text] = await settings.setReadingDismissed(s.text, dismissed: false)
+                }
+            }
+        } else if s.kind == "waiver" {
+            if canEdit && !s.confirmed {
+                HStack(spacing: CavnarSpace.xs) {
+                    Button {
+                        Task { rowNotes[s.text] = await settings.confirmWaiver(source: s.text, everyWeek: true) }
+                    } label: { Text("Let it off as it says").frame(maxWidth: .infinity) }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
+                    .disabled(busy)
+                    if let week {
+                        Button {
+                            Task { rowNotes[s.text] = await settings.confirmWaiver(source: s.text, everyWeek: false) }
+                        } label: { Text("Week of \(week) only").frame(maxWidth: .infinity) }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .disabled(busy)
+                    }
+                }
+            }
+        } else if !s.typed.isEmpty {
+            ForEach(s.typed) { reading in
+                VStack(alignment: .leading, spacing: 6) {
+                    CavnarMixedText(reading.line, role: .secondary, color: .cavnarInk)
+                    if canEdit {
+                        HStack(spacing: CavnarSpace.xs) {
+                            Button {
+                                Task { rowNotes[s.text] = await settings.confirmTyped(reading, source: s.text, everyWeek: true) }
+                            } label: { Text("Confirm \u{00B7} every week").frame(maxWidth: .infinity) }
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: busy))
+                            .disabled(busy)
+                            if let week {
+                                Button {
+                                    Task { rowNotes[s.text] = await settings.confirmTyped(reading, source: s.text, everyWeek: false) }
+                                } label: { Text("Week of \(week) only").frame(maxWidth: .infinity) }
+                                .buttonStyle(CavnarSecondaryButtonStyle())
+                                .disabled(busy)
+                            }
+                        }
+                    }
+                }
+            }
+            if canEdit {
+                textButton("Not what I meant", busy: busy) {
+                    rowNotes[s.text] = await settings.setReadingDismissed(s.text, dismissed: true)
+                }
+            }
+        }
+    }
+
+    private func textButton(_ title: String, busy: Bool, _ run: @escaping () async -> Void) -> some View {
+        Button {
+            Haptic.light()
+            Task { await run() }
+        } label: {
+            Text(title)
+                .font(.cavnarBody(CavnarType.secondary, weight: 700))
+                .foregroundStyle(Color.cavnarEmber2)
+                .cavnarHitTarget()
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
     }
 
     private func ruleRow(source: String?, words: String, stale: String?, rule: NoteRule, canEdit: Bool) -> some View {

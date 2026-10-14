@@ -272,6 +272,7 @@ enum StaffTodayPlan {
             if let role = leg.role, !role.isEmpty { parts.append(role) }
             if let station = leg.station, !station.isEmpty { parts.append("on \(station)") }
             if let section = leg.section, !section.isEmpty { parts.append("\(section) section") }
+            if let pill = leg.commitmentPill { parts.append(pill.word) }
             if let h = leg.hoursLabel { parts.append(h.replacingOccurrences(of: "hrs", with: "hours")
                                                         .replacingOccurrences(of: "hr", with: "hour")) }
             if let r = leg.request { parts.append(r.detail.trimmingCharacters(in: CharacterSet(charactersIn: "."))) }
@@ -416,7 +417,19 @@ extension StaffTodayPlan {
         let times = legs.map { $0.timeRange.isEmpty ? "Time to be set" : $0.timeRange }
             .joined(separator: " + ")
         let role = legs.compactMap(\.role).first(where: { !$0.isEmpty })
-        return [times, role].compactMap { $0 }.joined(separator: " \u{00B7} ")
+        return [times, role, firmnessWord(legs)].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// "Tentative" / "Likely" on the day's one line when a leg is not firm
+    /// (commitment_ladder, MARKET-27; schedule re-audit 10/11/26 TRUST-32):
+    /// a tentative event-night shift must not read as firm until it is
+    /// tapped open. A firm day says nothing extra — the pill says it on the
+    /// open day. The least firm leg wins.
+    static func firmnessWord(_ legs: [StaffShift]) -> String? {
+        let levels = legs.compactMap(\.commitment)
+        if levels.contains("tentative") { return "Tentative" }
+        if levels.contains("likely") { return "Likely" }
+        return nil
     }
 
     /// Whether a day has more than its one line to show on a tap: a

@@ -145,6 +145,8 @@ final class CommandSheetViewModel {
     // MARK: Inline answers
 
     private struct DecideBody: Encodable { let decision: String }
+    // swiftlint:disable:next identifier_name
+    private struct NeedsCoverFlag: Decodable { var needs_cover: Bool? = nil }
     private struct DecideResult: Decodable {
         let ok: Bool
         let error: String?
@@ -173,7 +175,14 @@ final class CommandSheetViewModel {
                 rowOutcome[item.key] = r.error ?? "That didn't go through."
             }
         } catch let error as APIClient.APIError {
-            rowOutcome[item.key] = error.message
+            // A drop that leaves no manager on the floor is never approved on
+            // a warning (409 needs_cover, STRESS-16): nothing changed, and
+            // the answer — who runs the floor instead — is given on Labor.
+            if error.status == 409, error.decodeBody(NeedsCoverFlag.self)?.needs_cover == true {
+                rowOutcome[item.key] = error.message + " Open Labor to say who runs the floor instead."
+            } else {
+                rowOutcome[item.key] = error.message
+            }
         } catch {}
     }
 

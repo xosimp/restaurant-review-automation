@@ -205,7 +205,10 @@ struct ScheduleReviewPanel: View {
     /// A rule the week breaks, in the server's own words — never its key —
     /// with what Cavnar AI can do about it.
     private func violationRow(_ v: RuleViolation) -> some View {
-        let label = (v.label?.isEmpty == false ? v.label : nil) ?? "A rule this week breaks"
+        // Your own limit, not law (LOGIC-20): said as "Over your limit", a
+        // decision in amber, as the web's review lines say it.
+        let base = (v.label?.isEmpty == false ? v.label : nil) ?? "A rule this week breaks"
+        let label = v.isOverLimit ? "Over your limit \u{2014} " + base : base
         let when = [v.employee, CavnarDate.dayDate(v.day ?? v.date.flatMap { LaborViewModel.weekdayName($0) }, v.date),
                     v.shiftStart].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
         let fix = (review?.fixes ?? []).first { $0.index != nil && $0.index == v.index }

@@ -820,3 +820,95 @@ enum SetupWords {
     /// the web's `cavTimeOptions`.
     static let quarterHours: [String] = (0..<96).map { time(minutes: $0 * 15) }
 }
+
+// MARK: - The manager rules and the shortest shift (schedule re-audit 10/11/26 R)
+
+/// What the rules screen states about who runs the floor and how short a
+/// shift may be, read from GET labor/rules: the shortest shift (contract #2,
+/// `min_shift_hours`, 3h by default), the two manager allowances
+/// (`closing_manager_stays_minutes`, `opening_manager_lead_minutes` — 60
+/// each unless set, 0 off; LOGIC-12) with what the punches show, the
+/// second manager at the rush (`second_manager_from_staff`, else the line
+/// the restaurant's own weeks show; LOGIC-13) and where the roster forces a
+/// run past a limit (STRESS-18). Stated on the phone; set on the web.
+struct ManagerRulesSummary: Equatable {
+    var shortestShiftHours: Double
+    var shortestShiftIsDefault: Bool
+    var closingStayMinutes: Int
+    var openingLeadMinutes: Int
+    var secondManagerFrom: Int?
+    var secondManagerLearned: Bool
+    var learnedLine: String?
+    var structure: [String]
+
+    static let defaultAllowance = 60
+    static let defaultShortestHours = 3.0
+
+    private static func number(_ v: LooseValue?) -> Double? {
+        switch v {
+        case .number(let n)?: return n.isFinite ? n : nil
+        case .string(let s)?: return Double(s.trimmingCharacters(in: .whitespaces))
+        default: return nil
+        }
+    }
+
+    private static func object(_ v: LooseValue?) -> [String: LooseValue] {
+        if case .object(let o)? = v { return o }
+        return [:]
+    }
+
+    init(rules: [String: LooseValue], defaults: [String: LooseValue], structure: LooseValue?,
+         learned: LooseValue?, second: LooseValue?) {
+        let set = Self.number(rules["min_shift_hours"])
+        shortestShiftHours = set ?? Self.number(defaults["min_shift_hours"]) ?? Self.defaultShortestHours
+        shortestShiftIsDefault = set == nil
+        closingStayMinutes = Int(Self.number(rules["closing_manager_stays_minutes"]) ?? Double(Self.defaultAllowance))
+        openingLeadMinutes = Int(Self.number(rules["opening_manager_lead_minutes"]) ?? Double(Self.defaultAllowance))
+        let sm = Self.object(second)
+        secondManagerFrom = Self.number(sm["from"]).map { Int($0) }.flatMap { $0 > 0 ? $0 : nil }
+        if case .string(let b)? = sm["basis"] { secondManagerLearned = b == "history" } else { secondManagerLearned = false }
+        var notes: [String] = []
+        if case .list(let l)? = structure {
+            for item in l {
+                if case .string(let t)? = Self.object(item)["text"], !t.isEmpty { notes.append(t) }
+            }
+        }
+        self.structure = notes
+        let lr = Self.object(learned)
+        var parts: [String] = []
+        if let m = Self.number(Self.object(lr["closing_stay"])["minutes"]) {
+            parts.append("your closing manager is usually out \(Int(m)) min after the last person")
+        }
+        if let m = Self.number(Self.object(lr["opening_lead"])["minutes"]), m > 0 {
+            parts.append("prep starts before a manager who is in \(Int(m)) min before open")
+        }
+        learnedLine = parts.isEmpty ? nil : "From your punches: " + parts.joined(separator: "; ") + "."
+    }
+
+    /// "3h shortest shift (the default)".
+    var shortestLine: String {
+        let h = shortestShiftHours == shortestShiftHours.rounded() ? String(Int(shortestShiftHours))
+                                                                   : String(format: "%.1f", shortestShiftHours)
+        return "No shift shorter than \(h)h" + (shortestShiftIsDefault ? " (the default)" : "")
+    }
+
+    /// The two allowances in words; "off" at 0.
+    var closingLine: String {
+        closingStayMinutes > 0
+            ? "The closing manager may stay up to \(closingStayMinutes) min after the last person leaves"
+            : "The closing manager leaves with the last person"
+    }
+
+    var openingLine: String {
+        openingLeadMinutes > 0
+            ? "Prep before an opening manager who is in \(openingLeadMinutes) min before open is fine"
+            : "A manager is on from the first prep shift"
+    }
+
+    /// "A second manager once 9 or more are on — your own weeks run two
+    /// from there"; nil when the line is off.
+    var secondManagerLine: String? {
+        guard let n = secondManagerFrom else { return nil }
+        return "A second manager once \(n) or more are on" + (secondManagerLearned ? " \u{2014} your own weeks run two managers from there" : "")
+    }
+}

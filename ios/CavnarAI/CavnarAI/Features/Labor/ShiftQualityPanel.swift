@@ -85,6 +85,12 @@ struct ShiftQualityPanel: View {
                 HomeMixedText.make(held, size: CavnarType.secondary, weight: 600, color: .cavnarAmber)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // How much of the score was measured, and what withdrew
+            // (LOGIC-15): the band the server gave is held by it.
+            if let measured = quality.measured?.line {
+                HomeMixedText.make(measured, size: CavnarType.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // The verdict's one next move: the top recommendation, and the
             // ratings that would sharpen the score (Improve).
             if onRecommendation != nil, let recs = quality.recommendations, !recs.isEmpty {
@@ -98,8 +104,11 @@ struct ShiftQualityPanel: View {
                 if let optimizer = viewModel?.scheduleResult?.optimizerSummary, optimizer.hasContent {
                     optimizerBlock(optimizer)
                 }
-                if let reason = viewModel?.scheduleResult?.gate?.reason, viewModel?.scheduleResult?.gate?.ran == true {
-                    HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk2)
+                // The quality gate's verdict — and, when it was owed but
+                // skipped or failed, why (BUGSGEN-16), as the web says it.
+                if let gate = viewModel?.scheduleResult?.gate, let reason = gate.line {
+                    HomeMixedText.make(reason, size: CavnarType.caption,
+                                       color: gate.ran ? .cavnarInk2 : .cavnarAmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let dimensions = customerDimensions, !dimensions.isEmpty {
@@ -1150,6 +1159,23 @@ struct ShiftQualityPanel: View {
         case "preferences", "staff_preferences":
             let misses = (f["misses"]?.arrayValue?.count ?? 0) + (f["learned_misses"]?.arrayValue?.count ?? 0)
             if misses > 0 { out.append("\(misses) staff preference\(misses == 1 ? "" : "s") not kept") }
+        case "shift_length":
+            // Each day longer than the restaurant's own long day for the
+            // role (blind re-audit 10/11/26 STRESS-14), the longest first.
+            for d in (f["long"]?.arrayValue ?? []).prefix(3) {
+                guard let o = d.objectValue, let n = o["name"]?.stringValue else { continue }
+                let h = o["hours"]?.doubleValue.map { String(format: "%g", $0) } ?? ""
+                let lim = o["limit"]?.doubleValue.map { String(format: "%g", $0) } ?? ""
+                let day = o["date"]?.stringValue.map(CavnarDate.mdy) ?? ""
+                out.append("\(n) \(day): \(h)h, past the \(lim)h long day")
+            }
+            // A manager far past their own usual week: said, never scored
+            // (owners' and salaried managers' hours are their own).
+            for m in f["manager_load"]?.arrayValue ?? [] {
+                guard let o = m.objectValue, let n = o["name"]?.stringValue,
+                      let h = o["hours"]?.doubleValue, let u = o["usual"]?.doubleValue else { continue }
+                out.append("\(n): \(String(format: "%g", h))h this week against their usual \(String(format: "%g", u))h \u{2014} said, not scored")
+            }
         default: break
         }
         return Array(out.prefix(4))
