@@ -2449,8 +2449,20 @@ def mobile_get_staff_contacts(current_user):
 @mobile_bp.route("/labor/staff-contacts", methods=["POST"])
 @mobile_login_required
 def mobile_set_staff_contact(current_user):
-    from models import set_staff_contact
+    """Where to reach one member of staff. The address an employee's
+    schedule link and every notice go to, so changing it is a publishing
+    act (schedule re-audit 10/11/26 BUGSLIFE-13): it needs SCHEDULE_PUBLISH
+    (or TEAM_INVITE, the login that manages the team). The Labor view a
+    member login holds let it point an employee's /s/ link, which accepts
+    availability, at itself. Every change is on the change history (who,
+    before, after) and the employee is told at the address they had."""
+    from models import set_staff_contact, get_staff_contacts
     from staff_settings import clean_phone
+    from permissions import has_permission, SCHEDULE_PUBLISH, TEAM_INVITE
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)
+            or has_permission(current_user, TEAM_INVITE)):
+        return jsonify(ok=False, error="Your login can't change where staff are contacted. "
+                                       "Ask whoever sends the schedule."), 403
     data = request.get_json(silent=True) or {}
     name = (data.get("employee_name") or "").strip()
     # A field the form did not send is kept, not erased (MOD-EMP-4).
@@ -2464,9 +2476,35 @@ def mobile_set_staff_contact(current_user):
         phone, perr = clean_phone(data.get("phone"))
         if perr:
             return jsonify(ok=False, error=perr), 400
-    if not set_staff_contact(current_user["restaurant_id"], name, email, phone,
-                             pos_id=(str(data.get("pos_id") or "").strip() or None)):
+    rid = current_user["restaurant_id"]
+    key = " ".join(name.split()).casefold()
+    before = next((c for c in get_staff_contacts(rid) if " ".join(c["employee_name"].split()).casefold() == key), None)
+    if not set_staff_contact(rid, name, email, phone, pos_id=(str(data.get("pos_id") or "").strip() or None)):
         return jsonify(ok=False, error="Couldn't save that contact."), 400
+    after = next((c for c in get_staff_contacts(rid) if " ".join(c["employee_name"].split()).casefold() == key), None)
+    was = {"email": (before or {}).get("email") or "", "phone": (before or {}).get("phone") or ""}
+    now = {"email": (after or {}).get("email") or "", "phone": (after or {}).get("phone") or ""}
+    if was != now:
+        try:
+            import change_log
+            change_log.record(rid, "roster", "contact", was, now, subject=name, user=current_user)
+        except Exception as e:
+            print(f"[staff contact] change history not recorded rid={rid}: {e!r}")
+        # Told at the address they HAD (an email or a text), so a contact
+        # pointed somewhere else is never silent.
+        try:
+            import people
+            changed = [w for w in ("email", "phone") if was[w] != now[w]]
+            what = " and ".join("email address" if w == "email" else "phone number" for w in changed)
+            text = (f"Your {what} for schedule messages was changed by a manager. "
+                    "If you didn't ask for that, tell your manager.")
+            if was["email"] and "email" in changed:
+                people._send_staff_email(rid, was["email"], people._place(rid, None), "Your contact details changed",
+                                         [text])
+            if was["phone"] and "phone" in changed:
+                people._send_staff_text(rid, was["phone"], text)
+        except Exception as e:
+            print(f"[staff contact] employee not told rid={rid}: {e!r}")
     return jsonify(ok=True)
 
 
