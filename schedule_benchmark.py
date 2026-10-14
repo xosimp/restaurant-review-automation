@@ -748,7 +748,12 @@ def _slot_values(spec, need) -> tuple:
         _obj = None
     if _obj is not None and hasattr(_obj, "slot_value") and hasattr(_obj, "ObjectiveContext"):
         try:
-            ctx = _obj.ObjectiveContext.build(spec.get("_rid"), sorted({k[0] for k in need}))
+            # the need itself is the demand the weights are read from (a
+            # busy day's half hour needs more people than a quiet one's)
+            by = {}
+            for (d, t, f), n in need.items():
+                by.setdefault((d, f), {})[int(t)] = int(n)
+            ctx = _obj.ObjectiveContext.build(spec.get("_rid"), sorted({k[0] for k in need}), need=by)
             return {k: float(_obj.slot_value(ctx, k[0], k[1], k[2]) or 0.0) for k in need}, "schedule_objective"
         except Exception as e:                      # never costs the benchmark
             print(f"[benchmark] schedule_objective.slot_value unusable ({e!r}); the stated fallback prices")

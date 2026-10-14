@@ -188,6 +188,15 @@ def _window(c, role, d, day, plan_bounds, stay=0, max_minutes=12 * 60):
     if w.get("latest") is not None:
         hi = min(hi, int(w["latest"]))
     b = plan_bounds.get(d)
+    if not b and plan_bounds and c is not None and not is_24h(c, day):
+        # The plan has no manager on this date: nobody is drafted outside
+        # the open hours, where each minute could only add to the stretch
+        # with no manager (the manager rule outranks the stay and the prep).
+        o, cl = _rules.open_hours(c, day)
+        if o is not None:
+            lo = max(lo, o)
+        if cl is not None:
+            hi = min(hi, cl)
     if b and not (c is not None and is_24h(c, day)):
         # (open around the clock the managers run across the turnover, so a
         # date's own manager rows bound nothing — the manager tier holds it)
