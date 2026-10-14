@@ -196,6 +196,12 @@ SCHEDULE_CALL_SECONDS = int(round(_assumed_call_seconds(CHUNK_ROWS_PER_CALL, eff
 SCHEDULE_POST_MODEL_SECONDS = 240
 SCHEDULE_JOB_MIN_SECONDS = 15 * 60
 SCHEDULE_JOB_MAX_SECONDS = 40 * 60
+# A week drafted in code (the solver — the default source since the blind
+# re-audit of 10/11/26, ARCH-1/ARCH-18 — or carry_forward): no model call is
+# planned, so the job is held to what code takes — the solver's
+# deterministic budget, the repair loop's emergency cap, the score and the
+# save — with room to spare, never the model's 15-40 minutes.
+SCHEDULE_CODE_JOB_SECONDS = int(float(os.getenv("SCHEDULE_CODE_JOB_SECONDS", "") or 10 * 60))
 
 # The generation group's CPU slots (P-39): job_queue.group_concurrency's
 # default (QUEUE_GENERATION_CONCURRENCY), a count of claimed rows across
@@ -335,6 +341,19 @@ class GenerationClock:
         want = int(model) + SCHEDULE_POST_MODEL_SECONDS
         sized = self.started + max(SCHEDULE_JOB_MIN_SECONDS, min(SCHEDULE_JOB_MAX_SECONDS, want))
         if sized > self.deadline:
+            self.deadline = sized
+            self._record()
+        self.model_planned = True
+
+    def plan_code(self) -> None:
+        """Size the deadline for a draft made wholly in code (ARCH-18):
+        SCHEDULE_CODE_JOB_SECONDS from the start, plus any CPU-slot wait
+        excused — shortening the ordinary week's default, but never a
+        deadline a model call was already planned against."""
+        if getattr(self, "model_planned", False):
+            return
+        sized = self.started + SCHEDULE_CODE_JOB_SECONDS + self.excused
+        if sized < self.deadline:
             self.deadline = sized
             self._record()
 
@@ -2720,9 +2739,9 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     )
     # This week's arms, read before the draft (contract #7): where the draft
     # comes from is one of them (schedule_fallback.draft_source — the
-    # SCHEDULE_DRAFT_SOURCE switch, else the draft_v1 arm, else the model).
-    # What the model cannot write is drafted in code from the same facts
-    # (schedule_fallback, AI-11).
+    # SCHEDULE_DRAFT_SOURCE switch, else the draft_v1 arm, else the solver,
+    # ARCH-1). On the model source, what the model cannot write is drafted in
+    # code from the same facts (schedule_fallback, AI-11).
     _arms = []
     try:
         import schedule_experiments as _sx_b
@@ -2737,6 +2756,10 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
                  "roster_roles": {n: r for n, r in roster_pairs}, "week_dates": next_week_dates,
                  "plan_rows": list(manager_plan.get("rows") or []),
                  "plan_dates": list(manager_plan.get("dates") or []),
+                 # The plan itself: the solver-first draft chooses the
+                 # managers inside its solve from the plan's candidates and
+                 # writes what it chose back here (ARCH-23).
+                 "manager_plan": manager_plan,
                  "open_times": constraints.open_times or {}, "close_times": constraints.close_times or {}}
     # The deterministic+critic arm (scheduler audit 10/10/26 AI-8): the
     # solver's week reviewed by the model, each edit validated by code.
@@ -3259,9 +3282,12 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
         return per_date * len(task["dates"]) * share
     if clock is not None:
         # Planned as the calls go out — batches of independent calls at once
-        # (_take_batch), each batch as long as its longest call (AI-4).
-        clock.plan(len(plan), seconds=_planned_model_seconds(
-            plan, lambda t: call_seconds(task_rows(t), costs, contract=contract), parallel_calls()))
+        # (_take_batch), each batch as long as its longest call (AI-4). A
+        # code source plans none (ARCH-18): it makes no call.
+        if ((fallback or {}).get("source") or "model") == "model" and not (
+                (fallback or {}).get("code_redo") and redo is not None):
+            clock.plan(len(plan), seconds=_planned_model_seconds(
+                plan, lambda t: call_seconds(task_rows(t), costs, contract=contract), parallel_calls()))
         # The days the Building screen counts (#36).
         clock.plan_days(want)
     try:
@@ -3320,8 +3346,18 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # A whole week begun before today (BUGSGEN-24) is a week: drafted in
     # code where the model cannot write, its empty days said.
     week_like = redo is None or bool((fallback or {}).get("started_week"))
-    if (week_like and chosen != "model") or code_redo:
+    # A code source never calls the drafting model, on ANY pass (blind
+    # re-audit 10/11/26 BUGSGEN-9): the quality gate's rewrite and an
+    # owner's redo carry dates, and used to send them to the model — a
+    # "solver" week came back with a model-written gate day kept, and the
+    # env switch was no kill switch during an outage or a cost pause.
+    if chosen != "model" or code_redo:
         queue = []
+    if fallback is not None and (chosen != "model" or code_redo) and clock is not None:
+        # The job is sized for what code takes, not for model calls nobody
+        # will make (ARCH-18: a seconds-long solve sat under a 15-40 minute
+        # deadline).
+        clock.plan_code()
     parallel_cap = parallel_calls()
     while queue:
         # The next calls to send together (scheduler audit 10/10/26 AI-4,
@@ -3546,7 +3582,7 @@ def _generate_in_parts(analysis, shifts, roster_pairs, kwargs, fallback=None):
     # owner's rows instead (the caller puts them back); data that is not
     # current is never papered over.
     code_draft = None
-    if fallback is not None and (week_like or code_redo):
+    if fallback is not None and (week_like or code_redo or chosen != "model"):
         import schedule_fallback as _sfb
         if chosen != "model":
             gaps = {d: "chosen" for d in want if d not in {x[0] for x in written if x[0] and x[3] and not x[4]}}
@@ -3805,24 +3841,59 @@ def _critic_scorer(facts, signals, weights):
     return score
 
 
+def code_drafted(result) -> bool:
+    """Whether a generation's result was drafted from a code source (the
+    solver — the default — or carry_forward): every pass after it honours
+    the same source and never calls the drafting model (BUGSGEN-9)."""
+    import schedule_fallback as _sfb
+    ds = (result or {}).get("draft_source") or {}
+    return str(ds.get("chosen") or "") in _sfb.CODE_SOURCES
+
+
+def draft_source_for(restaurant_id, week_start) -> str:
+    """The draft source in force for a restaurant's week: SCHEDULE_DRAFT_
+    SOURCE, else the week's draft_v1 arm, else the solver — what an owner's
+    redo is drafted from before anything is built (BUGSGEN-9). Never raises
+    (the default on a failed read)."""
+    import schedule_fallback as _sfb
+    arms = []
+    try:
+        import schedule_experiments as _sx_d
+        arms = _sx_d.arms_for(restaurant_id, week_start)
+    except Exception as e:
+        _soft_fail("experiment arm", e, restaurant_id)
+    return _sfb.draft_source(restaurant_id, arms)
+
+
 def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
-    """The days `dates` drafted without the model (schedule_fallback): the
-    last published week carried forward, else — or when the "solver"
-    source was chosen — SHIFT REQUIREMENTS shaped on the restaurant's usual
-    shifts and solved. {"rows", "source", "base", "dropped", "unassigned",
-    "why", "line"}, or None when neither could draft a row. Never raises."""
+    """The days `dates` drafted without the model (schedule_fallback), from
+    the code sources in schedule_fallback.code_order: the chosen code source
+    first; on the model source's fallback the SOLVER first (SHIFT
+    REQUIREMENTS shaped and solved against every rule — BUGSGEN-21: the
+    carried week brought last week's breaches with it, 15 hard against the
+    solver's 1 on the same seeded week), the carried week first only where
+    the week has no requirements; the other as the last resort. {"rows",
+    "source", "base", "dropped", "unassigned", "why", "line"}, or None when
+    neither could draft a row. Never raises."""
     import schedule_fallback as _sfb
     rid = fallback.get("restaurant_id")
     c = fallback.get("constraints")
     try:
         rows, dropped, unassigned, used, base = [], [], [], None, {}
-        if chosen in ("model", "carry_forward"):
-            base = _sfb.base_week(rid, fallback.get("week_dates") or dates, shifts)
-            if base:
-                got = _sfb.carry_forward_rows(base, dates, c, fallback.get("roster_names"),
-                                              fallback.get("plan_dates"))
-                rows, dropped, used = got["rows"], got["dropped"], "carry_forward"
-        if not rows:
+        solver_first = None
+        has_reqs = any(int(e.get("required") or 0) > 0 for row in ((facts or {}).get("requirements") or [])
+                       for e in (row.get("roles") or []) if isinstance(e, dict))
+        order = _sfb.code_order(chosen, has_requirements=has_reqs)
+        for source in order:
+            if rows:
+                break
+            if source == "carry_forward":
+                base = base or _sfb.base_week(rid, fallback.get("week_dates") or dates, shifts)
+                if base:
+                    got = _sfb.carry_forward_rows(base, dates, c, fallback.get("roster_names"),
+                                                  fallback.get("plan_dates"))
+                    rows, dropped, used = got["rows"], got["dropped"], "carry_forward"
+                continue
             first = str(sorted(dates)[0])
             since = (_date_of(first) - __import__("datetime").timedelta(days=56)).isoformat()
             hist = list((base or {}).get("rows") or []) + [s for s in shifts or []
@@ -3878,13 +3949,13 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
         reasons = [why.get(d) for d in drafted if why.get(d)]
         main = max(set(reasons), key=reasons.count) if reasons else "other"
         redo = bool(fallback.get("code_redo"))
-        basis = (locals().get("solver_first") or {}).get("stats") if used == "solver" else None
+        basis = (solver_first or {}).get("stats") if used == "solver" else None
         out = {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
                "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
                                                         base if used == "carry_forward" else None, redo=redo,
                                                         basis=basis)}
-        if used == "solver" and locals().get("solver_first"):
-            out["solver"] = solver_explain(locals()["solver_first"])
+        if used == "solver" and solver_first:
+            out["solver"] = solver_explain(solver_first)
         return out
     except Exception as e:
         _soft_fail("code draft", e, rid)

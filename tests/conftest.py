@@ -42,6 +42,13 @@ os.environ.setdefault("LEARNING_HOLDOUT_PCT", "0")
 # client's calls would pass or fail by the dice. Off in the suite; its own
 # tests turn it on with monkeypatch.setenv.
 os.environ.setdefault("AI_SHADOW_REVIEW", "0")
+# The solver is production's draft source (blind re-audit 10/11/26 ARCH-1);
+# the model's draft is an arm. The suite's generation tests drive the model
+# arm's pipeline with a stubbed model answer (labor.generate_optimized_
+# schedule), so the suite runs that arm by default; the tests of the default
+# source, the draft_v1 arms and the benchmark delete or set it themselves
+# (tests/test_sf11_p_pipeline.py, test_sf10_e_fallback.py, schedule_benchmark).
+os.environ.setdefault("SCHEDULE_DRAFT_SOURCE", "model")
 # Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.
