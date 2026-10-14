@@ -138,13 +138,18 @@ def _law(restaurant, key, on=None):
 # ── good-faith estimates ───────────────────────────────────────────────────
 
 def _published_rows(restaurant_id, weeks=12, db_path=None):
+    """[(week_start, rows)] of the weeks staff were SENT — each week's live
+    copy's PUBLISHED rows (models.live_where / live_csv_sql; schedule
+    re-audit 10/11/26 BUGSLIFE-17). It read the working copy of any
+    published row nothing superseded, so an estimate given to a new hire
+    could count a manager's unsent edits as the published schedule."""
     from schedule_versions import rows_from_csv
     since = (date.today() - timedelta(days=7 * weeks)).isoformat()
     conn = get_conn(db_path)
     try:
-        hist = conn.execute("SELECT week_start, schedule_csv FROM schedule_history WHERE restaurant_id=? AND "
-                            "published_at IS NOT NULL AND superseded_by IS NULL AND week_start>=? ORDER BY week_start",
-                            (restaurant_id, since)).fetchall()
+        hist = conn.execute(f"SELECT h.week_start, {_models.live_csv_sql('h')} AS schedule_csv FROM schedule_history h "
+                            f"WHERE h.restaurant_id=? AND {_models.live_where('h')} AND h.week_start>=? "
+                            "ORDER BY h.week_start", (restaurant_id, since)).fetchall()
     finally:
         conn.close()
     return [(h["week_start"], rows_from_csv(h["schedule_csv"] or "")) for h in hist]

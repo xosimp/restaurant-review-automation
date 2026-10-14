@@ -208,15 +208,13 @@ def _published_rows(restaurant_id, day, db_path=None):
     """(rows, history_id) of the published week covering `day`, each row's
     name read as the person it means now (people.canonical_names)."""
     try:
-        from schedule_versions import rows_from_csv
+        import schedule_shifts
         # The live week's published copy and its id from ONE read
-        # (models.live_week_for, ARCH-11): the id used to come from a
-        # second query of its own (the newest published id), which could
-        # name another copy than the rows.
-        w = _models_mod.live_week_for(restaurant_id, date.fromisoformat(str(day)[:10]),
-                                      db_path=db_path or _models_mod.DB_PATH) or {}
-        rows = [r for r in rows_from_csv(w.get("schedule_csv") or "") if (r.get("date") or "")[:10] == str(day)[:10]]
-        hid = w.get("id")
+        # (models.live_week_for, ARCH-11) — the day's shifts from the shift
+        # projection (schedule re-audit 10/11/26 ARCH-7), the week's text
+        # while it has none.
+        rows, hid = schedule_shifts.live_shifts_on(restaurant_id, str(day)[:10],
+                                                   db_path=db_path or _models_mod.DB_PATH)
     except Exception:
         return [], None
     try:
