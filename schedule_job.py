@@ -1797,6 +1797,9 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
         weather=se._json_safe(result.get("weather_forecast")),
         economics={"projected_revenue": result.get("projected_revenue"),
                    "projected_revenue_source": result.get("projected_revenue_source"),
+                   # The sales the crew was sized on and what Home states
+                   # (ARCH-28).
+                   "forecast_basis": se._json_safe(result.get("forecast_basis")),
                    "labor_budget_dollars": result.get("labor_budget_dollars"),
                    # The rate the week was priced at (SQ-6).
                    "blended_rate": result.get("blended_rate"),

@@ -302,6 +302,63 @@ def test_a_fuller_draft_than_last_week_says_over_its_plan():
     assert vp["value"] == -30 and vp["text"].startswith("Over the week of 10/5/26's plan by $30")
 
 
+# ── ARCH-28: the schedule says which forecast it was sized on ───────────────
+
+def test_two_figures_for_one_date_are_reconciled_in_words():
+    import demand_model as dm
+    entry = {"estimator": "trend", "ratio": 1.08, "skill": 0.12, "backtest_n": 70,
+             "quantiles": {0.1: 4600.0, 0.5: 5400.0, 0.9: 6100.0}}
+    rec = dm.reconcile(5400, 5000, entry, "Fri 10/23/26")
+    assert rec["diff_pct"] == 8.0 and rec["estimator"] == "trend" and (rec["low"], rec["high"]) == (4600, 6100)
+    assert rec["text"].startswith("The schedule is sized on $5,400 for Fri 10/23/26 — Home and the nightly report "
+                                  "show $5,000")
+    assert "this restaurant's recent trend" in rec["text"] and "between $4,600 and $6,100" in rec["text"]
+    assert dm.reconcile(5050, 5000, entry) is None          # within 3%: one figure
+    assert dm.reconcile(None, 5000, entry) is None
+
+
+def test_the_week_states_the_figure_the_crew_was_sized_on_beside_the_others():
+    dd = {"2026-10-23": {"projected_sales": 5400, "surface_sales": 5000,
+                         "forecast": {"estimator": "trend", "low": 4600, "high": 6100}, "reconcile": {"text": "x"}},
+          "2026-10-24": {"projected_sales": 6600, "surface_sales": 6000,
+                         "forecast": {"estimator": "trend", "low": 5600, "high": 7400}},
+          "2026-10-25": {"closed": True, "projected_sales": 0}}
+    fb = E.forecast_basis(dd, 11000, "the week's day-by-day projection")
+    assert fb["sized_on"] == 12000 and fb["surface"] == 11000 and fb["stated"] == 11000
+    assert (fb["low"], fb["high"]) == (10200, 13500) and fb["dates"] == ["2026-10-23"]
+    assert fb["text"].startswith("The crew is sized on $12,000 of sales (the weekday's typical night moved by "
+                                 "this restaurant's recent trend")
+    assert "Home and the nightly report add up to $11,000" in fb["text"]
+    assert "the labor % is set against $11,000 (the week's day-by-day projection)" in fb["text"]
+    assert E.forecast_basis({}, 1000) is None
+
+
+def test_date_demand_carries_what_home_states_and_the_reconciliation(db_path, monkeypatch):
+    import math
+    import random
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Trend Bar", owner_email="trend@x.test",
+                                                     timezone="America/Chicago"))
+    today = date(2026, 10, 10)
+    rnd = random.Random(3)
+    c = models.get_conn()
+    for i in range(1, 20 * 7 + 1):
+        d = today - timedelta(days=i)
+        v = 1000 * [1.0, 0.9, 1.0, 1.1, 1.5, 1.7, 1.2][d.weekday()] * math.exp(0.02 * (-i / 7.0)) \
+            * (1 + rnd.gauss(0, 0.04))
+        c.execute("INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales, total_hours, labor_pct) "
+                  "VALUES (?,?,?,?,?,?)", (rid, d.isoformat(), d.strftime("%A"), v, 50, 30))
+    c.commit()
+    c.close()
+    monkeypatch.setattr(E._DemandContext, "surface_sales", lambda self, day: 1400.0)
+    x = E.date_demand(rid, ["2026-10-16"], today=today, db_path=db_path)["2026-10-16"]
+    assert x["surface_sales"] == 1400.0 and x["forecast"]["estimator"] == "trend"
+    assert x["reconcile"]["surface"] == 1400 and x["reconcile"]["sized_on"] == x["projected_sales"]
+    assert "Fri 10/16/26" in x["reconcile"]["text"]
+
+
 # ── LOGIC-15: knowing less never makes a week look better ───────────────────
 
 def test_the_band_is_held_by_the_share_measured():

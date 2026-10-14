@@ -1099,6 +1099,56 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 entry["projected_sales"] = round(bv * (ratio / occasion if occasion else 1.0), 0)
             else:
                 entry["projected_sales"] = round(base * ratio, 0)
+        # The figure every other surface states for this date (demand.
+        # forecast_day, calibrated — Home, the nightly report) beside the one
+        # the schedule is sized on, reconciled in words where they differ
+        # (blind re-audit 10/11/26 ARCH-28).
+        surface = ctx.surface_sales(day)
+        entry["surface_sales"] = surface
+        if entry.get("projected_sales") and surface:
+            import demand_model as _dm_r
+            rec = _dm_r.reconcile(entry["projected_sales"], surface, fcm, f"{wd[:3]} {mdy(d)}")
+            if rec:
+                entry["reconcile"] = rec
+    return out
+
+
+def forecast_basis(date_demand: dict, projected_revenue=None, revenue_source: str = None) -> dict | None:
+    """The week's two sales figures said together (ARCH-28): {"sized_on" (the
+    sum the crew was sized on, date_demand's projected_sales), "surface"
+    (the sum of what Home and the nightly report state, forecast_day's),
+    "stated" (the week's projected revenue the labor % is set against, and
+    its source), "estimator" (the schedule forecast's chosen one), "low",
+    "high" (its 80% range summed, when measured), "dates" (the reconciled
+    ones), "text"} — None without a projected figure. Pure."""
+    dd = {d: x for d, x in (date_demand or {}).items() if isinstance(x, dict) and not x.get("closed")}
+    sized = [float(x["projected_sales"]) for x in dd.values() if x.get("projected_sales")]
+    if not sized:
+        return None
+    surf = [float(x["surface_sales"]) for x in dd.values() if x.get("surface_sales")]
+    ests = [((x.get("forecast") or {}).get("estimator")) for x in dd.values()]
+    est = next((e for e in ests if e), None) or "naive"
+    lows = [(x.get("forecast") or {}).get("low") for x in dd.values()]
+    highs = [(x.get("forecast") or {}).get("high") for x in dd.values()]
+    ranged = all(v for v in lows) and all(v for v in highs) and len(lows) == len(dd)
+    rec_dates = sorted(d for d, x in dd.items() if x.get("reconcile"))
+    out = {"sized_on": round(sum(sized), 0), "surface": round(sum(surf), 0) if len(surf) == len(dd) else None,
+           "stated": round(float(projected_revenue), 0) if projected_revenue else None,
+           "stated_source": revenue_source, "estimator": est,
+           "low": round(sum(float(v) for v in lows), 0) if ranged else None,
+           "high": round(sum(float(v) for v in highs), 0) if ranged else None,
+           "dates": rec_dates, "text": None}
+    est_words = {"trend": "the weekday's typical night moved by this restaurant's recent trend",
+                 "seasonal": "the weekday's typical night moved by how this week ran last year",
+                 "naive": "the weekday's typical night"}.get(est, "the weekday's typical night")
+    bits = [f"The crew is sized on ${out['sized_on']:,.0f} of sales ({est_words}, with each date's own facts"
+            + (f"; 80% range ${out['low']:,.0f}–${out['high']:,.0f}" if ranged else "") + ")"]
+    if out["surface"] and abs(out["surface"] - out["sized_on"]) / out["surface"] * 100 >= 3.0:
+        bits.append(f"Home and the nightly report add up to ${out['surface']:,.0f} for the same days")
+    if out["stated"] and abs(out["stated"] - out["sized_on"]) / out["stated"] * 100 >= 3.0:
+        bits.append(f"the labor % is set against ${out['stated']:,.0f}"
+                    + (f" ({revenue_source})" if revenue_source else ""))
+    out["text"] = "; ".join(bits) + "."
     return out
 
 
@@ -1144,6 +1194,20 @@ class _DemandContext:
 
     def _today(self):
         return self.today or _today_for(self.rid)
+
+    def surface_sales(self, day):
+        """What Home and the nightly report state for `day` (demand.
+        forecast_day with its effects and its calibration), or None."""
+        try:
+            import demand as _demand
+            fc = _demand.forecast_day(self.rid, day, db_path=self.db) or {}
+        except Exception:
+            return None
+        v = fc.get("typical_sales") if fc.get("available") else None
+        try:
+            return round(float(v), 0) if v else None
+        except (TypeError, ValueError):
+            return None
 
     def forecast_effects(self, day):
         try:

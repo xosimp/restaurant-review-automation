@@ -40950,7 +40950,10 @@ window.cavPalette = cavPalette;
     }
     if (n.cost) h += kv('Cost', nt(n.cost.text || ''), '');
     h += kv('Overtime', ot.priced ? (ot.hours ? _schedHrs(ot.hours) + 'h' : '0h') : '—', ot.priced ? (ot.hours ? 'bad' : 'good') : '', nt(ot.text || ''));
-    if (n.forecast_sales) h += kv('Forecast sales', _schedMoney(n.forecast_sales.value), '', nt(n.forecast_sales.basis || ''));
+    // With the figure the crew was sized on and the one Home states, when
+    // they differ (blind re-audit 10/11/26 ARCH-28): the server's sentence.
+    if (n.forecast_sales) h += kv('Forecast sales', _schedMoney(n.forecast_sales.value), '', nt(n.forecast_sales.basis || '')
+      + (n.forecast_sales.reconcile ? '<br>' + nt(n.forecast_sales.reconcile) : ''));
     // Scheduled against scheduled (blind re-audit 10/11/26 TRUST-7).
     var vp = n.vs_last_plan;
     if (vp) h += kv(vp.value != null && vp.value < 0 ? 'Over last week’s plan' : 'Under last week’s plan',

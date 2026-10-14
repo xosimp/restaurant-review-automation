@@ -691,6 +691,13 @@ def _numbers(rid, row, rows, c, dates, quality=None) -> dict:
     if rev:
         out["forecast_sales"] = {"value": round(float(rev)),
                                  "basis": econ.get("projected_revenue_source") or "the forecast this week was built on"}
+        # The figure the crew was sized on and the one Home states, with the
+        # schedule forecast's estimator and range (ARCH-28, additive).
+        fb = econ.get("forecast_basis") or {}
+        if fb:
+            out["forecast_sales"].update(sized_on=fb.get("sized_on"), surface=fb.get("surface"),
+                                         estimator=fb.get("estimator"), low=fb.get("low"), high=fb.get("high"),
+                                         reconcile=fb.get("text"))
     if cost:
         priced = "overtime_hours" in cost
         ot = cost.get("overtime_hours") if priced else None

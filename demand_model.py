@@ -327,6 +327,47 @@ def forecast_dates(restaurant_id, dates, db_path=DB_PATH, today=None) -> dict:
         return {}
 
 
+# The schedule and every other surface (blind re-audit 10/11/26 ARCH-28):
+# Home and the nightly report state demand.forecast_day — the weekday's
+# median with its measured effects, corrected by its own record — while the
+# schedule is sized on this module's chosen estimator (trend or season over
+# the median) with the date's dated facts. Two figures for one Friday, and
+# nothing said. A date whose two figures differ by RECONCILE_MIN_PCT or more
+# carries one sentence naming both, the estimator and why, and its range.
+RECONCILE_MIN_PCT = 3.0
+
+
+def reconcile(sized_on, surface_sales, entry=None, day_label: str = "") -> dict | None:
+    """{"sized_on", "surface", "diff_pct", "estimator", "low", "high", "text"}
+    when the schedule's figure for a date (`sized_on`) and the one every
+    other surface states (`surface_sales`, forecast_day's) differ by
+    RECONCILE_MIN_PCT or more; None otherwise or without both. `entry` the
+    date's forecast_dates entry (estimator, skill, quantiles). Pure."""
+    try:
+        a, b = float(sized_on or 0), float(surface_sales or 0)
+    except (TypeError, ValueError):
+        return None
+    if a <= 0 or b <= 0:
+        return None
+    diff = (a - b) / b * 100.0
+    if abs(diff) < RECONCILE_MIN_PCT:
+        return None
+    e = entry or {}
+    est = e.get("estimator") or "naive"
+    q = e.get("quantiles") or {}
+    low, high = q.get(0.1), q.get(0.9)
+    why = basis_words(e) if est in ("trend", "seasonal") else ""
+    where = f"{day_label} " if day_label else ""
+    text = (f"The schedule is sized on ${a:,.0f} for {where}— Home and the nightly report show ${b:,.0f} "
+            f"(the weekday's typical night with its measured effects). "
+            + (f"The schedule's forecast adds {why}" if why else "The schedule's figure carries the date's own facts")
+            + (f"; 80% of past nights fell between ${float(low):,.0f} and ${float(high):,.0f}." if low and high
+               else "."))
+    return {"sized_on": round(a, 0), "surface": round(b, 0), "diff_pct": round(diff, 1), "estimator": est,
+            "low": round(float(low), 0) if low else None, "high": round(float(high), 0) if high else None,
+            "text": text}
+
+
 def basis_words(entry) -> str:
     """The owner-facing words for what moved a date off its typical night."""
     if not entry:

@@ -2877,6 +2877,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue_source_words(result.get("revenue_basis"), revenue.get("source"))
+    # The sales the crew was sized on, beside the week's stated revenue and
+    # what Home and the nightly report state for the same days (blind
+    # re-audit 10/11/26 ARCH-28) — one sentence, kept with the draft.
+    try:
+        import schedule_economics as _econ_fb
+        result["forecast_basis"] = _econ_fb.forecast_basis(date_demand, result.get("projected_revenue"),
+                                                           result.get("projected_revenue_source"))
+    except Exception as _fbx:
+        _soft_fail("forecast basis", _fbx, restaurant_id)
+        result["forecast_basis"] = None
     # Where a cut measurably went worse here, for the optimizer (memory
     # audit 9/29/26, "what_worked").
     result["learned_worse"] = learned_worse_levers(restaurant_id)
