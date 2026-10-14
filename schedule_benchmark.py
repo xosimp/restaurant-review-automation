@@ -554,6 +554,12 @@ def _write_restaurant(spec, owner_email) -> int:
         cols["salaried_staff_json"] = json.dumps(spec["salaried"])
     if spec["floors"]:
         cols["role_floors_json"] = json.dumps(spec["floors"])
+    if spec["closed_days"] and "compliance_json" not in spec["cols"]:
+        # The archetype's closed weekdays are the restaurant's closures, as
+        # an owner saves them (schedule_rules.closures): with only its hours
+        # on file a closed Monday read as a trading day the manager plan had
+        # to staff (found by workstream R, 10/14/26).
+        cols["compliance_json"] = json.dumps({"closed_weekdays": list(spec["closed_days"])})
     cols.update(spec["cols"])
     models.update_restaurant(rid, cols)
     return rid

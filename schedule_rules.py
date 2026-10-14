@@ -5935,6 +5935,11 @@ def counts_as_manager(c: "Constraints", row: dict) -> bool:
 # person is off (or the close), is covered by that manager - up to this
 # long. A gap in the middle of the day or at the open is still a gap, and a
 # last manager scheduled off hours before the end of the night is still one.
+# The "_pinned" value on a manager-plan row (schedule_skeleton.PLAN_SOURCE —
+# the plan is above this module, so it is named here and a test holds the
+# two together): the gap filler may extend such a row (BUGSGEN-17).
+PLAN_PIN = "manager_plan"
+
 CLOSING_MANAGER_STAYS_MINUTES = 60      # the default; each restaurant's own: closing_stay_minutes (LOGIC-12)
 
 # The opening manager is in about an hour before the doors open (owner,

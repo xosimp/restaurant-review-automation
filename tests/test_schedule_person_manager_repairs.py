@@ -431,6 +431,13 @@ def test_an_owner_operator_week_is_covered_to_the_cap_and_the_rest_explained():
     rows = []
     for i in range(7):
         rows += [_row(i, "Sam", "11:00am", "4:30pm"), _row(i, "Tia", "4:30pm", "10:00pm")]
+    # The 55h default gives way to the manager rule when nobody else can
+    # cover (the tier order, sched re-audit 10/11/26 STRESS-18): the week is
+    # managed end to end.
+    full = sr.cover_manager_gaps(rows, c)
+    assert _hours(full["rows"], "Olive") > 55 and not full["left"]
+    # A 55h cap the owner set is theirs: covered to it, the rest explained.
+    c.salaried_cap = 55
     out = sr.cover_manager_gaps(rows, c)
     assert _hours(out["rows"], "Olive") <= 55 + 0.01
     assert out["left"] and out["shortfall"] and out["shortfall"]["unmanaged_hours"] > 0
@@ -534,7 +541,7 @@ def test_a_day_level_breach_is_never_needs_review_on_an_innocent_row():
     assert s["hard_rows"] == [] and s["hard_days"][0]["date"] == WEEK[2]
     assert s["lines"][0] == "⚠ 10/7/26 — no manager on Wednesday from 9:00am to 10:00am"
     src = inspect.getsource(__import__("schedule_job"))
-    assert 'if not _v["hard"] or _v.get("day_level"):' in src
+    assert 'if not se._rules.owner_hard(_v) or _v.get("day_level"):' in src     # a policy limit marks no row either (LOGIC-20)
     import mobile_api
     marked = [dict(r, notes="NEEDS REVIEW") for r in rows]
     mobile_api._mark_review_rows(marked, sr.violations(rows, c))

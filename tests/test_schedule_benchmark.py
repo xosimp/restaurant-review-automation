@@ -189,15 +189,11 @@ def test_the_pipeline_carries_no_name_from_a_removed_one_client_rule():
 # fix makes it hold. Strict: a fix that makes one pass fails here until the
 # entry is removed — the gate only ever tightens.
 KNOWN = {
-    ("cafe_6", "solver", "roles_staffed"): "STRESS-18 (R): the one manager's salaried cap leaves Sunday "
-                                           "unmanaged, so the solver staffs nobody",
-    ("cafe_6", "carry_forward", "manager"): "STRESS-18 (R): carried Sunday crew with no manager on",
     ("daypart_limited", "solver", "no_long_shifts"): "STRESS-1 (S): 11-12h lunch-to-close doubles",
     ("daypart_limited", "solver", "nobody_starved"): "STRESS-2 (S): capacity ignores dayparts",
     ("qsr_teens", "solver", "no_long_shifts"): "STRESS-1 (S): 11-12h doubles",
     ("qsr_teens", "solver", "usual_days"): "STRESS-15 (S): the first solver draft ignores usual days",
     ("qsr_teens", "solver", "nobody_starved"): "STRESS-6 (S): teens lose their hours to doubles and 4h shapes",
-    ("single_manager", "solver", "manager"): "STRESS-18 / STRESS-3 (R): one manager's week leaves a gap",
 }
 
 
