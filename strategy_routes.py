@@ -7229,10 +7229,48 @@ def _do_publish_review(u):
             return {"ok": False, "error": "A row on screen has no readable date — reload the week."}, 400
     from permissions import has_permission, SCHEDULE_PUBLISH
     can = bool(u.get("is_admin")) or has_permission(u, SCHEDULE_PUBLISH)
-    out = prepublish.review(rid, sid, rows=rows, user=u, today=_local_today(u), can_publish=can)
+    # "core" — what Send needs, first; "explain" — the rest, after (the web's
+    # re-check after an edit, TRUST-26). Default "all" (the phone).
+    sections = (body.get("sections") if request.method == "POST" else request.args.get("sections")) or "all"
+    out = prepublish.review(rid, sid, rows=rows, user=u, today=_local_today(u), can_publish=can,
+                            sections=sections if sections in prepublish.SECTIONS else "all")
     if not out.get("ok"):
         return out, 404
     return out, 200
+
+
+def _do_publish_review_dismiss(u):
+    """The owner's answer to one pre-publish suggestion, kept server-side
+    (schedule re-audit 10/11/26 TRUST-17: "Leave them off this week" and
+    "Keep 4" lived in the page and came back on every check). POST {key,
+    scope: "week" | "every", schedule_id?, until? (the week's last day),
+    evidence? (the suggestion's signature), answer?, undo?}. A week's answer
+    lasts until the week ends; a standing one until its evidence changes."""
+    if not _sees_labor(u):
+        return _forbidden("Only someone who can see labor can answer this.")
+    from permissions import has_permission, SCHEDULE_PUBLISH
+    if not (u.get("is_admin") or has_permission(u, SCHEDULE_PUBLISH)):
+        return _forbidden("Your login can draft a schedule but not answer for the week.")
+    import prepublish
+    import schedule_overrides as _so_d
+    import schedule_versions as _sv_d
+    b = _body()
+    key = str(b.get("key") or "").strip()
+    if not key or not key.split(":", 1)[0] in ("left_off", "floor", "crew"):
+        return {"ok": False, "error": "Which suggestion?"}, 400
+    rid = _rid(u)
+    if b.get("undo"):
+        _so_d.undismiss(rid, key)
+    else:
+        until = str(b.get("until") or "")[:10] or None
+        try:
+            sid = int(b.get("schedule_id") or 0) or None
+        except (TypeError, ValueError):
+            sid = None
+        _so_d.dismiss(rid, key, scope=b.get("scope") or "week", history_id=sid, until=until,
+                      evidence=b.get("evidence"), answer=b.get("answer"), actor=u, authority=_sv_d.authority_of(u))
+    prepublish.invalidate(rid)
+    return {"ok": True, "key": key, "message": "Kept — it won't be suggested again while that holds."}, 200
 
 
 def _do_publish_check(u):
@@ -7899,6 +7937,7 @@ _ROUTES = [
     ("/labor/publish-check", ["GET"], _do_publish_check, "publish_check"),
     # The pre-publish review, one payload for web and phone (RM-6, contract #6).
     ("/labor/publish-review", ["GET", "POST"], _do_publish_review, "publish_review"),
+    ("/labor/publish-review/dismiss", ["POST"], _do_publish_review_dismiss, "publish_review_dismiss"),
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
     ("/data-health/verify", ["POST"], _do_data_verify, "data_health_verify"),
