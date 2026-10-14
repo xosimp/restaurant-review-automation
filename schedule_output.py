@@ -1239,7 +1239,7 @@ SHARED_INPUTS = ("analysis", "shifts")
 def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=None, week_start=None,
                 dates=None, ai_call_id=None, model=None, effort=None, contract=None, stop_reason=None,
                 outcome=None, error=None, seconds=None, usage=None, rows=None, answer_chars=None,
-                db_path=None, call_kind=None, tier=None, job_id=None):
+                db_path=None, call_kind=None, tier=None, job_id=None, call_key=None):
     """Store one schedule call: the exact request (model, max_tokens, system,
     messages, thinking, output_config with its schema), the generator's
     arguments (`inputs`, encoded so a replay rebuilds them), and the answer
@@ -1250,9 +1250,9 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
     req = dict(request or {})
     try:
         import schedule_batch as _sb_key
-        _key = _sb_key.call_key(req)
+        _key = call_key or _sb_key.call_key(req)
     except Exception:
-        _key = None
+        _key = call_key
     prompt_text = json.dumps(req.get("messages") or [], default=str)
     names = guest_names_in(prompt_text)
     req = _scrub(encode(req), names)
@@ -1295,10 +1295,37 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
         conn.close()
 
 
+def prompt_sig(request=None, stored=None) -> str:
+    """What a schedule call was written FROM, as one hash: its system and
+    messages as record_call stores them (encoded, guests' details scrubbed),
+    cache markers left out (a cache TTL may differ between two tries of the
+    same prompt). `request` — a call about to be sent; `stored` — the
+    encoded request a row kept. A resumed try compares the two: equal, its
+    stored answer was written for exactly this prompt; not, the inputs moved
+    while the job restarted (blind re-audit 10/11/26 ARCH-25)."""
+    import hashlib
+    if stored is None:
+        from ai_utils import guest_names_in
+        req = dict(request or {})
+        names = guest_names_in(json.dumps(req.get("messages") or [], default=str))
+        stored = _scrub(encode({"system": req.get("system"), "messages": req.get("messages")}), names)
+
+    def _strip(o):
+        if isinstance(o, dict):
+            return {k: _strip(v) for k, v in o.items() if k != "cache_control"}
+        if isinstance(o, list):
+            return [_strip(x) for x in o]
+        return o
+    body = _strip({"system": (stored or {}).get("system"), "messages": (stored or {}).get("messages")})
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode("utf-8", "replace")).hexdigest()[:32]
+
+
 # A stored answer a resumed generation may read again (schedule_resume): one
 # the model finished, or cut short (its finished days are kept the same way
 # the first time), never an error, a refusal or JSON that did not parse.
-REUSABLE_OUTCOMES = ("ok", "truncated", "salvaged")
+# "batch_answer" — an auto-draft's Message Batches answer, stored by its
+# callback for the draft to read by call key (schedule_batch, ARCH-15).
+REUSABLE_OUTCOMES = ("ok", "truncated", "salvaged", "batch_answer")
 
 
 def stored_answers(job_id, db_path=None) -> list:
@@ -1310,7 +1337,7 @@ def stored_answers(job_id, db_path=None) -> list:
     conn = get_conn(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, call_key, model, stop_reason, outcome, usage_json, answer_z FROM schedule_model_calls "
+            "SELECT id, call_key, model, stop_reason, outcome, usage_json, answer_z, request_z FROM schedule_model_calls "
             "WHERE job_id=? AND call_key IS NOT NULL ORDER BY id", (str(job_id),)).fetchall()
     finally:
         conn.close()
@@ -1327,8 +1354,13 @@ def stored_answers(job_id, db_path=None) -> list:
         text = _answer_text(r["answer_z"])
         if not text:
             continue
+        try:
+            stored_req = _unz(r["request_z"]) or {}
+            sig = usage.get("prompt_sig") or (prompt_sig(stored=stored_req) if stored_req.get("messages") else None)
+        except Exception:
+            sig = None
         out.append({"id": r["id"], "call_key": r["call_key"], "model": r["model"],
-                    "stop_reason": r["stop_reason"], "answer": text, "usage": usage})
+                    "stop_reason": r["stop_reason"], "answer": text, "usage": usage, "prompt_sig": sig})
     return out
 
 

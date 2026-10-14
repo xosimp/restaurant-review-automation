@@ -6119,6 +6119,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                     request=dict(_call), prompt=prompt, prepared=True)
     _rec = dict(generation_id=generation_id, week_start=week_dates[0], dates=_gen_dates, contract=_contract,
                 call_kind=call_kind, tier=_route.tier)
+    # The auto-draft PLANNING its calls for one Message Batch
+    # (schedule_batch.planning — blind re-audit 10/11/26 ARCH-15): the
+    # request is listed and nothing is sent or recorded. CallPlanned is an
+    # ordinary exception the engine's dispatch collects with the batch's
+    # other calls — never a BaseException tunnelled past cleanup.
+    import schedule_batch as _sbatch
+    if _sbatch.plan_call(dict(_call, readiness=_ready_sched)):
+        raise _sbatch.CallPlanned(dict(_call, readiness=_ready_sched))
     _client = get_client(timeout=360.0)
     # The days the answer has finished, as it streams, for the Building
     # screen's "N of 7 days drafted" (AI cost audit 10/7/26 #36): a job's
@@ -6137,11 +6145,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         # request-path default. The timeout is the longest silence between
         # streamed events, not the whole call; the job's deadline bounds the
         # whole call (create_with_retry cuts a stream still writing then).
-        # The auto-draft's batched answer, when this is the call it was
-        # written for (schedule_batch — RM-10); while the auto-draft
-        # captures its request, this raises CallCaptured before anything is
-        # sent or recorded.
-        import schedule_batch as _sbatch
+        # A stored answer for this call — the auto-draft's batched answers
+        # (schedule_batch — RM-10, ARCH-15) or a resumed try's
+        # (schedule_resume) — read by its call key, else None: send it.
         msg = _sbatch.answer_for(dict(_call, readiness=_ready_sched))
         if msg is None:
             msg = create_with_retry(_client, readiness=_ready_sched, **refusal_fallback(_call))

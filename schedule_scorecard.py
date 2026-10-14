@@ -310,14 +310,96 @@ def survival(origins, base_rows, published_rows) -> dict:
 
 
 def ablation_wanted(learned, clock=None) -> bool:
-    """Whether the generation runs the learning ablation: something learned
-    binds this week, the switch is not off, and the job's clock has room."""
+    """Whether the generation queues the learning ablation: something learned
+    binds this week and the switch is not off (`clock`, when given, must
+    have room — the ablation now runs off the owner's wait, ARCH-14, so the
+    job passes none)."""
     if not learned or (os.environ.get(ABLATION_ENV) or "1").strip() in ("0", "off", "false"):
         return False
     try:
         return clock is None or clock.seconds_left() > ABLATION_MIN_CLOCK_SECONDS
     except Exception:
         return False
+
+
+ABLATION_KIND = "schedule_ablation"
+
+
+def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned, reassign_on=True,
+                     db_path=None) -> dict:
+    """The learning ablation as a bulk job_queue row, after the save (blind
+    re-audit 10/11/26 ARCH-14): the rows that came into the repair loop and
+    the rows it made, packed; the context it re-runs in is the one stored
+    with this week's metrics (schedule_metrics.snapshot, its `kind`). What
+    the generation tags carry until it runs: {"queued": True, ...}; with the
+    queue off, {"ran": False, "why": "queue off"} — never inline."""
+    import job_queue
+    import schedule_resume as _pk
+    if not job_queue.enabled():
+        return {"ran": False, "queued": False, "why": "queue off", "learned": int(learned or 0)}
+    payload = {"restaurant_id": restaurant_id, "history_id": int(history_id), "kind": kind,
+               "learned": int(learned or 0), "reassign_on": bool(reassign_on),
+               "pre_z": _pk.pack([dict(r) for r in pre_rows or []]), "on_z": _pk.pack(compact(rows_on))}
+    qid, _created = job_queue.enqueue(ABLATION_KIND, payload, restaurant_id=restaurant_id, priority_class="bulk",
+                                      idempotency_key=f"{ABLATION_KIND}:{int(history_id)}", db_path=db_path)
+    return {"ran": False, "queued": True, "job": qid, "learned": int(learned or 0)}
+
+
+def run_queued_ablation(job, db_path=None) -> dict:
+    """job_queue's handler for `schedule_ablation`: the week's repair loop
+    run again over the same rows, in the same frozen context, with the
+    learned memory off (schedule_engine.post_model_rows' context), bounded
+    by ABLATION_MAX_SECONDS; the result is written into the week's
+    generation tags (record_ablation). Offline — no owner waits on it."""
+    import time as _t
+    import types as _types
+    import schedule_engine as se
+    import schedule_metrics as sm
+    import schedule_resume as _pk
+    p = job.payload if hasattr(job, "payload") else (job or {}).get("payload") or {}
+    hid, rid = p.get("history_id"), p.get("restaurant_id")
+    blob = sm.context_for(history_id=hid, kind=p.get("kind"), db_path=db_path)
+    ctx = sm.load_context(blob) if blob else None
+    if not ctx:
+        out = {"ran": False, "why": "no stored context", "learned": p.get("learned")}
+        record_ablation(hid, out, db_path=db_path)
+        return out
+    c = ctx.get("constraints")
+    result = dict(ctx.get("result") or {})
+    result["constraints"] = c
+    if c is not None and result.get("roster_roles") and not getattr(c, "roster_roles", None):
+        c.roster_roles = dict(result["roster_roles"])
+    rest = ctx.get("restaurant")
+    signals = dict(ctx.get("signals") or {}, learned=[]) if ctx.get("signals") is not None else None
+    x = se.RepairContext(rid, result, c, editable=set(ctx["editable"]) if ctx.get("editable") else None,
+                         restaurant=_types.SimpleNamespace(**rest) if isinstance(rest, dict) else None,
+                         close_times=ctx.get("close_times") or {}, role_buffers=ctx.get("role_buffers") or {},
+                         signals=signals, weights=ctx.get("weights"), requirements=ctx.get("requirements") or [],
+                         curve=ctx.get("curve") or {}, clock=None, solver_on=ctx.get("solver_on", True),
+                         max_seconds=ABLATION_MAX_SECONDS)
+    x.reassign_on = bool(p.get("reassign_on", True))
+    x.shadow = True
+    t0 = _t.monotonic()
+    loop = se.repair_week([dict(r) for r in _pk.unpack(p.get("pre_z")) or []], x)
+    out = {"ran": True, "learned": p.get("learned"), "rows_on": _pk.unpack(p.get("on_z")) or [],
+           "rows_off": compact(loop.get("rows")), "seconds": round(_t.monotonic() - t0, 2), "offline": True}
+    record_ablation(hid, out, db_path=db_path)
+    return {"ran": True, "history_id": hid, "seconds": out["seconds"]}
+
+
+def record_ablation(history_id, ablation, db_path=None) -> bool:
+    """The ablation's result into the week's generation tags, leaving the
+    rest of the row as tag_generation wrote it."""
+    if not history_id:
+        return False
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE schedule_generation_tags SET ablation_json=? WHERE history_id=?",
+                           (json.dumps(ablation, default=str), int(history_id)))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
 
 
 def compact(rows) -> list:

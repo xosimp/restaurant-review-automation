@@ -1257,7 +1257,8 @@ def test_the_quality_gate_is_skipped_when_the_job_has_no_time_left_for_it(db, mo
         clock.started = clock.deadline - se.SCHEDULE_JOB_MAX_SECONDS
         se._run_schedule_job("gate-late", rid)
     assert len(calls) == 1 and finished["status"] == "done"
-    assert finished["result"]["gate"] == {"ran": False}
+    # Skipped is said, with why (blind re-audit 10/11/26 BUGSGEN-16).
+    assert finished["result"]["gate"]["ran"] is False and finished["result"]["gate"]["why"] == "time"
 
 
 # ── AI cost audit 10/7/26 #21: the gate fills in code before it pays the model ──
