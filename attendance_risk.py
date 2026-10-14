@@ -24,8 +24,13 @@ at 18% each (an expected 0.9 missing) read as fully covered.
                      requirement the draft was written to), scheduled,
                      expected heads (the sum of each person's chance of
                      turning up), P(short).
-  standby_needed()   a busy shift whose P(short) is at least STANDBY_RISK
-                     needs a standby (or one more person, budget allowing).
+  standby_needed()   a busy shift whose P(short by at least k) is at least
+                     STANDBY_RISK needs a standby (or one more person, budget
+                     allowing) — k scaled to the crew (short_by_k: one of
+                     four matters, one of eight does not; schedule re-audit
+                     10/11/26 LEARNING-19), and, where a value of the
+                     shortfall and a cost of the standby are known, only
+                     when the expected shortfall saved is worth the person.
   exposure()         the graded reliability cost every judge shares: 0
                      below GRADED_FROM, rising to 1 at shift_quality.
                      UNRELIABLE_RATE — never the 20% cliff.
@@ -37,7 +42,13 @@ from datetime import date
 
 WEEKDAY_SHRINK = 4.0             # shifts of a person's overall rate behind their weekday rate
 RESTAURANT_SHRINK = 30.0         # shifts of the cohort's rate behind a restaurant's own base
-STANDBY_RISK = 0.35              # P(fewer turn up than the shift needs) that asks for a standby
+STANDBY_RISK = 0.35              # P(short by k or more) that asks for a standby
+# The shortfall that matters scales with the crew (re-audit 10/11/26
+# LEARNING-19): P(short at all) is P(any absence) = 1-(1-p)^n, which reached
+# STANDBY_RISK at a 10% base with 4 people, 6.9% with 6, 5.2% with 8 — every
+# big busy shift got a paid extra person whether one absence of eight
+# mattered or not. k = this share of the need, rounded, at least 1.
+STANDBY_SHORT_SHARE = 0.2
 GRADED_FROM = 0.10               # a rate under this costs nothing
 
 
@@ -84,18 +95,21 @@ def shrink(hits, weight, prior, k) -> float:
         return float(prior or 0.0)
 
 
-def rates_from_tally(tally: dict, base: float, cohort=None) -> dict:
+def rates_from_tally(tally: dict, base: float, cohort=None, today=None) -> dict:
     """{"base", "cohort", "people": {name lower: {"all", "days": {weekday:
     rate}, "shifts"}}} from staff_settings.attendance_tally's weighted
     tally (absences, a call-out in full: a body missing either way). Pure."""
-    from staff_settings import NO_SHOW_PRIOR_SHIFTS
+    from staff_settings import NO_SHOW_PRIOR_SHIFTS, redemption_shifts
     w_all = sum(float(t.get("w") or 0) for t in (tally or {}).values())
     base_r = float(base or 0.0)
     if cohort is not None:
         base_r = shrink(base_r * w_all, w_all, cohort, RESTAURANT_SHRINK)
     people = {}
     for name, t in (tally or {}).items():
-        p_all = shrink(t.get("w_absent") or 0.0, t.get("w") or 0.0, base_r, NO_SHOW_PRIOR_SHIFTS)
+        # Clean weeks since the last absence shrink toward the base too
+        # (LEARNING-21), as staff_settings' rates do.
+        k = NO_SHOW_PRIOR_SHIFTS + (redemption_shifts(t.get("last_miss"), today) if today else 0.0)
+        p_all = shrink(t.get("w_absent") or 0.0, t.get("w") or 0.0, base_r, k)
         days = {}
         for wd, e in (t.get("days") or {}).items():
             days[wd] = round(shrink(e.get("w_absent") or 0.0, e.get("w") or 0.0, p_all, WEEKDAY_SHRINK), 3)
@@ -117,7 +131,8 @@ def rates(restaurant_id, db_path=None, today=None) -> dict:
             cohort = _sp.noshow_prior(restaurant_id, **kw)
         except Exception:
             cohort = None
-        return rates_from_tally(rec.get("tally") or {}, (rec.get("base") or {}).get("absence") or 0.0, cohort)
+        return rates_from_tally(rec.get("tally") or {}, (rec.get("base") or {}).get("absence") or 0.0, cohort,
+                                today=rec.get("today"))
     except Exception as e:
         print(f"[attendance_risk] rates unavailable for {restaurant_id}: {e}")
         return {}
@@ -154,6 +169,25 @@ def p_short(miss_probs, need) -> float:
     return round(sum(dist[:need]), 4) if need <= len(dist) else 1.0
 
 
+def short_by_k(need) -> int:
+    """The shortfall a crew of `need` notices (LEARNING-19): STANDBY_SHORT_SHARE
+    of it, rounded, at least 1 — 1 for a crew up to 7, 2 from 8, 3 from 13."""
+    return max(1, int(round(int(need or 0) * STANDBY_SHORT_SHARE)))
+
+
+def p_short_by(miss_probs, need, k) -> float:
+    """P(the shift is short by `k` or more): P(heads <= need - k)."""
+    return p_short(miss_probs, int(need or 0) - int(k or 1) + 1)
+
+
+def expected_short(miss_probs, need) -> float:
+    """E[max(0, need - heads)] — the people the shift is expected to be
+    short (Poisson-binomial)."""
+    need = int(need or 0)
+    dist = heads_distribution(miss_probs)
+    return round(sum(pk * max(0, need - k) for k, pk in enumerate(dist)), 4)
+
+
 def shift_risks(rows: list, requirements: list, r: dict, busy: set = None, families=None) -> list:
     """[{date, day, daypart, role, family, need, scheduled, expected, p_short,
     busy, people: [{employee, miss}]}] for each shift and role family the
@@ -187,27 +221,53 @@ def shift_risks(rows: list, requirements: list, r: dict, busy: set = None, famil
         for fam, need in need_by.items():
             people = sorted((on.get((d, part, fam)) or {}).values())
             miss = [p_for(r, n, wd) for n in people]
+            k = short_by_k(need)
+            # With one more on, how much of the expected shortfall goes away
+            # (the standby's worth, in people).
+            saved = round(expected_short(miss, need) - expected_short(miss + [0.0], need), 4)
             out.append({"date": d, "day": wd, "daypart": part, "role": fam, "need": need,
                         "scheduled": len(people), "expected": round(sum(1.0 - q for q in miss), 2),
-                        "p_short": p_short(miss, need), "busy": (d, part) in (busy or set()),
+                        "p_short": p_short(miss, need), "short_by": k, "p_short_by": p_short_by(miss, need, k),
+                        "expected_short": expected_short(miss, need), "standby_saves": saved,
+                        "busy": (d, part) in (busy or set()),
                         "people": [{"employee": n, "miss": round(q, 3)} for n, q in zip(people, miss)]})
     out.sort(key=lambda x: (-x["p_short"], x["date"], x["daypart"], x["role"]))
     return out
 
 
-def standby_needed(risks: list) -> list:
-    """The busy shifts whose P(short) reaches STANDBY_RISK and that are
-    staffed to their need (a shift already short needs a person, not a
-    standby): each a standby requirement."""
-    return [x for x in risks or [] if x.get("busy") and x["p_short"] >= STANDBY_RISK
-            and x["scheduled"] >= x["need"]]
+def standby_needed(risks: list, value_of=None, cost_of=None) -> list:
+    """The busy shifts whose P(short by short_by_k or more) reaches
+    STANDBY_RISK and that are staffed to their need (a shift already short
+    needs a person, not a standby): each a standby requirement
+    (LEARNING-19). With `value_of(x)` ($ one person short costs that shift)
+    and `cost_of(x)` ($ the standby costs), only where the expected
+    shortfall the standby saves (standby_saves x value) is worth its cost;
+    either unknown, the crew-scaled threshold alone decides."""
+    out = []
+    for x in risks or []:
+        p = x.get("p_short_by", x.get("p_short"))
+        if not (x.get("busy") and p is not None and p >= STANDBY_RISK and x["scheduled"] >= x["need"]):
+            continue
+        if value_of is not None and cost_of is not None:
+            try:
+                v, c = value_of(x), cost_of(x)
+            except Exception:
+                v = c = None
+            if v is not None and c is not None and float(x.get("standby_saves") or 0) * float(v) < float(c):
+                continue
+        out.append(x)
+    return out
 
 
 def words(x: dict) -> str:
     """The owner's sentence for one at-risk shift."""
     from time_utils import mdy
     meal = "lunch" if x["daypart"] == "morning" else "dinner"
-    return (f"{x['day'][:3]} {mdy(x['date'])} {meal}: about a {int(round(x['p_short'] * 100))}% chance fewer than "
-            f"{x['need']} {x['role'].replace('_', ' ')}{'s' if x['need'] != 1 else ''} turn up (expected "
+    k = int(x.get("short_by") or 1)
+    p = x.get("p_short_by", x["p_short"])
+    return (f"{x['day'][:3]} {mdy(x['date'])} {meal}: about a {int(round(p * 100))}% chance "
+            + (f"{k} or more of the " if k > 1 else "fewer than ")
+            + f"{x['need']} {x['role'].replace('_', ' ')}{'s' if x['need'] != 1 else ''} "
+            + ("don't turn up" if k > 1 else "turn up") + f" (expected "
             f"{x['expected']:g} of {x['scheduled']} scheduled, from each person's own attendance on "
             f"{x['day']}s; assumes one person's absence says nothing about another's)")

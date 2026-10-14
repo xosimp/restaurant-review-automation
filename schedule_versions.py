@@ -35,6 +35,7 @@ def get_conn(db_path=None):
 log = logging.getLogger(__name__)
 
 import schedule_rows as _srows
+import schedule_time as _stime_scope
 
 COLS = _srows.COLS
 
@@ -1092,6 +1093,49 @@ def apply_locks(rows, stored_rows, step=None, explicit=None) -> list:
     return rows
 
 
+# The schedule_history columns store_week may set besides the two copies'
+# text: the stamps a save, a Send or a rename writes with them.
+_WEEK_SETS = frozenset({"quality_json", "hours_scheduled", "hours_hourly", "hours_salaried", "edited_at",
+                        "edited_by", "published_at", "published_by", "publishing_at", "republished_at"})
+_SET_RE = re.compile(r"^\s*([a-z_]+)\s*=")
+
+
+def store_week(conn, restaurant_id, history_id, working=None, published=None, sets=(), args=()) -> int:
+    """THE write of a stored week's text (schedule re-audit 10/11/26 ARCH-7,
+    ARCH-24): the working copy (`working` → schedule_csv), the published
+    copy (`published` → published_csv), any of the week's stamps beside
+    them (`sets`: "col=<sql>" fragments over _WEEK_SETS, `args` their
+    parameters in order) — and the week's shift projection
+    (schedule_shifts.project) rewritten from the result, on the caller's
+    connection inside its write transaction. Every writer of a week's text
+    calls this (tests/test_sf11_d_shift_identity.py holds the code to it),
+    so the rows table never disagrees with the text and the week's
+    invariants live in one place. A caller that appends a version appends
+    it FIRST, so the projection carries its revision. Returns the rows the
+    UPDATE touched (1, or 0 when the week is gone)."""
+    parts, vals = [], []
+    if working is not None:
+        parts.append("schedule_csv=?")
+        vals.append(working)
+    if published is not None:
+        parts.append("published_csv=?")
+        vals.append(published)
+    for frag in sets or ():
+        m = _SET_RE.match(frag or "")
+        if not m or m.group(1) not in _WEEK_SETS:
+            raise ValueError(f"store_week cannot set {frag!r}")
+        parts.append(frag)
+    vals.extend(args or ())
+    n = 1
+    if parts:
+        cur = conn.execute(f"UPDATE schedule_history SET {', '.join(parts)} WHERE id=? AND restaurant_id=?",
+                           (*vals, history_id, restaurant_id))
+        n = cur.rowcount
+    import schedule_shifts
+    schedule_shifts.project(conn, restaurant_id, history_id)
+    return n
+
+
 def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=None, quality=None,
              expected_version=None, saved_authority=None, row_origins=None) -> int:
     """Write one change to a stored week AND append its version row, on the
@@ -1172,16 +1216,24 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         # Unknown, never a guess: a reader falls back to the all-in figure.
         print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
         split = {"hourly": None, "salaried": None}
-    cur = conn.execute(
-        "UPDATE schedule_history SET schedule_csv=?, quality_json=COALESCE(?, quality_json), hours_scheduled=?, "
-        "hours_hourly=?, hours_salaried=?, edited_at=datetime('now'), edited_by=?, "
-        "published_csv=CASE WHEN ? IS NULL THEN published_csv ELSE ? END WHERE id=? AND restaurant_id=?",
-        (draft_text, json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
-         (saved_by or "").strip()[:120] or None, live_text, live_text, history_id, restaurant_id))
-    if cur.rowcount != 1:
-        raise LookupError("that schedule is gone")
+    # The version first, so the week's shift projection carries its
+    # revision (store_week); one transaction either way.
     _row_id, version = _insert_version(conn, restaurant_id, history_id, reason, draft_text, quality, saved_by,
                                        saved_authority, row_origins=row_origins)
+    if store_week(conn, restaurant_id, history_id, working=draft_text, published=live_text,
+                  sets=("quality_json=COALESCE(?, quality_json)", "hours_scheduled=?", "hours_hourly=?",
+                        "hours_salaried=?", "edited_at=datetime('now')", "edited_by=?"),
+                  args=(json.dumps(quality) if quality else None, hours, split["hourly"], split["salaried"],
+                        (saved_by or "").strip()[:120] or None)) != 1:
+        raise LookupError("that schedule is gone")
+    # A change to the copy staff have closes every cover it undid — the
+    # holder back on a shift a request still called covered (schedule
+    # re-audit 10/11/26 BUGSLIFE-2); in this transaction, told after it.
+    if live_write:
+        import shift_requests as _srq_c
+        _rev = _srq_c.staff_changes_vs(restaurant_id, old_live, new_live, db_path=db or DB_PATH)["reverted"]
+        if _rev:
+            _srq_c.close_reverted(conn, restaurant_id, _rev, actor=saved_by)
     if live_write:
         # Every draft of the week waiting to replace this copy carries the
         # change too (schedule re-audit 10/11/26 BUGSLIFE-1): a regenerated
@@ -1199,6 +1251,89 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
             if "no such table" not in str(e).lower():
                 raise
     return version
+
+
+class WeekReplaced(Exception):
+    """The week a save names was replaced by a newer copy: read-only."""
+
+    def __init__(self, superseded_by, message):
+        super().__init__(message)
+        self.superseded_by = superseded_by
+
+
+def save_studio_week(restaurant_id, history_id, csv_text, *, raw_rows=None, explicit_locks=None,
+                     expected_version=None, saved_by=None, saved_authority=None, quality=None,
+                     cavnar_changes=None, review=None, violations=None, rows=None, constraints=None,
+                     review_extras=None, db_path=DB_PATH) -> dict:
+    """A manager's Studio save of one week — the week service the save
+    route calls (schedule re-audit 10/11/26 ARCH-24; it lived in the route
+    and wrote schedule_history itself). In ONE write transaction:
+
+    * a copy a newer one replaced is read-only (WeekReplaced; UI-3);
+    * the same rows saved again — a retry of a save that committed, a
+      double press — write no second version and teach nothing (`unchanged`);
+    * otherwise the version check is repeated inside the lock (StaleVersion
+      on a conflict, SCHED-19), each changed row's origin is read
+      (step_origins, L-5), the rows the manager changed lock (apply_locks,
+      contract #4), and the week is written through write_on (the working
+      copy only on a week staff have; the version; the shift projection);
+    * the generation's review is kept and only what the edited rows decide
+      is refreshed (schedule_engine.refresh_review, P-26) — `review` and
+      `violations` from the save's sweep; a sweep that could not run
+      (`review` None) leaves the stored review as it was.
+
+    Returns {"history_id", "version", "unchanged", "published" (whether the
+    week was already with staff), "step", "csv_text" (as stored),
+    "review"}. Raises WeekReplaced, StaleVersion or LookupError (the week
+    is gone); nothing is written then."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        own = conn.execute("SELECT superseded_by, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
+                           (history_id, restaurant_id)).fetchone()
+        if own is None:
+            raise LookupError("that schedule is gone")
+        replaced = replaced_error(own)
+        if replaced:
+            raise WeekReplaced(own["superseded_by"], replaced)
+        published = bool(own["published_at"])
+        unchanged = same_rows(latest_rows(conn, history_id), rows_from_csv(csv_text), explicit_locks=explicit_locks)
+        step = None
+        if unchanged:
+            version = latest_version(conn, history_id) or None
+        else:
+            changed = rows_changed_since(conn, history_id, expected_version)
+            if changed:
+                raise StaleVersion(changed)
+            prev = latest_rows(conn, history_id)
+            step = step_origins(prev, rows_from_csv(csv_text), raw_rows,
+                                cavnar_changes if isinstance(cavnar_changes, list) else None)
+            csv_text = _srows.to_csv(apply_locks(rows_from_csv(csv_text), prev, step, explicit=explicit_locks))
+            version = write_on(conn, restaurant_id, history_id, "edited", csv_text, saved_by=saved_by,
+                               quality=quality, expected_version=expected_version,
+                               saved_authority=saved_authority, row_origins=step["stored"])
+        import models as _m_rv
+        if review is not None and violations is not None:
+            was = conn.execute("SELECT review_json, review_ref, hours_budget FROM schedule_history "
+                               "WHERE id=? AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
+            # The whole saved review (stored once by reference, SCALE-13).
+            saved_rv = _m_rv.history_review(conn, was) if was else {}
+            from schedule_engine import refresh_review
+            review = refresh_review(saved_rv, violations, rows if rows is not None else rows_from_csv(csv_text),
+                                    constraints, hours_budget=(was["hours_budget"] if was else None),
+                                    extras=review_extras or {})
+        if review is not None:
+            head, ref = _m_rv.store_history_review(conn, restaurant_id, json.loads(json.dumps(review, default=str)))
+            conn.execute("UPDATE schedule_history SET review_json=?, review_ref=? WHERE id=? AND restaurant_id=?",
+                         (head, ref, history_id, restaurant_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"history_id": history_id, "version": version, "unchanged": unchanged, "published": published,
+            "step": step, "csv_text": csv_text, "review": review}
 
 
 def in_id_space(old_live, new_live, target_rows) -> tuple:
@@ -1250,12 +1385,13 @@ def carry_live_into_drafts(conn, restaurant_id, history_id, old_live, new_live, 
         except Exception as e:
             print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
             split = {"hourly": None, "salaried": None}
-        conn.execute("UPDATE schedule_history SET schedule_csv=?, hours_scheduled=?, hours_hourly=?, hours_salaried=? "
-                     "WHERE id=? AND restaurant_id=?",
-                     (text, round(sum(_hours(r) for r in merged), 1), split["hourly"], split["salaried"], d["id"],
-                      restaurant_id))
+        # The version first, then the draft's text through the one week
+        # write (store_week: its shift projection with it — ARCH-7).
         if conn.execute("SELECT 1 FROM schedule_versions WHERE history_id=? LIMIT 1", (d["id"],)).fetchone():
             _insert_version(conn, restaurant_id, d["id"], LIVE_REASON, text, None, saved_by, None)
+        store_week(conn, restaurant_id, d["id"], working=text,
+                   sets=("hours_scheduled=?", "hours_hourly=?", "hours_salaried=?"),
+                   args=(round(sum(_hours(r) for r in merged), 1), split["hourly"], split["salaried"]))
         changed.append(d["id"])
     return changed
 
@@ -1481,9 +1617,11 @@ def backfill_published_copies(db_path=DB_PATH, max_seconds: float = 10.0) -> int
             break
         conn = get_conn(db_path)
         try:
-            row = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND published_csv IS NULL",
-                               (hid,)).fetchone()
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT restaurant_id, schedule_csv FROM schedule_history WHERE id=? "
+                               "AND published_csv IS NULL", (hid,)).fetchone()
             if row is None:
+                conn.rollback()
                 continue
             versions = materialize(conn, conn.execute(
                 "SELECT version, reason, " + VERSION_TEXT + " FROM schedule_versions WHERE history_id=? "
@@ -1495,11 +1633,12 @@ def backfill_published_copies(db_path=DB_PATH, max_seconds: float = 10.0) -> int
             # rewritten only to carry them; its rows are unchanged).
             draft_ids = _srows.carry_ids(draft, [], known_ids=[r.get("shift_id") for r in draft])
             told_ids = _srows.carry_ids(told, draft_ids, known_ids=[r.get("shift_id") for r in told])
-            conn.execute("UPDATE schedule_history SET published_csv=?, schedule_csv=? WHERE id=? "
-                         "AND published_csv IS NULL", (_srows.to_csv(told_ids), _srows.to_csv(draft_ids), hid))
+            store_week(conn, row["restaurant_id"], hid, working=_srows.to_csv(draft_ids),
+                       published=_srows.to_csv(told_ids))
             conn.commit()
             done += 1
         except Exception as e:
+            conn.rollback()
             log.warning("published copy not backfilled for week %s: %s", hid, e)
         finally:
             conn.close()
@@ -1646,6 +1785,90 @@ HALF_LIFE_DAYS = {"moved_off": PERSON_HALF_LIFE_DAYS, "moved_on": PERSON_HALF_LI
 # A pattern is the manager's habit only when they made the change in at least
 # this share of the weeks they could have (L-6) — weighted by recency.
 PATTERN_MIN_RATE = 0.5
+# A habit's evidence is the manager's own hand, and noise must not pass for
+# one (schedule re-audit 10/11/26 LEARNING-9, LEARNING-10, LEARNING-11):
+#   candidate  at least CANDIDATE_MIN_OPPORTUNITIES weeks it could have been
+#              made in (in its newest regime) and the Wilson LOWER bound of
+#              the hand rate at least CANDIDATE_MIN_LOWER — the point rate
+#              alone let two one-off removals after a quiet spell (2 of 2)
+#              start a habit in 22% of person-slots a manager edits one week
+#              in ten (3.4% now; a real habit is a candidate at its third
+#              hand edit, or at once on the one-tap "Always");
+#   enforced   ENFORCE_MIN_HAND hand hits and their Wilson lower bound at
+#              least ENFORCE_MIN_LOWER (3 of 3 in a row binds: it took 5) —
+#              a week the draft merely carried it is never a hit.
+CANDIDATE_MIN_OPPORTUNITIES = 3
+CANDIDATE_MIN_LOWER = 0.3
+ENFORCE_MIN_HAND = 3
+ENFORCE_MIN_LOWER = 0.5
+
+
+def candidate_ok(n_hits, opps, hits_w, opps_w, min_repeats=2, min_rate=PATTERN_MIN_RATE) -> bool:
+    """Whether an edit pattern is a habit candidate (LEARNING-10): at least
+    `min_repeats` hand weeks, CANDIDATE_MIN_OPPORTUNITIES weeks it could have
+    been made in, `min_rate` of them (weighted) and a Wilson lower bound of
+    CANDIDATE_MIN_LOWER. `min_repeats` under 2 is a count (who taught what),
+    not a candidacy: the floors do not apply."""
+    if int(n_hits or 0) < int(min_repeats or 0):
+        return False
+    rate, _conf = _stats.strength(hits_w, opps_w)
+    if rate < (min_rate or 0):
+        return False
+    if int(min_repeats or 0) < 2:
+        return True
+    return int(opps or 0) >= CANDIDATE_MIN_OPPORTUNITIES and \
+        _stats.wilson_lower(hits_w, opps_w) >= CANDIDATE_MIN_LOWER
+
+
+def habit_enforceable(row) -> bool:
+    """Whether a standing habit has earned binding the passes by the
+    manager's hand alone (LEARNING-9, LEARNING-11): ENFORCE_MIN_HAND hand
+    hits and the Wilson lower bound of hits over the weeks that tested it by
+    hand at least ENFORCE_MIN_LOWER. The owner's own word is _owner_kept."""
+    hits, opps = int(_col(row, "hits") or 0), int(_col(row, "opportunities") or 0)
+    return hits >= ENFORCE_MIN_HAND and _stats.wilson_lower(hits, max(hits, opps)) >= ENFORCE_MIN_LOWER
+
+
+def migrate_hand_evidence(conn) -> int:
+    """Once per row, at boot (schedule_intel's schema init): a standing row
+    stored before evidence_basis counted every week the draft merely carried
+    it as a hit and an opportunity (LEARNING-9). Those weeks — times_applied
+    less times_confirmed — come back out of both, and a row that bound the
+    passes on them alone (not habit_enforceable, not the owner's word) stops
+    binding: it is a candidate again until the manager's hand confirms it.
+    Marks each row 'hand'; idempotent. Returns the rows corrected."""
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM schedule_standing_patterns WHERE evidence_basis IS NULL").fetchall()]
+    except Exception:
+        return 0
+    n = 0
+    for r in rows:
+        kept = max(0, int(r.get("times_applied") or 0) - int(r.get("times_confirmed") or 0))
+        hits = max(0, int(r.get("hits") or 0) - kept)
+        opps = max(hits, int(r.get("opportunities") or 0) - kept)
+        fixed = dict(r, hits=hits, opportunities=opps)
+        enforced = r.get("enforced_since")
+        if enforced and not (habit_enforceable(fixed) or _owner_kept(fixed)):
+            enforced = None
+        conn.execute("UPDATE schedule_standing_patterns SET hits=?, opportunities=?, enforced_since=?, "
+                     "evidence_basis='hand' WHERE id=?", (hits, opps, enforced, r["id"]))
+        n += 1
+    return n
+
+
+def hand_still_needed(row) -> int:
+    """How many more hand corrections in a row would make a standing habit
+    bind (0 when it binds or cannot by hits alone) — the editor's "learning,
+    applied after N more" (LEARNING-11)."""
+    hits, opps = int(_col(row, "hits") or 0), int(_col(row, "opportunities") or 0)
+    for more in range(0, 8):
+        h, o = hits + more, max(hits, opps) + more
+        if h >= ENFORCE_MIN_HAND and _stats.wilson_lower(h, o) >= ENFORCE_MIN_LOWER:
+            return more
+    return 0
+
+
 # The confidence bound on a rate: the Wilson lower bound at 90%, the level the
 # experiment readout's intervals use.
 WILSON_Z = _stats.WILSON_Z
@@ -2117,6 +2340,7 @@ def _record(data: _WeekData, hid: int, today=None):
             "asked": data.asked(comp["chain"])}
 
 
+@_stime_scope.scoped
 def learning_weeks(restaurant_id, weeks=LEARN_WEEKS, db_path=DB_PATH, history_ids=None, include_unlooked=False,
                    today=None) -> list:
     """Every week in the last `weeks` weeks (by its saves) that a person of
@@ -2443,6 +2667,7 @@ def acceptance(restaurant_id, weeks=8, db_path=DB_PATH) -> dict:
 
 # ── what the manager keeps changing ────────────────────────────────────────
 
+@_stime_scope.scoped
 def learned_patterns(restaurant_id, weeks=LEARN_WEEKS, min_repeats=2, db_path=DB_PATH, min_rate=PATTERN_MIN_RATE,
                      week_edits=None) -> list:
     """Edits that recur across recent weeks: the same person moved off the
@@ -2598,11 +2823,13 @@ def _patterns_from_weeks(restaurant_id, week_edits, min_repeats=2, db_path=DB_PA
     found.sort(key=lambda t: -len(t[1]))
     for (kind, name, day, part), hits, sc in found:
         n = len(hits)
-        if n < min_repeats or not name:
+        if not name:
+            continue
+        # A minimum of opportunities and the rate's Wilson lower bound, not
+        # its point value (re-audit 10/11/26 LEARNING-10).
+        if not candidate_ok(n, sc["opps"], sc["hits_w"], sc["opps_w"], min_repeats, min_rate):
             continue
         rate, conf = _strength(sc["hits_w"], sc["opps_w"])
-        if rate < min_rate:
-            continue
         of = sc["opps"]
         pretty = {"morning": "lunch/day", "night": "dinner/night"}.get(part, part)
         lw = max((e["hid"] for e in hits), default=0)
@@ -3058,6 +3285,7 @@ def _iso_day(value) -> str:
     return w.strftime("%Y-%m-%d") if w else ""
 
 
+@_stime_scope.scoped
 def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     """Keep the standing patterns current, in this order:
 
@@ -3141,8 +3369,8 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
                 # confirmations: reading starts after the newest of them.
                 conn.execute("INSERT INTO schedule_standing_patterns (restaurant_id, pattern_key, kind, employee, role, "
                              "day, daypart, time, text, editors, first_learned, last_confirmed, person_id, detail, "
-                             "checked_through, opportunities, hits, last_hand, source) "
-                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'learned')",
+                             "checked_through, opportunities, hits, last_hand, source, evidence_basis) "
+                             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'learned','hand')",
                              (restaurant_id, k, p["kind"], p.get("employee") or None, p.get("role") or None,
                               p.get("day"), p.get("daypart"), p.get("time") or None, p.get("text"), editors, now, now,
                               pids.get(p.get("employee")), detail, lw, opps, hits, hand))
@@ -3187,17 +3415,17 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
         # Confidence and decay (L-30): a re-test once a half-life has passed
         # with no hand confirmation; retired once two have and the confidence
         # is under the floor. A row stored before the evidence columns takes
-        # its kept weeks as hits and its reversals as misses.
+        # its hand confirmations as hits and its reversals as misses (never
+        # its kept weeks — LEARNING-9).
         # A row retired by decay comes back only on a draft made after it.
         newest_week = conn.execute("SELECT MAX(id) FROM schedule_history WHERE restaurant_id=?",
                                    (restaurant_id,)).fetchone()[0] or 0
-        import schedule_memory as _smem
         for r in _standing_rows(conn, restaurant_id):
             if r["status"] not in ("active", "retest"):
                 continue
-            if not int(r.get("opportunities") or 0) and int(r.get("times_applied") or 0):
-                r["hits"] = int(r["times_applied"])
-                r["opportunities"] = int(r["times_applied"]) + int(r.get("times_overridden") or 0)
+            if not int(r.get("opportunities") or 0) and int(r.get("times_confirmed") or 0):
+                r["hits"] = int(r["times_confirmed"])
+                r["opportunities"] = int(r["times_confirmed"]) + int(r.get("times_overridden") or 0)
             if not r.get("last_hand"):
                 r["last_hand"] = _iso_day(r.get("last_confirmed") if int(r.get("times_confirmed") or 0)
                                           else r.get("first_learned")) or today.isoformat()
@@ -3230,7 +3458,10 @@ def refresh_standing_patterns(restaurant_id, db_path=DB_PATH, today=None) -> dic
             enforced = r.get("enforced_since")
             if status == "retired":
                 enforced = None
-            elif not enforced and (conf >= _smem.ACTIVE_CONFIDENCE or _owner_kept(r)):
+            elif not enforced and (habit_enforceable(r) or _owner_kept(r)):
+                # Bound by the manager's hand (ENFORCE_MIN_HAND hand hits,
+                # re-audit 10/11/26 LEARNING-9/11) or the owner's word —
+                # never by weeks the draft carried it.
                 enforced = now
             conn.execute("UPDATE schedule_standing_patterns SET confidence=?, opportunities=?, hits=?, last_hand=?, "
                          "last_kept=?, enforced_since=?, "
@@ -3318,14 +3549,19 @@ def _read_weeks(restaurant_id, stats, db_path=DB_PATH, today=None):
             verdict = _week_verdict(p, draft, final, edited, asked=rec.get("asked"))
             if verdict in ("kept", "confirmed"):
                 u["applied"] += 1
-                u["hits"] += 1
-                u["opps"] += 1
                 u["last"] = str(w["published_at"])[:19]
                 # A week that went out keeping it (LEARNING-1): once it is
                 # WORKED as published it renews the decay (_worked_kept), as
                 # the punches renew an opener's (schedule_memory kept_dates).
                 u["kept_week"] = max(str(u["kept_week"] or ""), week_day or "") or None
                 if verdict == "confirmed":
+                    # Only the manager's own hand is evidence (re-audit
+                    # 10/11/26 LEARNING-9): a week the draft merely carried
+                    # it ("kept") used to add a hit AND an opportunity, so
+                    # two one-off edits climbed to the binding line by
+                    # themselves in three more weeks nobody touched.
+                    u["hits"] += 1
+                    u["opps"] += 1
                     u["confirmed"] += 1
                     u["hand"] = week_day or u["hand"]
             elif verdict == "over":
@@ -3434,6 +3670,7 @@ def standing_patterns(restaurant_id, db_path=DB_PATH, include_retired=True) -> l
     return out
 
 
+@_stime_scope.scoped
 def patterns_for_draft(restaurant_id, db_path=DB_PATH) -> tuple:
     """(patterns, conflicts) the next draft reads: the live window's
     patterns plus every active standing one it no longer shows (worded as
@@ -3629,9 +3866,11 @@ def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, d
     LEARN-3): an account holder's (`authority` principal) is the owner's
     word — source owner_said, applied whatever its confidence, and it
     brings back a row anybody retired. A delegate's (a manager's) is their
-    hand confirming it — a new row is an ordinary learned one (one week of
-    evidence, held only once it clears the line), an existing one is
-    confirmed by hand, and a row the OWNER let go stays let go. A ruled row
+    hand confirming it AND their explicit word that it holds every week: it
+    binds the passes at once (enforced_since — schedule re-audit 10/11/26
+    LEARNING-11: a manager who said "Always" used to re-do the same fix four
+    more weeks before it bound), as a priced habit, never a hard rule and
+    never the owner's word; a row the OWNER let go stays let go. A ruled row
     is already a rule."""
     import schedule_intel as _si
     k = _si.pattern_key(p)
@@ -3647,14 +3886,14 @@ def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, d
             conn.execute("INSERT INTO schedule_standing_patterns (restaurant_id, pattern_key, kind, employee, role, day, "
                          "daypart, time, text, editors, first_learned, last_confirmed, detail, checked_through, "
                          "times_confirmed, opportunities, hits, last_hand, source, authority, person_id, "
-                         "owner_kept_at, answer_authority) "
-                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,1,?,?,?,?,?,?)",
+                         "owner_kept_at, answer_authority, evidence_basis, enforced_since) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,1,?,?,?,?,?,?,'hand',?)",
                          (restaurant_id, k, p["kind"], p.get("employee") or None, p.get("role") or None, p.get("day"),
                           p.get("daypart"), p.get("time") or None, p.get("text"),
                           json.dumps({(who or "owner"): 1}), now, now, detail, int(history_id or 0), today,
                           "owner_said" if owner else "learned", authority,
                           _person_id(restaurant_id, p.get("employee"), db_path) if p.get("employee") else None,
-                          today if owner else None, "principal" if owner else "delegate"))
+                          today if owner else None, "principal" if owner else "delegate", now))
         elif row["status"] == "ruled":
             pass
         elif not owner and row["status"] == "retired" and (row.get("retired_reason") or "") == "owner":
@@ -3664,8 +3903,9 @@ def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, d
                          "retired_at=NULL, retired_week=NULL, retired_reason=NULL, times_overridden=0, "
                          "times_confirmed=COALESCE(times_confirmed, 0)+1, last_confirmed=?, source='owner_said', "
                          "authority='principal', owner_kept_at=?, answer_authority='principal', "
+                         "enforced_since=COALESCE(enforced_since, ?), "
                          "detail=CASE WHEN ?='{}' THEN detail ELSE ? END, "
-                         "updated_at=datetime('now') WHERE id=?", (today, now, today, detail, detail, row["id"]))
+                         "updated_at=datetime('now') WHERE id=?", (today, now, today, now, detail, detail, row["id"]))
         else:
             conn.execute("UPDATE schedule_standing_patterns SET status=CASE WHEN status='dormant' THEN 'dormant' "
                          "ELSE 'active' END, last_hand=?, retest_since=NULL, "
@@ -3673,8 +3913,9 @@ def owner_said_pattern(restaurant_id, p, authority, history_id=None, who=None, d
                          "times_confirmed=COALESCE(times_confirmed, 0)+1, last_confirmed=?, "
                          "authority=COALESCE(authority, ?), "
                          "answer_authority=CASE WHEN answer_authority='principal' THEN 'principal' ELSE 'delegate' END, "
+                         "enforced_since=COALESCE(enforced_since, ?), "
                          "detail=CASE WHEN ?='{}' THEN detail ELSE ? END, "
-                         "updated_at=datetime('now') WHERE id=?", (today, now, authority, detail, detail, row["id"]))
+                         "updated_at=datetime('now') WHERE id=?", (today, now, authority, now, detail, detail, row["id"]))
         conn.commit()
     finally:
         conn.close()

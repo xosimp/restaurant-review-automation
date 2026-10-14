@@ -91,36 +91,84 @@ struct PublishReach: Decodable, Equatable {
 /// acknowledgement names) and who each channel reaches. With no
 /// `schedule_id` it answers for the OPEN draft, or `schedule_id: null`.
 struct PublishCheck: Decodable, Equatable {
-    /// One blocker: its key, its words, and whether it is hard — the law or
-    /// the owner's non-negotiables, drawn red (TRUST-27) — with how often the
-    /// owner sent past it before (TRUST-28).
+    /// One blocker: its key, its words, its TIER — must-fix (red) or a
+    /// decision (amber) — and, for a must-fix, how it may be sent past: the
+    /// law an edit can fix never, the posting law with the owner's
+    /// acknowledgement, a manager gap by a manager or owner on the roster
+    /// (schedule re-audit 10/11/26 TRUST-24, TRUST-4/5/8). The gate's
+    /// `demotable` (formerly `hard`) says only whether the owner's record
+    /// may quiet it, and is not a colour.
     struct Item: Decodable, Equatable {
         let key: String
         let text: String
-        var hard: Bool? = nil
+        var tier: String? = nil
+        var law = false
+        var fixable = true
+        var cls: String? = nil
+        var kind: String? = nil
+        var coverCandidates: [String] = []
+        var legalText: String? = nil
         var overriddenBefore: String? = nil
 
         enum CodingKeys: String, CodingKey {
-            case key, text, hard
+            case key, text, tier, law, fixable, cls, kind, legal
+            case coverCandidates = "cover_candidates"
             case overriddenBefore = "overridden_before"
         }
+        private enum LegalKeys: String, CodingKey { case text }
 
-        init(key: String, text: String, hard: Bool? = nil) {
-            self.key = key; self.text = text; self.hard = hard
+        init(key: String, text: String, tier: String? = nil) {
+            self.key = key; self.text = text; self.tier = tier
         }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             key = try c.decode(String.self, forKey: .key)
             text = try c.decode(String.self, forKey: .text)
-            hard = c.sfBool(.hard)
+            tier = c.sfText(.tier)
+            law = c.sfBool(.law) ?? false
+            fixable = c.sfBool(.fixable) ?? true
+            cls = c.sfText(.cls)
+            kind = c.sfText(.kind)
+            coverCandidates = c.setupTexts(.coverCandidates)
+            legalText = (try? c.nestedContainer(keyedBy: LegalKeys.self, forKey: .legal))?.sfText(.text)
             overriddenBefore = PublishReview.MustFix.overriddenLine(
                 (try? c.decodeIfPresent(LooseValue.self, forKey: .overriddenBefore)) ?? nil)
         }
 
-        /// As a must-fix: hard unless the server said it is not.
+        /// In the must-fix tier (or from before the tiers, which the gate
+        /// reads as must-fix).
+        var isMustFix: Bool { PublishReview.MustFix.isMustFixTier(tier) }
+
+        /// As a must-fix, overridable the way the gate's override_policy
+        /// says — the web's fromCheck, item for item.
         var mustFix: PublishReview.MustFix {
-            PublishReview.MustFix(key: key, text: text, hard: hard ?? true, overriddenBefore: overriddenBefore)
+            var m = PublishReview.MustFix(key: key, text: text, tier: tier ?? "must_fix", hard: true,
+                                          overriddenBefore: overriddenBefore)
+            m.law = law
+            m.cls = cls
+            m.kind = kind
+            m.candidates = coverCandidates
+            m.legalText = legalText
+            if law {
+                m.overrideAllowed = !fixable
+                m.overrideNeeds = fixable ? nil : "legal_ack"
+                m.needsCoveredBy = false
+                m.overrideWhy = fixable ? "This breaks the law \u{2014} fix it, or the week can\u{2019}t go to staff." : nil
+                m.overridePrompt = fixable ? nil : legalText
+            }
+            return m
+        }
+
+        /// A decision-tier blocker as a decision that holds Send, answered
+        /// by sending it as it is (the web's fromCheck).
+        var decision: PublishReview.Decision {
+            var d = PublishReview.Decision(key: key, text: text, options: [
+                PublishReview.Action(label: "Send it as it is", action: "acknowledge",
+                                     payload: ["key": .string(key)], scope: "week")], holds: true)
+            d.kind = kind
+            d.overriddenBefore = overriddenBefore
+            return d
         }
     }
     var ok = false
@@ -228,7 +276,6 @@ struct PublishResult: Decodable {
     let unreachable: [Unreachable]
     let failed: [Failed]
     let error: String?
-    let status: String?
     // True when the owner sent past the publish gate's blockers — said
     // in the result so "sent" never quietly hides that it was.
     let acknowledged: Bool?
@@ -250,14 +297,27 @@ struct PublishResult: Decodable {
     var actionId: Int? = nil
     var executeAt: String? = nil
     var undoMinutes: Int? = nil
+    /// The people the Send's inline window did not reach yet — the outbox
+    /// job tells them within the minute (schedule re-audit 10/11/26
+    /// BUGSLIFE-21: the phone said "sent to N" and nothing of the rest).
+    var sending: [String] = []
+    /// Nobody was told: the week is only in the staff portal.
+    var portalOnly = false
+    /// The outbox as it stands (still sending, failed, unreachable) —
+    /// polled while anyone is still being sent to.
+    var delivery: PublishDeliveryCounts? = nil
+    /// Covers and swaps this send undid, each told (BUGSLIFE-1).
+    var staffChangesUndone: [String] = []
 
     enum CodingKeys: String, CodingKey {
-        case ok, sent, unreachable, failed, error, status, acknowledged, note, version, queued
+        case ok, sent, unreachable, failed, error, acknowledged, note, version, queued, sending, delivery
         case alreadyPublished = "already_published"
         case changesSent = "changes_sent"
         case actionId = "action_id"
         case executeAt = "execute_at"
         case undoMinutes = "undo_minutes"
+        case portalOnly = "portal_only"
+        case staffChangesUndone = "staff_changes_undone"
     }
 
     // Lenient: a changes-only send may answer without every list.
@@ -268,7 +328,6 @@ struct PublishResult: Decodable {
         unreachable = (try? c.decodeIfPresent([Unreachable].self, forKey: .unreachable)) ?? []
         failed = (try? c.decodeIfPresent([Failed].self, forKey: .failed)) ?? []
         error = try? c.decodeIfPresent(String.self, forKey: .error)
-        status = try? c.decodeIfPresent(String.self, forKey: .status)
         acknowledged = try? c.decodeIfPresent(Bool.self, forKey: .acknowledged)
         alreadyPublished = try? c.decodeIfPresent(Bool.self, forKey: .alreadyPublished)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
@@ -278,6 +337,23 @@ struct PublishResult: Decodable {
         actionId = (try? c.decodeIfPresent(Int.self, forKey: .actionId)) ?? nil
         executeAt = (try? c.decodeIfPresent(String.self, forKey: .executeAt)) ?? nil
         undoMinutes = (try? c.decodeIfPresent(Int.self, forKey: .undoMinutes)) ?? nil
+        // `sending` is the names still to go; an older server's count reads
+        // as that many unnamed people.
+        let names = c.setupTexts(.sending)
+        if !names.isEmpty {
+            sending = names
+        } else if let n = c.sfInt(.sending), n > 0 {
+            sending = Array(repeating: "", count: n)
+        }
+        portalOnly = c.sfBool(.portalOnly) ?? false
+        delivery = (try? c.decodeIfPresent(PublishDeliveryCounts.self, forKey: .delivery)) ?? nil
+        staffChangesUndone = c.setupTexts(.staffChangesUndone)
+    }
+
+    /// "4 still sending" — the people not yet reached, from the outbox when
+    /// it has been read since, else the Send's own list.
+    func stillSending(_ now: PublishDeliveryCounts?) -> Int {
+        (now ?? delivery)?.sending ?? sending.count
     }
 
     struct Sent: Decodable, Identifiable {
@@ -334,20 +410,38 @@ final class PublishScheduleViewModel {
     /// loads, or from a server without it: the sheet then reads the publish
     /// check's blockers alone, hard ones still red.
     var review: PublishReview?
-    /// The publish check's blockers as must-fix items (the fallback list)
-    /// and the 409's, when the gate answered the press with more.
+    /// The publish check's blockers, read only when the review could not
+    /// run (TRUST-25): its must-fix tier as must-fix items and its decision
+    /// tier as decisions that hold Send (TRUST-24) — and the 409's, when the
+    /// gate answered the press with more.
     var checkItems: [PublishReview.MustFix] = []
+    var checkDecisions: [PublishReview.Decision] = []
     var gateItems: [PublishReview.MustFix] = []
+    var gateDecisions: [PublishReview.Decision] = []
     /// Each must-fix the owner sends past, by key, with their words — sent
-    /// as `overrides: [{key, reason}]` and stored by key (TRUST-28). One by
-    /// one: there is no "acknowledge all" (TRUST-2, TRUST-3).
+    /// as `overrides: [{key, reason}]` and stored by key (TRUST-28). Each on
+    /// its own (TRUST-2, TRUST-3); a group's one tap is a FIX, never an
+    /// override for all of them.
     var overrides: [String: PublishOverrideChoice] = [:]
     /// The `holds` decisions answered here (their keys go back with Send as
     /// acknowledgements) — each needs an answer before the week goes out.
     var acknowledged: Set<String> = []
-    /// A review tap that shows a shift in the week (`open`): the sheet closes
-    /// so the week is in view.
+    /// A review tap that opens another screen (`open`, TRUST-20): the sheet
+    /// closes and the screen that opened it goes there (`onOpen`).
     var dismissRequested = false
+    var openTarget: ReviewOpenTarget?
+    /// Where an `open` goes; nil from a screen that can't take it there
+    /// (History), which then says so under the button.
+    var onOpen: ((ReviewOpenTarget) -> Void)?
+    /// A setting set on the web, opened over the sheet.
+    var webPath: String?
+    /// A person's record in Team, opened over the sheet ("Fix it in Team").
+    var personTarget: PersonSheetTarget?
+    /// The restaurant's targets, opened over the sheet (TRUST-29).
+    var showingTargets = false
+    /// The press the gate refused an override on, by key, with why (the
+    /// 409's `override_refused`; TRUST-4/5).
+    var refusedOverrides: [String: String] = [:]
     /// The rows on screen when they hold an edit no save has stored: the
     /// review is asked about them (`POST labor/publish-review`), not the
     /// stored copy.
@@ -372,9 +466,12 @@ final class PublishScheduleViewModel {
     /// The crew's shifts on the sheet unless the review already asks about
     /// them as decisions (its `decide` keys name the crew).
     var showsCrew: Bool {
-        guard check?.publishedAt == nil else { return false }
+        guard publishedAt == nil else { return false }
         return !(review?.decide.contains { $0.key.lowercased().hasPrefix("crew") } ?? false)
     }
+
+    /// When the week went to staff — the review's, else the check's.
+    var publishedAt: String? { review?.publishedAt ?? check?.publishedAt }
 
     /// Puts the crew's suggested shift on the week through the row runner.
     var crewAddRow: (([String: LooseValue]) async -> String?)? {
@@ -442,13 +539,11 @@ final class PublishScheduleViewModel {
     }
     /// The publish outbox's counts for the week on screen (schedule audit
     /// 10/10/26 BUGSLIFE-9): still sending, failed (retried), unreachable.
-    struct PublishDelivery: Decodable {
-        var sending: Int? = nil
-        var failed: Int? = nil
-        var unreachable: Int? = nil
-        var missing: Int { (failed ?? 0) + (unreachable ?? 0) }
-    }
+    typealias PublishDelivery = PublishDeliveryCounts
     var delivery: PublishDelivery?
+    /// Polls the outbox while a send is still reaching people
+    /// (BUGSLIFE-21); stopped when nobody is left or the sheet goes.
+    private var deliveryPoll: Task<Void, Never>?
     /// The version of the rows the screen holds (Labor's own), sent with
     /// Send so a week changed since is refused, not sent unseen.
     var version: Int?
@@ -459,7 +554,7 @@ final class PublishScheduleViewModel {
     /// What must be fixed or overridden before Send: the review's list (or
     /// the publish check's), with anything the gate's 409 added since.
     var mustFix: [PublishReview.MustFix] {
-        guard check?.publishedAt == nil || !unsentChanges.isEmpty else { return gateItems }
+        guard publishedAt == nil || !unsentChanges.isEmpty else { return gateItems }
         var out = review?.isUsable == true ? (review?.mustFix ?? []) : checkItems
         for item in gateItems where !out.contains(where: { $0.key == item.key }) { out.append(item) }
         return out
@@ -468,17 +563,28 @@ final class PublishScheduleViewModel {
     /// The items still holding Send.
     var openItems: [PublishReview.MustFix] { PublishGate.open(mustFix, overrides: overrides) }
 
+    /// Every decision on the sheet: the review's (or, without it, the
+    /// check's decision tier), with any the gate's 409 added since.
+    var decisions: [PublishReview.Decision] {
+        var out = review?.isUsable == true ? (review?.decide ?? []) : checkDecisions
+        for d in gateDecisions where !out.contains(where: { $0.key == d.key }) { out.append(d) }
+        return out
+    }
+
+    /// The decisions that hold Send, answered or not.
+    var holdingDecisions: [PublishReview.Decision] { decisions.filter(\.holds) }
+
     /// The decisions Send waits on that have no answer yet.
     var undecided: [PublishReview.Decision] {
-        guard check?.publishedAt == nil else { return [] }
-        return (review?.holding ?? []).filter { !acknowledged.contains($0.key) }
+        guard publishedAt == nil else { return [] }
+        return holdingDecisions.filter { !acknowledged.contains($0.key) }
     }
 
     /// What Send acknowledges: each override's key and each answered
     /// decision's, still on the lists.
     var acknowledgeKeys: [String] {
         let fromOverrides = PublishGate.overrides(mustFix, overrides).map(\.key)
-        let decided = (review?.holding ?? []).map(\.key).filter { acknowledged.contains($0) }
+        let decided = holdingDecisions.map(\.key).filter { acknowledged.contains($0) }
         return fromOverrides + decided.filter { !fromOverrides.contains($0) }
     }
 
@@ -503,13 +609,14 @@ final class PublishScheduleViewModel {
                 "/mobile/api/labor/schedule-share-status", query: query, hapticOnError: false)
             status = s?.status ?? []
             delivery = s?.delivery
-            await loadCheck()
-            await loadReview()
-            if check?.publishedAt == nil, let id = scheduleId {
+            // ONE gate run per load (schedule re-audit 10/11/26 TRUST-25):
+            // the review carries the send, reach, sent state and the gate's
+            // own items; the publish check is read only when it fails.
+            await refreshGate()
+            if publishedAt == nil, let id = scheduleId {
                 crew.onAnswered = { [weak self] in
                     if let provider = self?.versionProvider { self?.version = provider() }
-                    await self?.loadCheck()
-                    await self?.loadReview()
+                    await self?.refreshGate()
                 }
                 await crew.load(historyId: id)
             }
@@ -525,6 +632,13 @@ final class PublishScheduleViewModel {
     /// Blockers before Send, as the web's psRefresh reads them. A week staff
     /// already have names only who a saved change moved; the gate's
     /// warnings are for a week staff don't have yet.
+    /// The gate, read once: the review, else (it failed, or an older server
+    /// has none) the publish check — never both (TRUST-25).
+    func refreshGate() async {
+        if await loadReview() { return }
+        await loadCheck()
+    }
+
     func loadCheck() async {
         guard let scheduleId else { return }
         guard let c: PublishCheck = try? await client.send(
@@ -534,19 +648,27 @@ final class PublishScheduleViewModel {
         canPublish = c.canPublish
         replacedReason = c.replacedReason
         if c.publishedAt == nil {
-            checkItems = c.blockerItems.isEmpty
-                ? zip(c.blockerKeys, c.blockers).map { PublishReview.MustFix(key: $0.0, text: $0.1) }
-                : c.blockerItems.map(\.mustFix)
+            // The tier, not the old `hard` flag (TRUST-24): a decision
+            // (notice, a late change, an unscored week) is amber and answered
+            // in one tap, never a red must-fix that wants a reason.
+            if c.blockerItems.isEmpty {
+                checkItems = zip(c.blockerKeys, c.blockers).map { PublishReview.MustFix(key: $0.0, text: $0.1) }
+                checkDecisions = []
+            } else {
+                checkItems = c.blockerItems.filter(\.isMustFix).map(\.mustFix)
+                checkDecisions = c.blockerItems.filter { !$0.isMustFix }.map(\.decision)
+            }
         } else if unsentChanges.isEmpty, let un = c.unsentChanges {
             unsentChanges = un
         }
         pruneOverrides()
     }
 
-    /// The pre-publish review of this week. An older server answers 404 and
-    /// the sheet keeps the publish check's list.
-    func loadReview() async {
-        guard let scheduleId else { return }
+    /// The pre-publish review of this week; true when it came back usable.
+    /// An older server answers 404 and the sheet reads the publish check.
+    @discardableResult
+    func loadReview() async -> Bool {
+        guard let scheduleId else { return false }
         do {
             // The STORED week: Send sends what is stored, so the review is of
             // that copy — a screen with an unsaved edit is said instead
@@ -556,10 +678,48 @@ final class PublishScheduleViewModel {
                                                          hapticOnError: false)
             review = r.isUsable ? r : nil
         } catch is CancellationError {
+            return review != nil
         } catch {
             review = nil
         }
+        if let r = review {
+            // What the publish check used to answer, from the same payload.
+            check = nil
+            canPublish = r.canPublish ?? true
+            replacedReason = r.replacedReason
+            if r.publishedAt != nil, unsentChanges.isEmpty, let un = r.send.unsentChanges { unsentChanges = un }
+            if r.publishedAt != nil, let d = r.send.delivery { delivery = d }
+        }
         pruneOverrides()
+        return review != nil
+    }
+
+    /// While a send is still reaching people, read the outbox again every
+    /// few seconds (at most two minutes) so "4 still sending" counts down
+    /// and a failure shows — the web's notice_status (BUGSLIFE-21).
+    func watchDelivery() {
+        deliveryPoll?.cancel()
+        guard let scheduleId else { return }
+        let query = ["schedule_id": String(scheduleId)]
+        deliveryPoll = Task { [weak self] in
+            for _ in 0..<24 {
+                try? await Task.sleep(for: .seconds(5))
+                if Task.isCancelled { return }
+                guard let self else { return }
+                let s: StatusResponse? = try? await self.client.send(
+                    "/mobile/api/labor/schedule-share-status", query: query, hapticOnError: false)
+                if let s {
+                    self.status = s.status
+                    self.delivery = s.delivery ?? self.delivery
+                }
+                if (self.delivery?.sending ?? 0) == 0 { return }
+            }
+        }
+    }
+
+    func stopWatchingDelivery() {
+        deliveryPoll?.cancel()
+        deliveryPoll = nil
     }
 
     /// An override is for an item on the list: one since fixed is dropped,
@@ -567,8 +727,8 @@ final class PublishScheduleViewModel {
     private func pruneOverrides() {
         let keys = Set(mustFix.map(\.key))
         overrides = overrides.filter { keys.contains($0.key) }
-        let holding = Set((review?.holding ?? []).map(\.key))
-        if review != nil { acknowledged = acknowledged.filter { holding.contains($0) } }
+        let holding = Set(holdingDecisions.map(\.key))
+        if review != nil || check != nil { acknowledged = acknowledged.filter { holding.contains($0) } }
     }
 
     /// Run one of the review's taps: a fix that edits the week (Labor's own
@@ -586,13 +746,39 @@ final class PublishScheduleViewModel {
             Haptic.selection()
             return
         }
-        if action.action == "open" {
-            dismissRequested = true
+        // One answer for a group of one rule's decisions (TRUST-15): each
+        // key acknowledged, sent with Send like a single answer.
+        if action.action == "acknowledge_all" {
+            var keys: [String] = []
+            if case .list(let l)? = action.payload["keys"] {
+                keys = l.compactMap { if case .string(let s) = $0 { return s } else { return nil } }
+            }
+            for k in keys {
+                acknowledged.insert(k)
+                answered[k] = action.buttonLabel
+            }
+            Haptic.selection()
             return
         }
-        // "Leave them off this week", "Keep 3": an answer that changes
-        // nothing — said on the sheet, never sent.
+        // Goes where its payload says (TRUST-20) — Redo, Setup's managers,
+        // the person in Team, the shift on the week, a web setting — never
+        // a sheet that only closes.
+        if action.action == "open" {
+            openAction(action)
+            return
+        }
+        // "Leave them off this week", "Keep 3": kept on the server, so it is
+        // not asked again while it holds (TRUST-17) — it used to live only
+        // on this sheet and came back on every check.
         if action.action == "dismiss" {
+            actionBusy = action.id
+            defer { actionBusy = nil }
+            if let refusal = await dismissSuggestion(action, decision: decision) {
+                actionNotes[action.id] = refusal
+                Haptic.error()
+                return
+            }
+            actionNotes[action.id] = nil
             if let decision { answered[decision] = action.buttonLabel }
             Haptic.selection()
             return
@@ -618,8 +804,75 @@ final class PublishScheduleViewModel {
         if let decision { answered[decision] = action.buttonLabel }
         if let provider = versionProvider { version = provider() }
         Haptic.success()
-        await loadCheck()
-        await loadReview()
+        await refreshGate()
+    }
+
+    /// An `open` tap: a web setting opens over the sheet; anything else
+    /// closes the sheet and the screen that opened it goes there. A screen
+    /// that can't (History) says where to do it instead.
+    func openAction(_ action: PublishReview.Action) {
+        guard let target = ReviewOpenTarget.from(action.payload) else {
+            actionNotes[action.id] = "Open the week on the Labor screen to do this."
+            return
+        }
+        Haptic.light()
+        if case .web(let path) = target {
+            webPath = path
+            return
+        }
+        if case .targets = target {
+            showingTargets = true
+            return
+        }
+        if case .person(let who) = target {
+            // The person's record in Team opens over this sheet, from
+            // anywhere the sheet was opened — the review stays underneath.
+            personTarget = PersonSheetTarget(key: nil, name: who)
+            return
+        }
+        guard let onOpen else {
+            actionNotes[action.id] = "Open this week on the Labor screen to do this."
+            return
+        }
+        openTarget = target
+        dismissRequested = true
+        onOpen(target)
+    }
+
+    private struct DismissBody: Encodable {
+        let key: String
+        let scope: String
+        var until: String? = nil
+        var evidence: String? = nil
+        var scheduleId: Int? = nil
+        var answer: String? = nil
+        /// Brings a kept answer back (the web's "ask again"); not sent by a
+        /// dismissal.
+        var undo: Bool? = nil
+        enum CodingKeys: String, CodingKey {
+            case key, scope, until, evidence, answer, undo
+            case scheduleId = "schedule_id"
+        }
+    }
+
+    /// POST labor/publish-review/dismiss — the web's own call (TRUST-17).
+    /// Nil when kept; else why not.
+    private func dismissSuggestion(_ action: PublishReview.Action, decision: String?) async -> String? {
+        let p = action.payload
+        guard let key = LaborViewModel.payloadText(p, "key") ?? decision else { return nil }
+        let body = DismissBody(key: key, scope: LaborViewModel.payloadText(p, "scope") ?? action.scope ?? "week",
+                               until: LaborViewModel.payloadText(p, "until") ?? review?.weekEnd,
+                               evidence: LaborViewModel.payloadText(p, "evidence"),
+                               scheduleId: scheduleId, answer: action.buttonLabel)
+        do {
+            let r: OKErrorResponse = try await client.send("/mobile/api/labor/publish-review/dismiss", method: .post,
+                                                           body: body, hapticOnError: false, retryTransient: false)
+            return r.ok ? nil : (r.error ?? "Kept for now \u{2014} it may be asked again.")
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Kept for now \u{2014} it may be asked again."
+        }
     }
 
     private struct CrewAnswerBody: Encodable {
@@ -700,10 +953,20 @@ final class PublishScheduleViewModel {
                                           hapticOnError: false, retryTransient: false)
             case "labor/rules":
                 // A floor the work never needed, lowered on that weekday and
-                // meal — the owner's own floors, role by role.
-                guard case .object(let floors)? = body["role_floors"] else { return "That change couldn\u{2019}t be read." }
-                r = try await client.send("/mobile/api/labor/rules", method: .post, body: RoleFloorsBody(roleFloors: floors),
-                                          hapticOnError: false, retryTransient: false)
+                // meal — the owner's own floors, role by role; or a rule the
+                // owner always sends past, changed in one tap (TRUST-10:
+                // `rules` merged key by key, never a law-backed setting).
+                if case .object(let floors)? = body["role_floors"] {
+                    r = try await client.send("/mobile/api/labor/rules", method: .post,
+                                              body: RoleFloorsBody(roleFloors: floors),
+                                              hapticOnError: false, retryTransient: false)
+                } else if case .object(let rules)? = body["rules"], !rules.isEmpty {
+                    r = try await client.send("/mobile/api/labor/rules", method: .post,
+                                              body: ["rules": LooseValue.object(rules)],
+                                              hapticOnError: false, retryTransient: false)
+                } else {
+                    return "That change couldn\u{2019}t be read."
+                }
             default:
                 return "Open the week on the web to do this one."
             }
@@ -851,6 +1114,16 @@ final class PublishScheduleViewModel {
         /// The tiered gate's must-fix keys (each needs an override with a
         /// reason; a manager gap, who runs the floor): the rest are decisions.
         var mustFixKeys: [String]? = nil
+        /// The must-fix keys no override sends past (a law an edit can fix)
+        /// and each override the gate refused, with why (TRUST-4/5/8).
+        var notOverridable: [String]? = nil
+        var overrideRefused: [Refused]? = nil
+
+        struct Refused: Decodable, Equatable {
+            let key: String
+            let why: String
+        }
+
         enum CodingKeys: String, CodingKey {
             case blockers, notes
             case mustFixKeys = "must_fix_keys"
@@ -859,6 +1132,8 @@ final class PublishScheduleViewModel {
             case blockerKeys = "blocker_keys"
             case blockerItems = "blocker_items"
             case scheduleId = "schedule_id"
+            case notOverridable = "not_overridable"
+            case overrideRefused = "override_refused"
         }
 
         /// The lines to show and the keys they carry, items first.
@@ -867,19 +1142,38 @@ final class PublishScheduleViewModel {
             return (blockers ?? [], blockerKeys ?? [])
         }
 
-        /// The gate's blockers as must-fix items, hard unless it said not
-        /// (or, from the tiered gate, unless it is not a must-fix key).
+        /// Whether one blocker is in the must-fix tier: its own `tier`, else
+        /// the tiered gate's key list, else (a gate from before the tiers)
+        /// must-fix.
+        private func isMustFix(_ item: Item) -> Bool {
+            if item.tier != nil { return item.isMustFix }
+            if let must = mustFixKeys { return must.contains(item.key) }
+            return true
+        }
+
+        /// The gate's must-fix tier as must-fix items (red), each with what
+        /// its override needs (TRUST-24).
         var items: [PublishReview.MustFix] {
-            var out: [PublishReview.MustFix]
             if let items = blockerItems, !items.isEmpty {
-                out = items.map(\.mustFix)
-            } else {
-                out = zip(blockerKeys ?? [], blockers ?? []).map { PublishReview.MustFix(key: $0.0, text: $0.1) }
+                return items.filter(isMustFix).map { item in
+                    var m = item.mustFix
+                    if notOverridable?.contains(m.key) == true { m.overrideAllowed = false }
+                    return m
+                }
             }
-            if let must = mustFixKeys {
-                out = out.map { var m = $0; m.hard = must.contains(m.key); return m }
+            let pairs = zip(blockerKeys ?? [], blockers ?? []).map { PublishReview.MustFix(key: $0.0, text: $0.1) }
+            guard let must = mustFixKeys else { return pairs }
+            return pairs.filter { must.contains($0.key) }
+        }
+
+        /// The gate's decision tier, each answered in one tap (amber).
+        var decisions: [PublishReview.Decision] {
+            if let items = blockerItems, !items.isEmpty {
+                return items.filter { !isMustFix($0) }.map(\.decision)
             }
-            return out
+            guard let must = mustFixKeys else { return [] }
+            return zip(blockerKeys ?? [], blockers ?? []).filter { !must.contains($0.0) }
+                .map { PublishCheck.Item(key: $0.0, text: $0.1, tier: "decide").decision }
         }
     }
 
@@ -980,6 +1274,8 @@ final class PublishScheduleViewModel {
                 overrides = [:]
                 acknowledged = []
                 gateItems = []
+                gateDecisions = []
+                refusedOverrides = [:]
                 unsentChanges = []
                 onSent?()
                 if let v = result.version { onVersion?(v) }
@@ -987,15 +1283,32 @@ final class PublishScheduleViewModel {
                 publishError = result.error ?? "Couldn't send the schedule."
             }
             await load()
+            // Some of the staff are still being told (the outbox job reaches
+            // them within the minute): "4 still sending" counts down here and
+            // a failure shows, instead of "sent" and silence (BUGSLIFE-21).
+            if result.ok, !result.queued {
+                if let d = result.delivery { delivery = d }
+                if result.stillSending(delivery) > 0 { watchDelivery() }
+            }
         } catch let error as APIClient.APIError {
             if error.status == 409, let gate = error.decodeBody(GateResponse.self), gate.needsAck == true {
                 // Not a failure: the gate found something not fixed or
-                // overridden (it appeared since the list was read). It joins
-                // the list; the overrides already given stand by key.
+                // overridden (it appeared since the list was read), or
+                // refused an override (a name not on the roster, "x" for a
+                // reason — TRUST-4/5). It joins the list; the overrides
+                // already given stand by key, a refused one is said on its
+                // item and taken back so it can be given again.
                 gateItems = gate.items
+                gateDecisions = gate.decisions
                 gateNotes = gate.notes?.items ?? []
+                refusedOverrides = Dictionary((gate.overrideRefused ?? []).map { ($0.key, $0.why) },
+                                              uniquingKeysWith: { a, _ in a })
+                for key in refusedOverrides.keys { overrides[key] = nil }
                 if let id = gate.scheduleId { self.scheduleId = id }
                 await loadReview()
+                if let first = gate.overrideRefused?.first {
+                    publishError = first.why
+                }
                 Haptic.warning()
             } else {
                 // 403 lands here too — a member who can draft but not send
@@ -1029,9 +1342,11 @@ struct PublishScheduleSheet: View {
     init(scheduleId: Int? = nil, unsentChanges: [String] = [], hoursBudget: Double? = nil, version: Int? = nil,
          onSent: (() -> Void)? = nil, onVersion: ((Int) -> Void)? = nil,
          rowActionRunner: ((PublishReview.Action) async -> String?)? = nil,
-         versionProvider: (() -> Int?)? = nil, hasUnsavedEdits: Bool = false) {
+         versionProvider: (() -> Int?)? = nil, hasUnsavedEdits: Bool = false,
+         onOpen: ((ReviewOpenTarget) -> Void)? = nil) {
         self.hoursBudget = hoursBudget
         let vm = PublishScheduleViewModel()
+        vm.onOpen = onOpen
         vm.scheduleId = scheduleId
         vm.unsentChanges = unsentChanges
         vm.version = version
@@ -1073,18 +1388,35 @@ struct PublishScheduleSheet: View {
                             ScheduleNotice(text: "Your last edit isn\u{2019}t saved. This checks and sends the week as it was last saved.",
                                            tone: .cavnarAmber, symbol: "exclamationmark.triangle.fill")
                         }
-                        let review = viewModel.check?.publishedAt == nil ? viewModel.review : nil
+                        let unsent = viewModel.publishedAt == nil
+                        let review = unsent ? viewModel.review : nil
                         if let verdict = review?.verdict, !verdict.sentence.isEmpty {
                             PublishVerdictCard(verdict: verdict)
                         }
                         if !viewModel.mustFix.isEmpty {
-                            PublishMustFixCard(items: viewModel.mustFix, overrides: $viewModel.overrides,
-                                               busy: viewModel.actionBusy, notes: viewModel.actionNotes) { fix in
+                            // Red, one card per rule kind with its one fix,
+                            // each item fixed or sent past on its own
+                            // (TRUST-15, TRUST-24).
+                            PublishMustFixCard(items: viewModel.mustFix, groups: review?.mustFixGroups ?? [],
+                                               overrides: $viewModel.overrides,
+                                               busy: viewModel.actionBusy, notes: viewModel.actionNotes,
+                                               refused: viewModel.refusedOverrides) { fix in
                                 Task { await viewModel.run(fix) }
                             }
                         }
-                        if let review, !review.decide.isEmpty {
-                            PublishDecideCard(decisions: review.decide, busy: viewModel.actionBusy,
+                        // What holds Send, amber, apart from the suggestions
+                        // that never do (TRUST-16).
+                        let holding = unsent ? viewModel.holdingDecisions : []
+                        if !holding.isEmpty {
+                            PublishDecideCard(decisions: holding, groups: review?.decideGroups ?? [],
+                                              holds: true, busy: viewModel.actionBusy,
+                                              notes: viewModel.actionNotes, answered: viewModel.answered) { option, key in
+                                Task { await viewModel.run(option, decision: key) }
+                            }
+                        }
+                        if let review, !review.suggestions.isEmpty {
+                            PublishDecideCard(decisions: review.suggestions, groups: [], holds: false,
+                                              busy: viewModel.actionBusy,
                                               notes: viewModel.actionNotes, answered: viewModel.answered) { option, key in
                                 Task { await viewModel.run(option, decision: key) }
                             }
@@ -1092,27 +1424,39 @@ struct PublishScheduleSheet: View {
                         if viewModel.showsCrew {
                             PublishCrewCard(store: viewModel.crew, rows: nil, addRow: viewModel.crewAddRow)
                         }
-                        if let review, !review.numbers.isEmpty || review.quality.score != nil {
-                            PublishNumbersCard(numbers: review.numbers, quality: review.quality)
+                        if let review, !review.alwaysOverridden.isEmpty {
+                            PublishAlwaysOverriddenCard(items: review.alwaysOverridden, busy: viewModel.actionBusy,
+                                                        notes: viewModel.actionNotes) { action in
+                                Task { await viewModel.run(action) }
+                            }
                         }
-                        if let review, !review.fragile.isEmpty || !review.changed.isEmpty || !review.fyi.isEmpty
-                            || !review.why.isEmpty || !review.sure.lines.isEmpty {
+                        if let review, !review.numbers.isEmpty || review.quality.score != nil
+                            || review.numbers.laborMissing != nil {
+                            PublishNumbersCard(numbers: review.numbers, quality: review.quality,
+                                               busy: viewModel.actionBusy, notes: viewModel.actionNotes) { action in
+                                Task { await viewModel.run(action) }
+                            }
+                        }
+                        if let review {
                             PublishReviewProof(review: review, busy: viewModel.actionBusy,
                                                notes: viewModel.actionNotes) { action in
                                 Task { await viewModel.run(action) }
                             }
                         }
                         staffCard
-                        // Worth a look and likely to change — never a block,
-                        // nothing to acknowledge — behind one tap.
-                        let notes = viewModel.gateNotes.isEmpty ? (viewModel.check?.notes ?? []) : viewModel.gateNotes
-                        let showsWorth = viewModel.check?.publishedAt == nil
-                            && (!notes.isEmpty || viewModel.check?.hours?.hourly != nil)
-                        let likely = viewModel.check?.likelyToChange
-                        let showsLikely = likely?.ready == true && !(likely?.rows.isEmpty ?? true)
-                            && viewModel.check?.publishedAt == nil
+                        // The week's hours and the rows likely to change —
+                        // never a block, behind one tap. With the review the
+                        // gate's notes are its "Worth a look" (fyi) above, so
+                        // they are not said twice (TRUST-25); without it, the
+                        // check's notes stand in.
+                        let notes: [PublishNote] = !viewModel.gateNotes.isEmpty ? viewModel.gateNotes
+                            : (review == nil ? (viewModel.check?.notes ?? []) : [])
+                        let hours = review?.hours ?? viewModel.check?.hours
+                        let showsWorth = unsent && (!notes.isEmpty || hours?.hourly != nil)
+                        let likely = review?.likelyToChange ?? viewModel.check?.likelyToChange
+                        let showsLikely = likely?.ready == true && !(likely?.rows.isEmpty ?? true) && unsent
                         if showsWorth || showsLikely {
-                            worthALookDisclosure(notes: notes, showsWorth: showsWorth,
+                            worthALookDisclosure(notes: notes, hours: hours, showsWorth: showsWorth,
                                                  likely: showsLikely ? likely : nil)
                         }
                         if let error = viewModel.publishError {
@@ -1150,16 +1494,34 @@ struct PublishScheduleSheet: View {
                 }
             }
             .task { await viewModel.load() }
+            .onDisappear { viewModel.stopWatchingDelivery() }
             .onChange(of: viewModel.dismissRequested) { _, now in if now { dismiss() } }
             .sheet(item: $viewModel.editingContact) { contact in
                 StaffContactSheet(viewModel: viewModel, contact: contact)
+            }
+            // "Fix it in Team": the person's record over the review (TRUST-20).
+            .sheet(item: $viewModel.personTarget, onDismiss: { Task { await viewModel.refreshGate() } }) { target in
+                PersonSheet(target: target)
+            }
+            // A weekly sales estimate to forecast from (TRUST-29).
+            .sheet(isPresented: $viewModel.showingTargets, onDismiss: { Task { await viewModel.refreshGate() } }) {
+                AccountTargetsView()
+            }
+            // A rule or budget the phone sets on the web, over the review.
+            .sheet(isPresented: Binding(get: { viewModel.webPath != nil },
+                                        set: { if !$0 { viewModel.webPath = nil } }),
+                   onDismiss: { Task { await viewModel.refreshGate() } }) {
+                if let path = viewModel.webPath, let url = CavnarHandoff.webpageURL(for: path) {
+                    CavnarSafariView(url: url).ignoresSafeArea()
+                }
             }
         }
     }
 
     /// "2 notes worth a look · 3 rows likely to change" — the publish
     /// check's notes and the rows the owner usually edits, one tap away.
-    private func worthALookDisclosure(notes: [PublishNote], showsWorth: Bool, likely: LikelyToChange?) -> some View {
+    private func worthALookDisclosure(notes: [PublishNote], hours: PublishHours?, showsWorth: Bool,
+                                      likely: LikelyToChange?) -> some View {
         var parts: [String] = []
         if showsWorth { parts.append(notes.isEmpty ? "The week's hours" : "\(notes.count) worth a look") }
         if let likely { parts.append("\(likely.rows.count) likely to change") }
@@ -1183,7 +1545,7 @@ struct PublishScheduleSheet: View {
             .accessibilityValue(showingWorthALook ? "Expanded" : "Collapsed")
             if showingWorthALook {
                 if showsWorth {
-                    PublishWorthALookCard(notes: notes, hours: viewModel.check?.hours, budget: hoursBudget)
+                    PublishWorthALookCard(notes: notes, hours: hours, budget: hoursBudget)
                 }
                 if let likely {
                     PublishLikelyToChangeCard(likely: likely)
@@ -1332,7 +1694,7 @@ struct PublishScheduleSheet: View {
             }
             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isPublishing))
             .disabled(viewModel.isPublishing)
-        } else if viewModel.hasSent || viewModel.check?.publishedAt != nil {
+        } else if viewModel.hasSent || viewModel.publishedAt != nil {
             // Sent. Another send re-sends to everyone, so it is a separate,
             // quieter action that asks first (CLIENT-36). The people the
             // first send did not reach get their own, unconfirmed action.
@@ -1466,9 +1828,35 @@ struct PublishScheduleSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            // The rest of the staff, still going out (the outbox reaches
+            // them within the minute) and what failed since (BUGSLIFE-21).
+            if let line = Self.deliveryLine(result, now: viewModel.delivery) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "paperplane")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .accessibilityHidden(true)
+                    CavnarMixedText(line, role: .secondary, color: .cavnarInk2)
+                }
+            }
+            ForEach(result.staffChangesUndone, id: \.self) { line in
+                CavnarMixedText(line, role: .secondary, color: .cavnarAmber)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
+    }
+
+    /// "4 still sending · 1 failed — Cavnar AI tries again" — nil when
+    /// everyone the send reaches has been told.
+    static func deliveryLine(_ result: PublishResult, now: PublishDeliveryCounts?) -> String? {
+        let sending = result.stillSending(now)
+        let failed = (now ?? result.delivery)?.failed ?? 0
+        var parts: [String] = []
+        if sending > 0 { parts.append("\(sending) still sending") }
+        if failed > 0 { parts.append("\(failed) failed \u{2014} Cavnar AI tries again, and Send again reaches them") }
+        if parts.isEmpty { return nil }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private var statusCard: some View {

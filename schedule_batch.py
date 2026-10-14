@@ -160,8 +160,10 @@ def plan_requests(restaurant_id, week_start=None) -> list:
     of them (the round of independent calls), or [] when it would send none
     (a code draft) or could not be built."""
     import schedule_engine as se
+    import learning_stats as _ls_scope
     try:
-        with planning() as plan:
+        # The week's learning_v2 arm holds for this build only (LEARNING-14).
+        with planning() as plan, _ls_scope.learning_scope():
             out = se._build_schedule_result(restaurant_id, week_start=week_start)
     except Exception as e:
         print(f"[schedule_batch] restaurant {restaurant_id}: no request to batch ({e!r})")

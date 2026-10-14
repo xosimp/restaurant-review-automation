@@ -167,10 +167,14 @@ def _published_csv(restaurant_id, day, db_path=DB_PATH):
 
 def published_rows(restaurant_id, day, db_path=DB_PATH):
     """[{employee, role, shift_start, shift_end, scheduled_hours}] for `day`
-    from the published week (see _published_csv)."""
-    import csv, io
+    from the published week (see _published_csv) — read from the shift
+    projection (schedule_shifts.live_shifts_on: one indexed read of the
+    day, no week parsed — schedule re-audit 10/11/26 ARCH-7), from the
+    week's text while that week has no current projection."""
+    import schedule_shifts
     out = []
-    for row in csv.DictReader(io.StringIO(_published_csv(restaurant_id, day, db_path))):
+    rows, _hid = schedule_shifts.live_shifts_on(restaurant_id, day, db_path=db_path)
+    for row in rows:
         if (row.get("date") or "")[:10] != day.isoformat() or not (row.get("employee") or "").strip():
             continue
         out.append({"employee": row["employee"].strip(), "role": (row.get("role") or "").strip(),

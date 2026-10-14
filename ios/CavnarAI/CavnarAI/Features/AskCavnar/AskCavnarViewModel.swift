@@ -435,6 +435,28 @@ struct AskProposal: Decodable, Identifiable, Hashable {
     /// card shows all of them and confirm posts only these keys. Nil from
     /// an older backend, when the whole body is posted as before.
     let fieldsShown: [ShownField]?
+    /// generate_schedule: each rule Cavnar AI read from the owner's OWN
+    /// words this turn, said back ("I read: …"), in the order of the body's
+    /// `confirm_rules` (blind re-audit 10/11/26 AI-25, contract #6). Each is
+    /// held as a rule for the week only if the owner keeps it ticked.
+    var rulesRead: [RuleRead]? = nil
+    /// The readings the owner unticked on the card, by index: left out of
+    /// `confirm_rules`, so they stay preferences. Never decoded.
+    var declinedRules: Set<Int> = []
+
+    struct RuleRead: Decodable, Hashable {
+        var readsAs: String = ""
+        var quote: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case quote
+            case readsAs = "reads_as"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            readsAs = ((try? c.decodeIfPresent(String.self, forKey: .readsAs)) ?? nil) ?? ""
+            quote = (try? c.decodeIfPresent(String.self, forKey: .quote)) ?? nil
+        }
+    }
 
     var id: String { proposalId.map { "p\($0)" } ?? (action + summary) }
 
@@ -468,11 +490,17 @@ struct AskProposal: Decodable, Identifiable, Hashable {
         case proposalId = "proposal_id"
         case atStake = "at_stake"
         case fieldsShown = "fields_shown"
+        case rulesRead = "rules_read"
     }
 
-    /// What confirm posts: only the fields the card showed.
+    /// What confirm posts: only the fields the card showed — and of the
+    /// readings, only the ones the owner kept ticked.
     var postedBody: [String: AnyCodableValue] {
-        let all = body ?? [:]
+        var all = body ?? [:]
+        if !declinedRules.isEmpty, case .array(let rules)? = all["confirm_rules"] {
+            let kept = rules.enumerated().filter { !declinedRules.contains($0.offset) }.map(\.element)
+            all["confirm_rules"] = kept.isEmpty ? nil : .array(kept)
+        }
         guard let shown = fieldsShown else { return all }
         let keys = Set(shown.map(\.key))
         return all.filter { keys.contains($0.key) }

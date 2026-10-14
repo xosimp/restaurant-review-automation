@@ -125,7 +125,9 @@ def test_the_cap_cuts_the_server_the_floor_can_best_spare():
     assert n == 1
     kept = {r["employee"]: r for r in out}
     assert "Cy" in kept and kept["Cy"]["shift_end"] == "10:00pm"  # the level 5 stays on for the night
-    assert any("over the 2-server cap" in (r.get("notes") or "") for r in out)
+    # A 4pm-5pm stub is under the one shortest shift (contract #2,
+    # BUGSGEN-6): the shift the floor can best spare goes whole.
+    assert len(out) == 2
 
 
 # ── the stagger ─────────────────────────────────────────────────────────

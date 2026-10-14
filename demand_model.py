@@ -25,16 +25,29 @@ Three estimators, each "as of" an origin (only nights before it are read):
             file and shrunk toward 1 (one year counts SEASON_ONE_YEAR).
             Needs SEASON_MIN_DAYS of history.
 
-backtest() forecasts each of the last BACKTEST_DAYS nights from the nights
-before (origin = the night minus HORIZON_DAYS, the schedule's own lead), and
-scores each estimator's mean absolute error against naive's on the same
-nights. The estimator kept is the lowest error IF it beats naive by MIN_SKILL
-over at least BACKTEST_MIN nights; otherwise naive, and it says so (the
-honest frame: never a fancier figure that is worse). The interval is the
-kept estimator's own backtested errors (conformal: the empirical quantiles
-of log(actual / forecast)), so "80% between low and high" is what its past
-nights did; its median error is the bias correction, bounded to
-BIAS_MAX_PCT. Below BACKTEST_MIN nights no interval is stated.
+backtest() forecasts past nights from the nights before them (origin = the
+night minus a lead), over the last BACKTEST_DAYS nights.
+
+  selection    at HORIZON_DAYS: each estimator's mean absolute error
+               against naive's on the same nights; the estimator kept is the
+               lowest error IF it beats naive by MIN_SKILL over at least
+               BACKTEST_MIN nights, otherwise naive, and it says so (never a
+               fancier figure that is worse);
+  calibration  CROSS-FITTED (blind re-audit 10/11/26 LEARNING-26 —
+               choosing the best of three and calibrating its interval on
+               the same nights made the interval narrower than the truth):
+               the nights are split into alternate halves (date ordinal even
+               and odd, so a season turn reaches both); each half's errors
+               are those of the estimator the OTHER half would have chosen,
+               so no night's error is read by the choice it was made by,
+               each AT THE DATE'S OWN LEAD (the date minus
+               today — a weekly draft is made up to ~2 weeks before its last
+               night, and a 7-day backtest understated the far nights'
+               spread). The interval is those errors' empirical quantiles
+               (conformal, log(actual / forecast)) so "80% between low and
+               high" is what nights that far out did; the median error is
+               the bias correction, bounded to BIAS_MAX_PCT. Below
+               BACKTEST_MIN nights no interval is stated.
 
 Weather and events are NOT in here: they are measured per daypart and
 applied by schedule_economics.date_demand (demand_drivers), and the ratio
@@ -60,9 +73,10 @@ SEASON_BOUNDS = (0.6, 1.6)
 SEASON_ONE_YEAR = 0.5            # one year's move counts half; two years' three quarters
 SEASON_TWO_YEARS = 0.75
 HISTORY_DAYS = 2 * 371 + NAIVE_WEEKS * 7 + 14
-BACKTEST_DAYS = 70
+BACKTEST_DAYS = 84
 BACKTEST_MIN = 14
-HORIZON_DAYS = 7                 # a schedule is drafted about a week ahead of its nights
+HORIZON_DAYS = 7                 # the selection's lead; the interval reads each date's own lead
+MAX_LEAD_DAYS = 21
 MIN_SKILL = 0.03                 # beat the median by 3% of its error, or keep the median
 BIAS_MAX_PCT = 15.0
 QUANTILES = (0.1, 0.25, 0.5, 0.7, 0.75, 0.9)
@@ -206,15 +220,17 @@ def estimate(series, d, origin, estimator) -> float | None:
     return None
 
 
-def backtest(series, today, days=BACKTEST_DAYS, horizon=HORIZON_DAYS) -> dict:
+def backtest(series, today, days=BACKTEST_DAYS, horizon=HORIZON_DAYS, parity=None, estimators=ESTIMATORS) -> dict:
     """{estimator: {"n", "mae", "log_errors": [log(actual/forecast)]}} over
-    the nights in the `days` before today, each forecast as of the night
-    minus `horizon` days. Pure."""
-    out = {e: {"n": 0, "abs": [], "log_errors": []} for e in ESTIMATORS}
-    for d in sorted(x for x in series if today - timedelta(days=days) <= x < today):
+    the nights in the `days` before today (only those whose date ordinal
+    has `parity` 0 or 1, when given), each forecast as of the night minus
+    `horizon` days. Pure."""
+    out = {e: {"n": 0, "abs": [], "log_errors": []} for e in estimators}
+    for d in sorted(x for x in series if today - timedelta(days=days) <= x < today
+                    and (parity is None or x.toordinal() % 2 == parity)):
         actual = series[d]
         origin = d - timedelta(days=horizon)
-        for e in ESTIMATORS:
+        for e in estimators:
             f = estimate(series, d, origin, e)
             if f and f > 0:
                 out[e]["abs"].append((d, abs(f - actual) / actual))
@@ -274,19 +290,35 @@ def interval(log_errors) -> dict | None:
 
 
 def forecast_from_series(series, dates, today) -> dict:
-    """forecast_dates over an in-memory series (pure; the tests' entry)."""
+    """forecast_dates over an in-memory series (pure; the tests' entry): the
+    estimator chosen on the older backtest nights, each date's interval
+    from the newer nights at that date's own lead (module doc)."""
     bt = backtest(series, today)
     pick = choose(bt)
     est = pick["estimator"]
-    mult = interval(bt.get(est, {}).get("log_errors"))
+    # Cross-fitting: each half's errors come from the estimator the other
+    # half chose (module doc).
+    other = {p: choose(backtest(series, today, parity=1 - p))["estimator"] for p in (0, 1)}
+    by_lead = {}
+
+    def mult_for(lead):
+        if lead not in by_lead:
+            errs = []
+            for p in (0, 1):
+                cal = backtest(series, today, horizon=lead, parity=p, estimators=(other[p],))
+                errs += cal.get(other[p], {}).get("log_errors") or []
+            by_lead[lead] = interval(errs)
+        return by_lead[lead]
     out = {}
     for d in dates:
         naive, _used = _naive(series, d, today)
         if naive is None:
             continue
+        lead = max(1, min(MAX_LEAD_DAYS, (d - today).days))
+        mult = mult_for(lead)
         point = estimate(series, d, today, est) or naive
         e = {"naive": round(naive, 2), "point": round(point, 2), "estimator": est, "skill": pick["skill"],
-             "backtest_n": pick["n"], "reason": pick["reason"]}
+             "backtest_n": pick["n"], "reason": pick["reason"], "lead_days": lead}
         if mult:
             e["quantiles"] = {q: round(point * m, 2) for q, m in mult.items()}
             e["p50"] = e["quantiles"][0.5]
@@ -325,6 +357,47 @@ def forecast_dates(restaurant_id, dates, db_path=DB_PATH, today=None) -> dict:
     except Exception as e:
         print(f"[demand_model] forecast unavailable for {restaurant_id}: {e}")
         return {}
+
+
+# The schedule and every other surface (blind re-audit 10/11/26 ARCH-28):
+# Home and the nightly report state demand.forecast_day — the weekday's
+# median with its measured effects, corrected by its own record — while the
+# schedule is sized on this module's chosen estimator (trend or season over
+# the median) with the date's dated facts. Two figures for one Friday, and
+# nothing said. A date whose two figures differ by RECONCILE_MIN_PCT or more
+# carries one sentence naming both, the estimator and why, and its range.
+RECONCILE_MIN_PCT = 3.0
+
+
+def reconcile(sized_on, surface_sales, entry=None, day_label: str = "") -> dict | None:
+    """{"sized_on", "surface", "diff_pct", "estimator", "low", "high", "text"}
+    when the schedule's figure for a date (`sized_on`) and the one every
+    other surface states (`surface_sales`, forecast_day's) differ by
+    RECONCILE_MIN_PCT or more; None otherwise or without both. `entry` the
+    date's forecast_dates entry (estimator, skill, quantiles). Pure."""
+    try:
+        a, b = float(sized_on or 0), float(surface_sales or 0)
+    except (TypeError, ValueError):
+        return None
+    if a <= 0 or b <= 0:
+        return None
+    diff = (a - b) / b * 100.0
+    if abs(diff) < RECONCILE_MIN_PCT:
+        return None
+    e = entry or {}
+    est = e.get("estimator") or "naive"
+    q = e.get("quantiles") or {}
+    low, high = q.get(0.1), q.get(0.9)
+    why = basis_words(e) if est in ("trend", "seasonal") else ""
+    where = f"{day_label} " if day_label else ""
+    text = (f"The schedule is sized on ${a:,.0f} for {where}— Home and the nightly report show ${b:,.0f} "
+            f"(the weekday's typical night with its measured effects). "
+            + (f"The schedule's forecast adds {why}" if why else "The schedule's figure carries the date's own facts")
+            + (f"; 80% of past nights fell between ${float(low):,.0f} and ${float(high):,.0f}." if low and high
+               else "."))
+    return {"sized_on": round(a, 0), "surface": round(b, 0), "diff_pct": round(diff, 1), "estimator": est,
+            "low": round(float(low), 0) if low else None, "high": round(float(high), 0) if high else None,
+            "text": text}
 
 
 def basis_words(entry) -> str:

@@ -739,7 +739,9 @@ struct StaffLaterRow: View {
     var body: some View {
         let times = legs.map(\.timeRange).filter { !$0.isEmpty }.joined(separator: " + ")
         let role = legs.compactMap(\.role).first(where: { !$0.isEmpty })
-        let what = [times.isEmpty ? nil : times, role].compactMap { $0 }.joined(separator: " \u{00B7} ")
+        // How firm, as the week's own rows say it (TRUST-32).
+        let what = [times.isEmpty ? nil : times, role, StaffTodayPlan.firmnessWord(legs)].compactMap { $0 }
+            .joined(separator: " \u{00B7} ")
         (Text(String((legs.first?.day ?? "").prefix(3))).font(.cavnar(.label)).foregroundStyle(Color.cavnarInk)
             + Text(" ").font(.cavnar(.body))
             + HomeMixedText.make(CavnarDate.mdy(date), role: .secondary, color: .cavnarInk2)

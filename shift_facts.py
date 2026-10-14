@@ -177,7 +177,7 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
             # The record is shift_facts (SCALE-5): the window replaced there,
             # the export marked stale — never the whole three-year file
             # rewritten and re-parsed under the POS write lock.
-            return _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path)
+            return _after_ingest(restaurant_id, _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path), db_path)
         # Rows a fact cannot hold (a row with no person, one shift sent
         # twice): the file is the record again, exactly as sent — it is
         # rebuilt from the facts first, then merged below as it always was.
@@ -232,8 +232,21 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
         adopt(restaurant_id, rows_=merged, source=src, db_path=db_path)
     except Exception as e:
         log.warning("[shift_facts] adoption skipped for restaurant %s: %s", restaurant_id, e)
-    return {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
-            "resolved": new_rows}
+    return _after_ingest(restaurant_id, {"rows": len(new_rows), "window": (dates[0], dates[-1]) if dates else None, "people": who,
+            "resolved": new_rows}, db_path)
+
+
+def _after_ingest(restaurant_id, out, db_path=None):
+    """What the history now says about who is who, asked of the owner
+    (people.raise_identity_questions — schedule re-audit 10/11/26 STRESS-7,
+    STRESS-8: one name worn by two people, one person under two names).
+    Never fails the ingest."""
+    try:
+        import people
+        out["identity_questions"] = people.raise_identity_questions(restaurant_id, db_path=db_path)
+    except Exception as e:
+        log.warning("[shift_facts] identity questions skipped for restaurant %s: %s", restaurant_id, e)
+    return out
 
 
 def _fits(rows_) -> bool:

@@ -1177,7 +1177,29 @@ def api_preferences(current_user):
     import staff_settings
     st = staff_settings.for_name(rid, name) if name else {}
     return jsonify(ok=True, preferred_dayparts=st.get("preferred_dayparts") or [], desired_hours=st.get("desired_hours"),
+                   learned_avoids=_learned_avoids(rid, name),
                    schedule_texts=_schedule_texts(current_user["id"], rid), **_texts_consent(current_user["id"], rid))
+
+
+def _learned_avoids(rid, name) -> list:
+    """The slots the draft has learned this person avoids, shown to them
+    with the evidence (schedule re-audit 10/11/26 LEARNING-22: a learned
+    "avoid" moved shifts without anyone seeing it): [{slot, text}]. A read;
+    [] when there is none or it cannot be read."""
+    if not name:
+        return []
+    try:
+        import schedule_intel as _si
+        mine = next((p for n, p in (_si.behaviour_preferences(rid) or {}).items()
+                     if " ".join(str(n).split()).casefold() == " ".join(str(name).split()).casefold()), None)
+    except Exception:
+        return []
+    out = []
+    for slot in (mine or {}).get("avoids") or []:
+        said = ((mine.get("evidence") or {}).get(slot) or {}).get("said") or ""
+        out.append({"slot": slot, "text": (f"You've {said}, so drafts put you there less. "
+                                           "Tell your manager if that's not what you want.") if said else ""})
+    return out
 
 
 def _texts_consent(user_id, rid) -> dict:

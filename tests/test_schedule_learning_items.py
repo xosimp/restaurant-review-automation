@@ -240,15 +240,17 @@ def test_no_prediction_under_the_minimum_history(db):
 
 def test_rows_like_the_ones_the_manager_keeps_changing_are_flagged_with_why(db):
     rid = _restaurant(db)
-    _edit_history(db, rid, 5)
+    # Seven drafts: the rolling-origin backtest (re-audit 10/11/26
+    # LEARNING-20) scores weeks 4-7, each from the weeks before it.
+    _edit_history(db, rid, 7)
     weeks = sl.prediction_weeks(rid, db_path=db)
-    assert len(weeks) == 5 and all(sum(w["edited"]) == 5 for w in weeks)
+    assert len(weeks) == 7 and all(sum(w["edited"]) == 5 for w in weeks)
     flagged = sl.predict_row_edits(rid, _draft(9), db_path=db)
     who = {(f["employee"], f["date"]) for f in flagged}
     w = _week(9)
     assert who == {("Zed", w[5]), ("Zed", w[6]), ("Gus", w[5]), ("Hal", w[6])}, flagged
     zed = next(f for f in flagged if f["employee"] == "Zed")
-    assert zed["likelihood"] >= 0.5 and "you changed 10 of 10 of Zed's shifts" in zed["reason"]
+    assert zed["likelihood"] >= 0.5 and "you changed 14 of 14 of Zed's shifts" in zed["reason"]
     assert "likely you'll change it" in zed["text"] and f"{dt.date.fromisoformat(w[5]).month}/" in zed["text"]
     assert "-" not in zed["text"].split("—")[0], "the date is M/D/YY, never ISO"
     gus = next(f for f in flagged if f["employee"] == "Gus")
@@ -269,7 +271,7 @@ def test_the_likely_edit_percentage_is_withheld_until_its_backtest_has_weeks(db)
 
 def test_every_likely_edit_carries_its_backtest_beside_it(db):
     rid = _restaurant(db)
-    _edit_history(db, rid, 5)
+    _edit_history(db, rid, 7)
     flagged = sl.predict_row_edits(rid, _draft(9), db_path=db)
     bt = sl.edit_prediction_backtest(sl.prediction_weeks(rid, db_path=db))
     assert flagged and all(f["backtest_hit_rate"] == bt["hit_rate"] and f["backtest_weeks"] == bt["weeks"]
@@ -281,9 +283,11 @@ def test_every_likely_edit_carries_its_backtest_beside_it(db):
 
 def test_held_out_hit_rate_on_the_edit_history(db):
     rid = _restaurant(db)
-    _edit_history(db, rid, 6)
+    _edit_history(db, rid, 7)
     bt = sl.edit_prediction_backtest(sl.prediction_weeks(rid, db_path=db))
-    assert bt["weeks"] == 6 and bt["skipped"] == 0
+    # Rolling origin (LEARNING-20): the first PREDICT_MIN_WEEKS weeks have no
+    # history before them to be predicted from.
+    assert bt["weeks"] == 4 and bt["skipped"] == sl.PREDICT_MIN_WEEKS
     assert bt["hit_rate"] == 1.0, bt          # every flagged row was changed
     assert bt["recall"] == 0.8, bt            # the one-off removal each week is not predictable
     assert sl.edit_prediction_summary(rid, db_path=db)["backtest"]["hit_rate"] == 1.0
@@ -318,7 +322,7 @@ def test_held_out_hit_rate_on_a_noisy_manager_beats_chance_by_far():
                     edited.append(rng.random() < p)
         weeks.append({"history_id": i, "week_start": w[0], "rows": rows, "edited": edited})
     bt = sl.edit_prediction_backtest(weeks)
-    assert bt["weeks"] == 10 and bt["flagged"] >= 10
+    assert bt["weeks"] == 10 - sl.PREDICT_MIN_WEEKS and bt["flagged"] >= 7
     # Measured: 49 of 60 flagged rows changed (82%), against 21.5% of all rows.
     assert bt["hit_rate"] >= 0.75 and bt["hit_rate"] >= 3 * bt["base_rate"], bt
 

@@ -1753,6 +1753,11 @@ def save_client_settings(restaurant_id, current_user):
             return jsonify(ok=False, conflict=True, fields=[], current_version=e.current_version,
                            error=e.user_message), 409
         _record_settings_change(restaurant_id, current_user, before, write, billing_reason)
+        if "sched_notes" in write:
+            # Read into typed rules off the request (owner_rules — blind
+            # re-audit 10/11/26 AI-22); never a send, so no gate.
+            import owner_rules as _owr_save
+            _owr_save.queue_read(restaurant_id)
     saved_row = _gr_cs(restaurant_id)
     saved = {k: getattr(saved_row, k, None) for k in fields if k != "weekly_revenue_target"}
     if "weekly_revenue_target" in fields:

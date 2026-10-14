@@ -2449,8 +2449,20 @@ def mobile_get_staff_contacts(current_user):
 @mobile_bp.route("/labor/staff-contacts", methods=["POST"])
 @mobile_login_required
 def mobile_set_staff_contact(current_user):
-    from models import set_staff_contact
+    """Where to reach one member of staff. The address an employee's
+    schedule link and every notice go to, so changing it is a publishing
+    act (schedule re-audit 10/11/26 BUGSLIFE-13): it needs SCHEDULE_PUBLISH
+    (or TEAM_INVITE, the login that manages the team). The Labor view a
+    member login holds let it point an employee's /s/ link, which accepts
+    availability, at itself. Every change is on the change history (who,
+    before, after) and the employee is told at the address they had."""
+    from models import set_staff_contact, get_staff_contacts
     from staff_settings import clean_phone
+    from permissions import has_permission, SCHEDULE_PUBLISH, TEAM_INVITE
+    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)
+            or has_permission(current_user, TEAM_INVITE)):
+        return jsonify(ok=False, error="Your login can't change where staff are contacted. "
+                                       "Ask whoever sends the schedule."), 403
     data = request.get_json(silent=True) or {}
     name = (data.get("employee_name") or "").strip()
     # A field the form did not send is kept, not erased (MOD-EMP-4).
@@ -2464,9 +2476,35 @@ def mobile_set_staff_contact(current_user):
         phone, perr = clean_phone(data.get("phone"))
         if perr:
             return jsonify(ok=False, error=perr), 400
-    if not set_staff_contact(current_user["restaurant_id"], name, email, phone,
-                             pos_id=(str(data.get("pos_id") or "").strip() or None)):
+    rid = current_user["restaurant_id"]
+    key = " ".join(name.split()).casefold()
+    before = next((c for c in get_staff_contacts(rid) if " ".join(c["employee_name"].split()).casefold() == key), None)
+    if not set_staff_contact(rid, name, email, phone, pos_id=(str(data.get("pos_id") or "").strip() or None)):
         return jsonify(ok=False, error="Couldn't save that contact."), 400
+    after = next((c for c in get_staff_contacts(rid) if " ".join(c["employee_name"].split()).casefold() == key), None)
+    was = {"email": (before or {}).get("email") or "", "phone": (before or {}).get("phone") or ""}
+    now = {"email": (after or {}).get("email") or "", "phone": (after or {}).get("phone") or ""}
+    if was != now:
+        try:
+            import change_log
+            change_log.record(rid, "roster", "contact", was, now, subject=name, user=current_user)
+        except Exception as e:
+            print(f"[staff contact] change history not recorded rid={rid}: {e!r}")
+        # Told at the address they HAD (an email or a text), so a contact
+        # pointed somewhere else is never silent.
+        try:
+            import people
+            changed = [w for w in ("email", "phone") if was[w] != now[w]]
+            what = " and ".join("email address" if w == "email" else "phone number" for w in changed)
+            text = (f"Your {what} for schedule messages was changed by a manager. "
+                    "If you didn't ask for that, tell your manager.")
+            if was["email"] and "email" in changed:
+                people._send_staff_email(rid, was["email"], people._place(rid, None), "Your contact details changed",
+                                         [text])
+            if was["phone"] and "phone" in changed:
+                people._send_staff_text(rid, was["phone"], text)
+        except Exception as e:
+            print(f"[staff contact] employee not told rid={rid}: {e!r}")
     return jsonify(ok=True)
 
 
@@ -3661,6 +3699,20 @@ def mobile_generate_schedule(current_user):
     # nothing starts: Generate for one week used to join a redo of another,
     # show that as the answer, and lose the owner's instruction.
     _req = _se.generation_request(rid, week_start, dates, base_history_id, instruction)
+    # The readings of the owner's words they ticked before generating — the
+    # Generate sheet's "I read: …" (POST /labor/schedule-instruction/read),
+    # or Ask Cavnar's card, read from the owner's own words (blind re-audit
+    # 10/11/26 AI-7, AI-25, contract #6): checked here before anything
+    # starts, stored as one-week rules once this press starts a job. A
+    # reading nobody ticked is a preference only.
+    import owner_rules as _owr_gen
+    _confirm = [r for r in (body.get("confirm_rules") or []) if isinstance(r, dict)][:20] \
+        if isinstance(body.get("confirm_rules"), list) else []
+    if _confirm:
+        try:
+            _owr_gen.confirm_for_week(rid, _confirm, _req["week_start"], user=current_user, dry_run=True)
+        except ValueError as _cex:
+            return jsonify(ok=False, error=_cex.args[0]), 400
     _running, _running_req = _ops.running_job("schedule", rid)
     if _running:
         if _running_req == _req:
@@ -3720,6 +3772,12 @@ def mobile_generate_schedule(current_user):
         _rejection.update(reason_chip=_chip if isinstance(_chip, str) else None,
                           reason_text=_words if isinstance(_words, str) else None,
                           user=dict(current_user))
+    if _confirm:
+        try:
+            _owr_gen.confirm_for_week(rid, _confirm, _req["week_start"], user=current_user)
+        except ValueError as _cex:
+            _ops.finish_async_job(job_id, "error", {"ok": False, "error": _cex.args[0]})
+            return jsonify(ok=False, error=_cex.args[0]), 400
     _job_kw = {"week_start": week_start or _req["week_start"], "dates": dates, "base_history_id": base_history_id}
     if instruction:
         _job_kw["instruction"] = instruction
@@ -3890,6 +3948,12 @@ def mobile_schedule_history_detail(history_id, current_user):
     # A copy a newer one replaced is read-only: both clients show why and
     # hide editing and Send; the save and the Send refuse it (UI-3).
     detail["replaced_reason"] = _sv_d.replaced_error(detail)
+    # A person of the restaurant opened an unsent draft (blind re-audit
+    # 10/11/26 LEARNING-16): the scorecard tells a reviewed week from one
+    # sent unread. Admins are not recorded.
+    if not detail.get("published_at"):
+        import schedule_scorecard as _ssc_view
+        _ssc_view.record_view(current_user["restaurant_id"], history_id, user=current_user, surface="detail")
 
     # The week's WORKING copy (the Studio edits it; on a sent week it holds
     # the unsent changes) read with the one reader — quoted fields, the
@@ -3943,7 +4007,8 @@ def mobile_schedule_history_detail(history_id, current_user):
                                          (economics or {}).get("projected_revenue"),
                                          labor_target=detail.get("labor_target"),
                                          labor_budget_dollars=(economics or {}).get("labor_budget_dollars"),
-                                         week_dates=_week_dates_of(detail.get("week_start")))
+                                         week_dates=_week_dates_of(detail.get("week_start")),
+                                         quality=detail.get("quality"))
     except Exception as e:
         print(f"[schedule history] labor view failed for {history_id}: {e!r}")
     # The aids a fresh draft carries — overtime moves, standby, likely edits
@@ -8682,99 +8747,34 @@ def mobile_score_schedule(current_user):
                     _explicit_locks[_sid] = _srows_save.is_locked(_raw.get("lock"))
             csv_text = _rows_to_csv(rows)
             who = current_user.get("username") or current_user.get("email")
-            # The week, its version row and its review are one write: the
+            # The week, its version row, its shift projection and its review
+            # are one write, made by the week service (schedule_versions.
+            # save_studio_week — schedule re-audit 10/11/26 ARCH-24): the
             # version check is repeated inside the lock, so two saves on one
-            # base version give one 200 and one 409, and a version that
-            # cannot be written leaves the week as it was (SCHED-19).
-            from models import get_conn as _gc2
-            conn2 = _gc2()
-            _step, _was_published, _new_version, _unchanged = None, False, None, False
+            # base version give one 200 and one 409 (SCHED-19); a copy a
+            # newer one replaced is read-only (UI-3); the same rows saved
+            # again (a retry, a double press) write no second version and
+            # teach nothing; the rows the manager changed lock (contract #4);
+            # the generation's review is kept and only what the edited rows
+            # decide is refreshed (P-26).
             try:
-                conn2.execute("BEGIN IMMEDIATE")
-                # A copy of the week a newer one replaced is read-only: it
-                # used to save (and then send) over nothing (UI-3).
-                _own = conn2.execute("SELECT superseded_by, published_at FROM schedule_history "
-                                     "WHERE id=? AND restaurant_id=?", (hid, rid)).fetchone()
-                if _own is None:
-                    raise LookupError("that schedule is gone")
-                _replaced = _sv.replaced_error(_own)
-                if _replaced:
-                    conn2.rollback()
-                    return jsonify(ok=False, replaced=True, superseded_by=_own["superseded_by"],
-                                   error=_replaced), 409
-                # The same rows saved again — the phone's retry of a save
-                # that committed but whose answer was lost, a double press —
-                # are already the week: no second version, no second
-                # learning capture, and no false conflict with the save's
-                # own version (schedule audit 10/10/26: the iOS save retried
-                # with retryTransient, and the retry wrote a duplicate
-                # `edited` version and taught the learners twice). The
-                # review is still refreshed below.
-                _unchanged = _sv.same_rows(_sv.latest_rows(conn2, hid), _sv.rows_from_csv(csv_text),
-                                           explicit_locks=_explicit_locks)
-                if not _unchanged:
-                    _changed = _sv.rows_changed_since(conn2, hid, sent)
-                    if _changed:
-                        raise _sv.StaleVersion(_changed)
-                # Whose each changed row is (schedule audit 10/3/26 L-5): the
-                # client's `origin` flag on a row Cavnar AI handed back
-                # (apply fixes, Improve, the overtime move — with its
-                # `origin_sig`), `cavnar_changes` for rows Cavnar AI took out,
-                # and Cavnar AI's own note tags; and whether the week was
-                # already with staff (a change to it is a reaction, L-4).
-                _pub = conn2.execute("SELECT published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
-                                     (hid, rid)).fetchone()
-                _was_published = bool(_pub and _pub[0])
-                if _unchanged:
-                    _new_version = _sv.latest_version(conn2, hid) or None
-                else:
-                    _prev = _sv.latest_rows(conn2, hid)
-                    _step = _sv.step_origins(_prev, _sv.rows_from_csv(csv_text), raw_rows,
-                                             data.get("cavnar_changes") if isinstance(data.get("cavnar_changes"), list)
-                                             else None)
-                    # A row the manager changed in this save is locked: every
-                    # later pass, the solver and a regenerate keep it exactly
-                    # (contract #4); Cavnar AI's own changes are not.
-                    csv_text = _rows_to_csv(_sv.apply_locks(_sv.rows_from_csv(csv_text), _prev, _step,
-                                                            explicit=_explicit_locks))
-                    _new_version = _sv.write_on(conn2, rid, hid, "edited", csv_text, saved_by=who, quality=quality,
-                                                expected_version=sent,
-                                                saved_authority=_sv.authority_of(current_user),
-                                                row_origins=_step["stored"])
-                # The generation's review is kept and only what the edited
-                # rows decide is refreshed (schedule audit 10/3/26 P-26): the
-                # save used to overwrite it with a bare sweep, and the fix
-                # lines, the trims, the manager stretches nobody could cover,
-                # the rules it could not check and the budget line vanished.
-                if review is not None and violations is not None:
-                    _was = conn2.execute("SELECT review_json, review_ref, hours_budget FROM schedule_history "
-                                         "WHERE id=? AND restaurant_id=?", (hid, rid)).fetchone()
-                    # The whole saved review (stored once, SCALE-13).
-                    _saved_rv = _models_mod.history_review(conn2, _was) if _was else {}
-                    from schedule_engine import refresh_review as _refresh_rv
-                    review = _refresh_rv(_saved_rv, violations, rows, inputs.get("constraints"),
-                                         hours_budget=(_was["hours_budget"] if _was else None),
-                                         extras={k: review[k] for k in ("unmet", "soft_requirements") if k in review})
-                if review is not None:
-                    # A sweep that could not run leaves the review as it was,
-                    # never wiped.
-                    _rv_head, _rv_ref = _models_mod.store_history_review(
-                        conn2, rid, json.loads(json.dumps(review, default=str)))
-                    conn2.execute("UPDATE schedule_history SET review_json=?, review_ref=? WHERE id=? AND restaurant_id=?",
-                                  (_rv_head, _rv_ref, hid, rid))
-                conn2.commit()
-                saved = hid
+                _res = _sv.save_studio_week(
+                    rid, hid, csv_text, raw_rows=raw_rows, explicit_locks=_explicit_locks, expected_version=sent,
+                    saved_by=who, saved_authority=_sv.authority_of(current_user), quality=quality,
+                    cavnar_changes=data.get("cavnar_changes"), review=review, violations=violations, rows=rows,
+                    constraints=inputs.get("constraints"),
+                    review_extras=({k: review[k] for k in ("unmet", "soft_requirements") if k in review}
+                                   if review is not None else None))
+            except _sv.WeekReplaced as _wr:
+                return jsonify(ok=False, replaced=True, superseded_by=_wr.superseded_by, error=str(_wr)), 409
             except _sv.StaleVersion:
-                conn2.rollback()
                 return _conflict(_sv.list_versions(rid, hid))
             except LookupError:
-                conn2.rollback()
                 return jsonify(ok=False, error="That week is gone — reload the schedule."), 404
-            except Exception:
-                conn2.rollback()
-                raise
-            finally:
-                conn2.close()
+            _step, _was_published = _res["step"], _res["published"]
+            _new_version, _unchanged = _res["version"], _res["unchanged"]
+            csv_text, review = _res["csv_text"], _res["review"]
+            saved = hid
             if not _unchanged:
                 try:
                     _log_account_event(rid, "schedule_edited", current_user, detail=f"history {saved}: {len(rows)} rows")
@@ -8952,6 +8952,7 @@ _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
 # The one NEEDS REVIEW pattern, shared with the generation's parse
 # (schedule_rules.REVIEW_MARK — re-audit 10/4/26 PIPE-6).
 from schedule_rules import REVIEW_MARK as _REVIEW_MARK  # noqa: E402
+from schedule_rules import owner_hard as _sr_owner_hard  # noqa: E402
 
 
 def _mark_review_rows(rows, violations):
@@ -8964,7 +8965,8 @@ def _mark_review_rows(rows, violations):
         return
     # A breach about a day (no manager on, a floor short) marks no row: it
     # is pinned to one only so consumers have an index (E-13).
-    still = {v["index"] for v in violations if v.get("hard") and not v.get("day_level") and v.get("index") is not None}
+    # A policy limit that is not law marks no row either (LOGIC-20).
+    still = {v["index"] for v in violations if _sr_owner_hard(v) and not v.get("day_level") and v.get("index") is not None}
     for i, r in enumerate(rows):
         if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
             r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()

@@ -21,10 +21,10 @@ struct ScheduleWeekNotes: View {
             // anyone else, and any projected saving on that same basis.
             if let view = result.laborView, let line = view.line {
                 caption(line + (view.text.map { ". \($0)" } ?? "."))
-                if let saved = view.savings, saved > 0, let recent = view.recentPct {
-                    caption("Projection, not yet earned: about $\(saved.commaFormatted) under your last "
-                            + "\(view.recentDays ?? 14) days at \(String(format: "%g", recent))% "
-                            + (view.isAllIn ? "all-in" : "hourly pay") + ".")
+                // Scheduled against scheduled (blind re-audit 10/11/26
+                // TRUST-7): the server's own sentence, or why it is withheld.
+                if let vp = view.vsLastPlan, let said = vp.text ?? vp.withheld {
+                    caption(said)
                 }
             }
             if let source = result.projectedRevenueSource, !source.isEmpty {

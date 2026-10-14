@@ -291,11 +291,48 @@ struct NoteSentence: Decodable, Identifiable, Equatable {
     var why: String? = nil
     var rule: NoteRuleDraft? = nil
     var ruleId: Int? = nil
+    /// The rule's words when one holds this sentence. (The server also sends
+    /// `enforced: false` on an unconfirmed reading — read as nil here, and as
+    /// `notEnforced`.)
     var enforced: String? = nil
     var stale: String? = nil
+    /// Every reading is a preference until the owner confirms it (blind
+    /// re-audit 10/11/26 AI-10): the server marks such a row `enforced:
+    /// false` and the row says "Not enforced".
+    var notEnforced = false
+    /// The owner set Cavnar AI's reading aside ("Not what I meant").
+    var dismissed = false
+    /// A waiver of a standing position, applied only once confirmed
+    /// (BUGSGEN-4).
+    var confirmed = false
+    /// The typed rules Cavnar AI read from it, each said back ("I read: …")
+    /// for the owner to confirm (owner_rules, contract #6).
+    var typed: [TypedReading] = []
+
+    struct TypedReading: Decodable, Equatable, Identifiable {
+        var rule: [String: LooseValue] = [:]
+        var words: String = ""
+        var readsAs: String? = nil
+        var id: String { (readsAs ?? words) }
+        enum CodingKeys: String, CodingKey {
+            case rule, words
+            case readsAs = "reads_as"
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if case .object(let o)? = (try? c.decodeIfPresent(LooseValue.self, forKey: .rule)) ?? nil { rule = o }
+            words = c.sfText(.words) ?? ""
+            readsAs = c.sfText(.readsAs)
+            if words.isEmpty && readsAs == nil {
+                throw DecodingError.dataCorruptedError(forKey: .words, in: c, debugDescription: "Nothing read")
+            }
+        }
+        /// "I read: Maria Lopez closes, Fri" — the round trip, else the words.
+        var line: String { readsAs ?? words }
+    }
 
     enum CodingKeys: String, CodingKey {
-        case text, kind, why, rule, enforced, stale
+        case text, kind, why, rule, enforced, stale, dismissed, confirmed, typed
         case ruleId = "rule_id"
     }
     init(text: String, kind: String?) { self.text = text; self.kind = kind }
@@ -307,7 +344,11 @@ struct NoteSentence: Decodable, Identifiable, Equatable {
         rule = try? c.decodeIfPresent(NoteRuleDraft.self, forKey: .rule)
         ruleId = try? c.decodeIfPresent(Int.self, forKey: .ruleId)
         enforced = try? c.decodeIfPresent(String.self, forKey: .enforced)
+        notEnforced = ((try? c.decodeIfPresent(Bool.self, forKey: .enforced)) ?? nil) == false
         stale = try? c.decodeIfPresent(String.self, forKey: .stale)
+        dismissed = c.sfBool(.dismissed) ?? false
+        confirmed = c.sfBool(.confirmed) ?? false
+        typed = c.setupList(TypedReading.self, .typed)
     }
 }
 

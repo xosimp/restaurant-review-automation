@@ -106,10 +106,33 @@ def test_a_night_the_pos_has_not_finished_reporting_is_not_watched():
     assert attendance.events(rid) == []
 
 
-def test_a_covered_swap_is_not_a_miss():
+def test_a_cover_the_week_no_longer_shows_does_not_excuse_the_holder():
+    """Schedule re-audit 10/11/26 BUGSLIFE-2 (this test asserted the bug):
+    a 'covered' request whose taker is not on the week staff have — the
+    holder back on the shift — says nothing about the holder. Maria is on
+    the published week with no punch: a miss, never "covered by Cy"."""
     rid = _rid()
     d = date(2026, 9, 26)
     _publish(rid, [d], ["Maria G.", "Ana B."])
+    _pos_day(rid, d, ["Ana B.", "Cy D."])
+    conn = models.get_conn()
+    hid = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    conn.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, "
+                 "status, replacement_name) VALUES (?,?,?,?,?,?,?)",
+                 (rid, hid, "Maria G.", d.isoformat(), "4:00pm", "covered", "Cy D."))
+    conn.commit()
+    conn.close()
+    attendance.join_published(rid, d.isoformat())
+    ev = next(e for e in attendance.events(rid) if e["employee_name"] == "Maria G.")
+    assert ev["outcome"] != "covered" and not ev["covered_by"]
+
+
+def test_a_covered_swap_is_not_a_miss():
+    """While the week staff have still shows the cover (Cy on the shift
+    beside Maria's row from an older copy), Maria's miss is covered."""
+    rid = _rid()
+    d = date(2026, 9, 26)
+    _publish(rid, [d], ["Maria G.", "Ana B.", "Cy D."])
     _pos_day(rid, d, ["Ana B.", "Cy D."])
     conn = models.get_conn()
     hid = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=?", (rid,)).fetchone()[0]

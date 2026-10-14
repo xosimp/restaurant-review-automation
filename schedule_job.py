@@ -58,6 +58,7 @@ import traceback
 from dataclasses import dataclass, field
 
 import schedule_engine as se
+import schedule_time as _stime
 
 # The quality gate's passes after the first draft: the fill in code, then the
 # model's rewrite (each at most once). A loop over this, never a recursion.
@@ -235,11 +236,16 @@ def run(req: Request) -> None:
         print(f"[schedule] job {req.job_id} was failed before it started — not run")
         return
     job = GenerationRun(req, se.current_clock())
-    try:
-        winner = _owner_redo(job) if req.redo else _week(job)
-        _finish(job, winner)
-    except Exception as e:
-        _fail(job, e)
+    import learning_stats as _ls_scope
+    # The learning_v2 switchback's off week turns every learned input off
+    # for this generation only (blind re-audit 10/11/26 LEARNING-14; set in
+    # schedule_engine._build_schedule_result where the week's arm is known).
+    with _ls_scope.learning_scope():
+        try:
+            winner = _owner_redo(job) if req.redo else _week(job)
+            _finish(job, winner)
+        except Exception as e:
+            _fail(job, e)
 
 
 def _finish(job: GenerationRun, winner: Candidate) -> None:
@@ -677,8 +683,11 @@ def _stage_parse(job: GenerationRun, cand: Candidate, editable, kept_rows) -> _P
             continue
         # A row with no shift times, or a weekday where the role belongs, is
         # not a shift (owner, 9/26/26): dropped and counted, never saved.
+        # A start equal to its end ("5:00pm-5:00pm") is a typo, never a
+        # 24-hour shift (sched re-audit 10/11/26 BUGSGEN-19): unreadable.
         if (not (_row.get("shift_start") or "").strip() or not (_row.get("shift_end") or "").strip()
-                or (_row.get("role") or "").strip() in se._WEEKDAYS):
+                or (_row.get("role") or "").strip() in se._WEEKDAYS
+                or _stime.span(_row) is None):
             _dropped_rows.append(_line[:120])
             continue
         # The sweep's own ceiling (close_cap_minutes) with the rules the
@@ -797,8 +806,11 @@ def _stage_signals(cand: Candidate, ctx: _PassContext) -> None:
         # trade moves are off with the solver.
         ctx.reassign_on = _sx.flag(result["experiment_arms"], "reassign")
         # learning_v1's off week (LEARNING-25): the learned memory binds none
-        # of this week's passes.
-        if not _sx.flag(result["experiment_arms"], "learned") and cand.pass_sig is not None:
+        # of this week's passes; learning_v2's (LEARNING-14) nothing learned
+        # does.
+        import learning_stats as _ls_off
+        if (not _sx.flag(result["experiment_arms"], "learned") or _ls_off.learning_off()) \
+                and cand.pass_sig is not None:
             cand.pass_sig = dict(cand.pass_sig, learned=[])
     except Exception as _arx:
         se._soft_fail("experiment arm", _arx, rid)
@@ -957,7 +969,9 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     for _v in _viols:
         # A breach about a DAY (no manager on, a floor short) is shown on the
         # day (review.hard_days), never as "needs review" on a row (E-13).
-        if not _v["hard"] or _v.get("day_level"):
+        # A policy limit that is not law is "over your limit" to the owner
+        # (LOGIC-20), never a NEEDS REVIEW row the gate holds as must-fix.
+        if not se._rules.owner_hard(_v) or _v.get("day_level"):
             continue
         _r = preview_rows[_v["index"]]
         _r["needs_review"] = True
@@ -1032,6 +1046,14 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
             f"{len(_unm)} fact{'s' if len(_unm) != 1 else ''} on file name{'' if len(_unm) != 1 else 's'} "
             f"nobody on the roster, so {'they apply' if len(_unm) != 1 else 'it applies'} to nobody: "
             + "; ".join(u["detail"] for u in _unm[:3]) + ("…" if len(_unm) > 3 else ""))
+    # Who is who, as the shift history reads it (schedule re-audit 10/11/26
+    # STRESS-7, STRESS-8): one name worn by two people is scheduled as one
+    # until split; one person under two names is held to one week's hours,
+    # overtime and rest until answered. Said — never a silent merge or split.
+    _idq = list(getattr(_constraints, "identity_concerns", None) or [])
+    review["identity_concerns"] = _idq
+    for _q in _idq[:3]:
+        review["lines"].append(_q["text"])
     # The manager plan, said (D-5, PR-1). Kept with the review so a reopened
     # week still asks.
     review["lines"].extend(_skeleton.review_lines(_mplan, gaps=se._rules.manager_gaps(preview_rows, _constraints)))
@@ -1144,9 +1166,16 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     if _over_d:
         review["over_budget_dollars"] = round(_cost - _lbd, 0)
         review["over_budget_hours"] = round(max(0.0, _hs - _hb), 1)
+        # Which budget binds (blind re-audit 10/11/26 BUGSGEN-22): the dollar
+        # budget prices each person at their own rate, the hours budget the
+        # same dollars at the blended rate — "$298 over (988h scheduled
+        # against 988h)" read as a contradiction.
+        _bind = _econ.binding_budget(_cost, _lbd, _hs, _hb,
+                                     ((result.get("projected_cost") or {}).get("overtime_premium")))
+        review["budget_binds"] = _bind.get("binds")
         _budget_lines.append(
-            f"⚠ ${_cost:,.0f} of hourly pay against a ${_lbd:,.0f} hourly budget — ${_cost - _lbd:,.0f} over "
-            f"({_hs:,.0f}h scheduled against {_hb:,.0f}h)")
+            f"⚠ ${_cost:,.0f} of hourly pay against a ${_lbd:,.0f} hourly budget — ${_cost - _lbd:,.0f} over"
+            + (f" ({_bind['note']})" if _bind.get("note") else ""))
     elif (_lbd <= 0 or not _cost) and _hb > 0 and _hs > _hb * 1.02:
         review["over_budget_hours"] = round(_hs - _hb, 1)
         _budget_lines.append(
@@ -2147,6 +2176,9 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
         weather=se._json_safe(result.get("weather_forecast")),
         economics={"projected_revenue": result.get("projected_revenue"),
                    "projected_revenue_source": result.get("projected_revenue_source"),
+                   # The sales the crew was sized on and what Home states
+                   # (ARCH-28).
+                   "forecast_basis": se._json_safe(result.get("forecast_basis")),
                    "labor_budget_dollars": result.get("labor_budget_dollars"),
                    # The rate the week was priced at (SQ-6).
                    "blended_rate": result.get("blended_rate"),

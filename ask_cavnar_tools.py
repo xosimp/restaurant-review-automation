@@ -4253,8 +4253,18 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
         body, summary_text, _why = _schedule_card(args, restaurant_id)
         if body is None:
             return None
+        # The rules the draft will HOLD are read from the owner's OWN words
+        # in this turn — one model hop, never Ask's paraphrase read again —
+        # and shown on the card, so Confirm is the owner confirming each
+        # "I read: …" (blind re-audit 10/11/26 AI-25, contract #6). The
+        # paraphrase still reaches the draft, as preferences only.
+        rules_read = _schedule_card_rules(restaurant_id, body, owner_words)
+        if rules_read:
+            body["confirm_rules"] = rules_read
         return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
-                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
+                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True,
+                "rules_read": [{"reads_as": r.get("reads_as") or "", "quote": r.get("quote") or ""}
+                               for r in rules_read]}
     if name == "edit_shift":
         import shift_edits
         body, summary_text, _why = shift_edits.card(restaurant_id, args)
@@ -4422,6 +4432,7 @@ PROPOSAL_DENYLIST = frozenset({
 })
 
 _FIELD_LABELS = {
+    "confirm_rules": "Held as rules for this week",
     "schedule_id": "Schedule #", "enabled": "Auto-approve", "daily_cap": "At most a day",
     "months": "Keep reviews (months)", "supplier_email": "Supplier", "draft_hash": "Order version",
     "message": "Message", "link_url": "Link", "target_day": "For", "segment": "Audience",
@@ -4627,6 +4638,33 @@ def _week_draft_id(restaurant_id, monday_iso):
         return int(row["id"]) if row else None
     finally:
         conn.close()
+
+
+def _schedule_card_rules(restaurant_id, body, owner_words) -> list:
+    """The typed rules read from the owner's own words of this turn
+    (owner_rules.instruction_readings, the one reader: shape, meaning and
+    quote checked in code), each with its "I read: …", for the card's
+    Confirm to hold as one-week rules (confirm_for_week). [] with no owner
+    words or nothing read. Never raises."""
+    words_ = " ".join(str(owner_words or "").split())[:500]
+    if restaurant_id is None or not words_:
+        return []
+    try:
+        import owner_rules as _owr
+        import schedule_engine as _se
+        monday = _se.generation_request(restaurant_id, body.get("week_start"), body.get("dates"))["week_start"]
+        dates = _se.week_dates_from(_se._date_of(monday))
+        out = []
+        for item in _owr.instruction_readings(restaurant_id, dates, words_, extract=True):
+            for r in item.get("rules") or []:
+                rule = {k: v for k, v in (r.get("rule") or {}).items() if k != "confirmed"}
+                out.append(dict(rule, reads_as=r.get("reads_as")))
+            if (item.get("waiver") or {}).get("words"):
+                out.append({"kind": "waiver", "quote": item["text"], "reads_as": "I read: " + item["waiver"]["words"]})
+        return out[:10]
+    except Exception as e:
+        print(f"[ask] schedule card rules not read: {e!r}")
+        return []
 
 
 def _schedule_card(args, restaurant_id):
@@ -4902,6 +4940,10 @@ def fields_shown(body) -> list:
             val = "the order as it stands now (" + val[:8] + ")"
         if k == "use_checked":
             val = "only the lines Cavnar AI checked"
+        if k == "confirm_rules" and isinstance(v, (list, tuple)):
+            # Each reading said back, so Confirm holds what the owner read
+            # (blind re-audit 10/11/26 AI-25).
+            val = "; ".join(str((x or {}).get("reads_as") or "") for x in v if isinstance(x, dict))
         if k == "review_ids" and isinstance(v, (list, tuple)):
             val = f"only the {len(v)} listed above"
         if k == "review_hashes" and isinstance(v, dict):

@@ -393,7 +393,12 @@ def annotate(restaurant_id, review, unattended=False, db_path=None) -> dict:
     for b in review.get("blockers") or []:
         kind = kind_of(b.get("key"))
         s = st.get(kind)
-        b = dict(b, kind=kind, hard=hard(kind),
+        # `demotable` (schedule re-audit 10/11/26 TRUST-24, formerly `hard`):
+        # whether the owner's record may quiet this kind — never its tier.
+        # The tier (`tier`: must_fix / decide) is the colour both clients
+        # draw; the old `hard` read as "red" on the phone and painted a
+        # notice, a late change or an unscored week as a must-fix.
+        b = dict(b, kind=kind, demotable=not hard(kind),
                  overridden_before=({"weeks": s["overridden"], "of": s["shown"], "last": s["last_overridden"]}
                                     if s and s["overridden"] else None))
         beyond = _beyond_accepted(b, s)
@@ -411,7 +416,7 @@ def annotate(restaurant_id, review, unattended=False, db_path=None) -> dict:
     # The must-fix tier first (TRUST-3), then the ones owners always send past
     # last, then the gate's own severity rank — never the date.
     blockers.sort(key=lambda b: ((b.get("tier") or tier_of_key(b.get("key"))) != "must_fix",
-                                 ((st.get(b["kind"]) or {}).get("rate") or 0.0), not b["hard"], b.get("rank") or 0))
+                                 ((st.get(b["kind"]) or {}).get("rate") or 0.0), b["demotable"], b.get("rank") or 0))
     always = sorted((dict(s) for s in st.values()
                      if s["overridden"] >= ALWAYS_MIN_WEEKS and (s["rate"] or 0) >= ALWAYS_MIN_RATE),
                     key=lambda s: (-(s["rate"] or 0), -s["overridden"], s["kind"]))

@@ -454,6 +454,41 @@ struct QualityWeekDimension: Codable, Identifiable, Equatable {
     }
 }
 
+/// shift_quality's `measured`: the share of the score's weight that came
+/// from data (LOGIC-15), the measures that withdrew, the band it was held
+/// down from, and the server's sentence for it. Lenient: any odd field is
+/// nil.
+struct QualityMeasured: Codable, Equatable {
+    var share: Double? = nil
+    var text: String? = nil
+    var withdrawnLabels: [String] = []
+    var bandCappedFrom: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case share, text
+        case withdrawnLabels = "withdrawn_labels"
+        case bandCappedFrom = "band_capped_from"
+    }
+
+    init(share: Double? = nil, text: String? = nil) { self.share = share; self.text = text }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
+        share = c.sfDouble(.share)
+        text = c.sfText(.text)
+        withdrawnLabels = c.setupTexts(.withdrawnLabels)
+        bandCappedFrom = c.sfText(.bandCappedFrom)
+    }
+
+    /// "Rated on 26% measured data — Coverage curve, Operational scores
+    /// withdrew" — the server's sentence, else the measures named.
+    var line: String? {
+        if let text { return text }
+        guard !withdrawnLabels.isEmpty else { return nil }
+        return "Not measured this week: " + withdrawnLabels.joined(separator: ", ") + "."
+    }
+}
+
 /// What a shift was judged against. Monday lunch and Saturday dinner are
 /// different jobs, and the profile is what says so.
 struct QualityProfile: Codable, Equatable {
@@ -747,6 +782,10 @@ struct ScheduleQuality: Codable, Equatable {
     /// engine's words (schedule re-audit 10/4/26 SQ-2). Absent on older
     /// payloads and on a week with no hard breach.
     var heldBy: QualityHeldBy? = nil
+    /// How much of the score was MEASURED (blind re-audit 10/11/26
+    /// LOGIC-15): the band is held by it — thin data never reads
+    /// "excellent" — and the measures that withdrew are named.
+    var measured: QualityMeasured? = nil
 
     var scoredShifts: [QualityShift] { (shifts ?? []).filter { $0.scored } }
     var customerDimensions: [QualityDimension] {
@@ -937,6 +976,35 @@ struct ScheduleGate: Codable, Equatable {
     let ran: Bool
     let kept: String?
     let reason: String?
+    /// Why a gate the draft tripped did NOT run — "time", "capped",
+    /// "error", "past" (schedule re-audit 10/11/26 BUGSGEN-16): the payload
+    /// always carries a verdict, so a gate skipped or failed is said, never
+    /// read as one that found nothing. Nil when it ran (or an older server).
+    var why: String? = nil
+    /// What tripped it, in the gate's words, when it did not run.
+    var tripped: String? = nil
+
+    enum CodingKeys: String, CodingKey { case ran, kept, reason, why, tripped }
+
+    init(ran: Bool, kept: String? = nil, reason: String? = nil, why: String? = nil, tripped: String? = nil) {
+        self.ran = ran; self.kept = kept; self.reason = reason; self.why = why; self.tripped = tripped
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ran = c.sfBool(.ran) ?? false
+        kept = c.sfText(.kept)
+        reason = c.sfText(.reason)
+        why = c.sfText(.why)
+        tripped = c.sfText(.tripped)
+    }
+
+    /// The line to show: the gate's reason when it ran, or when it was owed
+    /// and skipped or failed (`why`) — the web's sq-gate rule.
+    var line: String? {
+        guard let reason, ran || why != nil else { return nil }
+        return reason
+    }
 }
 
 /// A rating stored under a name nobody on the roster has, with the
@@ -1695,13 +1763,18 @@ struct ScheduleReview: Codable, Equatable {
     /// person leaves, each with the one tap that writes the stay into the
     /// schedule (schedule audit 10/10/26 TRUST-21, `assumed_stays`).
     var assumedStays: HomeLenientList<AssumedStay>? = nil
+    /// The owner's own limits crossed, not law ("over your limit", schedule
+    /// re-audit 10/11/26 LOGIC-20): counted apart from `hard` — decisions.
+    var overLimit: Int? = nil
 
     var hardCount: Int { hard ?? 0 }
     var softCount: Int { soft ?? 0 }
-    var isClean: Bool { hardCount == 0 && softCount == 0 }
+    var overLimitCount: Int { overLimit ?? 0 }
+    var isClean: Bool { hardCount == 0 && softCount == 0 && overLimitCount == 0 }
 
     enum CodingKeys: String, CodingKey {
         case hard, soft, lines, fixes, unfixed, trimmed, staggered, unmet, setup
+        case overLimit = "over_limit"
         case byKind = "by_kind"
         case hardRows = "hard_rows"
         case hoursTrimmed = "hours_trimmed"
@@ -1796,12 +1869,19 @@ struct RuleViolation: Codable, Identifiable, Equatable {
     /// row: shown on the day, never as "needs review" on whoever's row it
     /// is pinned to (schedule audit 10/3/26 E-13). Absent on older payloads.
     var dayLevel: Bool? = nil
+    /// The owner's own scheduling limit crossed, not law (schedule re-audit
+    /// 10/11/26 LOGIC-20, schedule_rules.owner_hard): "over your limit" — a
+    /// decision, amber, never a red must-fix or a NEEDS REVIEW mark.
+    var policy: Bool? = nil
 
     var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")" }
-    var isHard: Bool { hard ?? false }
+    /// Hard to the OWNER: hard, and not a policy limit (owner_hard).
+    var isHard: Bool { (hard ?? false) && policy != true }
+    /// "Over your limit" — a hard rule of the owner's own, not law.
+    var isOverLimit: Bool { (hard ?? false) && policy == true }
 
     enum CodingKeys: String, CodingKey {
-        case kind, index, employee, date, day, role, detail, hard, label
+        case kind, index, employee, date, day, role, detail, hard, label, policy
         case shiftStart = "shift_start"
         case noShow = "no_show"
         case dayLevel = "day_level"
@@ -1814,11 +1894,55 @@ struct RuleViolation: Codable, Identifiable, Equatable {
 struct GenerationProgress: Codable, Equatable {
     let daysTotal: Int
     let daysDrafted: Int
+    /// The stages the job REPORTED reaching (schedule_engine.
+    /// GENERATION_STAGES — the same field the web's Building steps read):
+    /// the phone ticks only these, never a timed script (schedule re-audit
+    /// 10/11/26 TRUST-21). Empty from an older server, or before the first.
+    var stages: [Stage] = []
+
+    struct Stage: Codable, Equatable {
+        let key: String
+        let label: String
+        var done = false
+        var current = false
+
+        enum CodingKeys: String, CodingKey { case key, label, done, current }
+
+        init(key: String, label: String, done: Bool = false, current: Bool = false) {
+            self.key = key; self.label = label; self.done = done; self.current = current
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            guard let k = c.sfText(.key) else {
+                throw DecodingError.dataCorruptedError(forKey: .key, in: c, debugDescription: "A stage with no key")
+            }
+            key = k
+            label = c.sfText(.label) ?? k
+            done = c.sfBool(.done) ?? false
+            current = c.sfBool(.current) ?? false
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case daysTotal = "days_total"
         case daysDrafted = "days_drafted"
+        case stages
     }
+
+    init(daysTotal: Int, daysDrafted: Int, stages: [Stage] = []) {
+        self.daysTotal = daysTotal; self.daysDrafted = daysDrafted; self.stages = stages
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        daysTotal = c.sfInt(.daysTotal) ?? 0
+        daysDrafted = c.sfInt(.daysDrafted) ?? 0
+        stages = c.setupList(Stage.self, .stages)
+    }
+
+    /// The stage the job is in now, by index; nil before it reported one.
+    var currentIndex: Int? { stages.lastIndex(where: \.current) }
 
     /// "3 of 7 days drafted", or nil before the first day is finished.
     var line: String? {
@@ -4129,6 +4253,14 @@ final class LaborViewModel {
     private struct ReplacementsBody: Encodable {
         let rows: [ScheduleRow]
         let index: Int
+        /// The draft these rows are, so the shift's "why" reads the engine's
+        /// own recorded reason (re-audit 10/11/26 TRUST-2), never one
+        /// reconstructed after the fact.
+        var scheduleId: Int? = nil
+        enum CodingKeys: String, CodingKey {
+            case rows, index
+            case scheduleId = "schedule_id"
+        }
     }
 
     private struct ReplacementsResponse: Decodable {
@@ -4150,7 +4282,7 @@ final class LaborViewModel {
         do {
             let response: ReplacementsResponse = try await client.send(
                 "/mobile/api/labor/schedule/replacements", method: .post,
-                body: ReplacementsBody(rows: rows, index: index), hapticOnError: false)
+                body: ReplacementsBody(rows: rows, index: index, scheduleId: result.historyId), hapticOnError: false)
             return response.ok ? (response.replacements ?? []) : []
         } catch {
             return []
@@ -4886,12 +5018,17 @@ final class LaborViewModel {
         var instruction: String? = nil
         var reasonChip: String? = nil
         var reasonText: String? = nil
+        /// The readings of the instruction the owner ticked on "Is this what
+        /// you meant?" (blind re-audit 10/11/26 AI-7, contract #6): held as
+        /// rules for this week; an unticked one is a preference only.
+        var confirmRules: [[String: LooseValue]] = []
         enum CodingKeys: String, CodingKey {
             case dates, instruction
             case weekStart = "week_start"
             case historyId = "history_id"
             case reasonChip = "reason_chip"
             case reasonText = "reason_text"
+            case confirmRules = "confirm_rules"
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -4901,12 +5038,129 @@ final class LaborViewModel {
             try c.encodeIfPresent(instruction, forKey: .instruction)
             try c.encodeIfPresent(reasonChip, forKey: .reasonChip)
             try c.encodeIfPresent(reasonText, forKey: .reasonText)
+            if !confirmRules.isEmpty { try c.encode(confirmRules, forKey: .confirmRules) }
         }
     }
 
     /// "Anything for this week?" — the owner's words for the next draft,
     /// sent once as `instruction` and cleared when the job starts.
     var generateInstruction = ""
+
+    /// The instruction's readings the owner ticked, sent with the next
+    /// Generate as `confirm_rules` and cleared once it starts.
+    var confirmRules: [[String: LooseValue]] = []
+
+    /// One rule Cavnar AI read from the owner's words for this draft, said
+    /// back before anything is generated ("I read: Maria Lopez closes,
+    /// 10/16/26") — POST /labor/schedule-instruction/read.
+    struct InstructionReading: Identifiable, Equatable {
+        let id: Int
+        let readsAs: String
+        let rule: [String: LooseValue]
+        /// Already a rule this week: shown ticked, not sent again.
+        let confirmed: Bool
+    }
+
+    private struct InstructionReadBody: Encodable {
+        let instruction: String
+        var weekStart: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case instruction
+            case weekStart = "week_start"
+        }
+    }
+
+    struct InstructionReadResponse: Decodable {
+        var ok = false
+        var error: String? = nil
+        var sentences: [Sentence] = []
+
+        struct Sentence: Decodable {
+            var text = ""
+            var rules: [Reading] = []
+            var waiver: Waiver? = nil
+            enum CodingKeys: String, CodingKey { case text, rules, waiver }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                text = c.sfText(.text) ?? ""
+                rules = c.setupList(Reading.self, .rules)
+                waiver = (try? c.decodeIfPresent(Waiver.self, forKey: .waiver)) ?? nil
+            }
+        }
+        struct Reading: Decodable {
+            var rule: [String: LooseValue] = [:]
+            var readsAs: String? = nil
+            var words: String? = nil
+            var confirmed = false
+            enum CodingKeys: String, CodingKey {
+                case rule, words, confirmed
+                case readsAs = "reads_as"
+            }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                if case .object(let o)? = (try? c.decodeIfPresent(LooseValue.self, forKey: .rule)) ?? nil { rule = o }
+                readsAs = c.sfText(.readsAs)
+                words = c.sfText(.words)
+                confirmed = c.sfBool(.confirmed) ?? false
+            }
+        }
+        struct Waiver: Decodable {
+            var words: String? = nil
+            var confirmed = false
+            enum CodingKeys: String, CodingKey { case words, confirmed }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                words = c.sfText(.words)
+                confirmed = c.sfBool(.confirmed) ?? false
+            }
+        }
+        enum CodingKeys: String, CodingKey { case ok, error, sentences }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            ok = c.sfBool(.ok) ?? false
+            error = c.sfText(.error)
+            sentences = c.setupList(Sentence.self, .sentences)
+        }
+    }
+
+    /// The readings of the instruction, as the web's Generate press shows
+    /// them: each typed rule ("I read: …") and each standing position the
+    /// words let off (a waiver, sent back as {kind: "waiver", quote}).
+    nonisolated static func readings(_ sentences: [InstructionReadResponse.Sentence]) -> [InstructionReading] {
+        var out: [InstructionReading] = []
+        for s in sentences {
+            for r in s.rules where !r.rule.isEmpty {
+                out.append(InstructionReading(id: out.count, readsAs: r.readsAs ?? r.words ?? s.text,
+                                              rule: r.rule, confirmed: r.confirmed))
+            }
+            if let w = s.waiver {
+                out.append(InstructionReading(id: out.count, readsAs: "I read: " + (w.words ?? s.text),
+                                              rule: ["kind": .string("waiver"), "quote": .string(s.text)],
+                                              confirmed: w.confirmed))
+            }
+        }
+        return out
+    }
+
+    /// Reads the instruction BEFORE generating (AI-7). Nil readings with an
+    /// error when it could not be read — Generate then goes ahead and every
+    /// reading stays a preference, as the web does.
+    func readInstruction() async -> (readings: [InstructionReading], error: String?) {
+        let words = generateInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return ([], nil) }
+        do {
+            let r: InstructionReadResponse = try await client.send(
+                "/mobile/api/labor/schedule-instruction/read", method: .post,
+                body: InstructionReadBody(instruction: String(words.prefix(500)), weekStart: generateWeek.weekStart),
+                hapticOnError: false, retryTransient: false)
+            guard r.ok else { return ([], r.error) }
+            return (Self.readings(r.sentences), nil)
+        } catch let e as APIClient.APIError {
+            return ([], e.message)
+        } catch {
+            return ([], nil)
+        }
+    }
 
     /// Which week the next generation is for. Any date inside the wanted
     /// week is enough; the server snaps it to the week's start.
@@ -4997,7 +5251,9 @@ final class LaborViewModel {
                                    dates: redo, historyId: redo == nil ? nil : historyId,
                                    instruction: words.isEmpty ? nil : String(words.prefix(500)),
                                    reasonChip: reasonChip,
-                                   reasonText: (note?.isEmpty ?? true) ? nil : String(note!.prefix(300))))
+                                   reasonText: (note?.isEmpty ?? true) ? nil : String(note!.prefix(300)),
+                                   confirmRules: redo == nil && !words.isEmpty ? confirmRules : []))
+            if response.ok { confirmRules = [] }
             guard response.ok, let jobId = response.jobId else {
                 scheduleError = response.error ?? "Couldn't start schedule generation."
                 isGeneratingSchedule = false

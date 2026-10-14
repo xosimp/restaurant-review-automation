@@ -316,12 +316,17 @@ struct ReplacementPickerSheet: View {
                         Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // Approving leaves no manager on the floor: it goes only
+                    // with who runs the floor instead (STRESS-16).
+                    if let need = viewModel.needsCover, need.requestId == request.id {
+                        NeedsCoverBlock(viewModel: viewModel, need: need) { dismiss() }
+                    }
                     VStack(spacing: 10) {
                         Button {
                             Haptic.medium()
                             Task {
                                 await viewModel.decideShiftRequest(request.id, approve: true, replacement: replacement)
-                                if viewModel.requestError == nil { dismiss() }
+                                if viewModel.requestError == nil && viewModel.needsCover == nil { dismiss() }
                             }
                         } label: {
                             Group {
@@ -350,5 +355,102 @@ struct ReplacementPickerSheet: View {
             judged = await viewModel.loadCoverCandidates(requestId: request.id, names: allNames)
             loadingJudged = false
         }
+    }
+}
+
+/// "Who runs the floor instead?" — asked when approving a drop would leave
+/// part of the day with no manager on the floor: the server refuses it on a
+/// warning alone (409 `needs_cover`, schedule re-audit 10/11/26 STRESS-16 —
+/// zero minutes on the floor without a manager, owners count). The managers
+/// on the roster are one tap; anyone else (the owner, a lead the owner
+/// trusts) is typed, as the web asks it. Nothing changed until this answer.
+struct NeedsCoverBlock: View {
+    @Bindable var viewModel: ScheduleSetupViewModel
+    let need: ScheduleSetupViewModel.NeedsCover
+    var onApproved: () -> Void = {}
+
+    @State private var who = ""
+    @FocusState private var focused: Bool
+
+    private var managers: [String] { (viewModel.teamSetup.managers?.managers ?? []).map(\.name) }
+    private var busy: Bool { viewModel.requestBusyId == need.requestId }
+    private var name: String { who.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            CavnarKicker("No manager on the floor", icon: "exclamationmark.triangle.fill", tint: .cavnarRedText)
+            CavnarMixedText(need.gap, role: .body, color: .cavnarInk)
+            Text("Who runs the floor instead? The owner counts.").cavnarText(.label)
+            if !managers.isEmpty {
+                AccountFlowLayout(spacing: 6) {
+                    ForEach(managers, id: \.self) { m in
+                        Button {
+                            Haptic.selection()
+                            who = m
+                        } label: {
+                            AccountChip(text: m, muted: who != m)
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(who == m ? .isSelected : [])
+                    }
+                }
+            }
+            TextField("A manager, or you", text: $who)
+                .font(.cavnar(.body))
+                .foregroundStyle(Color.cavnarInk)
+                .focused($focused)
+                .padding(CavnarSpace.s)
+                .background(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                    .fill(Color.cavnarPaper2))
+                .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                    .strokeBorder(focused ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
+            Button {
+                Haptic.medium()
+                let covering = name
+                Task {
+                    await viewModel.decideShiftRequest(need.requestId, approve: true, replacement: need.replacement,
+                                                       coveredBy: covering)
+                    if viewModel.requestError == nil && viewModel.needsCover == nil { onApproved() }
+                }
+            } label: {
+                Group {
+                    if busy { CavnarShimmerText(text: "Approving\u{2026}") } else {
+                        Text(name.isEmpty ? "Name who runs the floor" : "Approve \u{2014} \(name) runs the floor")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: name.isEmpty || busy))
+            .disabled(name.isEmpty || busy)
+            Button {
+                viewModel.needsCover = nil
+            } label: { Text("Don\u{2019}t approve it").frame(maxWidth: .infinity) }
+                .buttonStyle(CavnarSecondaryButtonStyle())
+        }
+        .padding(CavnarSpace.m)
+        .background(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+            .fill(Color.cavnarRed.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+            .strokeBorder(Color.cavnarRed.opacity(0.35), lineWidth: 1))
+    }
+}
+
+/// The same question on its own sheet, for an Approve tapped in a list.
+struct NeedsCoverSheet: View {
+    @Bindable var viewModel: ScheduleSetupViewModel
+    let need: ScheduleSetupViewModel.NeedsCover
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                NeedsCoverBlock(viewModel: viewModel, need: need) { dismiss() }
+                    .padding(20)
+            }
+            .accountSheetChrome("Approve")
+        }
+        .presentationDetents([.medium, .large])
     }
 }

@@ -32,10 +32,16 @@ def test_required_is_the_larger_of_floor_and_typical_and_the_floor_is_marked():
     by_role = {x["role"]: x for x in night["roles"]}
     # Case-insensitive merge; the owner's spelling wins.
     assert set(by_role) == {"Server", "Line Cook"}
-    assert by_role["Server"] == {"role": "Server", "required": 6, "floor": 0, "typical": 6}
+    # `ledger` (re-audit 10/11/26 LEARNING-27) is additive: every lever that
+    # moved the number, here only the usual crew.
+    assert {k: v for k, v in by_role["Server"].items() if k != "ledger"} == \
+        {"role": "Server", "required": 6, "floor": 0, "typical": 6}
+    assert [e["lever"] for e in by_role["Server"]["ledger"]] == ["usual"]
     assert by_role["Line Cook"]["required"] == 3 and by_role["Line Cook"]["floor"] == 3
     morning = next(r for r in rows if r["daypart"] == "morning")
-    assert morning["roles"] == [{"role": "Line Cook", "required": 1, "floor": 1, "typical": 0}]
+    assert [{k: v for k, v in x.items() if k != "ledger"} for x in morning["roles"]] == \
+        [{"role": "Line Cook", "required": 1, "floor": 1, "typical": 0}]
+    assert [e["lever"] for e in morning["roles"][0]["ledger"]] == ["floor"]
 
 
 def test_a_per_day_floor_overrides_the_role_default_as_the_scorer_reads_it():

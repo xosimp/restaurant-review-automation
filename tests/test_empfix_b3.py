@@ -418,11 +418,23 @@ def test_a_republish_does_not_let_one_shift_carry_two_requests(db, told):
     assert "uq_shift_requests_live" in names
 
 
-def test_approving_a_drop_whose_shift_moved_is_refused(db, told):
+def test_approving_a_drop_whose_shift_moved_follows_the_shift_by_its_id(db, told):
+    # Schedule re-audit 10/11/26 ARCH-6 (updated): a retime keeps the
+    # shift's id, so the request is still about the same shift — approving
+    # it follows the shift to its new time instead of refusing it as gone.
     rid = _restaurant(db, SERVERS)
     _publish(db, rid, [(W1[1], "Ana", "Server", "5:00pm", "10:00pm", 5)])
     req = srq.request_drop(rid, "Ana", W1[1], "5:00pm", now=NOW)
     _publish(db, rid, [(W1[1], "Ana", "Server", "4:00pm", "10:00pm", 6)])      # moved to 4pm
+    out = srq.decide(rid, req["id"], True, now=NOW)
+    assert out["status"] == "open" and out["shift_start"] == "4:00pm"
+
+
+def test_approving_a_drop_whose_shift_went_to_someone_else_is_refused(db, told):
+    rid = _restaurant(db, SERVERS)
+    _publish(db, rid, [(W1[1], "Ana", "Server", "5:00pm", "10:00pm", 5)])
+    req = srq.request_drop(rid, "Ana", W1[1], "5:00pm", now=NOW)
+    _publish(db, rid, [(W1[1], "Ben", "Server", "5:00pm", "10:00pm", 5)])      # given to Ben
     with pytest.raises(srq.ShiftRequestError, match="no longer on the schedule"):
         srq.decide(rid, req["id"], True, now=NOW)
     assert srq.decide(rid, req["id"], False, now=NOW)["status"] == "denied"

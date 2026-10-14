@@ -11021,7 +11021,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-tile .ring circle{fill:none;stroke-width:7}
 .ss-tile .ring .tr{stroke:var(--hb-line2)}
 .ss-tile .ring .fg{stroke:var(--ember);stroke-linecap:round;transition:stroke-dashoffset 1.1s cubic-bezier(.2,.9,.3,1)}
-/* Estimated savings' math (_ssSavingsMath): a card under the tile on hover
+/* Against last week's plan's math (_ssPlanMath): a card under the tile on hover
    or keyboard focus, in the floating-card language (.swp). */
 .ss-tile.has-math{cursor:help;outline:none}
 /* A tile that goes somewhere (Warnings, owner 10/7/26): the whole tile is the
@@ -24228,6 +24228,38 @@ function generateSchedule(btn, opts) {
       return;
     }
   }
+  // What the owner typed for this draft, said back BEFORE it is generated
+  // (blind re-audit 10/11/26 AI-7, contract #6): each rule Cavnar AI reads
+  // from it, ticked to be held as a rule for this week; an unticked one is a
+  // preference only. Read once per press (opts.instruction_read).
+  var _instrEl = document.getElementById('sfw1-instr');
+  var _instrText = _instrEl ? String(_instrEl.value || '').replace(/^\s+|\s+$/g, '').slice(0, 500) : '';
+  if (_instrText && !opts.instruction_read && window.sfw1Sheet) {
+    btn.disabled = true;
+    var _irBody = {instruction: _instrText};
+    var _irWs = _schedWeekStart(); if (_irWs) _irBody.week_start = _irWs;
+    fetch('/api/labor/schedule-instruction/read', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(_irBody)})
+      .then(apiJson).then(function (d) {
+        btn.disabled = false;
+        var ss = (d && d.ok && d.sentences) || [], items = [], i, j;
+        for (i = 0; i < ss.length; i++) {
+          for (j = 0; j < (ss[i].rules || []).length; j++) items.push({rule: ss[i].rules[j].rule, reads_as: ss[i].rules[j].reads_as, confirmed: ss[i].rules[j].confirmed});
+          if (ss[i].waiver) items.push({rule: {kind: 'waiver', quote: ss[i].text}, reads_as: 'I read: ' + ss[i].waiver.words, confirmed: ss[i].waiver.confirmed});
+        }
+        if (!items.length) { opts.instruction_read = true; generateSchedule(btn, opts); return; }
+        window._schedInstrPending = {btn: btn, opts: opts, items: items};
+        var h = '<div class="hb-kicker">Before Cavnar AI drafts</div><h3 id="sfw1-modal-t">Is this what you meant?</h3>'
+          + '<p class="so-p">Tick each one to hold it as a rule for this week. Anything you leave unticked, the draft only aims for.</p>';
+        for (i = 0; i < items.length; i++) {
+          h += '<label class="rul-sw" style="border-top:0;gap:10px"><input type="checkbox" data-sched-instr-rule="' + i + '"' + (items[i].confirmed ? ' checked disabled' : '') + '>'
+            + '<span class="t">' + _numText(items[i].reads_as || '') + (items[i].confirmed ? ' <small>already a rule this week</small>' : '') + '</span></label>';
+        }
+        h += '<div class="so-f"><button type="button" class="cbtn cbtn-secondary" data-sched-instr-edit="1">Change what I typed</button>'
+          + '<button type="button" class="cbtn cbtn-primary" data-sched-instr-go="1">Generate</button></div>';
+        sfw1Sheet(h);
+      }).catch(function () { btn.disabled = false; opts.instruction_read = true; generateSchedule(btn, opts); });
+    return;
+  }
   _schedBtn = btn;
   btn.disabled = true;
   var _oldNotice = document.getElementById('sched-notice'); if (_oldNotice) _oldNotice.remove();
@@ -24241,6 +24273,8 @@ function generateSchedule(btn, opts) {
   if (opts.reason_text) body.reason_text = opts.reason_text;
   var _instr = document.getElementById('sfw1-instr');
   if (_instr && String(_instr.value || '').replace(/\s+/g, '')) body.instruction = String(_instr.value).replace(/^\s+|\s+$/g, '').slice(0, 500);
+  // The readings the owner ticked on the "Is this what you meant?" sheet.
+  if (opts.confirm_rules && opts.confirm_rules.length) body.confirm_rules = opts.confirm_rules;
   var panel = document.getElementById('schedule-preview-panel');
   if (panel) panel.style.display = 'none';
 
@@ -27167,13 +27201,14 @@ function _snrForm(i, rule, d) {
 function _snrTyped(i, x, d) {
   var t = x.typed || [], o = '', j;
   if (!t.length) return '';
-  o += '<div class="snr-s"><b>Cavnar AI reads it as:</b> until you make it a rule, the draft keeps to it where it can.</div>';
+  o += '<div class="snr-s"><b>Not enforced yet.</b> Cavnar AI reads it as below — until you make it a rule, the draft only treats it as a preference.</div>';
   for (j = 0; j < t.length; j++) {
     o += '<div class="snr-act"><span class="snr-s">' + _numText(t[j].words) + '</span>'
       + (d.can_edit ? '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-snr-typed="' + i + ':' + j + '" data-scope="every">Make it a rule · every week</button>'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-typed="' + i + ':' + j + '" data-scope="week">Week of <span class="hb-num">' + _escHtml(mdy(d.week_of)) + '</span> only</button>' : '')
       + '</div>';
   }
+  if (d.can_edit) o += '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-dismiss="' + i + '">Not what I meant</button></div>';
   return o + '<span class="ac-status" data-snr-tstatus="' + i + '"></span>';
 }
 function snrHtml(d) {
@@ -27191,23 +27226,36 @@ function snrHtml(d) {
       used[x.rule_id] = 1;
       h += '<div class="snr-row ' + (x.stale ? 'warn' : 'ok') + '">' + q + '<div class="snr-s">' + (x.stale ? '<b>' + _escHtml(x.stale) + '</b> ' : '<b>A rule the draft is checked against:</b> ') + _numText(x.enforced) + '</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Remove the rule</button></div>') + '</div>';
+    } else if (x.dismissed) {
+      // A reading the owner set aside (AI-10): guidance, nothing holds it.
+      h += '<div class="snr-row">' + q + '<div class="snr-s"><b>Not enforced.</b> You set Cavnar AI’s reading aside, so the draft reads it as guidance only.</div>'
+        + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-undismiss="' + i + '">Show the reading again</button></div>') + '</div>';
     } else if (x.kind === 'rule') {
-      h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
+      h += '<div class="snr-row offer">' + q + '<div class="snr-s"><b>Not enforced yet — Cavnar AI can hold this as a minimum.</b> ' + (x.why ? _escHtml(x.why) + ' ' : '') + 'Until you make it a rule, the draft only aims for it.</div>'
         + (ro ? '' : _snrForm(i, x.rule, d)) + '</div>';
     } else if (x.typed && x.typed.length) {
       h += '<div class="snr-row offer">' + q + _snrTyped(i, x, d) + '</div>';
     } else if (x.kind === 'unchecked') {
-      h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not checked.</b> ' + _escHtml(x.why || '') + ' The draft aims for it; check the draft against it yourself.</div>'
+      h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not enforced.</b> ' + _escHtml(x.why || '') + ' The draft aims for it; check the draft against it yourself.</div>'
         + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-open="' + i + '">Make a minimum from it</button></div><div data-snr-slot="' + i + '"></div>') + '</div>';
     } else if (x.kind === 'waiver') {
       // A standing position waived by this note (schedule_dedicated: the
       // bar-tables bartender, Anthony 10/9/26).
-      h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>Allowance:</b> ' + _escHtml(x.why || '') + '</div></div>';
+      // Applied only once the owner confirms it (BUGSGEN-4): until then the
+      // standing position is staffed.
+      if (x.confirmed) {
+        h += '<div class="snr-row ok">' + q + '<div class="snr-s"><b>Allowance in force:</b> ' + _escHtml(x.why || '') + '</div>'
+          + (ro || !x.rule_id ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" data-snr-remove="' + x.rule_id + '">Staff it again</button></div>') + '</div>';
+      } else {
+        h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>Not applied yet — the position is staffed.</b> Cavnar AI reads it as: ' + _escHtml(x.why || '') + '</div>'
+          + (ro ? '' : '<div class="snr-act"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-snr-waive="' + i + '" data-scope="every">Let it off as it says</button>'
+            + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-snr-waive="' + i + '" data-scope="week">Week of <span class="hb-num">' + _escHtml(mdy(d.week_of)) + '</span> only</button></div>') + '</div>';
+      }
     } else if (x.kind === 'person') {
       h += '<div class="snr-row warn">' + q + '<div class="snr-s"><b>About one person.</b> ' + _escHtml(x.why || '') + '</div>'
         + '<div class="snr-act"><button type="button" class="cbtn cbtn-text cbtn-sm" onclick="swOpenTeam(\'notes\')">Scheduling notes in Labor →</button></div></div>';
     } else {
-      h += '<div class="snr-row">' + q + '<div class="snr-s"><b>Guidance.</b> The draft aims for it; nothing checks it.</div></div>';
+      h += '<div class="snr-row">' + q + '<div class="snr-s"><b>Not enforced — guidance.</b> The draft aims for it; nothing checks it.</div></div>';
     }
   }
   var rest = [];
@@ -27224,8 +27272,34 @@ function snrHtml(d) {
   return h;
 }
 document.addEventListener('click', function (ev) {
-  var t = ev.target && ev.target.closest ? ev.target.closest('[data-snr-day],[data-snr-add],[data-snr-remove],[data-snr-open],[data-snr-typed],[data-snr-read]') : null;
+  var t = ev.target && ev.target.closest ? ev.target.closest('[data-snr-day],[data-snr-add],[data-snr-remove],[data-snr-open],[data-snr-typed],[data-snr-read],[data-snr-dismiss],[data-snr-undismiss],[data-snr-waive]') : null;
   if (!t || !_snr) return;
+  if (t.hasAttribute('data-snr-dismiss') || t.hasAttribute('data-snr-undismiss')) {
+    // "Not what I meant" (AI-10): the reading is neither held nor proposed.
+    var dx = (_snr.sentences || [])[+(t.getAttribute('data-snr-dismiss') || t.getAttribute('data-snr-undismiss'))];
+    if (!dx) return;
+    t.disabled = true;
+    fetch('/api/labor/note-rules/dismiss', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: dx.text, dismissed: t.hasAttribute('data-snr-dismiss')})})
+      .then(apiJson).then(function (d) {
+        if (d && d.ok) { ssLoadNoteRules(true); return; }
+        t.disabled = false; toast((d && d.error) || 'Could not save that', 'error');
+      }).catch(function () { t.disabled = false; toast('Could not save that', 'error'); });
+    return;
+  }
+  if (t.hasAttribute('data-snr-waive')) {
+    // The owner confirms a note lets a standing position off (BUGSGEN-4).
+    var wx = (_snr.sentences || [])[+t.getAttribute('data-snr-waive')];
+    if (!wx) return;
+    t.disabled = true;
+    fetch('/api/labor/note-rules/waiver', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_text: wx.text, scope: t.getAttribute('data-scope'), week_start: _snr.week_of || ''})})
+      .then(apiJson).then(function (d) {
+        if (d && d.ok) { toast('Allowance made — the draft lets it off as your note says'); ssLoadNoteRules(true); return; }
+        t.disabled = false; toast((d && d.error) || 'Could not save that', 'error');
+      }).catch(function () { t.disabled = false; toast('Could not save that', 'error'); });
+    return;
+  }
   if (t.hasAttribute('data-snr-read')) {
     // The owner's press: the sentences no model has read are read now
     // (owner_rules, RM-9) — proposals, nothing held until confirmed.
@@ -27528,23 +27602,27 @@ function _ssLaborPct() {
   var lv = (_swData || {}).labor_view;
   return (lv && lv.pct != null) ? +lv.pct : null;
 }
-// The math behind Estimated savings, on hover or focus of the tile (owner,
-// 10/6/26: "a tooltip with the math ... so owners know"). The figures are
-// the server's own (schedule_economics.labor_view): savings = (recent labor
-// % - this draft's labor %) x this week's forecast sales, both on one basis.
-function _ssSavingsMath(lv, rev) {
-  if (!lv || lv.savings == null || lv.recent_pct == null || lv.pct == null || !(+rev > 0)) return '';
-  var r = +lv.recent_pct, p = +lv.pct, R = +rev, S = +lv.savings, pts = Math.round((r - p) * 10) / 10;
+// The math behind "Against last week's plan", on hover or focus of the tile
+// (owner, 10/6/26: "a tooltip with the math ... so owners know"). The
+// figures are the server's own (schedule_economics.labor_view vs_last_plan,
+// blind re-audit 10/11/26 TRUST-7): scheduled against scheduled, the last
+// published week's plan % less this draft's %, times this week's forecast
+// sales, both on one basis. It compared the recent MEASURED labor % with a
+// scheduled one, so an identical schedule showed savings and a thinner one
+// more.
+function _ssPlanMath(lv, rev) {
+  var vp = lv && lv.vs_last_plan;
+  if (!vp || vp.value == null || vp.last_pct == null || lv.pct == null || !(+rev > 0)) return '';
+  var r = +vp.last_pct, p = +lv.pct, R = +rev, S = +vp.value, pts = Math.round((r - p) * 10) / 10;
   var basis = lv.basis === 'all_in' ? 'all-in' : 'hourly pay only';
   var n = function (x) { return '<span class="hb-num">' + x + '</span>'; };
   var row = function (k, v, sub) { return '<div class="mr"><span class="mk">' + k + (sub ? '<small>' + sub + '</small>' : '') + '</span><span class="mv">' + v + '</span></div>'; };
-  var split = lv.salaried_cost != null ? 'hourly ' + n(_schedMoney(lv.hourly_cost)) + ' + salaried ' + n(_schedMoney(lv.salaried_cost)) : '';
   return '<div class="ss-math" role="tooltip"><div class="mh">How this is worked out</div>'
     + row('Forecast sales this week', n(_schedMoney(R)))
-    + row('At your last ' + n(lv.recent_days || 14) + ' days\u2019 labor', n(_schedMoney(r / 100 * R)), n(r + '%') + ' of sales, ' + basis)
-    + row('This draft', n(_schedMoney(p / 100 * R)), n(p + '%') + ' of sales' + (split ? ' \u00b7 ' + split : ''))
+    + row('The week of ' + n(_escHtml(mdy(vp.week_start))) + '\u2019s plan', n(r + '%'), 'scheduled, of its forecast sales, ' + basis)
+    + row('This draft', n(p + '%'), 'scheduled, of this week\u2019s forecast sales')
     + '<div class="meq">' + n(r + '%') + ' \u2212 ' + n(p + '%') + ' = ' + n(pts + ' pts') + ' \u00d7 ' + n(_schedMoney(R)) + ' = <b>' + n(_schedMoney(S)) + '</b></div>'
-    + '<div class="mft">A projection: it is earned only if the week runs as drafted and sales come in at the forecast.</div></div>';
+    + '<div class="mft">A projection: it is earned only if the week runs as drafted and sales come in at the forecast. Never shown while a shift is short of the people it needs.</div></div>';
 }
 function ssRenderSummary() {
   var el = document.getElementById('ss-summary'); if (!el) return;
@@ -27565,20 +27643,22 @@ function ssRenderSummary() {
   if (plab) {
     lp = plab.value;
     lv = {label: plab.label, grade: plab.grade, basis: plab.basis, target_pct: plab.target, target_basis: plab.target_basis,
-          text: plab.text, savings: lv ? lv.savings : null, recent_pct: lv ? lv.recent_pct : null, recent_days: lv ? lv.recent_days : null};
+          text: plab.text, pct: plab.value, recent_pct: lv ? lv.recent_pct : null, recent_days: lv ? lv.recent_days : null,
+          // The review's own comparison with last week's plan (TRUST-7).
+          vs_last_plan: pnum.vs_last_plan || (lv ? lv.vs_last_plan : null)};
     tgt = plab.target != null ? +plab.target : 0;
   }
   if (pnum && pnum.overtime) pc = {overtime_hours: pnum.overtime.priced ? pnum.overtime.hours : null, overtime_premium: pnum.overtime.premium};
   var ds = _schedWeekDates || [], people = {}, hrs = 0;
   for (i = 0; i < _schedRows.length; i++) { people[String(_schedRows[i].employee || '').toLowerCase()] = 1; hrs += _swRowHrs(_schedRows[i]); }
   var np = 0, k; for (k in people) if (people.hasOwnProperty(k) && k) np++;
-  // Savings are a projection, never a result (CLAUDE.md, value delivered):
-  // the forecast's sales at the labor % measured over the recent window,
-  // minus the same sales at this draft's — the server's, both on one basis
-  // (SQ-4: the hourly draft against the all-in recent % made the salaries
-  // the "savings"). Shown only when both are measured.
-  var rev = +d.projected_revenue, sav = (lv && lv.savings != null) ? +lv.savings : null;
-  var rec = {pct: lv ? lv.recent_pct : null, days: lv ? lv.recent_days : null};
+  // Against last week's plan is a projection, never a result (CLAUDE.md,
+  // value delivered): scheduled against scheduled, the server's, on one
+  // basis, withheld while a shift is short (blind re-audit 10/11/26 TRUST-7:
+  // the "Estimated savings" hero set a measured recent % against this
+  // draft's scheduled one, so it grew as the week got thinner).
+  var rev = +d.projected_revenue, vp = (lv && lv.vs_last_plan) || null;
+  var sav = (vp && vp.value != null) ? +vp.value : null;
   var basisWord = lv ? (lv.basis === 'all_in' ? 'all-in' : 'hourly pay only') : '';
   var sc = q.score, band = q.band ? String(q.band) : '';
   var C = 2 * Math.PI * 30, off = sc != null ? C * (1 - Math.max(0, Math.min(100, +sc)) / 100) : C;
@@ -27593,13 +27673,19 @@ function ssRenderSummary() {
   // lines that put most weeks in amber; the reason a cap bit leads (TRUST-29).
   var qcls = pq.grade === 'good' ? 'good' : (pq.grade === 'weak' ? 'warn' : '');
   h += tile(sc == null ? '' : qcls, 'Shift quality', sc == null ? '—' : '<span class="hb-num">' + Math.round(sc) + '</span>',
-            pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week')),
+            (pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week')))
+              // What the score stands on and what it has meant here (blind
+              // re-audit 10/11/26 LOGIC-15, TRUST-31): the server's words,
+              // a dash below the sample floor with the floor in its title.
+              + (pq.measured_text ? '<br>' + _numText(pq.measured_text) : '')
+              + (sc == null ? '' : (pq.outcome_text ? '<br>' + _numText(pq.outcome_text)
+                : '<br><span title="' + _escHtml((pq.outcome_link && pq.outcome_link.note) || '') + '">Your high- against low-scoring weeks: —</span>')),
             sc == null ? '' : '<svg class="ring" viewBox="0 0 74 74" aria-hidden="true"><circle class="tr" cx="37" cy="37" r="30"/><circle class="fg" cx="37" cy="37" r="30" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 37 37)"/></svg>');
   // One grade with iOS (TRUST-7): the server's - over at any amount past the
   // target, neutral with none; the basis named on the tile (TRUST-30).
   var lgr = lv && lv.grade ? lv.grade : 'no_target';
   h += tile(lp === null ? '' : (lgr === 'over' ? 'bad' : (lgr === 'under' ? 'good' : '')), (lv && lv.label) || 'Labor', lp === null ? '—' : '<span class="hb-num">' + lp + '</span><small>%</small>',
-            lp === null ? 'Needs the forecast this draft was built on — generate a new draft to see it'
+            lp === null ? (pnum && pnum.labor_missing && pnum.labor_missing.text ? _numText(pnum.labor_missing.text) : 'Needs a sales forecast for this week')
               : 'of forecast sales, ' + basisWord + (tgt ? ' · ' + (lv.target_basis === 'hourly' ? 'the hourly budget is' : 'your target is') + ' <span class="hb-num">' + tgt + '%</span>' : ''),
             lv && lv.text ? '<div class="s" style="margin-top:4px">' + _numText(lv.text) + '</div>' : '');
   h += tile(cov == null ? '' : (cov >= 90 ? 'good' : (cov >= 75 ? 'warn' : 'bad')), 'Coverage', cov == null ? '—' : '<span class="hb-num">' + Math.round(cov) + '</span><small>%</small>',
@@ -27620,10 +27706,12 @@ function ssRenderSummary() {
               + (nLook ? ' · <span class="hb-num">' + nLook + '</span> worth a look' : (cnt && +cnt.fyi ? ' · <span class="hb-num">' + cnt.fyi + '</span> to read' : '')),
             '<span class="ss-go">Review &amp; send <i aria-hidden="true">\u2192</i></span>',
             ' role="button" tabindex="0" data-ss-go="publish" aria-label="Review the week before sending"');
-  h += tile('hero', 'Estimated savings', sav === null ? '—' : '<span class="hb-num">' + _schedMoney(sav) + '</span>',
-            sav === null ? 'Needs a measured labor % for your recent weeks and this draft’s forecast'
-              : 'this week vs your last <span class="hb-num">' + (rec.days || 14) + '</span> days at <span class="hb-num">' + rec.pct + '%</span> labor (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
-            '<span class="tag">Projection · not yet earned</span>' + _ssSavingsMath(lv, rev));
+  // An ordinary tile, not the hero (TRUST-7): a projection never leads.
+  h += tile('', sav !== null && sav < 0 ? 'Over last week’s plan' : 'Under last week’s plan',
+            sav === null ? '—' : '<span class="hb-num">' + _schedMoney(Math.abs(sav)) + '</span>',
+            sav === null ? (vp && vp.withheld ? _numText(vp.withheld) : 'Needs a published week priced with its forecast')
+              : 'its <span class="hb-num">' + vp.last_pct + '%</span> scheduled against this draft’s <span class="hb-num">' + lv.pct + '%</span> (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
+            '<span class="tag">Projection · not yet earned</span>' + _ssPlanMath(lv, rev));
   h += '</div>';
   // How far to trust the figures above (TRUST-19): the labor range from the
   // measured forecast error, its record, and last week's projection against
@@ -37010,8 +37098,17 @@ window._cuRole=window.CAV_BOOT.role;
     // The shortest shift (schedule audit 10/3/26 A2 E-16; blank is no rule)
     // and what full time means for anyone with no minimum of their own
     // (F2 D-41; 0 is no minimum, blank the default shown).
-    ['min_shift_hours','Shortest shift','hours, 1\u201312 \u2014 blank: no shortest'],
-    ['full_time_min_hours','Full-time means at least','hours a week \u2014 0: no minimum']];
+    // The one shortest shift every pass holds (contract #2, sched re-audit
+    // 10/11/26 BUGSGEN-6): blank is the 3h default, never no shortest.
+    ['min_shift_hours','Shortest shift','hours, 1\u201312 \u2014 blank: 3h, the default'],
+    ['full_time_min_hours','Full-time means at least','hours a week \u2014 0: no minimum'],
+    // The owner's two allowances to the manager-every-minute rule, per
+    // restaurant (LOGIC-12): 0 turns each off.
+    ['closing_manager_stays_minutes','Closing manager stays after the last person','minutes \u2014 0: they leave at their scheduled end'],
+    ['opening_manager_lead_minutes','Prep before the opening manager is fine when they arrive','minutes before open, at least \u2014 0: never'],
+    // A second manager on the floor once this many others are on (LOGIC-13);
+    // blank: what your own weeks show, 0: never.
+    ['second_manager_from_staff','A second manager from','staff on at once \u2014 blank: your own weeks, 0: never']];
   window.toggleRulesPanel=function(){_lbToggle('rules',loadRules,'Set rules ↓');};
   window.loadRules=function(){
     jget('/api/labor/rules',function(d){
@@ -37191,6 +37288,18 @@ window._cuRole=window.CAV_BOOT.role;
     h+='</div>';
     // Not a setting (owner, 10/2/26): stated, never switched.
     h+='<div class="rul-sw"><div class="t">A manager on the floor, always<small>Every minute anybody is on, a manager or owner is on too. Drafts are built to it and a gap blocks Publish.</small></div></div>';
+    /* Where the roster makes a limit unavoidable (one manager open every
+       day, STRESS-18), said once here rather than as a weekly blocker; and
+       what this restaurant's own punches say about the two manager
+       allowances above (LOGIC-12), for the owner to take or leave. */
+    var mst=d.manager_structure||[],mal=d.manager_allowances_learned||{},mi;
+    for(mi=0;mi<mst.length;mi++)h+='<div class="cmp-box" style="color:var(--amber)">'+esc(mst[mi].text)+'</div>';
+    var mls=[];
+    if(mal.closing_stay)mls.push('your closing manager is usually out '+esc(mal.closing_stay.minutes)+' min after the last person ('+esc(mal.closing_stay.dates)+' nights)');
+    if(mal.opening_lead&&mal.opening_lead.minutes>0)mls.push('prep starts before a manager who is in '+esc(mal.opening_lead.minutes)+' min before open ('+esc(mal.opening_lead.dates)+' mornings)');
+    if(mls.length)h+='<div class="cmp-src">From your punches: '+mls.join('; ')+'. Set the two manager fields above to match if that is how you run.</div>';
+    var sm=d.second_manager||{};
+    if(sm.from)h+='<div class="cmp-src">A second manager is asked for once '+esc(sm.from)+' or more are on'+(sm.basis==='history'?' \u2014 your own weeks run two managers from there ('+esc((sm.learned||{}).dates||0)+' days). Type your own number above to change it, 0 to turn it off.':'.')+'</div>';
     /* On by default (NS5 M8): once anyone is marked a closer, one of them
        stays until close every open day. A closer is chosen to close (the
        last of their role to leave), not a key holder (owner, 10/2/26). */
@@ -39128,6 +39237,20 @@ function sfw1RatingLine(s) {
     var p = window._schedGenPending; window._schedGenPending = null;
     closeSheet();
     p.opts.keep_locked = !t.hasAttribute('data-sched-gen-fresh');
+    generateSchedule(p.btn, p.opts);
+  });
+  // Generate's "Is this what you meant?" (AI-7): the ticked readings ride
+  // the press as confirm_rules; "Change what I typed" goes back to the box.
+  document.addEventListener('click', function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-sched-instr-go],[data-sched-instr-edit]') : null;
+    if (!t || !window._schedInstrPending) return;
+    var p = window._schedInstrPending; window._schedInstrPending = null;
+    var picked = [], boxes = document.querySelectorAll('[data-sched-instr-rule]'), i;
+    for (i = 0; i < boxes.length; i++) if (boxes[i].checked && !boxes[i].disabled) picked.push(p.items[+boxes[i].getAttribute('data-sched-instr-rule')].rule);
+    closeSheet();
+    if (t.hasAttribute('data-sched-instr-edit')) { var inp = $id('sfw1-instr'); if (inp) inp.focus(); return; }
+    p.opts.instruction_read = true;
+    p.opts.confirm_rules = picked;
     generateSchedule(p.btn, p.opts);
   });
   window.sfw1RedoSheet = function (dates) {
@@ -41145,10 +41268,21 @@ window.cavPalette = cavPalette;
         + (lp.other_basis_note ? '<br>' + nt(lp.other_basis_note) : '');
       h += kv(e(lp.label || 'Labor') + ' of forecast sales', lp.value + '%', cls, sub);
     }
+    // No labor %: why, and the fix that works (TRUST-29) - never "generate
+    // a new draft" to an owner with no forecast to build one on.
+    else if (n.labor_missing && n.labor_missing.text) h += kv('Labor of forecast sales', '\u2014', '', nt(n.labor_missing.text)
+      + (n.labor_missing.action ? ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="lmiss" data-n="0" data-j="0">' + e(n.labor_missing.action.label) + '</button>' : ''));
     if (n.cost) h += kv('Cost', nt(n.cost.text || ''), '');
     h += kv('Overtime', ot.priced ? (ot.hours ? _schedHrs(ot.hours) + 'h' : '0h') : '—', ot.priced ? (ot.hours ? 'bad' : 'good') : '', nt(ot.text || ''));
-    if (n.forecast_sales) h += kv('Forecast sales', _schedMoney(n.forecast_sales.value), '', nt(n.forecast_sales.basis || ''));
-    if (n.savings) h += kv('Estimated savings', _schedMoney(n.savings.value), '', nt(n.savings.basis || '') + ' <span class="tag">Projection · not yet earned</span>');
+    // With the figure the crew was sized on and the one Home states, when
+    // they differ (blind re-audit 10/11/26 ARCH-28): the server's sentence.
+    if (n.forecast_sales) h += kv('Forecast sales', _schedMoney(n.forecast_sales.value), '', nt(n.forecast_sales.basis || '')
+      + (n.forecast_sales.reconcile ? '<br>' + nt(n.forecast_sales.reconcile) : ''));
+    // Scheduled against scheduled (blind re-audit 10/11/26 TRUST-7).
+    var vp = n.vs_last_plan;
+    if (vp) h += kv(vp.value != null && vp.value < 0 ? 'Over last week’s plan' : 'Under last week’s plan',
+                    vp.value != null ? _schedMoney(Math.abs(vp.value)) : '—', '',
+                    nt(vp.text || vp.withheld || '') + (vp.value != null ? ' <span class="tag">Projection · not yet earned</span>' : ''));
     if (n.last_week) h += '<div class="pr-meta">' + nt(n.last_week.text) + '</div>';
     return h ? '<section class="pr-sec"><div class="pr-k">The numbers, with their track record</div>' + h + '</section>' : '';
   }
@@ -41288,6 +41422,13 @@ window.cavPalette = cavPalette;
   };
   function openShift(p) {
     if (p.redo && p.redo.length && window.sfw1RedoSheet) { studioGo('schedule'); sfw1RedoSheet(p.redo); return; }
+    // Where the payload says (re-audit 10/11/26 TRUST-20): the person in
+    // Team, who runs the floor and the rules, the budget, the targets -
+    // it used to open the stage and drop the panel and the person.
+    if (p.panel === 'targets') { if (window.cavNav) cavNav('account/restaurant'); return; }
+    if (p.panel === 'managers' || p.panel === 'rules') { if (window.cavNav) cavNav('labor/rules'); return; }
+    if (p.stage === 'team' && p.employee && window.openPersonSheet) { studioGo('team'); openPersonSheet(p.employee); return; }
+    if (p.panel === 'budget') { studioGo('setup'); if (window.ssTab) ssTab('basic'); return; }
     studioGo(p.stage || 'schedule');
     if (p.stage && p.stage !== 'schedule') return;
     var ix = rowIndex({shift_id: p.shift_id, employee: p.employee, date: p.date, shift_start: p.shift_start});
@@ -41334,6 +41475,7 @@ window.cavPalette = cavPalette;
     var d = prFor() || {}, what = t.getAttribute('data-pr'), n = +t.getAttribute('data-n'), j = +t.getAttribute('data-j');
     var m = (d.must_fix || [])[n], x = (d.decide || [])[n];
     if (what === 'retry') { prRefresh(); return; }
+    if (what === 'lmiss') { var lm = (d.numbers || {}).labor_missing; if (lm && lm.action) prDo(lm.action, t, null); return; }
     if (what === 'fix' && m) { prDo((m.fixes || [])[j], t, m.key); return; }
     if (what === 'gfix') { var g = (d.must_fix_groups || [])[n]; if (g) prDo((g.fixes || [])[j], t, g.kind); return; }
     if (what === 'gdec') { var gd = (d.decide_groups || [])[n]; if (gd) prDo((gd.fixes || [])[j], t, gd.kind); return; }
@@ -44984,7 +45126,12 @@ function sfw2RuleCheck(chk) {
     h+='<div class="lb2-form" style="margin-top:0"><div class="ac-field w"><label>District</label><input class="ac-input" id="cmp-district" maxlength="80" value="'+esc(cal.district||'')+'"'+(ro?' disabled':'')+'></div>';
     var y0=yrs.length?yrs[yrs.length-1]:{};
     h+='<div class="ac-field"><label>First day of school</label><input class="ac-input" type="date" id="cmp-ystart" value="'+esc(y0.start||'')+'"'+(ro?' disabled':'')+'></div>';
-    h+='<div class="ac-field"><label>Last day</label><input class="ac-input" type="date" id="cmp-yend" value="'+esc(y0.end||'')+'"'+(ro?' disabled':'')+'></div></div>';
+    h+='<div class="ac-field"><label>Last day</label><input class="ac-input" type="date" id="cmp-yend" value="'+esc(y0.end||'')+'"'+(ro?' disabled':'')+'></div>';
+    // the bell times: 14-15 year olds may not work while school is in session
+    var shr=cal.hours||{};
+    h+='<div class="ac-field"><label>School starts</label><input class="ac-input" id="cmp-shstart" maxlength="10" placeholder="7:30am" value="'+esc(shr.start||'')+'"'+(ro?' disabled':'')+'></div>';
+    h+='<div class="ac-field"><label>School ends</label><input class="ac-input" id="cmp-shend" maxlength="10" placeholder="3:30pm" value="'+esc(shr.end||'')+'"'+(ro?' disabled':'')+'></div></div>';
+    h+='<div class="cmp-src">14-15 year olds are kept off the schedule during school hours on a school day — '+(shr.start?esc(shr.start)+' to '+esc(shr.end):'7:30am to 3:30pm until you set your district’s bell times')+'.</div>';
     var br=(y0.breaks||[]).map(function(b){return b.start+' '+b.end+(b.label?' '+b.label:'');}).join('\n');
     h+='<div class="ac-field w"><label>Breaks, one a line: first-day last-day label (e.g. 2026-12-21 2027-01-01 Winter)</label><textarea class="ac-input" id="cmp-breaks" rows="3"'+(ro?' disabled':'')+'>'+esc(br)+'</textarea></div>';
     if(!ro)h+='<div class="sr-actions"><button type="button" class="cbtn cbtn-secondary" onclick="cmpSaveCalendar(this)">Save the school year</button><span class="ac-status" id="cmp-cal-status"></span></div>';
@@ -45041,7 +45188,8 @@ function sfw2RuleCheck(chk) {
     for(i=0;i<keep.length;i++)years.push(keep[i]);
     if(s||e)years.push({start:s,end:e,breaks:breaks});
     var done=busy(btn);
-    jsend('/api/labor/compliance/school-calendar',{district:document.getElementById('cmp-district').value,years:years},function(d){done();if(!d.ok){toast(d.error||'Could not save that','error');return;}_cmp=d;cmpRender();toast('School year saved','success');});
+    var hs=document.getElementById('cmp-shstart').value,he=document.getElementById('cmp-shend').value;
+    jsend('/api/labor/compliance/school-calendar',{district:document.getElementById('cmp-district').value,years:years,hours:(hs||he)?{start:hs,end:he}:null},function(d){done();if(!d.ok){toast(d.error||'Could not save that','error');return;}_cmp=d;cmpRender();toast('School year saved','success');});
   };
   window.cmpDraftEstimate=function(btn){
     var who=btn.getAttribute('data-cmp-emp'),done=busy(btn,'Drafting…');

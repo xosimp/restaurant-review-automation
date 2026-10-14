@@ -406,11 +406,28 @@ def _winner(arm="solver", state="winner"):
                                          "text": "Solver assignment leads on acceptance."}}]}
 
 
+def _confirmed(db, arm, key=None):
+    """The same call on consecutive stored weekly verdicts — what promotion
+    needs besides today's readout (blind re-audit 10/11/26 LEARNING-15)."""
+    conn = sx.get_conn(db)
+    try:
+        for wk in ("2026-W37", "2026-W38", "2026-W39", "2026-W40")[-sx.CONFIRM_SNAPSHOTS:]:
+            conn.execute("INSERT INTO schedule_experiment_verdicts (week, experiment, state, call, text, method, "
+                         "arms_json) VALUES (?,?,?,?,?,?,?)",
+                         (wk, key or sx.EXPERIMENTS[0]["key"], "winner", arm, "x", sx.VERDICT_METHOD, "[]"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_only_the_called_winner_can_be_promoted_and_it_becomes_every_restaurants_arm(db, monkeypatch):
     key = sx.EXPERIMENTS[0]["key"]
     rid = _rid(db)
     assert not sx.promote(key, "solver", promoted_by="will", db_path=db, _readout=_winner(state="insufficient"))["ok"]
     assert not sx.promote(key, "model", promoted_by="will", db_path=db, _readout=_winner("solver"))["ok"]
+    # Today's readout alone is not enough (LEARNING-15).
+    assert not sx.promote(key, "solver", promoted_by="will", db_path=db, _readout=_winner())["ok"]
+    _confirmed(db, "solver")
     out = sx.promote(key, "solver", promoted_by="will", note="90% interval cleared", db_path=db, _readout=_winner())
     assert out["ok"]
     assert not sx.promote(key, "solver", db_path=db, _readout=_winner())["ok"]           # one at a time
@@ -440,6 +457,7 @@ def test_only_the_called_winner_can_be_promoted_and_it_becomes_every_restaurants
 def test_a_promotion_holds_after_the_experiment_is_retired_in_code(db, monkeypatch):
     key = sx.EXPERIMENTS[0]["key"]
     rid = _rid(db)
+    _confirmed(db, "model")
     sx.promote(key, "model", promoted_by="will", db_path=db, _readout=_winner("model"))
     retired = tuple(dict(e, active=False) for e in sx.EXPERIMENTS)
     monkeypatch.setattr(sx, "EXPERIMENTS", retired)
@@ -460,6 +478,7 @@ def test_the_admin_promote_and_revert_routes(db, monkeypatch):
     app = Flask(__name__, template_folder="../templates")
     app.register_blueprint(admin_routes.admin_bp)
     key = sx.EXPERIMENTS[0]["key"]
+    _confirmed(db, "solver")
     with app.test_request_context(json={"experiment": key, "arm": "solver", "note": "reviewed"}):
         resp = admin_routes.admin_api_schedule_experiment_promote()
     body = (resp.get_json() if hasattr(resp, "get_json") else resp[0].get_json())

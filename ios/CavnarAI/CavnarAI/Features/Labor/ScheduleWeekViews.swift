@@ -566,94 +566,192 @@ struct ScheduleSummaryTiles {
     /// reads the publish gate as it stands NOW (`.publishCheck`), because
     /// time off approved or rules changed since the draft make the saved
     /// review stale (re-audit 10/8/26 #4). Nil check: not read (yet).
-    enum WarningsSource { case review, publishCheck(PublishCheck?) }
+    /// `.prepublish` is the pre-publish review — the one payload the web's
+    /// Summary reads — counting what holds Send (must-fix plus decisions, a
+    /// rule's group one; schedule re-audit 10/11/26 TRUST-22); its grade,
+    /// labor and overtime figures drive those tiles too.
+    enum WarningsSource { case review, publishCheck(PublishCheck?), prepublish(PublishReview?) }
 
     static func tiles(_ r: GeneratedSchedule, warnings source: WarningsSource = .review) -> [Tile] {
         var out: [Tile] = []
+        var pr: PublishReview? = nil
+        if case .prepublish(let loaded) = source { pr = loaded }
         let q = r.quality
-        let score = q?.checked == true ? q?.score : nil
+        let score = q?.checked == true ? q?.score : pr?.quality.score
         let band = (q?.band ?? "").isEmpty ? nil : q?.band
+        // Graded against the restaurant's own recent weeks (the review's
+        // grade), never fixed 80/60 lines that put most weeks in amber
+        // (TRUST-22, the web's TRUST-29): no grade, no colour.
+        let grade = pr?.quality.grade
+        var qsub = pr?.quality.lead ?? pr?.quality.text
+            ?? band.map { $0.prefix(1).uppercased() + $0.dropFirst() + " \u{00B7} graded from the finished week, out of 100" }
+            ?? "Not graded yet"
+        // What the score stands on and what it has meant here (LOGIC-15,
+        // TRUST-31): the server's words, "—" below 3 weeks a side.
+        if let m = pr?.quality.measuredText ?? q?.measured?.line { qsub += "\n" + m }
+        if score != nil, let pq = pr?.quality { qsub += "\n" + pq.outcomeLine }
         out.append(Tile(key: "quality", label: "Shift quality", value: score.map(String.init), unit: "",
-                        sub: band.map { $0.prefix(1).uppercased() + $0.dropFirst() + " \u{00B7} out of 100" }
-                            ?? "Not graded yet",
-                        tone: score.map { $0 >= 80 ? .good : ($0 >= 60 ? .warn : .bad) } ?? .neutral))
+                        sub: qsub,
+                        tone: score == nil ? .neutral : (grade == "good" ? .good : (grade == "weak" ? .warn : .neutral))))
+        out.append(laborTile(r, pr))
+        let cov = q?.dimensions?.first { $0.key == "coverage" }?.score
+        out.append(Tile(key: "coverage", label: "Coverage", value: cov.map(String.init), unit: cov == nil ? "" : "%",
+                        sub: "of each shift\u{2019}s needs met",
+                        tone: cov.map { $0 >= 90 ? .good : ($0 >= 75 ? .warn : .bad) } ?? .neutral))
+        out.append(overtimeTile(r, pr))
+        out.append(warningsTile(r, source))
+        let basis = r.laborView.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
+        out.append(planTile(r, pr, basis: basis))
+        return out
+    }
+
+    /// "Under/Over last week's plan" — an ordinary tile, never the hero
+    /// (blind re-audit 10/11/26 TRUST-7, TRUST-23, the web's same tile):
+    /// this draft against the last published week's plan, priced the same
+    /// way, a projection; withheld while any shift is short of its people.
+    /// The key stays "savings" for the tag the card draws.
+    static func planTile(_ r: GeneratedSchedule, _ pr: PublishReview?, basis: String) -> Tile {
+        let vp = pr?.numbers.vsLastPlan ?? r.laborView?.vsLastPlan
+        let label = vp?.label ?? "Under last week\u{2019}s plan"
+        guard let vp, let v = vp.value else {
+            return Tile(key: "savings", label: label, value: nil, unit: "",
+                        sub: vp?.withheld ?? "Needs a published week priced with its forecast", tone: .neutral)
+        }
+        var sub = "Against last week\u{2019}s plan"
+        if let last = vp.lastPct, let now = pr?.numbers.laborPct?.value ?? r.laborView?.pct {
+            sub = "its \(ScheduleBuildSettings.pct(last))% scheduled against this draft\u{2019}s \(ScheduleBuildSettings.pct(now))%"
+                + (basis.isEmpty ? "" : " (\(basis))")
+            if let rev = r.forecastSales, rev > 0 { sub += ", on \(money(rev)) forecast sales" }
+        }
+        return Tile(key: "savings", label: label, value: money(abs(v)), unit: "", sub: sub, tone: .neutral)
+    }
+
+    /// The Labor tile: the review's figure (the rows priced the way Send is
+    /// checked, TRUST-28) when it has one, else the draft's; coloured by the
+    /// server's one grade — over at any amount past the target, NEUTRAL
+    /// with no target (TRUST-22: no target used to read green). Missing, it
+    /// says why and the real fix (TRUST-29), never "generate a new draft"
+    /// when no forecast exists to build one on.
+    static func laborTile(_ r: GeneratedSchedule, _ pr: PublishReview?) -> Tile {
         let lv = r.laborView
-        let basis = lv.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
+        if let f = pr?.numbers.laborPct, let pct = f.value {
+            let basis = f.basis.map { $0 == "all_in" ? "all-in" : "hourly pay only" }
+                ?? lv.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
+            var sub = "of forecast sales" + (basis.isEmpty ? "" : ", \(basis)")
+            if let t = f.target {
+                sub += (f.targetBasis == "hourly" ? " \u{00B7} the hourly budget is " : " \u{00B7} your target is ")
+                    + "\(ScheduleBuildSettings.pct(t))%"
+            }
+            return Tile(key: "labor", label: f.label ?? "Labor", value: String(format: "%.1f", pct), unit: "%", sub: sub,
+                        tone: gradeTone(f.grade ?? laborGrade(pct, f.target)))
+        }
         if let pct = lv?.pct {
+            let basis = lv.map { $0.isAllIn ? "all-in" : "hourly pay only" } ?? ""
             var sub = "of forecast sales, \(basis)"
             if let t = lv?.targetPct {
                 sub += (lv?.targetBasis == "hourly" ? " \u{00B7} the hourly budget is " : " \u{00B7} your target is ")
                     + "\(ScheduleBuildSettings.pct(t))%"
             }
-            // Any amount above the target is over — it is a ceiling (M1).
-            let over = (lv?.targetPct).map { (pct * 10).rounded() / 10 > $0 } ?? false
-            out.append(Tile(key: "labor", label: "Labor", value: String(format: "%.1f", pct), unit: "%", sub: sub,
-                            tone: over ? .bad : .good))
-        } else {
-            out.append(Tile(key: "labor", label: "Labor", value: nil, unit: "",
-                            sub: "Generate a new draft to see it",
-                            tone: .neutral))
+            return Tile(key: "labor", label: "Labor", value: String(format: "%.1f", pct), unit: "%", sub: sub,
+                        tone: gradeTone(lv?.grade ?? laborGrade(pct, lv?.targetPct)))
         }
-        let cov = q?.dimensions?.first { $0.key == "coverage" }?.score
-        out.append(Tile(key: "coverage", label: "Coverage", value: cov.map(String.init), unit: cov == nil ? "" : "%",
-                        sub: "of each shift\u{2019}s needs met",
-                        tone: cov.map { $0 >= 90 ? .good : ($0 >= 75 ? .warn : .bad) } ?? .neutral))
-        // Overtime only from a figure the server priced: no projection, or
-        // one without overtime hours, is "—", never a green "Nobody past
-        // 40h" (re-audit 10/8/26 #5).
-        if let pc = r.projectedCost, let ot = pc.overtimeHours {
-            let premium = pc.overtimePremium.map { "\(money($0)) in premium pay" } ?? "Premium pay not priced"
-            out.append(Tile(key: "overtime", label: "Overtime", value: ScheduleWeekMath.hoursText(ot), unit: "h",
-                            sub: ot > 0 ? premium : "Nobody past 40h",
-                            tone: ot > 0 ? .bad : .good))
-        } else {
-            out.append(Tile(key: "overtime", label: "Overtime", value: nil, unit: "",
-                            sub: r.projectedCost == nil ? "Priced once saved"
-                                : "Not priced this week",
-                            tone: .neutral))
+        return Tile(key: "labor", label: "Labor", value: nil, unit: "",
+                    sub: pr?.numbers.laborMissing?.text ?? "Needs a sales forecast for this week",
+                    tone: .neutral)
+    }
+
+    /// schedule_economics.labor_grade: "over" past the target at one
+    /// decimal place, "under" at or under it, "no_target" without one.
+    static func laborGrade(_ pct: Double, _ target: Double?) -> String {
+        guard let t = target, t > 0 else { return "no_target" }
+        return (pct * 10).rounded() / 10 > (t * 10).rounded() / 10 ? "over" : "under"
+    }
+
+    static func gradeTone(_ grade: String) -> Tone {
+        grade == "over" ? .bad : (grade == "under" ? .good : .neutral)
+    }
+
+    /// The Overtime tile, from a figure the server priced (the review's,
+    /// else the draft's): "—" when it was not, and "No overtime" at zero —
+    /// never "Nobody past 40h", the line is each restaurant's own (TRUST-22).
+    static func overtimeTile(_ r: GeneratedSchedule, _ pr: PublishReview?) -> Tile {
+        var hours: Double? = nil
+        var premium: Double? = nil
+        var priced = false
+        if let n = pr?.numbers, n.overtimePriced != nil {
+            priced = n.overtimePriced == true
+            hours = priced ? (n.overtimeHours ?? 0) : nil
+            premium = n.overtimePremium
+        } else if let pc = r.projectedCost, let ot = pc.overtimeHours {
+            priced = true
+            hours = ot
+            premium = pc.overtimePremium
         }
-        out.append(warningsTile(r, source))
-        if let sav = lv?.savings, let rec = lv?.recentPct, let rev = r.forecastSales, rev > 0 {
-            out.append(Tile(key: "savings", label: "Under your recent labor", value: money(sav), unit: "",
-                            sub: "vs your last \(lv?.recentDays ?? 14) days at \(ScheduleBuildSettings.pct(rec))% (\(basis)), on \(money(rev)) forecast sales",
-                            tone: .hero))
-        } else {
-            out.append(Tile(key: "savings", label: "Under your recent labor", value: nil, unit: "",
-                            sub: "Needs your recent labor % and a forecast",
-                            tone: .hero))
+        guard priced, let ot = hours else {
+            return Tile(key: "overtime", label: "Overtime", value: nil, unit: "",
+                        sub: (r.projectedCost == nil && pr == nil) ? "Priced once saved" : "Not priced this week",
+                        tone: .neutral)
         }
-        return out
+        let premiumLine = premium.map { "\(money($0)) in premium pay" } ?? "Premium pay not priced"
+        return Tile(key: "overtime", label: "Overtime", value: ScheduleWeekMath.hoursText(ot), unit: "h",
+                    sub: ot > 0 ? premiumLine : "No overtime",
+                    tone: ot > 0 ? .bad : .good)
     }
 
     /// The Warnings tile. A rules check that never came back is "—", never
     /// a green "0 · Every rule kept" (re-audit 10/8/26 #4).
     static func warningsTile(_ r: GeneratedSchedule, _ source: WarningsSource) -> Tile {
         switch source {
+        case .prepublish(let review):
+            guard let review else {
+                return Tile(key: "warnings", label: "To fix or decide", value: nil, unit: "",
+                            sub: "Checking against today\u{2019}s data", tone: .neutral)
+            }
+            let must = review.counts.mustFix ?? review.mustFix.count
+            let n = review.counts.holding ?? (must + review.holding.count)
+            var sub = must > 0 ? "\(must) must be fixed before sending" : (n > 0 ? "Decisions only" : "Nothing to fix or decide")
+            let sug = review.counts.suggestions ?? review.suggestions.count
+            if sug > 0 { sub += " \u{00B7} \(sug) \(sug == 1 ? "suggestion" : "suggestions")" }
+            let look = review.verdict?.worthALook.count ?? 0
+            if look > 0 { sub += " \u{00B7} \(look) worth a look" }
+            return Tile(key: "warnings", label: "To fix or decide", value: String(n), unit: "", sub: sub,
+                        tone: must > 0 ? .bad : (n > 0 ? .warn : .good))
         case .review:
             guard let review = r.review, review.hard != nil || review.soft != nil else {
                 return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
                             sub: "No rules check came back \u{2014} review before sending",
                             tone: .neutral)
             }
-            let hard = review.hardCount, soft = review.softCount
-            return Tile(key: "warnings", label: "Warnings", value: String(hard + soft), unit: "",
-                        sub: hard > 0 ? "\(hard) break a hard rule \u{00B7} fix before sending"
-                            : (soft > 0 ? "Soft rules only \u{00B7} worth a look" : "Every rule kept"),
-                        tone: hard > 0 ? .bad : (soft > 0 ? .warn : .good))
+            // Over your own limit (not law) is a decision, apart from the
+            // hard rules (LOGIC-20).
+            let hard = review.hardCount, soft = review.softCount, over = review.overLimitCount
+            var sub = hard > 0 ? "\(hard) break a hard rule \u{00B7} fix before sending"
+                : (over > 0 ? "\(over) over your limit \u{00B7} decide before sending"
+                   : (soft > 0 ? "Soft rules only \u{00B7} worth a look" : "Every rule kept"))
+            if hard > 0 && over > 0 { sub += " \u{00B7} \(over) over your limit" }
+            return Tile(key: "warnings", label: "Warnings", value: String(hard + over + soft), unit: "",
+                        sub: sub,
+                        tone: hard > 0 ? .bad : (over > 0 || soft > 0 ? .warn : .good))
         case .publishCheck(let check):
             guard let check, check.ok else {
-                return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
+                return Tile(key: "warnings", label: "To fix or decide", value: nil, unit: "",
                             sub: "Read from the publish check \u{2014} not read yet", tone: .neutral)
             }
             if check.replacedReason != nil {
-                return Tile(key: "warnings", label: "Warnings", value: nil, unit: "",
+                return Tile(key: "warnings", label: "To fix or decide", value: nil, unit: "",
                             sub: "A newer copy of this week replaced it", tone: .neutral)
             }
-            let blockers = check.shown.lines.count, notes = check.notes.count
-            return Tile(key: "warnings", label: "Warnings", value: String(blockers + notes), unit: "",
-                        sub: blockers > 0 ? "\(blockers) to read before sending"
-                            : (notes > 0 ? "Notes only \u{00B7} worth a look" : "Nothing to read first"),
-                        tone: blockers > 0 ? .bad : (notes > 0 ? .warn : .good))
+            // By tier (TRUST-24): a decision is amber, never counted as a
+            // must-fix; the notes never hold Send and are said apart.
+            let items = check.blockerItems
+            let must = items.isEmpty ? check.shown.lines.count : items.filter(\.isMustFix).count
+            let decide = items.isEmpty ? 0 : items.count - must
+            let notes = check.notes.count
+            var sub = must > 0 ? "\(must) must be fixed before sending"
+                : (decide > 0 ? "Decisions only" : "Nothing to fix or decide")
+            if notes > 0 { sub += " \u{00B7} \(notes) worth a look" }
+            return Tile(key: "warnings", label: "To fix or decide", value: String(must + decide), unit: "", sub: sub,
+                        tone: must > 0 ? .bad : (decide > 0 ? .warn : .good))
         }
     }
 
@@ -691,9 +789,16 @@ struct ScheduleSummarySheet: View {
     let onPublish: () -> Void
     let onOptimize: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
-    /// The one verdict, from the pre-publish review (the web's Summary
-    /// reads the same object). Nil until it loads, or from an older server.
-    @State private var verdict: PublishReview.Verdict?
+    /// The pre-publish review (the web's Summary reads the same object):
+    /// the verdict, and the tiles' grade, labor, overtime and "To fix or
+    /// decide" counts (TRUST-22). Nil until it loads; `reviewFailed` when it
+    /// could not (an older server), and the tiles read the draft's own.
+    @State private var review: PublishReview?
+    @State private var reviewFailed = false
+
+    private var tiles: [ScheduleSummaryTiles.Tile] {
+        ScheduleSummaryTiles.tiles(result, warnings: reviewFailed ? .review : .prepublish(review))
+    }
 
     var body: some View {
         NavigationStack {
@@ -701,7 +806,7 @@ struct ScheduleSummarySheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                         CavnarKicker("Your draft")
-                        if let verdict, !verdict.sentence.isEmpty {
+                        if let verdict = review?.verdict, !verdict.sentence.isEmpty {
                             PublishVerdictCard(verdict: verdict)
                         } else {
                             Text("Ready for your review").cavnarText(.title)
@@ -710,7 +815,7 @@ struct ScheduleSummarySheet: View {
                     }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                               spacing: 10) {
-                        ForEach(ScheduleSummaryTiles.tiles(result), id: \.key) { tile in
+                        ForEach(tiles, id: \.key) { tile in
                             tileView(tile)
                         }
                     }
@@ -748,20 +853,15 @@ struct ScheduleSummarySheet: View {
             .accountSheetChrome("Draft ready")
         }
         .presentationDetents([.large])
-        .task(id: result.historyId) { await loadVerdict() }
+        .task(id: result.historyId) { await loadReview() }
     }
 
-    private struct VerdictOnly: Decodable {
-        let ok: Bool?
-        let verdict: PublishReview.Verdict?
-    }
-
-    /// The pre-publish review's verdict for this week (I1's one payload).
-    private func loadVerdict() async {
-        guard let id = result.historyId else { return }
-        let r: VerdictOnly? = try? await APIClient.shared.send(
+    /// The pre-publish review of this week (the one payload, TRUST-22).
+    private func loadReview() async {
+        guard let id = result.historyId else { reviewFailed = true; return }
+        let r: PublishReview? = try? await APIClient.shared.send(
             "/mobile/api/labor/publish-review", query: ["schedule_id": String(id)], hapticOnError: false)
-        if r?.ok == true { verdict = r?.verdict }
+        if let r, r.isUsable { review = r } else { reviewFailed = true }
     }
 
     @ViewBuilder

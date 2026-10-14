@@ -189,15 +189,11 @@ def test_the_pipeline_carries_no_name_from_a_removed_one_client_rule():
 # fix makes it hold. Strict: a fix that makes one pass fails here until the
 # entry is removed — the gate only ever tightens.
 KNOWN = {
-    ("cafe_6", "solver", "roles_staffed"): "STRESS-18 (R): the one manager's salaried cap leaves Sunday "
-                                           "unmanaged, so the solver staffs nobody",
-    ("cafe_6", "carry_forward", "manager"): "STRESS-18 (R): carried Sunday crew with no manager on",
     ("daypart_limited", "solver", "no_long_shifts"): "STRESS-1 (S): 11-12h lunch-to-close doubles",
     ("daypart_limited", "solver", "nobody_starved"): "STRESS-2 (S): capacity ignores dayparts",
     ("qsr_teens", "solver", "no_long_shifts"): "STRESS-1 (S): 11-12h doubles",
     ("qsr_teens", "solver", "usual_days"): "STRESS-15 (S): the first solver draft ignores usual days",
     ("qsr_teens", "solver", "nobody_starved"): "STRESS-6 (S): teens lose their hours to doubles and 4h shapes",
-    ("single_manager", "solver", "manager"): "STRESS-18 / STRESS-3 (R): one manager's week leaves a gap",
 }
 
 
@@ -236,6 +232,18 @@ def test_the_fast_subset_saves_a_week_on_both_code_arms_without_a_model(fast):
             assert m["draft_source"] in (arm, None) or arm in str(m["draft_source"])
             assert m["runs"] == runs and m["rows"] > 0 and m["seconds"] < 120
             assert m["unfilled_pricing"] in ("schedule_objective", "day_sales_per_needed_person_half_hour")
+
+
+def test_the_score_never_reads_good_over_a_week_the_gate_fails(fast):
+    """Shift Quality condemns what the invariants condemn (blind re-audit
+    10/11/26 STRESS-14): solver weeks breaking two or three invariants —
+    doubles the restaurant never works among them — scored 92-98."""
+    import shift_quality as _sq
+    for key, r in fast.items():
+        for arm, m in r["arms"].items():
+            failed = set(sb.failed_invariants(m))
+            if "no_long_shifts" in failed and m.get("quality") is not None:
+                assert m["quality"] < _sq.BANDS[1][0], (key, arm, m["quality"], sorted(failed))
 
 
 def test_no_legal_rule_is_broken_on_any_fast_archetype(fast):

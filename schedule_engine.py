@@ -457,8 +457,9 @@ def generation_scope(job_id, restaurant_id=None):
     try:
         # The restaurant's own lunch/dinner boundary (restaurants.
         # daypart_boundary — schedule_time.daypart_scope, ARCH-12) for
-        # every daypart question the generation asks.
-        with _stime.daypart_scope(_restaurant_split(restaurant_id)):
+        # every daypart question the generation asks — the same scope the
+        # nightly learners enter (restaurant_scope, re-audit 10/11/26 ARCH-11).
+        with _stime.restaurant_scope(restaurant_id):
             yield clock
     finally:
         _CLOCK.reset(token)
@@ -1769,6 +1770,11 @@ def _soft_fail(what, exc, restaurant_id):
 # the review's one line about what the draft was made without (P-17). An
 # input not named here reads as its own name.
 _INPUT_WORDS = {
+    # The sales the crew was sized on, said beside Home's (ARCH-28), and how
+    # long the restaurant's people usually work a day (STRESS-14).
+    "forecast basis": "which sales forecast the week was sized on",
+    "shift length norms": "how long your people usually work a day",
+    "length_norms": "how long your people usually work a day",
     # The closing manager's assumed stay, said and priced (TRUST-21).
     "assumed stays": "the closing manager's assumed stay",
     # The owner's pinned shifts a regenerate keeps (TRUST-17), and the standby
@@ -1824,7 +1830,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "standby prices": "what a standby is worth against what it costs", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
     "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
@@ -2032,16 +2038,30 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
               else default_week_start(restaurant, today))
     next_week_dates = week_dates_from(monday)
     week_days = week_day_names(next_week_dates)
+    # The learning_v2 switchback's off week (blind re-audit 10/11/26
+    # LEARNING-14): every learned input of this generation is off — read
+    # here, before the first learner is (learning_stats.learning_off; the
+    # job's learning_scope undoes it when the generation ends).
+    try:
+        import schedule_experiments as _sx_lo
+        import learning_stats as _ls_lo
+        if not _sx_lo.flag(_sx_lo.arms_for(restaurant_id, next_week_dates[0]), "learning"):
+            _ls_lo.switch_learning_off()
+    except Exception as _lox:
+        _soft_fail("experiment arm", _lox, restaurant_id)
     # Everything the rules need to know about who can work when, gathered
     # once and shared by the prompt, the backstops, the swap search, the
     # review panel and the publish gate.
     # The owner's words read into typed rules before the rules are built
     # (owner_rules — scheduler audit 10/10/26 RM-9, AI-9, AI-19): this
     # draft's instruction, the notes' sentences the reader cannot hold and
-    # the staff notes the hold reader cannot — each sentence once, cached;
-    # the one place a model reads them. The notes' readings are held softly
-    # by build_constraints (from the cache); the instruction's, which the
-    # owner typed for this draft, hard — applied just below.
+    # the staff notes the hold reader cannot — each sentence once, cached
+    # (the notes usually read already, when they were saved — AI-22). The
+    # notes' readings are preferences in build_constraints (from the cache);
+    # an instruction reading the owner CONFIRMED before generating is a
+    # one-week rule build_constraints already holds hard; the rest of the
+    # instruction's readings are preferences only (blind re-audit 10/11/26
+    # AI-7, contract #6) — applied just below.
     import owner_rules as _owr
     _owner_words = {"instruction": []}
     # A stopped run starts no further model call (10/9/26) — the reading
@@ -2052,7 +2072,7 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     except Exception as _sfx:
         _soft_fail("owner words", _sfx, restaurant_id)
     constraints = _rules.build_constraints(restaurant_id, next_week_dates, week_days, restaurant)
-    _owr.apply(constraints, _owner_words.get("instruction") or [])
+    _owr.apply(constraints, [r for r in (_owner_words.get("instruction") or []) if not r.get("confirmed")])
     roster_rows = _staff.roster(restaurant_id)
     # Somebody with no shift in weeks is not offered to the model (schedule
     # audit 10/3/26 E-3): the departed manager "Dana" was drafted onto a
@@ -2776,6 +2796,16 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
     result["fairness_ledger"] = ledger
     result["could_hold"] = could_hold
     result["projected_revenue_source"] = revenue_source_words(result.get("revenue_basis"), revenue.get("source"))
+    # The sales the crew was sized on, beside the week's stated revenue and
+    # what Home and the nightly report state for the same days (blind
+    # re-audit 10/11/26 ARCH-28) — one sentence, kept with the draft.
+    try:
+        import schedule_economics as _econ_fb
+        result["forecast_basis"] = _econ_fb.forecast_basis(date_demand, result.get("projected_revenue"),
+                                                           result.get("projected_revenue_source"))
+    except Exception as _fbx:
+        _soft_fail("forecast basis", _fbx, restaurant_id)
+        result["forecast_basis"] = None
     # Where a cut measurably went worse here, for the optimizer (memory
     # audit 9/29/26, "what_worked").
     result["learned_worse"] = learned_worse_levers(restaurant_id)
@@ -3917,6 +3947,64 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
         return None
 
 
+def _standby_prices(rid, dates, c, sig) -> tuple:
+    """(value_of, cost_of) for attendance_risk.standby_needed (schedule
+    re-audit 10/11/26 LEARNING-19): what one person short costs a shift — the
+    one objective's slot value summed over the daypart's core window
+    (schedule_objective.slot_value, cross-workstream contract #1) — and what
+    the standby costs (the role's rate x the window's hours, the overtime
+    inputs' rates). (None, None) while either cannot be read: the crew-scaled
+    threshold alone decides."""
+    try:
+        import schedule_objective as _obj
+    except ImportError:
+        return None, None
+    try:
+        ctx = _obj.ObjectiveContext.build(rid, sorted(dates))
+    except Exception as e:
+        _soft_fail("standby prices", e, rid)
+        return None, None
+    ot = (sig or {}).get("overtime") or {}
+    rates = {str(k).strip().lower(): v for k, v in (ot.get("rates") or {}).items()}
+    default = ot.get("default_rate") or rates.get("_default")
+    sq_ = __import__("shift_quality")
+
+    def window(x):
+        o, cl = _rules.open_hours(c, _weekday_name(x["date"]))
+        return sq_.floor_window(x["daypart"], o, cl)
+
+    def value_of(x):
+        w = window(x)
+        if not w:
+            return None
+        return sum(float(_obj.slot_value(ctx, x["date"], m, x["role"]) or 0) for m in range(w[0], w[1], 30))
+
+    pol = _standby_policy(rid)
+
+    def cost_of(x):
+        w = window(x)
+        rate = rates.get(str(x.get("role") or "").lower(), default)
+        if pol.get("stated"):
+            # On call (LEARNING-19): the owner's standby pay, not a shift.
+            if pol.get("flat_pay") is not None:
+                return float(pol["flat_pay"])
+            return float(rate) * float(pol.get("pay_hours") or 0) if rate else None
+        if not w or not rate:
+            return None
+        return float(rate) * (w[1] - w[0]) / 60.0
+    return value_of, cost_of
+
+
+def _standby_policy(rid) -> dict:
+    """The owner's on-call standby policy (standby_insurance.policy), {} on
+    a failed read."""
+    try:
+        import standby_insurance as _sbi
+        return _sbi.policy(rid) or {}
+    except Exception:
+        return {}
+
+
 def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     """A standby on each busy shift the drafted week is likely to come up
     short on (scheduler audit 10/10/26 RM-18 — attendance_risk.standby_
@@ -3931,9 +4019,22 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
         busy = _req_sb.busy_shifts(sorted(dates), facts.get("shift_profiles") or None,
                                    facts.get("demand_by_day") or {}, facts.get("demand_by_date") or {})
         risks = _ar.shift_risks(list(plan) + got["rows"], reqs, _ar.rates(rid), busy=busy)
-        need = _ar.standby_needed(risks)
+        value_of, cost_of = _standby_prices(rid, dates, c, sig)
+        need = _ar.standby_needed(risks, value_of=value_of, cost_of=cost_of)
     except Exception as e:
         _soft_fail("solver-first draft", e, rid)
+        return
+    ledger = [{"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "lever": "standby", "delta": 1,
+               "evidence": _ar.words(x), "provenance": "attendance"} for x in need[:7]]
+    # On call first (re-audit 10/11/26 LEARNING-19): a restaurant with a
+    # standby policy gets each need as an on-call suggestion (standby_
+    # insurance: a consented, paid-to-be-available person called only if
+    # somebody does not turn up) — never a paid extra shift in the draft.
+    if need and _standby_policy(rid).get("stated"):
+        got.setdefault("stats", {})["standby"] = {
+            "needed": len(need[:7]), "staffed": 0, "on_call": [
+                {"date": x["date"], "daypart": x["daypart"], "role": x.get("role"), "p_short_by": x.get("p_short_by"),
+                 "text": _ar.words(x)} for x in need[:7]], "ledger": ledger}
         return
     slots = []
     for x in need[:7]:
@@ -3958,7 +4059,9 @@ def _solver_standby(rid, dates, got, plan, facts, c, sig, weights) -> None:
     added = [{k: v for k, v in r.items() if k not in ("_pinned", "_standby", "_open")}
              for r in res.get("rows", [])[len(kept):] if (r.get("employee") or "").strip()]
     got["rows"] = got["rows"] + added
-    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added)}
+    # The standby lever in the requirement ledger's own shape (re-audit
+    # 10/11/26 LEARNING-27): what it added, where, and on what evidence.
+    got.setdefault("stats", {})["standby"] = {"needed": len(slots), "staffed": len(added), "ledger": ledger}
 
 
 def solver_explain(got) -> dict:
@@ -5326,11 +5429,17 @@ def _pairs_block(pairs: dict, roster_pairs: list) -> str:
     def _show(p):
         a, b = sorted(names.get(x, x.title()) for x in p)
         return f"{a} and {b}"
+    # A reading of the owner's words nobody confirmed (AI-8) is said as one:
+    # a preference, never the owner's own pairing.
+    proposed = pairs.get("proposed") or set()
+
+    def _tail(p):
+        return " (Cavnar AI's reading of the owner's notes, not confirmed - a preference)" if p in proposed else ""
     lines = []
     for p in sorted((pairs.get("avoid") or set()) - private, key=sorted):
-        lines.append(f"  keep apart: {_show(p)}")
+        lines.append(f"  keep apart: {_show(p)}{_tail(p)}")
     for p in sorted((pairs.get("prefer") or set()) - private, key=sorted):
-        lines.append(f"  work well together: {_show(p)}")
+        lines.append(f"  work well together: {_show(p)}{_tail(p)}")
     if not lines:
         return ""
     return "\n\nPAIRINGS (the owner's own notes on who works with whom):\n" + "\n".join(lines)
@@ -6275,15 +6384,20 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     the exact reported bug (Monday: 6 correct night closers + 2 uncounted
     doubles = 8) plus worse cases found in verification (10 on one night).
 
-    Only ever shortens a row's shift_end (never shift_start) — "cut early
-    when overstaffed" is already this restaurant's own stated convention
-    for servers (see hours_notes' SHIFT END / CLOSER RULES), not something
-    invented here. Priority for which row absorbs the cut, most to least
-    preferred: a row this file's own top-up/extension passes added (most
-    discretionary), then the later leg of a double shift (the specific
-    reported pattern), then whichever active row started latest (a
-    "last in, first cut" tiebreak). Removes a row outright if trimming it
-    below ~30min would leave a token sliver shift.
+    Ends a shift early at the peak — "cut early when overstaffed" is this
+    restaurant's own stated convention for servers (see hours_notes' SHIFT
+    END / CLOSER RULES) — or, for a shift that started too close to the
+    peak to keep the shortest shift before it, starts it once the first
+    other shift at the peak has gone (_overlap_cut). Priority for which row
+    absorbs the cut, most to least preferred: a row this file's own
+    top-up/extension passes added (most discretionary), then the later leg
+    of a double shift (the specific reported pattern), then the shift
+    ending SOONEST — the lunch tails at a lunch-to-dinner handover, never
+    the dinner server who just arrived (sched re-audit 10/11/26 BUGSGEN-7).
+    A cut never leaves a shift under the one shortest shift
+    (schedule_rules.shortest_for, contract #2); where nothing workable is
+    left the row goes, and a cut that keeps a shift is taken before one
+    that removes it.
 
     Returns (preview_rows, rows_trimmed, trimmed_dates).
 
@@ -6393,10 +6507,15 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
         def _priority(r):
             # The top-up tags its rows "coverage top-up" (the older
             # "PAR hours top-up" wording too): the pipeline's own additions.
+            # Then the shift ending SOONEST — at a lunch-to-dinner handover
+            # the lunch tails that make the overlap, never the dinner server
+            # who just arrived for the rush (sched re-audit 10/11/26
+            # BUGSGEN-7: ranking the latest starter first cut a 4pm dinner
+            # server to 4:00-4:30pm while the lunch tails stayed).
             is_topup = "top-up" in (r.get("notes") or "").lower()
             is_second_leg = id(r) in double_shift_second_legs
-            start = _rules.parse_minutes(r.get("shift_start", "")) or 0
-            return (0 if is_topup else 1, 0 if is_second_leg else 1, -start)
+            sp_ = _span_minutes(r) or (0, 0)
+            return (0 if is_topup else 1, 0 if is_second_leg else 1, sp_[1], sp_[0])
 
         for _pass in range(20):  # bounded — one trim per pass, per day
             peak, peak_time = _peak_server_overlap(day_rows)
@@ -6414,11 +6533,17 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                 return not requirement_regressions(preview_rows, after, index, date, c)
             ranked = sorted((r for r in active if not _pinned(r)), key=_priority)
             want = FILL_SCORE_CANDIDATES if scorer is not None else 1
-            legal, spare, held = [], [], []
+            # A cut that leaves a workable shift (at least the one shortest
+            # shift, contract #2) before a whole shift removed; a cut that
+            # leaves a role short of its requirement only when nothing else
+            # can go (BUGSGEN-7).
+            legal, removals, spare, held = [], [], [], []
             for r in ranked:
-                if legal and (_priority(r)[:2] != _priority(legal[0][0])[:2] or len(legal) >= want):
+                first = (legal or removals or [None])[0]
+                if first is not None and (_priority(r)[:2] != _priority(first[0])[:2] or len(legal) >= want):
                     break
-                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap, constraints=c)
+                cut = _overlap_cut(r, peak_time, day_name, close_times, role_buffers, _cap, constraints=c,
+                                   day_rows=active)
                 if cut is False:
                     continue
                 ok, why = _cut_ok(r, cut, date, day_name)
@@ -6427,9 +6552,15 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
                         held.append(why)
                 elif index and not _keeps_requirement(r, cut):
                     spare.append((r, cut))     # legal, but leaves a role short: only if nothing else is
+                elif cut is None:
+                    removals.append((r, cut))
                 else:
                     legal.append((r, cut))
-            legal = legal or spare[:want]
+            # Where only a whole shift can go, the latest starter goes — the
+            # "delay the latest start" of a handover taken all the way, when
+            # nobody leaves soon enough for it to keep a workable shift.
+            removals.sort(key=lambda rc: -((_span_minutes(rc[0]) or (0, 0))[0]))
+            legal = legal or removals[:want] or spare[:want]
             if not legal:
                 # Nothing at the peak may be cut: the night stays over the
                 # cap, and the owner is told what holds it there.
@@ -6461,22 +6592,38 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
 
 
 def _overlap_cut(row: dict, peak_time: int, day_name, close_times: dict, role_buffers: dict, cap: int,
-                 constraints=None):
-    """The row cut to end at `peak_time` (a new dict), None when that would
-    leave under half an hour (the row goes), False when it cannot be read.
-    `peak_time` past midnight (24:30) is the next morning's 12:30am."""
-    start_min = _rules.parse_minutes(row.get("shift_start", ""))
-    if start_min is None:
+                 constraints=None, day_rows=None):
+    """The row cut out of the peak (a new dict): ended at `peak_time` when
+    what is left before it is at least the one shortest shift (a lunch tail,
+    schedule_rules.shortest_for — contract #2), else started later, once the
+    first other shift on at the peak has gone (a late starter keeps a
+    workable shift after the handover); None when neither leaves a workable
+    shift (the row goes); False when it cannot be read. Never a 30-minute
+    shift (sched re-audit 10/11/26 BUGSGEN-6, BUGSGEN-7). `peak_time` past
+    midnight (24:30) is the next morning's 12:30am."""
+    sp0 = _span_minutes(row)
+    if sp0 is None:
         return False
-    if peak_time - start_min < 30:
-        return None
+    start_min, end_min = sp0
+    shortest = (_rules.shortest_for(constraints, row.get("employee"), row.get("date") or "")
+                if constraints is not None else _rules.DEFAULT_MIN_SHIFT_MINUTES)
     out = dict(row)
-    out["shift_end"] = _format_minutes_to_time(peak_time)
+    if peak_time - start_min >= shortest:
+        out["shift_end"] = _format_minutes_to_time(peak_time)
+    else:
+        ends = sorted(sp[1] for sp in (_span_minutes(x) for x in (day_rows or []) if x is not row)
+                      if sp and sp[0] <= peak_time < sp[1])
+        new_start = ends[0] if ends else None
+        if new_start is None or end_min - new_start < shortest:
+            return None
+        out["shift_start"] = _format_minutes_to_time(new_start)
     if day_name:
         _enforce_close_time(out, day_name, close_times, role_buffers, constraints=constraints)
     sp = _span_minutes(out)
     if not sp:
         return False
+    if sp[1] - sp[0] < shortest:
+        return None
     out["scheduled_hours"] = _stime.row_hours_text(out, _rules.tz_of(constraints) if constraints is not None
                                                    else None)
     note = (out.get("notes") or "").strip()
@@ -7044,6 +7191,9 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
     .measured_half_hours(...)} — the work-driven requirement's inputs, read
     once per read scope; {} pieces on any failure (the usual crew then
     stands, history the fallback — RM-17)."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     import models as _m_rm
     store = _m_rm.read_scope_store()
     key = ("requirement_model", int(restaurant_id))
@@ -7299,6 +7449,7 @@ def _live_requirements(dates, patterns, c, profiles, demand_by_day, demand_by_da
         cap_roles=sorted(getattr(c, "foh_roles", None) or {"server"}), date_demand=date_demand or None,
         splh_hold=splh_hold or None, late_headcount=(patterns or {}).get("late_headcount") or None,
         standard_needs=standard_needs or None, crew_answers=(patterns or {}).get("crew_answers") or None,
+        learned=(patterns or {}).get("learned_headcount") or None,
         staffing_model=staffing_model or None, concurrent=(patterns or {}).get("concurrent") or None,
         half_curve=half_curve or None, elasticity=elasticity or None, **_limit_kwargs(c))
 
@@ -7485,6 +7636,27 @@ def load_ledger(restaurant_id, before: str, weeks: int = LOAD_LEDGER_WEEKS) -> d
             e["hours"] = round(e["hours"], 2)
             out.setdefault(n, []).append(e)
     return out
+
+
+LENGTH_NORM_WEEKS = 8
+
+
+def length_norms_for(restaurant_id, before: str, families=None, weeks: int = LENGTH_NORM_WEEKS) -> dict:
+    """shift_quality.length_norms over the restaurant's punched shifts in the
+    `weeks` before `before` (shift_facts.person_rows) — what its people in
+    each role actually work a day (STRESS-14). {} on any failure (shift
+    length then judges against its default)."""
+    from datetime import datetime as _dt, timedelta as _td
+    import shift_facts as _sf
+    import shift_quality as _sq
+    try:
+        start = (_dt.strptime(str(before)[:10], "%Y-%m-%d") - _td(weeks=int(weeks))).strftime("%Y-%m-%d")
+        end = (_dt.strptime(str(before)[:10], "%Y-%m-%d") - _td(days=1)).strftime("%Y-%m-%d")
+        rows = _sf.person_rows(restaurant_id, since=start, until=end) or []
+    except Exception as _lx:
+        _soft_fail("length_norms", _lx, restaurant_id)
+        return {}
+    return _sq.length_norms(rows, families)
 
 
 def _breach_dayparts(v: dict, row: dict = None) -> list:
@@ -7799,6 +7971,17 @@ def _quality_signals(restaurant_id, result, **extra):
             signals["last_published_rows"] = _versions.rows_from_csv(_lp.get("schedule_csv") or "") if _lp else None
     except Exception as _sx:
         _soft_fail("last published week", _sx, restaurant_id)
+    # How long this restaurant's people work a day, per role (blind re-audit
+    # 10/11/26 STRESS-14): Shift Quality's shift-length norm, from the
+    # punches of the LENGTH_NORM_WEEKS before the week.
+    try:
+        _first_n = (_sig_week or [None])[0]
+        if _first_n:
+            signals["length_norms"] = frozen_read(
+                ("length_norms", restaurant_id, _first_n),
+                lambda: length_norms_for(restaurant_id, _first_n, (c.role_families if c is not None else None)))
+    except Exception as _sx:
+        _soft_fail("shift length norms", _sx, restaurant_id)
     try:
         signals["experienced"] = frozen_read(("experienced", restaurant_id),
                                              lambda: _staff.experienced_names(restaurant_id))
@@ -7827,6 +8010,12 @@ def _quality_signals(restaurant_id, result, **extra):
         _soft_fail("leader rule check", _lx, restaurant_id)
     try:
         weights = frozen_read(("quality_weights", restaurant_id), lambda: get_quality_weights(restaurant_id))
+        import learning_stats as _ls_w
+        if _ls_w.learning_off():
+            # learning_v2's off week (LEARNING-14): the owner's weights,
+            # without what the automatic calibration promoted.
+            import schedule_calibration as _scal_w
+            weights = _scal_w.weights_without_promotions(restaurant_id, weights)
     except Exception as _sx:
         _soft_fail("quality weights", _sx, restaurant_id)
         weights = {}
@@ -8398,12 +8587,14 @@ def in_restaurant_dayparts(fn):
 
     @functools.wraps(fn)
     def wrapper(restaurant_id, *a, **k):
-        split = _restaurant_split(restaurant_id)
-        if split is None or split == _stime.daypart_split():
-            return fn(restaurant_id, *a, **k)
-        with _stime.daypart_scope(split):
+        with _stime.restaurant_scope(restaurant_id):
             return fn(restaurant_id, *a, **k)
     return wrapper
+
+
+# The Studio's kept inputs and its prepared week read the restaurant's own
+# boundary too (BUGSGEN-12): its quick passes and scores ran at 3pm.
+studio_prepared = in_restaurant_dayparts(studio_prepared)
 
 
 @in_restaurant_dayparts
@@ -8820,6 +9011,9 @@ def likely_edits(restaurant_id, rows: list, patterns: list = None, predict: bool
     restaurant's own finished drafts) puts at or above its threshold, with
     the likelihood and the rates behind it. [{kind, employee?, date, text,
     likelihood?, reason?, index?}]."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return []  # learning_v2's off week (LEARNING-14)
     out = _pattern_likely_edits(restaurant_id, rows, patterns)
     if not predict:
         return out
@@ -9401,6 +9595,14 @@ REPAIR_STAGES = (
      "check the people your instruction or rules name"),
     ("stations", _rules.TIER_COVERAGE, "The kitchen-station fill", "check each kitchen station has a trained cook"),
     ("close_out", _rules.TIER_COVERAGE, "The closer repair", "check each role's closer stays until close"),
+    # The hours your RESTAURANT HOURS & SHIFT RULES give each role — a hard
+    # staffing rule — held here, at the coverage rank, BEFORE the trims: a
+    # row outside them moves inside, its length kept (sched re-audit
+    # 10/11/26 BUGSGEN-5: applied last, after the budget trim, it left
+    # 2:00-4:00pm line cooks). role_times (quality) still applies the
+    # owner's start/end-time preferences last.
+    ("role_windows", _rules.TIER_COVERAGE, "The pass that keeps each role inside your hours & shift rules",
+     "check each role starts and ends inside your hours & shift rules"),
     # The restaurant's own limits — rest between shifts, the longest shift
     # — where they are not law: ranked below the manager rule and coverage,
     # so their repair runs after those and may cost neither (LOGIC-1).
@@ -9413,6 +9615,11 @@ REPAIR_STAGES = (
     # (LOGIC-4): the top-up fills to them before the trim, which never cuts
     # under them, so a light draft and a heavy one end at the same week.
     ("top_up", _rules.TIER_REQUIREMENT, "The fill to the shift requirements", "a shift may be short of its usual crew"),
+    # A second manager on the floor at the rush (sched re-audit 10/11/26
+    # LOGIC-13): salaried managers under their week first — hours already
+    # paid for — then hourly ones inside their line; never overtime.
+    ("second_manager", _rules.TIER_REQUIREMENT, "The second-manager fill for the rush",
+     "a rush may run on one manager"),
     # Closes that measurably run late, ended when they really end (L-16) —
     # counted against the budget before the trim makes room for them.
     ("pad_overruns", _rules.TIER_BUDGET, "The pass that ends late-running closes when they really end",
@@ -9640,17 +9847,49 @@ def _stage_gained(tier, before_prof, after) -> bool:
     return False
 
 
-def _kept_rows_moved(before, after, editable) -> str:
+def _plan_extended(before, after) -> bool:
+    """Whether every manager-plan row of `before` that is not exactly in
+    `after` is still there as the same person's plan row that day, in the
+    same role, covering at least its old span — the plan pinned on WHO, the
+    manager stage free to bring them in earlier or keep them on (sched
+    re-audit 10/11/26 BUGSGEN-17: an abutting 7:00-7:30am stub instead)."""
+    from collections import Counter
+    full_a = Counter(_full_sig(r) for r in after if r.get("_pinned"))
+    plan_a = {}
+    for r in after:
+        if r.get("_pinned") == _rules.PLAN_PIN:
+            plan_a.setdefault(((r.get("employee") or "").strip().lower(), r.get("date"), r.get("role")), []).append(r)
+    for r in before:
+        if r.get("_pinned") != _rules.PLAN_PIN:
+            continue
+        sig = _full_sig(r)
+        if full_a[sig] > 0:
+            full_a[sig] -= 1
+            continue
+        sp = _stime.span(r)
+        mates = plan_a.get(((r.get("employee") or "").strip().lower(), r.get("date"), r.get("role"))) or []
+        if not sp or not any((_stime.span(x) or (1, 0))[0] <= sp[0] and (_stime.span(x) or (0, -1))[1] >= sp[1]
+                             for x in mates):
+            return False
+    return True
+
+
+def _kept_rows_moved(before, after, editable, tier=None) -> str:
     """'' when every row a partial redo keeps and every pinned row (the
     manager plan's, the owner's) is exactly as it was and nothing was added
-    on a kept day; else what moved."""
+    on a kept day; else what moved. At the manager rank a manager-plan row
+    may be extended — the same person, date and role, its old span still
+    covered (_plan_extended, BUGSGEN-17); an owner's locked or kept row never
+    moves."""
     from collections import Counter
     if editable is not None:
         kb = sorted(_full_sig(r) for r in before if r.get("date") not in editable)
         ka = sorted(_full_sig(r) for r in after if r.get("date") not in editable)
         if kb != ka:
             return "a day you kept"
-    pb = Counter(_full_sig(r) for r in before if r.get("_pinned"))
+    plan_ok = tier == _rules.TIER_MANAGER and _plan_extended(before, after)
+    pb = Counter(_full_sig(r) for r in before if r.get("_pinned")
+                 and not (plan_ok and r.get("_pinned") == _rules.PLAN_PIN))
     pa = Counter(_full_sig(r) for r in after if r.get("_pinned"))
     if any(pa[k] < n for k, n in pb.items()):
         return "a shift the manager plan or you kept"
@@ -9661,7 +9900,7 @@ def _judge(tier, before_rows, after_rows, before_prof, x) -> tuple:
     """(worse, after_profile): what a stage's change made worse that ranks
     above the stage, and any hard breach it made new or worse anywhere — []
     when the change may be kept."""
-    moved = _kept_rows_moved(before_rows, after_rows, x.editable)
+    moved = _kept_rows_moved(before_rows, after_rows, x.editable, tier=tier)
     if moved:
         return [{"id": ("kept",), "label": f"changed {moved}", "tier": -1, "before": 0, "after": 1}], None
     after = _rules.breach_profile(after_rows, x.c)
@@ -10043,6 +10282,22 @@ def _stage_optimizer(rows, x):
     return {"rows": res["rows"] if res.get("changes") else rows, "report": {"summary": _opt.summary(res, sig)}}
 
 
+def _stage_second_manager(rows, x):
+    out = _rules.cover_second_manager(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"], "to": e["to"], "kind": "second_manager",
+              "reason": e["reason"]} for e in out["added"] + out["extended"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"added": len(out["added"]), "extended": len(out["extended"])}}
+
+
+def _stage_role_windows(rows, x):
+    out = _rules.apply_role_windows(rows, x.c, editable=x.editable)
+    fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "role_window",
+              "reason": e["reason"]} for e in out["retimed"]]
+    return {"rows": out["rows"], "fixes": fixes,
+            "report": {"retimed": len(out["retimed"]), "left": out.get("left") or []}}
+
+
 def _stage_role_times(rows, x):
     out = _rules.apply_role_times(rows, x.c, editable=x.editable)
     fixes = [{"index": e["index"], "from": e["employee"] + " " + e["from"], "to": e["to"], "kind": "role_time",
@@ -10057,7 +10312,8 @@ _STAGE_FNS = {"person": _stage_person, "replace": _stage_replace, "manager": _st
               "overtime": _stage_overtime, "min_hours": _stage_min_hours, "pad_overruns": _stage_pad_overruns,
               "section_cap": _stage_section_cap,
               "budget": _stage_budget, "top_up": _stage_top_up, "stagger": _stage_stagger,
-              "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times}
+              "solver": _stage_solver, "optimizer": _stage_optimizer, "role_times": _stage_role_times,
+              "role_windows": _stage_role_windows, "second_manager": _stage_second_manager}
 
 
 def _stage_failure(key, exc, x) -> dict:
@@ -10273,6 +10529,17 @@ def post_model_rows(rows, ctx, restaurant_id=None, gate=True, max_seconds=REPAIR
 
 
 def repair_rows(rows, c, roster_roles=None, hours_budget=None) -> list:
+    """_repair_rows inside the restaurant's own lunch/dinner boundary
+    (Constraints.daypart_split — sched re-audit 10/11/26 BUGSGEN-12): every
+    pass, the solver and the scorer read the dayparts the sweep does."""
+    split = getattr(c, "daypart_split", None)
+    if split is None or split == _stime.daypart_split():
+        return _repair_rows(rows, c, roster_roles=roster_roles, hours_budget=hours_budget)
+    with _stime.daypart_scope(split):
+        return _repair_rows(rows, c, roster_roles=roster_roles, hours_budget=hours_budget)
+
+
+def _repair_rows(rows, c, roster_roles=None, hours_budget=None) -> list:
     """The job's ranked repair loop as one call over `rows` with the week's
     rules `c` and nothing else a generation reads — what the model-replay
     script repairs a stored answer with (scripts/schedule_model_eval.py's
@@ -10521,6 +10788,9 @@ def _apply_repair_reports(result, loop) -> None:
     result["min_hours"] = {"moved": n("min_hours", "moved"), "added": n("min_hours", "added"),
                            "left": (rep.get("min_hours") or {}).get("left") or []}
     result["role_times"] = {"retimed": n("role_times", "retimed"), "left": (rep.get("role_times") or {}).get("left") or []}
+    # The role-window hold at the coverage rank (BUGSGEN-5) — additive.
+    result["role_windows"] = {"retimed": n("role_windows", "retimed"),
+                              "left": (rep.get("role_windows") or {}).get("left") or []}
     result["end_overruns"] = {"padded": n("pad_overruns", "padded"),
                               "left": (rep.get("pad_overruns") or {}).get("left") or []}
     result["cap_floor_conflicts"] = (rep.get("section_cap") or {}).get("conflicts") or []
@@ -10963,7 +11233,7 @@ _COLS_PINNED = ("date", "day", "employee", "role", "shift_start", "shift_end", "
 # and why, the owner's rules it could not check, the over-budget line —
 # vanished at the first save. refresh_review keeps all of it and refreshes
 # only what the rows decide.
-_REVIEW_RULE_KEYS = ("hard", "soft", "by_kind", "hard_rows", "hard_days")
+_REVIEW_RULE_KEYS = ("hard", "soft", "over_limit", "by_kind", "hard_rows", "hard_days")
 
 
 def _fix_sig(r) -> tuple:
@@ -11359,7 +11629,9 @@ def _rules_for_swaps(c) -> dict:
         # under a consent rule, who agreed in writing to a short turnaround
         # (MARKET-3) — the swap index allows theirs, as the sweep does.
         "min_rest_hours": (c.compliance.get("min_rest_hours") if _rules.rest_mode(c.compliance) != "off" else None),
-        "rest_waived": ({k: {"standing": bool(v.get("standing")), "dates": sorted(v.get("dates") or ())}
+        "rest_waived": ({k: {"standing": bool(v.get("standing")), "dates": sorted(v.get("dates") or ()),
+                             # a waiver given for one shift allows that shift only (BUGSLIFE-7)
+                             "shifts": {d: sorted(s) for d, s in (v.get("shifts") or {}).items()}}
                          for k, v in (getattr(c, "rest_waivers", None) or {}).items()}
                         if _rules.rest_mode(c.compliance) == "consent_premium" else {}),
         # Owners and managers keep their own turnaround (rest_rule_applies):

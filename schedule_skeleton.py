@@ -72,7 +72,10 @@ KEPT_SOURCE = "kept"
 LOCKED_SOURCE = "locked"
 HANDOFF_MIN = 30                        # two managers overlap this long at a handover
 SINGLE_SHIFT_MAX_MIN = 10 * 60          # a day this long or shorter is one manager's shift
-MIN_SHIFT_MIN = _rules.MANAGER_MIN_SHIFT_MIN   # no planned manager shift is shorter (4h)
+# The longest day the plan runs a leader who sets their own hours on to, to
+# cover a stretch at either end (STRESS-3) — their own call, never a policy
+# breach (max_shift_applies); past it the plan adds a leg instead.
+LEADER_DAY_MAX_MIN = 15 * 60
 # A salaried manager with no weekly cap of their own, when the restaurant
 # set none either (E-17: SALARIED_HOURS_CAP is seven 12-hour days).
 SALARIED_WEEK_CAP = _rules.SALARIED_HOURS_CAP   # the one default (Constraints.salaried_limit)
@@ -164,6 +167,20 @@ def _names(names) -> str:
 
 def _overlap(a, b) -> int:
     return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+
+
+_EXTENSION_CLAUSES = ("stays on ", "runs on:")
+
+
+def _one_extension_reason(reason, note) -> str:
+    """A planned row's reason with ONE extension clause — the latest: a row
+    the plan extended twice read "stays on 8:00am–10:00am … stays on
+    8:00am–9:00am …" (sched re-audit 10/11/26 BUGSGEN-17)."""
+    parts = [p for p in str(reason or "").split(" — ")
+             if not any(p.strip().startswith(k) for k in _EXTENSION_CLAUSES)]
+    new = [p for p in str(note or "").split(" — ") if p.strip()]
+    keep = [p for p in parts if p.strip() not in {n.strip() for n in new}]
+    return " — ".join(keep + new)
 
 
 def is_plan_note(notes) -> bool:
@@ -461,9 +478,16 @@ def _week_cap(c, name, line=None, mode=None) -> float:
     manager may go past the line to their hours ceiling, then past the
     restaurant's ceiling to their own maximum (the manager on the floor
     outranks the restaurant's limits; a person's own maximum stays theirs)."""
-    if c.is_salaried(name):
-        return float(c.salaried_limit(name))
     mode = mode or _rules.FILL_ROUNDS[0]
+    if c.is_salaried(name):
+        # The 55h default is the restaurant's policy, not the person's own
+        # limit: in the last round — a stretch no manager can cover inside
+        # the limits — the manager on the floor outranks it (the tier order;
+        # sched re-audit 10/11/26 STRESS-18: a one-manager restaurant's week
+        # was left unmanaged on Sunday at 55h). A cap the owner set holds.
+        if not mode[1] and not c.salaried_cap_set(name):
+            return float(_rules.SALARIED_HOURS_MAX)
+        return float(c.salaried_limit(name))
     if mode[0]:
         return float(_rules.overtime_line(c, name, line))
     if mode[1] or c.own_max(name):
@@ -521,7 +545,9 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     acting = {k: set(v or ()) for k, v in (getattr(c, "acting_managers", None) or {}).items()
               if k not in (c.managers or {})}
     max_shift = int(float(c.compliance.get("max_shift_hours") or _rules.DEFAULTS["max_shift_hours"]) * 60)
-    min_len = min(MIN_SHIFT_MIN, max_shift)
+    # No planned manager shift is shorter than the one shortest shift
+    # (contract #2, BUGSGEN-6: the plan held its own 4h).
+    min_len = min(_rules.min_shift_minutes(c), max_shift)
     # Rounding a split to the half hour can add up to an hour to a middle
     # leg: the target stays that far under the shift-length rule.
     single_max = max(min_len, min(SINGLE_SHIFT_MAX_MIN, max_shift - 60))
@@ -800,22 +826,29 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                 continue
             s0, e0 = sp
             key = c.key(r["employee"])
+            # A leader who sets their own hours is not held to the team's
+            # longest shift (max_shift_applies, the sweep's own rule): the
+            # opener coming in half an hour earlier for the cooks' prep, not
+            # another manager on a seventh day in a row — the plan bought a
+            # policy breach (days in a row, a MUST-FIX) for what the opener's
+            # own day could cover (sched re-audit 10/11/26 STRESS-3).
+            mx = max_shift if _rules.max_shift_applies(c, key) else max(max_shift, LEADER_DAY_MAX_MIN)
             if gap[0] >= e0:
-                tries = [(s0, ne) for ne in range(min(gap[1], s0 + max_shift), e0, -30)]
+                tries = [(s0, ne) for ne in range(min(gap[1], s0 + mx), e0, -30)]
             elif gap[1] <= s0:
-                tries = [(ns, e0) for ns in range(max(gap[0], e0 - max_shift), s0, 30)]
+                tries = [(ns, e0) for ns in range(max(gap[0], e0 - mx), s0, 30)]
             else:
                 continue
             if not tries or _overlap(tries[0], gap) <= 0:
                 tried.setdefault(r["employee"], f"already on {_fmt(s0)}–{_fmt(e0)}, the longest shift the rules allow"
-                                 if e0 - s0 >= max_shift - 30 else f"already on {_fmt(s0)}–{_fmt(e0)} that day")
+                                 if e0 - s0 >= mx - 30 else f"already on {_fmt(s0)}–{_fmt(e0)} that day")
                 continue
             for ns, ne in tries:
                 covered = _overlap((ns, ne), gap)
                 if covered <= 0:
                     break
                 row = make_row(key, d, ns, ne, r.get("role") or role_of(key), "extended",
-                               r.get("_pin_reason", "") + note)
+                               _one_extension_reason(r.get("_pin_reason", ""), note))
                 ok, why = legal(row, without=r)
                 if not ok:
                     tried.setdefault(r["employee"], why)
@@ -838,7 +871,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         gaps = [g for g in _rules._uncovered([(S, E)], cov) if g[1] > g[0]
                 and not any(m0 <= g[0] and g[1] <= m1 for m0, m1, _w in marked[d])
                 # prep before an opening manager in an hour ahead of the open
-                and not _rules.opening_prep(g, [m0 for m0, _m1 in cov], opens.get(d))]
+                and not _rules.opening_prep(g, [m0 for m0, _m1 in cov], opens.get(d), _rules.opening_lead_minutes(c))]
         if not gaps:
             return False
         gap = max(gaps, key=lambda g: g[1])         # the close first: a manager at close matters most
@@ -902,7 +935,8 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         cov = coverage(d)
         for m0, m1, why in marked[d]:
             for a, b in _rules._uncovered([(m0, m1)], cov):
-                if b > a and not _rules.opening_prep((a, b), [s0 for s0, _e0 in cov], opens.get(d)):
+                if b > a and not _rules.opening_prep((a, b), [s0 for s0, _e0 in cov], opens.get(d),
+                                                     _rules.opening_lead_minutes(c)):
                     uncovered.append({"date": d, "day": _weekday(d), "from": _fmt(a), "to": _fmt(b),
                                       "start": a, "end": b, "minutes": b - a, "why": why})
 
@@ -996,9 +1030,15 @@ def plan_for_generation(restaurant_id, c, week_dates, shifts=None, roster_roles=
         rules = _ded.rules_of(rest)
         if rules:
             text = "\n".join(t for t in (getattr(rest, "sched_notes", None) or "", waive_text or "") if t)
+            # Only a waiver the owner confirmed lets the position off (blind
+            # re-audit 10/11/26 BUGSGEN-4); a sentence read as one but not
+            # confirmed leaves it staffed, and the review says so.
+            waived, pending = _ded.split_waivers(
+                text, rules, _ded.confirmed_waiver_keys(restaurant_id, week_dates, db_path=db_path))
             dplan = _ded.plan(c, sorted(set(dates)) if dates else week_dates, rules, history=history,
                               roster_roles=roster_roles, prior_rows=list(prior_rows or []) + list(plan.get("rows") or []),
-                              waived=_ded.waivers(text, rules))
+                              waived=waived)
+            dplan["unconfirmed_waivers"] = pending
             plan["dedicated"] = dplan
             plan["rows"] = list(plan.get("rows") or []) + dplan["rows"]
     except Exception as exc:
