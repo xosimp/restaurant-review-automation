@@ -89,7 +89,7 @@ _K = {
     "rules": ("compliance_json", "cut_floor_default", "daypart_split", "daypart_boundary", "delivery_pct", "foh_roles_json",
               "patio_roles_json", "jurisdiction", "compliance_profile_json", "school_calendar_json",
               "quality_weights_json", "quality_tuning_json", "role_arrival_json",
-              "role_close_buffer_json", "role_close_min_json", "role_cross_training_json", "role_floors_json",
+              "role_close_buffer_json", "role_close_min_json", "role_criticality_json", "role_cross_training_json", "role_floors_json",
               "role_minimums_json", "role_requirements_json", "kitchen_stations_json", "role_strength_json", "shift_leader_rules_json",
               # Standing positions (schedule_dedicated: EJ's bar-tables bartender).
               "dedicated_shifts_json",
@@ -579,6 +579,7 @@ FIELD_LABELS = {
     "compliance_json": "Scheduling rules", "role_floors_json": "Staffing floors", "sched_notes": "Scheduling notes",
     "dedicated_shifts_json": "Standing positions", "reply_keywords": "Reply search phrases", "reply_programs": "Membership programs in replies", "crew_answers_json": "Crew answers", "staff_request_policy_json": "Staff request approvals", "floor_settings_json": "Schedule on the floor (POS push, live labor)",
     "dsr_budget_mode": "Budget by day or week",
+    "role_criticality_json": "How hard each role is to run without",
     "data_retention_months": "Review retention (months)", "timezone": "Time zone",
     "sell_price": "Price", "service_model": "Service model", "concept": "Restaurant type",
 }

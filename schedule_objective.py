@@ -159,6 +159,76 @@ def default_stay(role, closer=False) -> int:
     return max(v, CLOSER_STAY_MINUTES if closer else 0)
 
 
+SHOULDER_MIN_DAYS = 3       # days of a family's punches before its stay or lead is its own
+STAY_BOUNDS = (0, 120)
+LEAD_BOUNDS = (0, 180)
+
+
+def shoulder_habits(c, rows) -> tuple:
+    """({family: stay minutes}, {family: lead minutes}) — how long each role
+    family's last person stays past the restaurant's close, and how early
+    its first person comes in before the open, as the median over the days
+    its punches (`rows`) show it (at least SHOULDER_MIN_DAYS), else the
+    stated default (DEFAULT_STAY_MINUTES / CLOSER_STAY_MINUTES for a family
+    with closers, DEFAULT_LEAD_MINUTES) for every family the roster works
+    (LOGIC-11: with no setting a role was hard-capped at the close and the
+    kitchen opened cold). A family the owner set a stay or a close
+    allowance for is the owner's, never these."""
+    import schedule_time as _st
+    if c is None:
+        return {}, {}
+    fam = c.family
+    last, first = defaultdict(dict), defaultdict(dict)
+    for r in rows or []:
+        d = str(r.get("date") or "")[:10]
+        sp = _span(r)
+        f = fam(r.get("role"))
+        if not d or not sp or not f:
+            continue
+        last[f][d] = max(last[f].get(d, sp[1]), sp[1])
+        first[f][d] = min(first[f].get(d, sp[0]), sp[0])
+    stays, leads = {}, {}
+    for f, days in last.items():
+        vals = []
+        for d, e in days.items():
+            wd = _weekday(d)
+            o = _st.parse_minutes((getattr(c, "open_times", None) or {}).get(wd) or "")
+            cl = _st.close_on_timeline(_st.parse_minutes((getattr(c, "close_times", None) or {}).get(wd) or ""), o)
+            if cl is not None and e >= cl - 30:
+                vals.append(e - cl)
+        if len(vals) >= SHOULDER_MIN_DAYS:
+            vals.sort()
+            stays[f] = max(STAY_BOUNDS[0], min(STAY_BOUNDS[1], int(vals[len(vals) // 2])))
+    for f, days in first.items():
+        vals = []
+        for d, s in days.items():
+            wd = _weekday(d)
+            o = _st.parse_minutes((getattr(c, "open_times", None) or {}).get(wd) or "")
+            if o is not None and s <= o + 30:
+                vals.append(o - s)
+        if len(vals) >= SHOULDER_MIN_DAYS:
+            vals.sort()
+            leads[f] = max(LEAD_BOUNDS[0], min(LEAD_BOUNDS[1], int(vals[len(vals) // 2])))
+    roles = set()
+    for rs in (getattr(c, "known_roles", None) or {}).values():
+        roles |= {str(x) for x in rs or () if str(x).strip()}
+    roles |= {str(x) for x in (getattr(c, "role_names", None) or {}).values() if str(x).strip()}
+    closers = getattr(c, "closers_by_role", None) or {}
+    for role in sorted(roles):
+        f = fam(role)
+        if not f:
+            continue
+        if f not in stays:
+            v = default_stay(role, closer=bool(closers.get(f)))
+            if v:
+                stays[f] = max(stays.get(f, 0), v)
+        if f not in leads:
+            v = default_lead(role)
+            if v:
+                leads[f] = max(leads.get(f, 0), v)
+    return stays, leads
+
+
 def min_shift_minutes(restaurant_or_constraints) -> int:
     """The one minimum shift (contract #2, R): schedule_rules.min_shift_minutes
     where it exists, else the restaurant's own min_shift_hours, else

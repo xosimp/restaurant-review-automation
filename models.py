@@ -680,6 +680,7 @@ class Restaurant:
     school_calendar_json: Optional[str] = None
     role_arrival_json: Optional[str] = None  # {"Server": 5} minutes before their own shift start a role clocks in (attendance.clock_in_leads)
     role_close_min_json: Optional[str] = None  # {"Bartender": 60} the last of a role stays until N minutes after close
+    role_criticality_json: Optional[str] = None  # {"Dishwasher": 1.6} the solver's weight on a half hour short of a role (schedule_objective)
     role_requirements_json: Optional[str] = None  # {"Bartender": ["alcohol"]} certifications a role needs
     foh_roles_json: Optional[str]    = None  # ["Server", "Bartender"] roles the section cap counts; default server only
     patio_roles_json: Optional[str]  = None  # roles a rainy day thins first
@@ -1302,6 +1303,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "school_calendar_json", "TEXT"),
         ("restaurants", "role_arrival_json", "TEXT"),
         ("restaurants", "role_close_min_json", "TEXT"),
+        ("restaurants", "role_criticality_json", "TEXT"),
         ("restaurants", "role_requirements_json", "TEXT"),
         ("restaurants", "foh_roles_json", "TEXT"),
         ("restaurants", "patio_roles_json", "TEXT"),
@@ -5150,7 +5152,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "auto_approve_earned","auto_publish_schedule","auto_order_trusted","weekly_plan_enabled","send_delay_minutes",
         "auto_approve_5star","auto_approve_4star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
         "compliance_json","role_floors_json","dedicated_shifts_json","reply_keywords","reply_programs","crew_answers_json","cut_floor_default","staff_request_policy_json","floor_settings_json",
-        "jurisdiction","compliance_profile_json","school_calendar_json","role_arrival_json","role_close_min_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
+        "jurisdiction","compliance_profile_json","school_calendar_json","role_arrival_json","role_close_min_json","role_criticality_json","role_requirements_json","foh_roles_json","patio_roles_json","role_cross_training_json",
         "role_families_json","closer_roles_json","salaried_cap",
         "trim_to_budget","reservation_provider","reservation_api_key",
         "response_language","tone_preset","data_retention_months",
@@ -6027,6 +6029,7 @@ def _restaurant_from_row(row) -> Restaurant:
         school_calendar_json=row["school_calendar_json"] if "school_calendar_json" in row.keys() else None,
         role_arrival_json=row["role_arrival_json"] if "role_arrival_json" in row.keys() else None,
         role_close_min_json=row["role_close_min_json"] if "role_close_min_json" in row.keys() else None,
+        role_criticality_json=row["role_criticality_json"] if "role_criticality_json" in row.keys() else None,
         role_requirements_json=row["role_requirements_json"] if "role_requirements_json" in row.keys() else None,
         foh_roles_json=row["foh_roles_json"] if "foh_roles_json" in row.keys() else None,
         patio_roles_json=row["patio_roles_json"] if "patio_roles_json" in row.keys() else None,
@@ -8674,7 +8677,8 @@ def init_staff_settings(db_path: str = DB_PATH):
                        ("standing_shifts", "TEXT"),       # [{"day", "start", "end", "role"}] the shifts they always work
                        ("trainee", "TEXT"),               # {"target_role", "trainer", "from", "until"} while in training
                        ("closes_for", "TEXT"),            # ["Bartender"] the roles a closer closes for; [] = their own
-                       ("work_days", "TEXT")):            # ["Monday", ...] days they work, hours left to the draft (10/9/26)
+                       ("work_days", "TEXT"),             # ["Monday", ...] days they work, hours left to the draft (10/9/26)
+                       ("doubles", "INTEGER")):           # 1 works doubles, 0 never, NULL their own history decides (LOGIC-19)
         if name not in have:
             conn.execute(f"ALTER TABLE staff_settings ADD COLUMN {name} {decl}")
     conn.commit()

@@ -43572,6 +43572,12 @@ function sfw2RuleCheck(chk) {
       h += '<div><div class="k">Closes for</div>' + (r.can_close_pending && !r.can_close ? '<div class="said">Marked to close through Cavnar AI support — it counts once you take it as yours in Team → Closers.</div>' : '')
         + '<div class="chip-tog" data-sfw2-cf-box="' + nm + '">' + _sfw2ChipTog(fam, cf, ro) + '</div><div class="said"><small>' + (cf.length ? 'The last of these roles to leave, until close.' : 'Nothing picked: their own role.') + '</small></div><div class="sfw2-err" data-sfw2-err="cf"></div></div>';
     }
+    // Doubles (LOGIC-19): two legs on one date with a break. Unset, their own
+    // history decides (a double on a quarter of the days they worked).
+    var dv = st.doubles, dch = [['auto', 'From their history', dv === null || dv === undefined], ['yes', 'Works doubles', dv === true], ['no', 'Never', dv === false]];
+    h += '<div><div class="k">Doubles</div><div class="chip-tog">';
+    for (i = 0; i < dch.length; i++) h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm ct' + (dch[i][2] ? ' on' : '') + (ro ? ' ro' : '') + '" data-sfw2-dbl="' + dch[i][0] + '" data-name="' + nm + '" aria-pressed="' + (dch[i][2] ? 'true' : 'false') + '"' + (ro ? ' disabled' : '') + '>' + dch[i][1] + '</button>';
+    h += '</div><div class="sfw2-err" data-sfw2-err="dbl"></div></div>';
     // Reliability (D-44, L-18): missed, called out, late over clocked shifts.
     h += '<div><div class="k">Reliability</div><div class="sfw2-rel">' + n(sfw2ReliabilityLine(r.reliability)) + '</div></div>';
     return h;
@@ -43606,7 +43612,7 @@ function sfw2RuleCheck(chk) {
     return out;
   }
   document.addEventListener('click', function (ev) {
-    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dorm],[data-sfw2-open]') : null;
+    var body = $id('roster-body'), sheet = $id('pp-roster'), t = ev.target && ev.target.closest ? ev.target.closest('[data-sfw2-fm],[data-sfw2-act-x],[data-sfw2-act-add],[data-sfw2-st-x],[data-sfw2-st-add],[data-sfw2-tr-add],[data-sfw2-tr-end],[data-sfw2-cf],[data-sfw2-dbl],[data-sfw2-dorm],[data-sfw2-open]') : null;
     if (!t || !((body && body.contains(t)) || (sheet && sheet.contains(t))) || t.disabled) return;
     var cfBox = t.closest('[data-sfw2-cf-box]'), name = t.getAttribute('data-name') || (cfBox ? cfBox.getAttribute('data-sfw2-cf-box') : '');
     var r = entry(name), st = (r && r.settings) || {}, v, list, i;
@@ -43666,6 +43672,11 @@ function sfw2RuleCheck(chk) {
       return;
     }
     if (t.hasAttribute('data-sfw2-tr-end')) { saveFacts(name, {trainee: {}}, t, 'tr', 'Training ended — they count toward headcount again'); return; }
+    if (t.hasAttribute('data-sfw2-dbl')) {
+      v = t.getAttribute('data-sfw2-dbl');
+      saveFacts(name, {doubles: v === 'yes' ? true : (v === 'no' ? false : 'auto')}, t, 'dbl', 'Saved — the next draft keeps it');
+      return;
+    }
     if (t.hasAttribute('data-sfw2-cf')) {
       var role = t.getAttribute('data-sfw2-cf'), cur = st.closes_for || [], next = [], had = false;
       for (i = 0; i < cur.length; i++) { if (roleOf(cur[i]).toLowerCase() === role.toLowerCase()) had = true; else next.push(cur[i]); }

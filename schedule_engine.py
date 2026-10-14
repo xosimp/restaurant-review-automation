@@ -4024,12 +4024,18 @@ def solver_explain(got) -> dict:
     st = dict(got.get("stats") or {})
     return {"engine": st.get("engine"), "status": st.get("status"), "seconds": st.get("seconds"),
             "proved_optimal": bool(st.get("proved_optimal")), "critic": st.get("critic"),
-            "reasons": [{k: r.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "employee",
-                                                "instead", "text")} for r in (got.get("reasons") or [])][:200],
+            "reasons": [{k: r.get(k) for k in ("shift_id", "date", "day", "role", "shift_start", "shift_end",
+                                                "employee", "instead", "facts", "runner_up", "text")}
+                        for r in (got.get("reasons") or [])][:200],
             "conflicts": list(got.get("conflicts") or [])[:12],
             "unfilled": [{k: e.get(k) for k in ("date", "day", "role", "shift_start", "shift_end", "floor", "text")}
                          for e in (got.get("unassigned") or [])][:40],
-            "short": list(got.get("short") or [])[:20],
+            "short": list(got.get("short") or [])[:40],
+            "assumed": list(got.get("assumed") or [])[:12],
+            # the solve's own record, so a redo can be told from noise (STRESS-10)
+            "seed": st.get("seed"), "budget": st.get("budget"), "phases": st.get("phases"),
+            "wall_capped": bool(st.get("wall_capped")), "usual_days": st.get("usual_days"),
+            "priced": st.get("priced"), "history_weeks": st.get("history_weeks"),
             "terms": {k: {"label": v.get("label"), "count": v.get("count")} for k, v in (got.get("terms") or {}).items()}}
 
 

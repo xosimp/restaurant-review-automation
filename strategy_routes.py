@@ -1982,7 +1982,7 @@ def _do_roster_get(u):
 # owner's highest rule, and an Owner role paid by the hour is pay.
 _OWNER_STAFF_FIELDS = ("floor_manager", "acting_manager", "paid_hourly")
 _F1_STAFF_FIELDS = ("floor_manager", "paid_hourly", "acting_manager", "standing_shifts", "trainee", "closes_for",
-                    "work_days")
+                    "work_days", "doubles")
 
 
 def _do_staff_settings_set(u):
@@ -2019,7 +2019,7 @@ def _do_staff_settings_set(u):
                          acting_manager=b.get("acting_manager"), standing_shifts=b.get("standing_shifts"),
                          trainee=(b.get("trainee") if b.get("trainee") is not None else ({} if "trainee" in b else None)),
                          closes_for=b.get("closes_for"), work_days=b.get("work_days"),
-                         updated_by=_who(u))
+                         doubles=b.get("doubles"), updated_by=_who(u))
     except _ss.StaffSettingsError as e:
         return {"ok": False, "error": str(e)}, 400
     changed = [k for k in ("active", "employment_type", "min_hours", "max_hours", "daypart_availability", "is_minor",
@@ -3022,6 +3022,30 @@ def _do_compliance_set(u):
             return _refuse(str(e))
         settings["role_arrival_json"] = _j.dumps(clean) if clean else None
         out["role_arrivals"] = clean
+    if isinstance(b.get("role_criticality"), dict):
+        # How hard each role is to run without, the solver's weight on a
+        # half hour short of it (schedule_objective.ROLE_CRITICALITY is the
+        # default; blind re-audit 10/11/26 LOGIC-24). Blank clears a role.
+        import schedule_objective as _sobj
+
+        def _crit(v):
+            if v in (None, ""):
+                return None
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                raise ValueError("A role's weight is a number, or blank.")
+            lo, hi = _sobj.CRITICALITY_BOUNDS
+            if isinstance(v, bool) or not lo <= n <= hi:
+                raise ValueError(f"A role's weight is between {lo:g} and {hi:g}.")
+            return round(n, 2)
+        try:
+            crit = _sr.merge_role_map(_sr._load_json(getattr(r, "role_criticality_json", None), {}) or {},
+                                      b["role_criticality"], _crit)
+        except ValueError as e:
+            return _refuse(str(e))
+        settings["role_criticality_json"] = _j.dumps(crit) if crit else None
+        out["role_criticality"] = crit
     _stays = b.get("role_close_stays") if isinstance(b.get("role_close_stays"), dict) else \
         (b.get("role_close_mins") if isinstance(b.get("role_close_mins"), dict) else None)
     if _stays is not None:

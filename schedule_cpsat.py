@@ -1468,10 +1468,14 @@ def _money(cents) -> str:
 
 
 def assignment_reasons(prob, mdl, assignment, limit=400) -> list:
-    """[{date, day, role, shift_start, shift_end, employee, instead, text}]:
-    for each shift the solve staffed, the marginal cost of the next-best
-    person who could legally take it — "Kim, not Lee: Lee would hit
-    overtime (+$27)". Read from the solution, term by term."""
+    """[{shift_id, date, day, role, shift_start, shift_end, employee, instead,
+    facts: [{key, value}], runner_up: {employee, facts, delta_cost} | None,
+    text}] (contract #4): for each shift the solve staffed, the marginal cost
+    of the next-best person who could legally take it — "Kim, not Lee: Lee
+    would hit overtime (+$27)". `facts` are only what speaks FOR the pick;
+    what speaks for the runner-up is its own `facts`; the text never argues
+    against the pick (TRUST-1) — where nothing named favours the pick it
+    says the rest of the week decided. Read from the solution, term by term."""
     hours = {}
     for u in prob.units:
         p = assignment[u.id] if u.id < len(assignment) else None
@@ -1498,37 +1502,57 @@ def assignment_reasons(prob, mdl, assignment, limit=400) -> list:
         if p is None:
             continue
         r = u.rows[0]
-        base = {"date": u.date, "day": u.day, "role": u.role_label, "shift_start": r.get("shift_start"),
-                "shift_end": r.get("shift_end"), "employee": prob.names[p]}
+        base = {"shift_id": r.get("shift_id") or None, "date": u.date, "day": u.day, "role": u.role_label,
+                "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"), "employee": prob.names[p]}
         alts = []
         for q in prob.dom[u.id]:
             if q == p:
                 continue
-            why, cost = _marginal(prob, mdl, u, p, q, hours, on_date)
-            alts.append((cost, prob.names[q], why))
+            m = _marginal(prob, mdl, u, p, q, hours, on_date)
+            alts.append((m["total"], prob.names[q], q, m))
         if not alts:
             blocked = sorted(prob.reasons[u.id].items())[:2]
             text = f"{prob.names[p]}: the only one who could legally work it"
             if blocked:
                 text += " (" + "; ".join(f"{n} — {w}" for n, w in blocked) + ")"
-            out.append(dict(base, instead=None, text=text + "."))
+            facts = [{"key": "only_legal", "value": True}] + [{"key": "blocked", "value": f"{n} — {w}"}
+                                                               for n, w in blocked]
+            out.append(dict(base, instead=None, facts=facts, runner_up=None, text=text + "."))
         else:
             alts.sort(key=lambda t: (t[0], t[1]))
-            cost, qn, why = alts[0]
-            out.append(dict(base, instead=qn, text=f"{prob.names[p]}, not {qn}: {why}."))
+            total, qn, q, m = alts[0]
+            # Only what speaks FOR the pick is said (contract #4, TRUST-1):
+            # a reason the runner-up is the better fit is never the reason
+            # the pick was made.
+            pro = sorted((x for x in m["parts"] if x[0] > 0 and x[3]), key=lambda x: (-x[0], x[1]))
+            con = sorted((x for x in m["parts"] if x[0] < 0 and x[3]), key=lambda x: (x[0], x[1]))
+            facts = [{"key": k, "value": v} for _c, k, v, _t in pro]
+            if mdl.last.get(u.id) and p in mdl.last[u.id] and not any(f["key"] == "last_week" for f in facts):
+                facts.append({"key": "last_week", "value": True})
+            if total > 0 and pro:
+                ot = [x for x in pro if x[1] == "overtime_avoided"]
+                lead = ot[0] if ot and any(x[1] == "ceiling_avoided" for x in pro) else pro[0]
+                text = f"{prob.names[p]}, not {qn}: {lead[3]}."
+            else:
+                text = (f"{prob.names[p]}: an equal fit with {qn} — the rest of the week decided who takes it.")
+            runner = {"employee": qn, "facts": [{"key": k, "value": v} for _c, k, v, _t in con],
+                      "delta_cost": round(float(total), 2)}
+            out.append(dict(base, instead=qn, facts=facts, runner_up=runner, text=text))
         if len(out) >= limit:
             break
     return out
 
 
-def _marginal(prob, mdl, u, p, q, hours, on_date):
-    """(why, cost) of q working u instead of p, holding everything else:
-    the largest named difference, and its cost in the model's units."""
+def _marginal(prob, mdl, u, p, q, hours, on_date) -> dict:
+    """{"parts": [(cost, key, value, text)], "total"} of q working u instead
+    of p, holding everything else: each named difference in the model's
+    units, positive where it speaks for p (the pick), negative where for q."""
     parts = []
     c = prob.c
     if on_date.get((q, u.date)):
         other = on_date[(q, u.date)][0]
-        return f"{prob.names[q]} is already on {other.role_label} that day", W_COVER_HOUR
+        return {"parts": [(W_COVER_HOUR, "runner_up_busy", other.role_label,
+                           f"{prob.names[q]} is already on {other.role_label} that day")], "total": W_COVER_HOUR}
     hq = hours.get((q, u.bucket), 0.0)
     hp = hours.get((p, u.bucket), 0.0) - u.hours
     if not prob.salaried[q]:
@@ -1536,31 +1560,42 @@ def _marginal(prob, mdl, u, p, q, hours, on_date):
         ot_q = max(0.0, hq + u.hours - line) - max(0.0, hq - line)
         if ot_q > 0.05:
             cents = ot_q * _ot_rate_cents(prob, q) * (1 + sq.OVERTIME_PREMIUM)
-            parts.append((W_OT_HOUR * ot_q, f"{prob.names[q]} would hit overtime (+{_money(cents)})"))
+            parts.append((W_OT_HOUR * ot_q, "overtime_avoided", _money(cents),
+                          f"{prob.names[q]} would hit overtime (+{_money(cents)})"))
         if c is not None and not c.own_max(prob.names[q]) and _rules.hours_rules_apply(c, prob.names[q]):
             ceil = float(c.compliance.get("weekly_hours_ceiling") or _rules.DEFAULTS["weekly_hours_ceiling"])
             over = max(0.0, hq + u.hours - ceil) - max(0.0, hq - ceil)
             if over > 0.05:
-                parts.append((W_POLICY_HOUR * over, f"{prob.names[q]} would pass your {ceil:g}h weekly ceiling"))
+                parts.append((W_POLICY_HOUR * over, "ceiling_avoided", ceil,
+                              f"{prob.names[q]} would pass your {ceil:g}h weekly ceiling"))
     if not prob.salaried[p]:
         line = prob.line[p]
         ot_p = max(0.0, hp + u.hours - line) - max(0.0, hp - line)
         if ot_p > 0.05:
-            parts.append((-W_OT_HOUR * ot_p, ""))
+            cents = ot_p * _ot_rate_cents(prob, p) * (1 + sq.OVERTIME_PREMIUM)
+            parts.append((-W_OT_HOUR * ot_p, "overtime", _money(cents),
+                          f"{prob.names[p]} is into overtime on it (+{_money(cents)})"))
     mn = prob.min_hours[p]
     if mn and hp < mn - 0.05:
-        parts.append((W_MIN_HOUR * min(u.hours, mn - hp), f"{prob.names[p]} needs the hours toward their {mn:g}h minimum"))
+        parts.append((W_MIN_HOUR * min(u.hours, mn - hp), "min_hours", mn,
+                      f"{prob.names[p]} needs the hours toward their {mn:g}h minimum"))
     if u.id in mdl.last and p in mdl.last[u.id] and q not in mdl.last[u.id]:
-        parts.append((Q * 2, f"{prob.names[p]} had this shift last week"))
+        parts.append((Q * 2, "last_week", True, f"{prob.names[p]} had this shift last week"))
+    elif u.id in mdl.usual and p in mdl.usual[u.id] and q not in mdl.usual[u.id]:
+        parts.append((Q * 2, "usual", True, f"{prob.names[p]} usually works this shift"))
+    elif u.id in mdl.last and q in mdl.last[u.id] and p not in mdl.last[u.id]:
+        parts.append((-Q * 2, "last_week", True, f"{prob.names[q]} had this shift last week"))
     rq, rp = _rate_cents(prob, q, u), _rate_cents(prob, p, u)
-    if rq > rp and u.hours:
-        parts.append(((rq - rp) * u.hours * (mdl.per_cent or 0.001),
-                      f"{prob.names[q]} costs more for the same shift (+{_money((rq - rp) * u.hours)})"))
+    if rq != rp and u.hours:
+        d = (rq - rp) * u.hours
+        parts.append((d * (mdl.per_cent or 0.001), "cheaper" if d > 0 else "costs_more", _money(abs(d)),
+                      (f"{prob.names[q]} costs more for the same shift (+{_money(d)})" if d > 0 else
+                       f"{prob.names[q]} costs less for the same shift ({_money(-d)})")))
     cp_, cq = prob.components_of(u, p), prob.components_of(u, q)
     words = {"pending": f"{prob.names[q]} has asked for that day off",
              "preference": f"{prob.names[q]} prefers the other half of the day",
              "learned_preference": f"{prob.names[q]} keeps dropping that shift",
-             "learned": f"it is what the managers keep doing on that shift",
+             "learned": "it is what the managers keep doing on that shift",
              "reliability": f"{prob.names[q]} has a reliability risk on it",
              "role": f"it is {prob.names[p]}'s own role",
              "rotation_weekend": f"{prob.names[q]} is due a weekend off",
@@ -1568,27 +1603,23 @@ def _marginal(prob, mdl, u, p, q, hours, on_date):
     for k, w in words.items():
         diff = cq.get(k, 0.0) - cp_.get(k, 0.0)
         if diff > 0.01:
-            parts.append((diff * Q, w))
+            parts.append((diff * Q, k, True, w))
+        elif diff < -0.01:
+            parts.append((diff * Q, k, True, ""))
     counts = getattr(mdl, "_counts", {}) or {}
     cp0, cq0 = counts.get(p) or {}, counts.get(q) or {}
     for k, word in (("closing", "closes"), ("weekend", "weekend shifts"), ("hard", "busy shifts")):
         if getattr(u, k) and cq0.get(k, 0) >= cp0.get(k, 0):
-            parts.append((K_CLOSE * Q * (1 + cq0.get(k, 0) - cp0.get(k, 0)),
+            parts.append((K_CLOSE * Q * (1 + cq0.get(k, 0) - cp0.get(k, 0)), "spread_" + k,
+                          {"runner_up": cq0.get(k, 0), "pick": cp0.get(k, 0) - 1},
                           f"spreads the {word} ({prob.names[q]} has {cq0.get(k, 0)} this week, "
                           f"{prob.names[p]} {cp0.get(k, 0) - 1})"))
             break
     hq_w, hp_w = cq0.get("hours", 0.0), cp0.get("hours", 0.0) - u.hours
     if hq_w > hp_w + 2:
-        parts.append((Q * 0.5, f"{prob.names[q]} already has {hq_w:g}h this week, {prob.names[p]} {hp_w:g}h"))
-    named = [t for t in parts if t[1]]
-    total = sum(t[0] for t in parts)
-    ot = [t for t in named if "overtime" in t[1]]
-    if ot and any("weekly ceiling" in t[1] for t in named):
-        return ot[0][1], total
-    if not named:
-        return "an equal fit — the rest of the week decides who takes it", max(0.0, total)
-    best = max(named, key=lambda t: t[0])
-    return best[1], total
+        parts.append((Q * 0.5, "hours_spread", {"runner_up": hq_w, "pick": hp_w},
+                      f"{prob.names[q]} already has {hq_w:g}h this week, {prob.names[p]} {hp_w:g}h"))
+    return {"parts": parts, "total": sum(x[0] for x in parts)}
 
 
 # ── the smallest set of rules that conflict (LOGIC-32, RM-12) ───────────────
@@ -1657,7 +1688,18 @@ def _blocker(prob, u, q, week_hours=None) -> tuple:
     if why == _rules.LABELS.get("over_max_hours"):
         mx = prob.maxh[q]
         return ("max_hours", f"{name}'s {mx:g}h maximum")
-    if why in (_rules.LABELS.get("unavailable_day"), _rules.LABELS.get("unavailable_daypart")):
+    if why == _rules.LABELS.get("unavailable_daypart"):
+        # Free for part of the day only: the shift's length, not their whole
+        # day, is what is in the way (blind re-audit 10/11/26 STRESS-21 —
+        # "Cook B unavailable Mondays" while Cook B works Monday lunches).
+        choice = ((getattr(prob.c, "daypart_avail", None) or {}).get(prob.key(name)) or {}).get(u.day) \
+            if prob.c is not None else None
+        if choice in ("morning", "night"):
+            return ("daypart", f"{name} works only {_stime_word(choice)} on {u.day}s")
+        return ("daypart", f"{name} unavailable for part of {u.day}")
+    if why == _rules.LABELS.get("outside_window") or str(why).startswith(str(_rules.LABELS.get("outside_window"))):
+        return ("window", f"{name}: {why}")
+    if why == _rules.LABELS.get("unavailable_day"):
         return ("availability", f"{name} unavailable {u.day}s")
     if "time off" in str(why).lower():
         return ("time_off", f"{name}'s approved time off {u.day}")
@@ -1735,6 +1777,14 @@ def _conflict_for_unit(prob, assignment, u, seed, seconds):
     if core is None:
         return None
     relax = [{"kind": meaning[i][0], "text": meaning[i][1]} for i in core]
+    # A shift across both halves of the day kept from someone free for one
+    # half: splitting it is the relaxation, not their availability.
+    sp = _rules._span(u.rows[0])
+    if sp and any(r["kind"] in ("daypart", "window") for r in relax) and \
+            {"morning", "night"} <= set(_stime_mod().span_dayparts(sp)):
+        cut = _stime_mod().daypart_split()
+        relax.append({"kind": "split", "text": f"split this shift at {_rules._fmt_minutes(cut)} so someone free "
+                                               f"for one half can take it"})
     names = "; ".join(r["text"] for r in relax)
     return {"date": u.date, "day": u.day, "what": f"{u.day} {part}: {u.role_label}", "relax_one_of": relax,
             "text": f"{u.day} {part} can't have this {u.role_label or ''} shift ({u.rows[0].get('shift_start')}–"
@@ -1977,6 +2027,15 @@ def gate_exact(rows, constraints, dates, signals=None, weights=None, viols=None,
         out["conflicts"] = [{"date": e["date"], "day": e["day"], "what": f"{e['day']} {e['role']}",
                              "relax_one_of": [], "text": e["text"]} for e in got["unfilled"]]
     return out
+
+
+def _stime_mod():
+    import schedule_time as _st
+    return _st
+
+
+def _stime_word(part) -> str:
+    return _stime_mod().part_word(part, capital=False)
 
 
 def _stime_hours(row, c):
