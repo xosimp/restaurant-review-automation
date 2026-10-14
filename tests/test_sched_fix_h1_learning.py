@@ -36,6 +36,18 @@ import schedule_versions as sv
 import staff_settings
 from models import Restaurant, create_restaurant
 
+
+@pytest.fixture(autouse=True)
+def _two_edit_candidates(monkeypatch):
+    """These tests are about their own subject, built on two-edit fixtures
+    from before the candidacy floor (schedule re-audit 10/11/26
+    LEARNING-10: three opportunities and a Wilson lower bound of 0.3 —
+    tests/test_sf11_g2_habits.py holds it). The old floor keeps each test
+    about its subject; enforcement is still earned by hand
+    (schedule_versions.habit_enforceable)."""
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_OPPORTUNITIES", 2)
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_LOWER", 0.0)
+
 HEAD = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 OWNER = {"id": 1, "username": "erik", "role": "owner", "restaurant_id": None}
 VIEW_AS = {"id": 1, "username": "erik", "role": "owner", "acting_admin_id": 9, "acting_admin": "will"}
@@ -391,7 +403,10 @@ def test_a_standing_row_carries_its_evidence_and_a_confidence():
     _week(rid, mon, _crew(mon, WITHOUT_BOB), _crew(mon, WITHOUT_BOB))      # kept: an unedited week is a keep
     sv.refresh_standing_patterns(rid)
     row = next(s for s in sv.standing_patterns(rid) if s["kind"] == "moved_off")
-    assert row["opportunities"] == 3 and row["hits"] == 3 and 0 < row["confidence"] < 1
+    # A kept week is used (times_applied) but is not evidence: only the
+    # manager's hand counts (re-audit 10/11/26 LEARNING-9).
+    assert row["opportunities"] == 2 and row["hits"] == 2 and 0 < row["confidence"] < 1
+    assert row["times_applied"] >= 1
     assert row["last_hand_iso"] == (_monday(2) + timedelta(days=0)).isoformat()
 
 
@@ -956,7 +971,7 @@ def test_a_big_edit_in_the_first_weeks_asks_why(observed):
     assert _save(rid, hid, _crew(mon, WITHOUT_BOB) + [_row(mon, "Zed")])["why_questions"][0]["kind"] == "headcount_add"
 
 
-def test_no_why_after_the_first_four_weeks():
+def test_the_why_is_asked_on_the_first_change_after_the_first_four_weeks_too():
     rid = _rid()
     for w in (5, 4, 3, 2):
         mon = _monday(w)
@@ -964,7 +979,10 @@ def test_no_why_after_the_first_four_weeks():
     mon = _monday(-1)
     hid = _hist(rid, mon, _crew(mon, EVERYONE))
     _v(rid, hid, "generated", _crew(mon, EVERYONE), by="Cavnar AI", auth="system")
-    assert _save(rid, hid, _crew(mon, WITHOUT_BOB))["why_questions"] == []
+    # Asked from the first occurrence at any age (re-audit 10/11/26
+    # LEARNING-10): it used to wait for a repeat past the first four weeks.
+    q = _save(rid, hid, _crew(mon, WITHOUT_BOB))["why_questions"]
+    assert len(q) == 1 and q[0]["kind"] == "moved_off" and q[0]["repeat"] == 0
 
 
 def test_always_makes_a_standing_pattern_now_with_the_owners_authority(observed):
@@ -1054,7 +1072,9 @@ def _predict_history(rid, weeks):
 
 def test_the_predictor_steers_only_at_its_backtest_hit_rate():
     rid = _rid()
-    _predict_history(rid, 6)
+    # Seven drafts: the rolling-origin backtest (re-audit 10/11/26
+    # LEARNING-20) predicts weeks 4-7 from the weeks before each.
+    _predict_history(rid, 7)
     mon = _monday(-1)
     rows = [_row(mon + timedelta(days=d), n) for n in ("Ana", "Ben") for d in range(5)] + \
         [_row(mon + timedelta(days=5), "Zed")]
@@ -1066,7 +1086,7 @@ def test_the_predictor_steers_only_at_its_backtest_hit_rate():
     review = sl.likely_to_change(rid, rows)
     assert review["ready"] and review["rows"][0]["employee"] == "Zed" and "were right" in review["note"]
     # A manager who changes Zed's rows about half the time: the predictor
-    # flags them, but its own backtest is right only 38% of the time — shown,
+    # flags them, but its own rolling-origin backtest is right only 25% of the time — shown,
     # never steering.
     import random
     rng = random.Random(5)
@@ -1083,7 +1103,7 @@ def test_the_predictor_steers_only_at_its_backtest_hit_rate():
     bt = sl.edit_prediction_backtest(weeks)
     assert bt["weeks"] >= sl.PREDICT_MIN_BACKTEST_WEEKS and bt["flagged"] and bt["hit_rate"] < 0.6
     weak = sl.likely_edit_signals(rid, rows, weeks=weeks)
-    assert weak["ready"] is False and weak["flags"] == [] and "right 8 of 21 times" in weak["reason"]
+    assert weak["ready"] is False and weak["flags"] == [] and "right 2 of 8 times over 5 held-out drafts" in weak["reason"]
 
 
 def test_the_publish_check_carries_likely_to_change(monkeypatch):

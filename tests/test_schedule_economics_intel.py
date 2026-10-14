@@ -337,7 +337,9 @@ def test_fairness_reads_the_ledger_when_this_week_adds_to_a_pattern():
 def test_behaviour_preferences_need_two_of_the_same(db_path, rid):
     hid = _publish(db_path, rid, WEEK[0], WEEK[6], HEADER + f"{WEEK[6]},Sunday,Ana,Server,4:00pm,10:00pm,6.0,\n")
     conn = get_conn(db_path)
-    for d in ("2026-09-06", "2026-09-13"):
+    # Three drops: an avoid binds the solver only at AVOID_MIN_EVENTS (re-audit
+    # 10/11/26 LEARNING-22 — two of three was a learned "avoid").
+    for d in ("2026-09-06", "2026-09-13", "2026-09-20"):
         conn.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, status, replacement_name) "
                      "VALUES (?,?,?,?,?,?,?)", (rid, hid, "Ana", d, "4:00pm", "covered", "Bob"))
     conn.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, status) "

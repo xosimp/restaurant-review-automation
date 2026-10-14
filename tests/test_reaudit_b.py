@@ -744,6 +744,12 @@ def test_b19_the_env_and_restaurant_pins_beat_a_retired_promotion(db, monkeypatc
     key = sx.EXPERIMENTS[0]["key"]
     rid = _rid(db)
     readout = {"experiments": [{"key": key, "verdict": {"call": "solver", "state": "winner", "text": "x"}}]}
+    # Promotion needs the same call on consecutive stored weekly verdicts
+    # (blind re-audit 10/11/26 LEARNING-15).
+    assert not sx.promote(key, "solver", promoted_by="will", db_path=db, _readout=readout)["ok"]
+    for wk in ("2026-W38", "2026-W39", "2026-W40")[-sx.CONFIRM_SNAPSHOTS:]:
+        _x(db, "INSERT INTO schedule_experiment_verdicts (week, experiment, state, call, text, method, arms_json) "
+               "VALUES (?,?,?,?,?,?,?)", (wk, key, "winner", "solver", "x", sx.VERDICT_METHOD, "[]"))
     assert sx.promote(key, "solver", promoted_by="will", db_path=db, _readout=readout)["ok"]
     monkeypatch.setattr(sx, "EXPERIMENTS", tuple(dict(e, active=False) for e in sx.EXPERIMENTS))
     assert sx.arms_for(rid, "2026-10-05", db_path=db)[0]["arm"] == "solver"

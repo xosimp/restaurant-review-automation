@@ -136,6 +136,25 @@ EXPERIMENTS = (
      "until_powered": "memory_on",
      "arms": ({"key": "memory_off", "label": "Learned memory off", "weight": 1, "flags": {"learned": False}},
               {"key": "memory_on", "label": "Learned memory on", "weight": 3, "flags": {"learned": True}})},
+    # Whether LEARNING AS A WHOLE makes weeks better (blind re-audit
+    # 10/11/26 LEARNING-14: learning_v1 and the ablation switch off only the
+    # learned memory). A small within-restaurant switchback: one week in
+    # eight with EVERY learned input off (learning_stats.learning_off — the
+    # prompt's learned lines, learned headcount, measured staffing moves,
+    # driver standards, promoted weights, reliability, learned preferences,
+    # retention, the edit predictor and the memory), judged on the outcome
+    # primaries. Until it can conclude every week keeps learning on (pinned,
+    # not counted).
+    {"key": "learning_v2",
+     "active": True,
+     "started": "2026-10-12",
+     "design": "switchback",
+     "question": "Do the learners, all of them together, make weeks better than drafting with nothing learned? "
+                 "(control: learning on, as every week runs today; the treatment switches every learned input off)",
+     "control": "learning_on",
+     "until_powered": "learning_on",
+     "arms": ({"key": "learning_off", "label": "Every learned input off", "weight": 1, "flags": {"learning": False}},
+              {"key": "learning_on", "label": "Learning on", "weight": 7, "flags": {"learning": True}})},
     # Where the draft comes from (scheduler audit 10/10/26 AI-1, AI-8,
     # AI-11; cross-workstream contract #7 — schedule_fallback): the model's
     # week, the last published week carried forward and repaired, or the
@@ -166,7 +185,7 @@ EXPERIMENTS = (
                "flags": {"draft_source": "solver", "critic": True}})},
 )
 # What a week gets from a flag no active experiment sets.
-DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model"}
+DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model", "learning": True}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
 
@@ -180,7 +199,19 @@ POWER_WINDOW_DAYS = 56
 MAX_WEEKS_PER_RESTAURANT = 8
 # v2 (schedule audit 10/10/26 LEARNING-25): judged on the primaries — the
 # Draft Rework Rate and the week's outcomes — not on acceptance.
-VERDICT_METHOD = "cluster_robust_outcomes_v2"
+VERDICT_METHOD = "cluster_robust_outcomes_v3"
+# v3 (blind re-audit 10/11/26 LEARNING-15): "better on any of six primaries
+# at 90%, worse on none", re-read every week with a promote button, called a
+# winner in 39-42% of null readouts and in every null run peeked weekly.
+# Now an improvement must survive Holm's step-down at FAMILY_ALPHA over
+# every (arm, primary) tested, each p-value ALWAYS-VALID (the mixture SPRT,
+# learning_stats.always_valid_p, tau = the primary's MEANINGFUL difference)
+# so the weekly re-reading does not inflate it, and promotion needs the same
+# call on CONFIRM_SNAPSHOTS consecutive stored weekly verdicts as well as
+# today's readout. "Worse" stays the plain 90% interval: anything worse
+# blocks a call.
+FAMILY_ALPHA = 0.05
+CONFIRM_SNAPSHOTS = 3
 Z90 = 1.645
 # Bounds on the readout, which runs on an admin request.
 READOUT_MAX_RESTAURANTS = 500
@@ -189,7 +220,10 @@ READOUT_WEEKS = 52
 RULE = (f"A winner is called only when every arm has at least {MIN_WEEKS_PER_ARM} published weeks from at least "
         f"{MIN_RESTAURANTS_PER_ARM} restaurants with a rework rate read, and on the primaries — the edits per 100 "
         "drafted rows, issues, labor %, labor against the hourly target, minutes with no manager and uncovered "
-        "no-shows — the leader is better on at least one at 90% and worse on none; acceptance is shown, never "
+        "no-shows — the leader is better on at least one past a Holm step-down at "
+        f"{int(FAMILY_ALPHA * 100)}% over every arm and primary, each read with an always-valid (sequential) "
+        "p-value so a weekly re-read does not inflate it, and worse on none at 90%; it is promoted only after "
+        f"{CONFIRM_SNAPSHOTS} consecutive weekly verdicts made the same call; acceptance is shown, never "
         "decisive. Each arm also says the smallest difference its sample can detect and the weeks it would take to "
         "see one worth seeing. Intervals are clustered by restaurant, "
         f"each restaurant counts at most {MAX_WEEKS_PER_RESTAURANT} weeks per arm, demo and test accounts are "
@@ -504,6 +538,12 @@ def promote(experiment_key, arm, promoted_by=None, note=None, db_path=DB_PATH, _
     if verdict.get("state") != "winner" or verdict.get("call") != arm:
         return {"ok": False, "error": "Only the arm the readout calls the winner can be promoted "
                                       f"(now: {verdict.get('text') or 'no verdict'})."}
+    # The same call on CONFIRM_SNAPSHOTS consecutive stored weekly verdicts
+    # (LEARNING-15): one readout that happens to say "winner" is not enough.
+    held = confirmed_weeks(experiment_key, arm, db_path=db_path)
+    if held < CONFIRM_SNAPSHOTS:
+        return {"ok": False, "error": (f"The readout has called {arm} on {held} consecutive weekly verdict"
+                                       f"{'s' if held != 1 else ''}; promotion needs {CONFIRM_SNAPSHOTS}.")}
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -516,6 +556,30 @@ def promote(experiment_key, arm, promoted_by=None, note=None, db_path=DB_PATH, _
     finally:
         conn.close()
     return {"ok": True, "experiment": exp["key"], "arm": arm, "promotion_id": pid}
+
+
+def confirmed_weeks(experiment_key, arm, db_path=DB_PATH) -> int:
+    """How many consecutive ISO weeks, newest back, the stored weekly
+    verdict (record_verdicts, VERDICT_METHOD) called `arm` the winner."""
+    import datetime as _dt
+    try:
+        rows = verdicts(experiment_key, db_path=db_path, limit=12)
+    except Exception:
+        return 0
+    n, prev = 0, None
+    for v in rows:
+        try:
+            y, w = str(v["week"]).split("-W")
+            monday = _dt.date.fromisocalendar(int(y), int(w), 1)
+        except (TypeError, ValueError, KeyError):
+            break
+        if prev is not None and (prev - monday).days != 7:
+            break
+        if v.get("state") != "winner" or v.get("call") != arm or v.get("method") != VERDICT_METHOD:
+            break
+        n += 1
+        prev = monday
+    return n
 
 
 def revert(experiment_key, reverted_by=None, db_path=DB_PATH) -> dict:
@@ -725,9 +789,11 @@ def _scored(db_path, history_ids) -> dict:
 def verdict(exp, arms: list) -> dict:
     """Whether to call a winner, by RULE: on the PRIMARIES (the rework rate
     and the week's outcomes), never on acceptance alone. An arm beats the
-    control when some primary is better at 90% (clustered) and none is
-    worse; one better on some and worse on another is a conflict. `arms`
-    are readout rows."""
+    control when some primary is better past the Holm step-down over every
+    (arm, primary) at FAMILY_ALPHA on always-valid p-values (LEARNING-15)
+    and none is worse at 90% (clustered); one better on some and worse on
+    another is a conflict. The control is called only when every other arm
+    is worse. `arms` are readout rows."""
     control = next((a for a in arms if a["arm"] == exp["control"]), None)
 
     def n_of(a):
@@ -738,19 +804,37 @@ def verdict(exp, arms: list) -> dict:
                          f"{a['restaurants']}/{MIN_RESTAURANTS_PER_ARM} restaurants" for a in arms)
         return {"call": None, "state": "insufficient",
                 "text": f"No call: not enough published weeks yet ({need})."}
+    import learning_stats as _ls
+    # Every difference tested, both ways, one family (LEARNING-15).
+    family = {}
+    for a in arms:
+        if a is control:
+            continue
+        for key, _label in PRIMARIES:
+            d = (a.get("vs_control") or {}).get(key)
+            if d and d.get("diff") is not None and d.get("se"):
+                family[(a["arm"], key)] = _ls.always_valid_p(d["diff"], d["se"], MEANINGFUL.get(key) or 1.0)
+    survivors = _ls.holm(family, FAMILY_ALPHA) if family else set()
     beats, lost, conflicts = [], [], []
     for a in arms:
         if a is control:
             continue
-        better, worse = [], []
+        better, worse, better_any, worse_any = [], [], [], []
         for key, label in PRIMARIES:
             sign = _excludes_zero((a.get("vs_control") or {}).get(key))
+            sure = (a["arm"], key) in survivors
             if sign < 0:
-                better.append(label)
+                better_any.append(label)
+                if sure:
+                    better.append(label)
             elif sign > 0:
-                worse.append(label)
-        if better and worse:
-            conflicts.append(f"{a['label']} has fewer {' and '.join(better)} but more {' and '.join(worse)}")
+                worse_any.append(label)
+                if sure:
+                    worse.append(label)
+        # A call needs a sure difference one way and nothing at a plain 90%
+        # the other way (anything worse blocks a winner).
+        if (better and worse_any) or (worse and better_any):
+            conflicts.append(f"{a['label']} has fewer {' and '.join(better_any)} but more {' and '.join(worse_any)}")
         elif better:
             beats.append((a, better))
         elif worse:
@@ -760,14 +844,15 @@ def verdict(exp, arms: list) -> dict:
     if beats:
         best, why = min(beats, key=lambda t: (t[0].get("drr") or {}).get("mean") or 0)
         return {"call": best["arm"], "state": "winner",
-                "text": f"{best['label']} leads: fewer {' and '.join(why)} at 90%, and no outcome worse."}
+                "text": f"{best['label']} leads: fewer {' and '.join(why)} (Holm-adjusted, always-valid), and no "
+                        "outcome worse."}
     if lost and len(lost) == len(arms) - 1:
         why = sorted({w for _a, ws in lost for w in ws})
         return {"call": control["arm"], "state": "winner",
                 "text": f"{control['label']} leads: the other arm{'s have' if len(lost) > 1 else ' has'} more "
-                        f"{' and '.join(why)} at 90%."}
+                        f"{' and '.join(why)} (Holm-adjusted, always-valid)."}
     return {"call": None, "state": "no_difference",
-            "text": "No detectable difference in the rework or the outcomes at 90%."}
+            "text": "No sure difference in the rework or the outcomes (Holm-adjusted, always-valid)."}
 
 
 def _excluded(db_path):

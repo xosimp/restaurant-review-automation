@@ -387,6 +387,70 @@ def restaurant_split(restaurant):
     return split_minutes(getattr(restaurant, "daypart_boundary", None)) if restaurant is not None else None
 
 
+# The restaurant whose boundary is in force (restaurant_scope), so a learner
+# entered from inside the generation's own scope, or twice over, reads the
+# restaurant once (schedule re-audit 10/11/26 ARCH-11).
+_SCOPE_RID = contextvars.ContextVar("schedule_daypart_rid", default=None)
+
+
+def split_for(restaurant_id, db_path=None):
+    """restaurants.daypart_boundary of one restaurant as minutes, or None
+    (3:00pm). The one read of it the learners and the generation share; the
+    lazy models import is this L0 module's single deliberate upward call
+    (ARCHITECTURE_MANIFEST §3: function-scope only). Never raises."""
+    if not restaurant_id:
+        return None
+    try:
+        import models as _models
+        if db_path and db_path != _models.DB_PATH:
+            r = _models.get_restaurant(restaurant_id, db_path)
+        else:
+            r = _models.get_restaurant(restaurant_id)
+        return restaurant_split(r)
+    except Exception:
+        return None
+
+
+@contextmanager
+def restaurant_scope(restaurant_id, db_path=None):
+    """daypart_scope for one restaurant's own boundary (schedule re-audit
+    10/11/26 ARCH-11): the nightly learners — outcomes, the memory, the
+    standing patterns, the edit learners, the attendance and the people
+    passes — used to read every daypart on the 3pm default while the
+    generation read the restaurant's, so a 2:30pm start was filed under
+    "morning" by the learners and asked for as "night" by the generation.
+    Entered by every per-restaurant job and by the learners' own entry
+    points (`scoped`); a no-op inside the same restaurant's scope."""
+    if restaurant_id and _SCOPE_RID.get() == restaurant_id:
+        yield daypart_split()
+        return
+    split = split_for(restaurant_id, db_path=db_path)
+    token_rid = _SCOPE_RID.set(restaurant_id or None)
+    try:
+        with daypart_scope(split) as cut:
+            yield cut
+    finally:
+        _SCOPE_RID.reset(token_rid)
+
+
+def scoped(fn):
+    """Decorator: run `fn(restaurant_id, ..., db_path=...)` inside
+    restaurant_scope of its restaurant — the first positional argument, or
+    the `restaurant_id` keyword; `db_path` read from the keyword when given.
+    A learner called from any job, route or test files its dayparts on the
+    restaurant's own boundary (ARCH-11)."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        rid = kwargs.get("restaurant_id", args[0] if args else None)
+        if not isinstance(rid, int) or isinstance(rid, bool):
+            return fn(*args, **kwargs)
+        with restaurant_scope(rid, db_path=kwargs.get("db_path")):
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 def daypart_at(minute, split=None) -> str:
     """The daypart a moment on the business timeline falls in: the small
     hours (1440 on) are the night's, before the boundary the morning's."""

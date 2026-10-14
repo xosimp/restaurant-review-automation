@@ -144,13 +144,18 @@ def test_two_denied_sunday_night_drops_do_not_become_an_avoid(db):
     assert "Ana" not in si.behaviour_preferences(rid)
 
 
-def test_two_approved_sunday_night_drops_are_an_avoid_and_two_claims_a_preference(db):
+def test_three_approved_sunday_night_drops_are_an_avoid_and_two_claims_a_preference(db):
     rid = _restaurant(db)
     _request(db, rid, "Ana", "2026-09-06", "5:00pm", "open")
     _request(db, rid, "Ana", "2026-09-13", "5:00pm", "covered", replacement="Ben")
     _request(db, rid, "Cy", "2026-09-20", "5:00pm", "covered", replacement="Ben")
+    # Two drops are no longer an avoid (re-audit 10/11/26 LEARNING-22:
+    # AVOID_MIN_EVENTS); a third is.
+    assert "Sunday night" not in (si.behaviour_preferences(rid).get("Ana") or {}).get("avoids", [])
+    _request(db, rid, "Ana", "2026-09-27", "5:00pm", "open")
     prefs = si.behaviour_preferences(rid)
     assert prefs["Ana"]["avoids"] == ["Sunday night"]
+    assert "dropped 3 of the 3 Sunday dinner shifts" in prefs["Ana"]["evidence"]["Sunday night"]["said"]
     # Schedule audit 10/10/26 LEARNING-15: picking up the only open shifts
     # there were says Ben wants hours, not Sunday nights (this test used to
     # expect "prefers Sunday night" — the flaw itself).
@@ -172,7 +177,10 @@ def test_the_outcomes_job_keeps_a_cursor_and_resumes_after_it(db, monkeypatch):
     conn.close()
     seen.clear()
     strategy_jobs.run_schedule_outcomes()
-    assert seen and seen[0] == rids[1]
+    # The pass resumes after the cursor; it runs OUTCOMES_WORKERS at once, so
+    # the two after it start together in either order (each now reads its
+    # restaurant's daypart boundary first — re-audit 10/11/26 ARCH-11).
+    assert seen and set(seen[:2]) == {rids[1], rids[2]}
 
 
 def test_the_outcomes_job_only_visits_labor_restaurants(db, monkeypatch):

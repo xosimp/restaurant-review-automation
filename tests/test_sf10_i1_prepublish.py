@@ -79,9 +79,13 @@ def test_the_review_answers_every_section_of_the_contract(db, monkeypatch, captu
     for k in ("verdict", "must_fix", "decide", "fyi", "numbers", "quality", "changed", "fragile", "why", "sure",
               "send", "counts", "narrative", "likely_to_change", "checked_at", "version"):
         assert k in body, k
-    assert set(body["verdict"]) == {"tone", "sentence", "subline"}
+    # Additive since the re-audit (10/11/26 contract #8): worth_a_look on the
+    # verdict; whose reasons and which engine drafted, on why.
+    assert set(body["verdict"]) == {"tone", "sentence", "subline", "worth_a_look"}
     assert set(body["changed"]) == {"vs_last_week", "vs_usual", "vs_last_draft", "cavnar_changes"}
-    assert set(body["why"]) == {"assignments", "left_off"}
+    assert set(body["why"]) == {"assignments", "left_off", "engine", "draft"}
+    for k in ("must_fix_groups", "decide_groups", "suggestions", "always_overridden"):
+        assert k in body, k
     assert body["counts"]["warnings"] == body["counts"]["must_fix"] + body["counts"]["decide"]
     assert "Week of 10/12/26" in body["verdict"]["subline"]
     # Ben has no shift, with a reason, never a bare name (TRUST-13).
@@ -108,7 +112,9 @@ def test_a_manager_gap_is_red_must_fix_and_named_in_the_verdict(db, monkeypatch,
     gaps = [m for m in out["must_fix"] if m["kind"] == "rule:no_manager"]
     assert gaps, out["must_fix"]
     assert gaps[0]["override"]["needs"] == "covered_by"
-    assert "Ana" in gaps[0]["override"]["candidates"]
+    # Only a manager or owner on the roster who can work that day (re-audit
+    # 10/11/26 TRUST-5) — never anybody who happens to be on the floor.
+    assert set(gaps[0]["override"]["candidates"]) == {"Erik", "Gabe"}
     assert out["verdict"]["tone"] == "red" and out["verdict"]["sentence"].startswith("Not ready:")
     # Ranked by severity, never by date: the manager rule leads.
     assert out["must_fix"][0]["kind"] in ("rule:no_manager", "roster:no_manager_roster")
@@ -132,8 +138,12 @@ def _review(blockers):
     return {"blockers": [dict(b) for b in blockers]}
 
 
-GAP = {"key": "rule:no_manager:2026-10-13:960", "text": "gap", "tier": sp.MUST_FIX}
-MINOR = {"key": "rule:minor_late:maya:2026-10-16:5:00pm", "text": "minor", "tier": sp.MUST_FIX}
+GAP = {"key": "rule:no_manager:2026-10-13:960", "text": "gap", "tier": sp.MUST_FIX, "cls": "manager",
+       "cover_candidates": ["Erik"]}
+MINOR = {"key": "rule:minor_late:maya:2026-10-16:5:00pm", "text": "minor", "tier": sp.MUST_FIX, "cls": "law",
+         "law": True, "fixable": True}
+AWAY = {"key": "rule:unavailable_day:ana:2026-10-16:5:00pm", "text": "unavailable", "tier": sp.MUST_FIX,
+        "cls": "person"}
 OVER = {"key": "hours_over", "text": "over", "tier": sp.DECIDE}
 
 
@@ -145,12 +155,22 @@ def test_a_bare_true_or_a_key_list_never_covers_a_must_fix():
 
 
 def test_a_must_fix_needs_its_own_reason_and_a_gap_its_floor_runner():
-    reasons = {MINOR["key"]: "Her parent signed the permit", GAP["key"]: "I'll cover it"}
-    acked, unacked = sp._ack_gate(_review([GAP, MINOR]), [], reasons)
-    assert acked == [MINOR["key"]] and [b["key"] for b in unacked] == [GAP["key"]]
+    # Re-audit 10/11/26 TRUST-4/5: the law (a minor's hours) is never typed
+    # past; a gap is covered only by a manager the gate offers (never
+    # "Mickey Mouse"); a reason is a few words, never "x".
+    reasons = {MINOR["key"]: "Her parent signed the permit", GAP["key"]: "I'll cover it", AWAY["key"]: "x"}
+    acked, unacked = sp._ack_gate(_review([GAP, MINOR, AWAY]), [], reasons)
+    assert acked == [] and {b["key"] for b in unacked} == {GAP["key"], MINOR["key"], AWAY["key"]}
+    assert all(b.get("override_problem") for b in unacked)
+    reasons[GAP["key"]] = {"reason": "", "covered_by": "Mickey Mouse"}
+    reasons[AWAY["key"]] = "She swapped her day off with Ben"
+    acked, unacked = sp._ack_gate(_review([GAP, MINOR, AWAY]), [], reasons)
+    gap = [b for b in unacked if b["key"] == GAP["key"]][0]
+    assert acked == [AWAY["key"]] and "isn't a manager" in gap["override_problem"]
     reasons[GAP["key"]] = {"reason": "", "covered_by": "Erik"}
-    acked, unacked = sp._ack_gate(_review([GAP, MINOR]), [], reasons)
-    assert set(acked) == {GAP["key"], MINOR["key"]} and not unacked
+    acked, unacked = sp._ack_gate(_review([GAP, MINOR, AWAY]), [], reasons)
+    assert set(acked) == {GAP["key"], AWAY["key"]} and [b["key"] for b in unacked] == [MINOR["key"]]
+    assert not sp.override_policy(MINOR)["allowed"] and sp.override_policy(GAP)["needs"] == "covered_by"
 
 
 def test_the_request_overrides_carry_who_runs_the_floor():
@@ -419,19 +439,22 @@ def test_no_confidence_is_stated_before_anything_was_measured(db):
     assert out["confidence"]["pct"] is None and out["kept_share"] is None
 
 
-def test_the_confidence_averages_the_measured_parts_and_names_each(db, monkeypatch):
+def test_drafts_kept_unchanged_and_the_forecast_are_context_never_the_confidence(db, monkeypatch):
+    # Re-audit 10/11/26 TRUST-6: the old figure averaged the share of drafts
+    # sent unchanged (it rose when owners stopped reading), the forecast's
+    # error and the scorer's completeness — one unedited week read 100%.
+    # Those stay as lines; the % is the K1 engine over how published weeks
+    # RAN, "—" with none measured.
     import schedule_versions as sv
     rid = _rid(db)
     monkeypatch.setattr(sv, "acceptance", lambda r, weeks=8: {
-        "weeks": [{"unchanged_share": 0.9}, {"unchanged_share": 0.92}, {"unchanged_share": 0.88}],
-        "mean_unchanged_share": 0.9, "trend": {"direction": "rising", "older": 0.88, "newer": 0.92, "delta": 0.04}})
+        "weeks": [{"unchanged_share": 1.0}], "mean_unchanged_share": 1.0, "trend": None})
     monkeypatch.setattr(prepublish, "forecast_record", lambda r: {"weeks": 10, "within_pct": 8, "weeks_within": 8,
                                                                   "mean_error_pct": 6.0, "last": None})
     out = prepublish._sure(rid, {"score": 80, "confidence": {"score": 96}}, None, {})
-    assert out["kept_share"] == 0.9 and out["kept_trend"]["direction"] == "rising"
-    assert out["confidence"]["pct"] == round((90 + 94 + 96) / 3)
-    assert len(out["confidence"]["basis"]) == 3
-    assert out["lines"][0].startswith("Your last 3 drafts went out with 90% of shifts unchanged (88% → 92%, rising)")
+    assert out["kept_share"] == 1.0
+    assert out["confidence"]["pct"] is None and out["confidence"]["weeks_measured"] == 0
+    assert any(l.startswith("Your last 1 draft went out with 100% of shifts unchanged") for l in out["lines"])
 
 
 # ── TRUST-16: the stages the job reached ───────────────────────────────────

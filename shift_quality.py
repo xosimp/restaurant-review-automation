@@ -6210,7 +6210,11 @@ class _SwapIndex:
                     # rest_premium — schedule audit 10/10/26 MARKET-3).
                     later = ps if ps >= e else s
                     w = self.rest_waived.get(low)
-                    if w and (w.get("standing") or later.date().isoformat() in (w.get("dates") or ())):
+                    # A waiver binds to the shift it was given for (schedule
+                    # re-audit 10/11/26 BUGSLIFE-7): its date and start.
+                    if w and (w.get("standing") or later.date().isoformat() in (w.get("dates") or ())
+                              or (later.hour * 60 + later.minute)
+                              in ((w.get("shifts") or {}).get(later.date().isoformat()) or ())):
                         continue
                     return False
         return True

@@ -1030,9 +1030,15 @@ def plan_for_generation(restaurant_id, c, week_dates, shifts=None, roster_roles=
         rules = _ded.rules_of(rest)
         if rules:
             text = "\n".join(t for t in (getattr(rest, "sched_notes", None) or "", waive_text or "") if t)
+            # Only a waiver the owner confirmed lets the position off (blind
+            # re-audit 10/11/26 BUGSGEN-4); a sentence read as one but not
+            # confirmed leaves it staffed, and the review says so.
+            waived, pending = _ded.split_waivers(
+                text, rules, _ded.confirmed_waiver_keys(restaurant_id, week_dates, db_path=db_path))
             dplan = _ded.plan(c, sorted(set(dates)) if dates else week_dates, rules, history=history,
                               roster_roles=roster_roles, prior_rows=list(prior_rows or []) + list(plan.get("rows") or []),
-                              waived=_ded.waivers(text, rules))
+                              waived=waived)
+            dplan["unconfirmed_waivers"] = pending
             plan["dedicated"] = dplan
             plan["rows"] = list(plan.get("rows") or []) + dplan["rows"]
     except Exception as exc:

@@ -15,7 +15,16 @@ def overrides_for(restaurant_id, history_id, covered_by="Owner", reason="Test: s
     takes."""
     import schedule_publish as sp
     review = sp.publish_review(restaurant_id, history_id)
-    return {b["key"]: {"reason": reason, "covered_by": covered_by} for b in review["blockers"]}
+    out = {}
+    for b in review["blockers"]:
+        # Since the re-audit (10/11/26 TRUST-5) a manager gap is covered by a
+        # manager or owner on the roster who can work that day — the first
+        # the gate offers — or by the account owner sending it ("Owner").
+        o = {"reason": reason, "covered_by": (b.get("cover_candidates") or [covered_by])[0]}
+        if b.get("law") and b.get("fixable") is False:
+            o["legal_ack"] = True          # the posting-notice law (TRUST-8)
+        out[b["key"]] = o
+    return out
 
 
 def override_list(restaurant_id, history_id, covered_by="Owner", reason="Test: sent knowingly") -> list:

@@ -320,12 +320,16 @@ def summary(restaurant_id=None, days=90, db_path=None) -> dict:
             "by_stage": stages}
 
 
-def context_for(generation_id=None, history_id=None, db_path=None):
+def context_for(generation_id=None, history_id=None, db_path=None, kind=None):
     """The newest stored context blob of a generation (or of a history row's
-    generation), for schedule_eval.freeze."""
+    generation — of its pass of `kind`, when named: the one the job saved),
+    for schedule_eval.freeze and the queued learning ablation."""
     conn = get_conn(db_path)
     try:
-        if generation_id:
+        if kind and history_id:
+            r = conn.execute("SELECT context_z FROM schedule_generation_metrics WHERE history_id=? AND kind=? "
+                             "AND context_z IS NOT NULL ORDER BY id DESC LIMIT 1", (history_id, kind)).fetchone()
+        elif generation_id:
             r = conn.execute("SELECT context_z FROM schedule_generation_metrics WHERE generation_id=? "
                              "AND context_z IS NOT NULL ORDER BY id DESC LIMIT 1", (generation_id,)).fetchone()
         else:
