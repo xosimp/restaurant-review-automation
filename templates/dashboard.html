@@ -27643,7 +27643,9 @@ function ssRenderSummary() {
   if (plab) {
     lp = plab.value;
     lv = {label: plab.label, grade: plab.grade, basis: plab.basis, target_pct: plab.target, target_basis: plab.target_basis,
-          text: plab.text, savings: lv ? lv.savings : null, recent_pct: lv ? lv.recent_pct : null, recent_days: lv ? lv.recent_days : null};
+          text: plab.text, pct: plab.value, recent_pct: lv ? lv.recent_pct : null, recent_days: lv ? lv.recent_days : null,
+          // The review's own comparison with last week's plan (TRUST-7).
+          vs_last_plan: pnum.vs_last_plan || (lv ? lv.vs_last_plan : null)};
     tgt = plab.target != null ? +plab.target : 0;
   }
   if (pnum && pnum.overtime) pc = {overtime_hours: pnum.overtime.priced ? pnum.overtime.hours : null, overtime_premium: pnum.overtime.premium};

@@ -1769,6 +1769,11 @@ def _soft_fail(what, exc, restaurant_id):
 # the review's one line about what the draft was made without (P-17). An
 # input not named here reads as its own name.
 _INPUT_WORDS = {
+    # The sales the crew was sized on, said beside Home's (ARCH-28), and how
+    # long the restaurant's people usually work a day (STRESS-14).
+    "forecast basis": "which sales forecast the week was sized on",
+    "shift length norms": "how long your people usually work a day",
+    "length_norms": "how long your people usually work a day",
     # The closing manager's assumed stay, said and priced (TRUST-21).
     "assumed stays": "the closing manager's assumed stay",
     # The owner's pinned shifts a regenerate keeps (TRUST-17), and the standby

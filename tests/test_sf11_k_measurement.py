@@ -459,5 +459,9 @@ def test_no_skill_earns_no_confidence(db, monkeypatch):
         "weeks": 8, "within_pct": 5, "weeks_within": 7, "mean_error_pct": 3.0, "skill": -0.4, "n_skill": 8,
         "beats_last_week": 1, "vs_last_week": 8, "last": None})
     out = prepublish._sure(rid, None, None, {})
-    assert out["confidence"]["pct"] == 0
-    assert "no better than a naive guess" in out["confidence"]["basis"][0]
+    # The week-level confidence reads how published weeks RAN (TRUST-6, T);
+    # the forecast's record is a line beside it, and says it is no better
+    # than a naive guess rather than its small misses.
+    assert out["forecast"]["skill"] == -0.4 and out["forecast"]["beats_last_week"] == 1
+    assert any("Beats last week's sales as a guess on 1 of the last 8 weeks" in x and "no range" in x
+               for x in out["lines"])
