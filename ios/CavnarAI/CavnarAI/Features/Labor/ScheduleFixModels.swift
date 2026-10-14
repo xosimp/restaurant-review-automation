@@ -1250,6 +1250,9 @@ struct ScheduleLaborView: Codable, Hashable {
     var recentDays: Int?
     var savings: Double?
     var text: String?
+    /// The server's one grade (schedule_economics.labor_grade): over /
+    /// under / no_target — both clients colour by it (TRUST-7, TRUST-22).
+    var grade: String?
 
     var isAllIn: Bool { basis == "all_in" }
 
@@ -1268,10 +1271,10 @@ struct ScheduleLaborView: Codable, Hashable {
         guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { return }
         basis = c.sfText(.basis); pct = c.sfDouble(.pct); targetPct = c.sfDouble(.targetPct)
         targetBasis = c.sfText(.targetBasis); recentPct = c.sfDouble(.recentPct); recentDays = c.sfInt(.recentDays)
-        savings = c.sfDouble(.savings); text = c.sfText(.text)
+        savings = c.sfDouble(.savings); text = c.sfText(.text); grade = c.sfText(.grade)
     }
     enum CodingKeys: String, CodingKey {
-        case basis, pct, savings, text
+        case basis, pct, savings, text, grade
         case targetPct = "target_pct"
         case targetBasis = "target_basis"
         case recentPct = "recent_pct"

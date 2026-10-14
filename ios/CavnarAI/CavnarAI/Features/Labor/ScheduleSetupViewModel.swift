@@ -2368,6 +2368,37 @@ final class ScheduleSetupViewModel {
     private struct DecideBody: Encodable {
         let decision: String
         let replacement: String?
+        /// Who runs the floor instead, when approving the drop leaves part
+        /// of the day with no manager (schedule re-audit 10/11/26
+        /// STRESS-16): the server refuses it without one (409 needs_cover).
+        var coveredBy: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case decision, replacement
+            case coveredBy = "covered_by"
+        }
+    }
+
+    /// A drop the server would not approve on a warning: approving it
+    /// leaves the floor with no manager, so it goes only with who runs the
+    /// floor instead (409 `needs_cover`, STRESS-16 — the owner's highest
+    /// rule). Nothing changed; the answer is asked here.
+    struct NeedsCover: Identifiable, Equatable {
+        let requestId: Int
+        let gap: String
+        var replacement: String? = nil
+        var id: Int { requestId }
+    }
+    var needsCover: NeedsCover?
+
+    private struct NeedsCoverBody: Decodable {
+        var needsCover: Bool? = nil
+        var managerGap: String? = nil
+        var error: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case error
+            case needsCover = "needs_cover"
+            case managerGap = "manager_gap"
+        }
     }
 
     private struct DecideResponse: Decodable {
@@ -2430,16 +2461,20 @@ final class ScheduleSetupViewModel {
     /// Approve or deny a hand-back. Naming a replacement on approve covers
     /// the shift outright; the server checks that person is legal for it
     /// and answers 400 with the reason when they are not.
-    func decideShiftRequest(_ id: Int, approve: Bool, replacement: String? = nil) async {
+    func decideShiftRequest(_ id: Int, approve: Bool, replacement: String? = nil, coveredBy: String? = nil) async {
         requestBusyId = id
         requestError = nil
         requestWarning = nil
         defer { requestBusyId = nil }
         do {
+            let who = coveredBy?.trimmingCharacters(in: .whitespacesAndNewlines)
             let r: DecideResponse = try await client.send(
                 "/mobile/api/labor/shift-requests/\(id)/decide", method: .post,
-                body: DecideBody(decision: approve ? "approve" : "deny", replacement: replacement))
+                body: DecideBody(decision: approve ? "approve" : "deny", replacement: replacement,
+                                 coveredBy: (who?.isEmpty ?? true) ? nil : who),
+                hapticOnError: false)
             if r.ok, let updated = r.request {
+                needsCover = nil
                 requestWarning = r.warning
                 if let i = shiftRequests.firstIndex(where: { $0.id == id }) { shiftRequests[i] = updated }
                 Haptic.success()
@@ -2448,7 +2483,17 @@ final class ScheduleSetupViewModel {
                 requestError = r.error ?? "Couldn't decide that."
             }
         } catch let error as APIClient.APIError {
-            requestError = error.message
+            if error.status == 409, let body = error.decodeBody(NeedsCoverBody.self), body.needsCover == true {
+                // Not a failure: nothing changed, and the drop goes only
+                // with who runs the floor instead (STRESS-16).
+                needsCover = NeedsCover(requestId: id,
+                                        gap: body.managerGap ?? body.error ?? "Approving this leaves no manager on the floor.",
+                                        replacement: replacement)
+                Haptic.warning()
+            } else {
+                Haptic.error()
+                requestError = error.message
+            }
         } catch {
             requestError = "Couldn't decide that."
         }

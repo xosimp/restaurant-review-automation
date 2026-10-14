@@ -1,77 +1,63 @@
 import SwiftUI
 
-/// What the generator is actually doing, while it does it.
+/// What the generator is actually doing, while it does it — only what the
+/// job REPORTED (schedule re-audit 10/11/26 TRUST-21).
 ///
-/// A spinner for minutes tells a restaurant owner that something is slow.
-/// These lines tell them something intelligent is happening, and every one
-/// of them names a real stage: the prompt genuinely carries availability,
-/// labor targets, operational scores and leadership rules, and the
-/// deterministic passes afterwards genuinely repair rows, check strength
-/// and score quality.
-///
-/// The timings are estimates, not progress. A week is several model calls
-/// and runs for minutes, so the step clock is a 75-second sketch stretched
-/// to the draft time measured here (`typical`, schedule_engine.
-/// typical_generation_seconds) — or three times over when nothing is
-/// measured yet — exactly as the web's scheduleTiming stretches it (iOS
-/// parity #15). It runs from when the job started, not from when this view
-/// appeared, so coming back to Labor mid-run picks up where it was. The one
-/// real measure is the days drafted (`progress`), shown under it; the server
-/// reports no percentage, and this never invents one.
+/// The steps are schedule-status's `progress.stages` (schedule_engine.
+/// GENERATION_STAGES, the field the web's Building steps read): a stage is
+/// ticked only once the job said it moved past it, and the live one is the
+/// stage it said it is in. Until the first report the sliding ember line
+/// stands in, with no step named — there used to be a 75-second timed
+/// script here that ticked "Weighing operational scores" for a team nobody
+/// had rated and stages the solver-first pipeline never runs. The one other
+/// real measure is the days drafted (`progress`), shown under it; the
+/// server reports no percentage, and this never invents one.
 struct ScheduleProgressSteps: View {
     @Environment(\.colorSchemeContrast) private var contrast
     /// Whether last year's same days are an input to this draft (the
-    /// labor payload's `last_year_available`, read tolerantly). A progress
-    /// line is a claim about the inputs, and most restaurants have no year
-    /// of history (NS1 #21).
+    /// labor payload's `last_year_available`): the inputs stage says so only
+    /// then (NS1 #21).
     var lastYearAvailable: Bool = false
-    /// When the job started (LaborViewModel.generationStartedAt).
-    var startedAt: Date? = nil
-    /// How long a full week usually takes here, measured; nil until two
-    /// have run.
-    var typical: GenerationTypical? = nil
+    /// The job's own report; nil (or no stages) before it sent one.
+    var progress: GenerationProgress? = nil
 
-    private var steps: [(text: String, after: Double)] { Self.steps(lastYearAvailable: lastYearAvailable) }
-
-    /// Each stage and roughly how long the one before it runs.
-    static func steps(lastYearAvailable: Bool) -> [(text: String, after: Double)] { [
-        (OwnerCopy.firstScheduleStep(lastYearAvailable: lastYearAvailable), 0),
-        ("Checking who's available", 7),
-        ("Balancing against your labor target", 15),
-        ("Weighing operational scores", 26),
-        ("Checking leadership requirements", 36),
-        ("Building the strongest team it can", 46),
-        ("Scoring every shift for quality", 62),
-    ] }
-
-    @State private var appeared = Date()
+    /// The inputs stage's words: last year's same days only when that input
+    /// exists; every other stage in the server's own words.
+    static func label(_ stage: GenerationProgress.Stage, lastYearAvailable: Bool) -> String {
+        stage.key == "inputs" ? OwnerCopy.firstScheduleStep(lastYearAvailable: lastYearAvailable) : stage.label
+    }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { timeline in
-            let elapsed = timeline.date.timeIntervalSince(startedAt ?? appeared)
-            let scale = GenerationCopy.stepScale(typical: typical)
-            let current = steps.lastIndex(where: { elapsed >= $0.after * scale }) ?? 0
+        let stages = progress?.stages ?? []
+        if let current = progress?.currentIndex {
             VStack(alignment: .leading, spacing: 7) {
-                ForEach(visible(around: current), id: \.self) { index in
-                    row(index: index, current: current)
+                ForEach(Self.window(count: stages.count, around: current), id: \.self) { index in
+                    row(stages[index], live: index == current)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(.easeOut(duration: 0.3), value: current)
+        } else {
+            // Nothing reported yet: the pulse, never a tick the job did not
+            // send (DESIGN_SYSTEM §10's loading line).
+            CavnarSkeletonBar(height: 3)
+                .frame(width: 180)
+                .accessibilityLabel("Starting the draft")
         }
     }
 
     /// A window rather than the whole list: the finished steps scroll away
     /// so the block stays the same height and the eye stays on the live one.
-    private func visible(around current: Int) -> [Int] {
+    static func window(count: Int, around current: Int) -> [Int] {
+        guard count > 0 else { return [] }
         let lower = max(0, current - 2)
-        let upper = min(steps.count - 1, current + 1)
-        return Array(lower...upper)
+        let upper = min(count - 1, current + 1)
+        return lower <= upper ? Array(lower...upper) : []
     }
 
-    private func row(index: Int, current: Int) -> some View {
-        let done = index < current
-        let live = index == current
+    private func row(_ stage: GenerationProgress.Stage, live: Bool) -> some View {
+        let done = stage.done && !live
+        let text = Self.label(stage, lastYearAvailable: lastYearAvailable)
         return HStack(spacing: 8) {
             ZStack {
                 if done {
@@ -86,14 +72,15 @@ struct ScheduleProgressSteps: View {
                 }
             }
             .frame(width: 12)
+            .accessibilityHidden(true)
 
             if live {
                 // The live step shimmers; the others are plain, so exactly
                 // one thing on screen is moving.
-                CavnarShimmerText(text: steps[index].text, color: .cavnarInk)
+                CavnarShimmerText(text: text, color: .cavnarInk)
                     .font(.cavnarBody(CavnarType.secondary, weight: 600))
             } else {
-                Text(steps[index].text)
+                Text(text)
                     .font(.cavnar(.secondary))
                     .foregroundStyle(done ? Color.cavnarInk3 : Color.cavnarInk3Muted(contrast))
             }
@@ -101,5 +88,7 @@ struct ScheduleProgressSteps: View {
         }
         .opacity(done ? 0.7 : 1)
         .transition(.opacity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text + (done ? ", done" : (live ? ", in progress" : "")))
     }
 }

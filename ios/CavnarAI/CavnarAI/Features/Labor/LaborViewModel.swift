@@ -937,6 +937,35 @@ struct ScheduleGate: Codable, Equatable {
     let ran: Bool
     let kept: String?
     let reason: String?
+    /// Why a gate the draft tripped did NOT run — "time", "capped",
+    /// "error", "past" (schedule re-audit 10/11/26 BUGSGEN-16): the payload
+    /// always carries a verdict, so a gate skipped or failed is said, never
+    /// read as one that found nothing. Nil when it ran (or an older server).
+    var why: String? = nil
+    /// What tripped it, in the gate's words, when it did not run.
+    var tripped: String? = nil
+
+    enum CodingKeys: String, CodingKey { case ran, kept, reason, why, tripped }
+
+    init(ran: Bool, kept: String? = nil, reason: String? = nil, why: String? = nil, tripped: String? = nil) {
+        self.ran = ran; self.kept = kept; self.reason = reason; self.why = why; self.tripped = tripped
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ran = c.sfBool(.ran) ?? false
+        kept = c.sfText(.kept)
+        reason = c.sfText(.reason)
+        why = c.sfText(.why)
+        tripped = c.sfText(.tripped)
+    }
+
+    /// The line to show: the gate's reason when it ran, or when it was owed
+    /// and skipped or failed (`why`) — the web's sq-gate rule.
+    var line: String? {
+        guard let reason, ran || why != nil else { return nil }
+        return reason
+    }
 }
 
 /// A rating stored under a name nobody on the roster has, with the
@@ -1814,11 +1843,55 @@ struct RuleViolation: Codable, Identifiable, Equatable {
 struct GenerationProgress: Codable, Equatable {
     let daysTotal: Int
     let daysDrafted: Int
+    /// The stages the job REPORTED reaching (schedule_engine.
+    /// GENERATION_STAGES — the same field the web's Building steps read):
+    /// the phone ticks only these, never a timed script (schedule re-audit
+    /// 10/11/26 TRUST-21). Empty from an older server, or before the first.
+    var stages: [Stage] = []
+
+    struct Stage: Codable, Equatable {
+        let key: String
+        let label: String
+        var done = false
+        var current = false
+
+        enum CodingKeys: String, CodingKey { case key, label, done, current }
+
+        init(key: String, label: String, done: Bool = false, current: Bool = false) {
+            self.key = key; self.label = label; self.done = done; self.current = current
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            guard let k = c.sfText(.key) else {
+                throw DecodingError.dataCorruptedError(forKey: .key, in: c, debugDescription: "A stage with no key")
+            }
+            key = k
+            label = c.sfText(.label) ?? k
+            done = c.sfBool(.done) ?? false
+            current = c.sfBool(.current) ?? false
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case daysTotal = "days_total"
         case daysDrafted = "days_drafted"
+        case stages
     }
+
+    init(daysTotal: Int, daysDrafted: Int, stages: [Stage] = []) {
+        self.daysTotal = daysTotal; self.daysDrafted = daysDrafted; self.stages = stages
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        daysTotal = c.sfInt(.daysTotal) ?? 0
+        daysDrafted = c.sfInt(.daysDrafted) ?? 0
+        stages = c.setupList(Stage.self, .stages)
+    }
+
+    /// The stage the job is in now, by index; nil before it reported one.
+    var currentIndex: Int? { stages.lastIndex(where: \.current) }
 
     /// "3 of 7 days drafted", or nil before the first day is finished.
     var line: String? {

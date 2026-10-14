@@ -98,8 +98,11 @@ struct ShiftQualityPanel: View {
                 if let optimizer = viewModel?.scheduleResult?.optimizerSummary, optimizer.hasContent {
                     optimizerBlock(optimizer)
                 }
-                if let reason = viewModel?.scheduleResult?.gate?.reason, viewModel?.scheduleResult?.gate?.ran == true {
-                    HomeMixedText.make(reason, size: CavnarType.caption, color: .cavnarInk2)
+                // The quality gate's verdict — and, when it was owed but
+                // skipped or failed, why (BUGSGEN-16), as the web says it.
+                if let gate = viewModel?.scheduleResult?.gate, let reason = gate.line {
+                    HomeMixedText.make(reason, size: CavnarType.caption,
+                                       color: gate.ran ? .cavnarInk2 : .cavnarAmber)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let dimensions = customerDimensions, !dimensions.isEmpty {

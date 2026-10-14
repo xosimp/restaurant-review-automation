@@ -273,9 +273,15 @@ def _review(restaurant_id, schedule_id, rows=None, user=None, today=None, can_pu
                                      [], "groups", rid)
         out["suggestions"] = [d for d in out["decide"] if not d.get("holds")]
         out["always_overridden"] = _safe(lambda: _always_overridden(rid, gate, c), [], "always overridden", rid)
+        # The week's hours split by pay, as the gate read them (E-7): the
+        # phone's "the week's hours" line reads it here, so the Send sheet
+        # runs the gate once (re-audit 10/11/26 TRUST-25), never the publish
+        # check beside the review.
+        out["hours"] = gate.get("hours")
     else:
         out.update(must_fix=[], decide=[], fyi=[], numbers=_empty_numbers(), quality=_empty_quality(),
-                   send=_empty_send(), must_fix_groups=[], decide_groups=[], suggestions=[], always_overridden=[])
+                   send=_empty_send(), must_fix_groups=[], decide_groups=[], suggestions=[], always_overridden=[],
+                   hours=None)
     out["changed"] = {"vs_last_week": [], "vs_usual": [], "vs_last_draft": [], "cavnar_changes": []}
     out["narrative"], out["fragile"] = [], []
     out["why"] = {"assignments": [], "left_off": left_off, "engine": None, "draft": None}
@@ -1154,7 +1160,7 @@ def _days_in_order(vs) -> list:
 def _empty_numbers() -> dict:
     return {"labor_pct": None, "cost": None, "overtime_hours": None,
             "overtime": {"hours": None, "premium": None, "priced": False, "text": "Priced once the week can be priced"},
-            "forecast_sales": None, "savings": None, "last_week": None}
+            "forecast_sales": None, "savings": None, "last_week": None, "labor_missing": None}
 
 
 def price_rows(rid, row, rows, c) -> tuple:
@@ -1258,6 +1264,8 @@ def _numbers(rid, row, rows, c, dates) -> dict:
     elif cost:
         out["cost"] = {"hourly": cost.get("total"), "salaried": None, "total": cost.get("total"),
                        "text": f"${cost.get('total') or 0:,.0f} hourly"}
+    if not out["labor_pct"]:
+        out["labor_missing"] = _safe(lambda: labor_missing(rid, cost, rev, dates), None, "labor missing", rid)
     if rec and rec.get("last") and rec["last"].get("projected") and rec["last"].get("actual"):
         p, a = float(rec["last"]["projected"]), float(rec["last"]["actual"])
         diff = (a - p) / p * 100 if p else 0
@@ -1265,6 +1273,61 @@ def _numbers(rid, row, rows, c, dates) -> dict:
                             "text": (f"The week ending {_mdy(rec['last']['period'])} we projected ${p:,.0f} in sales; "
                                      f"you ran ${a:,.0f} ({'+' if diff >= 0 else '−'}{abs(diff):.0f}%).")}
     return out
+
+
+LABOR_MISSING_ACTION = {"label": "Enter a weekly sales estimate", "action": "open",
+                        "payload": {"stage": "setup", "panel": "targets"}}
+
+
+def labor_missing(rid, cost, rev, dates) -> dict:
+    """Why the week has no labor % and the fix that would give it one
+    (schedule re-audit 10/11/26 TRUST-29: both clients said "generate a new
+    draft to see it" to an owner with no sales at all, where regenerating
+    cannot produce a forecast and loses their edits). {reason, text,
+    action?}: "not_priced" — the rows have no cost yet; "forecast_since" —
+    a forecast (or the owner's weekly sales estimate) exists now that the
+    draft was built without, so generating the week again does measure it;
+    "too_little_history" — some sales, fewer than the three complete weeks a
+    forecast needs; "no_sales" — nothing connected. The last two offer the
+    weekly sales estimate (the targets), the one fix that works today."""
+    import schedule_economics as _econ
+    from models import get_restaurant, weekly_revenue_target
+    if not cost:
+        return {"reason": "not_priced",
+                "text": "The week couldn't be priced yet — add pay rates in Team (or an hourly rate in your targets) "
+                        "to see labor as a share of sales."}
+    if rev:
+        return {"reason": "not_priced", "text": "Labor couldn't be worked out against this week's sales forecast."}
+    now = _econ.projected_weekly_revenue(rid, week_dates=dates or None) or {}
+    r = get_restaurant(rid)
+    est = float(weekly_revenue_target(r) or 0) if r is not None else 0.0
+    if now.get("value") or est > 0:
+        v = float(now.get("value") or est)
+        src = now.get("source") if now.get("value") else "your weekly sales estimate"
+        return {"reason": "forecast_since",
+                "text": (f"This draft was built before there was a sales forecast for the week — there is one now "
+                         f"(${v:,.0f}, from {src}). Generating the week again measures labor against it.")}
+    weeks = int(now.get("weeks") or 0)
+    if weeks > 0 or _has_sales(rid):
+        return {"reason": "too_little_history",
+                "text": (f"Only {weeks} complete {_plural(weeks, 'week')} of sales on file — a forecast needs three. "
+                         "Enter a weekly sales estimate in your targets until then, and labor shows against it."),
+                "action": dict(LABOR_MISSING_ACTION)}
+    return {"reason": "no_sales",
+            "text": ("No sales are connected yet, so there's no forecast to measure labor against. Connect your POS, "
+                     "or enter a weekly sales estimate in your targets."),
+            "action": dict(LABOR_MISSING_ACTION)}
+
+
+def _has_sales(rid) -> bool:
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        row = conn.execute("SELECT 1 FROM labor_daily_history WHERE restaurant_id=? AND sales > 0 LIMIT 1",
+                           (rid,)).fetchone()
+    finally:
+        conn.close()
+    return row is not None
 
 
 def _labor_target(rid):

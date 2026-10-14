@@ -27599,7 +27599,7 @@ function ssRenderSummary() {
   // target, neutral with none; the basis named on the tile (TRUST-30).
   var lgr = lv && lv.grade ? lv.grade : 'no_target';
   h += tile(lp === null ? '' : (lgr === 'over' ? 'bad' : (lgr === 'under' ? 'good' : '')), (lv && lv.label) || 'Labor', lp === null ? '—' : '<span class="hb-num">' + lp + '</span><small>%</small>',
-            lp === null ? 'Needs the forecast this draft was built on — generate a new draft to see it'
+            lp === null ? (pnum && pnum.labor_missing && pnum.labor_missing.text ? _numText(pnum.labor_missing.text) : 'Needs a sales forecast for this week')
               : 'of forecast sales, ' + basisWord + (tgt ? ' · ' + (lv.target_basis === 'hourly' ? 'the hourly budget is' : 'your target is') + ' <span class="hb-num">' + tgt + '%</span>' : ''),
             lv && lv.text ? '<div class="s" style="margin-top:4px">' + _numText(lv.text) + '</div>' : '');
   h += tile(cov == null ? '' : (cov >= 90 ? 'good' : (cov >= 75 ? 'warn' : 'bad')), 'Coverage', cov == null ? '—' : '<span class="hb-num">' + Math.round(cov) + '</span><small>%</small>',
@@ -41145,6 +41145,10 @@ window.cavPalette = cavPalette;
         + (lp.other_basis_note ? '<br>' + nt(lp.other_basis_note) : '');
       h += kv(e(lp.label || 'Labor') + ' of forecast sales', lp.value + '%', cls, sub);
     }
+    // No labor %: why, and the fix that works (TRUST-29) - never "generate
+    // a new draft" to an owner with no forecast to build one on.
+    else if (n.labor_missing && n.labor_missing.text) h += kv('Labor of forecast sales', '\u2014', '', nt(n.labor_missing.text)
+      + (n.labor_missing.action ? ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="lmiss" data-n="0" data-j="0">' + e(n.labor_missing.action.label) + '</button>' : ''));
     if (n.cost) h += kv('Cost', nt(n.cost.text || ''), '');
     h += kv('Overtime', ot.priced ? (ot.hours ? _schedHrs(ot.hours) + 'h' : '0h') : '—', ot.priced ? (ot.hours ? 'bad' : 'good') : '', nt(ot.text || ''));
     if (n.forecast_sales) h += kv('Forecast sales', _schedMoney(n.forecast_sales.value), '', nt(n.forecast_sales.basis || ''));
@@ -41288,6 +41292,13 @@ window.cavPalette = cavPalette;
   };
   function openShift(p) {
     if (p.redo && p.redo.length && window.sfw1RedoSheet) { studioGo('schedule'); sfw1RedoSheet(p.redo); return; }
+    // Where the payload says (re-audit 10/11/26 TRUST-20): the person in
+    // Team, who runs the floor and the rules, the budget, the targets -
+    // it used to open the stage and drop the panel and the person.
+    if (p.panel === 'targets') { if (window.cavNav) cavNav('account/restaurant'); return; }
+    if (p.panel === 'managers' || p.panel === 'rules') { if (window.cavNav) cavNav('labor/rules'); return; }
+    if (p.stage === 'team' && p.employee && window.openPersonSheet) { studioGo('team'); openPersonSheet(p.employee); return; }
+    if (p.panel === 'budget') { studioGo('setup'); if (window.ssTab) ssTab('basic'); return; }
     studioGo(p.stage || 'schedule');
     if (p.stage && p.stage !== 'schedule') return;
     var ix = rowIndex({shift_id: p.shift_id, employee: p.employee, date: p.date, shift_start: p.shift_start});
@@ -41334,6 +41345,7 @@ window.cavPalette = cavPalette;
     var d = prFor() || {}, what = t.getAttribute('data-pr'), n = +t.getAttribute('data-n'), j = +t.getAttribute('data-j');
     var m = (d.must_fix || [])[n], x = (d.decide || [])[n];
     if (what === 'retry') { prRefresh(); return; }
+    if (what === 'lmiss') { var lm = (d.numbers || {}).labor_missing; if (lm && lm.action) prDo(lm.action, t, null); return; }
     if (what === 'fix' && m) { prDo((m.fixes || [])[j], t, m.key); return; }
     if (what === 'gfix') { var g = (d.must_fix_groups || [])[n]; if (g) prDo((g.fixes || [])[j], t, g.kind); return; }
     if (what === 'gdec') { var gd = (d.decide_groups || [])[n]; if (gd) prDo((gd.fixes || [])[j], t, gd.kind); return; }
