@@ -77,6 +77,7 @@ The golden set (schedule_eval) is the replay half: real published weeks,
 scored with scripts/schedule_model_eval.py --set; it needs a copy of
 production's database, which the synthetic half here does not.
 """
+import hashlib
 import json
 import os
 import random
@@ -1040,7 +1041,11 @@ def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
                      deterministic=(None if runs < 2 else
                                     bool(sigs) and sigs[0] is not None and all(s == sigs[0] for s in sigs)),
                      seconds=round(sum(secs) / len(secs), 2) if secs else None, seconds_max=max(secs or [0]),
-                     cpu_seconds=round(sum(cpus) / len(cpus), 1) if cpus else None)
+                     cpu_seconds=round(sum(cpus) / len(cpus), 1) if cpus else None,
+                     # the first run's week as one hash: a refactor that must not change
+                     # behaviour compares this before and after, row for row
+                     rows_sig=(hashlib.sha1(repr(sigs[0]).encode()).hexdigest()[:16]
+                               if sigs and sigs[0] is not None else None))
         out["arms"][arm] = first
         out["failed"][arm] = failed_invariants(first)
     return out
