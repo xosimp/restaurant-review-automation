@@ -706,11 +706,16 @@ struct ScheduleSummaryTiles {
                             sub: "No rules check came back \u{2014} review before sending",
                             tone: .neutral)
             }
-            let hard = review.hardCount, soft = review.softCount
-            return Tile(key: "warnings", label: "Warnings", value: String(hard + soft), unit: "",
-                        sub: hard > 0 ? "\(hard) break a hard rule \u{00B7} fix before sending"
-                            : (soft > 0 ? "Soft rules only \u{00B7} worth a look" : "Every rule kept"),
-                        tone: hard > 0 ? .bad : (soft > 0 ? .warn : .good))
+            // Over your own limit (not law) is a decision, apart from the
+            // hard rules (LOGIC-20).
+            let hard = review.hardCount, soft = review.softCount, over = review.overLimitCount
+            var sub = hard > 0 ? "\(hard) break a hard rule \u{00B7} fix before sending"
+                : (over > 0 ? "\(over) over your limit \u{00B7} decide before sending"
+                   : (soft > 0 ? "Soft rules only \u{00B7} worth a look" : "Every rule kept"))
+            if hard > 0 && over > 0 { sub += " \u{00B7} \(over) over your limit" }
+            return Tile(key: "warnings", label: "Warnings", value: String(hard + over + soft), unit: "",
+                        sub: sub,
+                        tone: hard > 0 ? .bad : (over > 0 || soft > 0 ? .warn : .good))
         case .publishCheck(let check):
             guard let check, check.ok else {
                 return Tile(key: "warnings", label: "To fix or decide", value: nil, unit: "",

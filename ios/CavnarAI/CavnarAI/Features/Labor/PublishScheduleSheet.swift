@@ -846,8 +846,11 @@ final class PublishScheduleViewModel {
         var evidence: String? = nil
         var scheduleId: Int? = nil
         var answer: String? = nil
+        /// Brings a kept answer back (the web's "ask again"); not sent by a
+        /// dismissal.
+        var undo: Bool? = nil
         enum CodingKeys: String, CodingKey {
-            case key, scope, until, evidence, answer
+            case key, scope, until, evidence, answer, undo
             case scheduleId = "schedule_id"
         }
     }

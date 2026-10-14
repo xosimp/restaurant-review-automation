@@ -122,6 +122,12 @@ struct RosterSection: View {
                     RulesDiningSectionsSection(store: viewModel.teamSetup, canEdit: viewModel.canEditRules) {
                         showingSectionNames = true
                     }
+                    // Who runs the floor and the shortest shift, as the web's
+                    // rules screen states them (schedule re-audit 10/11/26 R);
+                    // set on the web, from the link below.
+                    if let summary = viewModel.managerRules {
+                        ManagerRulesBlock(summary: summary)
+                    }
                 }
                 VStack(spacing: 0) {
                     CavnarWebLinkRow(title: "Schedule rules",
@@ -1336,5 +1342,37 @@ private struct PairEditorSheet: View {
                         .strokeBorder(Color.cavnarPaper3, lineWidth: on ? 0 : 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// "A manager on the floor, always", the two manager allowances, the second
+/// manager at the rush, the shortest shift, and where the roster forces a
+/// run past a limit — stated, as the web's rules screen states them.
+struct ManagerRulesBlock: View {
+    let summary: ManagerRulesSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xs) {
+            AccountKicker(text: "Who runs the floor")
+            line("A manager on the floor, always \u{2014} every minute anybody is on, a manager or owner is on too.")
+            line(summary.closingLine)
+            line(summary.openingLine)
+            if let second = summary.secondManagerLine { line(second) }
+            line(summary.shortestLine)
+            ForEach(summary.structure, id: \.self) { note in
+                CavnarMixedText(note, role: .secondary, color: .cavnarAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let learned = summary.learnedLine {
+                CavnarMixedText(learned, role: .caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func line(_ text: String) -> some View {
+        CavnarMixedText(text, role: .secondary, color: .cavnarInk2)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

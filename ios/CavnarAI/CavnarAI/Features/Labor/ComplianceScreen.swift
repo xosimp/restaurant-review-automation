@@ -133,14 +133,24 @@ struct CompliancePayload: Decodable {
     var canSend = false
     var states: [StateChoice] = []
     var kinds: [String] = []
+    /// The school-day window a 14-15 year old may not work in (29 CFR
+    /// 570.35(a)(1); schedule re-audit 10/11/26 STRESS-5): the district's
+    /// bell times from the school calendar, else 7:30am-3:30pm.
+    var schoolStart: String?
+    var schoolEnd: String?
+
+    static let defaultSchoolHours = ("7:30am", "3:30pm")
 
     enum CodingKeys: String, CodingKey {
         case ok, error, evaluation, horizon, conflicts, rest, ledger, estimates, requests, states, kinds
+        case schoolCalendar = "school_calendar"
         case canEdit = "can_edit"
         case canSend = "can_send"
     }
     enum EvalKeys: String, CodingKey { case jurisdictions, questions, profile }
     enum RestKeys: String, CodingKey { case mode, hours }
+    enum CalendarKeys: String, CodingKey { case hours }
+    enum BellKeys: String, CodingKey { case start, end }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -163,6 +173,22 @@ struct CompliancePayload: Decodable {
         canSend = c.sfBool(.canSend) ?? false
         states = c.setupList(StateChoice.self, .states)
         kinds = c.setupTexts(.kinds)
+        if let cal = try? c.nestedContainer(keyedBy: CalendarKeys.self, forKey: .schoolCalendar),
+           let bell = try? cal.nestedContainer(keyedBy: BellKeys.self, forKey: .hours) {
+            schoolStart = bell.sfText(.start)
+            schoolEnd = bell.sfText(.end)
+        }
+    }
+
+    /// "14–15 year olds never work during school hours on a school day:
+    /// 7:30am–3:30pm (…)" — the web's statement of the federal rule.
+    var schoolHoursLine: String {
+        let own = schoolStart != nil && schoolEnd != nil
+        let s = schoolStart ?? Self.defaultSchoolHours.0, e = schoolEnd ?? Self.defaultSchoolHours.1
+        return "14\u{2013}15 year olds never work during school hours on a school day: \(s)\u{2013}\(e)"
+            + (own ? " (your district\u{2019}s bell times)"
+                   : " (the default until you enter your district\u{2019}s bell times on the web)")
+            + ". Federal law \u{2014} your state can add to it, never take it away."
     }
 
     /// "Illinois and Chicago apply." / "Nothing beyond federal law applies."
@@ -397,6 +423,9 @@ struct ComplianceScreen: View {
             CavnarMixedText("Rest between shifts: \(String(format: "%g", h)) hours, or less with the person\u{2019}s written consent, paid the premium.",
                             role: .secondary)
         }
+        // Minors' school hours (STRESS-5), stated as the web states it.
+        CavnarMixedText(p.schoolHoursLine, role: .secondary)
+            .fixedSize(horizontal: false, vertical: true)
         if p.canSend { sendersPart(p) }
         CavnarWebLinkRow(title: "Every rule in force, breaks and the school calendar", path: "labor/schedule",
                          actionLabel: "Open on the web")

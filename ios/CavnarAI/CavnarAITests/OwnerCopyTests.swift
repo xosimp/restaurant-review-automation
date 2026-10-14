@@ -166,10 +166,15 @@ final class OwnerCopyTests: XCTestCase {
     }
 
     func testTheScheduleProgressOnlyNamesLastYearWhenItExists() {
-        XCTAssertEqual(ScheduleProgressSteps.steps(lastYearAvailable: false).first?.text,
+        // The inputs stage the job reports is said in these words (TRUST-21:
+        // the steps are the job's reported stages, never a timed script).
+        let inputs = GenerationProgress.Stage(key: "inputs", label: "Reading your team, time off and sales")
+        XCTAssertEqual(ScheduleProgressSteps.label(inputs, lastYearAvailable: false),
                        "Reading your shift and sales history")
-        XCTAssertEqual(ScheduleProgressSteps.steps(lastYearAvailable: true).first?.text,
+        XCTAssertEqual(ScheduleProgressSteps.label(inputs, lastYearAvailable: true),
                        "Reading last year's same days")
+        let draft = GenerationProgress.Stage(key: "draft", label: "Drafting the week")
+        XCTAssertEqual(ScheduleProgressSteps.label(draft, lastYearAvailable: true), "Drafting the week")
     }
 
     func testServerRecoverableLabelsReadAsOpportunities() {

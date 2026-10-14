@@ -156,7 +156,9 @@ final class LaborReauditTests: XCTestCase {
         """.utf8))
         let zero = try XCTUnwrap(ScheduleSummaryTiles.tiles(none).first { $0.key == "overtime" })
         XCTAssertEqual(zero.value, "0")
-        XCTAssertEqual(zero.sub, "Nobody past 40h")
+        // The line is each restaurant's own, never "past 40h" (re-audit
+        // 10/11/26 TRUST-22).
+        XCTAssertEqual(zero.sub, "No overtime")
     }
 
     func testHistoryWarningsReadThePublishCheckNotTheSavedReview() throws {

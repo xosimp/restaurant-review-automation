@@ -1724,13 +1724,18 @@ struct ScheduleReview: Codable, Equatable {
     /// person leaves, each with the one tap that writes the stay into the
     /// schedule (schedule audit 10/10/26 TRUST-21, `assumed_stays`).
     var assumedStays: HomeLenientList<AssumedStay>? = nil
+    /// The owner's own limits crossed, not law ("over your limit", schedule
+    /// re-audit 10/11/26 LOGIC-20): counted apart from `hard` — decisions.
+    var overLimit: Int? = nil
 
     var hardCount: Int { hard ?? 0 }
     var softCount: Int { soft ?? 0 }
-    var isClean: Bool { hardCount == 0 && softCount == 0 }
+    var overLimitCount: Int { overLimit ?? 0 }
+    var isClean: Bool { hardCount == 0 && softCount == 0 && overLimitCount == 0 }
 
     enum CodingKeys: String, CodingKey {
         case hard, soft, lines, fixes, unfixed, trimmed, staggered, unmet, setup
+        case overLimit = "over_limit"
         case byKind = "by_kind"
         case hardRows = "hard_rows"
         case hoursTrimmed = "hours_trimmed"
@@ -1825,12 +1830,19 @@ struct RuleViolation: Codable, Identifiable, Equatable {
     /// row: shown on the day, never as "needs review" on whoever's row it
     /// is pinned to (schedule audit 10/3/26 E-13). Absent on older payloads.
     var dayLevel: Bool? = nil
+    /// The owner's own scheduling limit crossed, not law (schedule re-audit
+    /// 10/11/26 LOGIC-20, schedule_rules.owner_hard): "over your limit" — a
+    /// decision, amber, never a red must-fix or a NEEDS REVIEW mark.
+    var policy: Bool? = nil
 
     var id: String { "\(kind ?? "")-\(index ?? -1)-\(employee ?? "")" }
-    var isHard: Bool { hard ?? false }
+    /// Hard to the OWNER: hard, and not a policy limit (owner_hard).
+    var isHard: Bool { (hard ?? false) && policy != true }
+    /// "Over your limit" — a hard rule of the owner's own, not law.
+    var isOverLimit: Bool { (hard ?? false) && policy == true }
 
     enum CodingKeys: String, CodingKey {
-        case kind, index, employee, date, day, role, detail, hard, label
+        case kind, index, employee, date, day, role, detail, hard, label, policy
         case shiftStart = "shift_start"
         case noShow = "no_show"
         case dayLevel = "day_level"
@@ -4202,6 +4214,14 @@ final class LaborViewModel {
     private struct ReplacementsBody: Encodable {
         let rows: [ScheduleRow]
         let index: Int
+        /// The draft these rows are, so the shift's "why" reads the engine's
+        /// own recorded reason (re-audit 10/11/26 TRUST-2), never one
+        /// reconstructed after the fact.
+        var scheduleId: Int? = nil
+        enum CodingKeys: String, CodingKey {
+            case rows, index
+            case scheduleId = "schedule_id"
+        }
     }
 
     private struct ReplacementsResponse: Decodable {
@@ -4223,7 +4243,7 @@ final class LaborViewModel {
         do {
             let response: ReplacementsResponse = try await client.send(
                 "/mobile/api/labor/schedule/replacements", method: .post,
-                body: ReplacementsBody(rows: rows, index: index), hapticOnError: false)
+                body: ReplacementsBody(rows: rows, index: index, scheduleId: result.historyId), hapticOnError: false)
             return response.ok ? (response.replacements ?? []) : []
         } catch {
             return []

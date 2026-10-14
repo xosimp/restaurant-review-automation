@@ -207,7 +207,10 @@ final class LaborParityRoundTests: XCTestCase {
         """.utf8))
         let tiles = Dictionary(uniqueKeysWithValues: ScheduleSummaryTiles.tiles(r).map { ($0.key, $0) })
         XCTAssertEqual(tiles["quality"]?.value, "84")
-        XCTAssertEqual(tiles["quality"]?.tone, .good)
+        // No grade against the restaurant's own weeks yet: no colour — never
+        // the fixed 80/60 lines (re-audit 10/11/26 TRUST-22).
+        XCTAssertEqual(tiles["quality"]?.tone, .neutral)
+        XCTAssertEqual(tiles["labor"]?.tone, .good, "27.4% under a 28% target")
         XCTAssertEqual(tiles["labor"]?.value, "27.4")
         XCTAssertTrue(tiles["labor"]?.sub.contains("all-in · your target is 28%") == true)
         XCTAssertEqual(tiles["coverage"]?.value, "92")

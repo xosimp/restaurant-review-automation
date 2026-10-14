@@ -153,19 +153,121 @@ final class SchedFixI2bTests: XCTestCase {
         XCTAssertNil(try encode(PublishScheduleViewModel.PublishBody(scheduleId: 41, acknowledge: false))["overrides"])
     }
 
-    func testTheGatesHardItemsAreTheMustFixKeys() throws {
+    func testTheGatesTierNotItsDemotableFlagMakesAMustFix() throws {
+        // Re-audit 10/11/26 TRUST-24: a must-fix is the TIER; a decision
+        // (the budget, the notice rule) is amber and answered in one tap,
+        // whatever the old `hard` / new `demotable` flag says.
         let gate = try decode(PublishScheduleViewModel.GateResponse.self, """
         {"needs_ack": true, "blocker_items": [{"key": "rule:no_manager:a", "text": "Gap"},
-                                               {"key": "hours_over", "text": "Over budget", "hard": false}],
+                                               {"key": "hours_over", "text": "Over budget", "demotable": true}],
          "must_fix_keys": ["rule:no_manager:a"]}
         """)
-        XCTAssertEqual(gate.items.map(\.hard), [true, false])
+        XCTAssertEqual(gate.items.map(\.key), ["rule:no_manager:a"])
+        XCTAssertTrue(gate.items[0].hard)
+        XCTAssertEqual(gate.decisions.map(\.key), ["hours_over"])
+        XCTAssertTrue(gate.decisions[0].holds)
+        XCTAssertEqual(gate.decisions[0].options.first?.action, "acknowledge")
         let check = try decode(PublishCheck.self, """
-        {"ok": true, "blocker_items": [{"key": "notice_short", "text": "Short notice", "hard": false,
-                                        "overridden_before": {"weeks": 3, "of": 3}}]}
+        {"ok": true, "blocker_items": [{"key": "notice_short", "text": "Short notice", "tier": "decide",
+                                        "demotable": false, "overridden_before": {"weeks": 3, "of": 3}},
+                                       {"key": "rule:minor_late:a:x", "text": "Minor late", "tier": "must_fix",
+                                        "law": true, "fixable": true}]}
         """)
-        XCTAssertEqual(check.blockerItems.first?.mustFix.hard, false)
-        XCTAssertEqual(check.blockerItems.first?.overriddenBefore, "You sent past this in 3 of 3 weeks.")
+        XCTAssertFalse(check.blockerItems[0].isMustFix, "a notice decision is never a red must-fix")
+        XCTAssertEqual(check.blockerItems[0].decision.overriddenBefore, "You sent past this in 3 of 3 weeks.")
+        let law = check.blockerItems[1].mustFix
+        XCTAssertTrue(law.hard && law.law)
+        XCTAssertFalse(law.overrideAllowed, "the law an edit can fix is never sent past")
+    }
+
+    func testTheReviewCarriesTsFieldsAndTheLawsOverride() throws {
+        let r = try decode(PublishReview.self, """
+        {"ok": true, "verdict": {"tone": "green", "sentence": "Ready to send", "worth_a_look": [{"key": "overtime", "text": "3h of overtime"}]},
+         "published_at": null, "can_publish": true,
+         "must_fix": [{"key": "notice:law", "tier": "must_fix", "text": "Posted 5 days ahead; the law asks 14", "law": true,
+                       "cls": "law", "override_allowed": true,
+                       "override": {"needs": "legal_ack", "legal": {"text": "I understand the law asks 14 days."},
+                                    "min_reason": {"chars": 8, "words": 2}}}],
+         "must_fix_groups": [{"kind": "rule:long_run", "count": 3, "keys": ["a", "b", "c"], "text": "3 people — too many days in a row",
+                              "fixes": [{"label": "Fix all 3 (shows each change)", "action": "apply_fixes", "payload": {}}]}],
+         "decide": [{"key": "left_off:ana", "kind": "left_off", "holds": false, "text": "Ana has no shifts",
+                     "options": [{"label": "Leave them off this week", "action": "dismiss", "scope": "week",
+                                  "payload": {"key": "left_off:ana", "scope": "week", "until": "2026-10-20"}}]}],
+         "counts": {"must_fix": 1, "decide": 1, "decide_holding": 0, "suggestions": 1, "to_fix_or_decide": 1},
+         "always_overridden": [{"kind": "rule:long_run", "text": "You've sent past it in 9 of 9 weeks — change the rule?",
+                                "actions": [{"label": "Allow 7 days in a row", "action": "post", "scope": "every",
+                                             "payload": {"path": "labor/rules", "body": {"rules": {"max_consecutive_days": 7}}}}]}],
+         "numbers": {"labor_pct": null, "overtime": {"hours": 0, "premium": 0, "priced": true, "text": "No overtime"},
+                     "labor_missing": {"reason": "no_sales", "text": "No sales are connected yet.",
+                                       "action": {"label": "Enter a weekly sales estimate", "action": "open",
+                                                  "payload": {"stage": "setup", "panel": "targets"}}}},
+         "why": {"assignments": [{"text": "Cara could take it and is rated higher — swap?", "basis": "engine",
+                                  "basis_label": "Cavnar AI's reason", "favours_pick": false,
+                                  "swap": {"label": "Swap to Cara", "action": "edit_rows", "payload": {}}}],
+                 "engine": {"text": "Recorded with the draft."}, "draft": {"text": "Drafted by the solver."}},
+         "sure": {"confidence": {"pct": null, "basis": ["1 of the 2 published weeks it needs have been measured"],
+                                 "meaning": "How well supported"}, "lines": []},
+         "hours": {"hourly": 312, "salaried": 110}}
+        """)
+        let m = r.mustFix[0]
+        XCTAssertTrue(m.needsLegalAck && m.law)
+        XCTAssertFalse(PublishGate.complete(m, PublishOverrideChoice(reason: "Store opening week rush")),
+                       "the law needs its acknowledgement")
+        XCTAssertFalse(PublishGate.complete(m, PublishOverrideChoice(reason: "x", legalAck: true)),
+                       "a one-letter reason is no reason (TRUST-4)")
+        let ok = PublishOverrideChoice(reason: "Store opening week rush", legalAck: true)
+        XCTAssertTrue(PublishGate.complete(m, ok))
+        let sent = try encode(PublishGate.overrides(r.mustFix, [m.key: ok])[0])
+        XCTAssertEqual(sent["legal_ack"] as? Bool, true)
+        XCTAssertEqual(r.mustFixGroups.first?.count, 3)
+        XCTAssertEqual(r.suggestions.map(\.key), ["left_off:ana"])
+        XCTAssertTrue(r.holding.isEmpty)
+        XCTAssertEqual(r.counts.holding, 1)
+        XCTAssertEqual(r.alwaysOverridden.first?.actions.first?.action, "post")
+        XCTAssertEqual(r.numbers.laborMissing?.reason, "no_sales")
+        XCTAssertEqual(ReviewOpenTarget.from(r.numbers.laborMissing?.action?.payload ?? [:]), .targets)
+        XCTAssertEqual(r.numbers.overtimeHours, 0)
+        XCTAssertEqual(r.numbers.overtimePriced, true)
+        XCTAssertEqual(r.why.assignments.first?.basisLabel, "Cavnar AI's reason")
+        XCTAssertEqual(r.why.assignments.first?.swap?.label, "Swap to Cara")
+        XCTAssertEqual(r.why.draftText, "Drafted by the solver.")
+        XCTAssertEqual(r.sure.confidence?.figure, "\u{2014}", "below the floor, a dash, never a guess")
+        XCTAssertEqual(r.verdict?.worthALook.first?.text, "3h of overtime")
+        XCTAssertEqual(r.hours?.hourly, 312)
+    }
+
+    func testOpenPayloadsGoWhereTheySay() {
+        XCTAssertEqual(ReviewOpenTarget.from(["stage": .string("schedule"), "redo": .list([.string("2026-10-14")])]),
+                       .redo(["2026-10-14"]))
+        XCTAssertEqual(ReviewOpenTarget.from(["stage": .string("setup"), "panel": .string("managers")]), .managers)
+        XCTAssertEqual(ReviewOpenTarget.from(["stage": .string("team"), "employee": .string("Bob")]), .person("Bob"))
+        XCTAssertEqual(ReviewOpenTarget.from(["stage": .string("schedule"), "employee": .string("Ana")]), .addShift("Ana"))
+        XCTAssertEqual(ReviewOpenTarget.from(["stage": .string("setup"), "panel": .string("rules")]),
+                       .web(path: "labor/rules"))
+        XCTAssertEqual(ReviewOpenTarget.from(["stage": .string("schedule"), "date": .string("2026-10-14"),
+                                              "shift_id": .string("abc")]),
+                       .shift(date: "2026-10-14", shiftId: "abc", employee: nil, start: nil))
+    }
+
+    func testAManagerGapIsCoveredOnlyByAnOfferedName() throws {
+        let r = try decode(PublishReview.self, reviewJSON)
+        let gap = r.mustFix[0]
+        XCTAssertFalse(PublishGate.complete(gap, PublishOverrideChoice(reason: "", coveredBy: "Mickey Mouse")),
+                       "a name the gate did not offer is refused (TRUST-5)")
+        XCTAssertTrue(PublishGate.complete(gap, PublishOverrideChoice(reason: "", coveredBy: "erik")))
+    }
+
+    func testThePublishResultSaysWhoIsStillBeingSent() throws {
+        let r = try decode(PublishResult.self, """
+        {"ok": true, "sent": [], "unreachable": [], "failed": [], "sending": ["Ana", "Ben"], "portal_only": false,
+         "status": [{"employee_name": "Ana"}], "delivery": {"sending": 2, "failed": 0, "unreachable": 0},
+         "staff_changes_undone": ["Ben's swap with Cara was undone"]}
+        """)
+        XCTAssertEqual(r.sending, ["Ana", "Ben"])
+        XCTAssertEqual(r.stillSending(nil), 2)
+        XCTAssertEqual(r.stillSending(PublishDeliveryCounts(sending: 0, failed: 1, unreachable: 0)), 0)
+        XCTAssertEqual(r.staffChangesUndone.count, 1)
+        XCTAssertEqual(PublishScheduleSheet.deliveryLine(r, now: nil), "2 still sending")
     }
 
     // MARK: Fixes that edit the week

@@ -1506,6 +1506,10 @@ final class ScheduleSetupViewModel {
     // The sync's own sentence — the honest 400 while nothing is live.
     var reservationSyncMessage: String?
 
+    /// The manager rules and the shortest shift as the rules screen states
+    /// them (schedule re-audit 10/11/26 R); nil until the rules load.
+    var managerRules: ManagerRulesSummary?
+
     private struct RulesResponse: Decodable {
         let ok: Bool
         let rules: [String: LooseValue]?
@@ -1532,8 +1536,18 @@ final class ScheduleSetupViewModel {
         let certifications: [String]?
         let reservationFeed: ReservationFeedStatus?
         let reservationProviders: [CodeLabel]?
+        /// Schedule re-audit 10/11/26 (R): where the roster forces a run
+        /// past a limit (STRESS-18), what the punches say about the two
+        /// manager allowances (LOGIC-12) and the second-manager line
+        /// (LOGIC-13). Read loosely — an odd value is that line missing.
+        var managerStructure: LooseValue? = nil
+        var managerAllowancesLearned: LooseValue? = nil
+        var secondManager: LooseValue? = nil
         enum CodingKeys: String, CodingKey {
             case ok, rules, defaults, roles, error, jurisdiction, pack, packs, certifications
+            case managerStructure = "manager_structure"
+            case managerAllowancesLearned = "manager_allowances_learned"
+            case secondManager = "second_manager"
             case roleFloors = "role_floors"
             case roleArrivals = "role_arrivals"
             case rolesWithoutClockIn = "roles_without_clock_in"
@@ -1663,6 +1677,8 @@ final class ScheduleSetupViewModel {
             canEditRules = r.canEdit ?? true
             ruleCertifications = r.certifications ?? []
             reservationFeed = r.reservationFeed
+            managerRules = ManagerRulesSummary(rules: rules, defaults: ruleDefaults, structure: r.managerStructure,
+                                               learned: r.managerAllowancesLearned, second: r.secondManager)
             reservationProviders = r.reservationProviders ?? []
             rulesError = nil
             rulesLoaded = true
