@@ -55,7 +55,7 @@ def test_a_sent_date_is_the_viewers_day_not_utcs():
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout.strip()) == ["9/26/26", "9/27/26"]
     assert "mdyAt(r.published_at)" in _between("function ssLaunchRefresh() {", "\n}\n")
-    assert "mdyAt(r.published_at)" in _between("function ssLoadHistory() {", "\n}\n")
+    assert "mdyAt(r.published_at)" in _between("function _ssHistRow(r, sub) {", "\n}\n")
 
 
 def test_captions_are_words_in_the_chrome_face():
@@ -71,8 +71,9 @@ def test_every_home_check_is_a_softer_disc_with_a_dark_green_tick():
 
 
 def test_studio_history_keeps_the_csv_and_delete_labor_had():
-    h = _between("function ssLoadHistory() {", "\n}\n")
+    h = _between("function _ssHistRow(r, sub) {", "\n}\n")
     assert "ssHistCsv(" in h and "ssHistDelete(" in h
+    assert "_ssHistRow(" in _between("function ssLoadHistory() {", "\n}\n")
     assert "schedule_csv" in _between("function ssHistCsv(id, btn) {", "\n}\n")
     ios = open("ios/CavnarAI/CavnarAI/Features/Labor/LaborView.swift", encoding="utf-8").read()
     assert "LaborMoneyWentCard" not in ios

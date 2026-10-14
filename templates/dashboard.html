@@ -11476,13 +11476,28 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-bn-empty{padding:12px 0;color:var(--ink2);font-size:14.5px;line-height:1.5}
 /* History */
 .ss-hist-list{display:flex;flex-direction:column;gap:10px;margin-top:22px}
-.ss-hrow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;align-items:center;gap:18px;background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:16px 20px;box-shadow:var(--elev-card)}
+.ss-hweek{background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;box-shadow:var(--elev-card);padding:4px 20px}
+.ss-hrow{display:grid;grid-template-columns:minmax(0,1fr) 48px 112px auto;align-items:center;gap:16px;padding:12px 0}
+.ss-hrow .m{min-width:0}
 .ss-hrow .w{font-family:'Clash Display',sans-serif;font-size:18px;color:var(--ink)}
-.ss-hrow .l{font-size:13.5px;color:var(--ink3);margin-top:2px}
-.ss-hrow .q{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--ink)}
+.ss-hrow .l{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13.5px;color:var(--ink3);margin-top:3px}
+.ss-hrow .st{display:inline-flex;align-items:center;gap:6px;color:var(--ink2);cursor:help}
+.ss-hrow .st::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--ink3)}
+.ss-hrow .st.good::before{background:var(--hb-good)}
+.ss-hrow .st.warn::before{background:var(--hb-warn)}
+.ss-hrow .ed{font-size:12px;color:var(--ink3);border:1px solid var(--hb-line);border-radius:6px;padding:0 6px}
+.ss-hrow .q{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--ink);text-align:right}
 .ss-hrow .q.good{color:var(--hb-good)}
+.ss-hrow .ss-pill{justify-self:start}
 .ss-hact{display:flex;align-items:center;gap:4px}
-.ss-hrow .q small{display:block;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.ss-hrow.sub{padding:9px 0;border-top:1px solid var(--hb-line2)}
+.ss-hrow.sub .q{font-size:17px;color:var(--ink2)}
+.ss-hmore{border-top:1px solid var(--hb-line2)}
+.ss-hmore>summary{list-style:none;cursor:pointer;padding:9px 0 11px;font-size:13px;color:var(--ink3)}
+.ss-hmore>summary::-webkit-details-marker{display:none}
+.ss-hmore>summary::before{content:'▸';display:inline-block;margin-right:6px;transition:transform .15s ease}
+.ss-hmore[open]>summary::before{transform:rotate(90deg)}
+.ss-hmore>summary:hover{color:var(--ink2)}
 .ss-pill{font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:3px 10px;background:var(--sf-recess);color:var(--ink3)}
 .ss-pill.sent{color:var(--hb-good)}.ss-pill.draft{color:var(--hb-warn)}
 /* Labor's launcher */
@@ -11495,7 +11510,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .ss-launch-s{font-size:15px;color:var(--ink2);max-width:60ch}
 .ss-launch-r{display:flex;gap:10px;flex-wrap:wrap}
 @media (max-width:1320px){.ss .sw-grid{grid-template-columns:minmax(0,1fr)}.ss .sw-right{position:static;max-height:none;display:block}.ss-steps button{padding:7px 10px}}
-@media (max-width:980px){.ss-top{grid-template-columns:auto minmax(0,1fr) auto;gap:10px}.ss-brand{display:none}.ss-steps{justify-self:start;overflow-x:auto;max-width:100%}.ss-week,.ss-saved{display:none}.ss-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.ss-pub-grid{grid-template-columns:1fr}.ss-hrow{grid-template-columns:minmax(0,1fr) auto}}
+@media (max-width:980px){.ss-top{grid-template-columns:auto minmax(0,1fr) auto;gap:10px}.ss-brand{display:none}.ss-steps{justify-self:start;overflow-x:auto;max-width:100%}.ss-week,.ss-saved{display:none}.ss-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.ss-pub-grid{grid-template-columns:1fr}.ss-hrow{grid-template-columns:minmax(0,1fr) auto auto}.ss-hrow .ss-pill{display:none}}
 @media (max-width:600px){.ss-tiles{grid-template-columns:1fr}.ss-steps button i{display:none}.ss-sum-hd{flex-direction:column;align-items:flex-start}}
 @media (prefers-reduced-motion:reduce){.ss-stage.on{animation:none}.ss-tile .ring .fg{transition:none}}
 
@@ -28197,21 +28212,49 @@ document.addEventListener('click', function (e) {
       else toast(a === 'hold' ? 'Kept: it’s that shift’s minimum every week, reviewed in a season' : (a === 'lean' ? 'Noted: the draft is built to it there until its review' : 'Undone'), 'success');
     }).catch(function () { _ssCrewBusy = false; b.disabled = false; toast('That answer didn’t save. Check your connection.', 'error'); });
 });
+/* History (owner, 10/14/26: "way too wordy and jumbled"): one line per
+   week - the week, its status in two or three words (the full sentence on
+   hover), when it was built and its hours, the score, the state, Open and
+   the two icons. Earlier drafts of the same week fold under the newest. */
+function _ssHistLead(r) {
+  var parts = String(r.summary_line || '').split(' · '), edited = parts[0] === 'Manually edited';
+  if (edited) parts.shift();
+  return {lead: parts[0] || '', full: String(r.summary_line || ''), edited: edited};
+}
+function _ssHistRow(r, sub) {
+  var sent = !!r.published_at, gone = !!r.superseded_by, ld = _ssHistLead(r);
+  var tone = r.summary_tone === 'good' ? 'good' : (r.summary_tone === 'warn' ? 'warn' : '');
+  var meta = 'Built <span class="hb-num">' + _escHtml(mdy(String(r.generated_at || '').slice(0, 10))) + '</span>'
+    + (r.hours_budget ? ' · <span class="hb-num">' + _schedHrs(r.hours_scheduled || 0) + 'h</span> of <span class="hb-num">' + _schedHrs(r.hours_budget) + 'h</span> PAR' : '');
+  return '<div class="ss-hrow' + (sub ? ' sub' : '') + '"><div class="m">'
+    + (sub ? '' : '<div class="w">Week of <span class="hb-num">' + _escHtml(mdy(r.week_start)) + '</span> – <span class="hb-num">' + _escHtml(mdy(r.week_end)) + '</span></div>')
+    + '<div class="l">' + (ld.lead ? '<span class="st ' + tone + '" title="' + _escAttr(ld.full) + '">' + _escHtml(ld.lead) + '</span>' : '')
+    + (ld.edited ? '<span class="ed">Edited</span>' : '') + '<span class="mt">' + meta + '</span></div></div>'
+    + '<div class="q' + (r.quality_band === 'excellent' || r.quality_band === 'good' ? ' good' : '') + '" title="Shift Quality">' + (r.quality_score != null ? '<span class="hb-num">' + Math.round(r.quality_score) + '</span>' : '—') + '</div>'
+    + '<span class="ss-pill ' + (sent ? 'sent' : (gone ? '' : 'draft')) + '">' + (sent ? 'Sent ' + _escHtml(mdyAt(r.published_at)) : (gone ? 'Replaced' : 'Draft')) + '</span>'
+    + '<span class="ss-hact"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ssOpenWeek(' + (+r.id) + ')">Open</button>'
+    + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Download CSV" aria-label="Download CSV" onclick="ssHistCsv(' + (+r.id) + ',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><polyline points="7 10.5 12 15.5 17 10.5"/><path d="M5 19.5h14"/></svg></button>'
+    + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Delete" aria-label="Delete" onclick="ssHistDelete(' + (+r.id) + ',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 20 7"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 12.5h9l1-12.5"/></svg></button></span></div>';
+}
 function ssLoadHistory() {
   var el = document.getElementById('ss-hist-list'); if (!el) return;
   fetch('/api/labor/schedule-history', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
-    var hs = (d && d.ok && d.history) || [], h = '', i;
+    var hs = (d && d.ok && d.history) || [], h = '', i, j, order = [], byWeek = {};
     if (!hs.length) { el.innerHTML = '<div class="sw-note">No weeks yet. Build one in Setup.</div>'; return; }
     for (i = 0; i < hs.length; i++) {
-      var r = hs[i], sent = !!r.published_at, gone = !!r.superseded_by;
-      h += '<div class="ss-hrow"><div><div class="w">Week of <span class="hb-num">' + _escHtml(mdy(r.week_start)) + '</span> – <span class="hb-num">' + _escHtml(mdy(r.week_end)) + '</span></div>'
-         + '<div class="l">' + (r.summary_line ? num(r.summary_line) : 'Built <span class="hb-num">' + _escHtml(mdy(String(r.generated_at || '').slice(0, 10))) + '</span>')
-         + (r.hours_budget ? ' · <span class="hb-num">' + _schedHrs(r.hours_scheduled || 0) + 'h</span> of <span class="hb-num">' + _schedHrs(r.hours_budget) + 'h</span> PAR' : '') + '</div></div>'
-         + '<div class="q' + (r.quality_band === 'excellent' ? ' good' : '') + '">' + (r.quality_score != null ? '<span class="hb-num">' + Math.round(r.quality_score) + '</span>' : '—') + '<small>quality</small></div>'
-         + '<span class="ss-pill ' + (sent ? 'sent' : (gone ? '' : 'draft')) + '">' + (sent ? 'Sent ' + _escHtml(mdyAt(r.published_at)) : (gone ? 'Replaced' : 'Draft')) + '</span>'
-         + '<span class="ss-hact"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="ssOpenWeek(' + (+r.id) + ')">Open</button>'
-         + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" title="Download CSV" aria-label="Download CSV" onclick="ssHistCsv(' + (+r.id) + ',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><polyline points="7 10.5 12 15.5 17 10.5"/><path d="M5 19.5h14"/></svg></button>'
-         + '<button type="button" class="cbtn cbtn-icon cbtn-text cbtn-danger cbtn-sm" title="Delete" aria-label="Delete" onclick="ssHistDelete(' + (+r.id) + ',this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 20 7"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 12.5h9l1-12.5"/></svg></button></span></div>';
+      var wk = String(hs[i].week_start || '').slice(0, 10);
+      if (!byWeek[wk]) { byWeek[wk] = []; order.push(wk); }
+      byWeek[wk].push(hs[i]);
+    }
+    for (i = 0; i < order.length; i++) {
+      var list = byWeek[order[i]], lead = list[0];
+      /* The week's own version leads: the sent one, else the live draft. */
+      for (j = 0; j < list.length; j++) if (list[j].published_at && !list[j].superseded_by) { lead = list[j]; break; }
+      if (lead === list[0]) for (j = 0; j < list.length; j++) if (!list[j].superseded_by) { lead = list[j]; break; }
+      var rest = '', n = 0;
+      for (j = 0; j < list.length; j++) if (list[j] !== lead) { rest += _ssHistRow(list[j], true); n++; }
+      h += '<div class="ss-hweek">' + _ssHistRow(lead, false)
+        + (n ? '<details class="ss-hmore"><summary><span class="hb-num">' + n + '</span> earlier ' + (n === 1 ? 'version' : 'versions') + '</summary>' + rest + '</details>' : '') + '</div>';
     }
     el.innerHTML = h;
   }).catch(function () { el.innerHTML = '<div class="sw-note">History could not load.</div>'; });
