@@ -268,7 +268,7 @@ def _gaps(lines, start, end) -> list:
             continue
         steps = sorted((date.fromisoformat(b) - date.fromisoformat(a)).days for a, b in zip(ds, ds[1:]))
         typical = steps[len(steps) // 2] or 1
-        limit = max(14, int(typical * 2.5))
+        limit = max(10, int(typical * 2))
         inside = [d for d in ds if start <= d <= end]
         before = [d for d in ds if d < start]
         marks = ([before[-1]] if before else [start]) + inside + [end]
@@ -276,7 +276,7 @@ def _gaps(lines, start, end) -> list:
             gap = (date.fromisoformat(b) - date.fromisoformat(a)).days
             if gap > limit:
                 lo = max(start, (date.fromisoformat(a) + timedelta(days=1)).isoformat())
-                hi = (date.fromisoformat(b) - timedelta(days=1)).isoformat() if b != end else end
+                hi = (date.fromisoformat(b) - timedelta(days=1)).isoformat() if b in days else end
                 mine = sorted(cats[dist], key=lambda c: -cats[dist][c])
                 out.append({"distributor": dist, "from": lo, "to": hi, "from_mdy": _mdy(lo), "to_mdy": _mdy(hi),
                             "categories": [c for c in mine if cats[dist][c] > 0], "typical_days": typical})

@@ -44933,7 +44933,7 @@ function sfw2RuleCheck(chk) {
 .br-t td.n,.br-t th.n{text-align:right;white-space:nowrap}
 .br-t td b{color:var(--ink);font-weight:600}
 .br-t .m{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
-.br-t .up{color:var(--hb-bad)}.br-t .dn{color:var(--hb-good)}
+.br-t .br-up{color:var(--hb-bad)}.br-t .br-down{color:var(--hb-good)}
 .br-scroll{overflow-x:auto}
 .br-note{font-size:13.5px;color:var(--ink3);margin-top:10px;max-width:72ch;line-height:1.5}
 .br-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
@@ -45004,7 +45004,7 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < show; i++) {
       var r = list[i];
       h += '<tr><td><b>' + esc2(r.product) + '</b><span class="m">' + esc2(r.distributor) + ' · per ' + esc2(r.unit) + '</span></td>'
-        + '<td class="n">' + hn(money2(r.from)) + ' → ' + hn(money2(r.to)) + '<span class="m ' + (up ? 'up' : 'dn') + '">' + hn((r.change > 0 ? '+' : '−') + money2(Math.abs(r.change)) + (r.pct != null ? ' (' + (r.pct > 0 ? '+' : '') + r.pct + '%)' : '')) + '</span></td>'
+        + '<td class="n">' + hn(money2(r.from)) + ' → ' + hn(money2(r.to)) + '<span class="m ' + (up ? 'br-up' : 'br-down') + '">' + hn((r.change > 0 ? '+' : '−') + money2(Math.abs(r.change)) + (r.pct != null ? ' (' + (r.pct > 0 ? '+' : '') + r.pct + '%)' : '')) + '</span></td>'
         + '<td class="n">' + hn(r.since_mdy) + (r.bought_90d && r.impact_90d ? '<span class="m">' + hn((r.impact_90d > 0 ? '+' : '−') + money(Math.abs(r.impact_90d))) + ' on ' + hn(r.bought_90d) + ' ' + esc2(r.unit) + (r.bought_90d === 1 ? '' : 's') + ' in 90 days</span>' : '') + '</td></tr>';
     }
     return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Price</th><th class="n">Since</th></tr></thead><tbody>' + h + '</tbody></table></div>'
@@ -45041,7 +45041,8 @@ function sfw2RuleCheck(chk) {
     var pc = d.pour_cost || {}, pw = d.price_watch || {}, h = '<div class="dn-k">Bar · invoices ' + hn(d.invoices.from_mdy) + '–' + hn(d.invoices.to_mdy) + '</div>';
     if (pc.available) {
       var t = pc.total || {};
-      h += '<h1 class="dn-read" style="font-size:clamp(26px,3vw,40px)">' + (t.pct != null ? 'The bar’s pour cost is <em>' + hn(t.pct + '%') + '</em> over the last four weeks.' : 'Pour cost needs both invoices and sales in the same weeks.') + '</h1>'
+      h += '<h1 class="dn-read" style="font-size:clamp(26px,3vw,40px)">' + (t.pct == null ? 'Pour cost needs both invoices and sales in the same weeks.'
+          : (pc.complete === false ? 'Pour cost reads <em>' + hn(t.pct + '%') + '</em> so far — some invoices aren’t on file yet.' : 'The bar’s pour cost is <em>' + hn(t.pct + '%') + '</em> over the last four weeks.')) + '</h1>'
         + '<p class="dn-sub">' + hn(pc.window.from_mdy) + '–' + hn(pc.window.to_mdy) + ': ' + hn(money(t.purchases)) + ' bought from distributors against ' + hn(money(t.sales)) + ' in beer, liquor and wine sales.</p>'
         + gapsHtml(pc.gaps || [])
         + '<div style="margin-top:26px">' + tiles(pc) + '</div>'
