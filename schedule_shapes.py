@@ -1420,6 +1420,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     st = _rt.run(s, m)
     info = getattr(s, "sp_info", None) or {}
     memory = {"isolated": bool(info.get("isolated")), "peak_mb": info.get("peak_mb"),
+              "fallback": bool(info.get("fallback")),
               "memory_capped": bool(info.get("memory_capped")), "notes": [info["note"]] if info.get("note") else []}
     if st not in (_cp.OPTIMAL, _cp.FEASIBLE):
         out["short"] = short_meta

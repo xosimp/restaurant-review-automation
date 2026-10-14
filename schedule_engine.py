@@ -10352,6 +10352,8 @@ class RepairContext:
         # and those CP-SAT's memory bound ended (STRESS-11).
         self.wall_capped = []
         self.memory_capped = []
+        # searches whose solver process died or hung and ran here instead
+        self.isolation_fallback = []
         # Why a row nobody could take was left (apply_fixes), by person,
         # date and kind — the final review's `unfixed` reads it.
         self.unfixed_why = {}
@@ -10909,6 +10911,8 @@ def _stage_solver(rows, x):
         summary["memory_capped"] = True
         if "solver" not in x.memory_capped:
             x.memory_capped.append("solver")
+    if ((res.get("stats") or {}).get("memory") or {}).get("fallback") and "solver" not in x.isolation_fallback:
+        x.isolation_fallback.append("solver")
     print(f"[schedule] solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
           f"{res.get('after_score')} kept={summary['kept']} ({summary['seconds']}s)")
     return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
@@ -11173,11 +11177,15 @@ def solve_capped(result) -> list:
             out.append("wall:draft")
         if solver.get("memory_capped"):
             out.append("memory:draft")
+        # its solver process died or hung and the solve ran in this one
+        if any(isinstance(v, dict) and v.get("fallback") for v in (solver.get("memory") or {}).values()):
+            out.append("fallback:draft")
     em = ((result or {}).get("repair") or {}).get("emergency") or {}
     if em.get("loop"):
         out.append("wall:loop")
     out += [f"wall:{k}" for k in em.get("searches") or []]
     out += [f"memory:{k}" for k in em.get("memory") or []]
+    out += [f"fallback:{k}" for k in em.get("fallback") or []]
     return out
 
 
@@ -11366,6 +11374,9 @@ def _emergency_of(ledger, x) -> dict:
     mem = list(getattr(x, "memory_capped", None) or [])
     if mem:
         out["memory"] = mem
+    fb = list(getattr(x, "isolation_fallback", None) or [])
+    if fb:
+        out["fallback"] = fb
     return out
 
 

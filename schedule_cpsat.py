@@ -1234,12 +1234,26 @@ class _Model:
 # no_lp (and the LNS workers): measured at 250 people, Stage 1 proved the
 # same optimum in 3.9 s and 0.6 GB (was 6.4 s, 1.6 GB), the stability phase
 # proved 469 in 3.8 s and 0.6 GB where the full portfolio reached 530 in
-# 5.6 s and 1.1 GB. Every large solve runs in a forked child (`run`), so
-# what CP-SAT allocated goes back to the operating system the moment it
-# returns — a 250-person generation used to leave the process at 1.4 GB
-# for good — and CP-SAT's own max_memory_in_mb bounds it at what the
-# process already holds plus SOLVE_MEMORY_MB. A solve the memory bound
-# ended is recorded (`memory_capped`), like one the wall clock ended.
+# 5.6 s and 1.1 GB. Every large solve runs in a solver process of its own
+# (`run`), so what CP-SAT allocated goes back to the operating system the
+# moment it returns — a 250-person generation used to leave the process at
+# 1.4 GB for good — and CP-SAT's own max_memory_in_mb bounds it at
+# SOLVE_MEMORY_MB. A solve the memory bound ended is recorded
+# (`memory_capped`), like one the wall clock ended.
+#
+# The solver process is EXECED, never forked from this one: a generation
+# runs beside another generation's CP-SAT thread pools, the lease and
+# heartbeat threads and the database pool, and a fork while any of them
+# held a C-level lock (absl's, malloc's, sqlite's) would hand the child that
+# lock held for ever. A fresh interpreter that imports only OR-Tools
+# (_SOLVER_CODE, started by subprocess — fork-exec, safe from any thread)
+# reads the model and the parameters as protobuf text, solves, and writes
+# the response back as text: the same proto, the same parameters, the same
+# deterministic answer. One spare is kept started (_take_process) so a
+# solve does not wait on an interpreter's start-up. A solver process that
+# dies or outlives its wall clock plus ISOLATE_GRACE_SECONDS is killed and
+# the solve is run in this process on the same budget — recorded
+# (`sp_info["fallback"]`), never a failed generation.
 DET_PER_KVAR = _env_float("SCHEDULE_CPSAT_DET_PER_KVAR", 0.6)
 DET_CAP = _env_float("SCHEDULE_CPSAT_DET_CAP", 120.0)
 LEAN_MIN_VARS = int(_env_float("SCHEDULE_CPSAT_LEAN_MIN_VARS", 15000))
@@ -1267,126 +1281,74 @@ def lean(s, n_vars) -> None:
 
 
 def isolation() -> str:
-    """"fork" (the default where the OS has fork): a large solve runs in a
-    child process; "off" (SCHEDULE_CPSAT_ISOLATE=0, or already inside such
-    a child): in this process."""
-    v = str(os.getenv("SCHEDULE_CPSAT_ISOLATE", "fork") or "fork").strip().lower()
-    if v in ("0", "off", "false", "no", "inline") or not hasattr(os, "fork") or _IN_CHILD:
+    """"process" (the default): a large solve runs in a solver process of its
+    own; "off" (SCHEDULE_CPSAT_ISOLATE=0 — the kill switch): in this one."""
+    v = str(os.getenv("SCHEDULE_CPSAT_ISOLATE", "process") or "process").strip().lower()
+    if v in ("0", "off", "false", "no", "inline"):
         return "off"
-    return "fork"
+    return "process"
 
 
-_IN_CHILD = False                       # this process is an isolated child: solve inline
+# The solver process: a bare interpreter importing OR-Tools only. Reads
+# "<params bytes>\n<model bytes>\n" then the two protobuf texts; writes
+# "<peak MB>\n" then the CpSolverResponse as text. Empty input: exits.
+_SOLVER_CODE = r"""
+import os, sys, resource
+from ortools.sat.python import cp_model as cp
+inp = sys.stdin.buffer
+head = inp.readline()
+if not head.strip():
+    sys.exit(0)
+np, nm = (int(x) for x in head.split())
+params = inp.read(np).decode()
+model = inp.read(nm).decode()
+m = cp.CpModel()
+m.proto.parse_text_format(model)
+del model
+s = cp.CpSolver()
+s.parameters.parse_text_format(params)
+s.solve(m)
+out = str(s.response_proto).encode()
+r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak = r / 1048576.0 if sys.platform == "darwin" else r / 1024.0
+sys.stdout.buffer.write(("%.1f\n" % peak).encode() + out)
+sys.stdout.buffer.flush()
+"""
+
+_SPARE = []
+_SPARE_LOCK = __import__("threading").Lock()
+_SECRET_ENV = ("_KEY", "_TOKEN", "_SECRET", "PASSWORD", "DATABASE_URL", "_DSN")
 
 
-class IsolatedKilled(RuntimeError):
-    """An isolated child was killed (its wall clock, or the OOM killer)."""
+def _solver_env() -> dict:
+    """The solver process's environment: this one's, without a credential."""
+    return {k: v for k, v in os.environ.items() if not any(t in k.upper() for t in _SECRET_ENV)}
 
 
-def isolated(fn, *a, timeout=None, **k):
-    """fn(*a, **k) in a forked child, its answer pickled back — every byte it
-    allocated (Stage 1's whole model and its solve) goes back to the OS when
-    it returns. The child inherits everything as it stands, so the answer is
-    the one this process would have computed; fn must not need to change
-    this process's state. In this process when isolation is off, when the
-    child could not start, or when it ended in an error (the same call then
-    raises or answers here, exactly as before). Raises IsolatedKilled when
-    the child was killed — past `timeout` seconds, or by the OOM killer."""
-    if isolation() != "fork":
-        return fn(*a, **k)
-    import pickle
-    import signal
-    try:
-        r, w = os.pipe()
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            pid = os.fork()
-    except Exception:
-        return fn(*a, **k)
-    if pid == 0:                                    # the child: run, answer, exit
-        code = 0
+def _start_process():
+    import subprocess
+    import sys as _sys_p
+    return subprocess.Popen([_sys_p.executable, "-c", _SOLVER_CODE], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=_solver_env(),
+                            close_fds=True)
+
+
+def _take_process():
+    """A started solver process — the spare when one is waiting — and a new
+    spare started behind it."""
+    with _SPARE_LOCK:
+        proc = None
+        while _SPARE and proc is None:
+            cand = _SPARE.pop()
+            if cand.poll() is None:
+                proc = cand
+        if proc is None:
+            proc = _start_process()
         try:
-            os.close(r)
-            global _IN_CHILD
-            _IN_CHILD = True
-            _child_init()
-            try:
-                payload = ("ok", fn(*a, **k), _peak_mb())
-                data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-            except BaseException as e:
-                data = pickle.dumps(("error", repr(e)[:300], _peak_mb()), protocol=pickle.HIGHEST_PROTOCOL)
-            view = memoryview(data)
-            while len(view):
-                view = view[os.write(w, view):]
-        except BaseException:
-            code = 1
-        finally:
-            os._exit(code)
-    os.close(w)
-    data, killed = _read_child(r, pid, timeout)
-    payload = None
-    if data:
-        try:
-            payload = pickle.loads(data)
-        except Exception:
-            payload = None
-    if payload is None or payload[0] != "ok":
-        if killed[0] or killed[1] == signal.SIGKILL:
-            raise IsolatedKilled("past its wall clock" if killed[0] else "killed (out of memory?)")
-        return fn(*a, **k)
-    ISOLATED_PEAKS.append(float(payload[2] or 0.0))
-    del ISOLATED_PEAKS[:-50]
-    return payload[1]
-
-
-ISOLATED_PEAKS = []                     # the latest isolated children's peak memory, MB
-
-
-def _child_init() -> None:
-    """In a freshly forked child: never reuse the parent's pooled database
-    connections (models.forget_inherited_connections) — nothing here reads
-    the database, and nothing a child does may touch the parent's."""
-    import sys as _sys_c
-    m = _sys_c.modules.get("models")
-    if m is not None and hasattr(m, "forget_inherited_connections"):
-        try:
-            m.forget_inherited_connections()
+            _SPARE.append(_start_process())
         except Exception:
             pass
-
-
-def _read_child(r, pid, timeout):
-    """(bytes the child wrote, (killed for time, the signal that ended it))."""
-    import select
-    import signal
-    chunks, killed = [], False
-    deadline = _time.monotonic() + float(timeout) if timeout is not None else None
-    try:
-        while True:
-            left = (deadline - _time.monotonic()) if deadline is not None else 5.0
-            if left <= 0:
-                killed = True
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                break
-            ready, _w, _x = select.select([r], [], [], min(left, 5.0))
-            if not ready:
-                continue
-            b = os.read(r, 1 << 20)
-            if not b:
-                break
-            chunks.append(b)
-    finally:
-        os.close(r)
-        try:
-            _pid, wstatus = os.waitpid(pid, 0)
-        except OSError:
-            wstatus = 0
-    sig = os.WTERMSIG(wstatus) if os.WIFSIGNALED(wstatus) else None
-    return b"".join(chunks), (killed, sig)
+        return proc
 
 
 def _rss_mb() -> float:
@@ -1443,28 +1405,26 @@ def _answer(status, solution, fields=None, params=None):
     return s
 
 
-def run(s, model, build=None):
-    """s.solve(model) — or s.solve(build()) when `build` makes the model to
-    solve from `model` (a fixed week's evaluation clone: built in the child,
-    so this process never holds the copy) — with what it uses bounded (see
-    the block above): a model of ISOLATE_MIN_VARS variables or more in a
-    forked child; CP-SAT's memory bound at what this process holds plus
-    SOLVE_MEMORY_MB. The answer is the same either way — the same model and
-    parameters, a deterministic search. `s.sp_info` says how it ran:
-    {"isolated", "peak_mb", "memory_capped", "note"}."""
+def run(s, model, isolate=True):
+    """s.solve(model), with what it uses bounded (see the block above): a
+    model of ISOLATE_MIN_VARS variables or more (and `isolate`) in a solver
+    process of its own; CP-SAT's memory bound at SOLVE_MEMORY_MB over what
+    the solving process holds. The answer is the same either way — the same
+    model and parameters, a deterministic search. `s.sp_info` says how it
+    ran: {"isolated", "peak_mb", "memory_capped", "fallback", "note"}."""
     n_vars = len(model.proto.variables)
-    limit = int(_rss_mb() + SOLVE_MEMORY_MB)
-    s.parameters.max_memory_in_mb = limit
-    if isolation() == "fork" and n_vars >= ISOLATE_MIN_VARS:
-        got = _run_forked(s, model, limit, build)
+    if isolate and isolation() == "process" and n_vars >= ISOLATE_MIN_VARS:
+        got = _run_in_process(s, model)
         if got is not None:
             return got
-    st = s.solve(build() if build is not None else model)
+    note = (getattr(s, "sp_info", None) or {}).get("note")
+    limit = int(_rss_mb() + SOLVE_MEMORY_MB)
+    s.parameters.max_memory_in_mb = limit
+    st = s.solve(model)
     peak = _peak_mb()
-    info = dict(getattr(s, "sp_info", None) or {})
-    info.update(isolated=False, peak_mb=round(peak, 1), limit_mb=limit,
-                memory_capped=_memory_capped(s, st, peak, limit))
-    s.sp_info = info
+    s.sp_info = {"isolated": False, "peak_mb": round(peak, 1), "limit_mb": limit,
+                 "memory_capped": _memory_capped(s, st, peak, limit),
+                 "fallback": bool(note), "note": note}
     _trim()
     return st
 
@@ -1484,71 +1444,65 @@ def _memory_capped(s, st, peak, limit) -> bool:
             and wall < 0.95 * float(p.max_time_in_seconds or 1e18))
 
 
-def _run_forked(s, model, limit, build=None):
-    """The solve in a forked child: the child inherits the model as it
-    stands (nothing is serialised on the way in), builds what it solves when
-    asked, solves, writes back the status, the solution and the statistics,
-    and exits — its memory goes with it. The answer is injected into `s`
-    (_answer) and the status returned. None when the child could not run or
-    died without an answer for any reason but being killed (the caller then
-    solves in this process); a child killed — the OOM killer, or past its
-    wall clock plus ISOLATE_GRACE_SECONDS — is an answerless UNKNOWN, never
-    retried here."""
-    import pickle
-    import signal
-    import warnings
+def _run_in_process(s, model):
+    """The solve in a solver process (_SOLVER_CODE): the model and the
+    parameters out as protobuf text, the response back, injected into `s`;
+    the status returned. None — with `s.sp_info["note"]` saying why — when
+    the process could not start, died, answered nothing readable, or
+    outlived its wall clock plus ISOLATE_GRACE_SECONDS (it is killed): the
+    caller then solves in this process on the same budget."""
+    import subprocess
+    import ortools.sat.python.cp_model_helper as _cmh
+    s.parameters.max_memory_in_mb = int(SOLVE_MEMORY_MB + 150)   # the process starts at ~150 MB
+    limit = int(s.parameters.max_memory_in_mb)
     try:
-        r, w = os.pipe()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            pid = os.fork()
+        params = str(s.parameters).encode()
+        body = str(model.proto).encode()
     except Exception as e:
-        s.sp_info = {"isolated": False, "note": f"could not fork: {e!r}"[:200]}
+        s.sp_info = {"isolated": False, "note": f"model not serialised: {e!r}"[:200]}
         return None
-    if pid == 0:                                    # the child: solve, answer, exit
-        code = 0
+    payload = f"{len(params)} {len(body)}\n".encode() + params + body
+    del body
+    timeout = float(s.parameters.max_time_in_seconds or 60.0) + ISOLATE_GRACE_SECONDS
+    try:
+        proc = _take_process()
+    except Exception as e:
+        s.sp_info = {"isolated": False, "note": f"solver process did not start: {e!r}"[:200]}
+        return None
+    try:
+        out, _err = proc.communicate(payload, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
         try:
-            os.close(r)
-            global _IN_CHILD
-            _IN_CHILD = True
-            _child_init()
-            st = s.solve(build() if build is not None else model)
-            resp = s.response_proto
-            ok = st in (_cp.OPTIMAL, _cp.FEASIBLE)
-            payload = {"status": int(st), "solution": list(resp.solution) if ok else [],
-                       "fields": {k: getattr(resp, k) for k in _RESPONSE_FIELDS}, "peak_mb": _peak_mb()}
-            view = memoryview(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
-            while len(view):
-                view = view[os.write(w, view):]
-        except BaseException:
-            code = 1
-        finally:
-            os._exit(code)
-    os.close(w)
-    data, (killed, sig) = _read_child(
-        r, pid, float(s.parameters.max_time_in_seconds or 60.0) + ISOLATE_GRACE_SECONDS)
-    payload = None
-    if data:
-        try:
-            payload = pickle.loads(data)
+            proc.communicate(timeout=10)
         except Exception:
-            payload = None
-    if payload is None:
-        if killed or sig == signal.SIGKILL:
-            why = "past its wall clock" if killed else "killed (out of memory?)"
-            ans = _answer(_cp.UNKNOWN, [], params=s.parameters)
-            s._CpSolver__response = ans.response_proto
-            s.sp_info = {"isolated": True, "killed": True, "memory_capped": not killed, "note": "solve " + why,
-                         "limit_mb": limit}
-            return _cp.UNKNOWN
-        s.sp_info = {"isolated": False, "note": f"child ended without an answer (signal {sig})"}
+            pass
+        s.sp_info = {"isolated": False, "note": "the solver process outlived its wall clock and was killed; "
+                                                "solved here on the same budget"}
         return None
-    ans = _answer(payload["status"], payload["solution"], payload.get("fields"), params=None)
-    s._CpSolver__response = ans.response_proto
-    st = s.response_proto.status
-    peak = float(payload.get("peak_mb") or 0.0)
+    except Exception as e:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        s.sp_info = {"isolated": False, "note": f"the solver process failed ({e!r}); solved here"[:200]}
+        return None
+    head, _sep, text = (out or b"").partition(b"\n")
+    if proc.returncode != 0 or not text:
+        why = "was killed (out of memory?)" if (proc.returncode or 0) < 0 else f"exited {proc.returncode}"
+        s.sp_info = {"isolated": False, "note": f"the solver process {why} without an answer; solved here"}
+        return None
+    try:
+        resp = _cmh.CpSolverResponse()
+        resp.parse_text_format(text.decode())
+        peak = float(head or 0.0)
+    except Exception as e:
+        s.sp_info = {"isolated": False, "note": f"the solver's answer was unreadable ({e!r}); solved here"[:200]}
+        return None
+    s._CpSolver__response = resp
+    st = resp.status
     s.sp_info = {"isolated": True, "peak_mb": round(peak, 1), "limit_mb": limit,
-                 "memory_capped": _memory_capped(s, st, peak, limit)}
+                 "memory_capped": _memory_capped(s, st, peak, limit), "fallback": False}
     return st
 
 
@@ -1667,6 +1621,7 @@ def _solve_phases(mdl, max_seconds, seed, workers, deterministic, wall_left=None
         runs["isolated"] = runs["isolated"] or bool(info.get("isolated"))
         runs["peak_mb"] = max(runs["peak_mb"], float(info.get("peak_mb") or 0.0))
         runs["memory_capped"] = runs["memory_capped"] or bool(info.get("memory_capped"))
+        runs["fallback"] = bool(runs.get("fallback")) or bool(info.get("fallback"))
         if info.get("note"):
             runs.setdefault("notes", []).append(info["note"])
         last_name = s.status_name(st)
@@ -1844,7 +1799,8 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     # gave, whether they ran in a child process, the most memory one took
     # and whether CP-SAT's memory bound ended one
     out["memory"] = {"isolated": runs["isolated"], "peak_mb": runs["peak_mb"],
-                     "memory_capped": runs["memory_capped"], "notes": runs.get("notes") or []}
+                     "memory_capped": runs["memory_capped"], "fallback": bool(runs.get("fallback")),
+                     "notes": runs.get("notes") or []}
     out["budget"] = runs["budget"]
     out["variables"] = len(mdl.m.proto.variables)
     out["seed"] = int(seed)
@@ -2657,21 +2613,17 @@ def _fixed_eval(mdl, prob, assignment, seconds=3.0):
     if mdl is None or prob is None:
         return None
     # the whole objective with no phase held (_solve_phases bounds mdl.m)
-    base = getattr(mdl, "base", None) or mdl.m
-
-    def build():
-        # the copy is made where the solve runs: a large one in its child
-        # (run), so this process never holds it (STRESS-11)
-        m = base.clone()
-        m.clear_hints()
-        for u in mdl.live:
-            p = assignment[u.id] if u.id < len(assignment) else None
-            for q in prob.dom[u.id]:
-                m.add(mdl.x[(u.id, q)] == (1 if q == p else 0))
-            m.add(mdl.unf[u.id] == (1 if (p is None or p not in prob.dom[u.id]) else 0))
-        return m
+    m = (getattr(mdl, "base", None) or mdl.m).clone()
+    m.clear_hints()
+    for u in mdl.live:
+        p = assignment[u.id] if u.id < len(assignment) else None
+        for q in prob.dom[u.id]:
+            m.add(mdl.x[(u.id, q)] == (1 if q == p else 0))
+        m.add(mdl.unf[u.id] == (1 if (p is None or p not in prob.dom[u.id]) else 0))
+    # every variable fixed, one worker: settled in milliseconds, here
     s = _solver_for(seconds, workers=1, deterministic=True)
-    st = run(s, base, build=build)
+    st = run(s, m, isolate=False)
+    del m
     return s if st in (_cp.OPTIMAL, _cp.FEASIBLE) else None
 
 
@@ -2772,25 +2724,12 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
         mgr_slots.append(x)
     stage1_ctx = list(context_rows or []) + [dict(r) for r in manager_slots or []
                                               if (r.get("employee") or "").strip() and not r.get("_mgr_extra")]
-    # Stage 1 — its model and its solve — in a child process (isolated):
-    # this process never holds the shapes model, and what building and
-    # solving it took goes back to the OS (STRESS-11, SCALE-18). The same
-    # inputs, the same answer.
-    s1_cap = wall_left()
-    try:
-        shaped = isolated(_shapes.shape_week, dates, constraints, requirements, concurrent=concurrent,
-                          history_rows=history_rows, context_rows=stage1_ctx, last_week_rows=last_week_rows,
-                          rates=rates, blended_rate=blended, budget_dollars=budget_dollars,
-                          roster_roles=roster_roles, max_seconds=s1_secs, seed=seed,
-                          staffing_value=sig.get("staffing_value"), person_rates=ot.get("person_rates"),
-                          objective=ctx, exclude=exclude, wall_cap=s1_cap,
-                          timeout=(s1_cap if s1_cap else 4 * DET_CAP) + 120.0)
-        if isolation() == "fork" and isinstance((shaped.get("stats") or {}).get("memory"), dict):
-            shaped["stats"]["memory"]["isolated"] = True
-    except IsolatedKilled as e:
-        shaped = {"rows": [], "short": [], "assumed": [],
-                  "stats": {"status": "killed", "note": f"Stage 1 {e}", "memory_capped": "memory" in str(e),
-                            "wall_capped": "wall clock" in str(e)}}
+    shaped = _shapes.shape_week(dates, constraints, requirements, concurrent=concurrent, history_rows=history_rows,
+                                context_rows=stage1_ctx, last_week_rows=last_week_rows, rates=rates,
+                                blended_rate=blended, budget_dollars=budget_dollars, roster_roles=roster_roles,
+                                max_seconds=s1_secs, seed=seed, staffing_value=sig.get("staffing_value"),
+                                person_rates=ot.get("person_rates"), objective=ctx, exclude=exclude,
+                                wall_cap=wall_left())
     stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat", "seed": int(seed),
              "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic",
                         # what each stage's model size raised it to (work_budget)

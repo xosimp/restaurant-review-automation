@@ -45,79 +45,105 @@ def _solver(budget=5.0):
     return s
 
 
-# ── STRESS-11 / SCALE-18: the solve runs in a child, the same answer ─────────
+# ── STRESS-11 / SCALE-18: the solve runs in a solver process, the same answer ─
 
-def test_a_large_solve_runs_in_a_child_process_and_answers_exactly_as_in_this_one(monkeypatch):
-    m, xs = _model()
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "0")
-    inline = _solver()
-    st_in = cps.run(inline, m)
-    assert inline.sp_info["isolated"] is False
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
+@pytest.fixture
+def solver_process(monkeypatch):
+    """Solves of any size go to a solver process; spares a test started are
+    killed after it."""
+    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "process")
     monkeypatch.setattr(cps, "ISOLATE_MIN_VARS", 1)
+    yield
+    with cps._SPARE_LOCK:
+        for proc in cps._SPARE:
+            proc.kill()
+            proc.wait()
+        cps._SPARE.clear()
+
+
+def test_a_large_solve_runs_in_a_solver_process_and_answers_exactly_as_in_this_one(monkeypatch, solver_process):
+    m, xs = _model()
+    inline = _solver()
+    st_in = cps.run(inline, m, isolate=False)
+    assert inline.sp_info["isolated"] is False and inline.sp_info["fallback"] is False
     child = _solver()
     st_ch = cps.run(child, m)
     assert child.sp_info["isolated"] is True and child.sp_info["peak_mb"] > 0
-    # the same model and parameters, a deterministic search: the same week
+    # the same model and parameters (as protobuf text), a deterministic search: the same week
     assert st_ch == st_in == cps._cp.OPTIMAL
     assert child.objective_value == inline.objective_value
     assert [child.value(x) for x in xs] == [inline.value(x) for x in xs]
     assert child.status_name(st_ch) == "OPTIMAL" and child.wall_time >= 0
-    # CP-SAT's own memory bound is set at what this process holds plus the allowance
+    # CP-SAT's own memory bound travels with the parameters
     assert child.parameters.max_memory_in_mb >= cps.SOLVE_MEMORY_MB
+    # the solver process never inherits a credential
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-not-real")
+    assert "ANTHROPIC_API_KEY" not in cps._solver_env()
 
 
-def test_a_child_past_its_wall_clock_is_killed_and_answers_nothing_never_retried_here(monkeypatch):
-    m, _xs = _model(n=3000)
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
-    monkeypatch.setattr(cps, "ISOLATE_MIN_VARS", 1)
-    s = _solver(budget=60.0)
-    s.parameters.max_time_in_seconds = 0.5
-    monkeypatch.setattr(cps, "ISOLATE_GRACE_SECONDS", -0.5)        # its deadline is now
-    calls = []
-    real = s.solve
-    s.solve = lambda model: calls.append(1) or real(model)          # an in-process retry would land here
-    st = cps.run(s, m)
-    assert st == cps._cp.UNKNOWN
-    assert s.sp_info["killed"] is True and "wall clock" in s.sp_info["note"]
-    assert calls == []
+def test_the_solver_process_is_exec_d_never_forked_from_this_one():
+    import inspect
+    src = inspect.getsource(cps._start_process) + inspect.getsource(cps._run_in_process)
+    assert "subprocess.Popen" in src and "os.fork" not in inspect.getsource(cps)
 
 
-def _square_in_child(x):
-    return {"pid": os.getpid(), "value": x * x, "in_child": cps._IN_CHILD, "nested": cps.isolation()}
-
-
-def _boom():
-    raise ValueError("the same error here")
-
-
-def _sleep_forever():
-    time.sleep(60)
-
-
-def test_stage_one_runs_in_a_child_that_answers_what_this_process_would(monkeypatch):
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
-    got = cps.isolated(_square_in_child, 7)
-    assert got["value"] == 49 and got["pid"] != os.getpid()
-    # inside the child everything solves inline: no grandchildren
-    assert got["in_child"] is True and got["nested"] == "off"
-    assert cps._IN_CHILD is False
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "0")
-    assert cps.isolated(_square_in_child, 7)["pid"] == os.getpid()
-
-
-def test_a_child_that_raises_is_run_here_so_the_caller_sees_what_it_always_did(monkeypatch):
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
-    with pytest.raises(ValueError, match="the same error here"):
-        cps.isolated(_boom)
-
-
-def test_a_child_past_its_time_is_killed_and_said_never_rerun_here(monkeypatch):
-    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "fork")
+def test_a_hung_solver_process_is_killed_and_the_solve_runs_here_on_the_same_budget(monkeypatch, solver_process):
+    m, xs = _model()
+    monkeypatch.setattr(cps, "_SOLVER_CODE", "import time; time.sleep(60)")
+    monkeypatch.setattr(cps, "ISOLATE_GRACE_SECONDS", 0.5)
+    want = _solver()
+    cps.run(want, m, isolate=False)
+    s = _solver()
+    s.parameters.max_time_in_seconds = 0.5           # the hung process's deadline: 1 s
     t0 = time.monotonic()
-    with pytest.raises(cps.IsolatedKilled, match="wall clock"):
-        cps.isolated(_sleep_forever, timeout=0.3)
-    assert time.monotonic() - t0 < 10
+    st = cps.run(s, m)
+    assert st == cps._cp.OPTIMAL and time.monotonic() - t0 < 30
+    assert s.sp_info["isolated"] is False and s.sp_info["fallback"] is True
+    assert "killed" in s.sp_info["note"]
+    assert [s.value(x) for x in xs] == [want.value(x) for x in xs]      # never a failed generation
+
+
+def test_a_solver_process_that_dies_is_said_and_the_solve_runs_here(monkeypatch, solver_process):
+    m, _xs = _model()
+    monkeypatch.setattr(cps, "_SOLVER_CODE", "import sys; sys.exit(3)")
+    s = _solver()
+    assert cps.run(s, m) == cps._cp.OPTIMAL
+    assert s.sp_info["fallback"] is True and "exited 3" in s.sp_info["note"]
+
+
+def test_a_solve_started_while_another_thread_is_mid_solve_completes(solver_process):
+    """The lead's case: a second generation's CP-SAT busy on another thread
+    (its pools, its locks) while this one solves in a solver process."""
+    import threading
+    big, _bx = _model(n=6000, seed=9)
+    busy = threading.Event()
+    done = {}
+
+    def other():
+        s = cps._solver_for(30.0, workers=4, deterministic=True)
+        busy.set()
+        done["st"] = cps.run(s, big, isolate=False)
+    t = threading.Thread(target=other)
+    t.start()
+    assert busy.wait(10)
+    time.sleep(0.2)                                   # the other solve is under way
+    m, xs = _model()
+    want = _solver()
+    cps.run(want, m, isolate=False)
+    s = _solver()
+    st = cps.run(s, m)
+    assert st == cps._cp.OPTIMAL and s.sp_info["isolated"] is True
+    assert [s.value(x) for x in xs] == [want.value(x) for x in xs]
+    t.join(120)
+    assert not t.is_alive() and done["st"] in (cps._cp.OPTIMAL, cps._cp.FEASIBLE)
+
+
+def test_the_kill_switch_solves_here(monkeypatch):
+    m, _xs = _model()
+    monkeypatch.setenv("SCHEDULE_CPSAT_ISOLATE", "0")
+    monkeypatch.setattr(cps, "ISOLATE_MIN_VARS", 1)
+    s = _solver()
+    assert cps.run(s, m) == cps._cp.OPTIMAL and s.sp_info["isolated"] is False and not s.sp_info["fallback"]
 
 
 # ── SCALE-19: work scaled to the model, never below what was stated ──────────
