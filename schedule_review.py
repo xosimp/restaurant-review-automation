@@ -17,6 +17,8 @@ import schedule_time as _stime
 
 log = logging.getLogger(__name__)
 
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
+
 
 def _unstaffable_line(items) -> str:
     """The review's warning for days nobody can work (E-20) — a "⚠" line, so
@@ -213,7 +215,7 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
         try:
             stays = _rules.assumed_stays(rows or [], constraints)
         except Exception as _sx:
-            print(f"[schedule] assumed stays unavailable: {_sx!r}")
+            _degraded(f"assumed stays unavailable: {_sx!r}", _sx)
             stays = None
         if stays is not None:
             out["assumed_stays"] = stays
@@ -271,7 +273,7 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
                 if bcl:
                     budget.append(bcl)
             except Exception as _bx:
-                print(f"[schedule] budget conflict line unavailable: {_bx}")
+                _degraded(f"budget conflict line unavailable: {_bx}", _bx)
         budget += [ln for ln in budget_old[1:] if ln.startswith("The rules that come before the budget")]
     else:
         out.pop("over_budget_hours", None)

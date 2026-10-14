@@ -36,6 +36,11 @@ import json
 import os
 import re
 from datetime import date as _date
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 NOTE_ACTION = "schedule_note"
@@ -200,7 +205,7 @@ def _checked(bullets, rows, roster, restaurant_id, prompt, data_blocks, role_flo
                                           restaurant_id=restaurant_id, data_blocks=data_blocks,
                                           role_floors=role_floors)
     except Exception as e:
-        print(f"[schedule_narrative] line checks unavailable: {e!r}")
+        _degraded(f"line checks unavailable: {e!r}", e)
         passed = [b for b in bullets if str(b or "").strip()]
     for b in passed:
         why = final_rows_problem(b, rows, roster)
@@ -242,7 +247,7 @@ def write(restaurant_id, rows, changes=None, unmet=None, chips=None, model_bulle
                     out.update(bullets=[owner_dates(b) for b in kept], source="final_week")
                     return out
         except Exception as e:
-            print(f"[schedule_narrative] note not written: {e!r}")
+            _degraded(f"note not written: {e!r}", e)
     if model_bullets:
         kept, dropped = _checked(list(model_bullets), rows, roster, restaurant_id, prompt, [prompt], role_floors)
         out["dropped"] += dropped

@@ -44,6 +44,11 @@ import threading
 import uuid
 import zlib
 from datetime import date as _date, datetime as _datetime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -1862,7 +1867,7 @@ def stored_answer(request):
             with state["lock"]:
                 state["moved"].append(a["id"])
     except Exception as e:
-        print(f"[schedule] resumed: prompt not compared ({e!r})")
+        _degraded(f"resumed: prompt not compared ({e!r})", e)
     msg = StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
     u = a.get("usage") or {}
     if u.get("batch"):
@@ -1875,9 +1880,9 @@ def stored_answer(request):
         msg.usage.output_tokens = int(u.get("output_tokens") or 0)
         msg.usage.cache_read_input_tokens = int(u.get("cache_read_tokens") or 0)
         msg.usage.cache_creation_input_tokens = int(u.get("cache_write_tokens") or 0)
-        print(f"[schedule] the batched answer {a['id']} used for its call")
+        log.info(f"the batched answer {a['id']} used for its call")
         return msg
-    print(f"[schedule] resumed: call {a['id']}'s stored answer read again, not paid for")
+    log.info(f"resumed: call {a['id']}'s stored answer read again, not paid for")
     return msg
 
 

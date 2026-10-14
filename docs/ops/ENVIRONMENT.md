@@ -242,6 +242,7 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `SCHEDULE_SOLVER_DETERMINISTIC` | `1` | `1`: the backtracking solver's budget is work (above), the wall clock only its emergency cap (`wall_capped` reported). `0`: the wall clock is its budget again (not reproducible under load). | schedule_solver.py |
 | `SCHEDULE_ASSIGN_ENGINE` | `cpsat` | Who re-solves the assignment in the repair loop's solver stage: `cpsat` (`schedule_cpsat.improve`) or `backtracking` (`schedule_solver.improve`, also the fallback). | schedule_engine.py |
 | `SCHEDULE_SOLVER_DRAFT_SECONDS` | `25` | The solver-first draft's budget inside a generation (shapes then people), held to the job's clock. | schedule_engine.py |
+| `SCHEDULE_STATE_STRICT` | unset | `1` makes a generation result's undeclared key (a misspelling, or a key no stage writes) raise instead of being logged and counted (schedule_state, ARCH-5). The test suite sets it (tests/conftest.py); production leaves it unset. | schedule_state.py |
 | `SCHEDULE_RESOLVE_SECONDS` | `6` | The Studio's and Ask's re-solve of chosen days (MARKET-13). | schedule_cpsat.py |
 | `SCHEDULE_DRAFT_CRITIC` | — | `1` turns on the deterministic+critic review of a code-built week for every restaurant (`schedule_critic`, AI-8); else the `draft_v1` arm `code_critic`. | schedule_critic.py |
 | `SCHEDULE_CRITIC_MODEL` | `claude-sonnet-5-5` | The model the critic runs on. | ai_utils.py |

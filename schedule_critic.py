@@ -35,6 +35,11 @@ import json
 import os
 
 import schedule_rules as _rules
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 CRITIC_ACTION = "schedule_critic"
 # Edits one call may propose; a week reviewed in several day-chunks takes
@@ -306,7 +311,7 @@ def review(restaurant_id, rows, constraints, unmet=None, last_week_rows=None, ow
     try:
         people = people_facts([r.get("employee") for r in rows], signals, constraints)
     except Exception as e:
-        print(f"[schedule_critic] people facts not read: {e!r}")
+        _degraded(f"people facts not read: {e!r}", e)
     runs = chunks(rows)
     edits, prompts = [], []
     for ds in runs:
@@ -335,7 +340,7 @@ def review(restaurant_id, rows, constraints, unmet=None, last_week_rows=None, ow
             edits += [e for e in (data.get("edits") or []) if isinstance(e, dict)][:MAX_EDITS]
         except Exception as e:
             out["error"] = f"{type(e).__name__}"
-            print(f"[schedule_critic] no review of {ds[0]}..{ds[-1]}: {e!r}")
+            _degraded(f"no review of {ds[0]}..{ds[-1]}: {e!r}", e)
             break
     try:
         u = out["usage"]
@@ -343,7 +348,7 @@ def review(restaurant_id, rows, constraints, unmet=None, last_week_rows=None, ow
                                                     u["input_tokens"], u["output_tokens"],
                                                     u["cache_write_tokens"], u["cache_read_tokens"]), 6)
     except Exception as e:
-        print(f"[schedule_critic] cost not priced: {e!r}")
+        _degraded(f"cost not priced: {e!r}", e)
     if not edits:
         return out
     got = validate(rows, edits, constraints, score=score, limit=MAX_EDITS * max(1, len(runs)))
@@ -365,6 +370,6 @@ def review(restaurant_id, rows, constraints, unmet=None, last_week_rows=None, ow
         # Unvalidated prose is never shown: blank every reason.
         for k in got["kept"]:
             k["reason"] = ""
-        print(f"[schedule_critic] reasons not validated, blanked: {e!r}")
+        _degraded(f"reasons not validated, blanked: {e!r}", e)
     out.update(rows=got["rows"], kept=got["kept"], refused=got["refused"])
     return out

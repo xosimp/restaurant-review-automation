@@ -21,6 +21,11 @@ from functools import lru_cache
 
 from models import get_conn, DB_PATH
 from models import live_where as _models_live_where, live_csv_sql as _models_live_csv
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -789,7 +794,7 @@ def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
         import compliance_packs
         out = compliance_packs.apply_for(out, restaurant, owner_set or {})
     except Exception as e:
-        print(f"[schedule rules] jurisdiction rules not applied rid={getattr(restaurant, 'id', None)}: {e!r}")
+        _degraded(f"jurisdiction rules not applied rid={getattr(restaurant, 'id', None)}: {e!r}", e)
         return out
     for k in DAYS_OFF_RETIRED:
         out[k] = None
@@ -2963,7 +2968,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             c.habits.append(_h["signal"])
             c.typed_rules.append({k: v for k, v in _h.items() if k != "signal"})
     except Exception as exc:
-        print(f"[rules] habits unreadable for {restaurant_id}: {exc!r}")
+        _degraded(f"habits unreadable for {restaurant_id}: {exc!r}", exc)
     # Who has stopped working (schedule audit 10/3/26 E-3, D-17): no shift in
     # staff_settings.DORMANT_WEEKS weeks, not hand-added since, nothing on
     # file saying they are still here. Still on the roster — a row the owner
@@ -3028,7 +3033,7 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
                                           if str(s.get("date") or "")[:10] >= _since])
     except Exception as exc:
         found = []
-        print(f"[schedule_rules] identity concerns unread rid={restaurant_id}: {exc!r}")
+        _degraded(f"identity concerns unread rid={restaurant_id}: {exc!r}", exc)
     c.identity_concerns = []
     for f in found:
         if f["kind"] == "handoff":
@@ -9447,7 +9452,7 @@ def _will_not_stand(rows, c) -> set:
         return {id(rows[v["index"]]) for v in violations(rows, c)
                 if v.get("no_show") and v.get("index") is not None and v["index"] < len(rows)}
     except Exception as exc:
-        print(f"[schedule] could not read which rows will not stand: {exc}")
+        _degraded(f"could not read which rows will not stand: {exc}", exc)
         return set()
 
 

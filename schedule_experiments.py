@@ -87,6 +87,11 @@ import math
 import os
 
 from models import DB_PATH
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(*args, **kwargs):
@@ -328,12 +333,12 @@ def _power_or_pin(db_path) -> dict:
     try:
         return powered(db_path)
     except Exception as e:
-        print(f"[experiments] whether the experiment can conclude is unreadable: {e}")
+        _degraded(f"whether the experiment can conclude is unreadable: {e}", e)
         try:
             import ops
             ops.capture(e, job="schedule_experiment_power", context="arms_for")
         except Exception as _cx:
-            print(f"[experiments] could not record that failure: {_cx}")
+            _degraded(f"could not record that failure: {_cx}", _cx)
         return {"powered": False, "restaurants": None, "need": MIN_RESTAURANTS_PER_ARM,
                 "window_days": POWER_WINDOW_DAYS, "unreadable": True}
 
@@ -349,12 +354,12 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
     try:
         pins = _restaurant_pins(restaurant_id, db_path)
     except Exception as e:           # a pin that cannot be read never breaks generation
-        print(f"[experiments] pins unavailable for restaurant {restaurant_id}: {e}")
+        _degraded(f"pins unavailable for restaurant {restaurant_id}: {e}", e)
         pins = {}
     try:
         promoted = active_promotions(db_path)
     except Exception as e:           # nor does a promotion that cannot be read
-        print(f"[experiments] promotions unavailable: {e}")
+        _degraded(f"promotions unavailable: {e}", e)
         promoted = {}
     for exp in EXPERIMENTS:
         if not exp.get("active"):
@@ -926,7 +931,7 @@ def readout(db_path=DB_PATH) -> dict:
             where.append(_m_rows.learning_rows_sql("schedule_experiment_weeks.restaurant_id",
                                                    "schedule_experiment_weeks.week_start"))
         except Exception as e:
-            print(f"[experiments] demo-era floor not applied in SQL: {e}")
+            _degraded(f"demo-era floor not applied in SQL: {e}", e)
         rows = conn.execute("SELECT history_id, restaurant_id, experiment, arm, week_start, pinned, quality_score, "
                             "solver_applied FROM schedule_experiment_weeks "
                             + (f"WHERE {' AND '.join(where)} " if where else "")
@@ -969,7 +974,7 @@ def readout(db_path=DB_PATH) -> dict:
                     if d.get("rate") is not None:
                         rework[rec["history_id"]] = d["rate"]
         except Exception as e:
-            print(f"[experiments] acceptance unavailable for restaurant {rid}: {e}")
+            _degraded(f"acceptance unavailable for restaurant {rid}: {e}", e)
     exps = []
     keys = [e["key"] for e in EXPERIMENTS] + sorted({r["experiment"] for r in rows} - {e["key"] for e in EXPERIMENTS})
     for key in keys:
@@ -1048,7 +1053,7 @@ def readout(db_path=DB_PATH) -> dict:
         promoted = active_promotions(db_path)
         history = promotions(db_path=db_path)
     except Exception as e:           # the promotions table predates this database
-        print(f"[experiments] promotions unavailable: {e}")
+        _degraded(f"promotions unavailable: {e}", e)
         promoted, history = {}, []
     for e in exps:
         e["promotion"] = promoted.get(e["key"])
@@ -1058,7 +1063,7 @@ def readout(db_path=DB_PATH) -> dict:
             e["verdict_history"] = [{k: v.get(k) for k in ("week", "state", "call", "text", "method")}
                                     for v in verdicts(e["key"], db_path=db_path, limit=12)]
         except Exception as ex:      # a database from before the verdicts table
-            print(f"[experiments] verdict history unavailable: {ex}")
+            _degraded(f"verdict history unavailable: {ex}", ex)
             e["verdict_history"] = []
     return {"ok": True, "experiments": exps, "pins": pins, "env_pin": env, "rule": RULE,
             "min_weeks": MIN_WEEKS_PER_ARM, "min_restaurants": MIN_RESTAURANTS_PER_ARM,

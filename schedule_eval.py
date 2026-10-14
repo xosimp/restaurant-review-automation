@@ -64,6 +64,11 @@ import zlib
 from schedule_context import (  # noqa: F401
     MIN_VERDICT_RESTAURANTS, MIN_VERDICT_WEEKS, ROUTE_METRIC, _decisive, _evidence_text, latest_verdict,
     route_evidence, tag_evidence)
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -320,7 +325,7 @@ def _may_teach(restaurant_id, week_start, db_path=None) -> bool:
         return bool(models.learning_eligible(int(restaurant_id), since=str(week_start or "")[:10] or None,
                                              db_path=db_path))
     except Exception as e:
-        print(f"[schedule_eval] eligibility not read for {restaurant_id}: {e!r}")
+        _degraded(f"eligibility not read for {restaurant_id}: {e!r}", e)
         return False
 
 
@@ -375,7 +380,7 @@ def freeze(version, history_ids, tags=None, db_path=None) -> dict:
         try:
             base = _sfb.base_week(rid, _week(ws), db_path=db_path)
         except Exception as e:
-            print(f"[schedule_eval] base week not read for {hid}: {e!r}")
+            _degraded(f"base week not read for {hid}: {e!r}", e)
             base = {}
         key = f"{rid}:{ws}:{gid}"
         tags_now = item_tags(calls, roster_size, rid, ws, extra=(tags or {}).get(hid) or (),
@@ -515,7 +520,7 @@ def pre_repair_metrics(rows, item) -> dict:
         unmet = len(_so.unmet_items(rows, constraints=c, violations=viols,
                                     hours_budget=res.get("hours_budget")))
     except Exception as e:
-        print(f"[schedule_eval] unmet before repair not read: {e!r}")
+        _degraded(f"unmet before repair not read: {e!r}", e)
         unmet = None
     return {"hard_before": hard, "manager_minutes_before": int(sum((prof.get("manager") or {}).values())),
             "unmet_before": unmet, "pre_repair_defects": (hard + unmet) if unmet is not None else None}
@@ -631,7 +636,7 @@ def code_arm_rows(arm, item) -> list:
                 if got.get("rows"):
                     return got["rows"]
         except Exception as e:
-            print(f"[schedule_eval] solver-first arm fell back to v0: {e!r}")
+            _degraded(f"solver-first arm fell back to v0: {e!r}", e)
     return _sfb.solver_rows(dates, res.get("requirements_by_date") or {}, c, base_rows=base.get("rows") or [],
                             context_rows=[], open_times=res.get("open_times"), close_times=ctx.get("close_times"),
                             signals=ctx.get("signals"), weights=ctx.get("weights"),

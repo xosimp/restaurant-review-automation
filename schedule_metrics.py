@@ -38,6 +38,11 @@ eval copies what it needs into its own retention-exempt store.
 """
 import json
 import zlib
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -155,7 +160,7 @@ def role_violations(model_rows, c) -> int:
         import schedule_rules as _sr
         return sum(1 for v in _sr.violations(model_rows, c) if v.get("kind") == "role_not_held")
     except Exception as e:
-        print(f"[schedule_metrics] role check skipped: {e!r}")
+        _degraded(f"role check skipped: {e!r}", e)
         return 0
 
 
@@ -221,7 +226,7 @@ def snapshot(result, constraints, restaurant=None, close_times=None, role_buffer
     try:
         enc = _scrub(enc, guest_names_in(json.dumps(enc, default=str)[:200000]))
     except Exception as e:
-        print(f"[schedule_metrics] context not scrubbed, not kept: {e!r}")
+        _degraded(f"context not scrubbed, not kept: {e!r}", e)
         return None
     return zlib.compress(json.dumps(enc, default=str).encode("utf-8", "replace"))
 

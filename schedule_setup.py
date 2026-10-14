@@ -23,6 +23,11 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 
 import schedule_rules as _sr
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 # More of the roster than this marked to close reads as a list nobody
 # reviewed: a closer is the one person chosen to close for their role (D-9).
@@ -672,7 +677,7 @@ def strength_crews_view(restaurant_id, thresholds=None, c=None) -> dict:
         from labor import staffing_baseline
         typical = (staffing_baseline(restaurant_id) or {}).get("typical_headcount") or {}
     except Exception as e:
-        print(f"[setup] usual crew unavailable for {restaurant_id}: {e!r}")
+        _degraded(f"usual crew unavailable for {restaurant_id}: {e!r}", e)
         typical = {}
     try:
         from schedule_requirements import _parse_role_minimums

@@ -64,6 +64,11 @@ generation — a fallback that cannot be built leaves the days as they were.
 """
 import os
 from datetime import date as _date, timedelta as _td
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DRAFT_SOURCES = ("model", "carry_forward", "solver")
 DRAFT_SOURCE_ENV = "SCHEDULE_DRAFT_SOURCE"
@@ -161,7 +166,7 @@ def base_week(restaurant_id, week_dates, shifts=None, db_path=None) -> dict:
             if rows:
                 return {"rows": rows, "source": "published", "week_start": r["week_start"], "week_end": r["week_end"]}
     except Exception as e:
-        print(f"[schedule_fallback] published week not read: {e!r}")
+        _degraded(f"published week not read: {e!r}", e)
     dated = sorted({str(s.get("date") or "")[:10] for s in shifts or [] if str(s.get("date") or "")[:10] < first
                     and len(str(s.get("date") or "")[:10]) == 10})
     if not dated:

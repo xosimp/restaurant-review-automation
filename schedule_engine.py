@@ -33,6 +33,11 @@ from schedule_context import (  # noqa: F401
     current_schedule_run, frozen_inputs, frozen_read, schedule_pinned, schedule_route, start_route,
     week_start_day_for, week_start_day_of)
 from schedule_time import _date_of, _weekday_name, week_dates_from, week_day_names  # noqa: F401
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def _week_monday(today, week_start=None, start_day=0):
@@ -196,7 +201,8 @@ def thinking_tokens_reserved(effort=None) -> int:
     if effort is None:
         try:
             effort = schedule_effort_in_force()
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"schedule_effort_in_force failed — went on without it: {_sx!r}", _sx)
             return THINKING_TOKENS_RESERVED
     if effort == "":
         return 0
@@ -212,7 +218,8 @@ def output_tokens_per_row(contract=None) -> float:
     if contract is None:
         try:
             contract = _sched_out.schedule_contract()
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"schedule_contract failed — went on without it: {_sx!r}", _sx)
             return float(OUTPUT_TOKENS_PER_ROW)
     return _sched_out.answer_tokens_per_row(contract)
 
@@ -277,7 +284,8 @@ def reach_stage(key) -> None:
         c = current_clock()
         if c is not None:
             c.reach(key)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"current_clock failed — went on without it: {_sx!r}", _sx)
         pass
 
 
@@ -504,7 +512,8 @@ def _restaurant_split(restaurant_id):
         return None
     try:
         return _stime.restaurant_split(get_restaurant(restaurant_id))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"restaurant_split failed — went on without it: {_sx!r}", _sx)
         return None
 
 
@@ -689,7 +698,8 @@ def _enqueue_generation(job_id, restaurant_id, prior_draft_id=None, rejection=No
         rej["user"] = _row_safe_user(rej["user"])
     try:
         attribution = _ai.attribution_for_thread()
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"attribution_for_thread failed — went on without it: {_sx!r}", _sx)
         attribution = {}
     payload = {"job_id": str(job_id), "restaurant_id": restaurant_id, "prior_draft_id": prior_draft_id,
                "rejection": rej, "kwargs": dict(job_kwargs), "attribution": attribution}
@@ -783,7 +793,8 @@ def generation_request(restaurant_id, week_start=None, dates=None, history_id=No
             finally:
                 conn.close()
             base_week = (row[0] if row else None) or None
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"_gc_req failed — went on without it: {_sx!r}", _sx)
             base_week = None
     if base_week:
         monday = str(base_week)[:10]
@@ -857,7 +868,8 @@ def typical_generation_seconds(restaurant_id, db_path=None):
         if sec is not None:
             return {"seconds": int(round(sec)), "n": n, "basis": "all"}
         return None
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"sorted failed — went on without it: {_sx!r}", _sx)
         return None
     finally:
         conn.close()
@@ -913,7 +925,7 @@ def hard_week_signals(week_dates, closed_dates=(), roster_size=0, owner_rules=0,
             if hit:
                 hol.append(f"{hit[0]} {mdy(str(d)[:10])}")
     except Exception as e:
-        print(f"[schedule] pre-router: holidays not read: {e!r}")
+        _degraded(f"pre-router: holidays not read: {e!r}", e)
     if hol:
         out.append(("holiday", "holiday in the week: " + ", ".join(hol)))
     special = sorted(set(str(d)[:10] for d in closed_dates or ()) & set(str(d)[:10] for d in week_dates or ()))
@@ -955,7 +967,7 @@ def hard_week_reasons(week_dates, closed_dates=(), roster_size=0, owner_rules=0,
         try:
             ev = evidence(tag)
         except Exception as e:
-            print(f"[schedule] pre-router: evidence for {tag} not read: {e!r}")
+            _degraded(f"pre-router: evidence for {tag} not read: {e!r}", e)
             ev = None
         if ev:
             out.append(f"{why} — {ev}")
@@ -988,16 +1000,17 @@ def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster
             finally:
                 conn.close()
         except Exception as e:
-            print(f"[schedule] pre-router: drafts not counted: {e!r}")
+            _degraded(f"pre-router: drafts not counted: {e!r}", e)
         try:
             import ai_orchestrator as _orch_route
             last = _orch_route.subject_run(WORKFLOW, restaurant_id, run["subject"])
             escalated = bool(last and int(last.get("escalations") or 0) > 0)
         except Exception as e:
-            print(f"[schedule] pre-router: last run not read: {e!r}")
+            _degraded(f"pre-router: last run not read: {e!r}", e)
         try:
             closed = _rules.closures(restaurant)["closed_dates"] if restaurant is not None else []
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"closures failed — went on without it: {_sx!r}", _sx)
             closed = []
         rules_n = len(getattr(constraints, "owner_rules", None) or []) + \
             len(getattr(constraints, "owner_rules_unchecked", None) or [])
@@ -1011,7 +1024,7 @@ def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster
         try:
             signals = [why for _t, why in hard_week_signals(week_dates, **week_facts)]
         except Exception as e:
-            print(f"[schedule] pre-router: signals not read: {e!r}")
+            _degraded(f"pre-router: signals not read: {e!r}", e)
             signals = []
     else:
         signals = []
@@ -1025,7 +1038,7 @@ def _route_generation(restaurant_id, restaurant, week_dates, constraints, roster
                          "kind": "redo" if redo else "week", "pre_route": reasons[:6],
                          "unevidenced": unevidenced[:6]})
     if reasons:
-        print(f"[schedule] pre-router: {route.tier} ({'; '.join(reasons)})")
+        log.info(f"pre-router: {route.tier} ({'; '.join(reasons)})")
 
 
 def _gate_reasons(gate) -> list:
@@ -1086,7 +1099,7 @@ def _escalate_for_gate(gate) -> str:
         run["escalations"] = int(run.get("escalations") or 0) + 1
         run["notes"] = notes
         run["steps"].append(dict(step, tier=nxt.tier, model=nxt.model, effort=nxt.effort, trigger="rule_breach"))
-        print(f"[schedule] quality gate: escalating {route.tier} -> {nxt.tier}")
+        log.info(f"quality gate: escalating {route.tier} -> {nxt.tier}")
         return "escalated"
     run["steps"].append(dict(step, tier=route.tier, model=route.model, effort=route.effort))
     return "stay"
@@ -1145,7 +1158,7 @@ def _record_schedule_run(run) -> None:
                       reviewer_score=None, reviewer_notes=None, context=context, parent=None,
                       trigger=_orch._trigger_now(), db_path=None)
     except Exception as e:
-        print(f"[schedule] run not recorded: {e!r}")
+        _degraded(f"run not recorded: {e!r}", e)
 
 
 def _in_schedule_run(fn):
@@ -1243,7 +1256,7 @@ def _expected_rows(shifts, roster_pairs) -> int:
             n = by_week[busiest]
             return max(n, per_head) if len(days[busiest]) < 5 else n
     except Exception as _ex:
-        print(f"[schedule] expected rows unread, planning from the roster: {_ex}")
+        _degraded(f"expected rows unread, planning from the roster: {_ex}", _ex)
     return per_head
 
 
@@ -1341,7 +1354,8 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
         try:
             import weather as _wx
             _wx_rows = _wx.cached_forecast_for_week(restaurant, dates)
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"cached_forecast_for_week failed — went on without it: {_sx!r}", _sx)
             _wx_rows = []
         _h, date_demand = _merge_date_demand(restaurant_id, dates, _signals.by_date(restaurant_id, dates),
                                              weather=_wx_rows, closed=closed_here)
@@ -1395,7 +1409,8 @@ def forecast_preview(restaurant_id, week_start=None) -> dict:
         _soft_fail("forecast_preview learned crew", _lc, restaurant_id)
     try:
         out["demand_data_through"] = _demand_data_through(restaurant_id)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_demand_data_through failed — went on without it: {_sx!r}", _sx)
         out["demand_data_through"] = None
     return out
 
@@ -1518,12 +1533,13 @@ def _soft_fail(what, exc, restaurant_id):
     apart" vanish from both the prompt and the score with nobody told.
     Inside a generation it is also listed for the review (P-17:
     _input_failure_line)."""
-    print(f"[schedule] {what} unavailable for restaurant {restaurant_id}: {exc}")
+    _degraded(f"{what} unavailable for restaurant {restaurant_id}: {exc}", exc, restaurant_id=restaurant_id,
+              record=False)          # recorded below, as schedule_inputs
     _note_input_failure(what)
     try:
         _ops.capture(exc, job="schedule_inputs", context=f"restaurant_id={restaurant_id} input={what}")
     except Exception as _cx:
-        print(f"[schedule] could not record that failure: {_cx}")
+        _degraded(f"could not record that failure: {_cx}", _cx)
 
 
 # What each input a generation can go without is, in the owner's words, for
@@ -2939,7 +2955,8 @@ def _redo_reads_as_rules(restaurant_id, instruction, week_start=None) -> bool:
                 week = week_dates_from(_week_monday(_date_of(week_start), week_start,
                                                     start_day=week_start_day_for(get_restaurant(restaurant_id),
                                                                                  week_start)))
-            except Exception:
+            except Exception as _sx:
+                _degraded(f"week_dates_from failed — went on without it: {_sx!r}", _sx)
                 week = None
         todo = []
         for s in _owr._sentences(text):
@@ -2953,7 +2970,7 @@ def _redo_reads_as_rules(restaurant_id, instruction, week_start=None) -> bool:
         got = _owr.read(restaurant_id, todo, "instruction", names, roles, week_dates=week)
         return all(got.get(s) for s in todo)
     except Exception as e:
-        print(f"[schedule] redo reason not read: {e!r}")
+        _degraded(f"redo reason not read: {e!r}", e)
         return False
 
 
@@ -2992,7 +3009,8 @@ def _accepted_why(d, roster_pairs, owner_hours=False) -> str:
     from schedule_economics import _holiday_dates
     try:
         name = _holiday_dates(int(d[:4])).get(d)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"get failed — went on without it: {_sx!r}", _sx)
         name = None
     if name in _CLOSURE_HOLIDAYS and not owner_hours:
         return f"{name}, with no hours on file for it"
@@ -3697,7 +3715,7 @@ def _critic_scorer(facts, signals, weights):
                                  profiles=profiles, weights=weights, **signals)
             return q.get("score") if q.get("checked") else None
         except Exception as e:
-            print(f"[schedule] critic guard could not score: {e!r}")
+            _degraded(f"critic guard could not score: {e!r}", e)
             return None
     return score
 
@@ -4101,7 +4119,8 @@ def _standby_policy(rid) -> dict:
     try:
         import standby_insurance as _sbi
         return _sbi.policy(rid) or {}
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"policy failed — went on without it: {_sx!r}", _sx)
         return {}
 
 
@@ -4233,7 +4252,7 @@ def _assign_part_slots(part, t, rules_c, week_rows, kwargs, roster_pairs, clock)
     part["shape_unstaffed_dates"] = sorted({r.get("date") for r in got["unassigned"] if r.get("date")})
     part["shape_assignment"] = dict(got["stats"], assigned=len(got["assigned"]),
                                     unassigned=len(got["unassigned"]))
-    print(f"[schedule] shape slots assigned={len(got['assigned'])} unassigned={len(got['unassigned'])} "
+    log.info(f"shape slots assigned={len(got['assigned'])} unassigned={len(got['unassigned'])} "
           f"status={got['stats'].get('status')}")
     return part
 
@@ -4264,7 +4283,8 @@ def expected_call_usd(rows, costs=None, contract=None, heads=0, model=None) -> f
     inp = INPUT_TOKENS_BASE + INPUT_TOKENS_PER_PERSON * max(0, int(heads or 0))
     try:
         model = model or schedule_route().model
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"schedule_route failed — went on without it: {_sx!r}", _sx)
         model = None
     return float(_ai._estimate_cost(model or "", int(inp), int(out)))
 
@@ -4285,7 +4305,7 @@ def _run_cap_reached(rows, costs=None, contract=None, heads=0, inflight_usd=0.0,
         caps = _wf.policy(WORKFLOW).caps
         nxt = expected_call_usd(rows, costs, contract, heads)
     except Exception as e:
-        print(f"[schedule] run spend not read: {e!r}")
+        _degraded(f"run spend not read: {e!r}", e)
         return None
     calls = int(n or 0) + int(inflight_calls or 0)
     usd = float(cost or 0) + float(inflight_usd or 0)
@@ -4453,7 +4473,8 @@ def parallel_split_rows():
         import model_gateway as _mg_split
         if _mg_split.call_class() != "interactive":
             return None
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"call_class failed — went on without it: {_sx!r}", _sx)
         return None
     return n
 
@@ -4541,7 +4562,8 @@ def call_pool_workers() -> int:
     try:
         import job_queue as _jq_pool
         running = _jq_pool.max_running("generation")
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"max_running failed — went on without it: {_sx!r}", _sx)
         running = SCHEDULE_GEN_WORKERS
     return max(1, running * parallel_calls())
 
@@ -4632,6 +4654,7 @@ def _dispatch_calls(ready, analysis, shifts, kept, written_rows, generate):
         try:
             return one(t, dk, whole), None
         except Exception as e:
+            _degraded(f"one failed — went on without it: {e!r}", e)
             return None, e
     if len(ready) <= 1:
         return [safe(t, dk, whole) for t, dk, whole, _e in ready]
@@ -5087,7 +5110,7 @@ def _record_generation_metrics(restaurant_id, history_id, result, metrics_in, ki
                           loop=metrics_in.get("loop"), constraints=getattr(x, "c", None), seconds=seconds,
                           context=blob)
     except Exception as e:
-        print(f"[schedule] generation metrics not recorded for history {history_id}: {e!r}")
+        _degraded(f"generation metrics not recorded for history {history_id}: {e!r}", e)
         _ops.capture(e, job="schedule_metrics", context=f"restaurant_id={restaurant_id}")
         return None
 
@@ -5373,7 +5396,8 @@ def _demand_data_through(restaurant_id, today=None, restaurant=None) -> dict:
         try:
             from time_utils import restaurant_now_by_id
             today = restaurant_now_by_id(restaurant_id).date()
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"date failed — went on without it: {_sx!r}", _sx)
             today = _date.today()
     last = row["d"] if row else None
     if not last:
@@ -5396,7 +5420,7 @@ def _demand_data_through(restaurant_id, today=None, restaurant=None) -> dict:
         closed_wd = set(cl.get("closed_weekdays") or [])
         closed_dates = set(cl.get("closed_dates") or [])
     except Exception as _cx:
-        print(f"[schedule] closures unreadable for freshness, every day counts: {_cx}")
+        _degraded(f"closures unreadable for freshness, every day counts: {_cx}", _cx)
     trading = 0
     d = last_d + _tdd(days=1)
     while d < today:
@@ -5579,7 +5603,8 @@ def _summarize_schedule_csv_by_day_role(csv_text: str) -> dict:
             bucket = summary.setdefault(day, {}).setdefault(role, {"count": 0, "hours": 0.0})
             bucket["count"] += 1
             bucket["hours"] += hrs
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"DictReader failed — went on without it: {_sx!r}", _sx)
         return {}
     return summary
 
@@ -5785,7 +5810,7 @@ def week_requirements(restaurant_id, result, constraints=None, curve=None) -> li
             # The hours and ceilings the owner's hours notes state (PROMPT-1).
             **_limit_kwargs(c))
     except Exception as exc:
-        print(f"[schedule] shift requirements unavailable: {exc}")
+        _degraded(f"shift requirements unavailable: {exc}", exc)
         return []
 
 
@@ -5999,7 +6024,7 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
             pricer = _obj_t.WeekPricer([r for r in preview_rows if id(r) not in skip
                                         and (r.get("employee") or "").strip()], objective_ctx)
         except Exception as e:
-            print(f"[schedule] top-up objective unavailable: {e!r}")
+            _degraded(f"top-up objective unavailable: {e!r}", e)
             pricer = None
 
     def _econ_min_gain():
@@ -6551,7 +6576,7 @@ def _pass_scorer(restaurant_id, result, signals=None, weights=None):
         if signals is None:
             signals, weights = _quality_signals(restaurant_id, result)
     except Exception as _sx:
-        print(f"[schedule] score-aware passes unavailable: {_sx}")
+        _degraded(f"score-aware passes unavailable: {_sx}", _sx)
         return None
     profiles = result.get("shift_profiles") or None
     made = []
@@ -6562,7 +6587,7 @@ def _pass_scorer(restaurant_id, result, signals=None, weights=None):
         try:
             sc = _sqp.LocalScorer(rows, profiles=profiles, weights=weights, **signals)
         except Exception as _lx:
-            print(f"[schedule] local scorer failed: {_lx}")
+            _degraded(f"local scorer failed: {_lx}", _lx)
             return None
         made.append(sc)
         return sc
@@ -6943,7 +6968,8 @@ def stored_daily_targets(restaurant_id, history_id) -> dict:
         row = conn.execute("SELECT quality_json, quality_ref FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (hid, restaurant_id)).fetchone()
         q = _m_q.history_quality(conn, row) if row else {}          # the whole evaluation (SCALE-13)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_ensure_history_columns failed — went on without it: {_sx!r}", _sx)
         return {}
     finally:
         conn.close()
@@ -7102,7 +7128,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
         from models import get_role_scores as _grs
         role_scores = _grs(restaurant_id) or {}
     except Exception as _rx:
-        print(f"[schedule] role scores unavailable for {restaurant_id}: {_rx!r}")
+        _degraded(f"role scores unavailable for {restaurant_id}: {_rx!r}", _rx)
         role_scores = {}
     thresholds = get_role_strength_thresholds(restaurant_id) if scores else {}
     # Leader rules whatever the ratings (P-18, D-10), as the generation reads them.
@@ -7116,7 +7142,8 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
             from thresholds import DEMAND_LEVEL_MIN_READINGS as _MINR
             demand_by_day = {d["day"]: d["vs_average_pct"] for d in forecast["days"]
                              if (d.get("samples") or 0) >= _MINR}
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"build_demand_forecast failed — went on without it: {_sx!r}", _sx)
         demand_by_day = {}
 
     # Always built, as the generation builds them (SQ-15, SQ-22): a manager's
@@ -7136,7 +7163,8 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
         from labor import staffing_baseline
         _first = min((r.get("date") for r in (week_rows or []) if r.get("date")), default=None)
         patterns = staffing_baseline(restaurant_id, shifts=_cached_shifts(restaurant_id), before=_first)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"min failed — went on without it: {_sx!r}", _sx)
         patterns = {"typical_headcount": {}, "cross_trained": {}}
 
     restaurant = get_restaurant(restaurant_id)
@@ -7178,19 +7206,20 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
                 try:
                     import weather as _wx
                     _cached_wx = _wx.cached_forecast_for_week(restaurant, dates)
-                except Exception:
+                except Exception as _sx:
+                    _degraded(f"cached_forecast_for_week failed — went on without it: {_sx!r}", _sx)
                     _cached_wx = []
                 _h, out["date_demand"] = _merge_date_demand(restaurant_id, dates, out["demand_by_date"],
                                                             weather=_cached_wx, closed=c.closed_dates)
             except Exception as _hx:
-                print(f"[schedule] live date demand unavailable: {_hx}")
+                _degraded(f"live date demand unavailable: {_hx}", _hx)
             # The same person at a sibling location that day, as generation
             # scores it.
             try:
                 from models import sibling_location_shifts as _sibs
                 out["elsewhere"] = _sibs(restaurant_id, dates) or {}
             except Exception as _ex:
-                print(f"[schedule] live sibling shifts unavailable: {_ex}")
+                _degraded(f"live sibling shifts unavailable: {_ex}", _ex)
             out["prior_week_assignments"] = _prior_week_assignments(restaurant_id, before=dates[0])
             out["pending_time_off"] = {n: sorted(d) for n, d in c.pending_off.items()}
             # The week's demand-scaled requirements, rebuilt from the same
@@ -7202,7 +7231,7 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
                 import schedule_economics as _econ_live
                 out["splh_objective"] = _econ_live.splh_objective(restaurant_id)
             except Exception as _ox:
-                print(f"[schedule] live sales-per-labor-hour objective unavailable: {_ox}")
+                _degraded(f"live sales-per-labor-hour objective unavailable: {_ox}", _ox)
                 out["splh_objective"] = {"available": False}
             try:
                 import labor_standards as _ls_live
@@ -7220,9 +7249,9 @@ def quality_inputs_from_db(restaurant_id, daily_target_hours=None, week_rows=Non
                 import schedule_requirements as _req_live
                 out["requirements_by_date"] = _req_live.requirements_map(out["requirements"])
             except Exception as _rqx:
-                print(f"[schedule] live requirements unavailable: {_rqx}")
+                _degraded(f"live requirements unavailable: {_rqx}", _rqx)
     except Exception as _cx:
-        print(f"[schedule] live constraints unavailable: {_cx}")
+        _degraded(f"live constraints unavailable: {_cx}", _cx)
     out["learned_worse"] = learned_worse_levers(restaurant_id)
     return out
 
@@ -7258,7 +7287,7 @@ def learned_worse_levers(restaurant_id) -> dict:
         import rec_learning
         return rec_learning.worsened_levers(restaurant_id) or {}
     except Exception as e:
-        print(f"[schedule] learned levers unavailable for {restaurant_id}: {e}")
+        _degraded(f"learned levers unavailable for {restaurant_id}: {e}", e)
         return {}
 
 
@@ -7296,7 +7325,8 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
             try:
                 from time_utils import restaurant_now_by_id
                 today = restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y-%m-%d")
-            except Exception:
+            except Exception as _sx:
+                _degraded(f"strftime failed — went on without it: {_sx!r}", _sx)
                 today = _dt.now().strftime("%Y-%m-%d")
             floor = (_dt.strptime(before, "%Y-%m-%d") - _tdl(days=2)).strftime("%Y-%m-%d")
             entries = get_schedule_history(restaurant_id, limit=5)
@@ -7337,7 +7367,8 @@ def _prior_week_assignments(restaurant_id, days_back: int = 7, before: str = Non
             bucket.sort(key=lambda e: e["date"])
             out[name] = bucket[-days_back:]
         return out
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_last_published_csv failed — went on without it: {_sx!r}", _sx)
         return {}
 
 
@@ -7352,7 +7383,7 @@ def _prior_week_from_punches(restaurant_id, before, days_back=7) -> dict:
         end = (_dt.strptime(before, "%Y-%m-%d") - _tdp(days=1)).strftime("%Y-%m-%d")
         rows = _sf.person_rows(restaurant_id, since=start, until=end) or []
     except Exception as _px:
-        print(f"[schedule] punches for the seam unavailable for {restaurant_id}: {_px!r}")
+        _degraded(f"punches for the seam unavailable for {restaurant_id}: {_px!r}", _px)
         return {}
     out = {}
     for r in rows:
@@ -7878,7 +7909,7 @@ def objective_floor_hours(restaurant_id, result, c, signals) -> dict:
                 out[k] = round(uh * _obj_f.STARVED_SHARE, 2)
         return out
     except Exception as e:
-        print(f"[schedule] objective floor hours unavailable: {e!r}")
+        _degraded(f"objective floor hours unavailable: {e!r}", e)
         return {}
 
 
@@ -8046,7 +8077,8 @@ def _half_hours_signal(rows) -> dict:
     try:
         import schedule_requirements as _req
         return _req.half_hours_map(rows or [])
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"half_hours_map failed — went on without it: {_sx!r}", _sx)
         return {}
 
 
@@ -8055,7 +8087,8 @@ def _reasons_signal(rows) -> dict:
     try:
         import schedule_requirements as _req
         return _req.requirement_reasons(rows or [])
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"requirement_reasons failed — went on without it: {_sx!r}", _sx)
         return {}
 
 
@@ -8149,7 +8182,7 @@ def _identity_view(restaurant_id, roster, c=None):
         import people as _people_id
         key_of = (_people_id.identity_index(restaurant_id, names) or {}).get("key_of") or {}
     except Exception as _ix:
-        print(f"[schedule] identity unavailable for {restaurant_id}: {_ix!r}")
+        _degraded(f"identity unavailable for {restaurant_id}: {_ix!r}", _ix)
 
     def _display(n):
         k = " ".join(str(n or "").split()).lower()
@@ -8418,7 +8451,8 @@ def shifts_stamp(restaurant_id):
         finally:
             conn.close()
         return tuple(row) if row else ()
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"get_conn failed — went on without it: {_sx!r}", _sx)
         return None
 
 
@@ -8462,7 +8496,8 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
     targets = tuple(sorted((str(k), float(v)) for k, v in (daily_target_hours or {}).items()))
     try:
         version = schedule_inputs_version(restaurant_id)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"schedule_inputs_version failed — went on without it: {_sx!r}", _sx)
         version = None
     key = (restaurant_id, history_id or None, dates, targets, version)
     now = _time.monotonic()
@@ -8532,7 +8567,8 @@ def what_if_seconds():
     try:
         from flask import has_request_context
         return STUDIO_WHAT_IF_SECONDS if has_request_context() else None
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"has_request_context failed — went on without it: {_sx!r}", _sx)
         return None
 
 
@@ -8588,6 +8624,7 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
             what_if.pop("baseline", None)
             what_if.pop("best", None)
         except Exception as _wx:
+            _degraded(f"compare_candidates failed — went on without it: {_wx!r}", _wx)
             what_if = {"ran": False, "reason": f"comparison unavailable: {_wx}"}
     # Recommendation kinds this owner has been shown many times and never
     # once acted on stop being shown. Nothing is RECORDED here: this runs
@@ -8649,11 +8686,11 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
                                                               result.get("typical_headcount"))
             _rt_sq.attach_schedule_confidence(restaurant_id, quality, quality["recommendation_items"])
         except Exception as _rtx:
-            print(f"[schedule] recommendation confidence failed: {_rtx}")
+            _degraded(f"recommendation confidence failed: {_rtx}", _rtx)
         if hidden:
             quality["suppressed_recommendation_kinds"] = sorted(hidden)
     except Exception as _rx:
-        print(f"[schedule] recommendation filter failed: {_rx}")
+        _degraded(f"recommendation filter failed: {_rx}", _rx)
     return quality, what_if
 
 
@@ -8727,7 +8764,7 @@ def mark_next_week_built(restaurant_id, history_id) -> int:
         return rec_ledger.implemented(restaurant_id, "schedule:next-week", "schedule_review",
                                       source_ref=f"generated:{history_id}", meta={"module": "labor"})
     except Exception as e:
-        print(f"[schedule] next-week not marked implemented: {e}")
+        _degraded(f"next-week not marked implemented: {e}", e)
         return 0
 
 
@@ -8746,7 +8783,8 @@ def schedule_item_metric(item):
         import outcomes
         return outcomes.expected_metric_for("schedule_hours:" + str(item.get("key") or ""), item.get("text"),
                                             module="schedule")
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"expected_metric_for failed — went on without it: {_sx!r}", _sx)
         return None
 
 
@@ -8854,9 +8892,9 @@ def present_quality(restaurant_id, quality, user_id=None, authority=None):
                 _si.record_recommendation(restaurant_id, it.get("kind") or "other",
                                           str(it.get("text") or "")[:200], "shown", authority=authority)
             except Exception as e:
-                print(f"[schedule] showing not counted for {it.get('kind')}: {e}")
+                _degraded(f"showing not counted for {it.get('kind')}: {e}", e)
     except Exception as e:
-        print(f"[schedule] quality recommendations not presented rid={restaurant_id}: {e}")
+        _degraded(f"quality recommendations not presented rid={restaurant_id}: {e}", e)
     return quality
 
 
@@ -8874,7 +8912,8 @@ def _sched_notes_with_findings(restaurant_id, sched_notes):
         # lean Fridays" used to push every weekly draft to add Friday staff.
         links = [l for l in (bi.executive_brief(restaurant_id).get("links") or [])
                  if l.get("kind") == "reviews_x_labor" and l.get("headline")]
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"get failed — went on without it: {_sx!r}", _sx)
         links = []
     if not links:
         return sched_notes
@@ -8905,7 +8944,7 @@ def standby_for_rows(restaurant_id, rows: list, week_dates: list, inputs=None, l
         busy = _req_sb.busy_shifts(list(week_dates or []), inputs.get("shift_profiles") or None,
                                    inputs.get("demand_by_day") or {}, inputs.get("demand_by_date") or {})
     except Exception as e:
-        print(f"[schedule] standby requirements unavailable for {restaurant_id}: {e!r}")
+        _degraded(f"standby requirements unavailable for {restaurant_id}: {e!r}", e)
     return _sl.standby_days(restaurant_id, list(week_dates or []), rows=rows, limit=limit, requirements=reqs,
                             busy=busy)
 
@@ -8965,7 +9004,7 @@ def likely_edits(restaurant_id, rows: list, patterns: list = None, predict: bool
                 continue
             out.append(p)
     except Exception as _px:
-        print(f"[schedule] edit prediction unavailable for {restaurant_id}: {_px}")
+        _degraded(f"edit prediction unavailable for {restaurant_id}: {_px}", _px)
     return out
 
 
@@ -8975,13 +9014,15 @@ def _pattern_likely_edits(restaurant_id, rows: list, patterns: list = None) -> l
     if patterns is None:
         try:
             patterns = _versions.patterns_for_draft(restaurant_id)[0]
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"patterns_for_draft failed — went on without it: {_sx!r}", _sx)
             patterns = _versions.learned_patterns(restaurant_id)
     try:
         import schedule_intel as _si
         gone = _si.dismissed_patterns(restaurant_id)
         patterns = [p for p in patterns if _si.pattern_key(p) not in gone]
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"dismissed_patterns failed — went on without it: {_sx!r}", _sx)
         pass
     out, seen = [], set()
     for r in rows or []:
@@ -9132,7 +9173,8 @@ def _gate_someone_free(v, rows, c) -> bool:
     def takes(n, row, others):
         try:
             return bool(c.can_add(dict(row, employee=n), others)[0])
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"bool failed — went on without it: {_sx!r}", _sx)
             return False
     if kind == "no_manager":
         managers = [n for n in free if c.manages(n, d)]
@@ -9167,7 +9209,8 @@ def _gate_someone_free(v, rows, c) -> bool:
 def _gate_holds(c, name, role, d) -> bool:
     try:
         return bool(c.holds(name, role, d)) if hasattr(c, "holds") else True
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"hasattr failed — went on without it: {_sx!r}", _sx)
         return False
 
 
@@ -9181,7 +9224,7 @@ def _gate_people(result) -> dict:
         if rid:
             flags = frozen_read(("leader_flags", rid, None), lambda: get_leader_flags(rid) or {}) or {}
     except Exception as _fx:
-        print(f"[schedule] gate: leader flags unavailable: {_fx}")
+        _degraded(f"gate: leader flags unavailable: {_fx}", _fx)
     scores = {str(k).strip().lower(): v for k, v in (result.get("operational_scores") or {}).items()}
     return {"scores": scores, "flags": {str(k).strip().lower(): v for k, v in flags.items() if v}}
 
@@ -9245,7 +9288,7 @@ def _gate_rules(result) -> dict:
     try:
         prof = _rules.breach_profile(rows, c, viols=viols)
     except Exception as _gx:
-        print(f"[schedule] gate: breach profile unavailable: {_gx}")
+        _degraded(f"gate: breach profile unavailable: {_gx}", _gx)
         return {}
     hard = sum(1 for bid in (prof.get("by_id") or {}) if bid[0] in _rules.HARD)
     return {"hard": hard, "unmanaged": int(sum((prof.get("manager") or {}).values()))}
@@ -9317,7 +9360,7 @@ def _gate_fill_answer(answer, restaurant_id, history_id, dates, extra_rows=None,
             from models import get_schedule_history_detail as _gshd_fill
             text = (_gshd_fill(int(history_id), restaurant_id) or {}).get("schedule_csv") or ""
         except Exception as e:
-            print(f"[schedule] gate: draft not read for the fill: {e!r}")
+            _degraded(f"gate: draft not read for the fill: {e!r}", e)
             return None
     want = set(dates)
     body = [r for r in _versions.rows_from_csv(text) if (r.get("date") or "")[:10] in want]
@@ -9376,7 +9419,7 @@ def _record_gate_path(restaurant_id, path, dates) -> None:
                          path, "quality gate sent to the model: "))
             + ", ".join(sorted(dates or [])))
     except Exception as e:
-        print(f"[schedule] gate path not recorded: {e!r}")
+        _degraded(f"gate path not recorded: {e!r}", e)
 
 
 # The gate's fill in code re-runs its days through everything after the
@@ -9680,7 +9723,7 @@ def objective_need_text(result) -> dict:
             need.update(shaped)
         return _cps_t.need_text(need)
     except Exception as e:
-        print(f"[schedule] objective need unavailable: {e!r}")
+        _degraded(f"objective need unavailable: {e!r}", e)
         return {}
 
 
@@ -9714,7 +9757,7 @@ def objective_context(restaurant_id, week_dates, c, signals, requirements, budge
                 history_rows = [s for s in (_lab_o.load_shifts_for_restaurant(restaurant_id) or [])
                                 if since <= str(s.get("date") or "")[:10] < first]
             except Exception as e:
-                print(f"[schedule] objective history unavailable: {e!r}")
+                _degraded(f"objective history unavailable: {e!r}", e)
         ctx = _obj.ObjectiveContext.build(
             restaurant_id, list(week_dates or []), budget=budget_dollars or None,
             last_week_rows=sig.get("last_published_rows") or None, requirements=requirements or [],
@@ -9737,7 +9780,7 @@ def objective_context(restaurant_id, week_dates, c, signals, requirements, budge
             ctx.need = need
         return ctx
     except Exception as e:
-        print(f"[schedule] objective unavailable for restaurant {restaurant_id}: {e!r}")
+        _degraded(f"objective unavailable for restaurant {restaurant_id}: {e!r}", e)
         return None
 
 
@@ -9870,7 +9913,7 @@ class RepairContext:
                 self._pricing = _econ.week_pricing(self.rid, self.c, blended_rate=self.result.get("blended_rate")) \
                     if self.rid is not None else {}
             except Exception as exc:
-                print(f"[schedule] week pricing unavailable: {exc!r}")
+                _degraded(f"week pricing unavailable: {exc!r}", exc)
                 self._pricing = {}
         return self._pricing or None
 
@@ -10273,7 +10316,7 @@ def _stage_budget(rows, x):
         sc = x.scorer_for(rows) if x.scorer_for else None
         score_fn = sc.score if sc is not None else None
     except Exception as _tx:
-        print(f"[schedule] score-aware trim unavailable: {_tx}")
+        _degraded(f"score-aware trim unavailable: {_tx}", _tx)
     rep = {}
     new, trimmed, hours = _econ.trim_to_budget(
         rows, x.budget, x.result.get("daily_target_hours") or {}, constraints=x.c, floors=x.c.role_floors,
@@ -10300,7 +10343,8 @@ def _staffing_value(restaurant_id) -> dict:
     try:
         import staffing_elasticity as _sel
         return _sel.marginal_values(restaurant_id) or {}
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"marginal_values failed — went on without it: {_sx!r}", _sx)
         return {}
 
 
@@ -10378,7 +10422,7 @@ def _stage_solver(rows, x):
             x.memory_capped.append("solver")
     if ((res.get("stats") or {}).get("memory") or {}).get("fallback") and "solver" not in x.isolation_fallback:
         x.isolation_fallback.append("solver")
-    print(f"[schedule] solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
+    log.info(f"solver ({summary.get('engine')}) {summary['status']} {res.get('before_score')} -> "
           f"{res.get('after_score')} kept={summary['kept']} ({summary['seconds']}s)")
     return {"rows": res["rows"] if res.get("applied") else rows, "report": {"summary": summary}}
 
@@ -10434,7 +10478,7 @@ def _stage_optimizer(rows, x):
         # The wall clock, not the evaluations, ended it: the emergency cap.
         x.wall_capped.append("optimizer")
     if res.get("changes"):
-        print(f"[schedule] optimizer {res['before_score']} -> {res['after_score']} "
+        log.info(f"optimizer {res['before_score']} -> {res['after_score']} "
               f"({len(res['changes'])} changes, {res['seconds']}s)")
     return {"rows": res["rows"] if res.get("changes") else rows, "report": {"summary": _opt.summary(res, sig)}}
 
@@ -10478,14 +10522,14 @@ def _stage_failure(key, exc, x) -> dict:
     — for a hard-rule or manager stage — a publish blocker (P-3, P-17)."""
     tier = _STAGE_TIER.get(key, _rules.TIER_QUALITY)
     blocks = tier <= _rules.TIER_COVERAGE
-    print(f"[schedule] repair stage {key} failed: {exc!r}")
+    log.info(f"repair stage {key} failed: {exc!r}")
     try:
         # The learning ablation's shadow run (RM-4) is no draft's stage: its
         # failure is said under its own job, never as the week's.
         _job = "schedule_learning_ablation" if getattr(x, "shadow", False) else f"schedule_stage_{key}"
         _ops.capture(exc, job=_job, context=f"restaurant_id={x.rid} stage={key}")
     except Exception as _cx:
-        print(f"[schedule] could not record that failure: {_cx}")
+        _degraded(f"could not record that failure: {_cx}", _cx)
     return {"stage": key, "tier": tier, "blocks_publish": blocks, "error": type(exc).__name__,
             "line": stage_failure_line(key, blocks)}
 
@@ -10498,6 +10542,7 @@ def _run_stage(key, state, prof, x, ledger) -> tuple:
     try:
         out = _STAGE_FNS[key]([dict(r) for r in state], x)
     except Exception as e:
+        _degraded(f"dict failed — went on without it: {e!r}", e)
         ledger["failures"].append(_stage_failure(key, e, x))
         return state, prof, "failed"
     finally:
@@ -10692,7 +10737,7 @@ def post_model_rows(rows, ctx, restaurant_id=None, gate=True, max_seconds=REPAIR
                 q = _sq.score_rows(rs, profiles=result.get("shift_profiles") or None, weights=weights,
                                    **dict(signals))
             except Exception as e:
-                print(f"[schedule] eval scoring skipped: {e!r}")
+                _degraded(f"eval scoring skipped: {e!r}", e)
         return viols, q
 
     def _clean(rs):
@@ -11552,7 +11597,7 @@ def try_prepare_replacements(restaurant_id, rows: list, constraints=None):
     try:
         return prepare_replacements(restaurant_id, rows, constraints)
     except Exception as e:
-        print(f"[schedule] replacement prep failed rid={restaurant_id}: {e!r}")
+        _degraded(f"replacement prep failed rid={restaurant_id}: {e!r}", e)
         return None
 
 def _breach_reason(worse: dict) -> str:
@@ -11613,7 +11658,7 @@ def replacement_is_legal(restaurant_id, rows: list, index: int, name: str, const
     except Exception as e:
         # The person asking is an employee or a manager, not a developer:
         # the exception goes to the log, a plain sentence to them (MOD-EMP-10).
-        print(f"[schedule] replacement check failed rid={restaurant_id}: {e!r}")
+        _degraded(f"replacement check failed rid={restaurant_id}: {e!r}", e)
         return False, "we couldn't check that shift just now — try again, or ask a manager"
 
 

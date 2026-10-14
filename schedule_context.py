@@ -25,6 +25,7 @@ import copy
 import json
 import logging
 import os
+import sys
 import zlib
 
 import schedule_time as _stime
@@ -114,6 +115,43 @@ def frozen_read(key, fn):
     return copy.deepcopy(reads[key])
 
 
+def degraded(message, exc=None, *, restaurant_id=None, record=True) -> None:
+    """The one event a schedule failure that is caught and gone on without
+    becomes (blind re-audit 10/11/26 ARCH-20): a structured warning on every
+    occurrence — `event: schedule_degraded`, `where` (module.function), the
+    error — with the restaurant, the job and the stage from the bound log
+    context (schedule_job binds them), so each stage's degradations can be
+    counted from the logs; and, inside a generation, the exception recorded
+    once per place it happened (ops.capture), never once per row."""
+    try:
+        frame = sys._getframe(1)
+        where = f"{frame.f_globals.get('__name__', '?')}.{frame.f_code.co_name}"
+        err = repr(exc)[:300] if exc is not None else None
+    except Exception:                       # never let the report of a failure be one
+        where, err = "?", None
+    log.warning("%s", message, extra={"event": "schedule_degraded", "where": where, "error": err})
+    store = _FROZEN.get()
+    if store is None:
+        return
+    seen = store.setdefault("degraded", [])
+    if where in seen:
+        return
+    seen.append(where)
+    if record and isinstance(exc, BaseException):
+        try:
+            import ops
+            ops.capture(exc, job="schedule_degraded", restaurant_id=restaurant_id,
+                        context=f"{where}" + (f" restaurant_id={restaurant_id}" if restaurant_id else ""))
+        except Exception:
+            log.warning("a degraded schedule step could not be recorded", exc_info=True)
+
+
+def degradations() -> list:
+    """Where this generation went on without something (degraded's `where`)."""
+    store = _FROZEN.get()
+    return list(store.get("degraded") or []) if store is not None else []
+
+
 def _note_input_failure(what) -> None:
     """An input the draft went ahead without, for the review (P-17)."""
     store = _FROZEN.get()
@@ -201,7 +239,7 @@ def _route_allowed(route):
         return route
     import ai_utils as _ai
     import ai_workflows as _wf
-    print(f"[schedule] {route.model} is barred from the schedule route (AI-30) — running on {_ai.OPUS_55}")
+    log.info(f"{route.model} is barred from the schedule route (AI-30) — running on {_ai.OPUS_55}")
     run = _SCHED_RUN.get()
     if run is not None:
         run.setdefault("steps", []).append({"barred_model": route.model, "ran_on": _ai.OPUS_55})
@@ -425,7 +463,7 @@ def route_evidence(roster_size, db_path=None):
     try:
         v = latest_verdict(ROUTE_METRIC, "T4", "T3", roster_size, db_path=db_path)
     except Exception as e:
-        print(f"[schedule_eval] route evidence not read: {e!r}")
+        degraded(f"route evidence not read: {e!r}", e)
         return None
     if not _decisive(v):
         return None
@@ -440,7 +478,7 @@ def tag_evidence(tag, db_path=None):
     try:
         v = latest_verdict(ROUTE_METRIC, "T4", "T3", tag=tag, db_path=db_path)
     except Exception as e:
-        print(f"[schedule_eval] tag evidence not read: {e!r}")
+        degraded(f"tag evidence not read: {e!r}", e)
         return None
     if not _decisive(v):
         return None

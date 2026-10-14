@@ -52,6 +52,11 @@ import uuid
 # schedule_output, below labor; re-exported here.
 from schedule_output import (  # noqa: F401
     _HOOK, CallPlanned, _dates_of, _Scope, answer_for, answering, call_key, plan_call, planning)
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 WORKFLOW = "labor_schedule"
 CALLBACK = "schedule_batch:on_auto_draft"
@@ -73,7 +78,7 @@ def plan_requests(restaurant_id, week_start=None) -> list:
         with planning() as plan, _ls_scope.learning_scope():
             out = se._build_schedule_result(restaurant_id, week_start=week_start)
     except Exception as e:
-        print(f"[schedule_batch] restaurant {restaurant_id}: no request to batch ({e!r})")
+        _degraded(f"restaurant {restaurant_id}: no request to batch ({e!r})", e)
         return []
     if not isinstance(out, dict) or out.get("planned_calls") is None:
         return []

@@ -33,6 +33,11 @@ from models import DB_PATH
 import schedule_time as _stime
 from schedule_time import _APPROXIMATE, _holiday_dates, holiday_names  # noqa: F401  (the holiday calendar; re-exported)
 from schedule_review import binding_budget, budget_conflict_line  # noqa: E402,F401  (the review's budget lines; re-exported)
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -674,7 +679,7 @@ def last_plan_labor(restaurant_id, week_dates, all_in: bool, restaurant=None) ->
         finally:
             conn.close()
     except Exception as e:
-        print(f"[schedule_economics] last plan unreadable for {restaurant_id}: {e}")
+        _degraded(f"last plan unreadable for {restaurant_id}: {e}", e)
         return None
     if row is None:
         return None
@@ -833,7 +838,7 @@ def _corrected_by_record(restaurant_id, out, raw, db_path=DB_PATH):
         elif rec.get("withheld"):
             out["source"] += "; the published weeks' projections here have often been wide, so treat it as rough"
     except Exception as e:
-        print(f"[schedule_economics] revenue record unreadable for {restaurant_id}: {e}")
+        _degraded(f"revenue record unreadable for {restaurant_id}: {e}", e)
     return out
 
 
@@ -862,7 +867,7 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
             import demand
             proj = demand.week_projection(restaurant_id, week_dates, db_path=db_path)
         except Exception as e:
-            print(f"[schedule_economics] week projection unavailable for {restaurant_id}: {e}")
+            _degraded(f"week projection unavailable for {restaurant_id}: {e}", e)
             proj = {}
         if proj.get("total") and not proj.get("missing") and len(proj.get("days") or []) == len(week_dates):
             total = float(proj["total"])
@@ -1186,7 +1191,7 @@ class _DemandContext:
             import demand_model as _dm
             self.model = (_dm.forecast_dates(restaurant_id, dates, db_path=db_path, today=today) or {}).get("dates") or {}
         except Exception as e:
-            print(f"[schedule_economics] demand model unavailable for {restaurant_id}: {e}")
+            _degraded(f"demand model unavailable for {restaurant_id}: {e}", e)
             self.model = {}
 
     def _once(self, key, fn):
@@ -1200,7 +1205,7 @@ class _DemandContext:
                 try:
                     self._memo[key] = fn()
                 except Exception as e:
-                    print(f"[schedule_economics] {key[0]} unavailable for {self.rid}: {e}")
+                    _degraded(f"{key[0]} unavailable for {self.rid}: {e}", e)
                     self._memo[key] = None
                 if store is not None:
                     store[skey] = self._memo[key]
@@ -1723,7 +1728,7 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH, curve: dict 
         try:
             curve = measured_sales_curve(restaurant_id, weeks=weeks, db_path=db_path, today=today)
         except Exception as e:
-            print(f"[splh] sales curve unreadable for {restaurant_id}: {e}")
+            _degraded(f"sales curve unreadable for {restaurant_id}: {e}", e)
             curve = {}
     measured = {wd: v for wd, v in (curve or {}).items() if int(v.get("days") or 0) >= CURVE_MIN_DAYS}
     # hours split by daypart from the window's hourly shifts, per weekday
@@ -1755,7 +1760,7 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH, curve: dict 
             e[part] += h
             e["late"] += min(h, _late_minutes(sh) / 60.0)
     except Exception as e:
-        print(f"[splh] shift hours unreadable for {restaurant_id}: {e}")
+        _degraded(f"shift hours unreadable for {restaurant_id}: {e}", e)
     out = {}
     sales_by_wd = {}
     for r in days:
@@ -1910,7 +1915,7 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
             hist_pct = float(row["w"]) / float(row["s"])
             days_n, sales_total = int(row["n"] or 0), float(row["s"])
     except Exception as e:
-        print(f"[splh] labor % history unavailable for {restaurant_id}: {e}")
+        _degraded(f"labor % history unavailable for {restaurant_id}: {e}", e)
     finally:
         conn.close()
     if labor_target_pct is None:
@@ -2598,7 +2603,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             import schedule_objective as _objm
             pricer = _objm.WeekPricer(_live(rows), objective_ctx)
         except Exception as exc:
-            print(f"[schedule] trim objective unavailable: {exc!r}")
+            _degraded(f"trim objective unavailable: {exc!r}", exc)
             pricer = None
     objective_on = pricer is not None or objective_fn is not None
 
@@ -2613,7 +2618,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             after = [x for x in rows if x is not r] + ([new] if new is not None else [])
             return float(objective_fn(_live(rows))), float(objective_fn(_live(after)))
         except Exception as exc:
-            print(f"[schedule] trim objective unavailable: {exc!r}")
+            _degraded(f"trim objective unavailable: {exc!r}", exc)
             return None, None
 
     def _priced_apply(r, new):

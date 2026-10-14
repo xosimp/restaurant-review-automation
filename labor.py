@@ -24,6 +24,11 @@ from schedule_requirements import _role_minimums_dict, note_floors  # noqa: F401
 from schedule_objective import (  # noqa: F401
     RATE_SOURCES, _name_key, _punch_pay, _shift_rate, _shift_rate_source, rate_book)
 from schedule_time import _DATE_FORMATS, _iso_date  # noqa: F401
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
@@ -123,7 +128,8 @@ def _latest_shift_date(today=None, restaurant_id=None) -> str:
             from time_utils import restaurant_now_by_id
             today = (restaurant_now_by_id(restaurant_id) if restaurant_id
                      else datetime.now(ZoneInfo("America/Chicago"))).date()
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"date failed — went on without it: {_sx!r}", _sx)
             today = datetime.now(ZoneInfo("America/Chicago")).date()
     if isinstance(today, datetime):
         today = today.date()
@@ -295,11 +301,13 @@ def load_shifts(path: str = "sample_shifts.csv",
 2026-06-07,Sunday,James H.,Host,17:00,22:00,5,4.6,6400,"""
     try:
         return list(csv.DictReader(io.StringIO(_SAMPLE)))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"list failed — went on without it: {_sx!r}", _sx)
         try:
             with open(path, newline="", encoding="utf-8") as f:
                 return list(csv.DictReader(f))
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"open failed — went on without it: {_sx!r}", _sx)
             return []
 
 
@@ -386,7 +394,8 @@ def get_hourly_rate(restaurant_id: int) -> float:
         from models import get_restaurant
         r = get_restaurant(restaurant_id)
         return r.hourly_rate if r and r.hourly_rate else DEFAULT_HOURLY_RATE
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"get_restaurant failed — went on without it: {_sx!r}", _sx)
         return DEFAULT_HOURLY_RATE
 
 
@@ -397,7 +406,8 @@ def get_labor_target(restaurant_id: int) -> float:
         from models import get_restaurant
         from notify import labor_target_for
         return labor_target_for(get_restaurant(restaurant_id))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"labor_target_for failed — went on without it: {_sx!r}", _sx)
         return 30.0
 
 
@@ -630,7 +640,8 @@ def _without_salaried(restaurant_id, shifts):
     try:
         from models import get_restaurant, salaried_keys, salaried_name_key
         names = salaried_keys(get_restaurant(restaurant_id))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"salaried_keys failed — went on without it: {_sx!r}", _sx)
         names = set()
     if not names:
         return shifts, 0.0
@@ -696,7 +707,8 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
         try:
             from time_utils import restaurant_now_by_id
             _today = restaurant_now_by_id(restaurant_id).date()
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"date failed — went on without it: {_sx!r}", _sx)
             _today = None
     shifts = current_window(load_shifts_for_restaurant(restaurant_id, allow_sample=True,
                                                        client_data=client_data), window_days, today=_today)
@@ -713,7 +725,8 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
     blended = compute_blended_rate(shifts, role_rates, fallback=rate)
     try:
         covers_by_date = _covers_for_shifts(restaurant_id, shifts)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_covers_for_shifts failed — went on without it: {_sx!r}", _sx)
         covers_by_date = {}
     # The day-level margin fitted to this restaurant's own daily swing
     # (restaurant_thresholds, memory audit 9/29/26); the stated one when
@@ -722,12 +735,14 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
         import restaurant_thresholds as _rthr
         _day_margin = _rthr.margin(restaurant_id, "labor_over_day") if is_live else None
         _day_fit = _rthr.detail(restaurant_id, "labor_over_day") if is_live else None
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"margin failed — went on without it: {_sx!r}", _sx)
         _day_margin, _day_fit = None, None
     try:
         from models import get_restaurant as _gr_pr, person_rates as _prs
         _person_rates = _prs(_gr_pr(restaurant_id))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_prs failed — went on without it: {_sx!r}", _sx)
         _person_rates = {}
     _sal_day = 0.0
     if with_salaries and is_live:
@@ -736,7 +751,8 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
             if not viewer_sees_salaries():
                 raise LookupError("salaries are the owner's")
             _sal_day = float(salaried_day_share(_gr_sal(restaurant_id)) or 0)
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"viewer_sees_salaries failed — went on without it: {_sx!r}", _sx)
             _sal_day = 0.0
     result = analyse_shifts(shifts, hourly_rate=blended, labor_target=target,
                             role_rates=role_rates,
@@ -759,7 +775,8 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
         _flat = float(getattr(_r_rate, "hourly_rate", 0) or 0) if _r_rate else 0.0
         _owner_flat = _flat > 0 and (abs(_flat - DEFAULT_HOURLY_RATE) > 1e-9
                                      or getattr(_r_rate, "hourly_rate_source", None) == "set")
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_gr_rate failed — went on without it: {_sx!r}", _sx)
         _owner_flat = False
     rate_basis = labor_rate_basis(shifts, role_rates, blended, person_rates=_person_rates,
                                   fallback_assumed=not _owner_flat)
@@ -775,13 +792,15 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
         from models import get_restaurant as _get_r
         import thresholds as _thr
         basis = _thr.labor_cost_basis(_get_r(restaurant_id))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"labor_cost_basis failed — went on without it: {_sx!r}", _sx)
         basis = None
     result['cost_basis'] = basis
     result['money_went'] = money_went(result, blended, cost_basis=basis)
     try:
         result['staffing_board'] = staffing_board(result, shifts, blended, cost_basis=basis)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"staffing_board failed — went on without it: {_sx!r}", _sx)
         result['staffing_board'] = None
     return result
 
@@ -1080,7 +1099,8 @@ def person_rate_book(restaurant_id: int) -> tuple:
         from models import get_restaurant, person_rates
         return rate_book(load_shifts_for_restaurant(restaurant_id) or [],
                          person_rates(get_restaurant(restaurant_id)))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"rate_book failed — went on without it: {_sx!r}", _sx)
         return {}, {}
 
 
@@ -1520,7 +1540,8 @@ def analyse_shifts(shifts: list[dict],
         try:
             datetime.strptime(wk, "%Y-%m-%d")
             return mdy(wk)
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"strptime failed — went on without it: {_sx!r}", _sx)
             return str(wk)
 
     for emp, weeks in weekly_hours.items():
@@ -2027,7 +2048,8 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     try:
         import insight_store as _ist_note
         answered = tuple(_ist_note.answered_lines(restaurant_id, ("insight_labor", "diag_labor")))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"tuple failed — went on without it: {_sx!r}", _sx)
         answered = ()
     import hashlib
     # The restaurant's own calendar day is part of the key (DH3-2, DH4-13):
@@ -2042,7 +2064,8 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
     try:
         import owner_memory as _om_note
         mem_v = _om_note.memory_version(restaurant_id)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"memory_version failed — went on without it: {_sx!r}", _sx)
         mem_v = 0
     fingerprint = (_analysis_fingerprint(analysis)
                    + (":" + hashlib.sha1("\n".join(answered).encode("utf-8")).hexdigest()[:10] if answered else "")
@@ -2054,7 +2077,8 @@ def labor_note(restaurant_id, analysis: dict, **kwargs) -> str:
         try:
             import restaurant_context as _rc_note
             pk = ":" + _rc_note.packet(restaurant_id, LABOR_READ_SECTIONS, viewer=TEAM_VIEWER).fingerprint
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"packet failed — went on without it: {_sx!r}", _sx)
             pk = ""
     key = (restaurant_id, fingerprint + f":m{mem_v}" + pk)
     hit = _NOTE_CACHE.get(key)
@@ -2088,7 +2112,7 @@ def _keep_note(restaurant_id, note, fingerprint):
         import ai_reads
         ai_reads.record_store_read(restaurant_id, "labor", fingerprint, note)
     except Exception as e:
-        print(f"[labor note] not kept as history rid={restaurant_id}: {e}")
+        _degraded(f"not kept as history rid={restaurant_id}: {e}", e)
 
 
 def _note_local_day(restaurant_id) -> str:
@@ -2096,7 +2120,8 @@ def _note_local_day(restaurant_id) -> str:
     try:
         from time_utils import restaurant_now_by_id
         return restaurant_now_by_id(restaurant_id).date().isoformat()
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"isoformat failed — went on without it: {_sx!r}", _sx)
         return datetime.now(ZoneInfo('America/Chicago')).date().isoformat()
 
 
@@ -2189,7 +2214,7 @@ def labor_memory_block(restaurant_id, analysis=None, surface="labor_read", key_o
         mem = _mc.memory_context(restaurant_id, surface, viewer=TEAM_VIEWER,
                                  subjects=["labor"] + [f"labor:day:{d}" for d in days[:4]])
     except Exception as e:
-        print(f"[labor memory] {e}")
+        _degraded(f"{e}", e)
         return "", []
     if not getattr(mem, "text", ""):
         return "", []
@@ -2201,7 +2226,8 @@ def labor_memory_block(restaurant_id, analysis=None, surface="labor_read", key_o
     if key_out is not None:
         try:
             key_out["key_block"] = mem.text_without(("last_claim",))
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"text_without failed — went on without it: {_sx!r}", _sx)
             key_out["key_block"] = mem.text
     return block, words
 
@@ -2275,7 +2301,8 @@ def labor_target_whose(restaurant_id) -> str:
         import thresholds
         from models import get_restaurant
         t = thresholds.target_for(get_restaurant(restaurant_id), "labor")
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"target_for failed — went on without it: {_sx!r}", _sx)
         return ""
     label = " ".join(str((t or {}).get("label") or "").split())
     if not label:
@@ -2335,7 +2362,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
             if row and row["cnt"] > 1:
                 upload_context = (f"\nThis restaurant has {row['cnt']} labor periods on file — say whether the "
                                   "numbers are trending better or need more attention.")
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"_gc_l failed — went on without it: {_sx!r}", _sx)
             pass
 
     # Labor by payroll week, for trend awareness — the restaurant_context
@@ -2358,7 +2386,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
             has_trend = bool(_lt.data.get("has_trend"))
             trend_diff = _lt.data.get("trend_diff")
         except Exception as le:
-            print(f"[labor trend] {le}")
+            _degraded(f"{le}", le)
             _packet = None
 
     # Role breakdown context
@@ -2374,7 +2402,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         from marketing import get_upcoming_holidays as _get_hols
         _upcoming = _get_hols(_local_now.replace(tzinfo=None))
         holiday_context = f"\n- Upcoming holidays (affects scheduling): {_upcoming}" if _upcoming else ""
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_get_hols failed — went on without it: {_sx!r}", _sx)
         holiday_context = ""
 
     # Staff constraints context
@@ -2433,7 +2462,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     # (H8, CA5 F9). The model phrases it; it does not pick it.
     try:
         _diag = diagnose(analysis)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"diagnose failed — went on without it: {_sx!r}", _sx)
         _diag = {}
     if _diag.get("cause"):
         top_pick_context = ("\n- THE SINGLE BIGGEST OPPORTUNITY (already chosen from the figures — lead with this "
@@ -2472,7 +2502,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
             if _g_lines:
                 guard_context = "\n- Before any trim:\n" + "\n".join(_g_lines)
         except Exception as _ge:
-            print(f"[labor trim guard] {_ge}")
+            _degraded(f"{_ge}", _ge)
 
     # What Cavnar AI remembers for this restaurant (memory audit 9/29/26:
     # memory_context wired into the labor read) — the owner's constraints
@@ -2495,7 +2525,8 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         try:
             import insight_store as _ist_lab
             answered_block = _ist_lab.do_not_repeat_block(restaurant_id, ("insight_labor", "diag_labor"))
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"do_not_repeat_block failed — went on without it: {_sx!r}", _sx)
             answered_block = ""
 
     # The industry band for THIS restaurant's type, with its source and
@@ -2602,11 +2633,12 @@ The Recommendations section must start with exactly the word "Recommendations:" 
                 try:
                     _at = _ist_lab.latest(restaurant_id, "labor")[1]
                     stored.written_at = datetime.strptime(str(_at)[:19], "%Y-%m-%d %H:%M:%S")
-                except Exception:
+                except Exception as _sx:
+                    _degraded(f"latest failed — went on without it: {_sx!r}", _sx)
                     pass
                 return stored
         except Exception as _se:
-            print(f"[labor insight store] {_se}")
+            _degraded(f"{_se}", _se)
             _fp = None
 
     # The read runs as the "labor_insight" workflow (AI orchestration
@@ -2662,13 +2694,13 @@ The Recommendations section must start with exactly the word "Recommendations:" 
                 basis=f"this period's labor % carried forward ({analysis.get('period_days')} days); "
                       f"{trend_diff:+.1f} points on the last comparable week")
         except Exception as _fe:
-            print(f"[labor forecast log] {_fe}")
+            _degraded(f"{_fe}", _fe)
     if _fp and str(out).strip():
         try:
             import insight_store as _ist_put
             _ist_put.put(restaurant_id, "labor", _fp, out, raw=raw)
         except Exception as _pe:
-            print(f"[labor insight store] {_pe}")
+            _degraded(f"{_pe}", _pe)
     out.written_at = datetime.utcnow().replace(microsecond=0)
     return out
 
@@ -2771,7 +2803,7 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
             # comparison with a figure measured differently is dropped (#6).
             facts += list((_industry_read(industry) or {}).get("facts") or [])
         except Exception as e:
-            print(f"[labor] benchmark facts unavailable: {e}")
+            _degraded(f"benchmark facts unavailable: {e}", e)
     data_state = {}
     if a.get("hours_are_estimated"):
         data_state["required_disclosures"] = ["hours_estimated"]
@@ -2784,7 +2816,8 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
             today = (now or datetime.now(ZoneInfo('America/Chicago'))).date()
             data_state["data_age_days"] = (today - date.fromisoformat(str(end)[:10])).days
             data_state["as_of"] = _mdy_w(str(end)[:10])
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"date failed — went on without it: {_sx!r}", _sx)
             pass
     if registry_state:
         # The registry's stale sources and present-tense state (data_health.
@@ -2797,7 +2830,8 @@ def labor_read_context(analysis: dict, prompt: str, restaurant_id=None, industry
     try:
         import models as _m
         denied = _m.other_tenant_names(restaurant_id)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"other_tenant_names failed — went on without it: {_sx!r}", _sx)
         denied = set()
     # A cut the insight names is held to the restaurant's floors and its
     # "never cut below" default (A2; schedule_rules.cut_floor).
@@ -2862,7 +2896,8 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
     try:
         import models as _m
         denied = _m.other_tenant_names(restaurant_id)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"other_tenant_names failed — went on without it: {_sx!r}", _sx)
         denied = set()
     # A role with no floor of its own is held to the restaurant's "never
     # cut below" default, not to one person (schedule_rules.cut_floor).
@@ -2870,7 +2905,8 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
     try:
         import models as _m
         default = _sr.cut_floor_default(_m.get_restaurant(restaurant_id) if restaurant_id else None)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"cut_floor_default failed — went on without it: {_sx!r}", _sx)
         default = _sr.cut_floor_default(None)
     data_state = {"missing_inputs": missing}
     if registry_state:
@@ -2888,7 +2924,7 @@ def schedule_note_context(prompt, restaurant_id=None, data_blocks=None, floors=N
             if COHORT_BLOCK_HEADER in (prompt or ""):
                 bench = cohort_facts(restaurant_id)
         except Exception as e:
-            print(f"[labor] schedule note benchmark facts unavailable: {e}")
+            _degraded(f"schedule note benchmark facts unavailable: {e}", e)
     return rv.ValidationContext(
         restaurant_id=restaurant_id, surface="schedule_note", delivery="unattended", context_text=prompt or "",
         facts=bench,
@@ -2986,7 +3022,7 @@ def _labor_forecast_line(analysis: dict, trend_diff, restaurant_id=None) -> str:
             if rec.get("corrected") and rec.get("shown") is not None:
                 expect, note = round(float(rec["shown"]), 1), rec.get("note")
         except Exception as e:
-            print(f"[labor forecast record] {e}")
+            _degraded(f"{e}", e)
     move = (f"{'up' if trend_diff > 0 else 'down'} {abs(trend_diff):.1f} points on the week before"
             if abs(trend_diff) >= 1 else "about level with the week before")
     return (f"FORECAST: Labor ran {cur:g}% this period, {move}; if the schedule doesn't change, expect "
@@ -3054,7 +3090,8 @@ def industry_band_for(restaurant_id=None, restaurant=None):
             return None
         import intelligence
         return intelligence.industry_read(restaurant, "labor_pct_28d")
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"get_restaurant failed — went on without it: {_sx!r}", _sx)
         return None
 
 
@@ -3118,7 +3155,8 @@ def labor_window_line(analysis: dict, now=None, restaurant_id=None) -> tuple:
             now = restaurant_now_by_id(restaurant_id)
         today = (now or datetime.now(ZoneInfo('America/Chicago'))).date()
         age = (today - date.fromisoformat(str(end)[:10])).days
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"restaurant_now_by_id failed — went on without it: {_sx!r}", _sx)
         age = None
     span = mdy_range(start, end) if start else mdy(end)
     line = f"- Data window: {span} ({days} day{'' if days == 1 else 's'} with shifts)"
@@ -3204,7 +3242,8 @@ def apply_learned_headcount(restaurant_id, typical: dict, record: dict = None) -
     try:
         from schedule_learning import learned_headcount, headcount_to_apply
         adj = learned_headcount(restaurant_id) or {}
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"learned_headcount failed — went on without it: {_sx!r}", _sx)
         return out
     for key, roles in adj.items():
         slot = out.setdefault(tuple(key), {})
@@ -3284,7 +3323,8 @@ def _restaurant_role_families(restaurant_id) -> dict:
         from models import get_restaurant
         from schedule_rules import role_families
         return role_families(get_restaurant(restaurant_id))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"role_families failed — went on without it: {_sx!r}", _sx)
         return {}
 
 
@@ -3302,7 +3342,8 @@ def _held_roles_by_name(restaurant_id, names) -> dict:
         for r in _frozen_hr(("held_roles", restaurant_id), lambda: _people.held_roles(restaurant_id)):
             if (r.get("role") or "").strip():
                 held.setdefault(r["key"], set()).add(" ".join(r["role"].split()))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_frozen_hr failed — went on without it: {_sx!r}", _sx)
         return {}
     key = lambda n: " ".join(str(n or "").split()).casefold()  # noqa: E731
     return {n: held[key(n)] for n in names if key(n) in held}
@@ -3784,7 +3825,7 @@ def published_rows_for_baseline(restaurant_id, before=None, weeks: int = TYPICAL
             rows.extend(by_week.get(int(hid)) or [])
         return rows
     except Exception as e:
-        print(f"[labor] published weeks unreadable for the baseline ({restaurant_id}): {e}")
+        _degraded(f"published weeks unreadable for the baseline ({restaurant_id}): {e}", e)
         return []
 
 
@@ -3836,7 +3877,7 @@ def _trend_guard(restaurant_id):
             import staffing_elasticity as _sel_g
             ups = _sel_g.upward_windows(restaurant_id)
         except Exception as e:
-            print(f"[labor] measured staffing windows unavailable for {restaurant_id}: {e}")
+            _degraded(f"measured staffing windows unavailable for {restaurant_id}: {e}", e)
             ups = {}
 
         def guard(trend):
@@ -3847,7 +3888,7 @@ def _trend_guard(restaurant_id):
             return memo[key]
         return guard
     except Exception as e:
-        print(f"[labor] baseline provenance unavailable for {restaurant_id}: {e}")
+        _degraded(f"baseline provenance unavailable for {restaurant_id}: {e}", e)
         return None
 
 
@@ -3870,7 +3911,7 @@ def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
             open_times = {}
         families = _restaurant_role_families(restaurant_id)
     except Exception as e:
-        print(f"[labor] baseline settings unreadable for {restaurant_id}: {e}")
+        _degraded(f"baseline settings unreadable for {restaurant_id}: {e}", e)
     patterns = historical_patterns(shifts, published_rows=published_rows_for_baseline(restaurant_id, before),
                                    salaried=salaried, close_times=close_times or {},
                                    open_times=open_times if isinstance(open_times, dict) else {},
@@ -3881,7 +3922,7 @@ def _staffing_baseline(restaurant_id, shifts, before, close_times) -> dict:
             import crew_matrix as _cm
             _cm.bind_answers(r, patterns, today=before)
         except Exception as e:
-            print(f"[labor] crew answers not bound for {restaurant_id}: {e}")
+            _degraded(f"crew answers not bound for {restaurant_id}: {e}", e)
     return patterns
 
 
@@ -3927,7 +3968,8 @@ def format_profile_block(profiles: list = None) -> str:
         return ""
     try:
         pass
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"this step failed — went on without it: {_sx!r}", _sx)
         return ""
     lines = []
     for p in sorted(profiles, key=lambda x: (-x.priority, x.key)):
@@ -4289,7 +4331,8 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
         try:
             from schedule_context import current_clock as _cc_rec
             _job_rec = getattr(_cc_rec(), "job_id", None)
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"getattr failed — went on without it: {_sx!r}", _sx)
             _job_rec = None
         return _sched_out.record_call(
             restaurant_id, request, inputs=call_args, answer=raw, generation_id=generation_id,
@@ -4301,12 +4344,12 @@ def _record_schedule_call(restaurant_id, call, call_args, raw, msg, generation_i
             rows=rows, answer_chars=len(raw or "") if raw is not None else None, call_kind=call_kind,
             tier=tier, job_id=_job_rec)
     except Exception as e:
-        print(f"[schedule] model call not recorded rid={restaurant_id}: {e!r}")
+        _degraded(f"model call not recorded rid={restaurant_id}: {e!r}", e)
         try:
             import ops as _ops_rec
             _ops_rec.capture(e, job="schedule_model_calls", context=f"restaurant_id={restaurant_id}")
         except Exception as _cx:
-            print(f"[schedule] capture failed too: {_cx!r}")
+            _degraded(f"capture failed too: {_cx!r}", _cx)
         return None
 
 
@@ -4738,7 +4781,7 @@ def _no_show_block(restaurant_id, shifts):
             _events = _frozen_ns(("attendance_events", restaurant_id),
                                  lambda: _ss_ns.attendance_events(restaurant_id))
         except Exception as _ae:
-            print(f"[schedule] attendance unavailable for {restaurant_id}: {_ae}")
+            _degraded(f"attendance unavailable for {restaurant_id}: {_ae}", _ae)
             _events = []
     else:
         for s in shifts:
@@ -4823,7 +4866,7 @@ def _usual_crew(
                 from models import get_restaurant as _gr_bind
                 _cm_bind.bind_answers(_gr_bind(restaurant_id), _patterns)
             except Exception as _cbx:
-                print(f"[labor] crew answers not bound for {restaurant_id}: {_cbx}")
+                _degraded(f"crew answers not bound for {restaurant_id}: {_cbx}", _cbx)
     _typical = _patterns.get("typical_headcount") or {}
     # A shift whose start time could not be read belongs to neither
     # daypart. Reported separately rather than folded into one of them, so
@@ -4837,7 +4880,8 @@ def _usual_crew(
         try:
             from models import get_restaurant as _gr_sk, salaried_staff as _ss_sk, salaried_name_key as _snk
             _sal_keys = {_snk(x["name"]) for x in _ss_sk(_gr_sk(restaurant_id))}
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"_snk failed — went on without it: {_sx!r}", _sx)
             _sal_keys = set()
     for s in shifts:
         if _sal_keys and " ".join(str(s.get("employee") or "").lower().split()) in _sal_keys:
@@ -5035,7 +5079,8 @@ def _owner_rules_block(
                 import owner_rules as _owr_pl
                 _note_lines = _owr_pl.prompt_lines(restaurant_id, _owner_notes, "notes", week_dates) \
                     if restaurant_id else []
-            except Exception:
+            except Exception as _sx:
+                _degraded(f"prompt_lines failed — went on without it: {_sx!r}", _sx)
                 _note_lines = []
             _note_text = ("\n".join("  - " + _neut_n(ln) for ln in _note_lines) if _note_lines
                           else _neut_n(_owner_notes.strip()))
@@ -5058,7 +5103,8 @@ def _owner_rules_block(
             import owner_rules as _owr_pi
             _ins_lines = _owr_pi.prompt_lines(restaurant_id, " ".join(str(instruction).split())[:500], "instruction",
                                               week_dates) if restaurant_id else []
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"prompt_lines failed — went on without it: {_sx!r}", _sx)
             _ins_lines = []
         _ins_text = ("\n".join("  - " + _neut_ins(ln) for ln in _ins_lines) if _ins_lines
                      else _neut_ins(" ".join(str(instruction).split())[:500]))
@@ -5183,7 +5229,8 @@ def _context_blocks(
     if restaurant_id and not _slim:
         try:
             _demand_block = format_demand_block(build_demand_forecast(restaurant_id))
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"format_demand_block failed — went on without it: {_sx!r}", _sx)
             _demand_block = ""
     if not _demand_block and not _slim:
         # The missing input is stated (NS4 M8): the note must not claim a
@@ -5329,11 +5376,13 @@ def _people_notes(restaurant_id, roster_facts, week_dates, staff_availability):
             try:
                 import people as _people_to
                 _canon = _people_to.canonical_names(restaurant_id, list(_offs))
-            except Exception:
+            except Exception as _sx:
+                _degraded(f"canonical_names failed — went on without it: {_sx!r}", _sx)
                 _canon = {}
             for _e, _d in _offs.items():
                 _time_off.setdefault(_canon.get(_e) or _e, []).extend(list(_d))
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"approved_in_window failed — went on without it: {_sx!r}", _sx)
             _time_off = {}
 
     # The free-text note an employee typed about their own availability is
@@ -5532,7 +5581,8 @@ def _requirements_and_managers(
     try:
         import schedule_dedicated as _ded_req
         _ded_adj = _ded_req.requirement_adjustments((manager_plan or {}).get("dedicated"))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"requirement_adjustments failed — went on without it: {_sx!r}", _sx)
         _ded_adj = []
     if _ded_adj:
         requirement_adjustments = list(requirement_adjustments or []) + _ded_adj
@@ -5613,7 +5663,8 @@ def _requirements_and_managers(
     try:
         import schedule_dedicated as _ded
         _standing_block = _ded.prompt_block((manager_plan or {}).get("dedicated"))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"prompt_block failed — went on without it: {_sx!r}", _sx)
         _standing_block = ""
     _manager_names = _skel.priority_line(_pins, plan=manager_plan)
     if _manager_names and not rules_block:
@@ -5705,7 +5756,8 @@ def _record_lines(
     # list and dict reprs).
     try:
         _sched_now = datetime.now(ZoneInfo(tz_name or 'America/Chicago'))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"now failed — went on without it: {_sx!r}", _sx)
         _sched_now = datetime.now(ZoneInfo('America/Chicago'))
     if analysis.get("no_history"):
         # A restaurant with no shifts of its own (schedule audit 10/3/26 E-30):
@@ -5964,7 +6016,7 @@ def _read_answer(
     # deadline (P-22) — the answer is salvaged to its complete rows and the
     # caller rewrites what is missing (schedule audit 10/3/26 PR-28, PR-30).
     _truncated = _stop in ("max_tokens", "model_context_window_exceeded", "deadline")
-    print(f"[schedule] raw length={len(raw)} stop_reason={_stop} seconds={_seconds}")
+    log.info(f"raw length={len(raw)} stop_reason={_stop} seconds={_seconds}")
     import re as _re_sched
     if _stop == "refusal":
         # The model declined (a safety check; stop_reason "refusal"). What
@@ -6127,7 +6179,7 @@ def _record_and_cost(
                    # what a call's max_tokens has to hold per row (P-35).
                    "output_tokens_per_row": (round(_usage["output_tokens"] / _rows_written, 1)
                                              if _rows_written and _usage["output_tokens"] else None)}
-    print(f"[schedule] data_rows={len(_data_rows)} first={_data_rows[0] if _data_rows else None}")
+    log.info(f"data_rows={len(_data_rows)} first={_data_rows[0] if _data_rows else None}")
     return _model_call, csv_clean
 
 
@@ -6147,12 +6199,13 @@ def _checked_note_bullets(
                     total += float(row.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
                     pass
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"DictReader failed — went on without it: {_sx!r}", _sx)
             pass
         return round(total, 1)
 
     actual_hours = _count_csv_hours(csv_clean)
-    print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
+    log.info(f"hours_budget={hours_budget} actual={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
 
     # "Cavnar AI's note" reaches the page unread (R10, B5 #10), so each
     # bullet passes the digest's line checks: no figure or count the prompt
@@ -6527,7 +6580,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         try:
             _client = _sched_out.DayWatch(_client, _gen_clock.days_streamed, contract=_cbase, dates=_gen_dates)
         except Exception as _wx:
-            print(f"[schedule] the days streamed are not watched: {_wx!r}")
+            _degraded(f"the days streamed are not watched: {_wx!r}", _wx)
     try:
         # Background job, long output: minutes of generation, well past the
         # request-path default. The timeout is the longest silence between
@@ -6745,12 +6798,14 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
         try:
             import demand as _dm
             today = _dm.local_today(restaurant_id)
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"local_today failed — went on without it: {_sx!r}", _sx)
             today = date.today()
     since = (today - timedelta(days=int(weeks) * 7)).isoformat()
     try:
         conn = _gc(db_path) if db_path else _gc()
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"_gc failed — went on without it: {_sx!r}", _sx)
         return {"ok": False, "reason": "no database"}
 
     try:
@@ -6760,7 +6815,8 @@ def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = Non
               AND date >= ? AND date <= ? AND {_FINAL}
             ORDER BY date DESC
         """, (restaurant_id, since, today.isoformat())).fetchall()
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"fetchall failed — went on without it: {_sx!r}", _sx)
         return {"ok": False, "reason": "no history table"}
     finally:
         conn.close()
@@ -6903,7 +6959,8 @@ def employee_shifts_from_csv(schedule_csv: str, employee_name: str, meal_break_a
     import schedule_rows as _srows_es
     try:
         rows = _srows_es.parse(schedule_csv)
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"parse failed — went on without it: {_sx!r}", _sx)
         return []
     return employee_shifts_from_rows(rows, employee_name, meal_break_after_hours=meal_break_after_hours,
                                      restaurant_id=restaurant_id, spellings=spellings)
@@ -6938,7 +6995,7 @@ def employee_shifts_from_rows(rows, employee_name: str, meal_break_after_hours=N
             from models import sections_for_employee
             sections = sections_for_employee(int(restaurant_id), employee_name) or {}
         except Exception as e:
-            print(f"[labor] shift sections unavailable rid={restaurant_id}: {e!r}")
+            _degraded(f"shift sections unavailable rid={restaurant_id}: {e!r}", e)
             sections = {}
     shifts = []
     try:
@@ -6966,7 +7023,8 @@ def employee_shifts_from_rows(rows, employee_name: str, meal_break_after_hours=N
                 sec = sections.get((shifts[-1]["date"], shift_section_start(shifts[-1]["start"])))
                 if sec:
                     shifts[-1]["section"] = sec
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"strip failed — went on without it: {_sx!r}", _sx)
         return []
     shifts.sort(key=lambda s: (s["date"], s["start"]))
     return shifts
@@ -7034,7 +7092,8 @@ def employees_in_schedule(schedule_csv: str) -> list:
             name = (row.get("employee") or "").strip()
             if name and name.lower() not in seen:
                 seen[name.lower()] = name
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"DictReader failed — went on without it: {_sx!r}", _sx)
         return []
     return sorted(seen.values(), key=lambda n: n.lower())
 
@@ -7060,7 +7119,8 @@ def cohort_comparisons(restaurant_id, restaurant) -> list:
                     peers.get("standing") not in (None, "unmeasured"):
                 out.append(cm)
         return out
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"compare failed — went on without it: {_sx!r}", _sx)
         return []
 
 
@@ -7071,7 +7131,8 @@ def cohort_facts(restaurant_id, restaurant=None) -> list:
         try:
             from models import get_restaurant
             restaurant = get_restaurant(restaurant_id)
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"get_restaurant failed — went on without it: {_sx!r}", _sx)
             restaurant = None
     facts = []
     for cm in cohort_comparisons(restaurant_id, restaurant):
@@ -7099,5 +7160,6 @@ def _cohort_block(restaurant_id, restaurant) -> str:
         # targets carry the hours.
         return (f"\n\n{COHORT_BLOCK_HEADER} (an anonymous peer-group ratio — context only, never a target and never "
                 "a reason to add or cut hours; no ranking word under 75% comparison strength):\n" + "\n".join(lines))
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"cohort_comparisons failed — went on without it: {_sx!r}", _sx)
         return ""

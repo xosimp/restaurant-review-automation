@@ -60,6 +60,11 @@ from dataclasses import dataclass, field
 import schedule_engine as se
 import schedule_state as _state
 import schedule_time as _stime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 # The quality gate's passes after the first draft: the fill in code, then the
 # model's rewrite (each at most once). A loop over this, never a recursion.
@@ -219,13 +224,16 @@ def _check_stop(clock) -> None:
 
 def _boundary(run: GenerationRun, name: str) -> None:
     """A stage boundary: the Stop checked, and the queue row told how far the
-    job got (job_queue.checkpoint — a no-op outside the queue)."""
+    job got (job_queue.checkpoint — a no-op outside the queue). Every log
+    line after it carries the stage (logging_setup)."""
+    import logging_setup
+    logging_setup.bind(stage=name)
     _check_stop(run.clock)
     try:
         import job_queue as _jq
         _jq.checkpoint(name)
     except Exception as e:
-        print(f"[schedule] checkpoint {name} not kept: {e!r}")
+        _degraded(f"checkpoint {name} not kept: {e!r}", e)
 
 
 # ── the job ──────────────────────────────────────────────────────────────
@@ -239,19 +247,26 @@ def run(req: Request) -> None:
         # Called dead while it waited for a slot (a poll past its age, the
         # boot sweep): the owner was told it didn't finish, so nothing is
         # paid for now (re-audit 10/4/26 PIPE-9).
-        print(f"[schedule] job {req.job_id} was failed before it started — not run")
+        log.info(f"job {req.job_id} was failed before it started — not run")
         return
     job = GenerationRun(req, se.current_clock())
     import learning_stats as _ls_scope
     # The learning_v2 switchback's off week turns every learned input off
     # for this generation only (blind re-audit 10/11/26 LEARNING-14; set in
     # schedule_engine._build_schedule_result where the week's arm is known).
-    with _ls_scope.learning_scope():
-        try:
-            winner = _owner_redo(job) if req.redo else _week(job)
-            _finish(job, winner)
-        except Exception as e:
-            _fail(job, e)
+    # Every log line of the generation carries its restaurant, its job and
+    # (from each boundary) its stage — what the stages' degradations
+    # (schedule_context.degraded) are counted by.
+    import logging_setup
+    with logging_setup.context(restaurant_id=req.restaurant_id, job=str(req.job_id) if req.job_id else None,
+                               stage="start"):
+        with _ls_scope.learning_scope():
+            try:
+                winner = _owner_redo(job) if req.redo else _week(job)
+                _finish(job, winner)
+            except Exception as e:
+                _degraded(f"_owner_redo failed — went on without it: {e!r}", e)
+                _fail(job, e)
 
 
 def _finish(job: GenerationRun, winner: Candidate) -> None:
@@ -274,11 +289,12 @@ def _fail(job: GenerationRun, e: Exception) -> None:
         # saved, says what is in force.
         se._finish_stopped(req.job_id, req.restaurant_id, job.clock, job.history_id, job.payload)
         return
-    print(f"[schedule job] FAILED:\n{traceback.format_exc()}")
+    log.error(f"FAILED:\n{traceback.format_exc()}")
     se._run_failed(e)
     try:
         se._ops.capture(e, job="schedule_generate", context=f"restaurant_id={req.restaurant_id}")
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"capture failed — went on without it: {_sx!r}", _sx)
         pass
     if job.history_id:
         # The draft was saved before this failed (re-audit 10/4/26 PIPE-8):
@@ -363,7 +379,7 @@ def _owner_redo(job: GenerationRun) -> Candidate:
                 if code_only:
                     # Never the model for a week drafted in code (BUGSGEN-9).
                     raise se.ScheduleGenerationError(_code_redo_refusal(str(why), spec.dates))
-                print(f"[schedule] {why} — the model redoes the days")
+                _degraded(f"{why} — the model redoes the days", why)
                 spec = PassSpec(kind="redo", dates=spec.dates, base=spec.base, focus=spec.focus, code_redo=False)
                 continue
         else:
@@ -376,7 +392,7 @@ def _owner_redo(job: GenerationRun) -> Candidate:
             verdict = se._redo_base_moved(moved, cand.spec.base.rows, spec.dates, cand.answer, reruns)
             if verdict != "again":
                 raise se.ScheduleGenerationError(verdict)
-            print("[schedule] the draft changed on a kept day while the redo ran — running again over it")
+            _degraded("the draft changed on a kept day while the redo ran — running again over it", moved)
             reruns += 1
             # The model's answer as it came back, over the draft as it now
             # stands (PIPE-2): nothing is paid twice.
@@ -419,7 +435,7 @@ def _week(job: GenerationRun) -> Candidate:
         except Exception as _gx:
             # The gate is an improvement on a sound draft: one that crashed
             # leaves the draft as it was, captured (P-17) — never a lost week.
-            print(f"[schedule] quality gate failed: {_gx!r}")
+            _degraded(f"quality gate failed: {_gx!r}", _gx)
             se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={req.restaurant_id}")
             first.payload["gate"] = _gate_not_run("error")
             winner = first
@@ -440,7 +456,8 @@ def _started_week(req: Request):
     now = time_utils.restaurant_now(restaurant, naive=True)
     try:
         today = time_utils.business_date(restaurant, now).isoformat()
-    except Exception:
+    except Exception as _sx:
+        _degraded(f"isoformat failed — went on without it: {_sx!r}", _sx)
         today = now.date().isoformat()
     monday = se._week_monday(now, req.week_start, start_day=se.week_start_day_for(restaurant, req.week_start))
     week = se.week_dates_from(monday)
@@ -487,7 +504,7 @@ def _build_pass(job: GenerationRun, spec: PassSpec) -> Candidate:
         try:
             cand.gate_answer = copy.deepcopy(result)
         except Exception as _gcx:
-            print(f"[schedule] gate: answer not copied, no fill in code: {_gcx!r}")
+            _degraded(f"gate: answer not copied, no fill in code: {_gcx!r}", _gcx)
     editable, kept_rows = _stage_scope(cand)
     if spec.kind in ("gate_fill", "gate_rewrite") and spec.base is not None and spec.base.facts:
         # The days the gate keeps were built by the first pass: what it said
@@ -689,7 +706,7 @@ def _stage_parse(job: GenerationRun, cand: Candidate, editable, kept_rows) -> _P
         _csv_lines = _csv_lines[:1] + [ln for ln in _csv_lines[1:]
                                        if not (ln.split(",", 1)[0].strip() in _plan_dates
                                                and _skeleton.is_plan_line(ln))]
-    print(f"[schedule] csv lines={len(_csv_lines)} first3={_csv_lines[:3]}")
+    log.info(f"csv lines={len(_csv_lines)} first3={_csv_lines[:3]}")
     # A malformed row from the model used to be skipped in silence; counted
     # now, and surfaced.
     _dropped_rows = []
@@ -735,7 +752,7 @@ def _stage_parse(job: GenerationRun, cand: Candidate, editable, kept_rows) -> _P
         except (ValueError, TypeError):
             pass
     if _hours_drift_rows:
-        print(f"[schedule] corrected scheduled_hours on {_hours_drift_rows} row(s), "
+        log.info(f"corrected scheduled_hours on {_hours_drift_rows} row(s), "
               f"{round(_hours_drift_total, 1)}h total drift")
         # The model's hours disagreed with its own shift times and were
         # corrected: an AI-quality finding (fix round G #58), not a failing job.
@@ -749,7 +766,7 @@ def _stage_parse(job: GenerationRun, cand: Candidate, editable, kept_rows) -> _P
         # A redo's kept days, exactly as the owner saved them (PIPE-1).
         preview_rows.extend(kept_rows)
         hours_scheduled = se._safe_hours_sum(preview_rows)
-    print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
+    log.info(f"parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
     if not preview_rows:
         # Every line was unreadable: saving it would publish an empty week as
         # if it were a schedule (SCHED-42).
@@ -890,11 +907,11 @@ def _stage_repair(job: GenerationRun, cand: Candidate, ctx: _PassContext, editab
     except Exception as _abx:
         # Not an input the draft went without — the draft is whole — so it
         # is recorded for us, never said in the owner's review.
-        print(f"[schedule] learning ablation/row origins failed for restaurant {rid}: {_abx}")
+        _degraded(f"learning ablation/row origins failed for restaurant {rid}: {_abx}", _abx)
         try:
             se._ops.capture(_abx, job="schedule_learning_ablation", context=f"restaurant_id={rid}")
         except Exception as _cx:
-            print(f"[schedule] could not record that failure: {_cx}")
+            _degraded(f"could not record that failure: {_cx}", _cx)
     for _k, _s in (loop.get("seconds") or {}).items():
         cand.timer.add(f"repair.{_k}", _s)
     cand.rows = loop["rows"]
@@ -908,7 +925,7 @@ def _stage_repair(job: GenerationRun, cand: Candidate, ctx: _PassContext, editab
     ctx.added_dates = dict((loop.get("rows_added") or {}).get("top_up") or {})
     ctx.floor_added_dates = dict((loop.get("rows_added") or {}).get("floors") or {})
     ctx.trimmed_dates = dict(loop.get("section_cap_dates") or {})
-    print(f"[schedule] repair loop: {loop['cycles']} cycle(s), "
+    log.info(f"repair loop: {loop['cycles']} cycle(s), "
           f"{'converged' if loop['converged'] else 'stopped at its bound'}, {len(loop['fixes'])} fixes, "
           f"{len(loop['refused'])} refused, {len(loop['failures'])} failed")
 
@@ -1274,7 +1291,7 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
             from models import get_role_rates as _grr_ot, get_restaurant as _gr_ot
             _sl.price_overtime_moves(_ot, _grr_ot(rid), getattr(_gr_ot(rid), "hourly_rate", None) or None)
         except Exception as _px:
-            print(f"[schedule] overtime moves unpriced: {_px}")
+            _degraded(f"overtime moves unpriced: {_px}", _px)
         result["overtime_forecast"] = _ot
         for _o in _ot[:3]:
             review["lines"].append(_o["text"])
@@ -1286,7 +1303,7 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
             _busy_sb = _req_sb.busy_shifts(result.get("week_dates") or [], result.get("shift_profiles") or None,
                                            result.get("demand_by_day") or {}, result.get("demand_by_date") or {})
         except Exception as _bx:
-            print(f"[schedule] busy shifts unread for the standby: {_bx}")
+            _degraded(f"busy shifts unread for the standby: {_bx}", _bx)
         _sb = _sl.standby_days(rid, result.get("week_dates") or [], rows=preview_rows,
                                requirements=result.get("shift_requirements") or result.get("requirements"),
                                busy=_busy_sb)
@@ -1436,15 +1453,15 @@ def _stage_score(cand: Candidate, ctx: _PassContext) -> None:
         from models import capability_version as _capver
         result["capability_version"] = _capver(rid)
         if _quality.get("checked"):
-            print(f"[schedule] shift quality {_quality['score']}/100 "
+            log.info(f"shift quality {_quality['score']}/100 "
                   f"({_quality['band']}), confidence {_quality['confidence']['level']}"
                   + (f", what-if {_whatif['improvement']:+d}" if _whatif.get("ran") else ""))
     except Exception as _qx:
-        print(f"[schedule] quality engine failed: {_qx!r}")
+        _degraded(f"quality engine failed: {_qx!r}", _qx)
         try:
             se._ops.capture(_qx, job="schedule_stage_quality", context=f"restaurant_id={rid}")
         except Exception as _cqx:
-            print(f"[schedule] could not record that failure: {_cqx}")
+            _degraded(f"could not record that failure: {_cqx}", _cqx)
         result["quality"] = {"checked": False,
                              "error": "the scoring engine hit an error on this week — we've been alerted"}
         result["what_if"] = {"ran": False}
@@ -1458,7 +1475,7 @@ def _stage_score(cand: Candidate, ctx: _PassContext) -> None:
     _flagged = sum(1 for _r in preview_rows if _r.get("needs_review"))
     result["rows_needing_review"] = _flagged
     if _flagged:
-        print(f"[schedule] {_flagged} row(s) flagged for review")
+        log.info(f"{_flagged} row(s) flagged for review")
 
 
 def _stage_rows_out(cand: Candidate, ctx: _PassContext) -> None:
@@ -1486,7 +1503,7 @@ def _stage_rows_out(cand: Candidate, ctx: _PassContext) -> None:
                                  f"{len(_people)} people." + (f" Busiest day {_busiest}." if _busiest else ""),
                                  "First published week on file — no prior week to compare against."]
     except Exception as _sx:
-        print(f"[schedule] summary diff failed: {_sx}")
+        _degraded(f"summary diff failed: {_sx}", _sx)
     if preview_rows:
         # Each cook's station named for the screens — a read of the finished
         # rows (the station pass itself runs inside the repair loop).
@@ -1795,7 +1812,7 @@ def _judge(in_force: InForce, cand: Candidate, dates) -> tuple:
             dollars_before, base_labor = p_before["total"], p_before["parts"]["labor"]
             dollars_after = _obj_j.price_week(named(cand.rows), ctx)["total"]
     except Exception as _ox:
-        print(f"[schedule] gate objective unavailable: {_ox!r}")
+        _degraded(f"gate objective unavailable: {_ox!r}", _ox)
         dollars_before = dollars_after = base_labor = None
     after_local = se.gate_value(after_local, dollars_after, dollars_before, base_labor)
     return se._gate_keeps(before_local, after_local, cand.score, in_force.cand.score,
@@ -1849,7 +1866,7 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
         gate = dict(gate, exact={k: exact.get(k) for k in ("conflicts", "probed", "unprobed")},
                     exact_fixes=list(exact.get("fixes") or []))
         if se._gate_settled_by_solver(gate, exact):
-            print(f"[schedule] quality gate: {gate['dates']} explained by the solver — no rewrite")
+            log.info(f"quality gate: {gate['dates']} explained by the solver — no rewrite")
             se._record_gate_path(rid, "solver", gate["dates"])
             se._run_gate(gate, "explained")
             first.payload["gate"] = {"ran": True, "kept": "explained", "path": "solver",
@@ -1866,7 +1883,7 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
     if clock is not None and clock.model_seconds_left() < se.GATE_MIN_MODEL_SECONDS:
         # Not enough of the job's time left to rewrite the weak days and
         # check the rewrite (P-22): the draft stands as it is.
-        print(f"[schedule] quality gate skipped: {int(clock.model_seconds_left())}s of model time left")
+        log.info(f"quality gate skipped: {int(clock.model_seconds_left())}s of model time left")
         se._run_gate(gate, "skipped")
         first.payload["gate"] = _gate_not_run("time", gate)
         return first
@@ -1884,7 +1901,7 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
             se._gate_fill_answer(first.gate_answer, rid, None, gate["dates"], extra_rows=gate.get("exact_fixes"),
                                  csv_text=first.payload.get("schedule_csv"))
         if no_fill:
-            print(f"[schedule] quality gate: no fill in code ({no_fill}) — straight to the rewrite")
+            log.info(f"quality gate: no fill in code ({no_fill}) — straight to the rewrite")
             gate = dict(gate, fill={"tried": False, "skipped": no_fill})
         in_force = InForce(first, dict(first.payload, gate={"ran": True, **gate}))
         attempts = list(GATE_ATTEMPTS) if fill_answer is not None else ["rewrite"]
@@ -1894,7 +1911,7 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
             # straight away, on the next rung (_escalate_for_gate) — unless
             # the run is at its caps, when the draft stands as it was.
             if se._escalate_for_gate(gate) == "capped":
-                print("[schedule] quality gate rewrite skipped: the run is at its caps")
+                log.info("quality gate rewrite skipped: the run is at its caps")
                 first.payload["gate"] = _gate_not_run("capped", gate)
                 return first
             escalated_here = True
@@ -1903,7 +1920,7 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
     except Exception as _gx:
         # The draft stands; the failed gate is captured (P-17) and said on
         # the payload (BUGSGEN-1, BUGSGEN-16 — it used to carry no verdict).
-        print(f"[schedule] quality gate failed: {_gx!r}")
+        _degraded(f"quality gate failed: {_gx!r}", _gx)
         se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={rid}")
         first.payload["gate"] = _gate_not_run("error", gate)
         return first
@@ -1944,7 +1961,7 @@ def _gate_code_only(job: GenerationRun, first: Candidate, gate: dict) -> Candida
     except se.ScheduleGenerationError:
         raise
     except Exception as _gx:
-        print(f"[schedule] quality gate failed: {_gx!r}")
+        _degraded(f"quality gate failed: {_gx!r}", _gx)
         se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={rid}")
         first.payload["gate"] = _gate_not_run("error", gate)
         return first
@@ -1970,7 +1987,7 @@ def _gate_fill(job: GenerationRun, gate: dict, in_force: InForce, fill_answer: d
     draft when it was not (or when the fill failed)."""
     rid = job.req.restaurant_id
     dates = list(gate["dates"])
-    print(f"[schedule] quality gate: filling {dates} in code ({gate['reason']})")
+    log.info(f"quality gate: filling {dates} in code ({gate['reason']})")
     first = in_force.cand
     base = _held_base(first)
     try:
@@ -1980,10 +1997,11 @@ def _gate_fill(job: GenerationRun, gate: dict, in_force: InForce, fill_answer: d
     except Exception as e:
         # The code's fill failed (#21): the model's rewrite is still owed the
         # gate's days, from the draft as it was.
-        print(f"[schedule] quality gate fill failed:\n{traceback.format_exc()}")
+        _degraded(f"quality gate fill failed:\n{traceback.format_exc()}", e)
         try:
             se._ops.capture(e, job="schedule_generate", context=f"restaurant_id={rid}")
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"capture failed — went on without it: {_sx!r}", _sx)
             pass
         return in_force
     better, _why = _judge(in_force, fill, dates)
@@ -2106,7 +2124,7 @@ def _inherit_week_facts(result: dict, facts: dict, gate_dates) -> None:
             src = ds.get("code_source") or ds.get("source") or "solver"
             code_line = _sfb.note_line(src, main, code, ds.get("base") if src == "carry_forward" else None)
         except Exception as e:
-            print(f"[schedule] code-built days line not rebuilt: {e!r}")
+            _degraded(f"code-built days line not rebuilt: {e!r}", e)
             se._ops.capture(e, job="schedule_generate", context="code-built days line")
     if code_line:
         ds["line"] = code_line
@@ -2172,7 +2190,7 @@ def _recon_lines(ds: dict, facts: dict) -> set:
         if facts.get("unstaffable_dates"):
             out.add(se._unstaffable_line(facts["unstaffable_dates"]))
     except Exception as e:
-        print(f"[schedule] week lines not rebuilt: {e!r}")
+        _degraded(f"week lines not rebuilt: {e!r}", e)
         se._ops.capture(e, job="schedule_generate", context="week lines")
     out.discard(None)
     return out
@@ -2196,13 +2214,13 @@ def _gate_rewrite(job: GenerationRun, gate: dict, in_force: InForce, escalated=F
     if not escalated:
         _check_stop(clock)
         if clock is not None and clock.model_seconds_left() < se.GATE_MIN_MODEL_SECONDS:
-            print(f"[schedule] quality gate rewrite skipped: {int(clock.model_seconds_left())}s of model time left")
+            log.info(f"quality gate rewrite skipped: {int(clock.model_seconds_left())}s of model time left")
             se._run_gate(gate, "skipped")
             return _standing(_rewrite_skipped(in_force, "time"))
         if se._escalate_for_gate(gate) == "capped":
-            print("[schedule] quality gate rewrite skipped: the run is at its caps")
+            log.info("quality gate rewrite skipped: the run is at its caps")
             return _standing(_rewrite_skipped(in_force, "capped"))
-    print(f"[schedule] quality gate: regenerating {dates} ({gate.get('reason')})")
+    log.info(f"quality gate: regenerating {dates} ({gate.get('reason')})")
     se._record_gate_path(rid, "model", dates)
     base_cand = in_force.cand
     base = _held_base(base_cand)
@@ -2214,11 +2232,12 @@ def _gate_rewrite(job: GenerationRun, gate: dict, in_force: InForce, escalated=F
     except Exception as e:
         # The rewrite failed, but the draft it was improving is sound: the
         # owner gets that draft, not a failure it did not have.
-        print(f"[schedule] quality gate rewrite failed:\n{traceback.format_exc()}")
+        _degraded(f"quality gate rewrite failed:\n{traceback.format_exc()}", e)
         se._run_gate(None, "original")
         try:
             se._ops.capture(e, job="schedule_generate", context=f"restaurant_id={rid}")
-        except Exception:
+        except Exception as _sx:
+            _degraded(f"capture failed — went on without it: {_sx!r}", _sx)
             pass
         fb = dict(in_force.payload)
         fb["gate"] = {"ran": True, "kept": "original", "dates": dates,
@@ -2345,7 +2364,7 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
     except Exception as _hist_ex:
         # Something after the save failed (the draft is saved and in force):
         # captured, and the week goes on with its id.
-        print(f"[schedule history] after the save: {_hist_ex}")
+        _degraded(f"after the save: {_hist_ex}", _hist_ex)
         se._ops.capture(_hist_ex, job="schedule_generate",
                         context=f"restaurant_id={rid} — a step after the history save failed")
     return history_id
@@ -2378,7 +2397,7 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
     try:
         se._store_stage_seconds(history_id, rid, result["stage_seconds"])
     except Exception as _tsx:
-        print(f"[schedule] stage timings not updated for history {history_id}: {_tsx}")
+        _degraded(f"stage timings not updated for history {history_id}: {_tsx}", _tsx)
         se._ops.capture(_tsx, job="schedule_generate", context=f"restaurant_id={rid} — stage timings")
     # What each pass cost and what the model's rows were worth (AI-2, AI-23,
     # the eval's context) — every pass this job built, against the one week
@@ -2423,7 +2442,7 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
             if not _ab.get("queued"):
                 _ssc_tag.record_ablation(history_id, _ab)
     except Exception as _tgx:
-        print(f"[schedule] generation tags not kept: {_tgx}")
+        _degraded(f"generation tags not kept: {_tgx}", _tgx)
     try:
         from models import log_account_event
         _wd = result.get("week_dates") or []
@@ -2431,7 +2450,7 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
                           detail=f"week of {_wd[0] if _wd else '?'} · {len(preview_rows)} shifts · "
                                  f"{result.get('rows_needing_review', 0)} flagged")
     except Exception as _lx:
-        print(f"[schedule] account event not logged: {_lx}")
+        _degraded(f"account event not logged: {_lx}", _lx)
     try:
         # The rules, requirements and signals this week was checked and
         # scored against, kept with it (ARCH-35).
@@ -2444,7 +2463,7 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
         if c.dropped_rows:
             # Rows the model wrote that could not be read: an AI-quality
             # finding (fix round G #58), not a failing job.
-            print(f"[schedule] dropped {len(c.dropped_rows)} malformed row(s): {c.dropped_rows[:3]}")
+            log.info(f"dropped {len(c.dropped_rows)} malformed row(s): {c.dropped_rows[:3]}")
             import ai_utils as _ai_q
             _ai_q.record_quality_event("labor_schedule", "line_dropped", restaurant_id=rid,
                                        action="labor_schedule", n=len(c.dropped_rows),
@@ -2457,7 +2476,7 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
         _sres.checkpoint_saved(history_id, se._json_ready(payload),
                                week_start=(result.get("week_dates") or [None])[0] or req.week_start)
     except Exception as _cpx:
-        print(f"[schedule] saved checkpoint not kept: {_cpx!r}")
+        _degraded(f"saved checkpoint not kept: {_cpx!r}", _cpx)
 
 
 # ── the learning ablation, offline (a job_queue row after the save) ─────────

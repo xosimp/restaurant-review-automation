@@ -50,6 +50,11 @@ import models as _models_mod
 from models import DB_PATH
 import schedule_rules as _rules
 import schedule_time as _stime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -235,7 +240,7 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
         kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
         punches = _sf.person_rows(restaurant_id, since=since, until=until, **kw) or []
     except Exception as exc:
-        print(f"[schedule] punches unavailable to the manager plan for {restaurant_id}: {exc}")
+        _degraded(f"punches unavailable to the manager plan for {restaurant_id}: {exc}", exc)
         punches = []
     if not punches:
         punches = [s for s in (shifts or []) if since <= str(s.get("date") or "")[:10] <= until]

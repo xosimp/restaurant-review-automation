@@ -42,6 +42,8 @@ import ops as _ops
 
 log = logging.getLogger(__name__)
 
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
+
 # A Send delivers inline for at most this long, so a publish to a large
 # staff on email or text never holds a request thread for minutes (ARCH-20);
 # the rest go out from the outbox job within the minute.
@@ -469,7 +471,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             if left:
                 add(_unwritten_key(left), line_of(left).lstrip("⚠ ").strip(), date=left[0].get("date"))
     except Exception as _ux:
-        print(f"[publish] unwritten days unreadable: {_ux!r}")
+        _degraded(f"unwritten days unreadable: {_ux!r}", _ux)
     # A role the requirements need with nobody of it on all day (STRESS-9),
     # read against the rows as they stand: one the owner has since covered
     # is not said.
@@ -486,7 +488,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                     _shp_pr.uncovered_line(left).lstrip("⚠ ").strip(), tier=DECIDE, rank=12,
                     date=left[0].get("date"))
     except Exception as _ucx:
-        print(f"[publish] uncovered roles unreadable: {_ucx!r}")
+        _degraded(f"uncovered roles unreadable: {_ucx!r}", _ucx)
     # The generation's own lead lines (re-audit 10/4/26 PIPE-7) — only what
     # the live sweep cannot recompute (TRUST-5): the sweep's rule lines, the
     # budget's, the stage failures, the settings the rules could not read
@@ -745,7 +747,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             cost = float(_econ.price_week(_sr.with_assumed_stays(rows, c), pricing)["total"] or 0)
             dollars = (cost, lbd)
     except Exception as _dx:
-        print(f"[publish] dollar budget check unavailable: {_dx!r}")
+        _degraded(f"dollar budget check unavailable: {_dx!r}", _dx)
         dollars = None
     if dollars is not None:
         cost, lbd = dollars
@@ -948,7 +950,7 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
             try:
                 create_schedule_share(rid, schedule_id, name, sent_to="app")
             except Exception as e:
-                print(f"[publish] app share not recorded for {name}: {e}")
+                _degraded(f"app share not recorded for {name}: {e}", e)
         # The chain's final word (BUGSLIFE-3): read below when it came before
         # deliver() returned; written to the outbox row when it came after.
         with lock:
@@ -1566,7 +1568,7 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
                             user_id=actor.get("id"), source_ref=f"published:{schedule_id}",
                             meta={"module": "schedule"})
     except Exception as _rle:
-        print(f"[publish] implementation not recorded for {rid}: {_rle}")
+        _degraded(f"implementation not recorded for {rid}: {_rle}", _rle)
     # What the week's first publish says, into the observation log: every
     # change from the original draft by origin (the manager's, Cavnar AI's
     # kept ones, an admin's), and whether a person sent it (schedule audit
@@ -1583,7 +1585,7 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
         import schedule_versions as _sv_out
         _sv_out.record_week_outcome(rid, schedule_id, actor=actor, published=True)
     except Exception as _wox:
-        print(f"[publish] schedule outcome not filed for {rid}: {_wox}")
+        _degraded(f"schedule outcome not filed for {rid}: {_wox}", _wox)
     # The reviews' and the nightly reports' "+1" asks this week carries,
     # recorded as implemented under it — the loop from a complaint to the
     # person added and what the complaints did next (re-audit CROSSMODULE-10).
@@ -1592,7 +1594,7 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
         _stsig_pub.record_published(rid, schedule_id,
                                     user_id=actor.get("id") if isinstance(actor, dict) else None)
     except Exception as _spx:
-        print(f"[publish] staffing asks not recorded for {rid}: {_spx}")
+        _degraded(f"staffing asks not recorded for {rid}: {_spx}", _spx)
     # The week's sales projection the schedule was built against, frozen
     # now so it can be scored when the week closes (forecast_log kind
     # revenue_week, insert-once; CA2 #6). Never blocks the publish.
@@ -1600,7 +1602,7 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
         import demand as _demand
         _demand.freeze_week_projection(rid, row["week_start"])
     except Exception as _fx:
-        print(f"[schedule] week projection not frozen rid={rid}: {_fx}")
+        _degraded(f"week projection not frozen rid={rid}: {_fx}", _fx)
 
 
 def _after_send(rid, schedule_id, version, review, acked, override_reasons, actor, authority):
@@ -2368,7 +2370,7 @@ def _needs_ack(review, unacked, schedule_id):
         if _rid_na:
             _so_na.record_shown(_rid_na, schedule_id, review.get("blockers") or [])
     except Exception as _nax:
-        print(f"[publish] shown blockers not recorded for {schedule_id}: {_nax}")
+        _degraded(f"shown blockers not recorded for {schedule_id}: {_nax}", _nax)
     return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
             # The keys, parallel to `blockers` (and as {key, text} items):
             # the client sends back `acknowledge: [the keys it showed]` (F2-9).

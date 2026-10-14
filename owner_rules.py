@@ -93,6 +93,11 @@ import json
 import os
 import re
 from datetime import date as _date
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 KINDS = ("floor", "max", "person_off", "person_on", "start", "end", "pair", "avoid", "close", "open", "weight")
 PERSON_KINDS = ("person_off", "person_on", "pair", "avoid", "close", "open")
@@ -695,7 +700,7 @@ def read_items(restaurant_id, items, names, roles, week_dates=None, c=None, call
                 continue
             data = json.loads(ai_utils.extract_text(msg) or "{}")
         except Exception as e:
-            print(f"[owner_rules] sentences not read: {e!r}")
+            _degraded(f"sentences not read: {e!r}", e)
             continue
         got = {}
         for item in (data.get("sentences") or []) if isinstance(data, dict) else []:
@@ -711,7 +716,7 @@ def read_items(restaurant_id, items, names, roles, week_dates=None, c=None, call
             try:
                 _store(restaurant_id, keys[(s, p)], src, s, valid, model, person=p, db_path=db_path)
             except Exception as e:
-                print(f"[owner_rules] reading not cached: {e!r}")
+                _degraded(f"reading not cached: {e!r}", e)
             out[(s, p)] = valid
     return out
 
@@ -779,7 +784,7 @@ def _staff_note_parts(restaurant_id, db_path=None) -> list:
                     continue                      # the hold reader holds it, deterministic
                 out.append((who, text))
     except Exception as e:
-        print(f"[owner_rules] staff notes not read: {e!r}")
+        _degraded(f"staff notes not read: {e!r}", e)
     return out
 
 
@@ -848,7 +853,7 @@ def queue_read(restaurant_id, user=None, db_path=None) -> bool:
                           idempotency_key=f"{READ_JOB_KIND}:{restaurant_id}:{digest}", db_path=db_path)
         return True
     except Exception as e:
-        print(f"[owner_rules] read not queued: {e!r}")
+        _degraded(f"read not queued: {e!r}", e)
         return False
 
 
@@ -930,7 +935,7 @@ def _instruction_waivers(restaurant_id, sents, week_dates, db_path=None) -> dict
             if w:
                 out[s] = {"words": w, "confirmed": _snr._key(s) in have}
     except Exception as e:
-        print(f"[owner_rules] waivers not read: {e!r}")
+        _degraded(f"waivers not read: {e!r}", e)
     return out
 
 
@@ -1271,7 +1276,7 @@ def apply(c, rules) -> None:
         try:
             _apply_one(c, rule, week, _r)
         except Exception as e:
-            print(f"[owner_rules] rule not applied: {e!r}")
+            _degraded(f"rule not applied: {e!r}", e)
             try:
                 c.owner_rules_unchecked.append(str(rule.get("quote") or words(rule)))
             except Exception:
@@ -1701,7 +1706,7 @@ def prompt_lines(restaurant_id, text, source="notes", week_dates=None, db_path=N
         got = read_items(restaurant_id, [(s, source, None) for s in sents], names, roles,
                          week_dates=week_dates if source == "instruction" else None, extract=False, db_path=db_path)
     except Exception as e:
-        print(f"[owner_rules] prompt lines from the sentences: {e!r}")
+        _degraded(f"prompt lines from the sentences: {e!r}", e)
         return [f"NOT ENFORCED — guidance: \"{_neut(_norm(s))[:300]}\"" for s in sents]
     out = []
     for s in sents:

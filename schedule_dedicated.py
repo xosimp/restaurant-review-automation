@@ -55,6 +55,11 @@ import json
 import re
 
 import schedule_time as _stime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DEDICATED_SOURCE = "dedicated"
 NOTE_MARK = "Cavnar AI: standing position"
@@ -201,7 +206,7 @@ def confirmed_waiver_keys(restaurant_id, week_dates=None, db_path=None) -> set:
                 if src:
                     out.add(_snr._key(src))
     except Exception as e:
-        print(f"[schedule_dedicated] confirmed waivers unread: {e!r}")
+        _degraded(f"confirmed waivers unread: {e!r}", e)
     return out
 
 

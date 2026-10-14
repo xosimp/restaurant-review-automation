@@ -34,6 +34,8 @@ def get_conn(db_path=None):
 
 log = logging.getLogger(__name__)
 
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
+
 import schedule_rows as _srows
 import schedule_time as _stime_scope
 
@@ -1219,7 +1221,7 @@ def write_on(conn, restaurant_id, history_id, reason, schedule_csv, saved_by=Non
         split = _models_mod.history_hours(restaurant_id, draft_text)
     except Exception as e:
         # Unknown, never a guess: a reader falls back to the all-in figure.
-        print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
+        _degraded(f"hours split unavailable rid={restaurant_id}: {e!r}", e)
         split = {"hourly": None, "salaried": None}
     # The version first, so the week's shift projection carries its
     # revision (store_week); one transaction either way.
@@ -1388,7 +1390,7 @@ def carry_live_into_drafts(conn, restaurant_id, history_id, old_live, new_live, 
         try:
             split = _models_mod.history_hours(restaurant_id, text)
         except Exception as e:
-            print(f"[schedule versions] hours split unavailable rid={restaurant_id}: {e!r}")
+            _degraded(f"hours split unavailable rid={restaurant_id}: {e!r}", e)
             split = {"hourly": None, "salaried": None}
         # The version first, then the draft's text through the one week
         # write (store_week: its shift projection with it — ARCH-7).

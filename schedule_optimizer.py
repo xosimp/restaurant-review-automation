@@ -69,6 +69,11 @@ from datetime import datetime as _dt
 import schedule_objective as _obj
 import shift_quality as sq
 import schedule_time as _stime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 # Stop once the week reaches this, or when no candidate improves it.
 DEFAULT_TARGET = 92
@@ -1878,7 +1883,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 base_dollars = float(_obj.price_week(
                     [r for r in current_rows if (r.get("employee") or "").strip()], objective_ctx)["parts"]["labor"])
         except Exception as e:
-            print(f"[optimizer] objective unavailable: {e!r}")
+            _degraded(f"objective unavailable: {e!r}", e)
             objective_ctx, base_objective = None, None
 
     def value(q, rs):

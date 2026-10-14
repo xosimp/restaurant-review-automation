@@ -34,6 +34,11 @@ from models import DB_PATH
 from models import live_where as _live_where, live_csv_sql as _live_csv
 from canonical_facts import FINAL_SQL
 import schedule_time as _stime_scope
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -200,7 +205,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
                 key = (local.strftime("%Y-%m-%d"), "morning" if local.hour < 15 else "night")
                 issue_at[key] = issue_at.get(key, 0) + 1
         except Exception as _ix:
-            print(f"[outcomes] issues unavailable for restaurant {restaurant_id}: {_ix}")
+            _degraded(f"issues unavailable for restaurant {restaurant_id}: {_ix}", _ix)
         actuals = _Actuals(restaurant_id, db_path)
         for w in weeks:
             rows = week_rows.get(int(w["id"])) or []
@@ -227,7 +232,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
                         + timedelta(days=1)).isoformat()
                 own_split = _ddr.date_part_sales_conn(conn, restaurant_id, w["week_start"], _end)
             except Exception as _osx:
-                print(f"[outcomes] own daypart split unreadable for {restaurant_id}: {_osx}")
+                _degraded(f"own daypart split unreadable for {restaurant_id}: {_osx}", _osx)
                 own_split = {}
             for (d, part), e in by.items():
                 day = conn.execute("SELECT sales, labor_pct, day_of_week FROM labor_daily_history WHERE restaurant_id=? "
@@ -437,7 +442,7 @@ class _Actuals:
                 elif a["outcome"] in ("late", "left_early"):
                     out[(d, part)][a["outcome"]] += 1
         except Exception as e:
-            print(f"[outcomes] attendance unavailable for restaurant {self.rid}: {e}")
+            _degraded(f"attendance unavailable for restaurant {self.rid}: {e}", e)
         finally:
             conn.close()
         for e in out.values():
@@ -502,7 +507,7 @@ def _place_reviews(conn, restaurant_id, by, tz):
                             "deleted_at IS NULL AND substr(review_date,1,10) BETWEEN ? AND ?",
                             (restaurant_id, lo, hi)).fetchall()
     except Exception as _rx:
-        print(f"[outcomes] reviews unavailable for restaurant {restaurant_id}: {_rx}")
+        _degraded(f"reviews unavailable for restaurant {restaurant_id}: {_rx}", _rx)
         return {}
     main = {}
     for (d, p), e in by.items():
@@ -844,7 +849,7 @@ def record_weeks(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, toda
                                           until=(monday - timedelta(days=1)).isoformat(),
                                           db_path=None if db_path == DB_PATH else db_path)
     except Exception as e:
-        print(f"[schedule_intel] punches unread for {restaurant_id}: {e!r}")
+        _degraded(f"punches unread for {restaurant_id}: {e!r}", e)
         punches = []
     by_week = {}
     for r in punches:
@@ -1007,7 +1012,7 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
         _families = _sr.role_families(_models_mod.get_restaurant(
             restaurant_id, _models_mod.DB_PATH if db_path == DB_PATH else db_path))
     except Exception as e:
-        print(f"[schedule_intel] chosen closers unreadable rid={restaurant_id}: {e}")
+        _degraded(f"chosen closers unreadable rid={restaurant_id}: {e}", e)
         chosen_closers, _families = {}, {}
     people = {}       # lower name -> {display, roles{}, shifts, closes, nights, holidays, by_week{ws: weekend?}}
     week_keys = []
@@ -1053,7 +1058,7 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
                                  db_path=None if db_path == DB_PATH else db_path,
                                  roster=set(roster) if roster else None) or {}
     except Exception as e:
-        print(f"[schedule_intel] tip opportunity unreadable rid={restaurant_id}: {e}")
+        _degraded(f"tip opportunity unreadable rid={restaurant_id}: {e}", e)
         tip_rot = {}
     for role, members in sorted(by_role.items(), key=lambda kv: kv[0].lower()):
         if len(members) < ROTATION_MIN_GROUP:
@@ -1524,7 +1529,7 @@ def coverage_watch_missing(restaurant_id, db_path=DB_PATH) -> list:
             missing.append("no point-of-sale with live clock-ins is connected")
         return missing
     except Exception as e:
-        print(f"[schedule_intel] coverage_watch_missing failed for {restaurant_id}: {e}")
+        _degraded(f"coverage_watch_missing failed for {restaurant_id}: {e}", e)
         return ["the coverage check could not be read"]
 
 
@@ -1554,7 +1559,7 @@ def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
                 "AND business_date < ?", (restaurant_id, s, e, COVERAGE_RUNS_SINCE)).fetchall()}
         return out
     except Exception as ex:
-        print(f"[schedule_intel] watched_dates failed for {restaurant_id}: {ex}")
+        _degraded(f"watched_dates failed for {restaurant_id}: {ex}", ex)
         return set()
     finally:
         conn.close()
@@ -1623,7 +1628,7 @@ def slot_readings(restaurant_id, since, until, db_path=DB_PATH) -> dict:
         except Exception:
             tickets, comps = [], {}
     except Exception as ex:
-        print(f"[schedule_intel] slot readings unavailable for {restaurant_id}: {ex}")
+        _degraded(f"slot readings unavailable for {restaurant_id}: {ex}", ex)
         return {}
     finally:
         conn.close()
@@ -1845,7 +1850,7 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
                              "restored_at, updated_at) VALUES (?,?,?,?,?,?,?)",
                              (restaurant_id, "schedule_restore", str(kind)[:60], "restored", now, now, now))
             except Exception as e:
-                print(f"[schedule_intel] restore not held durably: {e}")
+                _degraded(f"restore not held durably: {e}", e)
         # A showing is one per recommendation per day: a manager saving the
         # same week ten times in one sitting was ten "shown, never taken"
         # and switched the advice off for good (SCHED-26), and every rescore
@@ -1931,7 +1936,7 @@ def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None)
                            "JOIN schedule_history h ON h.id=o.history_id WHERE o.restaurant_id=? AND h.week_end < ?",
                            (restaurant_id, today.isoformat())).fetchall()
     except Exception as e:
-        print(f"[schedule_intel] measure_accepted_recommendations unavailable: {e}")
+        _degraded(f"measure_accepted_recommendations unavailable: {e}", e)
         return 0
     finally:
         conn.close()
@@ -2245,7 +2250,7 @@ def suppression_state(restaurant_id, db_path=DB_PATH, now=None, write=True) -> d
             rows = conn.execute("SELECT kind, key, action, authority, created_at FROM schedule_recommendation_events "
                                 "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
         except Exception as e:
-            print(f"[schedule_intel] suppressed_kinds failed: {e}")
+            _degraded(f"suppressed_kinds failed: {e}", e)
             rows = []
         # Counted since the owner last asked for the kind back — the log's
         # own restore row, or the durable one (the log is pruned at 365 days).
@@ -2343,7 +2348,7 @@ def suppressed_kinds(restaurant_id, db_path=DB_PATH) -> set:
         return {k for k, st in suppression_state(restaurant_id, db_path=db_path).items()
                 if st["state"] == "suppressed"}
     except Exception as e:
-        print(f"[schedule_intel] suppressed_kinds failed: {e}")
+        _degraded(f"suppressed_kinds failed: {e}", e)
         return set()
 
 
@@ -2414,7 +2419,7 @@ def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH, author
                                "AND status IN ('active', 'retest', 'dormant')",
                                (restaurant_id, str(key)[:200])).fetchone()
         except Exception as e:                 # no standing table yet: nothing the owner kept
-            print(f"[schedule_intel] standing pattern unreadable rid={restaurant_id}: {e}")
+            _degraded(f"standing pattern unreadable rid={restaurant_id}: {e}", e)
             row = None
         finally:
             conn.close()

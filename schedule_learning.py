@@ -52,6 +52,8 @@ from schedule_requirements import headcount_to_apply  # noqa: F401  (the one rea
 
 log = logging.getLogger(__name__)
 
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
+
 # How far back the edit learners read (schedule audit 10/3/26 L-27): 24
 # weeks, every week weighted by its age's half-life
 # (schedule_versions.HALF_LIFE_DAYS — a person on a slot 120 days, a role's
@@ -2763,7 +2765,7 @@ def _standby_person(restaurant_id, day, rows, tally, db_path, base=0.0):
         fits = labor_replacements.for_gap(restaurant_id, role, day["day"], exclude=working, db_path=db_path,
                                           limit=6, on_date=d)
     except Exception as e:
-        print(f"[schedule_learning] standby candidates unavailable: {e}")
+        _degraded(f"standby candidates unavailable: {e}", e)
         return None
     if not fits:
         return None
