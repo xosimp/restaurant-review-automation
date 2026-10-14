@@ -292,7 +292,6 @@ def test_a_save_queues_the_read_off_the_request(rid, monkeypatch, db_path):
     import job_queue
     monkeypatch.setenv("OWNER_RULES_READ", "1")
     got = []
-    monkeypatch.setattr(job_queue, "enabled", lambda: True)
     monkeypatch.setattr(job_queue, "enqueue", lambda kind, payload, **k: got.append((kind, payload, k)) or (1, True))
     models.update_restaurant(rid, {"sched_notes": "Jen and Ben never together."}, db_path=db_path)
     assert orr.queue_read(rid)

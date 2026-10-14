@@ -827,15 +827,13 @@ def queue_read(restaurant_id, user=None, db_path=None) -> bool:
     """Queue the read of the saved words (AI-22: notes are read when they
     are saved, never in the generation's critical path): one job-queue row
     per distinct set of unread sentences (its idempotency key), so two saves
-    of the same notes queue one read. False when there is nothing to read,
-    the queue is off (JOB_QUEUE=0: the generation reads them, batched) or
-    the model's reading is switched off. Never raises."""
+    of the same notes queue one read. The queue is the one path (job_queue,
+    ARCH-10). False when there is nothing to read or the model's reading is
+    switched off. Never raises."""
     try:
         if str(os.getenv(READ_ENV, "1")).strip() == "0":
             return False
         import job_queue
-        if not job_queue.enabled():
-            return False
         names, roles = _roster(restaurant_id, db_path=db_path)
         items = saved_items(restaurant_id, db_path=db_path)
         got = read_items(restaurant_id, items, names, roles, extract=False, db_path=db_path, dismissed=True)
