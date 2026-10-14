@@ -331,7 +331,14 @@ def _owner_redo(job: GenerationRun) -> Candidate:
     req.week_start = week_start
     _refuse_dates_outside(base, req.dates)
     code_first = False
-    if not req.focus:
+    # A week drafted in code is redone in code, whatever the reason says
+    # (blind re-audit 10/11/26 BUGSGEN-9): the source in force is honoured
+    # on every pass — the owner's words still become typed rules the solve
+    # holds; they are never sent to the drafting model.
+    code_only = se.draft_source_for(req.restaurant_id, week_start) != "model"
+    if code_only:
+        code_first = True
+    elif not req.focus:
         # An owner's redo is drafted in code first (scheduler audit 10/10/26
         # AI-28): a one-day redo used to pay a whole week's thinking for a
         # few rows. The days are re-shaped and solved against every rule —
@@ -347,6 +354,9 @@ def _owner_redo(job: GenerationRun) -> Candidate:
             try:
                 cand = _build_pass(job, spec)
             except _CodeRedoDeclined as why:
+                if code_only:
+                    # Never the model for a week drafted in code (BUGSGEN-9).
+                    raise se.ScheduleGenerationError(_code_redo_refusal(str(why), spec.dates))
                 print(f"[schedule] {why} — the model redoes the days")
                 spec = PassSpec(kind="redo", dates=spec.dates, base=spec.base, focus=spec.focus, code_redo=False)
                 continue
@@ -368,6 +378,17 @@ def _owner_redo(job: GenerationRun) -> Candidate:
                             focus=spec.focus, code_redo=False,
                             redo_how=((cand.result.get("redo") or {}).get("how")
                                       or ("code" if cand.code_redo_on else "model")))
+
+
+def _code_redo_refusal(why: str, dates) -> str:
+    """The owner's sentence when a redo drafted in code could not be kept and
+    the model is not the source (BUGSGEN-9): what happened and what to do."""
+    which = se._dates_label(sorted(dates or ()))
+    if "changed nothing" in why:
+        return (f"Solving {which} again gave the same shifts — they already hold every rule. Say what should "
+                "change (who, when, or a rule), or edit the shifts yourself. Nothing was saved.")
+    return (f"Cavnar AI couldn't redraft {which} in code — nobody can legally take those shifts with the rules "
+            "as they stand. Check who is off or unavailable, then try again. Nothing was saved.")
 
 
 def _week(job: GenerationRun) -> Candidate:
@@ -1755,8 +1776,40 @@ def _judge(in_force: InForce, cand: Candidate, dates) -> tuple:
     week no worse (_gate_keeps)."""
     before_local = se._gate_local(in_force.cand.quality, dates)
     after_local = se._gate_local(cand.quality, dates)
+    # Both weeks priced by the one objective on the draft in force's own
+    # context (blind re-audit 10/11/26 LOGIC-6): the gate judges as the
+    # optimizer moves and the solver drafts.
+    dollars_before = dollars_after = base_labor = None
+    try:
+        ctx = _objective_ctx_of(in_force.cand)
+        if ctx:
+            import schedule_objective as _obj_j
+            named = lambda rs: [r for r in rs or [] if (r.get("employee") or "").strip()]  # noqa: E731
+            p_before = _obj_j.price_week(named(in_force.cand.rows), ctx)
+            dollars_before, base_labor = p_before["total"], p_before["parts"]["labor"]
+            dollars_after = _obj_j.price_week(named(cand.rows), ctx)["total"]
+    except Exception as _ox:
+        print(f"[schedule] gate objective unavailable: {_ox!r}")
+        dollars_before = dollars_after = base_labor = None
+    after_local = se.gate_value(after_local, dollars_after, dollars_before, base_labor)
     return se._gate_keeps(before_local, after_local, cand.score, in_force.cand.score,
                           in_force.cand.rules(), cand.rules())
+
+
+def _objective_ctx_of(cand: Candidate):
+    """The one objective's context for a candidate's week (schedule_engine.
+    objective_context), built once and kept on it; None when it cannot be."""
+    got = getattr(cand, "_objective_ctx", None)
+    if got is None:
+        res = cand.result or {}
+        c = res.get("constraints")
+        reqs = res.get("requirements") if isinstance(res.get("requirements"), list) else []
+        got = se.objective_context(getattr(c, "restaurant_id", None), list(res.get("week_dates") or []), c,
+                                   cand.pass_sig or {}, reqs or [],
+                                   budget_dollars=res.get("labor_budget_dollars") or None,
+                                   blended=res.get("blended_rate"), need_text=res.get("objective_need")) or False
+        cand._objective_ctx = got
+    return got or None
 
 
 def _gate(job: GenerationRun, first: Candidate) -> Candidate:
@@ -1800,6 +1853,10 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
                                                + " with every rule as it stands — relax one of the rules named "
                                                  "and it can be filled."}
             return first
+    if se.code_drafted(first.result):
+        # A week drafted in code is never rewritten by the model (blind
+        # re-audit 10/11/26 BUGSGEN-9): the gate's fill in code, nothing else.
+        return _gate_code_only(job, first, gate)
     if clock is not None and clock.model_seconds_left() < se.GATE_MIN_MODEL_SECONDS:
         # Not enough of the job's time left to rewrite the weak days and
         # check the rewrite (P-22): the draft stands as it is.
@@ -1853,6 +1910,50 @@ def _gate(job: GenerationRun, first: Candidate) -> Candidate:
             continue
         return _gate_rewrite(job, gate, in_force, escalated=escalated_here)
     return in_force.cand
+
+
+def _gate_code_only(job: GenerationRun, first: Candidate, gate: dict) -> Candidate:
+    """The quality gate on a week drafted in code (the solver, the default
+    source, or carry_forward — BUGSGEN-9): the fill in code over the gate's
+    days when it can change something, judged like any gate pass; never the
+    model's rewrite. The payload says the gate ran in code only."""
+    rid = job.req.restaurant_id
+    clock = job.clock
+    no_fill = se._gate_fill_skip(first.result, None)
+    if no_fill == "converged" and gate.get("exact_fixes"):
+        no_fill = None                     # the exact solve found shifts the loop did not (LOGIC-26)
+    if no_fill is None and clock is not None and clock.seconds_left() < se._gate_fill_seconds(first.result) + \
+            se.REPAIR_RESERVE_SECONDS:
+        no_fill = "time"
+    if no_fill:
+        se._run_gate(gate, "skipped")
+        first.payload["gate"] = _gate_not_run("code_" + no_fill, gate)
+        return first
+    se._run_gate(gate)
+    _boundary(job, "gate")
+    try:
+        fill_answer = se._gate_fill_answer(first.gate_answer, rid, None, gate["dates"],
+                                           extra_rows=gate.get("exact_fixes"),
+                                           csv_text=first.payload.get("schedule_csv"))
+    except se.ScheduleGenerationError:
+        raise
+    except Exception as _gx:
+        print(f"[schedule] quality gate failed: {_gx!r}")
+        se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={rid}")
+        first.payload["gate"] = _gate_not_run("error", gate)
+        return first
+    if fill_answer is None:
+        first.payload["gate"] = _gate_not_run("code_converged", gate)
+        return first
+    in_force = InForce(first, dict(first.payload, gate={"ran": True, **gate}))
+    outcome = _gate_fill(job, gate, in_force, fill_answer)
+    if isinstance(outcome, Candidate):
+        return outcome                       # settled in code
+    g = dict((outcome.payload or {}).get("gate") or {})
+    g.update(rewrite={"tried": False, "skipped": "code"})
+    if not g.get("kept"):
+        g.update(kept="original", reason=_GATE_NOT_RUN["code_converged"])
+    return _standing(InForce(outcome.cand, dict(outcome.payload, gate=g)))
 
 
 def _gate_fill(job: GenerationRun, gate: dict, in_force: InForce, fill_answer: dict):
@@ -1909,6 +2010,10 @@ _GATE_NOT_RUN = {
               "so the draft is as it was written.",
     "error": "Cavnar AI couldn't check this draft's weakest days just now, so the draft is as it was written.",
     "past": "The weakest days have already happened, so Cavnar AI left them as they were.",
+    # A week drafted in code (BUGSGEN-9): no model rewrite is ever made.
+    "code_converged": "This week was solved in code against every rule, and solving its weakest days again found "
+                      "nothing better — no AI rewrite is made of a week drafted in code.",
+    "code_time": "Cavnar AI ran out of time to re-solve the weakest days, so the draft is as it was solved.",
 }
 
 

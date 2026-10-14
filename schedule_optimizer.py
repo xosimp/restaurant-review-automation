@@ -66,6 +66,7 @@ Nothing here calls a model. Pure over its inputs apart from time.
 import time as _time
 from datetime import datetime as _dt
 
+import schedule_objective as _obj
 import shift_quality as sq
 import schedule_time as _stime
 
@@ -102,10 +103,13 @@ LEARNED_WORSE_MAX = 1.5
 # P-32): week points per 1% of the week's labor dollars a move adds over the
 # draft. An 8h add at $25/h on a $15,000 week is 1.3% — 0.67 points — and
 # the same add at $14/h 0.37: of two adds that buy the same, the cheaper
-# wins, and an add has to buy more than its cost. Dollars a move SAVES earn
-# nothing: the search finishes the draft's quality, it never trades the
-# score for a cheaper week (the budget trim and labor efficiency own that).
-LABOR_POINTS_PER_PCT = 0.5
+# wins, and an add has to buy more than its cost. Since the blind re-audit
+# of 10/11/26 (LOGIC-23) dollars a move SAVES are credited at the same rate
+# (they "earned nothing", so no pass ever tightened a week under its budget
+# but over-staffed against its curve); and the dollars are the one
+# objective's (schedule_objective — LOGIC-6), the same exchange rate CP-SAT's
+# quality tier uses. One number: schedule_objective.POINTS_PER_PCT_OF_LABOR.
+LABOR_POINTS_PER_PCT = _obj.POINTS_PER_PCT_OF_LABOR
 # A row the edit predictor says the manager will change (schedule_learning.
 # likely_edit_signals, when the engine passes signals["likely_edits"]):
 # points of its shift per unit of its weight for keeping it as it is.
@@ -270,19 +274,31 @@ def _overrun_weight(rows: list, overruns: list, families: dict = None) -> float:
     return sum(float(x.get("weight") or 0) for x in _smem.misses(rows, overruns, families=families or None))
 
 
-def week_value(quality: dict, rows: list, pricing=None, base_dollars: float = 0.0, likely=None) -> float:
+def week_value(quality: dict, rows: list, pricing=None, base_dollars: float = 0.0, likely=None,
+               objective_ctx=None, base_objective: float = None) -> float:
     """What a week is worth to the owner, in week points: its Shift Quality
     (objective — what it breaks of the scheduling memory is in it, the
     learned-patterns measure, L-3), less LABOR_POINTS_PER_PCT for each 1% of
-    labor dollars it costs over `base_dollars` (the draft's — a saving earns
-    nothing, P-32), less what it keeps of the rows the manager is expected
-    to change (likely_cost, L-15). The one value the repair loop and the
-    solver's judge both choose by."""
+    the draft's labor dollars (`base_dollars`) the week costs MORE — and,
+    since the blind re-audit of 10/11/26 (LOGIC-23), plus the same for each
+    1% it costs less: a saving is credited at the rate an add is charged, so
+    an over-staffed week under its budget is tightened where the score does
+    not fall (the coverage floors and the rules hold by the moves' own
+    legality). With `objective_ctx` (schedule_objective — LOGIC-6, ARCH-2)
+    the dollars are the ONE objective's (price_week: labor, overtime, the
+    value of every half hour short, the budget, stability, shape, fairness)
+    against `base_objective`, the draft's — the figure the solver drafted
+    to; else the labor dollars. Less what it keeps of the rows the manager
+    is expected to change (likely_cost, L-15). The one value the repair
+    loop and the solver's judge both choose by."""
     v = objective(quality)
-    if pricing and base_dollars > 0:
-        over = labor_dollars(rows, pricing) - base_dollars
-        if over > 0:
-            v -= LABOR_POINTS_PER_PCT * over / base_dollars * 100.0
+    if base_dollars > 0:
+        per_dollar = _obj.points_per_dollar(base_dollars)
+        if objective_ctx is not None and base_objective is not None:
+            named = [r for r in rows or [] if (r.get("employee") or "").strip()]
+            v -= per_dollar * (_obj.price_week(named, objective_ctx)["total"] - base_objective)
+        elif pricing:
+            v -= per_dollar * (labor_dollars(rows, pricing) - base_dollars)
     if likely:
         v -= likely_cost(rows, likely, quality)
     return v
@@ -1376,6 +1392,82 @@ def _hard_rule_moves(state, shift, where, moves, add_person):
                                 f"a rule about a person on {where}"))
 
 
+def _surplus_moves(state, objective_ctx, limit=None) -> list:
+    """Cuts of hours the week carries above the one objective's need (blind
+    re-audit 10/11/26 LOGIC-23: no pass ever reduced labor where quality is
+    unaffected — a week under its budget but over-staffed against its curve
+    was never tightened): a shift every half hour of which is above the need
+    for its role on its date, removed; else the run of surplus half hours at
+    its end (or start), cut back to no shorter than the shortest shift. Only
+    where the objective HAS a need for the role that date (no need on file
+    is not "nobody needed"); never a salaried person's hours, a pinned row,
+    somebody's only shift or under their minimum (_can_cut). Each is then
+    judged like any move: legal, and kept only where its value — the score
+    with the saved dollars credited (week_value) — rises."""
+    if objective_ctx is None:
+        return []
+    import schedule_rules as _rules
+    fam = lambda role: sq.role_family(role, state.families)  # noqa: E731
+    need = {}
+    for (d, role), curve in (objective_ctx.need or {}).items():
+        cur = need.setdefault((d, fam(role)), {})
+        for t, n in curve.items():
+            cur[int(t)] = cur.get(int(t), 0) + int(n or 0)
+    on = {}
+    spans = {}
+    for i, r in enumerate(state.rows):
+        sp = _span(r)
+        if sp[0] is None or not (r.get("employee") or "").strip():
+            continue
+        spans[i] = sp
+        cur = on.setdefault((r.get("date"), fam(r.get("role"))), {})
+        for t in range(sp[0] - sp[0] % STEP, sp[1], STEP):
+            if sp[0] <= t and t + STEP <= sp[1]:
+                cur[t] = cur.get(t, 0) + 1
+    c = state.constraints
+    scored = []
+    for i, sp in spans.items():
+        r = state.rows[i]
+        if i in state.pinned or _salaried(state, r):
+            continue
+        key = (r.get("date"), fam(r.get("role")))
+        if key not in need:
+            continue
+        nd, have = need[key], on.get(key) or {}
+        ts = [t for t in range(sp[0] - sp[0] % STEP, sp[1], STEP) if sp[0] <= t and t + STEP <= sp[1]]
+        if not ts:
+            continue
+        spare = [have.get(t, 0) - nd.get(t, 0) >= 1 for t in ts]
+        day = _day(r.get("date"))
+        why = f"{r.get('employee')}'s {day} hours were above what the half hours need"
+        if all(spare):
+            if _can_cut(state, i, sq._row_hours(r), removing=True):
+                scored.append((len(ts), _remove_move(state, i, why)))
+            continue
+        shortest = (_rules.shortest_for(c, r.get("employee"), r.get("date") or "") if c is not None
+                    else _rules.DEFAULT_MIN_SHIFT_MINUTES)
+        tail = 0
+        while tail < len(spare) and spare[len(spare) - 1 - tail]:
+            tail += 1
+        head = 0
+        while head < len(spare) and spare[head]:
+            head += 1
+        # every cut of the surplus run by the hour, not only the whole run:
+        # the value (week_value) picks how far — a cut that would take its
+        # person under half their usual week is priced so (the objective)
+        for k in range(tail, 1, -2):
+            new_e = max(sp[0] + shortest, sp[1] - k * STEP)
+            if new_e < sp[1] and _can_cut(state, i, (sp[1] - new_e) / 60.0):
+                scored.append((k, _retime_move(state, i, sp[0], new_e, why)))
+        for k in range(head, 1, -2):
+            new_s = min(sp[1] - shortest, sp[0] + k * STEP)
+            if new_s > sp[0] and _can_cut(state, i, (new_s - sp[0]) / 60.0):
+                scored.append((k, _retime_move(state, i, new_s, sp[1], why)))
+    scored.sort(key=lambda t: -t[0])
+    out = [m for _n, m in scored if m is not None]
+    return out[:limit] if limit else out
+
+
 def _salaried(state, row) -> bool:
     sal = state.signals.get("salaried")
     if sal is None and state.constraints is not None:
@@ -1721,8 +1813,14 @@ REASSIGN_KINDS = ("replace", "swap", "trade")
 def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dict = None,
              constraints=None, target: int = DEFAULT_TARGET, max_seconds: float = DEFAULT_SECONDS,
              max_evaluations: int = DEFAULT_EVALUATIONS, hours_budget: float = None,
-             max_server_overlap: int = None, only_dates=None, what_if: bool = True, reassign: bool = True) -> dict:
+             max_server_overlap: int = None, only_dates=None, what_if: bool = True, reassign: bool = True,
+             objective_ctx=None) -> dict:
     """Improve the week's Shift Quality with legal moves, and say what moved.
+
+    `objective_ctx` (schedule_objective.ObjectiveContext — blind re-audit
+    10/11/26 LOGIC-6, ARCH-2, LOGIC-23): every move is valued by week_value
+    against the ONE objective's dollars — what the solver drafted to — the
+    dollars a move saves credited as its adds are charged.
 
     Returns {rows, changes: [{kind, reason, gain, score_after, dollars}],
     before_score, after_score, quality, evaluations, seconds, stopped,
@@ -1771,12 +1869,25 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
 
     current_rows = [dict(r) for r in rows or []]
     base_dollars = labor_dollars(current_rows, pricing) if pricing else 0.0
+    base_objective = None
+    if objective_ctx is not None:
+        try:
+            base_objective = _obj.price_week([r for r in current_rows if (r.get("employee") or "").strip()],
+                                             objective_ctx)["total"]
+            if base_dollars <= 0:
+                base_dollars = float(_obj.price_week(
+                    [r for r in current_rows if (r.get("employee") or "").strip()], objective_ctx)["parts"]["labor"])
+        except Exception as e:
+            print(f"[optimizer] objective unavailable: {e!r}")
+            objective_ctx, base_objective = None, None
 
     def value(q, rs):
         """The week's worth: its score (the scheduling memory's measure in
-        it, L-3) less the labor dollars it adds over the draft (P-32) and the
-        rows it keeps that the manager is expected to change (L-15)."""
-        return week_value(q, rs, pricing, base_dollars, likely)
+        it, L-3) less the one objective's dollars it adds over the draft —
+        plus those it saves (LOGIC-6, LOGIC-23; P-32) — and the rows it
+        keeps that the manager is expected to change (L-15)."""
+        return week_value(q, rs, pricing, base_dollars, likely, objective_ctx=objective_ctx,
+                          base_objective=base_objective)
 
     viols, prof, sig = sweep_of(current_rows)
     out = {"rows": current_rows, "changes": [], "before_score": None, "after_score": None,
@@ -1888,7 +1999,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         # hold (shift_quality.week_held) already keeps the score under any
         # sane target; a target set at or below the hold still may not stop
         # the search before the breach's own moves are tried.
-        if (current.get("score") or 0) >= target and not memory_misses(current) and not current.get("held_by"):
+        at_target = (current.get("score") or 0) >= target and not memory_misses(current) \
+            and not current.get("held_by")
+        if at_target and objective_ctx is None:
             stopped = "target reached"
             break
         if _time.monotonic() - t0 > max_seconds or evaluations >= max_evaluations:
@@ -1897,11 +2010,19 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         state = _State(current_rows, signals, inputs, constraints=c)
         state.viols = viols or []
         accepted = False
-        for phase in ("weak", "what_if"):
+        # At the score's target only the hours above the objective's need are
+        # still looked at (LOGIC-23): a week scored 100 can still carry two
+        # servers nobody needs.
+        for phase in (("surplus",) if at_target else ("weak", "surplus", "what_if")):
             if phase == "what_if" and not what_if:
                 break
             candidates, seen = [], set()
-            if phase == "weak":
+            if phase == "surplus":
+                # The hours above the objective's need (LOGIC-23), with the
+                # saved dollars credited by week_value.
+                candidates = [mv for mv in _surplus_moves(state, objective_ctx, limit=MOVES_PER_ROUND)
+                              if mv[0] not in tabu]
+            elif phase == "weak":
                 problems = _learned_problems(current) + _problems(current)[:8]
                 for problem in problems:
                     for mv in _moves_for(problem, state):
@@ -1979,6 +2100,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 accepted = True
                 break
         if not accepted:
+            if at_target:
+                stopped = "target reached"
             break
     out.update(rows=current_rows, after_score=current.get("score"), quality=current,
                evaluations=evaluations, seconds=round(_time.monotonic() - t0, 1), stopped=stopped)

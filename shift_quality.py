@@ -371,6 +371,13 @@ class ShiftContext:
     demand_pct: float | None = None                    # vs an average day
     target_hours: float | None = None                  # this DAY's hour target
     day_hours: float = 0.0                             # hours scheduled this day
+    # Whether every half hour of the one objective's need (schedule_
+    # objective — signals["objective_need"]) is met on this day, and the
+    # day's hours above that need (a role with no need on file counted
+    # whole); None when the week carries no such need (blind re-audit
+    # 10/11/26 LOGIC-6).
+    day_need_met: bool | None = None
+    day_surplus_hours: float | None = None
     week_assignments: dict = field(default_factory=dict)   # {name: [assignment]}
     prior_pattern: dict = field(default_factory=dict)  # {name: {"days": [...], "dayparts": [...]}}
     # Last PUBLISHED week on this weekday and daypart (RM-3): [(name key,
@@ -1742,12 +1749,29 @@ def dim_labor_efficiency(ctx: ShiftContext) -> DimensionResult | None:
     if not ctx.target_hours or ctx.target_hours <= 0 or ctx.day_hours <= 0:
         return None
     ratio = ctx.day_hours / float(ctx.target_hours)
-    if 0.9 <= ratio <= 1.02:
+    # Under the target, "the floor is thin" was a guess from hours. Where
+    # the week carries the one objective's need (blind re-audit 10/11/26
+    # LOGIC-6: Shift Quality's cost reads schedule_objective), the guess
+    # gives way to the measure: a day under its hours target with every
+    # half hour of its need covered is not marked down — the objective
+    # counts those hours as money saved, and the score no longer disagrees.
+    under_but_covered = ratio < 0.9 and ctx.day_need_met is True
+    # Over the target, the same: only the hours ABOVE what the half hours
+    # need count as over — hours that buy needed coverage are the trade the
+    # objective prices (a person short at a busy half hour against the
+    # budget), never a second penalty here.
+    target = float(ctx.target_hours)
+    over_all = ctx.day_hours - target
+    bought = 0.0
+    if over_all > 0 and ctx.day_surplus_hours is not None:
+        bought = max(0.0, over_all - float(ctx.day_surplus_hours))
+    judged = (ctx.day_hours - bought) / target
+    if 0.9 <= judged <= 1.02 or under_but_covered:
         score = SCORE_MAX
-    elif ratio > 1.02:
-        score = max(0, int(round(100 - (ratio - 1.02) * 220)))
+    elif judged > 1.02:
+        score = max(0, int(round(100 - (judged - 1.02) * 220)))
     else:
-        score = max(0, int(round(100 - (0.9 - ratio) * 130)))
+        score = max(0, int(round(100 - (0.9 - judged) * 130)))
 
     res = DimensionResult(
         key="labor_efficiency", label="Labor efficiency", score=score,
@@ -1756,11 +1780,22 @@ def dim_labor_efficiency(ctx: ShiftContext) -> DimensionResult | None:
                "target_hours": round(float(ctx.target_hours), 1),
                "ratio": round(ratio, 2)},
     )
+    if bought > 0:
+        res.facts["over_for_need_hours"] = round(bought, 1)
     over = ctx.day_hours - float(ctx.target_hours)
     if 0.9 <= ratio <= 1.02:
         res.strengths.append(f"{ctx.day_hours:.0f}h against a {float(ctx.target_hours):.0f}h target.")
+    elif over > 0 and 0.9 <= judged <= 1.02:
+        res.strengths.append(f"{over:.0f}h over this day's {target:.0f}h target, all of it covering what the half "
+                             "hours need.")
+    elif under_but_covered:
+        res.facts["need_met"] = True
+        res.strengths.append(f"{abs(over):.0f}h under this day's {float(ctx.target_hours):.0f}h target with every "
+                             "half hour's need covered.")
     elif over > 0:
-        res.weaknesses.append(f"{over:.0f}h over this day's {float(ctx.target_hours):.0f}h target.")
+        res.weaknesses.append(f"{over:.0f}h over this day's {float(ctx.target_hours):.0f}h target"
+                              + (f" ({over - bought:.0f}h of it above what the half hours need)." if bought > 0
+                                 else "."))
     else:
         res.weaknesses.append(
             f"{abs(over):.0f}h under target — cheap, but check the floor can carry it.")
@@ -5721,6 +5756,73 @@ def _breach_from_id(bid) -> dict:
     return {}
 
 
+def _need_met_by_date(rows, need_text, families=None, flagged=frozenset(), salaried=frozenset(),
+                      floor_hours=None):
+    """({date: every half hour of the objective's need met}, {date: hourly
+    hours above that need}) from signals["objective_need"] ({"date|role":
+    {"minute": people}} — schedule_cpsat.need_text: the demand the week is
+    priced against, one objective — blind re-audit 10/11/26 LOGIC-6),
+    counting each role's family as one crew; a family with no need on file
+    that day counts every hour above it (as before: no need is not a need).
+    `floor_hours` ({person key: hours} — signals["objective_floor_hours"],
+    half the usual week of somebody who lives on 15h or more: the objective
+    never takes a person under it for the budget, schedule_objective.
+    starved_hour_usd) — a shift whose removal would take its person under
+    it is not surplus either: the objective keeps it, so the score does not
+    call it waste. (None, None) when the week carries no such need."""
+    if not need_text:
+        return None, None
+    need = {}
+    for k, curve in need_text.items():
+        d, _sep, role = str(k).partition("|")
+        if not d or not role:
+            continue
+        cur = need.setdefault((d, role_family(role, families)), {})
+        for t, n in (curve or {}).items():
+            cur[int(t)] = cur.get(int(t), 0) + int(n or 0)
+    floors = {name_key(k): float(v) for k, v in (floor_hours or {}).items() if v}
+    week_h = {}
+    if floors:
+        for r in rows or []:
+            sp = _row_span(r)
+            nk = name_key(r.get("employee"))
+            if sp is not None and nk:
+                week_h[nk] = week_h.get(nk, 0.0) + (sp[1] - sp[0]) / 60.0
+    on, hourly_on = {}, {}
+    for r in rows or []:
+        sp = _row_span(r)
+        name = (r.get("employee") or "").strip()
+        if sp is None or not name or (name.lower(), r.get("date") or "", r.get("shift_start") or "") in flagged:
+            continue
+        key = (r.get("date"), role_family(r.get("role"), families))
+        cur = on.setdefault(key, {})
+        hcur = hourly_on.setdefault(key, {})
+        nk = name_key(name)
+        # a shift whose removal would take its person under the floor
+        paid = nk not in salaried and not (nk in floors and week_h.get(nk, 0.0) - (sp[1] - sp[0]) / 60.0
+                                           < floors[nk] - 0.01)
+        for t in range(sp[0] - sp[0] % 30, sp[1], 30):
+            if sp[0] <= t and t + 30 <= sp[1]:
+                cur[t] = cur.get(t, 0) + 1
+                if paid:
+                    hcur[t] = hcur.get(t, 0) + 1
+    met, surplus = {}, {}
+    for (d, fam), curve in need.items():
+        have = on.get((d, fam)) or {}
+        met[d] = met.get(d, True) and all(have.get(t, 0) >= n for t, n in curve.items())
+    for (d, fam), hcur in hourly_on.items():
+        curve = need.get((d, fam))
+        if d not in met and not any(k[0] == d for k in need):
+            continue                         # no need on file that day: the hours read as before
+        extra = 0.0
+        have = on.get((d, fam)) or {}
+        for t, n_h in hcur.items():
+            spare = have.get(t, 0) - (curve.get(t, 0) if curve else 0)
+            extra += max(0, min(n_h, spare)) * 0.5
+        surplus[d] = surplus.get(d, 0.0) + extra
+    return met, surplus
+
+
 def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: dict = None, **signals) -> list:
     """Bucket a finished schedule into the shifts the engine scores.
 
@@ -5827,6 +5929,9 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
                 existing[0]["closing"] = existing[0]["closing"] or closing
 
     targets = signals.get("daily_target_hours") or {}
+    need_met, surplus_by = _need_met_by_date(rows, signals.get("objective_need"), signals.get("role_families"),
+                                             signals.get("flagged") or set(), salaried,
+                                             signals.get("objective_floor_hours"))
     open_times = signals.get("open_times") or {}
     close_times = signals.get("close_times") or {}
     role_floors_all = signals.get("role_floors") or {}
@@ -5994,6 +6099,8 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             demand_pct=demand_by_day.get(day),
             target_hours=targets.get(date),
             day_hours=day_hours.get(date, 0.0),
+            day_need_met=need_met.get(date) if need_met is not None else None,
+            day_surplus_hours=surplus_by.get(date) if surplus_by is not None and date in surplus_by else None,
             week_assignments=week_assignments,
             prior_pattern=signals.get("prior_pattern") or {},
             last_week_slots=(None if last_slots is None else list(last_slots.get((day, part)) or [])),

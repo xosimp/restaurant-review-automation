@@ -159,33 +159,37 @@ EXPERIMENTS = (
     # AI-11; cross-workstream contract #7 — schedule_fallback): the model's
     # week, the last published week carried forward and repaired, or the
     # week shaped in code and solved. Judged like any arm, on acceptance and
-    # outcomes. "code_shaped" weighs 0 — reachable by a pin or the env
-    # switch (SCHEDULE_DRAFT_SOURCE), never by the hash — until workstream
-    # F's solver-first draft lands and the eval (schedule_eval) shows it
-    # does not lose on the stored weeks (RM-21). Every week takes the
-    # model's draft until the experiment can conclude (until_powered). The
-    # arm keys are this experiment's own: SCHEDULE_EXPERIMENT_PIN="solver"
-    # (assign_v1's arm) must never pin a week's DRAFT to code.
+    # outcomes. Since the blind re-audit of 10/11/26 (ARCH-1, LOGIC-7) the
+    # CONTROL is the solver-first draft ("code_shaped"): it holds every
+    # invariant of the schedule benchmark the carried week holds, in seconds
+    # (scripts/schedule_benchmark.py; MODULE_OVERVIEW.md has the table), and
+    # the model's draft paid 15-40 minutes and 48-56k thinking tokens for
+    # work the solver re-did. Every week takes the solver's draft until the
+    # experiment can conclude (until_powered) — the model's draft is an arm,
+    # reachable by a restaurant's pin or SCHEDULE_DRAFT_SOURCE=model. The arm
+    # keys are this experiment's own: SCHEDULE_EXPERIMENT_PIN="solver"
+    # (assign_v1's arm) is not one of them.
     {"key": "draft_v1",
      "active": True,
      "started": "2026-10-10",
-     "question": "Does a draft built without the model (carried forward, or shaped in code) do as well as the model's?",
-     "control": "model_draft",
-     "until_powered": "model_draft",
+     "question": "Does the model's draft, or the last published week carried forward, do better than the week "
+                 "shaped in code and solved?",
+     "control": "code_shaped",
+     "until_powered": "code_shaped",
      "arms": ({"key": "model_draft", "label": "The model's draft", "weight": 1, "flags": {"draft_source": "model"}},
               {"key": "carried", "label": "Last published week, carried forward", "weight": 1,
                "flags": {"draft_source": "carry_forward"}},
-              {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 0,
+              {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 1,
                "flags": {"draft_source": "solver"}},
               # The solver-first draft with the model as a critic of it
               # (schedule_critic — scheduler audit 10/10/26 AI-8): a few
-              # judged edits, each validated by code. Off the hash, like
-              # code_shaped, until the eval reads it.
+              # judged edits, each validated by code. Off the hash until the
+              # eval reads it: reachable by a pin.
               {"key": "code_critic", "label": "Shaped in code, solved, then reviewed by the model", "weight": 0,
                "flags": {"draft_source": "solver", "critic": True}})},
 )
 # What a week gets from a flag no active experiment sets.
-DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "model", "learning": True}
+DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "solver", "learning": True}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
 
