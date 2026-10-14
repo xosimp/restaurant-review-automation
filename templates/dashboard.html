@@ -10940,7 +10940,12 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
    (owner, 10/6/26). The band is the first day cell's backdrop, behind every
    cell of the row; .ss-main clips it at the window's sides. */
 .ss .ss-main{overflow-x:hidden}
-.ss .swg-hr>.swg-d{background:transparent;border-radius:0}
+/* The day row is a rounded band inside the week's card (owner, 10/14/26:
+   the edge-to-edge band read as cut off at the card's sides): each day cell
+   is opaque in the page's colour, the first and last round the ends. */
+.ss .swg-hr>.swg-d{background:var(--paper)}
+.ss .swg-hr>.swg-d:first-child{border-radius:14px 0 0 14px}
+.ss .swg-hr>.swg-d:last-child{border-radius:0 14px 14px 0}
 /* The band stops at the week's own card (owner, 10/7/26): clipped by the
    window alone it ran on across the Overview / Fix column. overflow-x:clip,
    not hidden - hidden makes the card a scroll box and the row stops sticking.
@@ -10950,8 +10955,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .ss .sw-center{overflow-x:clip}
 /* No fade and no darker shade (owner, 10/9/26: "no blur"): a hard-edged band
    in the page's own colour, opaque so the people scroll cleanly under it. */
-.ss .swg-hr>.swg-d:first-child::before{content:'';position:absolute;z-index:-1;top:0;bottom:0;left:-100vw;right:-100vw;pointer-events:none;
-  background:var(--paper)}
+
 .swg-t{display:grid;grid-template-columns:var(--swg-name,148px) repeat(var(--swg-days,7),minmax(var(--swg-min,86px),1fr));min-width:760px}
 .swg-r{display:contents}
 .swg-r:hover>.swg-p,.swg-r:hover>.swg-c{background:var(--hb-tint)}

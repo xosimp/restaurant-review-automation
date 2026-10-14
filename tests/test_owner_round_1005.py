@@ -214,15 +214,15 @@ def test_done_for_you_cards_put_their_category_bottom_right():
     assert ".hb-rcpt .m{position:absolute;right:16px;bottom:13px;margin:0;" in SRC
 
 
-def test_the_studio_day_row_is_one_full_width_band_with_no_blur():
+def test_the_studio_day_row_is_a_rounded_band_inside_the_card_with_no_blur():
     """Owner, 10/6/26: the boxed black cells read tacky against the page -
-    one band edge to edge. 10/9/26: "no blur" - no fade and no darker
-    shade, a hard-edged band in the page's own colour."""
-    assert ".ss .swg-hr>.swg-d{background:transparent;border-radius:0}" in SRC
-    band = SRC[_at(".ss .swg-hr>.swg-d:first-child::before{"):]
-    band = band[:band.index("}")]
-    assert "left:-100vw;right:-100vw" in band and "background:var(--paper)" in band
-    assert "transparent" not in band and "--ss-band" not in band
+    one band. 10/9/26: "no blur" - no fade and no darker shade, the page's
+    own colour. 10/14/26: the edge-to-edge band read as cut off at the
+    card's sides - it is a rounded band inside the card now."""
+    assert ".ss .swg-hr>.swg-d{background:var(--paper)}" in SRC
+    assert ".ss .swg-hr>.swg-d:first-child{border-radius:14px 0 0 14px}" in SRC
+    assert ".ss .swg-hr>.swg-d:last-child{border-radius:0 14px 14px 0}" in SRC
+    assert ".ss .swg-hr>.swg-d:first-child::before{" not in SRC and "left:-100vw;right:-100vw" not in SRC
     assert ".ss .ss-main{overflow-x:hidden}" in SRC
 
 
