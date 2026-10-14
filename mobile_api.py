@@ -8952,6 +8952,7 @@ _SCHEDULE_COLS = ("date", "day", "employee", "role", "shift_start", "shift_end",
 # The one NEEDS REVIEW pattern, shared with the generation's parse
 # (schedule_rules.REVIEW_MARK — re-audit 10/4/26 PIPE-6).
 from schedule_rules import REVIEW_MARK as _REVIEW_MARK  # noqa: E402
+from schedule_rules import owner_hard as _sr_owner_hard  # noqa: E402
 
 
 def _mark_review_rows(rows, violations):
@@ -8964,7 +8965,8 @@ def _mark_review_rows(rows, violations):
         return
     # A breach about a day (no manager on, a floor short) marks no row: it
     # is pinned to one only so consumers have an index (E-13).
-    still = {v["index"] for v in violations if v.get("hard") and not v.get("day_level") and v.get("index") is not None}
+    # A policy limit that is not law marks no row either (LOGIC-20).
+    still = {v["index"] for v in violations if _sr_owner_hard(v) and not v.get("day_level") and v.get("index") is not None}
     for i, r in enumerate(rows):
         if i not in still and "NEEDS REVIEW" in (r.get("notes") or ""):
             r["notes"] = _REVIEW_MARK.sub("", r.get("notes") or "").strip()

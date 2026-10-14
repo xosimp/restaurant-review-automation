@@ -69,8 +69,10 @@ def test_trim_removes_discretionary_hours_first_and_reports_each():
     rows = [_row(d, n, "4:00pm", "8:00pm") for d in WEEK for n in ("Ana", "Bob", "Cy")]     # 84h
     rows.append(_row(WEEK[4], "Dee", "4:00pm", "8:00pm", notes="added — coverage top-up"))
     rows.append(_row(WEEK[5], "Ana", "11:00am", "3:00pm"))                                   # first leg; the 4pm is her second
+    # The trim's floor is the one shortest shift (contract #2, BUGSGEN-6);
+    # this fixture assumes 4h, so it sets it.
     out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=76.0, daily_targets={d: 17 for d in WEEK},
-                                                constraints=_c(), floors={})
+                                                constraints=_c(compliance={"min_shift_hours": 4.0}), floors={})
     assert removed >= 16 and sum(float(r["scheduled_hours"]) for r in out) <= 76.0
     reasons = [t["reason"] for t in trimmed]
     assert all(t["kind"] == "removed" for t in trimmed)

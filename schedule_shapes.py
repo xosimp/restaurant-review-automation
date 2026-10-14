@@ -65,7 +65,6 @@ GRID = 15
 MAX_PATTERNS = 150
 HISTORY_MIN_SHARE = 0.05
 HISTORY_TOP = 12
-DEFAULT_MIN_SHIFT = 4.0
 DEFAULT_MAX_SHIFT = 10.0
 DEFAULT_SECONDS = 8.0
 
@@ -137,7 +136,7 @@ def _window(c, role, d, day, plan_bounds):
         mlo, mhi, prep_ok = b
         if not prep_ok:
             lo = max(lo, mlo)
-        hi = min(hi, mhi + _rules.CLOSING_MANAGER_STAYS_MINUTES)
+        hi = min(hi, mhi + _rules.closing_stay_minutes(c))
     return lo, hi
 
 
@@ -159,7 +158,8 @@ def plan_bounds(context_rows, c) -> dict:
         out[d] = (min(lo, sp[0]), max(hi, sp[1]), False)
     for d, (lo, hi, _p) in list(out.items()):
         o, _cl = _rules.open_hours(c, sq._day_name(d))
-        out[d] = (lo, hi, o is not None and lo <= o - _rules.OPENING_MANAGER_LEAD_MINUTES)
+        lead = _rules.opening_lead_minutes(c)
+        out[d] = (lo, hi, lead > 0 and o is not None and lo <= o - lead)
     return out
 
 
@@ -324,6 +324,36 @@ def _available(c, role, d, roster_roles) -> int:
     return n
 
 
+def _length_bounds(c, role, d, roster_roles, min_h, max_h) -> tuple:
+    """(shortest, longest) hours a shape of `role` on `d` may be, from the
+    people who may legally work it (STRESS-6): the one shortest shift
+    lowered to a minor's legal day (a 14-15 year old's 3h school-day cap is
+    a shift, not nothing — schedule_rules.shortest_for), and no shape longer
+    than the longest day anybody available may work (three 16-17 servers
+    capped at 8h got 0h when every shape was 11am-10pm)."""
+    if c is None:
+        return min_h, max_h
+    lo, hi = min_h, None
+    for name in c.roster_names or []:
+        if not c.holds(name, role, d):
+            continue
+        mine = (c.known_roles or {}).get(c.key(name))
+        if not mine and (roster_roles or {}).get(name):
+            if c.family((roster_roles or {}).get(name)) != c.family(role):
+                continue
+        elif mine and c.family(role) not in {c.family(x) for x in mine}:
+            continue
+        if not (c.can_work(name, d)[0] and c.fillable(name, d)[0]):
+            continue
+        lo = min(lo, _rules.shortest_for(c, name, d) / 60.0)
+        cap = None
+        if c.key(name) in (c.minors or ()):
+            cap, _t = _rules.minor_daily_cap(c, c.key(name), d)
+        longest = min(max_h, float(cap)) if cap else max_h
+        hi = longest if hi is None else max(hi, longest)
+    return lo, (max_h if hi is None else max(lo, hi))
+
+
 def shape_week(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                last_week_rows=None, rates=None, blended_rate=None, budget_dollars=None, roster_roles=None,
                demand_curve=None, max_seconds=DEFAULT_SECONDS, seed=7, staffing_value=None) -> dict:
@@ -346,7 +376,10 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     close_times = getattr(c, "close_times", None) or {}
     curves = demand_curves(dates, requirements, concurrent, demand_curve, open_times, close_times)
     comp = getattr(c, "compliance", None) or {}
-    min_h = float(comp.get("min_shift_hours") or DEFAULT_MIN_SHIFT)
+    # The one shortest shift (contract #2, schedule_rules.min_shift_minutes);
+    # per role and date it is lowered to what the people who may work it can
+    # legally work (a 14-15 year old's 3h school day — STRESS-6).
+    min_h = _rules.min_shift_minutes(c) / 60.0
     max_h = min(float(comp.get("max_shift_hours") or DEFAULT_MAX_SHIFT), DEFAULT_MAX_SHIFT + 2)
     hist = history_patterns(list(history_rows or []) + list(last_week_rows or []), family)
     bounds = plan_bounds(context_rows, c)
@@ -394,7 +427,8 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
         day = sq._day_name(d)
         for role in sorted(roles_by_date[d]):
             demand = curves.get((d, role)) or {}
-            ps = patterns_for(role, d, demand, hist, c, bounds, min_h, max_h, getattr(c, "role_times", None))
+            lo_h, hi_h = _length_bounds(c, role, d, roster_roles, min_h, max_h)
+            ps = patterns_for(role, d, demand, hist, c, bounds, lo_h, hi_h, getattr(c, "role_times", None))
             if not ps:
                 continue
             cap_people = _available(c, role, d, roster_roles)
