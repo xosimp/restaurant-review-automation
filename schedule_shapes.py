@@ -935,7 +935,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     # The one shortest shift (contract #2, schedule_rules.min_shift_minutes); per
     # role and date it is lowered to what the people who may work it can
     # legally work (a 14-15 year old's 3h school day — STRESS-6, R).
-    min_h = _obj.min_shift_minutes(c) / 60.0
+    min_h = _rules.min_shift_minutes(c) / 60.0
     max_h = min(float(comp.get("max_shift_hours") or DEFAULT_MAX_SHIFT), DEFAULT_MAX_SHIFT + 2)
     hist = history_patterns(hist_rows, family)
     bounds = plan_bounds(context_rows, c)

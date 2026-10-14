@@ -13,6 +13,7 @@ from flask import Flask
 from test_edge_sched_publish import (db, save_app, _restaurant, _save, _mobile_app, _bearer, _post_save,  # noqa: F401
                                      _one, W1, HEADER)
 import schedule_engine
+import schedule_fixes
 import schedule_optimizer
 import schedule_rules
 import schedule_skeleton as skel
@@ -71,7 +72,7 @@ def test_apply_fixes_and_improve_see_the_pin_and_hand_it_back(db, monkeypatch):
     def optimize(rows_in, *a, **k):
         seen["optimize"] = [r.get("_pinned") for r in rows_in]
         return {"rows": rows_in, "changes": [], "applied": False}
-    monkeypatch.setattr(shift_quality, "apply_fixes", fixes)
+    monkeypatch.setattr(schedule_fixes, "apply_fixes", fixes)
     monkeypatch.setattr(schedule_optimizer, "optimize", optimize)
     monkeypatch.setattr(schedule_optimizer, "summary", lambda res, sig: {"changes": []})
     u = {"restaurant_id": rid, "id": 1, "username": "erik", "role": "owner"}

@@ -18,6 +18,7 @@ L-33  "make it a rule" for a headcount (a role floor) and a start time
 L-35  the first weeks ask a one-tap why for a big change
 """
 import json
+import schedule_fixes
 import sys
 from datetime import date, timedelta
 
@@ -353,7 +354,7 @@ def test_apply_fixes_flags_its_rows_and_presents_itself(monkeypatch):
     monkeypatch.setattr(schedule_engine, "_quality_signals", lambda *a, **k: ({}, {}))
     monkeypatch.setattr(schedule_engine, "_score_schedule_quality", lambda *a, **k: ({"score": 80}, {}))
     monkeypatch.setattr(schedule_engine, "present_quality", lambda *a, **k: None)
-    monkeypatch.setattr(shift_quality, "apply_fixes", lambda *a, **k: {
+    monkeypatch.setattr(schedule_fixes, "apply_fixes", lambda *a, **k: {
         "rows": fixed, "fixes": [{"index": 0, "from": "Bob", "to": "Dee"}], "unfixed": []})
     u = {"restaurant_id": rid, "id": 1, "username": "erik", "role": "owner"}
     with Flask(__name__).test_request_context("/labor/schedule/apply-fixes", method="POST", json={"rows": rows}):

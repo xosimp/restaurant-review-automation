@@ -1,6 +1,7 @@
 """Regressions from the independent re-audit of the schedule optimizer work.
 Each test names the defect it pins."""
 import shift_quality as sq
+import schedule_fixes
 import schedule_optimizer as so
 
 SAT, FRI, MON, TUE = "2026-09-12", "2026-09-11", "2026-09-07", "2026-09-08"
@@ -44,7 +45,7 @@ def test_a_close_rule_nobody_in_the_role_holds_is_set_aside_not_scored_zero(monk
 def test_the_fix_pass_does_not_swap_people_for_a_shift_that_is_too_long():
     rows = [row(SAT, "Ann", "Server", "8:00am", "11:00pm", "15"), row(FRI, "Bob", "Server")]
     v = [{"hard": True, "kind": "shift_too_long", "index": 0, "employee": "Ann", "label": "too long"}]
-    out = sq.apply_fixes(rows, v, profiles=[sq.ShiftProfile()], roster=["Ann", "Bob"],
+    out = schedule_fixes.apply_fixes(rows, v, profiles=[sq.ShiftProfile()], roster=["Ann", "Bob"],
                          typical_headcount={("Saturday", "night"): {"Server": 1}})
     assert out["fixes"] == [] and out["rows"][0]["employee"] == "Ann"
     assert "not something a different person" in out["unfixed"][0]["reason"]

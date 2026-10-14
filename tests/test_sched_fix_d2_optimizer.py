@@ -8,6 +8,7 @@ what-if's swaps are taken inside the search and checked with every rule
 restaurant's scheduling memory holds is kept (L-3, D-35, L-16).
 """
 import pytest
+import schedule_fixes
 
 import schedule_optimizer as so
 import schedule_rules as sr
@@ -240,7 +241,7 @@ def test_the_what_if_swap_is_taken_inside_the_search_and_checked_with_every_rule
     res = so.optimize(rows, {}, signals=sig, constraints=c)
     assert _on(res["rows"], "Bea", SAT) and _on(res["rows"], "Cal", TUE)
     assert [ch["kind"] for ch in res["changes"]] == ["swap"] and "better arrangement" in res["changes"][0]["reason"]
-    after = sq.compare_candidates(res["rows"], rule_constraints=c, **sig)
+    after = schedule_fixes.compare_candidates(res["rows"], rule_constraints=c, **sig)
     assert after["checked_with"] == "every rule" and not after["swaps"]
 
 
@@ -253,8 +254,8 @@ def test_the_what_if_never_offers_a_swap_a_rule_refuses():
     rows = [row(SAT, "Dee", "5:00pm", "11:00pm", role="Bartender"), row(TUE, "Ann", "11:00am", "4:00pm", role="Bartender")]
     sig = _sig(names, role="Bartender", scores={"Ann": 5, "Dee": 1}, demand_by_day={"Saturday": 40.0},
                typical_headcount={("Saturday", "night"): {"Bartender": 1}, ("Tuesday", "morning"): {"Bartender": 1}})
-    loose = sq.compare_candidates(rows, **sig)
-    held = sq.compare_candidates(rows, rule_constraints=c, **sig)
+    loose = schedule_fixes.compare_candidates(rows, **sig)
+    held = schedule_fixes.compare_candidates(rows, rule_constraints=c, **sig)
     assert held["checked_with"] == "every rule"
     for r in held["rows"]:
         if r["date"] == SAT:
@@ -270,7 +271,7 @@ def test_the_what_if_never_offers_a_pinned_row():
     rows = [dict(row(SAT, "Cal", "4:00pm", "10:00pm"), _pinned="manager_plan"), row(TUE, "Bea", "4:00pm", "10:00pm")]
     sig = _sig(names, scores={"Bea": 5, "Cal": 2}, demand_by_day={"Saturday": 40.0},
                typical_headcount={("Saturday", "night"): {"Server": 1}, ("Tuesday", "night"): {"Server": 1}})
-    out = sq.compare_candidates(rows, rule_constraints=cons(names), **sig)
+    out = schedule_fixes.compare_candidates(rows, rule_constraints=cons(names), **sig)
     assert out["rows"][0]["employee"] == "Cal" and not out["swaps"]
 
 

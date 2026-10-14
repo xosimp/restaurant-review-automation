@@ -1271,6 +1271,7 @@ def cut_policy(restaurant, text: str = "") -> dict:
 # the tests import them, and each is that module's rule, never a copy.
 
 import schedule_time as _stime  # noqa: E402
+from schedule_time import window_allows  # noqa: E402,F401  (a shift against a time window; re-exported)
 
 parse_minutes = _stime.parse_minutes
 _EARLY_PREP_FROM = _stime.NIGHT_TAIL_BEFORE
@@ -1330,34 +1331,6 @@ def tz_of(c) -> str:
 # A "latest" this early with no "earliest" after it is the small hours of
 # the next morning ("until 1:00am"), not a one-in-the-morning curfew.
 _OVERNIGHT_LATEST_BEFORE = _stime.SMALL_HOURS_BEFORE
-
-
-def window_allows(lo, hi, start_m, end_m) -> tuple:
-    """(ok, which) for a shift from start_m to end_m (minutes past
-    midnight) against a window lo..hi (either may be None). A window whose
-    latest is before its earliest, or a bare latest in the small hours,
-    runs past midnight; so does a shift whose end is not after its start
-    (SCHED-13). `which` is 'early' or 'late' when refused. Pure — the swap
-    index in shift_quality applies the same rule."""
-    if start_m is None or end_m is None:
-        return True, ""
-    # A start in the small hours is that night's (E-32): a 12:30am porter is
-    # after a "from 6pm" window opens, not eighteen hours before it, and the
-    # window's own small-hours bounds are read in the same night.
-    night = _night_offset(start_m, end_m)
-    if night:
-        lo = None if lo is None else (lo + 24 * 60 if lo < _OVERNIGHT_LATEST_BEFORE else lo)
-        if hi is not None and (hi < _OVERNIGHT_LATEST_BEFORE or (lo is not None and hi < lo)):
-            hi = hi + 24 * 60
-    elif hi is not None and ((lo is not None and hi < lo) or (lo is None and hi < _OVERNIGHT_LATEST_BEFORE)):
-        hi = hi + 24 * 60
-    end = end_m if end_m > start_m else end_m + 24 * 60
-    start_m, end = start_m + night, end + night
-    if lo is not None and start_m < lo:
-        return False, "early"
-    if hi is not None and end > hi:
-        return False, "late"
-    return True, ""
 
 
 def window_holds(window, day, week_dates=None, today=None) -> bool:
@@ -7369,7 +7342,7 @@ def _habit_violations(rows, c) -> list:
     schedule_memory.enforced_signals' tier "bound") the rows break, read by
     schedule_memory.misses — the one meaning of each kind. Pinned to the
     first row it names, else the day's first row of that weekday."""
-    import schedule_memory as _smem
+    import schedule_learned as _smem
     fams = getattr(c, "role_families", None) or None
     out = []
     for miss in _smem.misses(rows, c.habits, families=fams):

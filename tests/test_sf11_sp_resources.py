@@ -5,6 +5,7 @@ cache bounded, a generation's reads frozen (blind re-audit STRESS-11,
 STRESS-12, SCALE-15, SCALE-16, SCALE-18, SCALE-19, SCALE-20, SCALE-21,
 SCALE-22, SCALE-24)."""
 import json
+import schedule_fixes
 import os
 import sqlite3
 import time
@@ -371,11 +372,11 @@ def test_the_what_if_is_bounded_on_a_request_thread_and_says_so():
         assert se.what_if_seconds() == se.STUDIO_WHAT_IF_SECONDS
     rows = [{"date": WEEK[i], "day": DAYS[i], "employee": n, "role": "Server", "shift_start": "4:00pm",
              "shift_end": "10:00pm", "scheduled_hours": "6", "notes": ""} for i in range(3) for n in ("Ann", "Kim")]
-    out = sq.compare_candidates(rows, profiles=[sq.ShiftProfile()], max_seconds=0,
+    out = schedule_fixes.compare_candidates(rows, profiles=[sq.ShiftProfile()], max_seconds=0,
                                 scores={"Ann": 2, "Kim": 5}, roster=["Ann", "Kim", "Lee"])
     assert out["ran"] is True and out["evaluated"] == 0
     assert out["cut_short"] is True and "time limit" in out["verdict"]
-    full = sq.compare_candidates(rows, profiles=[sq.ShiftProfile()], scores={"Ann": 2, "Kim": 5},
+    full = schedule_fixes.compare_candidates(rows, profiles=[sq.ShiftProfile()], scores={"Ann": 2, "Kim": 5},
                                  roster=["Ann", "Kim", "Lee"])
     assert full["cut_short"] is False and "time limit" not in full["verdict"]
 

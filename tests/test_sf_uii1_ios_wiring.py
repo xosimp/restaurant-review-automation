@@ -109,7 +109,7 @@ def test_the_server_still_sends_what_the_phone_reads():
     routes = _py("strategy_routes.py")
     assert '"cavnar_removed": gone' in routes and '"likely_to_change": likely' in routes
     assert '"top_reason"' in _py("shift_quality.py") and '"held_by"' in _py("shift_quality.py")
-    assert '"checked_with"' in _py("shift_quality.py")
+    assert '"checked_with"' in _py("schedule_fixes.py")      # the what-if's verdict (moved from shift_quality)
     assert '"dollars_before"' in _py("schedule_optimizer.py")
 
 

@@ -137,7 +137,6 @@ DEFAULT_LEAD_MINUTES = (("cook", 60), ("chef", 60), ("kitchen", 60), ("line", 60
                         ("barista", 30), ("server", 30), ("bar", 30))
 DEFAULT_STAY_MINUTES = (("dish", 45), ("porter", 45), ("steward", 45))
 CLOSER_STAY_MINUTES = 45
-MIN_SHIFT_MINUTES_DEFAULT = 180
 
 
 def _low(s) -> str:
@@ -251,24 +250,6 @@ def shoulder_habits(c, rows) -> tuple:
                 leads[f] = max(leads.get(f, 0), v)
     return stays, leads
 
-
-def min_shift_minutes(restaurant_or_constraints) -> int:
-    """The one minimum shift (contract #2, R): schedule_rules.min_shift_minutes
-    where it exists, else the restaurant's own min_shift_hours, else
-    MIN_SHIFT_MINUTES_DEFAULT."""
-    try:
-        import schedule_rules as _r
-        fn = getattr(_r, "min_shift_minutes", None)
-        if fn is not None:
-            return int(fn(restaurant_or_constraints))
-    except Exception:
-        pass
-    comp = getattr(restaurant_or_constraints, "compliance", None) or {}
-    try:
-        v = float(comp.get("min_shift_hours") or 0)
-    except (TypeError, ValueError):
-        v = 0.0
-    return int(round(v * 60)) if v > 0 else MIN_SHIFT_MINUTES_DEFAULT
 
 
 # ── what the history says ─────────────────────────────────────────────────

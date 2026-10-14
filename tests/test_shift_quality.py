@@ -10,6 +10,7 @@ than as unit tests of each function, because the failure this engine exists
 to catch is emergent. No single dimension going wrong produces it.
 """
 import os
+import schedule_fixes
 
 import pytest
 
@@ -571,7 +572,7 @@ SAT_KITCHEN_SCORES = {"Jo": 4, "Kim": 4, "Dana": 4, "Lee": 4}
 def test_the_engine_finds_the_swap_that_fixes_eriks_saturday():
     rows = [row(SAT, "Sam", "Bartender"), row(SAT, "Alex", "Bartender"),
             row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")] + SAT_KITCHEN_AND_FLOOR
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(),
         scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2, **SAT_KITCHEN_SCORES},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
@@ -586,7 +587,7 @@ def test_a_swap_is_never_made_onto_a_day_somebody_cannot_work():
     """A schedule that breaks availability with a better score is not an
     improvement, it is a broken schedule."""
     rows = [row(SAT, "Sam", "Bartender"), row(FRI, "Pat", "Bartender")]
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(), scores={"Pat": 5, "Sam": 2},
         availability={"Pat": {"Saturday"}},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
@@ -611,7 +612,7 @@ def test_a_swap_never_pushes_anybody_over_forty_hours():
     # Without the ceiling this swap is a clear win, which is what makes it
     # a real test of the ceiling rather than of anything else.
     assert sq._swap_is_legal(rows, 3, 4, {}, scores) is False
-    out = sq.compare_candidates(rows, profiles=profiles(), scores=scores,
+    out = schedule_fixes.compare_candidates(rows, profiles=profiles(), scores=scores,
                                 leader_rules=rules)
     final = {}
     for r in out["rows"]:
@@ -632,7 +633,7 @@ def test_a_swap_never_double_books_somebody():
     assert sq._swap_is_legal(rows, 0, 1, {}, scores) is False
     mirrored = [row(SAT, "A", "Cook"), row(FRI, "B", "Cook"), row(SAT, "B", "Cook")]
     assert sq._swap_is_legal(mirrored, 0, 1, {}, scores) is False
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=[sq.ShiftProfile(key="std", min_strength={"Cook": 8},
                                         source="restaurant")], scores=scores)
     seen = set()
@@ -648,7 +649,7 @@ def test_the_comparison_never_rewrites_the_schedule_the_owner_reads():
     a generated schedule dies."""
     rows = [row(SAT, "Sam", "Bartender"), row(FRI, "Pat", "Bartender")]
     before = [dict(r) for r in rows]
-    sq.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Sam": 2},
+    schedule_fixes.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Sam": 2},
                           leader_rules=[{"role": "Bartender", "days": ["Saturday"],
                                          "daypart": "night", "min_score": 5}])
     assert rows == before
@@ -656,7 +657,7 @@ def test_the_comparison_never_rewrites_the_schedule_the_owner_reads():
 
 def test_finding_nothing_better_is_a_real_answer():
     rows = [row(SAT, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
-    out = sq.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Casey": 5})
+    out = schedule_fixes.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Casey": 5})
     assert out["ran"]
     assert out["improvement"] == 0
     assert "strongest team available" in out["verdict"]
@@ -665,7 +666,7 @@ def test_finding_nothing_better_is_a_real_answer():
 def test_every_accepted_swap_says_which_dimensions_it_moved():
     rows = [row(SAT, "Sam", "Bartender"), row(SAT, "Alex", "Bartender"),
             row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")] + SAT_KITCHEN_AND_FLOOR
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(), scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2, **SAT_KITCHEN_SCORES},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
                        "min_score": 5}])
@@ -678,7 +679,7 @@ def test_every_accepted_swap_says_which_dimensions_it_moved():
 def test_the_comparison_is_bounded_so_a_big_restaurant_stays_fast():
     rows = [row(d, f"E{i}", "Server")
             for d in (MON, TUE, WED, THU, FRI, SAT, SUN) for i in range(12)]
-    out = sq.compare_candidates(rows, profiles=[sq.ShiftProfile()],
+    out = schedule_fixes.compare_candidates(rows, profiles=[sq.ShiftProfile()],
                                 scores={f"E{i}": (i % 5) + 1 for i in range(12)},
                                 max_evaluations=15)
     assert out["evaluated"] <= 15
@@ -1032,7 +1033,7 @@ def test_the_comparison_never_recommends_benching_an_unrated_employee():
     round to rating — the exact opposite of what the rating design says."""
     rows = [row(SAT, "Unrated", "Bartender"), row(SAT, "Alex", "Bartender"),
             row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(),
         scores={"Pat": 5, "Casey": 5, "Alex": 2})
     # A swap trades two people's shifts, so nobody is taken off the week by
@@ -1561,7 +1562,7 @@ def test_the_verdict_only_claims_the_roster_is_best_when_it_checked_all_of_it():
         for k in range(2):
             big.append(row((MON, TUE, WED, THU, FRI, SAT, SUN)[(i + k * 3) % 7],
                            f"E{i}", "Server"))
-    out = sq.compare_candidates(big, profiles=[sq.ShiftProfile(
+    out = schedule_fixes.compare_candidates(big, profiles=[sq.ShiftProfile(
         key="n", min_strength={"Server": 30}, source="restaurant")],
         scores={f"E{i}": (i % 5) + 1 for i in range(40)}, max_evaluations=5)
     assert out["legal_swaps"] > out["evaluated"]
@@ -1569,7 +1570,7 @@ def test_the_verdict_only_claims_the_roster_is_best_when_it_checked_all_of_it():
     assert "A wider search might still find something" in out["verdict"]
 
     small = [row(SAT, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
-    tiny = sq.compare_candidates(small, profiles=profiles(),
+    tiny = schedule_fixes.compare_candidates(small, profiles=profiles(),
                                  scores={"Pat": 5, "Casey": 5})
     assert "strongest team available" in tiny["verdict"]
 
@@ -1587,8 +1588,8 @@ def test_a_swap_never_moves_somebody_carrying_a_staff_constraint():
     kw = dict(profiles=setup, scores={"Pat": 5, "Sam": 2},
               leader_rules=[{"role": "Bartender", "days": ["Saturday"],
                              "daypart": "night", "min_score": 5}])
-    free = sq.compare_candidates(rows, **kw)
-    bound = sq.compare_candidates(rows, constraints={"Pat": "no weekends"}, **kw)
+    free = schedule_fixes.compare_candidates(rows, **kw)
+    bound = schedule_fixes.compare_candidates(rows, constraints={"Pat": "no weekends"}, **kw)
     assert free["swaps"], free["verdict"]
     assert not bound["swaps"]
     assert bound["evaluated"] == 0

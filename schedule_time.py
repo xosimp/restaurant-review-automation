@@ -668,3 +668,31 @@ def weekday_of(iso) -> str:
 def overlap_minutes(a, b) -> int:
     """Minutes two (start, end) spans share; 0 when they do not meet."""
     return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+
+
+def window_allows(lo, hi, start_m, end_m) -> tuple:
+    """(ok, which) for a shift from start_m to end_m (minutes past
+    midnight) against a window lo..hi (either may be None). A window whose
+    latest is before its earliest, or a bare latest in the small hours,
+    runs past midnight; so does a shift whose end is not after its start
+    (SCHED-13). `which` is 'early' or 'late' when refused. Pure — the swap
+    index in shift_quality applies the same rule."""
+    if start_m is None or end_m is None:
+        return True, ""
+    # A start in the small hours is that night's (E-32): a 12:30am porter is
+    # after a "from 6pm" window opens, not eighteen hours before it, and the
+    # window's own small-hours bounds are read in the same night.
+    night = night_offset(start_m)
+    if night:
+        lo = None if lo is None else (lo + 24 * 60 if lo < SMALL_HOURS_BEFORE else lo)
+        if hi is not None and (hi < SMALL_HOURS_BEFORE or (lo is not None and hi < lo)):
+            hi = hi + 24 * 60
+    elif hi is not None and ((lo is not None and hi < lo) or (lo is None and hi < SMALL_HOURS_BEFORE)):
+        hi = hi + 24 * 60
+    end = end_m if end_m > start_m else end_m + 24 * 60
+    start_m, end = start_m + night, end + night
+    if lo is not None and start_m < lo:
+        return False, "early"
+    if hi is not None and end > hi:
+        return False, "late"
+    return True, ""

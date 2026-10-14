@@ -885,7 +885,7 @@ class Problem:
         # own level — its slope there — in the solver's units.
         self.k_miss = 0.0
         if self.mem:
-            import schedule_memory as _smem
+            import schedule_learned as _smem
             try:
                 ot_line = float((self.signals.get("overtime") or {}).get("line") or 0) or None
             except (TypeError, ValueError):
@@ -1936,7 +1936,7 @@ class Problem:
         family's day — schedule_memory's own reading of an opener and a
         closer, over every row of the family that date, kept ones too."""
         if not hasattr(self, "_edges_mem"):
-            import schedule_memory as _smem
+            import schedule_learned as _smem
             tie = _smem.OPENER_TIE_MINUTES
             by = {}
             for v in self.units:

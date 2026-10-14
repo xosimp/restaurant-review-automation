@@ -48,6 +48,7 @@ from datetime import datetime
 import models as _models_mod
 from models import DB_PATH
 import schedule_time as _stime_scope
+from schedule_requirements import headcount_to_apply  # noqa: F401  (the one reading of a learned headcount; re-exported)
 
 log = logging.getLogger(__name__)
 
@@ -450,7 +451,6 @@ def _strength_of_people(restaurant_id, db_path=DB_PATH) -> tuple:
     return leaders, scores
 
 
-
 def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repeats=2, min_rate=None) -> list:
     """A 'moved' edit on a Friday or Saturday night where the person the
     manager put in is a closer and the one taken off is not, or has the
@@ -647,25 +647,6 @@ def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_P
                                                      "settled": (pre + r["delta"]) if pre is not None else None}
             live_slots.add(slot)
     return out
-
-
-def headcount_to_apply(base, delta, settled) -> int:
-    """How many of a learned headcount `delta` a requirement whose own
-    baseline is `base` still needs (LEARNING-3, RM-5): an add only while the
-    baseline is below the level the manager settled on — never past it — and
-    a cut only while it is above. With no settled level read, the delta."""
-    try:
-        base, delta = int(base or 0), int(round(float(delta or 0)))
-    except (TypeError, ValueError):
-        return 0
-    if settled is None:
-        return delta
-    target = int(round(float(settled)))
-    if delta > 0:
-        return max(0, min(delta, target - base))
-    if delta < 0:
-        return min(0, max(delta, target - base))
-    return 0
 
 
 # ── implicit recommendation acceptance ───────────────────────────────────

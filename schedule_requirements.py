@@ -488,7 +488,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             # The manager's learned headcount, as a LEVEL on the figure the
             # table reached (LEARNING-18): only while that figure is short of
             # (an add) or over (a cut) the level they settled on.
-            from schedule_learning import headcount_to_apply as _h2a
+            _h2a = headcount_to_apply
             learned_moved = {}
             for key_l, e_l in learned_here.items():
                 r_l = next((r for r in typical_here if r.strip().lower() == key_l), None)
@@ -1271,3 +1271,22 @@ def _role_minimums_dict(raw) -> dict:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def headcount_to_apply(base, delta, settled) -> int:
+    """How many of a learned headcount `delta` a requirement whose own
+    baseline is `base` still needs (LEARNING-3, RM-5): an add only while the
+    baseline is below the level the manager settled on — never past it — and
+    a cut only while it is above. With no settled level read, the delta."""
+    try:
+        base, delta = int(base or 0), int(round(float(delta or 0)))
+    except (TypeError, ValueError):
+        return 0
+    if settled is None:
+        return delta
+    target = int(round(float(settled)))
+    if delta > 0:
+        return max(0, min(delta, target - base))
+    if delta < 0:
+        return min(0, max(delta, target - base))
+    return 0

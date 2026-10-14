@@ -8460,6 +8460,7 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
     signal again.
     """
     import shift_quality as _sq
+    import schedule_fixes as _fixes_wi
     profiles = result.get("shift_profiles") or None
     if prepared is not None:
         # The Studio's kept inputs (studio_prepared): the sweep and the score
@@ -8482,7 +8483,7 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
         what_if = {"ran": False, "reason": "Nothing to compare."}
     if quality.get("checked") and not what_if.get("on_demand"):
         try:
-            what_if = _sq.compare_candidates(rows, profiles=profiles, weights=weights,
+            what_if = _fixes_wi.compare_candidates(rows, profiles=profiles, weights=weights,
                                              rule_constraints=result.get("constraints"),
                                              max_seconds=what_if_seconds(), **signals)
             # The engine reports what a better arrangement WOULD have been;
@@ -10049,12 +10050,13 @@ def _replace_tier(rows, x, tier):
     if not todo:
         return {"rows": rows}
     import shift_quality as _sqf
+    import schedule_fixes as _fixes_af
     # The candidate budget grows with the roster: sized for ~20 people, a
     # 55-person week ran out before its fixes were tried (9/26/26).
-    out = _sqf.apply_fixes(rows, todo, profiles=x.profiles, weights=x.weights, rule_constraints=x.c,
-                           only_dates=x.editable,
-                           max_evaluations=max(_sqf.MAX_CANDIDATE_EVALUATIONS, 3 * len(x.roster)),
-                           **dict(x.signals, flagged=_flagged_rows(viols)))
+    out = _fixes_af.apply_fixes(rows, todo, profiles=x.profiles, weights=x.weights, rule_constraints=x.c,
+                                only_dates=x.editable,
+                                max_evaluations=max(_sqf.MAX_CANDIDATE_EVALUATIONS, 3 * len(x.roster)),
+                                **dict(x.signals, flagged=_flagged_rows(viols)))
     for u in out.get("unfixed") or []:
         i = u.get("index")
         r = rows[i] if isinstance(i, int) and 0 <= i < len(rows) else {}

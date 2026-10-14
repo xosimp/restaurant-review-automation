@@ -270,7 +270,7 @@ def _overrun_weight(rows: list, overruns: list, families: dict = None) -> float:
     (schedule_memory.misses over the end_overrun memories alone)."""
     if not overruns:
         return 0.0
-    import schedule_memory as _smem
+    import schedule_learned as _smem
     return sum(float(x.get("weight") or 0) for x in _smem.misses(rows, overruns, families=families or None))
 
 
