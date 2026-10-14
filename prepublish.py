@@ -332,24 +332,18 @@ def _cache_key(rid, schedule_id, rows, user, today, can_publish, sections):
         if h is None:
             return None
         stamps = []
-        for sql in ("SELECT COUNT(*) AS n, MAX(created_at) AS a, MAX(decided_at) AS b FROM staff_time_off "
+        for sql in ("SELECT COUNT(*) AS n, MAX(dismissed_at) AS a FROM schedule_review_dismissals "
                     "WHERE restaurant_id=?",
-                    "SELECT COUNT(*) AS n, MAX(updated_at) AS a, NULL AS b FROM staff_settings WHERE restaurant_id=?",
-                    "SELECT COUNT(*) AS n, MAX(updated_at) AS a, NULL AS b FROM staff_availability "
-                    "WHERE restaurant_id=?",
-                    "SELECT COUNT(*) AS n, MAX(created_at) AS a, NULL AS b FROM manual_team_members "
-                    "WHERE restaurant_id=?",
-                    "SELECT COUNT(*) AS n, MAX(dismissed_at) AS a, NULL AS b FROM schedule_review_dismissals "
-                    "WHERE restaurant_id=?",
-                    "SELECT COUNT(*) AS n, MAX(overridden_at) AS a, NULL AS b FROM schedule_publish_overrides "
+                    "SELECT COUNT(*) AS n, MAX(overridden_at) AS a FROM schedule_publish_overrides "
                     "WHERE restaurant_id=?"):
             r = conn.execute(sql, (rid,)).fetchone()
-            stamps.append((r["n"], r["a"], r["b"]))
+            stamps.append((r["n"], r["a"]))
     finally:
         conn.close()
-    rest = _m.get_restaurant(rid)
-    rsig = json.dumps([vars(rest) if rest is not None else None, _m.get_operational_scores(rid)], sort_keys=True,
-                      default=str)
+    # The schedule's inputs as one stamp (models.schedule_inputs_version —
+    # the restaurant row, shift history, people, availability, time off,
+    # roles, ratings …): the Studio's kept inputs are keyed on it too.
+    rsig = _m.schedule_inputs_version(rid)
     rows_sig = json.dumps(rows, sort_keys=True, default=str) if rows is not None else ("saved", _version(rid, schedule_id))
     who = ""
     if isinstance(user, dict):
@@ -878,7 +872,7 @@ def trim_preview(rid, keep):
     lbd = float(econ.get("labor_budget_dollars") or 0)
     if hb <= 0 and lbd <= 0:
         return None
-    pricing = _econ.week_pricing(rid, c, blended_rate=econ.get("blended_rate") or None)
+    pricing = _pricing(rid, c, econ)
 
     def cost(rs):
         return float(_econ.price_week(_sr.with_assumed_stays(rs, c), pricing)["total"] or 0)
@@ -1175,12 +1169,20 @@ def price_rows(rid, row, rows, c) -> tuple:
         econ = {}
     if c is None or not rows:
         return econ, None
-    pricing = _econ.week_pricing(rid, c, blended_rate=econ.get("blended_rate") or None)
+    return econ, _econ.price_week(_sr.with_assumed_stays(rows, c), _pricing(rid, c, econ))
+
+
+def _pricing(rid, c, econ):
+    """The week's pricing (schedule_economics.week_pricing) with the
+    restaurant's hourly rate where no blended rate was kept — one pricing
+    for the numbers and the budget trim's preview."""
+    import schedule_economics as _econ
+    pricing = _econ.week_pricing(rid, c, blended_rate=(econ or {}).get("blended_rate") or None)
     if not pricing.get("blended_rate"):
         from models import get_restaurant
         r = get_restaurant(rid)
         pricing["blended_rate"] = getattr(r, "hourly_rate", None) or 15.0
-    return econ, _econ.price_week(_sr.with_assumed_stays(rows, c), pricing)
+    return pricing
 
 
 def forecast_record(rid) -> dict:
