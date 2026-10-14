@@ -4579,6 +4579,8 @@ def init_db(db_path: str = DB_PATH):
     init_email_intake(db_path)
     from fintech_invoices import init_fintech_invoices
     init_fintech_invoices(db_path)
+    from bar_cost import init_bar_cost
+    init_bar_cost(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway

@@ -2550,6 +2550,7 @@ function cavNav(path, opts) {
 function cavRoute() {
   if (window.studioOnRoute) studioOnRoute();
   if (window.dnaOnRoute) dnaOnRoute();
+  if (window.barOnRoute) barOnRoute();
   var h = window.location.hash || '';
   if (h === _cavHist.routed) return;
   _cavHist.routed = h;
@@ -13915,6 +13916,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          sit six inches above "Waste is climbing" with nothing explaining how
          both were true. Each now says which question it answers. #}
       <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}" id="fc2-head">{{ _head }}</span></h1>
+      {# Food | Bar (owner, 10/14/26): Bar opens its own page over the dashboard at /bar, the way Restaurant DNA does. #}
+      <div class="lb2-range fc2-sub" role="tablist" aria-label="Food Cost section"><button type="button" role="tab" class="on" aria-selected="true">Food</button><button type="button" role="tab" aria-selected="false" data-bar-open="1">Bar</button></div>
       {# Nothing under the heading (owner, 9/27/26): the count date and the
          benchmark basis line, and the data-health chip, are gone - the food
          cost figure says what it is missing, and Data health lives in
@@ -44908,6 +44911,203 @@ function sfw2RuleCheck(chk) {
     });
   };
   document.addEventListener('DOMContentLoaded', function () { if (window._DNA_BOOT) window.dnaOpen({fromBoot: true}); });
+})();
+</script>
+<script>window._BAR_BOOT={{ 'true' if request.path == '/bar' else 'false' }};</script>
+<style>
+/* ── Bar (owner, 10/14/26; DESIGN_SYSTEM.md -> Bar page): Food Cost's Bar
+   page over the dashboard, in the Restaurant DNA page's shell (.dn, .dn-bar,
+   .dn-scroll, .dn-wrap and its type). br- is the prefix. */
+.br-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:6px}
+.br-tile{background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:18px 20px}
+.br-tile .k{font-size:13px;color:var(--ink3);display:flex;align-items:center;gap:8px}
+.br-tile .k i{width:8px;height:8px;border-radius:50%;background:var(--ink3)}
+.br-tile.good .k i{background:var(--hb-good)}.br-tile.warn .k i{background:var(--hb-warn)}.br-tile.low .k i{background:var(--ink3)}
+.br-tile .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:40px;line-height:1.1;color:var(--ink);margin:8px 0 4px}
+.br-tile .v small{font-size:16px;color:var(--ink3);margin-left:2px}
+.br-tile .s{font-size:13.5px;color:var(--ink2);line-height:1.45}
+.br-tile .r{font-size:12.5px;color:var(--ink3);margin-top:8px}
+.br-t{width:100%;border-collapse:collapse;font-size:14.5px;margin-top:14px}
+.br-t th{font-size:12px;font-weight:600;color:var(--ink3);text-align:left;padding:8px 10px;border-bottom:1px solid var(--hb-line2)}
+.br-t td{padding:11px 10px;border-bottom:1px solid var(--hb-line2);color:var(--ink2);vertical-align:middle}
+.br-t td.n,.br-t th.n{text-align:right;white-space:nowrap}
+.br-t td b{color:var(--ink);font-weight:600}
+.br-t .m{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
+.br-t .up{color:var(--hb-bad)}.br-t .dn{color:var(--hb-good)}
+.br-scroll{overflow-x:auto}
+.br-note{font-size:13.5px;color:var(--ink3);margin-top:10px;max-width:72ch;line-height:1.5}
+.br-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
+.br-sel{background:var(--surface);color:var(--ink);border:1px solid var(--hb-line);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
+.br-tag{font-size:11.5px;color:var(--ink3);border:1px solid var(--hb-line);border-radius:6px;padding:0 6px;margin-left:6px}
+.br-empty{padding:22px;border-radius:14px;background:var(--sf-recess);color:var(--ink2);font-size:15px;line-height:1.55;margin-top:14px}
+.fc2-sub{margin-top:10px}
+@media (max-width:900px){.br-tiles{grid-template-columns:1fr}.br-two{grid-template-columns:1fr}}
+</style>
+<script>
+(function () {
+  var OPEN = false, BACK_TO = null, FROM_DASH = false, DATA = null;
+  function esc2(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function hn(t) { return '<span class="hb-num">' + esc2(t) + '</span>'; }
+  function money(v) { var n = Math.round(+v || 0); return (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US'); }
+  function money2(v) { var n = +v || 0; return (n < 0 ? '−$' : '$') + Math.abs(n).toFixed(2); }
+  function shell() {
+    var el = document.getElementById('bar');
+    if (el) return el;
+    el = document.createElement('div'); el.id = 'bar'; el.className = 'dn'; el.hidden = true;
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Bar');
+    el.innerHTML = '<div class="dn-bar"><button type="button" class="cbtn cbtn-glass cbtn-sm" id="br-close" aria-label="Back to Food Cost">← Back</button>'
+      + '<span class="dn-bar-t">Bar</span><span class="dn-bar-r" id="br-asof"></span></div><div class="dn-scroll" id="br-scroll"><div class="dn-wrap" id="br-body"></div></div>';
+    document.body.appendChild(el);
+    document.getElementById('br-close').addEventListener('click', function () { window.barClose(); });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); window.barClose(); } });
+    el.addEventListener('change', function (e) {
+      var t = e.target; if (!t || !t.getAttribute || !t.getAttribute('data-br-cat')) return;
+      setCategory(t.getAttribute('data-br-cat'), t.value, t);
+    });
+    return el;
+  }
+  function tiles(pc) {
+    var h = '', i;
+    for (i = 0; i < pc.categories.length; i++) {
+      var c = pc.categories[i];
+      h += '<div class="br-tile ' + (c.tone || '') + '"><div class="k"><i></i>' + esc2(c.label) + '</div>'
+        + '<div class="v">' + (c.pct == null ? '—' : hn(c.pct) + '<small>%</small>') + '</div>'
+        + '<div class="s">' + (c.pct == null ? (c.sales ? 'No ' + esc2(c.label.toLowerCase()) + ' invoices in this window' : 'No sales in this category') : 'Bought ' + hn(money(c.purchases)) + ' · sold ' + hn(money(c.sales))) + '</div>'
+        + '<div class="r">Rule of thumb ' + hn(c.range[0] + '–' + c.range[1] + '%') + (c.tone === 'warn' ? ' · above it' : (c.tone === 'low' ? ' · below it' : (c.tone === 'good' ? ' · inside it' : ''))) + '</div></div>';
+    }
+    return '<div class="br-tiles">' + h + '</div>';
+  }
+  function months(pc) {
+    var rows = '', i, j;
+    for (i = pc.months.length - 1; i >= 0; i--) {
+      var m = pc.months[i];
+      rows += '<tr><td><b>' + esc2(m.label) + '</b>' + (m.partial ? '<span class="m">' + hn(m.from_mdy) + '–' + hn(m.to_mdy) + '</span>' : '') + '</td>';
+      for (j = 0; j < m.categories.length; j++) { var c = m.categories[j]; rows += '<td class="n">' + (c.pct == null ? '—' : hn(c.pct + '%')) + '<span class="m">' + hn(money(c.purchases)) + ' / ' + hn(money(c.sales)) + '</span></td>'; }
+      rows += '</tr>';
+    }
+    return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Month</th><th class="n">Beer &amp; seltzer</th><th class="n">Liquor</th><th class="n">Wine</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + '<p class="br-note">Each cell is bought / sold. A month is read only where invoices and sales are both on file; a delivery that lands early moves a month, which is why four weeks is the headline.</p>';
+  }
+  function priceRows(list, up) {
+    if (!list.length) return '<div class="br-empty">' + (up ? 'No price went up in the last four months.' : 'No price came down in the last four months.') + '</div>';
+    var h = '', i, show = Math.min(list.length, 12);
+    for (i = 0; i < show; i++) {
+      var r = list[i];
+      h += '<tr><td><b>' + esc2(r.product) + '</b><span class="m">' + esc2(r.distributor) + ' · per ' + esc2(r.unit) + '</span></td>'
+        + '<td class="n">' + hn(money2(r.from)) + ' → ' + hn(money2(r.to)) + '<span class="m ' + (up ? 'up' : 'dn') + '">' + hn((r.change > 0 ? '+' : '−') + money2(Math.abs(r.change)) + (r.pct != null ? ' (' + (r.pct > 0 ? '+' : '') + r.pct + '%)' : '')) + '</span></td>'
+        + '<td class="n">' + hn(r.since_mdy) + (r.bought_90d && r.impact_90d ? '<span class="m">' + hn((r.impact_90d > 0 ? '+' : '−') + money(Math.abs(r.impact_90d))) + ' on ' + hn(r.bought_90d) + ' ' + esc2(r.unit) + (r.bought_90d === 1 ? '' : 's') + ' in 90 days</span>' : '') + '</td></tr>';
+    }
+    return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Price</th><th class="n">Since</th></tr></thead><tbody>' + h + '</tbody></table></div>'
+      + (list.length > show ? '<p class="br-note">' + hn(list.length - show) + ' more ' + (up ? 'increases' : 'decreases') + ' are smaller.</p>' : '');
+  }
+  function distributors(ds) {
+    var h = '', i;
+    for (i = 0; i < ds.length; i++) {
+      var d = ds[i];
+      h += '<tr><td><b>' + esc2(d.distributor) + '</b><span class="m">' + hn(d.invoices) + ' invoice' + (d.invoices === 1 ? '' : 's') + '</span></td><td class="n">' + hn(money(d.spend)) + '<span class="m">' + (d.share != null ? hn(d.share + '%') : '') + '</span></td><td class="n">' + (d.fees ? hn(money(d.fees)) : '—') + '</td></tr>';
+    }
+    return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Distributor</th><th class="n">Spend</th><th class="n">Fees &amp; taxes</th></tr></thead><tbody>' + h + '</tbody></table></div>';
+  }
+  function catSelect(p, cats) {
+    var o = '', i;
+    for (i = 0; i < cats.length; i++) o += '<option value="' + esc2(cats[i].key) + '"' + (cats[i].key === p.category ? ' selected' : '') + '>' + esc2(cats[i].label) + '</option>';
+    return '<select class="br-sel" data-br-cat="' + esc2(p.product_key) + '" aria-label="Category for ' + esc2(p.product) + '">' + o + '</select>';
+  }
+  function products(d) {
+    var ps = d.products || [], h = '', i, n = 0;
+    for (i = 0; i < ps.length; i++) {
+      var p = ps[i];
+      if (p.category === 'fee' || p.category === 'deposit') continue;
+      n++;
+      h += '<tr><td><b>' + esc2(p.product) + '</b>' + (p.owner_set ? '<span class="br-tag">set by you</span>' : '') + '<span class="m">' + esc2(p.distributor) + '</span></td><td class="n">' + hn(money(p.spend)) + '</td><td class="n">' + catSelect(p, d.categories || []) + '</td></tr>';
+    }
+    return '<details class="dn-fam"><summary><span class="nm">How every product is sorted</span><span class="c">' + hn(n) + ' products</span></summary>'
+      + '<p class="br-note">Cavnar AI sorts each product from its name, unit and distributor. Change one and it stays that way.</p>'
+      + '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Spend</th><th class="n">Category</th></tr></thead><tbody>' + h + '</tbody></table></div></details>';
+  }
+  function page(d) {
+    if (!d || !d.ok) return '<div class="dn-k">Bar</div><div class="br-empty">The bar’s numbers couldn’t be read just now. Try again in a minute.</div>';
+    if (!d.available) return '<div class="dn-k">Bar</div><h1 class="dn-read" style="font-size:32px">Your bar page is waiting on invoices.</h1><div class="br-empty">' + esc2(d.why_not || '') + '</div>';
+    var pc = d.pour_cost || {}, pw = d.price_watch || {}, h = '<div class="dn-k">Bar · invoices ' + hn(d.invoices.from_mdy) + '–' + hn(d.invoices.to_mdy) + '</div>';
+    if (pc.available) {
+      var t = pc.total || {};
+      h += '<h1 class="dn-read" style="font-size:clamp(26px,3vw,40px)">' + (t.pct != null ? 'The bar’s pour cost is <em>' + hn(t.pct + '%') + '</em> over the last four weeks.' : 'Pour cost needs both invoices and sales in the same weeks.') + '</h1>'
+        + '<p class="dn-sub">' + hn(pc.window.from_mdy) + '–' + hn(pc.window.to_mdy) + ': ' + hn(money(t.purchases)) + ' bought from distributors against ' + hn(money(t.sales)) + ' in beer, liquor and wine sales.</p>'
+        + '<div style="margin-top:26px">' + tiles(pc) + '</div>'
+        + '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Month by month</div><h2 class="dn-h2">Pour cost by month</h2>' + months(pc) + '</section>';
+    } else {
+      h += '<h1 class="dn-read" style="font-size:32px">Prices first; pour cost soon.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>';
+    }
+    h += '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Price watch</div><h2 class="dn-h2">What your distributors charge</h2>'
+      + '<p class="dn-sub">The latest change on every product bought more than once in the last four months, with what it means at the amounts you buy. A lower price is often a case deal or a different pack.</p>'
+      + '<div class="br-two" style="margin-top:18px"><div><div class="dn-k" style="color:var(--hb-bad)">Went up · ' + hn((pw.increases || []).length) + '</div>' + priceRows(pw.increases || [], true) + '</div>'
+      + '<div><div class="dn-k" style="color:var(--hb-good)">Came down · ' + hn((pw.decreases || []).length) + '</div>' + priceRows(pw.decreases || [], false) + '</div></div></section>'
+      + '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Distributors</div><h2 class="dn-h2">Where the money goes</h2>' + distributors(d.distributors || []) + '</section>'
+      + '<section class="dn-sec" style="margin-top:56px">' + products(d) + '</section>'
+      + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';
+    return h;
+  }
+  function load(cb) {
+    fetch('/api/food-cost/bar', {credentials: 'same-origin'}).then(function (r) { return r.json(); })
+      .then(function (d) { DATA = d; cb(d); }).catch(function () { cb(null); });
+  }
+  function paint() {
+    var body = document.getElementById('br-body'); if (!body) return;
+    body.innerHTML = '<div class="dn-k">Bar</div><div class="dr-pulse wide" role="status" aria-label="Loading" style="margin-top:24px"><i></i></div>';
+    load(function (d) {
+      if (!OPEN) return;
+      body.innerHTML = page(d);
+      var as = document.getElementById('br-asof'); if (as) as.textContent = d && d.as_of_mdy ? 'invoices through ' + d.as_of_mdy : '';
+    });
+  }
+  function setCategory(key, cat, sel) {
+    sel.disabled = true;
+    fetch('/api/food-cost/bar/category', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({product_key: key, category: cat})}).then(function (r) { return r.json(); }).then(function (d) {
+      sel.disabled = false;
+      if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'That didn’t save. Try again.', 'error'); return; }
+      if (typeof toast === 'function') toast('Saved — pour cost updated', 'success');
+      var sc = document.getElementById('br-scroll'), top = sc ? sc.scrollTop : 0;
+      load(function (d2) { var b = document.getElementById('br-body'); if (b && OPEN) { b.innerHTML = page(d2); if (sc) sc.scrollTop = top; var det = b.querySelector('details.dn-fam'); if (det) det.open = true; } });
+    }).catch(function () { sel.disabled = false; if (typeof toast === 'function') toast('That didn’t save. Check your connection.', 'error'); });
+  }
+  window.barOpen = function (opts) {
+    opts = opts || {};
+    var el = shell();
+    if (!OPEN) {
+      OPEN = true; BACK_TO = document.activeElement; el.hidden = false; document.body.classList.add('dn-open');
+      if (!opts.fromBoot && !opts.fromPop && window.location.pathname !== '/bar' && window.history && history.pushState) {
+        history.pushState({bar: 1}, '', '/bar'); FROM_DASH = true;
+      }
+      var sc = document.getElementById('br-scroll'); if (sc) sc.scrollTop = 0;
+      paint();
+      var cb = document.getElementById('br-close'); if (cb) cb.focus();
+    }
+    return false;
+  };
+  window.barClose = function (opts) {
+    opts = opts || {};
+    var el = document.getElementById('bar');
+    if (!OPEN || !el) return;
+    OPEN = false; el.hidden = true; document.body.classList.remove('dn-open');
+    if (!opts.fromPop && window.location.pathname === '/bar') {
+      if (FROM_DASH) { FROM_DASH = false; history.back(); }
+      else { history.replaceState(null, '', '/#inventory'); if (typeof cavNav === 'function') cavNav('inventory'); }
+    }
+    if (BACK_TO && BACK_TO.focus) { try { BACK_TO.focus(); } catch (e) { } }
+  };
+  window.barOnRoute = function () {
+    var at = window.location.pathname === '/bar';
+    if (at && !OPEN) window.barOpen({fromPop: true});
+    else if (!at && OPEN) window.barClose({fromPop: true});
+  };
+  if (window.cavNavRegister) cavNavRegister('bar', function () { window.barOpen(); return true; });
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('[data-bar-open]') : null;
+    if (!t) return;
+    e.preventDefault(); window.barOpen();
+  });
+  document.addEventListener('DOMContentLoaded', function () { if (window._BAR_BOOT) window.barOpen({fromBoot: true}); });
 })();
 </script>
 <script>

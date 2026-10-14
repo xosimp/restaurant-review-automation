@@ -484,6 +484,7 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
 
 
 @app.route("/dna")
+@app.route("/bar")
 @app.route("/")
 @app.route("/schedule/studio")
 @login_required

@@ -2121,6 +2121,10 @@ fine pointer.
 - Reduce Motion: no float, lean, motes or running lights; the reveal and
   the loading state stay.
 
+### Bar page — Food Cost → Bar (10/14/26)
+
+Food Cost's heading carries a `lb2-range` segmented switch, **Food | Bar** (`role="tab"`); Bar opens its own page over the dashboard at `/bar` in Restaurant DNA's shell (`.dn`, `.dn-bar` with ← Back, `.dn-scroll`, `.dn-wrap`, its `dn-k` kicker, `dn-read` headline, `dn-h2` / `dn-sub`), prefix `br-`. Order: the four-week pour cost as the headline sentence; three `.br-tile`s (beer & seltzer, liquor, wine — the % in the number face, bought · sold, the rule-of-thumb range with a tone dot: green inside, amber above, ink3 below); Month by month (`.br-t`, each cell bought / sold, a partial month names its dates); Price watch in two columns (went up in red, came down in green: product, distributor · per case/keg, $from → $to with the change, since M/D/YY and the 90-day money); Distributors (spend, share, fees & taxes); a folded `dn-fam` "How every product is sorted" with a category select per product (a change saves at once, toast, and the page re-reads). Data `GET /api/food-cost/bar`.
+
 ### Restaurant DNA — the restaurant's personality, revealed (10/8/26)
 
 A signature screen, not a table (owner, 10/8/26: "make it feel like an AI is

@@ -11842,6 +11842,36 @@ def food_cost_cogs(current_user):
     return _m("mobile_food_cost_cogs")(current_user)
 
 
+@client_bp.route("/api/food-cost/bar")
+@login_required
+def food_cost_bar(current_user):
+    """The Bar page (Food Cost → Bar): price watch and pour cost by category
+    from the Fintech invoices and the nightly report (bar_cost.build).
+    Gated with Food Cost (/api/food-cost: FOOD_COST_VIEW)."""
+    import bar_cost as _bc
+    try:
+        return jsonify(**_bc.build(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@client_bp.route("/api/food-cost/bar/category", methods=["POST"])
+@login_required
+def food_cost_bar_category(current_user):
+    """The owner sorts one product (beer / liquor / wine / na / other), or
+    clears it back to Cavnar AI's guess with an empty category."""
+    import bar_cost as _bc
+    b = request.get_json(silent=True) or {}
+    key = str(b.get("product_key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="Which product?"), 400
+    try:
+        return jsonify(**_bc.set_category(current_user["restaurant_id"], key, b.get("category"),
+                                          user_id=current_user.get("id")))
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+
+
 @client_bp.route("/api/food-cost/cfo")
 @login_required
 def food_cost_cfo(current_user):
