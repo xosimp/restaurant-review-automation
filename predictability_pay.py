@@ -141,7 +141,7 @@ def _overlap(a, b):
 
 # ── classify ───────────────────────────────────────────────────────────────
 
-def classify(before_rows, after_rows) -> list:
+def classify(before_rows, after_rows, restaurant_id=None, db_path=None) -> list:
     """Each person's changed shifts between two versions of a week.
 
     [{"employee", "key", "date", "kind", "before", "after", "minutes_changed",
@@ -150,7 +150,20 @@ def classify(before_rows, after_rows) -> list:
     (longer, nothing lost), move (time or date changed, no hours lost),
     reduce (hours lost), cut (cancelled). A shift cut on one date and one of
     at least its hours added on another, for the same person in the same
-    week, is one move of date."""
+    week, is one move of date.
+
+    With `restaurant_id`, both weeks' names are read as the one person each
+    means now (people.canonical_names, as unsent_changes reads them —
+    schedule re-audit 10/11/26 BUGSLIFE-6): a rename between two Sends is
+    never priced as a "cut" of the old spelling and an "add" of the new."""
+    if restaurant_id is not None:
+        try:
+            import schedule_versions as _sv_pp
+            before_rows, after_rows = _sv_pp.canonical_rows(restaurant_id, [before_rows or [], after_rows or []],
+                                                           db_path=db_path)
+        except Exception as e:
+            print(f"[predictability_pay] names not read as people rid={restaurant_id}: {e!r}")
+
     def norm(rows):
         out = {}
         for r in rows or []:
@@ -427,7 +440,7 @@ def preview(restaurant_id, before_rows, after_rows, now=None, db_path=None) -> d
     if not spec:
         return {"covered": False, "law": None, "code": None, "rows": [], "total": 0.0, "owed_count": 0,
                 "unknown_count": 0, "text": None}
-    rows = price(classify(before_rows, after_rows), spec, now, rate_of=rate_of, covered_of=covered_of,
+    rows = price(classify(before_rows, after_rows, restaurant_id, db_path), spec, now, rate_of=rate_of, covered_of=covered_of,
                  consent_of=_consent_lookup(restaurant_id, db_path=db_path), code=code,
                  source=(e.get("predictability_pay") or [{}])[-1].get("source"), on=now)
     owed = [x for x in rows if x["status"] in ("owed", "unknown_coverage") and (x.get("premium_hours") or x.get("amount"))]
@@ -503,10 +516,10 @@ def record_send(restaurant_id, history_id, after_rows, before_rows=None, sent_by
         staff_made = set()
         prev = before_rows
         for s in swaps:
-            for c in classify(prev, s):
+            for c in classify(prev, s, restaurant_id, db_path):
                 staff_made.add((c["key"], c["date"]))
             prev = s
-        changes = [c for c in classify(before_rows, after_rows) if (c["key"], c["date"]) not in staff_made]
+        changes = [c for c in classify(before_rows, after_rows, restaurant_id, db_path) if (c["key"], c["date"]) not in staff_made]
         rows = price(changes, spec, now, rate_of=rate_of, covered_of=covered_of,
                      consent_of=_consent_lookup(restaurant_id, db_path=db_path), code=code,
                      source=(e.get("predictability_pay") or [{}])[-1].get("source"), on=now)
@@ -542,7 +555,7 @@ def record_request_change(restaurant_id, history_id, before_rows, after_rows, ki
         r, code, e, spec, rate_of, covered_of = _context(restaurant_id, db_path, on=now)
         if not spec:
             return {"recorded": 0}
-        changes = classify(before_rows, after_rows)
+        changes = classify(before_rows, after_rows, restaurant_id, db_path)
         src = (e.get("predictability_pay") or [{}])[-1].get("source")
         rows = []
         if kind == "extra":
@@ -568,10 +581,14 @@ def record_request_change(restaurant_id, history_id, before_rows, after_rows, ki
         return {"recorded": 0, "error": True}
 
 
-def record_rest_premiums(restaurant_id, history_id, violations, rows, sent_by=None, now=None, db_path=None) -> dict:
+def record_rest_premiums(restaurant_id, history_id, violations, rows, sent_by=None, now=None, db_path=None,
+                         version=None) -> dict:
     """The rest premium each consented short turnaround owes (the sweep's
     rest_premium flags), written when the week is sent. One row per
-    instance; a second send of the same week does not record it twice."""
+    instance; a second send of the same week does not record it twice.
+    `version` is the published version the Send stamped, kept on each row so
+    a premium is tied to the copy that caused it (schedule re-audit 10/11/26
+    BUGSLIFE-19)."""
     try:
         from time_utils import restaurant_now_by_id
         import schedule_rules as _sr
@@ -620,7 +637,7 @@ def record_rest_premiums(restaurant_id, history_id, violations, rows, sent_by=No
                        "status": "owed" if amount is not None else "owed"}
                 if amount is None:
                     rec["exempt_reason"] = "no hourly rate on file — hours owed, dollars to be set"
-                _insert(conn, restaurant_id, history_id, None, rec, now, sent_by)
+                _insert(conn, restaurant_id, history_id, version, rec, now, sent_by)
                 n += 1
             conn.commit()
         finally:

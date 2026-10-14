@@ -303,10 +303,9 @@ def offers_for(home_restaurant_id, name, db_path=None) -> list:
 def respond(home_restaurant_id, name, offer_id, accept, db_path=None) -> dict:
     """The visitor's answer. Yes: judged again on the week as it is now and
     written into the target site's live week with the request covered, in
-    one transaction; no: recorded and the target's managers told."""
+    one transaction (shift_requests._cover, the one cover body); no:
+    recorded and the target's managers told."""
     import shift_requests as _srq
-    from schedule_engine import _rows_to_csv_text
-    from schedule_versions import write_on
     conn = get_conn(db_path)
     try:
         o = conn.execute("SELECT * FROM cross_site_offers WHERE id=? AND home_restaurant_id=? AND employee_name=? "
@@ -326,39 +325,24 @@ def respond(home_restaurant_id, name, offer_id, accept, db_path=None) -> dict:
         _srq._tell_managers(target, "Offer declined", f"{name} (from another location) said no to "
                                                       f"{_srq._when(req)}.", db_path or _models_mod.DB_PATH)
         return {"status": "declined"}
-    for _attempt in range(_srq.WEEK_CAS_ATTEMPTS):
-        hist, rows, idx = _target_week(target, req, db_path)
-        ok, why = judge(target, req, home_restaurant_id, name, rows=rows, idx=idx, db_path=db_path)
-        if not ok:
-            raise CrossSiteError(f"you can't take it now: {why}")
-        conn = get_conn(db_path)
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            fresh = _srq._live_hist(conn, target, req)
-            if not _srq._same_week(fresh, hist):
-                conn.rollback()
-                continue
-            cur = conn.execute("UPDATE shift_change_requests SET status='covered', replacement_name=?, "
-                               "decided_at=COALESCE(decided_at, datetime('now')) WHERE id=? AND status='open'",
-                               (name, req["id"]))
-            if cur.rowcount != 1:
-                raise CrossSiteError("somebody else just took that shift")
-            new = [dict(r) for r in rows]
-            new[idx] = dict(new[idx], employee=name,
-                            notes=((new[idx].get("notes") or "").strip() + " (from another location)").strip())
-            write_on(conn, target, hist["id"], "swap", _rows_to_csv_text(new), saved_by=name)
-            _srq._close_offers(conn, req["id"])
-            conn.execute("UPDATE cross_site_offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'withdrawn' END, "
-                         "answered_at=datetime('now') WHERE request_id=? AND status='offered'", (o["id"], req["id"]))
-            conn.commit()
-            break
-        except BaseException:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-    else:
-        raise CrossSiteError("the schedule kept changing while that was checked — try again")
+    # The same cover body every claim runs through (schedule re-audit
+    # 10/11/26 BUGSLIFE-10): the shift's start (or, for a shift a manager
+    # posted, its end) gates it — a visitor could accept a shift already
+    # worked; the holder is told they are off it; every other live request
+    # on the shift is cancelled; the section, the task sheets and the
+    # predictability-pay record follow. Judged by this site's rules with the
+    # visitor's own facts and hours at home (judge, via visitor_home).
+
+    def _accept_offer(conn):
+        conn.execute("UPDATE cross_site_offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'withdrawn' END, "
+                     "answered_at=datetime('now') WHERE request_id=? AND status='offered'", (o["id"], req["id"]))
+    try:
+        _srq._cover(target, req, name, actor=name, from_status="open", check_role=False,
+                    db_path=db_path or _models_mod.DB_PATH,
+                    until="end" if (req.get("kind") or "") == "post" else "start",
+                    visitor_home=home_restaurant_id, tag="(from another location)", in_transaction=_accept_offer)
+    except _srq.ShiftRequestError as e:
+        raise CrossSiteError(str(e))
     _srq._tell_managers(target, "Shift covered from another location",
                         f"{name} (from another location) took {_srq._when(req)}.", db_path or _models_mod.DB_PATH)
     return {"status": "accepted", "request_id": req["id"], "target_restaurant_id": target}

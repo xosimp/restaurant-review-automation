@@ -6210,7 +6210,11 @@ class _SwapIndex:
                     # rest_premium — schedule audit 10/10/26 MARKET-3).
                     later = ps if ps >= e else s
                     w = self.rest_waived.get(low)
-                    if w and (w.get("standing") or later.date().isoformat() in (w.get("dates") or ())):
+                    # A waiver binds to the shift it was given for (schedule
+                    # re-audit 10/11/26 BUGSLIFE-7): its date and start.
+                    if w and (w.get("standing") or later.date().isoformat() in (w.get("dates") or ())
+                              or (later.hour * 60 + later.minute)
+                              in ((w.get("shifts") or {}).get(later.date().isoformat()) or ())):
                         continue
                     return False
         return True
@@ -6549,6 +6553,7 @@ PERSON_FIXABLE = frozenset({"off_roster", "inactive", "outside_week", "double_bo
                             "approved_time_off", "unavailable_day", "unavailable_daypart", "elsewhere",
                             "outside_window", "missing_cert", "over_max_hours", "rest_gap",
                             "minor_late", "minor_hours", "long_run", "minor_week_hours", "minor_early",
+                            "minor_school_hours",
                             "role_not_held", "note_unavailable"})
 
 

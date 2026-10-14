@@ -564,17 +564,51 @@ def _memo_key():
             str(getattr(_models_mod, "DB_PATH", "")), getattr(_db_override, "path", None))
 
 
+_SHARED_FLEET_GEN = "admin_fleet_gen"
+
+
+def _shared_fleet_gen():
+    """The fleet memo's generation in the database (a job_cursors row): an
+    admin write on one web worker drops every worker's memo, not only its
+    own (blind re-audit 10/11/26 ARCH-26/SCALE-23). None when unreadable —
+    the process's own generation still holds."""
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (_SHARED_FLEET_GEN,)).fetchone()
+        finally:
+            conn.close()
+        return row[0] if row else ""
+    except Exception:
+        return None
+
+
 def invalidate_fleet_cache():
     """Drop the memo — every admin write calls this (directly, or through the
-    after-request hook on /admin writes)."""
+    after-request hook on /admin writes) — here and, through the shared
+    generation, in every other process."""
     with _fleet_cv:
         _fleet_state["gen"] += 1
         _fleet_state["memo"] = None
+    try:
+        import uuid as _uuid_fg
+        conn = get_conn()
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (_SHARED_FLEET_GEN, _uuid_fg.uuid4().hex))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("the shared fleet generation was not moved: %s", e)
 
 
 def _fleet_memo(max_age=None):
     m = _fleet_state["memo"]
     if not m or m["key"] != _memo_key() or m["gen"] != _fleet_state["gen"]:
+        return None
+    if m.get("shared") is not None and _shared_fleet_gen() not in (None, m["shared"]):
         return None
     age = time.monotonic() - m["at"]
     ttl = FLEET_TTL_SECONDS if not m["meta"]["errors"] else min(FLEET_TTL_SECONDS, 10.0)
@@ -608,6 +642,8 @@ def _records_cached():
             if not _fleet_state["building"]:
                 _fleet_state["building"] = True
                 gen = _fleet_state["gen"]
+                # Read before the build: a write during it moves this.
+                shared = _shared_fleet_gen()
                 break
             remaining = deadline - time.monotonic()
             if _fleet_state["waiters"] >= FLEET_MAX_WAITERS or remaining <= 0:
@@ -630,7 +666,7 @@ def _records_cached():
         _fleet_state["building"] = False
         if gen == _fleet_state["gen"]:
             _fleet_state["memo"] = {"recs": recs, "d": d, "meta": meta, "at": time.monotonic(), "gen": gen,
-                                    "key": _memo_key()}
+                                    "key": _memo_key(), "shared": shared}
         _fleet_cv.notify_all()
     return recs, d, meta
 

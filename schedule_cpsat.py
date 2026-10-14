@@ -109,9 +109,17 @@ REQ_VALUE_BOUNDS = (0.1, 8.0)       # its demand x criticality against average: 
 # (else the usual) person on each slot; then every quality tie-break —
 # fairness can never again decide which shift goes empty.
 PHASE_RULES = frozenset({"manager", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
-                         "min_hours", "requirement", "budget", "leadership", "pending", "memory", "commitment"})
+                         "min_hours", "requirement", "budget", "habit", "leadership", "pending", "memory",
+                         "commitment"})
 PHASE_STABILITY = frozenset({"stability", "change", "usual"})
 PHASE_SHARES = (0.6, 0.15, 0.25)    # each phase's share of the deterministic work budget
+# A habit the manager taught by hand, broken (schedule_memory tier "bound" —
+# re-audit 10/11/26 LEARNING-12): its own tier, lexicographically above every
+# soft quality term (a whole week's quality is ~10^6 units at most: a hundred
+# shifts of 100 points at Q) and below the requirement tier, so coverage,
+# overtime and the minimums still win. It used to be a soft cost scaled by
+# the habit's confidence, tradeable for a modest fairness or preference gain.
+W_HABIT = 2 * 10 ** 6
 W_CHANGE_RESOLVE = 5 * 10 ** 6      # a re-solve changing a person on a shift that stays
 BUDGET_OVER_FACTOR = 3              # a dollar past the budget costs this many dollars of quality
 K_CHANGE_IMPROVE = 0.02             # points: the repair loop's tie-break toward the draft
@@ -138,6 +146,7 @@ TERM_LABELS = {
     "strength": "strength against target",
     "preferences": "staff preferences",
     "memory": "what the scheduling memory learned",
+    "habit": "a habit the manager taught by hand, broken",
     "reliability": "reliability",
     "role": "a fill-in from another role",
     "pending": "a day someone asked off",
@@ -269,10 +278,10 @@ class CpProblem(_solver.Problem):
             if not ok:
                 return why
         for r in u.rows:
-            for part in sq.touched_dayparts(r):
-                ok, why = c.can_work(name, u.date, part)
-                if not ok:
-                    return why
+            # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+            ok, why = c.can_work_row(name, dict(r, date=u.date))
+            if not ok:
+                return why
             ok, why = c.window_ok(name, u.date, r.get("shift_start", ""), r.get("shift_end", ""))
             if not ok:
                 return why
@@ -283,14 +292,11 @@ class CpProblem(_solver.Problem):
                 return _rules.LABELS["role_not_held"]
             if not drafted and c.training_row(dict(r, employee=name)):
                 return "would be a training shift"
-            if low in c.minors:
-                latest, _label = _rules.minor_latest(c, low, u.date)
-                e_m, s_m = _rules.end_minutes(r), _rules.start_minutes(r)
-                if latest is not None and e_m is not None and e_m > latest:
-                    return _rules.LABELS["minor_late"]
-                earliest = _rules.minor_earliest(c, low)
-                if earliest is not None and s_m is not None and s_m < earliest:
-                    return _rules.LABELS["minor_early"]
+            # a minor's time-of-day limits — late, early, school hours — by
+            # the sweep's one rule (sched re-audit 10/11/26 STRESS-5)
+            why = _rules.minor_row_breach(c, low, r, u.date)
+            if why:
+                return why
             ok, why = c.rest_ok(name, r, [])
             if not ok and (why == _rules.LABELS["overlap"] or self.law_rest):
                 return why
@@ -751,12 +757,13 @@ class _Model:
                     continue
                 # the owner's two allowances (the closing manager's stay,
                 # the prep before an opening manager) — the verdict's own
-                if mgr_end is not None and a >= mgr_end and b <= last_end and last_end - mgr_end <= \
-                        _rules.CLOSING_MANAGER_STAYS_MINUTES:
+                # — each restaurant's own (LOGIC-12)
+                stay_m, lead_m = _rules.closing_stay_minutes(c), _rules.opening_lead_minutes(c)
+                if mgr_end is not None and a >= mgr_end and b <= last_end and last_end - mgr_end <= stay_m:
                     continue
-                if _rules.opening_prep((a, b), mgr_starts, o) or (
-                        mgr_starts and b <= min(mgr_starts) and o is not None
-                        and min(mgr_starts) <= o - _rules.OPENING_MANAGER_LEAD_MINUTES):
+                if _rules.opening_prep((a, b), mgr_starts, o, lead_m) or (
+                        lead_m > 0 and mgr_starts and b <= min(mgr_starts) and o is not None
+                        and min(mgr_starts) <= o - lead_m):
                     continue
                 lits = [self.x[(u.id, p)] for u in live for p in prob.dom[u.id] if self.mgr(p, d)]
                 gap = m.new_bool_var(f"mg{d}_{a}")
@@ -911,7 +918,7 @@ class _Model:
         putting on a weekday's daypart, one of the people they keep putting
         on a role's slot — a cost while they are not on it."""
         prob, m, book = self.prob, self.m, self.book
-        if not prob.k_miss:
+        if not prob.k_miss and not any(mem.get("tier") == "bound" for mem in prob.mem):
             return
         for key, g in prob.groups.items():
             if g.get("kind") != "S" or not g.get("learned"):
@@ -920,8 +927,14 @@ class _Model:
             units = [prob.units[i] for i in prob._all_units(key)]
             first = [u for u in units if part in u.primary]
             for mem in g["learned"]:
+                bound = mem.get("tier") == "bound"
+                if not bound and not prob.k_miss:
+                    continue
                 if mem["kind"] == "moved_on":
                     want = {prob.pidx.get(prob.key(mem.get("person")))} - {None}
+                    # Their own pending day-off ask that date outranks the habit.
+                    if g["date"] in prob.pending.get(prob.key(mem.get("person")), ()):
+                        continue
                     fams = None
                 else:
                     want = {prob.pidx.get(prob.key(n)) for n in (_solver._val(mem).get("names") or [])} - {None}
@@ -934,7 +947,10 @@ class _Model:
                 lits = [self.x[(u.id, p)] for u in pool if not u.fixed for p in prob.dom[u.id] if p in want]
                 miss = m.new_bool_var(f"mem{len(book.terms)}")
                 m.add(sum(lits) + miss >= 1)
-                book.add("memory", miss, mem["confidence"] * prob.k_miss * Q, {"shift": key, "kind": mem["kind"]})
+                if bound:
+                    book.add("habit", miss, W_HABIT, {"shift": key, "kind": mem["kind"]})
+                else:
+                    book.add("memory", miss, mem["confidence"] * prob.k_miss * Q, {"shift": key, "kind": mem["kind"]})
 
     def _static_and_stability(self):
         prob, book = self.prob, self.book
@@ -968,7 +984,10 @@ class _Model:
                         term = "usual" if self.ctx is None else None
                     else:
                         term = None if k in _OWN_TERMS else _STATIC_TERMS.get(k, k)
-                    if term and val:
+                    if term == "habit" and val:
+                        # Its own tier (LEARNING-12): misses x W_HABIT.
+                        book.add("habit", v, round(val / _solver.K_HABIT) * W_HABIT, {"unit": u.id, "person": p})
+                    elif term and val:
                         book.add(term, v, val * Q, {"unit": u.id, "person": p})
                 if stab and p in ref:
                     book.add(term_s, v, -stab * Q, {"unit": u.id, "person": p})
@@ -1613,6 +1632,7 @@ def _marginal(prob, mdl, u, p, q, hours, on_date) -> dict:
              "preference": f"{prob.names[q]} prefers the other half of the day",
              "learned_preference": f"{prob.names[q]} keeps dropping that shift",
              "learned": "it is what the managers keep doing on that shift",
+             "habit": "it is what the manager has taught the draft by hand on that shift",
              "reliability": f"{prob.names[q]} has a reliability risk on it",
              "role": f"it is {prob.names[p]}'s own role",
              "rotation_weekend": f"{prob.names[q]} is due a weekend off",
@@ -1691,6 +1711,7 @@ def _blocker(prob, u, q, week_hours=None) -> tuple:
     if why is None:
         return None
     hard = (_rules.LABELS.get("minor_late"), _rules.LABELS.get("minor_early"), _rules.LABELS.get("minor_hours"),
+            _rules.LABELS.get("minor_school_hours"),
             _rules.LABELS.get("role_not_held"), _rules.LABELS.get("off_roster"), _rules.LABELS.get("inactive"))
     if why in hard or str(why).startswith("does not work") or str(why).startswith(_rules.LABELS.get("missing_cert", "~")):
         return None

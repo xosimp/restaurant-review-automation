@@ -308,7 +308,7 @@ def test_the_loop_no_longer_names_the_days():
     # The pass enqueues each draft on the job queue when it is on (scheduler
     # audit 10/10/26 SCALE-13); the lane and the tick's instant are unchanged.
     assert '_ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now,' in loop
-    assert "enqueue=_jq_ad.enabled()" in loop
+    assert "enqueue=True" in loop
     assert "local.weekday() != auto_publish_weekday(r)" in src
     jobs = open("strategy_jobs.py", encoding="utf-8").read()
     assert "local.weekday() != auto_order_weekday(r)" in jobs

@@ -184,10 +184,12 @@ def test_autopilot_offers_alone_only_when_on_and_earned_and_never_cuts(db, monke
 
 def test_a_cut_the_manager_taps_is_saved_through_the_studio_and_sent_to_that_person(db, monkeypatch):
     rid, r = _live(db, monkeypatch, SLOW)
-    import client_api
+    import schedule_publish
     sent = []
-    monkeypatch.setattr(client_api, "send_schedule_changes",
-                        lambda rid_, hid, actor=None, **k: sent.append(hid) or ({"ok": True}, 200))
+    # Only the cut's own shift is sent (re-audit 10/11/26 BUGSLIFE-4) — the
+    # whole week's changes send used to go.
+    monkeypatch.setattr(schedule_publish, "send_live_change",
+                        lambda rid_, hid, ids, actor=None, **k: sent.append(hid) or ({"ok": True, "ids": ids}, 200))
     best = labor_live.moves(r, now_local=SIX)[0]
     mid, new = labor_live._store_move(rid, best)
     out = labor_live.act(rid, mid, user={"id": 3, "username": "gm", "role": "owner", "restaurant_id": rid})
@@ -196,6 +198,7 @@ def test_a_cut_the_manager_taps_is_saved_through_the_studio_and_sent_to_that_per
     who = best["employee"]
     row = next(x for x in _rows(db, hid) if x["employee"] == who and x["date"] == W1[4])
     assert row["shift_end"] == "6:30pm"
+    assert out["sent"]["ids"] == [row["shift_id"]]
     conn = models.get_conn(db)
     origins = conn.execute("SELECT row_origins_json FROM schedule_versions WHERE history_id=? ORDER BY version DESC "
                            "LIMIT 1", (hid,)).fetchone()[0]

@@ -432,9 +432,13 @@ def reverse(restaurant_id, request_id, actor=None, db_path=DB_PATH, now=None) ->
         if undone:
             _srq._notify(restaurant_id, "auto_reversed", dict(row, status="denied"), db_path=db_path)
     elif row["status"] == "covered" and kind == "swap":
+        # The shifts as they are now: the holder's old shift (shift_id) is
+        # the colleague's, and theirs (target_shift_id) the holder's — so
+        # each leg's person is the other's (ARCH-6).
         back = dict(row, employee_name=row["target_name"], date=row["date"], shift_start=row["shift_start"],
                     target_name=row["employee_name"], target_date=row["target_date"],
-                    target_start=row["target_start"])
+                    target_start=row["target_start"], person_id=row.get("target_person_id"),
+                    target_person_id=row.get("person_id"))
         try:
             undone = bool(_srq.trade_back(restaurant_id, back, actor=who, db_path=db_path, now=now))
         except _srq.ShiftRequestError as e:

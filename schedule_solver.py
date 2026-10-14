@@ -204,6 +204,13 @@ K_CLOSE = 0.5             # per close they already have this week (× the fairne
 K_WEEKEND = 0.3           # per weekend shift they already have
 K_HARD = 0.1              # per busy shift they already have
 K_MIN_HOURS_NEW = 1000.0  # per hour under what the draft kept somebody at toward their minimum: never worth it
+# A habit the manager taught by hand and the memory now binds (schedule_
+# memory tier "bound" — re-audit 10/11/26 LEARNING-12): each one broken costs
+# more than a whole peak shift's score (2 x 100 points) — so no fairness,
+# preference or strength gain trades it away — and less than an hour under
+# somebody's minimum, so the tiers above quality (coverage, overtime, the
+# minimums) still win. A person's own pending day-off ask is never a miss.
+K_HABIT = 250.0
 # What the edit predictor costs: points of the shift a row the manager is
 # expected to change is kept on (schedule_optimizer.LIKELY_EDIT_SHIFT_POINTS
 # — the weight the repair loop holds a move to). The scheduling memory is a
@@ -401,7 +408,7 @@ class Problem:
         self.no_show, self.late_risk, self.rel_known = [], [], []
         # Each person's rate by weekday (staff_settings' weekday_rates,
         # shrunk toward their own) — the scorer's own reading (LEARNING-14).
-        self.no_show_day, self.late_rate = [], []
+        self.no_show_day, self.late_rate, self.rel_explore = [], [], []
         for n in self.names:
             r = lrel.get(self.key(n)) or {}
             try:
@@ -416,6 +423,9 @@ class Problem:
             except (TypeError, ValueError):
                 self.late_rate.append(0.0)
             self.rel_known.append(self.key(n) in lrel)
+            # Exploring (staff_settings, LEARNING-21): too few recent shifts
+            # to clear a risky label — not steered off shared busy shifts.
+            self.rel_explore.append(bool(r.get("explore")))
         tenure = {self.key(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
         marked = {self.key(n) for n in (s.get("experienced") or ()) if n}
         # Managers, acting managers and salaried people are experienced by
@@ -943,10 +953,10 @@ class Problem:
         for r in u.rows:
             # Any minute in a blocked half of the day (RULES-11), the card as
             # it stands that date (RULES-14) — the sweep's own tests.
-            for part in sq.touched_dayparts(r):
-                ok, why = c.can_work(name, u.date, part)
-                if not ok:
-                    return why
+            # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+            ok, why = c.can_work_row(name, dict(r, date=u.date))
+            if not ok:
+                return why
             ok, why = c.window_ok(name, u.date, r.get("shift_start", ""), r.get("shift_end", ""))
             if not ok:
                 return why
@@ -957,14 +967,11 @@ class Problem:
                 return _rules.LABELS["role_not_held"]
             if not drafted and c.training_row(dict(r, employee=name)):
                 return "would be a training shift"
-            if low in c.minors:
-                latest, _label = _rules.minor_latest(c, low, u.date)
-                e_m, s_m = _rules.end_minutes(r), _rules.start_minutes(r)
-                if latest is not None and e_m is not None and e_m > latest:
-                    return _rules.LABELS["minor_late"]
-                earliest = _rules.minor_earliest(c, low)
-                if earliest is not None and s_m is not None and s_m < earliest:
-                    return _rules.LABELS["minor_early"]
+            # a minor's time-of-day limits — late, early, school hours — by
+            # the sweep's one rule (STRESS-5)
+            why = _rules.minor_row_breach(c, low, r, u.date)
+            if why:
+                return why
             ok, why = c.rest_ok(name, r, [])
             if not ok:
                 return why
@@ -1543,9 +1550,10 @@ class Problem:
                 # Graded on the shift's own weekday (attendance_risk.exposure),
                 # as the scorer weighs it — never the 20% cliff (LEARNING-14).
                 from attendance_risk import exposure as _exposure
+                alone = len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
+                             if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1
                 w = _exposure(self.no_show_day[p].get(u.day, self.no_show[p])) if (
-                    u.hard or len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
-                                   if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1) else 0.0
+                    alone or (u.hard and not self.rel_explore[p])) else 0.0
                 from attendance_risk import late_exposure as _late_exposure
                 lw = (1.0 if self.late_risk[p] else _late_exposure(self.late_rate[p])) if u.edges else 0.0
                 if w > 0 or lw > 0:
@@ -1606,7 +1614,7 @@ class Problem:
         # its first daypart), or keep making another role on it; the role's
         # usual opener or closer working that day without opening or closing
         # it. The edit predictor (L-15).
-        mem = 0.0
+        mem, habit = 0.0, 0
         for m in self.mem_person.get(low) or ():
             kind = m["kind"]
             if m.get("day") != u.day:
@@ -1617,7 +1625,10 @@ class Problem:
                         continue
                     if kind == "moved_off" or " ".join(_low(r.get("role")).split()) != \
                             " ".join(_low(_val(m).get("role")).split()):
-                        mem += m["confidence"]
+                        if m.get("tier") == "bound":
+                            habit += 1
+                        else:
+                            mem += m["confidence"]
                         break
             elif kind in ("opener", "closer"):
                 fam = self.family(m.get("role")) if m.get("role") else None
@@ -1625,6 +1636,10 @@ class Problem:
                     mem += m["confidence"]
         if mem:
             out["learned"] = mem * self.k_miss
+        if habit:
+            # Its own tier, never scaled by a confidence or the measure's
+            # slope (LEARNING-12).
+            out["habit"] = habit * K_HABIT
         if self.likely:
             for r in u.rows:
                 w = self.likely.get((low, r.get("date") or "", r.get("shift_start") or ""))
@@ -1891,19 +1906,28 @@ class Problem:
                         first_on.setdefault(p, set()).add(self.family(r.get("role")))
             if first_on:
                 keys = {p: self.key(self.names[p]) for p in first_on}
-                cost = 0.0
+                cost, habit = 0.0, 0
                 for m in g["learned"]:
+                    missed = False
                     if m["kind"] == "moved_on":
-                        if self.key(m.get("person")) not in keys.values():
-                            cost += m["confidence"]
+                        # Their own pending day-off ask that date outranks
+                        # the habit: not a miss.
+                        missed = self.key(m.get("person")) not in keys.values() and \
+                            g["date"] not in self.pending.get(self.key(m.get("person")), ())
                     else:
                         fam = self.family(m.get("role")) if m.get("role") else None
                         mine = [p for p, fams in first_on.items() if fam is None or fam in fams]
                         names = {self.key(n) for n in (_val(m).get("names") or [])}
-                        if mine and not any(keys[p] in names for p in mine):
+                        missed = bool(mine) and not any(keys[p] in names for p in mine)
+                    if missed:
+                        if m.get("tier") == "bound":
+                            habit += 1
+                        else:
                             cost += m["confidence"]
                 if cost:
                     out["learned"] = cost * self.k_miss
+                if habit:
+                    out["habit"] = habit * K_HABIT
         return out
 
     def at_edge(self, u, kind, fam) -> bool:
@@ -3004,6 +3028,7 @@ _WHY = {
     "role": lambda P, u, o, n: f"it is {P.names[n]}'s own role",
     "dollars": lambda P, u, o, n: "the same shift at a lower wage",
     "learned": lambda P, u, o, n: "it is what the manager keeps doing on that shift",
+    "habit": lambda P, u, o, n: "it is what the manager has taught the draft by hand on that shift",
     "likely_edit": lambda P, u, o, n: f"the manager usually changes {P.names[o]} on that shift",
 }
 

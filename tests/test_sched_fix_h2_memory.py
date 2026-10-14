@@ -44,6 +44,18 @@ import schedule_versions as sv
 import staff_settings
 from models import Restaurant, create_restaurant
 
+
+@pytest.fixture(autouse=True)
+def _two_edit_candidates(monkeypatch):
+    """These tests are about their own subject, built on two-edit fixtures
+    from before the candidacy floor (schedule re-audit 10/11/26
+    LEARNING-10: three opportunities and a Wilson lower bound of 0.3 —
+    tests/test_sf11_g2_habits.py holds it). The old floor keeps each test
+    about its subject; enforcement is still earned by hand
+    (schedule_versions.habit_enforceable)."""
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_OPPORTUNITIES", 2)
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_LOWER", 0.0)
+
 HEAD = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 OWNER = {"id": 1, "username": "erik", "role": "owner", "restaurant_id": None}
 VIEW_AS = {"id": 1, "username": "erik", "role": "owner", "acting_admin_id": 9, "acting_admin": "will"}
@@ -239,24 +251,31 @@ def test_a_retired_ruled_or_dormant_pattern_keeps_its_status_in_the_memory():
 
 def test_a_pattern_is_enforced_only_once_its_confidence_clears_the_line():
     rid = _rid()
-    _bob_off_weeks(rid)
+    # Two hand edits: a candidate (binding takes three by hand since re-audit
+    # 10/11/26 LEARNING-9/11 — schedule_versions.habit_enforceable).
+    _bob_off_weeks(rid, weeks=(2, 1))
     sv.refresh_standing_patterns(rid)
     key = next(s["key"] for s in sv.standing_patterns(rid) if s["kind"] == "moved_off")
     week = [(_monday(-1) + timedelta(days=i)).isoformat() for i in range(7)]
     sm.consolidate(rid)
     m = _mem(rid, key="pattern:" + key)[0]
     assert m["confidence"] < sm.ACTIVE_CONFIDENCE and m["status"] == "candidate" and m["enforcement"] == "prompt"
-    assert not sm.enforced_signals(rid, week, roster_names=EVERYONE)
+    # A candidate the hand made twice leans the draft for CANDIDATE_BIND_DAYS
+    # (LEARNING-11) — tier "learning", at a scaled-down weight — never bound.
+    lean = sm.enforced_signals(rid, week, roster_names=EVERYONE)
+    assert all(x["tier"] == "learning" for x in lean)
     # Kept by the manager's own hand week after week: sure enough to bind.
     _sql("UPDATE schedule_standing_patterns SET hits=9, opportunities=9, confidence=0.71, last_hand=? "
          "WHERE restaurant_id=? AND pattern_key=?", date.today().isoformat(), rid, key)
+    sv.refresh_standing_patterns(rid)
     sm.consolidate(rid, only=("patterns",))
     sig = sm.enforced_signals(rid, week, roster_names=EVERYONE)
     assert [s["kind"] for s in sig] == ["moved_off"]
     s = sig[0]
     assert set(s) == {"kind", "key", "person", "day", "daypart", "role", "value", "confidence", "enforcement",
-                      "source"}
+                      "source", "learned_confidence", "tier", "origin", "text"}
     assert (s["person"], s["day"], s["daypart"], s["enforcement"]) == ("Bob", "Tuesday", "night", "soft")
+    assert (s["tier"], s["origin"]) == ("bound", "habit")
     # Bob off the roster, or a week without a Tuesday: nothing binds.
     assert not sm.enforced_signals(rid, week, roster_names=["Ana", "Cy"])
     assert not sm.enforced_signals(rid, [d for d in week if date.fromisoformat(d).weekday() != 1], EVERYONE)

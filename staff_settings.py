@@ -1226,7 +1226,40 @@ def _event(e):
 def _blank_tally() -> dict:
     return {"shifts": 0, "no_show": 0, "called_out": 0, "short": 0, "late": 0, "timed": 0,
             "w": 0.0, "w_miss": 0.0, "w_absent": 0.0, "w_callout": 0.0, "w_timed": 0.0, "w_late": 0.0,
-            "last_miss": None, "first": None, "last": None}
+            "last_miss": None, "first": None, "last": None, "recent": 0}
+
+
+# A label must be able to come off (schedule re-audit 10/11/26 LEARNING-21):
+# the recency weight decays a person's misses AND their shifts alike, so
+# their rate never drifts back without new shifts — and the solver, steering
+# a risky person away from busy and solo shifts, sends fewer. Each whole
+# clean week since the last miss, after a REDEEM_GRACE_DAYS grace (a label
+# does not flicker the week after a miss), is REDEEM_SHIFTS_PER_CLEAN_WEEK
+# more pseudo-shifts at the restaurant's own base rate (capped at
+# REDEEM_MAX_SHIFTS): two bad weeks
+# in July are no longer "risky" in October. And while someone marked risky
+# has had fewer than EXPLORE_MIN_SHIFTS shifts in the last
+# EXPLORE_WINDOW_DAYS, `explore` is set: the solver stops steering them off
+# shared busy shifts (only a shift they would hold alone stays priced), so
+# the record that could clear them keeps arriving.
+REDEEM_SHIFTS_PER_CLEAN_WEEK = 1.0
+REDEEM_GRACE_DAYS = 14
+REDEEM_MAX_SHIFTS = 26.0
+EXPLORE_WINDOW_DAYS = 28
+EXPLORE_MIN_SHIFTS = 4
+
+
+def redemption_shifts(last_miss, today) -> float:
+    """Pseudo-shifts at the base rate for the clean weeks since `last_miss`
+    (an ISO date) — 0 with no miss on record or one this week."""
+    from datetime import date as _date
+    if not last_miss:
+        return 0.0
+    try:
+        days = (today - _date.fromisoformat(str(last_miss)[:10])).days
+    except (TypeError, ValueError):
+        return 0.0
+    return min(REDEEM_MAX_SHIFTS, max(0, (days - REDEEM_GRACE_DAYS) // 7) * REDEEM_SHIFTS_PER_CLEAN_WEEK)
 
 
 def _add(t, day, outcome, notice, timed, w):
@@ -1271,6 +1304,11 @@ def attendance_tally(events, today=None) -> dict:
         t = tally.setdefault(n, dict(_blank_tally(), days={}))
         _add(t, day, outcome, notice, timed, w)
         try:
+            if 0 <= (today - _date.fromisoformat(str(day)[:10])).days <= EXPLORE_WINDOW_DAYS:
+                t["recent"] += 1
+        except (TypeError, ValueError):
+            pass
+        try:
             wd = _date.fromisoformat(str(day)[:10]).strftime("%A")
         except (TypeError, ValueError):
             wd = None
@@ -1290,12 +1328,15 @@ def attendance_bases(tally) -> dict:
             "late": (sum(t["w_late"] for t in tally.values()) / wt) if wt else 0.0}
 
 
-def _rates(t, base) -> dict:
+def _rates(t, base, today=None) -> dict:
     late = (smoothed_rate(t["w_late"], t["w_timed"], base["late"]) if t["timed"] >= LATE_MIN_SHIFTS else None)
-    return {"no_show_rate": smoothed_rate(t["w_miss"], t["w"], base["miss"]),
-            "absence_rate": smoothed_rate(t["w_absent"], t["w"], base["absence"]),
-            "call_out_rate": smoothed_rate(t["w_callout"], t["w"], base["call_out"]),
-            "late_rate": late}
+    # The clean weeks since the last miss pull the absence rates back toward
+    # the base (LEARNING-21).
+    prior = NO_SHOW_PRIOR_SHIFTS + (redemption_shifts(t.get("last_miss"), today) if today else 0.0)
+    return {"no_show_rate": smoothed_rate(t["w_miss"], t["w"], base["miss"], prior),
+            "absence_rate": smoothed_rate(t["w_absent"], t["w"], base["absence"], prior),
+            "call_out_rate": smoothed_rate(t["w_callout"], t["w"], base["call_out"], prior),
+            "late_rate": late, "redeemed_shifts": round(prior - NO_SHOW_PRIOR_SHIFTS, 1)}
 
 
 def weighted_attendance(events, today=None, min_shifts=6) -> dict:
@@ -1317,7 +1358,7 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
     for n, t in tally.items():
         if t["shifts"] < min_shifts:
             continue
-        rates = _rates(t, base)
+        rates = _rates(t, base, today)
         rate = rates["no_show_rate"]
         out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "called_out": t["called_out"], "late": t["late"],
                   "no_show_rate": rate,
@@ -1328,6 +1369,10 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
                   "late_threshold": LATE_RISK_RATE,
                   "base_rate": round(base["miss"], 3), "no_show_threshold": UNRELIABLE_RATE,
                   "unreliable": rate >= UNRELIABLE_RATE,
+                  "redeemed_shifts": rates["redeemed_shifts"],
+                  # Too few recent shifts to clear a risky label: the solver
+                  # keeps offering them shared shifts (LEARNING-21).
+                  "explore": rate > _exposure_from() and t.get("recent", 0) < EXPLORE_MIN_SHIFTS,
                   "short_rate": round(t["short"] / t["shifts"], 2),
                   "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
                   "half_life_days": RELIABILITY_HALF_LIFE_DAYS,
@@ -1337,6 +1382,11 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
                   # Saturday (scheduler audit 10/10/26 LEARNING-14).
                   "weekday_rates": _weekday_rates(t, rate)}
     return out
+
+
+def _exposure_from() -> float:
+    from attendance_risk import GRADED_FROM
+    return GRADED_FROM
 
 
 def _weekday_rates(t, person_rate) -> dict:
@@ -1430,6 +1480,9 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     says nothing about attendance (the same rule labor.py's no-show block
     applies).
     """
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     # Every shift somebody WATCHED (attendance.reliability_events — memory
     # audit 9/29/26): the outcomes the live check, the close-out and the
     # nightly published-week-vs-punches join recorded, and the shifts from a

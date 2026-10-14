@@ -64,6 +64,8 @@ import models as _models_mod
 from models import DB_PATH
 from staffing_curve import round_need as _round_need
 
+import schedule_time as _stime_scope
+
 SLOT = 30
 MODEL_WEEKS = 8
 PARTS = ("morning", "night")
@@ -104,6 +106,82 @@ def _quantile(vals, q):
 def _family(role):
     from intelligence.staffing import family_of
     return family_of(role)
+
+
+# ── the pre-go-live reference (schedule re-audit 10/11/26 LEARNING-8) ─────
+#
+# Per family x daypart, the median work per person-hour at the rush on the
+# restaurant's own nights before its first published Cavnar AI week: the
+# ceiling an unvalidated Cavnar-era night is held to (requirement_provenance.
+# cap_unvalidated). Kept here, not re-read from the 8-week window, so the cap
+# outlives the window; refreshed only by a reading from more pre-go-live
+# nights. Read by measure(); written by it (a cache row, never DDL here).
+REFERENCE_MIN_DAYS = 3
+
+
+def init_staffing_model(db_path=None):
+    """labor_standard_references, at boot (models.init_db)."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS labor_standard_references (
+            restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+            family         TEXT    NOT NULL,
+            daypart        TEXT    NOT NULL,
+            reference      REAL    NOT NULL,
+            days           INTEGER NOT NULL DEFAULT 0,
+            go_live        TEXT,
+            source         TEXT    NOT NULL DEFAULT 'pre_cavnar',
+            updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, family, daypart)
+        )""")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_references(restaurant_id, db_path=DB_PATH) -> dict:
+    """{(family, daypart): {"reference", "days", "go_live"}}; {} unread."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("SELECT family, daypart, reference, days, go_live FROM labor_standard_references "
+                                "WHERE restaurant_id=?", (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    return {(r["family"], r["daypart"]): {"reference": float(r["reference"]), "days": int(r["days"] or 0),
+                                          "go_live": r["go_live"]} for r in rows}
+
+
+def store_references(restaurant_id, seen: dict, live, have=None, db_path=DB_PATH) -> int:
+    """Upsert each (family, daypart) reference read from at least
+    REFERENCE_MIN_DAYS pre-go-live nights, when there is none yet, its
+    go-live moved, or this reading has as many nights or more. Returns rows
+    written; never raises."""
+    have = have if have is not None else load_references(restaurant_id, db_path=db_path)
+    n = 0
+    try:
+        conn = get_conn(db_path)
+        try:
+            for (fam, part), (value, days) in (seen or {}).items():
+                if value is None or int(days or 0) < REFERENCE_MIN_DAYS:
+                    continue
+                cur = have.get((fam, part))
+                if cur and cur.get("go_live") == live and int(cur.get("days") or 0) > int(days):
+                    continue
+                conn.execute("INSERT INTO labor_standard_references (restaurant_id, family, daypart, reference, days, "
+                             "go_live, source, updated_at) VALUES (?,?,?,?,?,?,'pre_cavnar',datetime('now')) "
+                             "ON CONFLICT(restaurant_id, family, daypart) DO UPDATE SET reference=excluded.reference, "
+                             "days=excluded.days, go_live=excluded.go_live, updated_at=excluded.updated_at",
+                             (restaurant_id, fam, part, float(value), int(days), live))
+                n += 1
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[staffing_model] references not stored for {restaurant_id}: {e}")
+    return n
 
 
 def _part_of(minute) -> str:
@@ -151,6 +229,92 @@ def work_slots(restaurant_id, start, end, db_path=DB_PATH) -> dict:
         day["tickets"][m] = day["tickets"].get(m, 0) + int(r["tickets"] or 0)
         day["bar tickets"][m] = day["bar tickets"].get(m, 0) + int(r["bar"] or 0)
     return out
+
+
+def _minutes_between(a, b):
+    from datetime import datetime as _dt
+    try:
+        x = _dt.fromisoformat(str(a).replace(" ", "T")[:19])
+        y = _dt.fromisoformat(str(b).replace(" ", "T")[:19])
+    except (TypeError, ValueError):
+        return None
+    m = (y - x).total_seconds() / 60.0
+    return m if 0 < m < 6 * 60 else None
+
+
+def service_slots(restaurant_id, start, end, db_path=DB_PATH) -> dict:
+    """{iso date: {"ticket": {minute: median minutes a ticket opened in that
+    half hour stayed open}, "kitchen": {minute: median minutes fired ->
+    bumped}, "bar": {...the bar's tickets}, "comps": {minute: discount share
+    of sales}}} from the ticket archive, on each ticket's business-day
+    timeline — the service outcomes the labor standard is fitted against
+    (schedule re-audit 10/11/26 LOGIC-21). Cancelled tickets out; {} on a
+    failed read."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT business_date, opened_at, closed_at, fired_at, bumped_at, COALESCE(is_bar,0) AS bar, "
+                "COALESCE(discount,0) AS disc, COALESCE(net_sales,0) AS net FROM pos_tickets WHERE restaurant_id=? "
+                "AND business_date>=? AND business_date<? AND COALESCE(cancelled,0)=0 AND opened_at IS NOT NULL",
+                (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    acc = {}
+    for r in rows:
+        bd = str(r["business_date"])[:10]
+        hk = str(r["opened_at"]).replace(" ", "T")
+        try:
+            h = int(hk[11:13]) + 24 * max(0, (date.fromisoformat(hk[:10]) - date.fromisoformat(bd)).days)
+            m = h * 60 + (30 if int(hk[14:16]) >= 30 else 0)
+        except (TypeError, ValueError):
+            continue
+        day = acc.setdefault(bd, {"ticket": {}, "kitchen": {}, "bar": {}, "disc": {}, "net": {}})
+        t = _minutes_between(r["opened_at"], r["closed_at"])
+        if t is not None:
+            day["bar" if r["bar"] else "ticket"].setdefault(m, []).append(t)
+        k = _minutes_between(r["fired_at"], r["bumped_at"])
+        if k is not None:
+            day["kitchen"].setdefault(m, []).append(k)
+        day["disc"][m] = day["disc"].get(m, 0.0) + float(r["disc"] or 0)
+        day["net"][m] = day["net"].get(m, 0.0) + float(r["net"] or 0)
+    out = {}
+    for bd, day in acc.items():
+        out[bd] = {k: {m: _median(v) for m, v in day[k].items()} for k in ("ticket", "kitchen", "bar")}
+        out[bd]["comps"] = {m: (day["disc"][m] / (day["disc"][m] + day["net"][m]))
+                            for m in day["net"] if (day["disc"][m] + day["net"][m]) > 0}
+    return out
+
+
+# The outcome each family's standard is fitted against (LOGIC-21): the line
+# by how long the kitchen takes a ticket, the bar by its tickets' time open,
+# the floor by its tables'.
+OUTCOME_OF = {"kitchen": "kitchen", "line": "kitchen", "cook": "kitchen", "bar": "bar", "bartender": "bar"}
+OUTCOME_MIN_DAYS = 9               # three terciles of three nights
+OUTCOME_TOLERANCE = 0.15           # service no more than 15% slower than at the restaurant's lightest loads
+
+
+def outcome_standard(pairs, tolerance=OUTCOME_TOLERANCE) -> dict:
+    """The load one person carried at the rush that service here measurably
+    holds at (LOGIC-21): `pairs` [(work per person-hour, outcome minutes)]
+    over nights, split into terciles by load; the outcome-optimal standard is
+    the median load of the busiest tercile whose median service time stays
+    within `tolerance` of the lightest tercile's. {} under OUTCOME_MIN_DAYS
+    nights. {"optimal", "limited": bool (service slowed at the busiest
+    loads), "terciles": [(load, minutes)], "days"}. Pure."""
+    pts = sorted((float(x), float(y)) for x, y in (pairs or []) if x and y is not None and y > 0)
+    if len(pts) < OUTCOME_MIN_DAYS:
+        return {}
+    k = len(pts) // 3
+    groups = [pts[:k], pts[k:2 * k], pts[2 * k:]]
+    terc = [(_median([x for x, _y in g]), _median([y for _x, y in g])) for g in groups]
+    base = terc[0][1]
+    ok = [t for t in terc if t[1] <= base * (1 + tolerance)]
+    best = max(ok, key=lambda t: t[0]) if ok else terc[0]
+    return {"optimal": round(best[0], 2), "limited": terc[-1][1] > base * (1 + tolerance),
+            "terciles": [(round(a, 2), round(b, 1)) for a, b in terc], "days": len(pts)}
 
 
 def people_slots(rows) -> dict:
@@ -230,8 +394,10 @@ def _core_slots(part, open_m=None, close_m=None):
     return list(floor_slots(part, open_m, close_m) or [])
 
 
+@_stime_scope.scoped
 def measure(restaurant_id, shifts=None, db_path=DB_PATH, today=None, weeks=MODEL_WEEKS, prior=None,
-            work=None, people=None, live=None, ok_pairs=None, overrides=None) -> dict:
+            work=None, people=None, live=None, ok_pairs=None, overrides=None, references=None,
+            outcomes=None) -> dict:
     """The model (see the module note): {"families": {family: {"lag",
     "lag_gain", "unit", "parts": {part: {"std", "own", "n", "prior",
     "source", "fixed", "text"}}}}, "work": {(weekday, part): {unit: {"total",
@@ -239,7 +405,11 @@ def measure(restaurant_id, shifts=None, db_path=DB_PATH, today=None, weeks=MODEL
     archive and punches. `prior` — {family: {part: per hour}}, the cohort's;
     `live` / `ok_pairs` — go-live and the validated (date, part) pairs
     (requirement_provenance); `overrides` the owner's standards
-    (labor_standards.overrides) — all read here when not given."""
+    (labor_standards.overrides); `references` the persisted pre-go-live
+    medians (load_references — LEARNING-8; backfilled from the archive
+    before go-live once the window holds no pre-go-live night); `outcomes`
+    the service outcomes by the half hour (service_slots — LOGIC-21) — all
+    read here when not given."""
     try:
         import labor_standards as _ls
         if today is None:
@@ -282,26 +452,71 @@ def measure(restaurant_id, shifts=None, db_path=DB_PATH, today=None, weeks=MODEL
                 prior = _sp.standard_prior(restaurant_id, db_path=db_path) or {}
             except Exception:
                 prior = {}
-        return _build(work, people, dates, live, ok_pairs or set(), overrides or {}, prior or {})
+        stored = None
+        if live and references is None:
+            stored = load_references(restaurant_id, db_path=db_path)
+            references = {k: v["reference"] for k, v in stored.items() if v.get("go_live") == live}
+            if not references and not any(d < live for d in dates):
+                references = _backfill_references(restaurant_id, live, shifts, weeks, db_path)
+        if outcomes is None:
+            outcomes = service_slots(restaurant_id, start, today, db_path=db_path)
+        model = _build(work, people, dates, live, ok_pairs or set(), overrides or {}, prior or {},
+                       references=references or {}, outcomes=outcomes or {})
+        if live and model.get("references_seen"):
+            store_references(restaurant_id, model["references_seen"], live, have=stored, db_path=db_path)
+        return model
     except Exception as e:
         print(f"[staffing_model] unavailable for {restaurant_id}: {e}")
         return {}
 
 
-def _build(work, people, dates, live, ok_pairs, overrides, prior) -> dict:
+def _backfill_references(restaurant_id, live, shifts, weeks, db_path) -> dict:
+    """{(family, daypart): reference} read from the MODEL_WEEKS before
+    go-live (the manager's own staffing), stored, for a restaurant whose
+    window no longer holds a pre-go-live night and has no reference yet
+    (LEARNING-8). {} when the archive does not reach back."""
+    try:
+        end = date.fromisoformat(str(live)[:10])
+    except ValueError:
+        return {}
+    start = end - timedelta(weeks=int(weeks))
+    work = work_slots(restaurant_id, start, end, db_path=db_path)
+    if not work:
+        return {}
+    if shifts is None:
+        import labor
+        shifts = labor.load_shifts_for_restaurant(restaurant_id) or []
+    lo, hi = start.isoformat(), end.isoformat()
+    people = people_slots([s for s in shifts if lo <= str(s.get("date") or "")[:10] < hi])
+    dates = sorted(d for d in work if d in people)
+    if not dates:
+        return {}
+    pre = _build(work, people, dates, None, set(), {}, {})
+    seen = {}
+    for fam, e in (pre.get("families") or {}).items():
+        for part, pe in (e.get("parts") or {}).items():
+            if pe.get("own_raw") is not None:
+                seen[(fam, part)] = (pe["own_raw"], pe.get("thr_days") or 0)
+    store_references(restaurant_id, seen, live, db_path=db_path)
+    return {k: v for k, (v, n) in seen.items() if n >= REFERENCE_MIN_DAYS}
+
+
+def _build(work, people, dates, live, ok_pairs, overrides, prior, references=None, outcomes=None) -> dict:
     """The model from read slots (pure)."""
     import labor_standards as _ls
     import requirement_provenance as _prov
     fams = sorted({f for d in dates for f in (people.get(d) or {})})
-    out = {"families": {}, "work": {}, "dates": len(dates)}
+    out = {"families": {}, "work": {}, "dates": len(dates), "references_seen": {}}
     for fam in fams:
         spec = _ls.WORK.get(fam)
         unit = spec[0] if spec else UNIT_FAMILY_TICKETS
         lag = measure_lag(work, people, fam, unit, dates)
         e = {"lag": lag["lag"], "lag_gain": lag["gain"], "unit": spec[0] if spec else None, "parts": {}}
+        metric = OUTCOME_OF.get(fam) or ("bar" if "bar" in str(fam) else "kitchen" if any(
+            w in str(fam) for w in ("kitchen", "line", "cook")) else "ticket")
         for part in PARTS:
             lo, hi = _part_range(part)
-            thr, mins = {}, []
+            thr, mins, served = {}, [], {}
             core = set(_core_slots(part))
             for d in dates:
                 p = (people.get(d) or {}).get(fam) or {}
@@ -321,26 +536,51 @@ def _build(work, people, dates, live, ok_pairs, overrides, prior) -> dict:
                 if n_star <= 0:
                     continue
                 thr[d] = (w[t_star] * 2.0) / n_star          # work per person-hour at the busiest half hour
+                o = (((outcomes or {}).get(d) or {}).get(metric) or {}).get(t_star)
+                if o is not None:
+                    served[d] = o
             fixed = int(math.floor((_quantile(mins, FIXED_QUANTILE) or 0) + 1e-9)) if mins else 0
             entry = {"fixed": fixed, "fixed_days": len(mins)}
+            if thr:
+                entry["own_raw"], entry["thr_days"] = round(_median(list(thr.values())), 3), len(thr)
             own_std = (overrides.get(fam) or {}).get(part, (overrides.get(fam) or {}).get("all")) if spec else None
             if spec and own_std is not None:
                 entry.update(std=float(own_std), source="yours", n=len(thr),
                              own=round(_median(list(thr.values())), 2) if thr else None)
             elif spec and thr:
-                capped = _prov.cap_unvalidated(thr, live, ok_pairs, part=part)
-                own = _median(list(capped.values()))
+                capped = _prov.cap_unvalidated(thr, live, ok_pairs, part=part,
+                                               reference=(references or {}).get((fam, part)))
+                pre_vals = [v for d, v in thr.items() if live and d < live]
+                if live and pre_vals:
+                    out["references_seen"][(fam, part)] = (_median(pre_vals), len(pre_vals))
+                own = _median(list(capped.values())) if capped else None
                 n = len(capped)
                 pr = (prior.get(fam) or {}).get(part)
-                if pr is not None:
+                if own is None:
+                    std = float(pr) if pr is not None else None
+                elif pr is not None:
                     std = (n * own + STD_SHRINK * float(pr)) / (n + STD_SHRINK)
                 elif n >= STD_MIN_DAYS:
                     std = own
                 else:
                     std = None
+                # Fitted against service (LOGIC-21): where the restaurant's
+                # own nights show service slowing at the habit's load, the
+                # standard is the busiest load service held at — more people,
+                # never fewer than the habit; where service held up at higher
+                # loads, that is said, never applied (the owner may adopt it
+                # as their standard).
+                fit = outcome_standard([(thr[d], served[d]) for d in served if d in capped])
+                source = "measured"
+                if std and fit:
+                    entry["outcome"] = dict(fit, habit=round(std, 2), metric=metric)
+                    if fit["limited"] and fit["optimal"] < std:
+                        std, source = fit["optimal"], "outcome"
                 if std:
-                    entry.update(std=round(std, 2), own=round(own, 2), n=n, prior=pr, source="measured",
-                                 capped=sum(1 for d in thr if capped[d] < thr[d]))
+                    entry.update(std=round(std, 2), own=round(own, 2) if own is not None else None, n=n, prior=pr,
+                                 source=source,
+                                 capped=sum(1 for d in thr if d in capped and capped[d] < thr[d]),
+                                 left_out=sum(1 for d in thr if d not in capped))
             if entry.get("std"):
                 who = _ls.UNIT_WORDS.get(fam, fam)
                 meal = "lunch" if part == "morning" else "dinner"
@@ -348,7 +588,8 @@ def _build(work, people, dates, live, ok_pairs, overrides, prior) -> dict:
                                  + (" (your standard)" if entry["source"] == "yours" else
                                     f" (measured here over {entry['n']} {'shift' if entry['n'] == 1 else 'shifts'}"
                                     + (", shrunk toward similar restaurants'" if entry.get("prior") is not None
-                                       else "") + ")"))
+                                       else "") + ")")
+                                 + _outcome_words(entry.get("outcome"), unit, who))
             e["parts"][part] = entry
         out["families"][fam] = e
     # The typical work of each weekday's meal and its half-hour shares.
@@ -376,6 +617,20 @@ def _build(work, people, dates, live, ok_pairs, overrides, prior) -> dict:
             "total": _median(e["totals"]), "days": n,
             "shares": {t: v / s for t, v in shares.items()} if s > 0 else {}}
     return out
+
+
+def _outcome_words(o, unit, who) -> str:
+    """The habit beside the outcome-optimal level, in the owner's words
+    (LOGIC-21)."""
+    if not o:
+        return ""
+    what = {"kitchen": "kitchen ticket times", "bar": "bar ticket times"}.get(o.get("metric"), "table times")
+    lo, hi = o["terciles"][0], o["terciles"][-1]
+    if o.get("limited"):
+        return (f"; {what} ran {hi[1]:g} min at {hi[0]:g} {unit} per {who}-hour against {lo[1]:g} at {lo[0]:g}, "
+                f"so service holds to about {o['optimal']:g} — your usual habit was {o['habit']:g}")
+    return (f"; {what} held ({lo[1]:g} to {hi[1]:g} min) up to {hi[0]:g} {unit} per {who}-hour over "
+            f"{o['days']} nights — your habit {o['habit']:g}; set your own standard to change it")
 
 
 def lags(model) -> dict:

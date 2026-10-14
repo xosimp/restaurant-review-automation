@@ -90,8 +90,19 @@ ABLATION_MIN_CLOCK_SECONDS = 120.0
 # freeze after it) — the retention registry's reader window (ops).
 TAGS_READ_DAYS = SCORE_WEEKS * 7 + FREEZE_AFTER_DAYS
 RUN_MAX_SECONDS = 15 * 60
+RUN_WORKERS = 3
 CURSOR_KEY = "schedule_scorecard_cursor"
 ADMIN_MAX_RESTAURANTS = 500
+# Engagement (blind re-audit 10/11/26 LEARNING-16): a week sent with no
+# edit counts as reviewed only when a person of the restaurant had the draft
+# open (the week's detail or the pre-publish review — schedule_draft_views)
+# at least ENGAGED_MIN_SECONDS before it went out. A week published before
+# the restaurant's first recorded view (views were not recorded yet) reads
+# unknown (None), as it always did.
+ENGAGED_MIN_SECONDS = 90
+# The owner's trend (LEARNING-17): at least this many scored weeks, a
+# serial-correlation-robust interval (learning_stats.trend_slope_ci).
+TREND_MIN_WEEKS = 8
 
 
 def get_conn(db_path=None):
@@ -158,6 +169,17 @@ def init_schedule_scorecard(db_path=None):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_scores_week ON schedule_learning_scores(restaurant_id, "
                      "week_start)")
+        # Who of the restaurant had a draft open, and when (LEARNING-16): one
+        # row per draft, a person's first and last view and how many.
+        conn.execute("""CREATE TABLE IF NOT EXISTS schedule_draft_views (
+            history_id      INTEGER PRIMARY KEY,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            first_viewed_at TEXT    NOT NULL,
+            last_viewed_at  TEXT    NOT NULL,
+            views           INTEGER NOT NULL DEFAULT 1,
+            surfaces        TEXT
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_draft_views_rid ON schedule_draft_views(restaurant_id)")
         conn.commit()
     finally:
         conn.close()
@@ -310,14 +332,95 @@ def survival(origins, base_rows, published_rows) -> dict:
 
 
 def ablation_wanted(learned, clock=None) -> bool:
-    """Whether the generation runs the learning ablation: something learned
-    binds this week, the switch is not off, and the job's clock has room."""
+    """Whether the generation queues the learning ablation: something learned
+    binds this week and the switch is not off (`clock`, when given, must
+    have room — the ablation now runs off the owner's wait, ARCH-14, so the
+    job passes none)."""
     if not learned or (os.environ.get(ABLATION_ENV) or "1").strip() in ("0", "off", "false"):
         return False
     try:
         return clock is None or clock.seconds_left() > ABLATION_MIN_CLOCK_SECONDS
     except Exception:
         return False
+
+
+ABLATION_KIND = "schedule_ablation"
+
+
+def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned, reassign_on=True,
+                     db_path=None) -> dict:
+    """The learning ablation as a bulk job_queue row, after the save (blind
+    re-audit 10/11/26 ARCH-14): the rows that came into the repair loop and
+    the rows it made, packed; the context it re-runs in is the one stored
+    with this week's metrics (schedule_metrics.snapshot, its `kind`). What
+    the generation tags carry until it runs: {"queued": True, ...} — never
+    inline (the queue is the one path since ARCH-10; there is no "queue
+    off")."""
+    import job_queue
+    import schedule_resume as _pk
+    payload = {"restaurant_id": restaurant_id, "history_id": int(history_id), "kind": kind,
+               "learned": int(learned or 0), "reassign_on": bool(reassign_on),
+               "pre_z": _pk.pack([dict(r) for r in pre_rows or []]), "on_z": _pk.pack(compact(rows_on))}
+    qid, _created = job_queue.enqueue(ABLATION_KIND, payload, restaurant_id=restaurant_id, priority_class="bulk",
+                                      idempotency_key=f"{ABLATION_KIND}:{int(history_id)}", db_path=db_path)
+    return {"ran": False, "queued": True, "job": qid, "learned": int(learned or 0)}
+
+
+def run_queued_ablation(job, db_path=None) -> dict:
+    """job_queue's handler for `schedule_ablation`: the week's repair loop
+    run again over the same rows, in the same frozen context, with the
+    learned memory off (schedule_engine.post_model_rows' context), bounded
+    by ABLATION_MAX_SECONDS; the result is written into the week's
+    generation tags (record_ablation). Offline — no owner waits on it."""
+    import time as _t
+    import types as _types
+    import schedule_engine as se
+    import schedule_metrics as sm
+    import schedule_resume as _pk
+    p = job.payload if hasattr(job, "payload") else (job or {}).get("payload") or {}
+    hid, rid = p.get("history_id"), p.get("restaurant_id")
+    blob = sm.context_for(history_id=hid, kind=p.get("kind"), db_path=db_path)
+    ctx = sm.load_context(blob) if blob else None
+    if not ctx:
+        out = {"ran": False, "why": "no stored context", "learned": p.get("learned")}
+        record_ablation(hid, out, db_path=db_path)
+        return out
+    c = ctx.get("constraints")
+    result = dict(ctx.get("result") or {})
+    result["constraints"] = c
+    if c is not None and result.get("roster_roles") and not getattr(c, "roster_roles", None):
+        c.roster_roles = dict(result["roster_roles"])
+    rest = ctx.get("restaurant")
+    signals = dict(ctx.get("signals") or {}, learned=[]) if ctx.get("signals") is not None else None
+    x = se.RepairContext(rid, result, c, editable=set(ctx["editable"]) if ctx.get("editable") else None,
+                         restaurant=_types.SimpleNamespace(**rest) if isinstance(rest, dict) else None,
+                         close_times=ctx.get("close_times") or {}, role_buffers=ctx.get("role_buffers") or {},
+                         signals=signals, weights=ctx.get("weights"), requirements=ctx.get("requirements") or [],
+                         curve=ctx.get("curve") or {}, clock=None, solver_on=ctx.get("solver_on", True),
+                         max_seconds=ABLATION_MAX_SECONDS)
+    x.reassign_on = bool(p.get("reassign_on", True))
+    x.shadow = True
+    t0 = _t.monotonic()
+    loop = se.repair_week([dict(r) for r in _pk.unpack(p.get("pre_z")) or []], x)
+    out = {"ran": True, "learned": p.get("learned"), "rows_on": _pk.unpack(p.get("on_z")) or [],
+           "rows_off": compact(loop.get("rows")), "seconds": round(_t.monotonic() - t0, 2), "offline": True}
+    record_ablation(hid, out, db_path=db_path)
+    return {"ran": True, "history_id": hid, "seconds": out["seconds"]}
+
+
+def record_ablation(history_id, ablation, db_path=None) -> bool:
+    """The ablation's result into the week's generation tags, leaving the
+    rest of the row as tag_generation wrote it."""
+    if not history_id:
+        return False
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("UPDATE schedule_generation_tags SET ablation_json=? WHERE history_id=?",
+                           (json.dumps(ablation, default=str), int(history_id)))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
 
 
 def compact(rows) -> list:
@@ -464,6 +567,14 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
     if rec is not None:
         out["rows_drafted"] = len(rec["base"])
         d = drr(rec) if rec["looked_at"] else None
+        # A week sent unread is not a draft that needed no edits (LEARNING-16:
+        # "pressed Publish" counted as looked at, so disengagement read as
+        # better drafts): its rate is kept apart and counts nowhere.
+        out["engaged"] = engagement(restaurant_id, history_id, h["published_at"], bool(rec.get("edited")),
+                                    bool(rec.get("published_by_person")), db_path=db_path) if rec["looked_at"] else None
+        if d is not None and out["engaged"] is False:
+            out["drr_unreviewed"] = d
+            d = None
         out["drr"] = d
         # Requirement error against what the draft was ASKED for.
         asked = {}
@@ -667,14 +778,89 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
         pub = rec.get("final_owner") or published
         out["origin_survival"] = survival(tags["origins"], rec["base"], pub)
     ab = tags.get("ablation") or {}
-    if rec is not None and rec["looked_at"] and ab.get("ran") and ab.get("rows_on") is not None:
-        final = rec.get("final") or []
-        on, off = distance(ab["rows_on"], final), distance(ab.get("rows_off") or [], final)
-        out["ablation"] = {"learned": ab.get("learned"), "drr_on": on, "drr_off": off,
-                           "effect": (round(off["rate"] - on["rate"], 2)
-                                      if on.get("rate") is not None and off.get("rate") is not None else None),
-                           "seconds": ab.get("seconds")}
+    if ab.get("ran") and ab.get("rows_on") is not None:
+        out["ablation"] = influence(ab)
     return out
+
+
+def influence(ab) -> dict:
+    """What the learned memory CHANGED in a draft (the ablation's two
+    drafts, memory on and off, over the same model answer): the edit items
+    between them per 100 drafted rows. Never an effect (blind re-audit
+    10/11/26 LEARNING-13): the manager edited the memory-on draft, so
+    "which of the two is closer to the week they sent" favours the one they
+    started from by construction — +5.6 edits/100 rows of "effect" when the
+    memory added nothing. Whether learning makes weeks better is the
+    learning_v2 switchback's question (schedule_experiments), judged on
+    outcomes."""
+    moved = distance(ab.get("rows_off") or [], ab.get("rows_on") or [])
+    return {"learned": ab.get("learned"), "changed_per_100": moved.get("rate"), "rows": moved.get("n"),
+            "seconds": ab.get("seconds"), "effect": None,
+            "note": "how much the learned memory changed the draft - not whether it helped"}
+
+
+# ── engagement: did a person look at the draft (LEARNING-16) ──────────────
+
+def record_view(restaurant_id, history_id, user=None, surface=None, db_path=None) -> bool:
+    """A person of the restaurant opened a draft (the week's detail, the
+    pre-publish review). An admin (or an admin's view-as) is not the
+    restaurant's look and is not recorded. Never raises into the route."""
+    try:
+        if not history_id:
+            return False
+        if isinstance(user, dict):
+            from permissions import answer_authority
+            if answer_authority(user) == "admin":
+                return False
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        conn = get_conn(db_path)
+        try:
+            conn.execute("INSERT INTO schedule_draft_views (history_id, restaurant_id, first_viewed_at, last_viewed_at, "
+                         "views, surfaces) SELECT ?,?,?,?,1,? WHERE EXISTS (SELECT 1 FROM schedule_history WHERE id=? "
+                         "AND restaurant_id=?) ON CONFLICT(history_id) DO UPDATE SET last_viewed_at=excluded.last_viewed_at, "
+                         "views=schedule_draft_views.views + 1",
+                         (int(history_id), restaurant_id, now, now, str(surface or "")[:40] or None, int(history_id),
+                          restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception as e:
+        log.warning("draft view not recorded rid=%s hid=%s: %s", restaurant_id, history_id, e)
+        return False
+
+
+def engagement(restaurant_id, history_id, published_at, edited, by_person, db_path=None):
+    """True / False / None: whether a person reviewed the week before it went
+    out (module constants). Edited: yes. Sent by a person with no edit: yes
+    when the draft was open ENGAGED_MIN_SECONDS or more before the publish;
+    no when it was opened only seconds before, or never while views were
+    being recorded (the restaurant has a view from before this publish);
+    None before then or when nobody of the restaurant sent it."""
+    if edited:
+        return True
+    if not by_person or not published_at:
+        return None
+    pub = str(published_at)[:19].replace("T", " ")
+    try:
+        conn = get_conn(db_path)
+        try:
+            v = conn.execute("SELECT first_viewed_at FROM schedule_draft_views WHERE history_id=? AND restaurant_id=?",
+                             (int(history_id), restaurant_id)).fetchone()
+            first = conn.execute("SELECT MIN(first_viewed_at) FROM schedule_draft_views WHERE restaurant_id=?",
+                                 (restaurant_id,)).fetchone()[0] if v is None else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if v is None:
+        return False if (first and str(first)[:19] < pub) else None
+    try:
+        dwell = (datetime.strptime(pub, "%Y-%m-%d %H:%M:%S")
+                 - datetime.strptime(str(v["first_viewed_at"])[:19], "%Y-%m-%d %H:%M:%S")).total_seconds()
+    except (TypeError, ValueError):
+        return None
+    return dwell >= ENGAGED_MIN_SECONDS
 
 
 _COLS = ("looked_at", "rows_drafted", "req_error_asked", "req_error_punched", "labor_pct", "hourly_target",
@@ -742,10 +928,24 @@ def score_restaurant(restaurant_id, today=None, db_path=None, weeks=SCORE_WEEKS)
     return out
 
 
+def score_one(restaurant_id, db_path=None, today=None) -> dict:
+    """One restaurant's Monday scoring — the `learner` queue row's body
+    (strategy_jobs.LEARNERS "schedule_scorecard"; blind re-audit 10/11/26
+    SCALE-26). A restaurant that may not teach is skipped."""
+    import models
+    r = models.get_restaurant(restaurant_id, db_path or models.DB_PATH)
+    if r is None or not getattr(r, "module_labor", 0) or not models.learns_for_itself(r, db_path=db_path):
+        return {"skipped": "does not learn for itself"}
+    return score_restaurant(restaurant_id, today=today, db_path=db_path)
+
+
 def run_scorecard(db_path=None, today=None) -> dict:
-    """The Monday job (after schedule_outcomes and the memory): every Labor
-    restaurant that may teach, bounded by RUN_MAX_SECONDS and resumable
-    from CURSOR_KEY (scheduler.resumable_sweep). The standard counts."""
+    """The Monday job inline (after schedule_outcomes and the memory): every
+    Labor restaurant that may teach, RUN_WORKERS at a time, bounded by
+    RUN_MAX_SECONDS and resumable from CURSOR_KEY (scheduler.
+    resumable_sweep); a pass that hits its bound is captured. With the job
+    queue on, the scheduler fans it out as one `learner` row per restaurant
+    instead (strategy_jobs.learner_pass — SCALE-26). The standard counts."""
     import models
     import scheduler as _sched
     ids = []
@@ -759,19 +959,28 @@ def run_scorecard(db_path=None, today=None) -> dict:
             continue
         ids.append(r.id)
     tally = {"attempted": 0, "failed": 0, "weeks": 0, "frozen": 0}
+    import threading
+    lock = threading.Lock()
 
     def _one(rid):
-        tally["attempted"] += 1
+        with lock:
+            tally["attempted"] += 1
         try:
             got = score_restaurant(rid, today=today, db_path=db_path)
-            tally["weeks"] += got["weeks"]
-            tally["frozen"] += got["frozen"]
+            with lock:
+                tally["weeks"] += got["weeks"]
+                tally["frozen"] += got["frozen"]
         except Exception as e:
-            tally["failed"] += 1
+            with lock:
+                tally["failed"] += 1
             import ops
             ops.capture(e, job="schedule_scorecard", context=f"restaurant_id={rid}", restaurant_id=rid)
-    _done, ran_out = _sched.resumable_sweep(CURSOR_KEY, sorted(ids), _one, RUN_MAX_SECONDS, workers=1,
+    _done, ran_out = _sched.resumable_sweep(CURSOR_KEY, sorted(ids), _one, RUN_MAX_SECONDS, workers=RUN_WORKERS,
                                             job="schedule_scorecard")
+    if ran_out:
+        import ops
+        ops.capture(RuntimeError(f"schedule_scorecard stopped at its {RUN_MAX_SECONDS}s bound; the rest lead the "
+                                 "next pass"), job="schedule_scorecard", context="time_bound")
     return {"attempted": tally["attempted"], "ok": tally["attempted"] - tally["failed"], "failed": tally["failed"],
             "skipped": 0, "hit_bound": bool(ran_out), "weeks": tally["weeks"], "frozen": tally["frozen"]}
 
@@ -836,8 +1045,11 @@ def owner_view(restaurant_id, weeks=12, db_path=None) -> dict:
             lines.append(f"Sales forecast off by {_fmt(r['forecast_error'], '%')}"
                          + (f" (a plain 8-week average was off by {_fmt(r['naive_error'], '%')})"
                             if r["naive_error"] is not None else ""))
+        if (r["metrics"] or {}).get("engaged") is False:
+            lines.append("Sent without being opened for review — its edits are not counted as the draft's")
         out_weeks.append({"history_id": r["history_id"], "week": mdy(r["week_start"]), "week_start": r["week_start"],
                           "status": r["status"], "looked_at": bool(r["looked_at"]),
+                          "engaged": (r["metrics"] or {}).get("engaged"),
                           "drr": r["drr"], "drr_lo": r["drr_lo"], "drr_hi": r["drr_hi"],
                           "labor_pct": r["labor_pct"], "hourly_target": r["hourly_target"],
                           "labor_vs_target": r["labor_vs_target"], "ot_hours": r["ot_hours"],
@@ -847,18 +1059,71 @@ def owner_view(restaurant_id, weeks=12, db_path=None) -> dict:
                           "forecast_error": r["forecast_error"], "naive_error": r["naive_error"],
                           "req_error_asked": r["req_error_asked"], "req_error_punched": r["req_error_punched"],
                           "lines": lines})
-    pts = [(restaurant_id, i, w["drr"]) for i, w in enumerate(reversed(out_weeks)) if w["drr"] is not None]
-    trend = learning_stats.fe_slope_ci(pts) if len(pts) >= 4 else None
-    sentence = None
-    if trend and trend.get("slope") is not None:
-        if trend["hi"] < 0:
-            sentence = "Your drafts are needing fewer edits week over week."
-        elif trend["lo"] > 0:
-            sentence = "Your drafts are needing more edits lately — tell Cavnar AI what keeps changing."
-        else:
-            sentence = "No clear change yet in how much each draft needs."
+    trend, sentence, outcomes, changed = owner_trend(restaurant_id, out_weeks, db_path=db_path)
     return {"ok": True, "available": bool(out_weeks), "weeks": out_weeks, "trend": trend, "trend_sentence": sentence,
-            "frozen_after_days": FREEZE_AFTER_DAYS}
+            "trend_outcomes": outcomes, "settings_changed": changed, "frozen_after_days": FREEZE_AFTER_DAYS,
+            "unreviewed_weeks": sum(1 for w in out_weeks if w.get("engaged") is False)}
+
+
+# The outcomes a "fewer edits" claim is paired with (LEARNING-16): each
+# lower is better.
+TREND_OUTCOMES = (("unmanaged_minutes", "minutes with no manager"), ("shortfall_hours", "hours short of the ask"),
+                  ("uncovered_no_shows", "uncovered no-shows"), ("labor_vs_target", "labor against the target"))
+
+
+def owner_trend(restaurant_id, out_weeks, db_path=None):
+    """(trend, sentence, outcomes, settings_changed) for the owner's own
+    weeks (newest first): the rework rate's slope over the weeks with a
+    serial-correlation-robust interval (learning_stats.trend_slope_ci, t on
+    n - 2) from TREND_MIN_WEEKS weeks (blind re-audit 10/11/26 LEARNING-17:
+    a z interval from 4 weeks told 11-17% of owners with no trend that
+    their drafts were improving); "fewer edits" is said only when no paired
+    outcome measurably worsened over the same weeks (LEARNING-16), and the
+    sentence says when the rules or settings changed inside the window."""
+    import learning_stats
+    series = [w.get("drr") for w in reversed(out_weeks)]
+    n = sum(1 for v in series if v is not None)
+    if n < TREND_MIN_WEEKS:
+        return (None, (f"Not enough reviewed weeks yet to say whether drafts are needing fewer edits ({n} of "
+                       f"{TREND_MIN_WEEKS})." if out_weeks else None), {}, None)
+    trend = learning_stats.trend_slope_ci(series, min_n=TREND_MIN_WEEKS)
+    outcomes = {}
+    for key, label in TREND_OUTCOMES:
+        t = learning_stats.trend_slope_ci([w.get(key) for w in reversed(out_weeks)], min_n=TREND_MIN_WEEKS)
+        if t.get("slope") is not None:
+            outcomes[key] = dict(t, label=label, worse=bool(t["lo"] > 0))
+    worse = [o["label"] for o in outcomes.values() if o["worse"]]
+    starts = [w.get("week_start") for w in out_weeks if w.get("week_start")]
+    changed = _settings_changed(restaurant_id, min(starts), db_path=db_path) if starts else None
+    note = " Your rules or settings changed during these weeks, so some of the change may be theirs." if changed else ""
+    sentence = None
+    if trend.get("slope") is not None:
+        if trend["hi"] < 0 and not worse:
+            sentence = "Your drafts are needing fewer edits week over week, and the weeks ran no worse." + note
+        elif trend["hi"] < 0:
+            sentence = ("Your drafts are needing fewer edits, but " + " and ".join(worse) + " went up over the same "
+                        "weeks — fewer edits is not better weeks." + note)
+        elif trend["lo"] > 0:
+            sentence = "Your drafts are needing more edits lately — tell Cavnar AI what keeps changing." + note
+        else:
+            sentence = "No clear change yet in how much each draft needs." + note
+    return trend, sentence, outcomes, changed
+
+
+def _settings_changed(restaurant_id, since, db_path=None):
+    """The number of owner rule and setting changes recorded since `since`
+    (change_log), or None when unreadable."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            r = conn.execute("SELECT COUNT(*) FROM change_log WHERE restaurant_id=? AND changed_at >= ? AND "
+                             "kind IN ('rules', 'hours', 'setting', 'automation', 'target')",
+                             (restaurant_id, str(since)[:10])).fetchone()
+        finally:
+            conn.close()
+        return int(r[0] or 0)
+    except Exception:
+        return None
 
 
 TREND_FIGURES = ("drr", "labor_vs_target", "ot_hours", "unmanaged_minutes", "shortfall_hours", "uncovered_no_shows",
@@ -879,7 +1144,10 @@ def admin_view(db_path=None) -> dict:
     by = {}
     for r in rows:
         by.setdefault(r["restaurant_id"], []).append(r)
-    rids = sorted(by)[:ADMIN_MAX_RESTAURANTS]
+    # A stratified sample across the fleet, rotated weekly (LEARNING-23):
+    # the first ADMIN_MAX_RESTAURANTS by id were the oldest customers only.
+    y_, w_, _d = date.today().isocalendar()
+    rids = learning_stats.fleet_sample(by, ADMIN_MAX_RESTAURANTS, key=f"scorecard|{y_}-W{w_:02d}")
     trend = {}
     for fig in TREND_FIGURES:
         pts = []
@@ -890,9 +1158,15 @@ def admin_view(db_path=None) -> dict:
                     pts.append((rid, i, float(r[fig])))
         trend[fig] = learning_stats.fe_slope_ci(pts)
         trend[fig]["mean"] = learning_stats.mean_ci([p[2] for p in pts])["mean"] if pts else None
-    abl = [(r["restaurant_id"], r["ablation_effect"]) for rid in rids for r in by[rid] if r["ablation_effect"] is not None]
+    # The learned memory's INFLUENCE (rows it changed per 100), never an
+    # effect (LEARNING-13): the effect is the learning_v2 switchback's.
     import schedule_experiments as sx
-    ablation = sx.cluster_mean_ci(abl) if abl else {"n": 0, "mean": None, "ci90": None}
+    infl = [(r["restaurant_id"], (r["metrics"].get("ablation") or {}).get("changed_per_100"))
+            for rid in rids for r in by[rid]]
+    infl = [(a, b) for a, b in infl if b is not None]
+    ablation = dict(sx.cluster_mean_ci(infl) if infl else {"n": 0, "mean": None, "ci90": None},
+                    measure="rows the learned memory changed per 100 drafted rows",
+                    note="influence, not an effect: whether learning helps is the learning_v2 switchback's readout")
     surv, cost, accepted, rules_n, rules_ok = {}, 0.0, 0, 0, 0
     for rid in rids:
         for r in by[rid]:
@@ -923,5 +1197,7 @@ def admin_view(db_path=None) -> dict:
             "cost_per_accepted_week": round(cost / accepted, 4) if accepted else None,
             "accepted_weeks": accepted, "model_cost_usd": round(cost, 4),
             "instruction_honoured_rate": round(rules_ok / float(rules_n), 3) if rules_n else None,
-            "latest": latest, "frozen_after_days": FREEZE_AFTER_DAYS,
-            "method": "within-restaurant slope over weeks since the first scored week, restaurant-cluster 90% interval"}
+            "latest": latest, "frozen_after_days": FREEZE_AFTER_DAYS, "sampled_from": len(by),
+            "method": ("within-restaurant slope over weeks since the first scored week, restaurant-cluster 90% "
+                       "interval (t on restaurants - 1), over a stratified weekly-rotated sample of at most "
+                       f"{ADMIN_MAX_RESTAURANTS} restaurants")}
