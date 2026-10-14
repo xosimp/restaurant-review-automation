@@ -32,8 +32,8 @@ request — is read here (read_items), into typed rules (`KINDS`):
 or none — a sentence that states no rule is said to the owner as "not
 enforced", and reaches the drafting model labelled so (prompt_lines). The
 plain minimum stays schedule_note_rules.read_sentence's (deterministic);
-everything else is read by a small model (Claude Haiku 5.5,
-`ai_utils.model_for("schedule_rules")`, structured output, through
+everything else is read by a small model (Claude Haiku 5.5 inside the T1
+canary, `ai_utils.model_for_run("schedule_rules", rid)`; structured output, through
 ai_utils.create_with_retry — workflow `schedule_rule_extract`) and EVERY rule
 it proposes is validated in code for its SHAPE and its MEANING (validate,
 AI-7, AI-29):

@@ -82,7 +82,11 @@ def test_each_sentence_is_read_once_and_cached(rid):
 
     def call(req):
         calls.append(req)
-        assert req["model"] == "claude-haiku-5-5" and req["output_config"]["format"]["type"] == "json_schema"
+        # The rule extraction's model honours the T1 canary (re-audit 10/11/26
+        # AI-26): Haiku 5.5 inside it, the tier's previous model outside.
+        import ai_utils
+        assert req["model"] == ai_utils.model_for_run("schedule_rules", rid)
+        assert req["output_config"]["format"]["type"] == "json_schema"
         assert "UNTRUSTED_GUEST_TEXT" in req["messages"][0]["content"]       # the owner's words, fenced as data
         return _Msg({"sentences": [{"index": 0, "rules": [_rule("close", person="Maria Lopez", days=["Friday"],
                                                                    quote="Maria closes Friday")]},
