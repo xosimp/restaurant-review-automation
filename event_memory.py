@@ -83,8 +83,13 @@ BASELINE_WEEKS = 8
 BASELINE_MIN = 3            # same-weekday nights a lift needs under it
 EFFECT_MIN_N = 3            # nights before a label's effect is applied ("measured 3 times")
 # A holiday comes once a year: one measured night of it applies only when it
-# moved sales past ordinary day-to-day variation (demand.OFF_DAY_PCT).
+# moved sales past ordinary day-to-day variation (demand.OFF_DAY_PCT) — and
+# a holiday measured on fewer than EFFECT_MIN_N nights applies SHRUNK toward
+# the restaurant's own typical holiday (holiday_prior), as if
+# HOLIDAY_PRIOR_NIGHTS more nights had run at it (blind re-audit 10/11/26
+# LEARNING-28: one rainy or event-coincident night set next year's lift).
 HOLIDAY_ONE_NIGHT_PCT = 20
+HOLIDAY_PRIOR_NIGHTS = 1
 EFFECT_FLOOR_PCT = 5        # a median effect smaller than this is "no measurable effect"
 EFFECT_BOUNDS = (-50.0, 100.0)
 RAIN_LABEL = "rain"
@@ -1341,15 +1346,48 @@ def measured_effect(restaurant_id, label, db_path=None):
     basis = (f"{s['display'] or label}: nights here ran a median {abs(med):.0f}% {word} a typical same weekday "
              f"(measured {n} time{'s' if n != 1 else ''}, last {mdy(s['last_date'])}{_record_words(s)}) — before and "
              f"after, not proof")
+    raw, shrunk = med, None
+    if s["kind"] == "holiday" and n < EFFECT_MIN_N:
+        # A holiday read from one or two nights (LEARNING-28): applied shrunk
+        # toward this restaurant's typical holiday, and said so.
+        prior, prior_n = holiday_prior(restaurant_id, exclude=norm, db_path=db_path)
+        med = round((n * raw + HOLIDAY_PRIOR_NIGHTS * prior) / float(n + HOLIDAY_PRIOR_NIGHTS), 1)
+        shrunk = {"raw_pct": raw, "prior_pct": prior, "prior_holidays": prior_n, "nights": n,
+                  "pseudo_nights": HOLIDAY_PRIOR_NIGHTS}
+        toward = (f"this restaurant's typical holiday ({prior:+.0f}%, {prior_n} measured)" if prior_n else
+                  "no change (no other holiday measured here yet)")
+        basis += (f"; n={n}, so it is applied at {med:+.0f}% — shrunk toward {toward} until more of its nights "
+                  "are measured")
     staffing = _staffing_on(hits)
     if staffing:
         basis += f"; {staffing['text']}"
-    return {"median_lift_pct": med, "n": n, "last": date.fromisoformat(s["last_date"]),
-            "label": norm, "staffing": staffing,
+    return {"median_lift_pct": med, "raw_median_lift_pct": raw, "shrunk": shrunk, "n": n,
+            "last": date.fromisoformat(s["last_date"]), "label": norm, "staffing": staffing,
             "display": s["display"], "kind": s["kind"], "low_lift_pct": s["low_lift_pct"],
             "high_lift_pct": s["high_lift_pct"], "direction": s["direction"], "applies": bool(applies),
             "owner_median_pct": s["owner_median_pct"], "basis": basis,
             "confounded": s["confounded"], "dates": list(s["dates"]), "drift": s["drift"]}
+
+
+def holiday_prior(restaurant_id, exclude=None, db_path=None):
+    """(median lift %, holidays) of this restaurant's OTHER holidays measured
+    on at least two nights — the category prior a one-night holiday is
+    shrunk toward (LEARNING-28); (0.0, 0) when there are none. Never
+    raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("SELECT label, median_lift_pct FROM event_effects WHERE restaurant_id=? AND "
+                                "kind='holiday' AND n >= 2 AND median_lift_pct IS NOT NULL",
+                                (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return 0.0, 0
+    vals = [float(r["median_lift_pct"]) for r in rows if r["label"] != exclude]
+    if not vals:
+        return 0.0, 0
+    return round(_median(vals), 1), len(vals)
 
 
 def _staffing_on(rows):

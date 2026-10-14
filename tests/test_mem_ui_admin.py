@@ -643,8 +643,9 @@ def test_the_reads_carry_what_the_panels_draw(world, monkeypatch):
     assert [r["week"] for r in ph["rows"]] == ["2026-W37", "2026-W38"]
     ex = c.get("/admin/api/schedule-experiments").get_json()
     # v2 judges on the primaries (Draft Rework Rate, outcomes), not on
-    # acceptance (scheduler audit 10/10/26 LEARNING-25).
-    assert ex["method"] == "cluster_robust_outcomes_v2" and ex["max_weeks_per_restaurant"] == 8
+    # acceptance (scheduler audit 10/10/26 LEARNING-25); v3 adds Holm over
+    # the primaries and always-valid p-values (blind re-audit LEARNING-15).
+    assert ex["method"] == "cluster_robust_outcomes_v3" and ex["max_weeks_per_restaurant"] == 8
     assert ex["experiments"][0]["verdict_history"][0]["week"] == "2026-W39"
     jobs = c.get("/admin/api/jobs").get_json()
     assert "value_snapshots" in {j["job"] for j in jobs["jobs"]}          # the new job is on the page

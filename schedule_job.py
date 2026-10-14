@@ -235,11 +235,16 @@ def run(req: Request) -> None:
         print(f"[schedule] job {req.job_id} was failed before it started — not run")
         return
     job = GenerationRun(req, se.current_clock())
-    try:
-        winner = _owner_redo(job) if req.redo else _week(job)
-        _finish(job, winner)
-    except Exception as e:
-        _fail(job, e)
+    import learning_stats as _ls_scope
+    # The learning_v2 switchback's off week turns every learned input off
+    # for this generation only (blind re-audit 10/11/26 LEARNING-14; set in
+    # schedule_engine._build_schedule_result where the week's arm is known).
+    with _ls_scope.learning_scope():
+        try:
+            winner = _owner_redo(job) if req.redo else _week(job)
+            _finish(job, winner)
+        except Exception as e:
+            _fail(job, e)
 
 
 def _finish(job: GenerationRun, winner: Candidate) -> None:
@@ -797,8 +802,11 @@ def _stage_signals(cand: Candidate, ctx: _PassContext) -> None:
         # trade moves are off with the solver.
         ctx.reassign_on = _sx.flag(result["experiment_arms"], "reassign")
         # learning_v1's off week (LEARNING-25): the learned memory binds none
-        # of this week's passes.
-        if not _sx.flag(result["experiment_arms"], "learned") and cand.pass_sig is not None:
+        # of this week's passes; learning_v2's (LEARNING-14) nothing learned
+        # does.
+        import learning_stats as _ls_off
+        if (not _sx.flag(result["experiment_arms"], "learned") or _ls_off.learning_off()) \
+                and cand.pass_sig is not None:
             cand.pass_sig = dict(cand.pass_sig, learned=[])
     except Exception as _arx:
         se._soft_fail("experiment arm", _arx, rid)

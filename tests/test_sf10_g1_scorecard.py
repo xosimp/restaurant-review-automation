@@ -190,7 +190,10 @@ def test_a_week_nobody_looked_at_has_no_rework_rate():
     assert m["looked_at"] is False and m["drr"] is None
 
 
-def test_the_ablation_effect_is_the_rework_the_learned_memory_saved():
+def test_the_ablation_reads_the_memorys_influence_never_an_effect():
+    # Blind re-audit 10/11/26 LEARNING-13: both drafts against the week the
+    # manager edited FROM the memory-on draft favours "on" by construction;
+    # the ablation now says how much the memory changed, never that it helped.
     rid = _rid()
     mon = _monday(3)
     gen = [_row(mon, n) for n in ("Ana", "Cy")]
@@ -201,8 +204,8 @@ def test_the_ablation_effect_is_the_rework_the_learned_memory_saved():
                        origins={sv.row_sig(r): "model" for r in gen},
                        ablation={"ran": True, "learned": 1, "rows_on": ssc.compact(gen), "rows_off": ssc.compact(off)})
     m = ssc.compute_week(rid, hid)
-    assert m["ablation"]["drr_on"]["rate"] == 0.0 and m["ablation"]["drr_off"]["rate"] == 50.0
-    assert m["ablation"]["effect"] == 50.0
+    assert m["ablation"]["changed_per_100"] == 50.0 and m["ablation"]["effect"] is None
+    assert "not whether it helped" in m["ablation"]["note"]
     assert m["arms"][0]["arm"] == "solver" and m["origin_survival"]["model"]["kept"] == 2
 
 
@@ -221,7 +224,9 @@ def test_the_job_returns_the_standard_counts_and_the_admin_view_reads_the_trend(
     assert view["ok"] and view["restaurants"] == 1 and view["weeks"] == 4
     assert view["trend"]["drr"]["slope"] is not None
     owner = ssc.owner_view(rid)
-    assert owner["trend"] is not None and owner["trend_sentence"]
+    # Four weeks are too few to call a trend (blind re-audit 10/11/26
+    # LEARNING-17: TREND_MIN_WEEKS, a serial-correlation-robust interval).
+    assert owner["trend"] is None and "Not enough reviewed weeks" in owner["trend_sentence"]
 
 
 def test_one_place_says_why_the_draft_did_a_row():

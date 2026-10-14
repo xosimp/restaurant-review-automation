@@ -3928,6 +3928,12 @@ def mobile_schedule_history_detail(history_id, current_user):
     # A copy a newer one replaced is read-only: both clients show why and
     # hide editing and Send; the save and the Send refuse it (UI-3).
     detail["replaced_reason"] = _sv_d.replaced_error(detail)
+    # A person of the restaurant opened an unsent draft (blind re-audit
+    # 10/11/26 LEARNING-16): the scorecard tells a reviewed week from one
+    # sent unread. Admins are not recorded.
+    if not detail.get("published_at"):
+        import schedule_scorecard as _ssc_view
+        _ssc_view.record_view(current_user["restaurant_id"], history_id, user=current_user, surface="detail")
 
     # The week's WORKING copy (the Studio edits it; on a sent week it holds
     # the unsent changes) read with the one reader — quoted fields, the

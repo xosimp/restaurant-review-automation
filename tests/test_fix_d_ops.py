@@ -256,7 +256,8 @@ def test_the_marker_call_sites_use_ops_markers():
     assert 'claim_marker(f"rating_unreadable:{rid}"' in inspect.getsource(notify._rating_unreadable)
     assert 'claim_marker(f"competitor_move_told:' in inspect.getsource(notify)
     assert "claim_marker(job, \"first_sync\")" in inspect.getsource(notify._first_seen_hours)
-    assert 'claim_marker("quality_calibration"' in inspect.getsource(strategy_jobs.run_quality_calibration)
+    # One restaurant's pass is quality_calibration_one since the queue fan-out (blind re-audit 10/11/26).
+    assert 'claim_marker("quality_calibration"' in inspect.getsource(strategy_jobs.quality_calibration_one)
 
 
 # ── #72 / #81: one retention registry ──────────────────────────────────────

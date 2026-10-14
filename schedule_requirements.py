@@ -365,10 +365,13 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     half_curve — {weekday: {minute: share}}, the curve measured at the half
                 hour from the ticket archive (schedule_economics.
                 measured_half_hours), used over the hourly one.
-    elasticity — {(role family, daypart): {"move": +1 | -1, "reason"}}
-                (staffing_elasticity.moves): one person more or fewer where
-                what one more person is worth here was measured with an
-                interval clear of zero (RM-20, LEARNING-6, MARKET-23).
+    elasticity — {(role family, daypart): {"move": +1 | -1, "reason",
+                "target", "weekdays"}} (staffing_elasticity.moves): one person
+                more or fewer where what one more person is worth here was
+                measured with an interval clear of zero (RM-20, LEARNING-6,
+                MARKET-23) — never past `target` (the level it was measured
+                above plus the move) and only on `weekdays` when given
+                (blind re-audit 10/11/26 LEARNING-6, -7).
     Each row also carries `half_need` — {minute: {role: people on}}, every
     half hour's full need after the caps — the one the score judges
     (half_hours_map).
@@ -439,6 +442,11 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 for (fam_e, part_e), mv in elasticity.items():
                     if part_e != part or not int((mv or {}).get("move") or 0):
                         continue
+                    # Only the weekdays at the demand it was measured at
+                    # (blind re-audit 10/11/26 LEARNING-7: a move measured
+                    # on the busy dinners added a person to all seven).
+                    if mv.get("weekdays") is not None and day not in set(mv.get("weekdays") or ()):
+                        continue
                     cands = [r for r in typical_here if _fo_e(r) == fam_e and int(typical_here[r] or 0) > 0]
                     if not cands:
                         continue
@@ -446,8 +454,17 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     step = int(mv["move"])
                     if step < 0 and int(typical_here[r_e]) <= 1:
                         continue
+                    # A target LEVEL (LEARNING-6, like schedule_learning.
+                    # headcount_to_apply): the level one more was measured
+                    # above plus the move — a baseline that already absorbed
+                    # it is not moved again.
+                    if mv.get("target") is not None:
+                        gap = int(mv["target"]) - int(typical_here[r_e])
+                        step = max(0, min(step, gap)) if step > 0 else min(0, max(step, gap))
+                    if not step:
+                        continue
                     typical_here[r_e] = int(typical_here[r_e]) + step
-                    moved_by[r_e.strip().lower()] = mv
+                    moved_by[r_e.strip().lower()] = dict(mv, move=step)
             floors_here = {}
             for role, spec in (role_floors or {}).items():
                 f = floor_for(spec or {}, day, part)

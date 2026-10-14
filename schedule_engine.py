@@ -2032,6 +2032,17 @@ def _build_schedule_result(restaurant_id, week_start=None, focus=None, dates=Non
               else default_week_start(restaurant, today))
     next_week_dates = week_dates_from(monday)
     week_days = week_day_names(next_week_dates)
+    # The learning_v2 switchback's off week (blind re-audit 10/11/26
+    # LEARNING-14): every learned input of this generation is off — read
+    # here, before the first learner is (learning_stats.learning_off; the
+    # job's learning_scope undoes it when the generation ends).
+    try:
+        import schedule_experiments as _sx_lo
+        import learning_stats as _ls_lo
+        if not _sx_lo.flag(_sx_lo.arms_for(restaurant_id, next_week_dates[0]), "learning"):
+            _ls_lo.switch_learning_off()
+    except Exception as _lox:
+        _soft_fail("experiment arm", _lox, restaurant_id)
     # Everything the rules need to know about who can work when, gathered
     # once and shared by the prompt, the backstops, the swap search, the
     # review panel and the publish gate.
@@ -7043,6 +7054,9 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
     .measured_half_hours(...)} — the work-driven requirement's inputs, read
     once per read scope; {} pieces on any failure (the usual crew then
     stands, history the fallback — RM-17)."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     import models as _m_rm
     store = _m_rm.read_scope_store()
     key = ("requirement_model", int(restaurant_id))
@@ -7826,6 +7840,12 @@ def _quality_signals(restaurant_id, result, **extra):
         _soft_fail("leader rule check", _lx, restaurant_id)
     try:
         weights = frozen_read(("quality_weights", restaurant_id), lambda: get_quality_weights(restaurant_id))
+        import learning_stats as _ls_w
+        if _ls_w.learning_off():
+            # learning_v2's off week (LEARNING-14): the owner's weights,
+            # without what the automatic calibration promoted.
+            import schedule_calibration as _scal_w
+            weights = _scal_w.weights_without_promotions(restaurant_id, weights)
     except Exception as _sx:
         _soft_fail("quality weights", _sx, restaurant_id)
         weights = {}
@@ -8817,6 +8837,9 @@ def likely_edits(restaurant_id, rows: list, patterns: list = None, predict: bool
     restaurant's own finished drafts) puts at or above its threshold, with
     the likelihood and the rates behind it. [{kind, employee?, date, text,
     likelihood?, reason?, index?}]."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return []  # learning_v2's off week (LEARNING-14)
     out = _pattern_likely_edits(restaurant_id, rows, patterns)
     if not predict:
         return out
