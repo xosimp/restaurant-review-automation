@@ -708,23 +708,40 @@ class _Model:
             if u.fixed and u.draft is None:
                 continue
             by_date.setdefault(u.date, []).append(u)
+        # Each date's kept manager spans, so a stretch past midnight is
+        # judged with the NEXT date's manager on (and the small hours with
+        # the night before's): a 10pm-6am crew was left unfilled because its
+        # 4-6am looked unmanaged from its own date (STRESS-4).
+        fixed_by = {}
+        for d0, units0 in by_date.items():
+            fixed_by[d0] = [(s, e) for u in units0 if u.fixed and u.draft is not None
+                            and any(_rules.counts_as_manager(c, dict(r, employee=prob.names[u.draft])) for r in u.rows)
+                            for s, e in u.bspans]
         for d, units in sorted(by_date.items()):
             items = [(s, e, u) for u in units for s, e in u.bspans]
             if not items:
                 continue
-            fixed_mgr = [(s, e) for s, e, u in items if u.fixed and u.draft is not None
-                         and any(_rules.counts_as_manager(c, dict(r, employee=prob.names[u.draft])) for r in u.rows)]
+            fixed_mgr = list(fixed_by.get(d) or [])
+            near = []
+            o_d = _ordinal(d)
+            for d1, spans1 in fixed_by.items():
+                o1 = _ordinal(d1)
+                if o_d is not None and o1 is not None and abs(o1 - o_d) == 1:
+                    near += [(s + 1440 * (o1 - o_d), e + 1440 * (o1 - o_d)) for s, e in spans1]
+            lo_i, hi_i = min(s for s, _e, _u in items), max(e for _s, e, _u in items)
+            near = [(s, e) for s, e in near if e > lo_i and s < hi_i]
             day = sq._day_name(d)
             o, _cl = _rules.open_hours(c, day)
             open_need = _rules.manager_need(c, d, [])
-            cuts = sorted({t for s, e, _u in items for t in (s, e)} | {t for s, e in open_need for t in (s, e)})
+            cuts = sorted({t for s, e, _u in items for t in (s, e)} | {t for s, e in open_need for t in (s, e)}
+                          | {t for s, e in near for t in (s, e) if lo_i < t < hi_i})
             last_end = max(e for _s, e, _u in items)
             mgr_end = max((e for _s, e in fixed_mgr), default=None)
             mgr_starts = {s for s, _e in fixed_mgr}
             for a, b in zip(cuts, cuts[1:]):
                 if b <= a:
                     continue
-                if any(s <= a and b <= e for s, e in fixed_mgr):
+                if any(s <= a and b <= e for s, e in fixed_mgr + near):
                     continue
                 cover = [u for s, e, u in items if s <= a and b <= e]
                 open_req = any(s <= a and b <= e for s, e in open_need)

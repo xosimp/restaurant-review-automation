@@ -5021,6 +5021,13 @@ def close_cap_minutes(c, row):
         return None
     day = _weekday_of(row.get("date") or "")
     close_m = close_minutes(c, day) if day else None
+    if day:
+        o_24, cl_24 = open_hours(c, day)
+        if o_24 is not None and cl_24 is not None and cl_24 - o_24 >= 23 * 60:
+            # Open around the clock: no close to cap at — a graveyard shift
+            # runs across the turnover (STRESS-4); only the longest shift
+            # past the business day's end bounds it.
+            return cl_24 + int(float((c.compliance or {}).get("max_shift_hours") or 12) * 60)
     if close_m is None:
         return None
     # The larger of the role's allowance and its stay (role_close_caps): a
@@ -5677,7 +5684,15 @@ def open_hours(c: "Constraints", day: str):
     from the hours on file — a close in the small hours is the next
     morning's. Either end is None when it is not on file."""
     o = parse_minutes((c.open_times or {}).get(day, "") or "")
-    return o, close_minutes(c, day)
+    cl = close_minutes(c, day)
+    # Open around the clock from midnight (12:00am-12:00am, 12:00am-11:59pm):
+    # the business day runs from the small hours' end, so its first hours
+    # are the night before's tail, never a second "open" every midnight —
+    # each date asked for a manager from 12:00am and the plan put every
+    # manager on all seven days (blind re-audit 10/11/26 STRESS-4).
+    if o is not None and cl is not None and cl - o >= 23 * 60 and o < _stime.NIGHT_TAIL_BEFORE:
+        return _stime.NIGHT_TAIL_BEFORE, _stime.NIGHT_TAIL_BEFORE + 24 * 60
+    return o, cl
 
 
 def _day_offset(d: str, base: str):

@@ -866,6 +866,20 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     except Exception as _ocx:
         se._soft_fail("owner words", _ocx, rid)
     review["unstaffable_dates"] = result.get("unstaffable_dates") or []
+    # A role the requirements need with nobody of it on all day, and why
+    # nobody can work it (blind re-audit 10/11/26 STRESS-9) — read against
+    # the rows as they stand by the publish gate too.
+    try:
+        import schedule_shapes as _shp_u
+        review["uncovered_roles"] = _shp_u.uncovered_roles(
+            preview_rows, result.get("requirements") or [], _constraints, result.get("roster_roles"))
+        _ul = _shp_u.uncovered_line(review["uncovered_roles"])
+        if _ul:
+            review["lines"].insert(0, _ul)
+            review["lead_lines"] = [_ul] + list(review.get("lead_lines") or [])
+    except Exception as _ucx:
+        se._soft_fail("uncovered roles", _ucx, rid)
+        review["uncovered_roles"] = []
     # A staffing rule, or a line of the RESTAURANT HOURS & SHIFT RULES, the
     # code could not read is named, so the owner checks the draft against it
     # (PROMPTS-1, PROMPT-1).

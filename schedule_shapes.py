@@ -94,6 +94,8 @@ W_POLICY_REST = 3 * 10 ** 8          # a turnaround shorter than the rest rule (
 W_OT_HUNDREDTH = 10 ** 6             # a hundredth of an hour past a person's overtime line (overtime)
 W_MIN_HOUR_HUNDREDTH = 3 * 10 ** 5   # a hundredth of an hour short of someone's minimum (min hours)
 W_DEMAND_SLOT = 10 ** 7 // 2         # kept for callers: the requirement tier's old flat price
+W_FIRM_SLOT = 10 ** 7 // 2           # the first person of a role the restaurant is never without (requirement)
+FIRM_PRESENCE = 0.8                  # "never without": on at that half hour on this share of its weekdays
 W_DISTINCT = 10 ** 7                 # kept for callers: the old distinct-count price
 W_BUDGET_DOLLAR = 300                # kept for callers
 W_DOLLAR = 100                       # cents in a dollar: every price below is in cents
@@ -186,7 +188,9 @@ def _window(c, role, d, day, plan_bounds, stay=0, max_minutes=12 * 60):
     if w.get("latest") is not None:
         hi = min(hi, int(w["latest"]))
     b = plan_bounds.get(d)
-    if b:
+    if b and not (c is not None and is_24h(c, day)):
+        # (open around the clock the managers run across the turnover, so a
+        # date's own manager rows bound nothing — the manager tier holds it)
         mlo, mhi, prep_ok = b
         if not prep_ok:
             lo = max(lo, mlo)
@@ -435,6 +439,79 @@ def _shoulders(curves, c, concurrent, requirements, profile, family):
     return stays
 
 
+def _round_the_clock(curves, c, dates, hist_rows, family):
+    """A 24-hour day's people on at once over its whole business day, from
+    the restaurant's own shifts (STRESS-4): the staffing baseline is read
+    between the open and midnight, so the graveyard after midnight had no
+    need and one person was drafted on 10pm-6am. For each 24-hour date and
+    role, the median over the history's same weekdays of the people on at
+    each half hour from day_start for 24 hours, a shift from the night
+    before counted into its small hours. In place on `curves`."""
+    if c is None or not hist_rows:
+        return
+    by_date = defaultdict(list)
+    for r in hist_rows:
+        sp = _span(r)
+        d = str(r.get("date") or "")[:10]
+        if sp and d and (r.get("employee") or "").strip():
+            by_date[d].append((sp, str(r.get("role") or "").strip()))
+    from datetime import date as _date, timedelta as _td
+    for d in dates or []:
+        day = sq._day_name(d)
+        if not is_24h(c, day):
+            continue
+        ds = day_start(c, day)
+        hist_days = sorted(x for x in by_date if sq._day_name(x) == day)
+        if not hist_days:
+            continue
+        counts = defaultdict(lambda: defaultdict(list))      # role -> t -> [n per week]
+        roles = set()
+        for hd in hist_days:
+            prev = (_date.fromisoformat(hd) - _td(days=1)).isoformat()
+            items = [(sp, role) for sp, role in by_date[hd]] + \
+                [((sp[0] - 1440, sp[1] - 1440), role) for sp, role in by_date.get(prev, ())]
+            here = defaultdict(lambda: defaultdict(int))
+            for (s, e), role in items:
+                roles.add(role)
+                for t in range(ds, ds + 1440, SLOT):
+                    if _covers(s, e, t):
+                        here[role][t] += 1
+            for role in roles:
+                for t in range(ds, ds + 1440, SLOT):
+                    counts[role][t].append(here[role][t])
+        for role in sorted(roles):
+            if _rules.manager_role_kind(role) in ("owner", "manager"):
+                continue
+            key = next((k for k in curves if k[0] == d and family(k[1]) == family(role)), (d, role))
+            cur = curves.setdefault(key, {})
+            for t, ns in counts[role].items():
+                ns = sorted(ns + [0] * (len(hist_days) - len(ns)))
+                med = ns[len(ns) // 2]
+                if med > 0:
+                    cur[t] = max(cur.get(t, 0), med)
+
+
+def _presence(hist_rows, family) -> dict:
+    """{(family, weekday, minute): share of that weekday's history dates the
+    family had somebody on at that half hour} — where the restaurant is
+    never without a role (its firm part, LOGIC-3). A shift past midnight
+    counts on its own date's timeline."""
+    on = defaultdict(set)
+    dates_by_day = defaultdict(set)
+    for r in hist_rows or []:
+        sp = _span(r)
+        d = str(r.get("date") or "")[:10]
+        if not sp or not d or not (r.get("employee") or "").strip():
+            continue
+        day = sq._day_name(d)
+        dates_by_day[day].add(d)
+        f = family(r.get("role"))
+        for t in range(sp[0] - sp[0] % SLOT, sp[1], SLOT):
+            if _covers(sp[0], sp[1], t):
+                on[(f, day, t)].add(d)
+    return {k: len(v) / float(len(dates_by_day[k[1]]) or 1) for k, v in on.items()}
+
+
 def _assumed_roles(dates, curves, c, roster_roles, profile, family, open_times, close_times):
     """Roles on the roster with no history and no requirement (STRESS-20): a
     new restaurant's dishwasher was never staffed. Each gets one person on
@@ -521,6 +598,52 @@ def _nobody_reason(c, role, d, roster_roles) -> str:
         return "nobody who works it can take a shift that fits its hours"
     bits = [f"{n} {w}" for w, n in sorted(why.items(), key=lambda kv: (-kv[1], kv[0]))[:3]]
     return f"all {holders} who work {role}: " + "; ".join(bits)
+
+
+def uncovered_roles(rows, requirements, c, roster_roles=None) -> list:
+    """[{date, day, role, needed, why}] — each open date a role the week's
+    requirements need (people or a floor) has NOBODY of its family on at
+    all, with why nobody can work it (STRESS-9: a week with no server any
+    day and no cook on four read as complete because a role nobody could
+    work dropped out of the model). Any draft source; the rows as they
+    stand."""
+    if c is None:
+        return []
+    fam = c.family
+    on = {(r.get("date"), fam(r.get("role"))) for r in rows or [] if (r.get("employee") or "").strip()}
+    need = {}
+    for row in requirements or []:
+        d = row.get("date")
+        if not d or d in (getattr(c, "closed_dates", None) or ()):
+            continue
+        for e in row.get("roles") or []:
+            n = max(int(e.get("required") or 0), int(e.get("floor") or 0))
+            role = str(e.get("role") or "").strip()
+            if n > 0 and role and _rules.manager_role_kind(role) not in ("owner", "manager"):
+                k = (d, fam(role))
+                if k not in need or n > need[k][1]:
+                    need[k] = (role, n)
+    out = []
+    for (d, f), (role, n) in sorted(need.items()):
+        if (d, f) in on:
+            continue
+        out.append({"date": d, "day": sq._day_name(d), "role": role, "needed": n,
+                    "why": _nobody_reason(c, role, d, roster_roles)})
+    return out
+
+
+def uncovered_line(items) -> str:
+    """The review's "⚠" line for uncovered_roles — one per week, the days
+    named, so the publish gate holds the week until the owner has seen it."""
+    if not items:
+        return ""
+    from time_utils import mdy
+    bits = []
+    for it in items[:6]:
+        bits.append(f"{it['day']} {mdy(it['date'])}: no {it['role']} on at all (needs {it['needed']}) — {it['why']}")
+    more = len(items) - 6
+    return ("⚠ Roles with nobody on: " + "; ".join(bits) + (f"; and {more} more" if more > 0 else "")
+            + ". Find cover, move time off, or lower that role's need for those days.")
 
 
 # ── the people ───────────────────────────────────────────────────────────
@@ -725,6 +848,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     hist = history_patterns(hist_rows, family)
     bounds = plan_bounds(context_rows, c)
     closed = set(getattr(c, "closed_dates", None) or ())
+    _round_the_clock(curves, c, dates, hist_rows, family)
     stays = _shoulders(curves, c, concurrent, requirements, prof, family)
     assumed = _assumed_roles(dates, curves, c, roster_roles, prof, family, open_times, close_times)
     for fam_a, role_a in assumed:
@@ -760,6 +884,10 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
         for t in range(sp[0] - sp[0] % SLOT, sp[1], SLOT):
             if _covers(sp[0], sp[1], t):
                 fixed_on[fam][absm(r.get("date"), t)] += 1
+    # The managers are the manager plan's (schedule_skeleton, in
+    # context_rows): Stage 1 shapes everybody else.
+    for k in [k for k in curves if _rules.manager_role_kind(k[1]) in ("owner", "manager")]:
+        curves.pop(k)
     roles_by_date = defaultdict(set)
     for (d, role) in curves:
         if d not in closed:
@@ -905,6 +1033,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             a = absm(d, t)
             need_by[(fam, a)] += int(k)
             role_at.setdefault((fam, a), (d, t, role))
+    presence = _presence(hist_rows, family)
     shorts = {}
     for (fam, a), need in sorted(need_by.items()):
         have = [v for v, _r in on_at.get((fam, a), ())]
@@ -919,6 +1048,14 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             m.add(sh >= gap)
         shorts[(fam, a)] = (sh, d, t, role)
         obj.append((max(1, _cents(_obj.slot_value(ctx, d, t, role))), sh))
+        # The firm part (LOGIC-3): where the restaurant is never without the
+        # role at this half hour (on in FIRM_PRESENCE of its same weekdays),
+        # its first person is the requirement tier — above the budget — and
+        # only the rest of the demand is priced against it.
+        if fixed_on[fam].get(a, 0) == 0 and presence.get((fam, sq._day_name(d), t), 0.0) >= FIRM_PRESENCE:
+            first = m.new_bool_var(f"fm{fam}_{a}")
+            m.add(sh <= gap - 1 + first)
+            obj.append((W_FIRM_SLOT, first))
         part_t = _stime.daypart_at(t)
         val = (staffing_value or {}).get((fam, part_t)) or {}
         try:

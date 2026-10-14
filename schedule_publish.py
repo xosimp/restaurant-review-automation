@@ -360,6 +360,23 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 add(_unwritten_key(left), line_of(left).lstrip("⚠ ").strip(), date=left[0].get("date"))
     except Exception as _ux:
         print(f"[publish] unwritten days unreadable: {_ux!r}")
+    # A role the requirements need with nobody of it on all day (STRESS-9),
+    # read against the rows as they stand: one the owner has since covered
+    # is not said.
+    try:
+        import schedule_shapes as _shp_pr
+        items = [u for u in (review.get("uncovered_roles") or []) if isinstance(u, dict)]
+        if items:
+            said_days.add(_shp_pr.uncovered_line(items).lstrip("⚠ ").strip())
+            fam = __import__("shift_quality").role_family
+            on_now = {(r.get("date"), fam(r.get("role"))) for r in rows if (r.get("employee") or "").strip()}
+            left = [u for u in items if (u.get("date"), fam(u.get("role"))) not in on_now]
+            if left:
+                add("uncovered:" + ",".join(f"{u['date']}:{fam(u['role'])}" for u in left[:6]),
+                    _shp_pr.uncovered_line(left).lstrip("⚠ ").strip(), tier=DECIDE, rank=12,
+                    date=left[0].get("date"))
+    except Exception as _ucx:
+        print(f"[publish] uncovered roles unreadable: {_ucx!r}")
     # The generation's own lead lines (re-audit 10/4/26 PIPE-7) — only what
     # the live sweep cannot recompute (TRUST-5): the sweep's rule lines, the
     # budget's, the stage failures, the settings the rules could not read

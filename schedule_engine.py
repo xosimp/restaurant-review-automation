@@ -3898,9 +3898,11 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
         reasons = [why.get(d) for d in drafted if why.get(d)]
         main = max(set(reasons), key=reasons.count) if reasons else "other"
         redo = bool(fallback.get("code_redo"))
+        basis = (locals().get("solver_first") or {}).get("stats") if used == "solver" else None
         out = {"rows": rows, "source": used, "base": base, "dropped": dropped, "unassigned": unassigned,
                "why": dict(why), "line": _sfb.note_line(used, "redo" if redo else main, drafted,
-                                                        base if used == "carry_forward" else None, redo=redo)}
+                                                        base if used == "carry_forward" else None, redo=redo,
+                                                        basis=basis)}
         if used == "solver" and locals().get("solver_first"):
             out["solver"] = solver_explain(locals()["solver_first"])
         return out

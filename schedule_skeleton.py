@@ -415,6 +415,12 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
     # A close at or before the open, or in the small hours, is the next
     # morning (schedule_time.close_on_timeline, BUGSGEN-22).
     cl = _stime.close_on_timeline(_clock((close_times or {}).get(wd)), o)
+    # Open around the clock from midnight: the business day runs from the
+    # small hours' end for 24 hours (schedule_rules.open_hours, STRESS-4) —
+    # a window from 12:00am put a second manager on every midnight.
+    round_clock = o is not None and cl is not None and cl - o >= 23 * 60
+    if round_clock and o < _stime.NIGHT_TAIL_BEFORE:
+        o, cl = _stime.NIGHT_TAIL_BEFORE, _stime.NIGHT_TAIL_BEFORE + 24 * 60
     hist = (spans or {}).get(wd) or {}
     hs, he = hist.get("start"), hist.get("end")
     if o is None and hs is None:
@@ -439,6 +445,8 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
         return None
     start, end = min(s for s, _e in need), max(e for _s, e in need)
     start, end = _down(start), _up(end)
+    if round_clock:
+        start, end = o, o + 24 * 60         # one business day, the next one's manager from its start
     if end - start < 60 or end - start > 24 * 60:
         return None
     if o is not None and cl is not None and start == _down(o):

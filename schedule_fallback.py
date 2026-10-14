@@ -273,7 +273,7 @@ def _default_times(day, part, open_times=None, close_times=None):
     return (o, "3:00pm") if part == "morning" else ("4:30pm", c)
 
 
-def note_line(source, why, dates, base=None, redo=False) -> str:
+def note_line(source, why, dates, base=None, redo=False, basis=None) -> str:
     """The review's line for days drafted in code: which days, from what,
     and why — "Built without the AI model: Saturday 10/17/26 and Sunday
     10/18/26 — your published week of 10/3/26 carried forward and checked
@@ -287,6 +287,18 @@ def note_line(source, why, dates, base=None, redo=False) -> str:
                 "the week your team last worked (" + mdy(base.get("week_start")) + "–" + mdy(base.get("week_end")) + ")")
         how = f"{what} carried forward and checked against every rule"
     else:
-        how = "your usual crew and shifts, solved against every rule"
+        # Only what was measured is claimed (blind re-audit 10/11/26
+        # STRESS-15, STRESS-20): "your usual crew" was said of a week that
+        # kept 56% of people's usual days, and of a restaurant with none.
+        b = basis or {}
+        weeks = int(b.get("history_weeks") or 0)
+        pct = (b.get("usual_days") or {}).get("pct")
+        if weeks <= 0:
+            how = "your team and your Role floors (no shift history yet), solved against every rule"
+        elif pct is not None:
+            how = (f"{weeks} week{'s' if weeks != 1 else ''} of your team's shifts — {pct:g}% of their usual "
+                   "days kept — solved against every rule")
+        else:
+            how = f"{weeks} week{'s' if weeks != 1 else ''} of your team's shifts, solved against every rule"
     words = _WHY_WORDS.get(why, _WHY_WORDS["other"])
     return f"{'Redone' if redo else 'Built'} without the AI model: {which} — {how} ({words})."
