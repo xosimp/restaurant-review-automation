@@ -1038,6 +1038,15 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
         if _ul:
             review["lines"].insert(0, _ul)
             review["lead_lines"] = [_ul] + list(review.get("lead_lines") or [])
+        # A role drafted with no history and no floor (STRESS-20): said, so
+        # the owner sets its floor before the next draft.
+        _as = [a for a in (((result.get("draft_source") or {}).get("solver") or {}).get("assumed") or [])
+               if isinstance(a, dict) and a.get("role")]
+        if _as:
+            review["assumed_roles"] = _as
+            review["lines"].append(
+                "Drafted with no history and no floor: " + ", ".join(a["role"] for a in _as[:6])
+                + " — one on through the open hours. Set their floors in Rules so the next draft knows.")
     except Exception as _ucx:
         se._soft_fail("uncovered roles", _ucx, rid)
         review["uncovered_roles"] = []

@@ -433,3 +433,15 @@ def test_the_engine_gives_the_solver_a_fixed_budget_and_the_clock_only_as_its_ca
                           None, roles, 5.0, [], {})
     assert seen["max_seconds"] == se.SOLVER_DRAFT_SECONDS          # never what the clock has left
     assert seen["wall_cap"] == 7.0
+
+
+def test_the_half_hour_curve_is_the_requirement_not_the_habits_head_count():   # LOGIC-17
+    names = [f"S{i}" for i in range(8)]
+    roles = {n: "Server" for n in names}
+    o, cl = _hours(("11:00am", "10:00pm"))
+    c = cons(names, roles, open_times=o, close_times=cl)
+    reqs = _req([WEEK[0]], "Server", {t: 2 for t in range(1020, 1320, 30)}, required=6)
+    got = shp.shape_week([WEEK[0]], c, reqs, roster_roles=roles, rates={"server": 10.0}, max_seconds=3)
+    # two on at once all night need two or three people, never the usual six
+    assert 2 <= len(got["rows"]) <= 3
+    assert max(_on(got["rows"], WEEK[0], t) for t in range(1020, 1320, 30)) == 2
