@@ -7,6 +7,8 @@ what-if's swaps are taken inside the search and checked with every rule
 (P-33), the six dimensions that had no move have one (SQ-19), and what the
 restaurant's scheduling memory holds is kept (L-3, D-35, L-16).
 """
+import pytest
+
 import schedule_optimizer as so
 import schedule_rules as sr
 import shift_quality as sq
@@ -207,9 +209,15 @@ def test_labor_dollars_are_priced_per_person_with_overtime_at_its_premium():
     rows = [row(d, "Ann", "9:00am", "6:00pm") for d in (MON, TUE, WED, THU, FRI)]        # 45h
     assert so.labor_dollars(rows, pricing) == 45 * 20.0 + 5 * 20.0 * 0.5
     assert so.labor_dollars([row(MON, "Bo", "9:00am", "1:00pm")], pricing) == 40.0
-    # a saving earns nothing: the search finishes the draft's quality
+    # A saving is credited at the rate an add is charged (blind re-audit
+    # 10/11/26 LOGIC-23 — it "earned nothing", so no pass ever tightened an
+    # over-staffed week under its budget): 0.5 points per 1% of the draft's
+    # labor dollars, either way.
     q = {"shifts": [{"scored": True, "score": 80, "profile": {"demand": "normal"}}], "raw_score": 80.0}
-    assert so.week_value(q, rows[:1], pricing, so.labor_dollars(rows, pricing)) == 80.0
+    base = so.labor_dollars(rows, pricing)
+    saved = base - so.labor_dollars(rows[:1], pricing)
+    assert so.week_value(q, rows[:1], pricing, base) == pytest.approx(80.0 + 0.5 * saved / base * 100.0)
+    assert so.week_value(q, rows + [row(SAT, "Ann", "9:00am", "1:00pm")], pricing, base) < 80.0
 
 
 # ── P-33: the what-if's best swaps taken inside the search, every rule held ──

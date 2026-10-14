@@ -2627,8 +2627,14 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             # than it saves, at the stated rates, is not a saving.
             before_v, after_v = _objective_change(r, new)
             if before_v is not None and after_v is not None and after_v >= before_v - OBJECTIVE_MIN_GAIN_USD:
-                return False, ("objective", {"date": d, "day": _day(d), "role": r.get("role"),
-                                             "costs": round(after_v - before_v, 2)})
+                detail = {"date": d, "day": _day(d), "role": r.get("role"), "costs": round(after_v - before_v, 2)}
+                k = _se._role_key(r.get("role"), c)
+                for part in _se._present(r):
+                    spec = ((index.get(d) or {}).get(part) or {}).get(k) or {}
+                    if spec.get("required"):
+                        detail.update(daypart=part, required=spec["required"], role=spec.get("role") or r.get("role"))
+                        break
+                return False, ("objective", detail)
         return True, None
 
     def _firm_breach(w, d) -> bool:
@@ -3128,10 +3134,15 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
     if held.get("objective"):
         # LOGIC-6: the cut would lose more, at the stated value of a person
         # short on that half hour, than the dollars it saves past the budget.
+        from shift_quality import role_words
         x = _first("objective")
-        bits.append("shifts worth more than they cost — the busy half hours they cover lose more in service than "
-                    "the cut would save" + (f", e.g. {x['day']} {x['role']}" if x and x.get("day") and x.get("role")
-                                            else ""))
+        what = ""
+        if x and x.get("required"):
+            what = (f" — {x['day']} {_part(x.get('daypart'))} needs {x['required']} "
+                    f"{role_words(x.get('role'), int(x['required']), 'people')}")
+        elif x and x.get("day") and x.get("role"):
+            what = f" — {x['day']} {x['role']}"
+        bits.append("what the shifts need, worth more in service than the cut would save" + what)
     if held.get("learned"):
         x = _first("learned")
         bits.append(f"{x['day']}s, where staffing cuts measured worse here" if x and x.get("day")

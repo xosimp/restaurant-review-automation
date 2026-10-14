@@ -1439,9 +1439,11 @@ def _usual_hint(m, z, z_by_pd, people, pats, hist_rows, c, family) -> int:
             dist = abs(s - u[0]) + abs(e - u[1])
             if best is None or dist < best[0]:
                 best = (dist, v)
+        if best is None:
+            continue                         # no usual here: the search is free (a 0 hint anchors it empty)
         for v, *_rest in opts:
-            m.add_hint(v, 1 if best is not None and v is best[1] else 0)
-        on += 1 if best is not None else 0
+            m.add_hint(v, 1 if v is best[1] else 0)
+        on += 1
     return on
 
 

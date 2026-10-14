@@ -745,7 +745,12 @@ def test_the_job_trims_to_the_requirement_and_says_the_conflict_once(db, monkeyp
     assert lines[0].startswith("⚠") and "over the ceiling" in lines[0]
     assert sum(1 for x in lines if x.startswith("The trim stopped")) == 1
     assert "needs 3 servers" in lines[1]
-    assert res["review"]["budget_conflict"]["held"]["requirement"]
+    # Since the blind re-audit of 10/11/26 (LOGIC-6, LOGIC-3) the trim reads
+    # the one objective: with no history nothing here is the requirement's
+    # firm part, so what holds the third server is that the night's need is
+    # worth more than the cut would save — said with the same need.
+    held = res["review"]["budget_conflict"]["held"]
+    assert held.get("requirement") or held.get("objective")
 
 
 def test_the_cap_trim_prefers_a_cut_that_keeps_the_requirement():

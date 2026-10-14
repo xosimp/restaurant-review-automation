@@ -101,6 +101,12 @@ HISTORY_PATTERN_USD = 6.0
 FAIRNESS_USD = 4.0
 # Overtime pay over the line (shift_quality.OVERTIME_PREMIUM).
 OVERTIME_PREMIUM = 0.5
+# The one exchange rate between Shift Quality's week points and these
+# dollars (blind re-audit 10/11/26 LOGIC-6): this many points for each 1% of
+# the draft's labor dollars — CP-SAT's quality tier, the optimizer's moves
+# (charged for dollars added AND credited for dollars saved, LOGIC-23) and
+# the quality gate's judge all convert at it.
+POINTS_PER_PCT_OF_LABOR = 0.5
 # A half hour of demand nobody measured (prep before the doors, the close
 # after them): this demand weight.
 UNMEASURED_DEMAND_WEIGHT = 0.6
@@ -588,6 +594,17 @@ class ObjectiveContext:
         if k in said:
             return bool(said[k])
         return float(self.person_usual(person).get("doubles") or 0.0) >= 0.25
+
+
+def points_per_dollar(week_labor_usd) -> float:
+    """Shift Quality week points one objective dollar is worth on a week
+    whose draft costs `week_labor_usd` in labor (POINTS_PER_PCT_OF_LABOR for
+    each 1% of it); 0 with no labor dollars to scale by."""
+    try:
+        base = float(week_labor_usd or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return POINTS_PER_PCT_OF_LABOR * 100.0 / base if base > 0 else 0.0
 
 
 def starved_hour_usd(ctx, person) -> float:

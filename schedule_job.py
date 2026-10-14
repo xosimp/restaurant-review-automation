@@ -1767,8 +1767,40 @@ def _judge(in_force: InForce, cand: Candidate, dates) -> tuple:
     week no worse (_gate_keeps)."""
     before_local = se._gate_local(in_force.cand.quality, dates)
     after_local = se._gate_local(cand.quality, dates)
+    # Both weeks priced by the one objective on the draft in force's own
+    # context (blind re-audit 10/11/26 LOGIC-6): the gate judges as the
+    # optimizer moves and the solver drafts.
+    dollars_before = dollars_after = base_labor = None
+    try:
+        ctx = _objective_ctx_of(in_force.cand)
+        if ctx:
+            import schedule_objective as _obj_j
+            named = lambda rs: [r for r in rs or [] if (r.get("employee") or "").strip()]  # noqa: E731
+            p_before = _obj_j.price_week(named(in_force.cand.rows), ctx)
+            dollars_before, base_labor = p_before["total"], p_before["parts"]["labor"]
+            dollars_after = _obj_j.price_week(named(cand.rows), ctx)["total"]
+    except Exception as _ox:
+        print(f"[schedule] gate objective unavailable: {_ox!r}")
+        dollars_before = dollars_after = base_labor = None
+    after_local = se.gate_value(after_local, dollars_after, dollars_before, base_labor)
     return se._gate_keeps(before_local, after_local, cand.score, in_force.cand.score,
                           in_force.cand.rules(), cand.rules())
+
+
+def _objective_ctx_of(cand: Candidate):
+    """The one objective's context for a candidate's week (schedule_engine.
+    objective_context), built once and kept on it; None when it cannot be."""
+    got = getattr(cand, "_objective_ctx", None)
+    if got is None:
+        res = cand.result or {}
+        c = res.get("constraints")
+        reqs = res.get("requirements") if isinstance(res.get("requirements"), list) else []
+        got = se.objective_context(getattr(c, "restaurant_id", None), list(res.get("week_dates") or []), c,
+                                   cand.pass_sig or {}, reqs or [],
+                                   budget_dollars=res.get("labor_budget_dollars") or None,
+                                   blended=res.get("blended_rate"), need_text=res.get("objective_need")) or False
+        cand._objective_ctx = got
+    return got or None
 
 
 def _gate(job: GenerationRun, first: Candidate) -> Candidate:

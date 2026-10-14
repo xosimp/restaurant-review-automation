@@ -8182,6 +8182,11 @@ def _quality_signals(restaurant_id, result, **extra):
         # once, each role on its own lead or lag — LOGIC-11), and the usual
         # people on at once the scorer rebuilds a curve from without them.
         "half_hours_by_date": _half_hours_signal(result.get("requirements")),
+        # The one objective's need (schedule_objective — blind re-audit
+        # 10/11/26 LOGIC-6): the requirement rows' half-hour need, and on the
+        # days the solver drafted the demand it shaped to — what the score's
+        # cost measure reads "covered" against, as every pass prices it.
+        "objective_need": objective_need_text(result),
         "concurrent": result.get("concurrent") or {},
         # {(role family, daypart): {"per_hour", "lo", "hi"}} — one more
         # person's measured net value an hour (staffing_elasticity, MARKET-23):
@@ -9611,8 +9616,10 @@ def _gate_rules(result) -> dict:
 def _gate_keeps(before_local, after_local, score_after, score_before, rules_before, rules_after) -> tuple:
     """(keep, why) for the gate's rewrite (P-43): never one with more hard
     breaches or more unmanaged minutes than the draft; one with fewer is kept
-    (the rules rank above the score); otherwise only a better score on the
-    rewritten days with the week no worse."""
+    (the rules rank above the score); otherwise only a better value on the
+    rewritten days with the week no worse. The value is the days' score
+    net of the one objective's dollars (schedule_job._judge — gate_value:
+    blind re-audit 10/11/26 LOGIC-6, ARCH-2)."""
     if rules_before and rules_after:
         if rules_after["hard"] > rules_before["hard"] or rules_after["unmanaged"] > rules_before["unmanaged"]:
             return False, "rules"
@@ -9621,6 +9628,18 @@ def _gate_keeps(before_local, after_local, score_after, score_before, rules_befo
     better = (after_local is not None and before_local is not None and after_local > before_local
               and (score_after or 0) >= (score_before or 0) - 1)
     return better, "score"
+
+
+def gate_value(local_score, dollars, base_dollars, base_labor) -> float:
+    """A gate pass's value on its days (LOGIC-6): the days' score less the
+    one objective's dollars the week costs over the draft in force — plus
+    those it saves — at the one exchange rate (schedule_objective.
+    points_per_dollar of the draft's labor dollars): the figure the optimizer
+    moves by and the solver drafted to. The score alone without dollars."""
+    if local_score is None or dollars is None or base_dollars is None or not base_labor:
+        return local_score
+    import schedule_objective as _obj_g
+    return float(local_score) - _obj_g.points_per_dollar(base_labor) * (float(dollars) - float(base_dollars))
 
 
 def _gate_local(quality: dict, dates) -> float:
@@ -9963,6 +9982,49 @@ def stage_failure_line(key, blocks=None) -> str:
 OBJECTIVE_HISTORY_DAYS = 56
 
 
+def requirement_need(dates, requirements, c=None, concurrent=None) -> dict:
+    """The one objective's need from SHIFT REQUIREMENTS rows, read exactly as
+    Stage 1 reads its demand (schedule_shapes.demand_curves: the row's own
+    half-hour need, else the measured people on at once x the demand factor,
+    else the ramp, else the count spread over the core window), summed by
+    role family (schedule_cpsat.objective_need). {} when there are none —
+    a requirement with no half-hour curve used to be no need at all to the
+    objective, so a pass priced cutting a required server at nothing."""
+    if not requirements:
+        return {}
+    import schedule_cpsat as _cps_r
+    import schedule_shapes as _shp_r
+    curves = _shp_r.demand_curves(list(dates or []), requirements, concurrent=concurrent or None,
+                                  open_times=getattr(c, "open_times", None) or {},
+                                  close_times=getattr(c, "close_times", None) or {})
+    return _cps_r.objective_need(curves, c)
+
+
+def objective_need_text(result) -> dict:
+    """The one objective's need for a generation's week as JSON-safe text
+    (schedule_cpsat.need_text): the requirement rows' half-hour need
+    (schedule_objective.ObjectiveContext's own reading), with the solver-
+    first draft's shaped demand (`objective_need`) on its dates. {} when
+    there is none."""
+    try:
+        import schedule_cpsat as _cps_t
+        import schedule_objective as _obj_t
+        reqs = (result or {}).get("requirements") or []
+        need = {}
+        if isinstance(reqs, list) and reqs:
+            need = requirement_need((result or {}).get("week_dates") or [], reqs, (result or {}).get("constraints"),
+                                    concurrent=(result or {}).get("concurrent"))
+        shaped = _cps_t.need_from_text((result or {}).get("objective_need"))
+        if shaped:
+            dates = {d for d, _r in shaped}
+            need = {k: v for k, v in need.items() if k[0] not in dates}
+            need.update(shaped)
+        return _cps_t.need_text(need)
+    except Exception as e:
+        print(f"[schedule] objective need unavailable: {e!r}")
+        return {}
+
+
 def objective_context(restaurant_id, week_dates, c, signals, requirements, budget_dollars=None, blended=None,
                       history_rows=None, need_text=None):
     """The ONE objective's context for a generation's week (schedule_
@@ -10002,12 +10064,18 @@ def objective_context(restaurant_id, week_dates, c, signals, requirements, budge
             rates=rates, person_rates=ot.get("person_rates"),
             blended_rate=ot.get("default_rate") or (ot.get("rates") or {}).get("_default") or blended,
             ot_line=ot.get("line"), constraints=c)
+        # The need, read as Stage 1 reads its demand — the requirement rows'
+        # curves, and on the dates the solver drafted the demand it shaped to
+        # (the demand weights stay the requirement rows', as the solver's).
+        need = requirement_need(week_dates, requirements, c, concurrent=sig.get("concurrent"))
         if need_text:
             import schedule_cpsat as _cps_n
             shaped = _cps_n.need_from_text(need_text)
             dates = {d for d, _r in shaped}
-            ctx.need = {k: v for k, v in ctx.need.items() if k[0] not in dates}
-            ctx.need.update(shaped)
+            need = {k: v for k, v in need.items() if k[0] not in dates}
+            need.update(shaped)
+        if need:
+            ctx.need = need
         return ctx
     except Exception as e:
         print(f"[schedule] objective unavailable for restaurant {restaurant_id}: {e!r}")
@@ -10657,7 +10725,10 @@ def _stage_optimizer(rows, x):
                         max_seconds=cap, max_evaluations=evals,
                         # The experiment's model arm: nobody reassigned by the
                         # optimizer either (schedule audit 10/10/26 LOGIC-27).
-                        reassign=bool(getattr(x, "reassign_on", True)))
+                        reassign=bool(getattr(x, "reassign_on", True)),
+                        # The one objective's dollars, saved as well as added
+                        # (blind re-audit 10/11/26 LOGIC-6, LOGIC-23).
+                        objective_ctx=x.objective_ctx() or None)
     x.search_spent["optimizer"] = x.search_spent.get("optimizer", 0.0) + (time.monotonic() - t0)
     used = int(res.get("evaluations") or 0)
     x.search_spent["optimizer_evaluations"] = int(x.search_spent.get("optimizer_evaluations", 0)) + max(1, used)

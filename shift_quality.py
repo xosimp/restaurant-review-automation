@@ -371,6 +371,10 @@ class ShiftContext:
     demand_pct: float | None = None                    # vs an average day
     target_hours: float | None = None                  # this DAY's hour target
     day_hours: float = 0.0                             # hours scheduled this day
+    # Whether every half hour of the one objective's need (schedule_
+    # objective — signals["objective_need"]) is met on this day; None when
+    # the week carries no such need (blind re-audit 10/11/26 LOGIC-6).
+    day_need_met: bool | None = None
     week_assignments: dict = field(default_factory=dict)   # {name: [assignment]}
     prior_pattern: dict = field(default_factory=dict)  # {name: {"days": [...], "dayparts": [...]}}
     # Last PUBLISHED week on this weekday and daypart (RM-3): [(name key,
@@ -1742,7 +1746,14 @@ def dim_labor_efficiency(ctx: ShiftContext) -> DimensionResult | None:
     if not ctx.target_hours or ctx.target_hours <= 0 or ctx.day_hours <= 0:
         return None
     ratio = ctx.day_hours / float(ctx.target_hours)
-    if 0.9 <= ratio <= 1.02:
+    # Under the target, "the floor is thin" was a guess from hours. Where
+    # the week carries the one objective's need (blind re-audit 10/11/26
+    # LOGIC-6: Shift Quality's cost reads schedule_objective), the guess
+    # gives way to the measure: a day under its hours target with every
+    # half hour of its need covered is not marked down — the objective
+    # counts those hours as money saved, and the score no longer disagrees.
+    under_but_covered = ratio < 0.9 and ctx.day_need_met is True
+    if 0.9 <= ratio <= 1.02 or under_but_covered:
         score = SCORE_MAX
     elif ratio > 1.02:
         score = max(0, int(round(100 - (ratio - 1.02) * 220)))
@@ -1759,6 +1770,10 @@ def dim_labor_efficiency(ctx: ShiftContext) -> DimensionResult | None:
     over = ctx.day_hours - float(ctx.target_hours)
     if 0.9 <= ratio <= 1.02:
         res.strengths.append(f"{ctx.day_hours:.0f}h against a {float(ctx.target_hours):.0f}h target.")
+    elif under_but_covered:
+        res.facts["need_met"] = True
+        res.strengths.append(f"{abs(over):.0f}h under this day's {float(ctx.target_hours):.0f}h target with every "
+                             "half hour's need covered.")
     elif over > 0:
         res.weaknesses.append(f"{over:.0f}h over this day's {float(ctx.target_hours):.0f}h target.")
     else:
@@ -5721,6 +5736,35 @@ def _breach_from_id(bid) -> dict:
     return {}
 
 
+def _need_met_by_date(rows, need_text, families=None, flagged=frozenset()):
+    """{date: every half hour of the objective's need met} from
+    signals["objective_need"] ({"date|role": {"minute": people}} —
+    schedule_cpsat.need_text: the demand the week is priced against, one
+    objective — blind re-audit 10/11/26 LOGIC-6), counting each role's
+    family as one crew; None when the week carries no such need."""
+    if not need_text:
+        return None
+    on = {}
+    for r in rows or []:
+        sp = _row_span(r)
+        name = (r.get("employee") or "").strip()
+        if sp is None or not name or (name.lower(), r.get("date") or "", r.get("shift_start") or "") in flagged:
+            continue
+        cur = on.setdefault((r.get("date"), role_family(r.get("role"), families)), {})
+        for t in range(sp[0] - sp[0] % 30, sp[1], 30):
+            if sp[0] <= t and t + 30 <= sp[1]:
+                cur[t] = cur.get(t, 0) + 1
+    out = {}
+    for k, curve in need_text.items():
+        d, _sep, role = str(k).partition("|")
+        if not d or not role:
+            continue
+        have = on.get((d, role_family(role, families))) or {}
+        ok = all(have.get(int(t), 0) >= int(n or 0) for t, n in (curve or {}).items())
+        out[d] = out.get(d, True) and ok
+    return out
+
+
 def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: dict = None, **signals) -> list:
     """Bucket a finished schedule into the shifts the engine scores.
 
@@ -5827,6 +5871,8 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
                 existing[0]["closing"] = existing[0]["closing"] or closing
 
     targets = signals.get("daily_target_hours") or {}
+    need_met = _need_met_by_date(rows, signals.get("objective_need"), signals.get("role_families"),
+                                 signals.get("flagged") or set())
     open_times = signals.get("open_times") or {}
     close_times = signals.get("close_times") or {}
     role_floors_all = signals.get("role_floors") or {}
@@ -5994,6 +6040,7 @@ def build_contexts(rows: list, profiles: list = None, only_dates=None, frame: di
             demand_pct=demand_by_day.get(day),
             target_hours=targets.get(date),
             day_hours=day_hours.get(date, 0.0),
+            day_need_met=need_met.get(date) if need_met is not None else None,
             week_assignments=week_assignments,
             prior_pattern=signals.get("prior_pattern") or {},
             last_week_slots=(None if last_slots is None else list(last_slots.get((day, part)) or [])),
