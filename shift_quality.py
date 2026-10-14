@@ -2092,6 +2092,8 @@ LENGTH_MIN_DAYS = 20
 LENGTH_PERCENTILE = 0.9
 SHIFT_LENGTH_FLOOR = 70
 LONG_DAY_PENALTY = 3.0
+LENGTH_SLACK_HOURS = 1.5
+LENGTH_SLACK_SHARE = 0.25
 MANAGER_LOAD_OVER = 1.25          # past their own usual week by a quarter...
 MANAGER_LOAD_MIN_HOURS = 55.0     # ...and at least this many hours
 MANAGER_LOAD_MIN_WEEKS = 3
@@ -2145,7 +2147,10 @@ def long_day_limit(ctx: ShiftContext, family: str) -> tuple:
     norm = (getattr(ctx, "length_norms", None) or {}).get(family)
     limit, source = DEFAULT_LONG_DAY_HOURS, "default"
     if norm and norm.get("p90"):
-        limit, source = max(float(norm["p90"]), 4.0), "yours"
+        # Past their usual long day by a margin, not by a quarter hour: an
+        # hour and a half or a quarter over it, whichever is more.
+        p90 = float(norm["p90"])
+        limit, source = max(p90 + LENGTH_SLACK_HOURS, p90 * (1 + LENGTH_SLACK_SHARE), 4.0), "yours"
     if ctx.max_shift_hours:
         limit = min(limit, float(ctx.max_shift_hours))
     return round(limit, 2), source
@@ -2225,7 +2230,7 @@ def week_shift_length(contexts: list) -> DimensionResult | None:
         own = worst["source"] == "yours"
         res.weaknesses.append(
             f"{long} of {tracked} shifts run longer than "
-            + (f"your {role_words(worst['role'], 2) or 'staff'} usually work ({worst['limit']:g}h)" if own
+            + (f"your {role_words(worst['role'], 2) or 'staff'} usually work (over {worst['limit']:g}h)" if own
                else f"{DEFAULT_LONG_DAY_HOURS:g} hours")
             + f" — {worst['name']} is down for {worst['hours']:g}h on {_day_name(worst['date'])}"
             + (". Split the doubles or bring in a second person." if long > 1 else "."))
