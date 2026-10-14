@@ -11442,6 +11442,9 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-t th.p{text-align:left;width:60px}
 .ss-crew-t td{background:var(--paper2);border-radius:10px;padding:8px 6px;text-align:center;vertical-align:top;border-top:3px solid transparent;min-width:84px}
 .ss-crew-t td.e{background:transparent}
+/* Differences: a cell with nothing to answer recedes so the ones that need a look stand out. */
+.ss-crew-t td.quiet{opacity:.42}
+.ss-crew-t td.quiet:hover{opacity:1}
 .ss-crew-t td.match{border-top-color:var(--green)}.ss-crew-t td.under{border-top-color:var(--amber)}
 .ss-crew-t td.over{border-top-color:var(--ink3)}.ss-crew-t td.below_rule{border-top-color:var(--red)}
 .ss-crew-n{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;color:var(--ink);white-space:nowrap}
@@ -28083,12 +28086,20 @@ function ssRenderCrew() {
       _ssCrew = d; ssCrewDraw();
     }).catch(function () { body.innerHTML = '<div class="ss-crew-empty">Your crew couldn’t be read just now. Check your connection and open Crew again.</div>'; });
 }
+/* A cell asks something of the owner when the draft runs leaner than the
+   usual, sits under a minimum, or a kept answer is due for review; heavier
+   and peak-only notes are for reading, under All roles (owner, 10/14/26:
+   the two views showed 12 and 14 roles, so the buttons looked dead). */
+function ssCrewCellOpen(c) { return !!c && (c.status === 'under' || c.status === 'below_rule' || c.answer_state === 'review'); }
+function ssCrewRoleOpen(r) { for (var i = 0; i < r.cells.length; i++) if (ssCrewCellOpen(r.cells[i])) return true; return false; }
 function ssCrewDraw() {
   var d = _ssCrew, body = document.getElementById('ss-crew-body'), bar = document.getElementById('ss-crew-bar');
   if (!d || !body) return;
+  var _nAll = (d.roles || []).length, _nDiff = 0, _ri;
+  for (_ri = 0; _ri < _nAll; _ri++) if (ssCrewRoleOpen(d.roles[_ri])) _nDiff++;
   if (bar) {
-    bar.innerHTML = '<button type="button" class="cbtn cbtn-sm ' + (_ssCrewShow === 'diff' ? 'cbtn-primary' : 'cbtn-secondary') + '" data-crew-show="diff">Differences</button>'
-      + '<button type="button" class="cbtn cbtn-sm ' + (_ssCrewShow === 'all' ? 'cbtn-primary' : 'cbtn-secondary') + '" data-crew-show="all">All roles</button>'
+    bar.innerHTML = '<button type="button" class="cbtn cbtn-sm ' + (_ssCrewShow === 'diff' ? 'cbtn-primary' : 'cbtn-secondary') + '" data-crew-show="diff">Differences <span class="hb-num">' + _nDiff + '</span></button>'
+      + '<button type="button" class="cbtn cbtn-sm ' + (_ssCrewShow === 'all' ? 'cbtn-primary' : 'cbtn-secondary') + '" data-crew-show="all">All roles <span class="hb-num">' + _nAll + '</span></button>'
       + '<span class="sum">' + (d.week_start ? 'Week of <span class="hb-num">' + _escHtml(mdy(d.week_start)) + '</span> · ' : 'No week built yet · ')
       + '<span class="hb-num">' + (+d.open || 0) + '</span> to answer</span>';
   }
@@ -28098,8 +28109,7 @@ function ssCrewDraw() {
   }
   var roles = (d.roles || []).filter(function (r) {
     if (_ssCrewShow !== 'diff' || !d.week_start) return true;
-    for (var i = 0; i < r.cells.length; i++) if (r.cells[i].status !== 'match' || r.cells[i].answer_state === 'review' || r.cells[i].peak_note) return true;
-    return false;
+    return ssCrewRoleOpen(r);
   });
   var legend = '<div class="ss-crew-legend"><span><i style="background:var(--green)"></i>The draft matches your usual</span>'
     + '<span><i style="background:var(--amber)"></i>The draft runs leaner</span><span><i style="background:var(--ink3)"></i>The draft runs heavier</span>'
@@ -28181,7 +28191,8 @@ function ssCrewCell(role, c) {
   var title = c.day + ' ' + meal + ': usually ' + c.usual + ' on at once through ' + core + (c.usual_peak ? ' (' + c.usual_peak + ' at the busiest half hour)' : '')
     + (c.status === 'usual' ? '' : ', this draft ' + c.draft + (c.draft_peak ? ' (' + c.draft_peak + ' at the busiest)' : ''))
     + (c.sales ? ', shift sales about $' + Math.round(c.sales).toLocaleString('en-US') : '');
-  return '<td class="' + c.status + '" title="' + _escHtml(title) + '"><div class="ss-crew-n">' + c.usual + (c.status === 'usual' ? '' : '<i>→</i>' + c.draft) + '</div>'
+  var quiet = _ssCrewShow === 'diff' && c.status !== 'usual' && !ssCrewCellOpen(c) && !_ssCrewAdded[ck];
+  return '<td class="' + c.status + (quiet ? ' quiet' : '') + '" title="' + _escHtml(title) + '"><div class="ss-crew-n">' + c.usual + (c.status === 'usual' ? '' : '<i>→</i>' + c.draft) + '</div>'
     + (sub.length ? '<div class="ss-crew-s">' + _escHtml(sub.join(' · ')) + '</div>' : '') + (chips ? '<div>' + chips + '</div>' : '') + act + '</td>';
 }
 document.addEventListener('click', function (e) {
