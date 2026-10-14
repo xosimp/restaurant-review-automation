@@ -1771,6 +1771,12 @@ def resend_webhook():
     etype = event.get("type") or ""
     _verified_inbound("resend", etype)
     data = event.get("data") or {}
+    if etype == "email.received":
+        # Mail TO an intake address (email_intake): recorded and queued,
+        # never anything to do with a send of ours.
+        import email_intake
+        email_intake.receive(data)
+        return jsonify(ok=True)
     message_id = data.get("email_id") or data.get("id") or ""
     to = data.get("to") or []
     recipients = to if isinstance(to, list) else [to]

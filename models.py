@@ -4572,6 +4572,13 @@ def init_db(db_path: str = DB_PATH):
     # 10/10/26 RM-7, SCALE-24).
     from job_queue import init_job_queue
     init_job_queue(db_path)
+    # Files received by email (Resend Receiving): the intake addresses, the
+    # received-mail ledger, and the Fintech distributor invoices read from
+    # them (email_intake, fintech_invoices — 10/14/26).
+    from email_intake import init_email_intake
+    init_email_intake(db_path)
+    from fintech_invoices import init_fintech_invoices
+    init_fintech_invoices(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway

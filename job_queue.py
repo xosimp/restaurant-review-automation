@@ -95,6 +95,7 @@ KINDS = {
     "schedule_generate": ("generation", "interactive", 3),
     "auto_draft": ("generation", "scheduled", 2),
     "learner": ("bulk", "bulk", 2),
+    "email_intake": ("bulk", "bulk", 4),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -102,6 +103,7 @@ HANDLERS = {
     "schedule_generate": "schedule_engine:run_queued_generation",
     "auto_draft": "strategy_jobs:run_queued_auto_draft",
     "learner": "strategy_jobs:run_queued_learner",
+    "email_intake": "email_intake:run_queued",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
