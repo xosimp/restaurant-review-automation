@@ -57,6 +57,8 @@ import os
 import re
 import sqlite3
 import threading
+import time
+import weakref
 
 
 def database_url(name="DATABASE_URL"):
@@ -418,11 +420,16 @@ class Translator:
     `unique_lookup(table)` -> [[columns] of each unique key], the arbiters an
     INSERT OR REPLACE may conflict on."""
 
-    def __init__(self, pk_lookup=None, columns_lookup=None, notnull_lookup=None, unique_lookup=None):
+    def __init__(self, pk_lookup=None, columns_lookup=None, notnull_lookup=None, unique_lookup=None,
+                 types_lookup=None):
         self.pk_lookup = pk_lookup or (lambda t: None)
         self.columns_lookup = columns_lookup or (lambda t: None)
         self.notnull_lookup = notnull_lookup or (lambda t: None)
         self.unique_lookup = unique_lookup or (lambda t: None)
+        # {column: declared type} — an integer column compared with '' (a
+        # NULLIF(col, '') written for SQLite's anything-goes columns).
+        self.types_lookup = types_lookup or (lambda t: None)
+        self._table = None
 
     # ── token passes before the function rewrites ───────────────────────────
 
@@ -484,6 +491,32 @@ class Translator:
                                         Tok("word", "AS"), Tok("ws", " "), Tok("word", "text"), Tok("op", ")")]
             out.append(t)
             i += 1
+        return out
+
+    def _truthy_params(self, toks) -> list:
+        """A parameter standing alone as a condition (`CASE WHEN ? THEN`,
+        `AND ?`) is SQLite's truthiness of whatever it is; Postgres wants a
+        boolean and refuses the smallint a Python int binds as. It becomes
+        `CAST(? AS integer) <> 0` (NULL stays unknown)."""
+        out = list(toks)
+        for k, t in enumerate(toks):
+            if t.kind != "param":
+                continue
+            p, n = _sig_index(toks, k, -1), _sig_index(toks, k, 1)
+            prev = toks[p] if p is not None else None
+            nxt = toks[n] if n is not None else None
+            if not (prev is not None and prev.kind == "word" and prev.upper in ("WHEN", "WHERE", "AND", "OR", "NOT")):
+                continue
+            if not (nxt is None or (nxt.kind == "word" and nxt.upper in ("THEN", "AND", "OR", "ORDER", "GROUP",
+                                                                            "LIMIT")) or
+                    (nxt.kind == "op" and nxt.text in (")", ";"))):
+                continue
+            if prev.upper == "AND":
+                b = _sig_index(toks, p, -1)
+                bb = _sig_index(toks, b, -1) if b is not None else None
+                if bb is not None and toks[bb].kind == "word" and toks[bb].upper == "BETWEEN":
+                    continue                     # x BETWEEN ? AND ?
+            out[k] = Tok("other", f"CAST({_P} AS integer) <> 0")
         return out
 
     def _qualify_upsert(self, toks) -> list:
@@ -645,7 +678,7 @@ class Translator:
             up = t.upper if t.kind == "word" else ""
             if is_call and up in ("DATETIME", "DATE", "TIME", "JULIANDAY", "STRFTIME", "IFNULL", "INSTR",
                                   "GROUP_CONCAT", "MAX", "MIN", "JSON_EXTRACT", "TOTAL", "SUM", "AVG", "ROUND",
-                                  "JSON_VALID", "JSON", "JSON_SET", "JSON_EACH"):
+                                  "JSON_VALID", "JSON", "JSON_SET", "JSON_EACH", "NULLIF"):
                 end = _call_end(toks, nxt)
                 inner = toks[nxt + 1:end]
                 args = _split_args(inner)
@@ -690,6 +723,11 @@ class Translator:
                                f"FROM (VALUES {vals}) AS _m(_v))")
                 elif up == "JSON_EXTRACT":
                     rep = self._json_extract(args, tr, out, toks, end)
+                elif up == "NULLIF" and len(args) == 2 and _literal(args[1]) == "" and self._numeric_column(args[0]):
+                    # NULLIF(n, '') on a number column: Postgres cannot read
+                    # '' as a number (and such a column never holds one —
+                    # the copy stored those as NULL), so it is the column.
+                    rep = tr(args[0]).strip()
                 elif up == "ROUND" and len(args) == 2:
                     # Postgres rounds to places only a numeric (round(double
                     # precision, integer) does not exist); answered as a
@@ -785,6 +823,15 @@ class Translator:
             alias, end = toks[n].text, n
         return f"jsonb_array_elements_text(cavnar_json_array({doc})) AS {alias}(value)", end
 
+    def _numeric_column(self, arg) -> bool:
+        sig = _significant(arg)
+        if not self._table or not sig or sig[-1].kind != "word" or \
+                not (len(sig) == 1 or (len(sig) == 3 and sig[1].text == ".")):
+            return False
+        types = self.types_lookup(self._table) or {}
+        typ = str(types.get(sig[-1].text) or types.get(sig[-1].text.lower()) or "").lower()
+        return any(k in typ for k in ("int", "real", "double", "numeric", "float"))
+
     def _agg_arg(self, arg, tr) -> str:
         """An aggregate's argument; a predicate counted as SQLite does —
         1 / 0, NULL kept."""
@@ -858,8 +905,10 @@ class Translator:
             # (a default's strftime format) is doubled.
             return self.translate_ddl(sql).replace("%", "%%")
         is_index = head[:1] == ["CREATE"] and "INDEX" in head
+        self._table = _main_table(_significant(toks))
         toks = self._collate_nocase(toks)
         toks = self._is_distinct(toks)
+        toks = self._truthy_params(toks)
         toks = self._qualify_upsert(toks)
         toks = self._like_escape(toks)
         toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
@@ -867,14 +916,26 @@ class Translator:
         table = _main_table(_significant(toks))
         toks = self._statement(toks, table)
         out = []
-        for t in toks:
+        for k, t in enumerate(toks):
             if t.kind == "param":
                 out.append("%s")
             elif t.kind in ("str", "other", "op", "comment", "dollar"):
                 out.append(t.text.replace("%", "%%").replace(_P, "%s"))
             elif t.kind == "word" and t.upper == "ROWID":
+                p, n = _sig_index(toks, k, -1), _sig_index(toks, k, 1)
+                prev = toks[p] if p is not None else None
+                nxt = toks[n] if n is not None else None
+                if prev is not None and prev.kind == "word" and prev.upper == "AS":
+                    out.append(t.text)                 # an alias named rowid stays rowid
+                    continue
                 pk = self.pk_lookup(table) if table else None
-                out.append(pk[0] if pk and len(pk) == 1 else "ctid")
+                col = pk[0] if pk and len(pk) == 1 else "ctid"
+                # Selected bare, it is still read back as row["rowid"].
+                selected = prev is not None and ((prev.kind == "word" and prev.upper in ("SELECT", "DISTINCT"))
+                                                 or (prev.kind == "op" and prev.text == ","))
+                ends = nxt is None or (nxt.kind == "op" and nxt.text == ",") or \
+                    (nxt.kind == "word" and nxt.upper == "FROM")
+                out.append(f"{col} AS rowid" if selected and ends and self._in_select_list(toks[:k]) else col)
             else:
                 out.append(t.text)
         return "".join(out).replace("LIMIT -1", "LIMIT ALL")
@@ -1279,7 +1340,7 @@ class PgConnection:
         self._closed = False
         self._catalog = catalog or Catalog(raw)
         self._tr = Translator(self._catalog.primary_key, self._catalog.columns, self._catalog.notnull,
-                              self._catalog.unique_keys)
+                              self._catalog.unique_keys, self._catalog.types)
         self.row_factory = None
         self.isolation_level = ""
         self.text_factory = str
@@ -1688,6 +1749,9 @@ class Catalog:
     def columns(self, table):
         return self._info(table)["columns"] or None if table else None
 
+    def types(self, table):
+        return self._info(table)["types"] if table else {}
+
     def notnull(self, table):
         return self._info(table)["notnull"] if table else set()
 
@@ -1712,10 +1776,7 @@ class Catalog:
                 for i, r in enumerate(rows)]
 
 
-# ── connections, reused per thread ──────────────────────────────────────────
-
-_local = threading.local()
-_POOL_PER_THREAD = 3
+# ── connections: one bounded pool per process (SCALE-11) ────────────────────
 
 
 _NUMERIC_LOADER = None
@@ -1753,30 +1814,199 @@ def _driver_connect(url):
     return raw
 
 
+def _env_int(name, default):
+    try:
+        return max(0, int(os.getenv(name) or default))
+    except ValueError:
+        return default
+
+
+class _Pool:
+    """One process's connections to one Postgres URL (SCALE-11). The app
+    opens a connection per unit of work (get_conn … close), often one
+    inside another on the same thread; per-thread idle lists with no cap
+    grew with every thread the process runs (request threads, the
+    scheduler, the queue's and the AI pools: 60-150 a process against
+    Railway's max_connections of 100). Here:
+
+      PG_POOL_MAX (20)       connections a process may have checked out by
+                             threads that held none — the cap that matters;
+      PG_POOL_OVERFLOW (20)  more, only for a thread that already holds one
+                             (a nested get_conn: waiting there on threads
+                             that wait on it would deadlock);
+      PG_POOL_IDLE (5)       idle connections kept for reuse;
+      PG_POOL_MAX_LIFETIME (1800 s) a connection's age before it is retired
+                             at its next return; PG_POOL_IDLE_SECONDS (300)
+                             an idle one's;
+      PG_POOL_TIMEOUT (30 s) how long a checkout waits for a free one
+                             before it fails, said.
+
+    So a process holds at most PG_POOL_MAX + PG_POOL_OVERFLOW connections
+    (40), and the web process plus worker.py at most 80 — under the 100
+    Railway allows, with room for a deploy's overlap at the defaults' idle
+    level. Behind PgBouncer (transaction mode) the same caps apply per
+    process; the advisory locks are transaction-scoped, which it keeps."""
+
+    def __init__(self, url):
+        self.url = url
+        self.cond = threading.Condition()
+        self.idle = []                    # [(raw, born, idle_since)]
+        self.base = 0                     # checked out by a thread holding none
+        self.overflow = 0                 # checked out by a thread already holding one
+        self.opened = 0                   # live raw connections (out + idle)
+
+    def limits(self):
+        return (_env_int("PG_POOL_MAX", 20), _env_int("PG_POOL_OVERFLOW", 20), _env_int("PG_POOL_IDLE", 5),
+                _env_int("PG_POOL_MAX_LIFETIME", 1800), _env_int("PG_POOL_IDLE_SECONDS", 300),
+                _env_int("PG_POOL_TIMEOUT", 30))
+
+    def checkout(self):
+        held = _held()
+        nested = held.get(self.url, 0) > 0
+        cap_base, cap_over, _keep, life, idle_s, timeout = self.limits()
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while True:
+                if nested and self.overflow < cap_over:
+                    kind = "overflow"
+                    self.overflow += 1
+                    break
+                if not nested and self.base < cap_base:
+                    kind = "base"
+                    self.base += 1
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise sqlite3.OperationalError(
+                        f"database connection pool exhausted ({self.base} + {self.overflow} in use; "
+                        f"PG_POOL_MAX={cap_base}, PG_POOL_OVERFLOW={cap_over})")
+                self.cond.wait(left)
+            raw = None
+            now = time.monotonic()
+            while self.idle:
+                r, born, since = self.idle.pop()
+                if now - born > life or now - since > idle_s:
+                    self.opened -= 1
+                    _close_raw(r)
+                    continue
+                raw = (r, born)
+                break
+        held[self.url] = held.get(self.url, 0) + 1
+        try:
+            if raw is None:
+                raw = (_driver_connect(self.url), time.monotonic())
+                with self.cond:
+                    self.opened += 1
+            c = PgConnection(raw[0])
+        except BaseException:
+            self._give_back(kind, None, None)
+            held[self.url] -= 1
+            raise
+        c._url, c._born, c._slot = self.url, raw[1], kind
+        return c
+
+    def checkin(self, conn):
+        held = _held()
+        if held.get(self.url, 0) > 0:
+            held[self.url] -= 1
+        raw, keep = conn._raw, True
+        try:
+            raw.rollback()
+        except Exception:
+            keep = False
+        if keep and getattr(getattr(raw, "info", None), "transaction_status", None) is not None and \
+                getattr(raw.info.transaction_status, "name", "") != "IDLE":
+            keep = False
+        self._give_back(getattr(conn, "_slot", "base"), raw if keep else None, getattr(conn, "_born", 0),
+                        drop=None if keep else raw)
+
+    def _give_back(self, kind, raw, born, drop=None):
+        _cb, _co, keep_n, life, _is, _t = self.limits()
+        with self.cond:
+            if kind == "overflow":
+                self.overflow = max(0, self.overflow - 1)
+            else:
+                self.base = max(0, self.base - 1)
+            if raw is not None and len(self.idle) < keep_n and time.monotonic() - born <= life:
+                self.idle.append((raw, born, time.monotonic()))
+                raw = None
+            closing = raw or drop
+            if closing is not None:
+                self.opened -= 1
+            self.cond.notify()
+        if closing is not None:
+            _close_raw(closing)
+
+    def close_idle(self):
+        with self.cond:
+            idle, self.idle = self.idle, []
+            self.opened -= len(idle)
+        for r, _b, _s in idle:
+            _close_raw(r)
+        return len(idle)
+
+    def stats(self):
+        with self.cond:
+            return {"in_use": self.base + self.overflow, "base": self.base, "overflow": self.overflow,
+                    "idle": len(self.idle), "open": self.opened}
+
+
+_pools = {}
+_pools_lock = threading.Lock()
+_local = threading.local()
+
+
+def _held():
+    h = getattr(_local, "held", None)
+    if h is None:
+        h = _local.held = {}
+    return h
+
+
+def pool(url=None) -> "_Pool":
+    url = url or database_url()
+    with _pools_lock:
+        p = _pools.get(url)
+        if p is None:
+            p = _pools[url] = _Pool(url)
+        return p
+
+
+def pool_stats(url=None) -> dict:
+    """{in_use, base, overflow, idle, open} of this process's pool."""
+    return pool(url).stats()
+
+
+def close_idle(url=None) -> int:
+    """Close the idle connections (every pool when `url` is None): before a
+    database is used as a template, and at a process's end."""
+    with _pools_lock:
+        pools = [p for u, p in _pools.items() if url is None or u == url]
+    return sum(p.close_idle() for p in pools)
+
+
 def connect(url=None) -> PgConnection:
-    """A PgConnection to `url` (DATABASE_URL by default), reused from this
-    thread's idle ones when one is open and idle."""
+    """A PgConnection to `url` (DATABASE_URL by default), from the process's
+    bounded pool (_Pool). close() hands it back; one never closed is handed
+    back when it is collected."""
     url = url or database_url()
     if not url:
         raise sqlite3.OperationalError("DATABASE_URL is not a Postgres URL")
-    idle = getattr(_local, "idle", None)
-    if idle is None:
-        idle = _local.idle = []
-    while idle:
-        u, raw = idle.pop()
-        if u != url:
-            _close_raw(raw)
-            continue
-        try:
-            raw.rollback()
-            c = PgConnection(raw)
-            c._url = url
-            return c
-        except Exception:
-            _close_raw(raw)
-    c = PgConnection(_driver_connect(url))
-    c._url = url
+    p = pool(url)
+    c = p.checkout()
+    c._finalizer = weakref.finalize(c, _collected, p, c._raw, c._slot, c._born, threading.get_ident())
     return c
+
+
+def _collected(p, raw, slot, born, tid):
+    """A PgConnection collected without close(): its transaction rolled
+    back and the connection closed — never pooled (the thread that held it
+    may be gone) — and its slot freed."""
+    try:
+        raw.rollback()
+    except Exception:
+        pass
+    p._give_back(slot, None, born, drop=raw)
 
 
 def _close_raw(raw):
@@ -1787,16 +2017,15 @@ def _close_raw(raw):
 
 
 def _release(conn):
-    raw = conn._raw
-    try:
-        raw.rollback()
-    except Exception:
-        _close_raw(raw)
+    fin = getattr(conn, "_finalizer", None)
+    if fin is not None:
+        fin.detach()
+    p = _pools.get(getattr(conn, "_url", None))
+    if p is None:
+        try:
+            conn._raw.rollback()
+        except Exception:
+            pass
+        _close_raw(conn._raw)
         return
-    idle = getattr(_local, "idle", None)
-    if idle is None:
-        idle = _local.idle = []
-    if len(idle) >= _POOL_PER_THREAD:
-        _close_raw(raw)
-        return
-    idle.append((getattr(conn, "_url", None), raw))
+    p.checkin(conn)

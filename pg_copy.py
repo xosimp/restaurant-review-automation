@@ -78,7 +78,14 @@ def _elements(ddl):
             db_dialect._render(toks[close_i + 1:]))
 
 
-_REF = re.compile(r"\bREFERENCES\b.*$", re.I | re.S)
+# A column's REFERENCES clause: the table, its columns, and the actions that
+# belong to the clause — never what follows it (`… REFERENCES restaurants(id)
+# UNIQUE` keeps its UNIQUE on the column: the whole tail was taken, so the
+# copied client_data lost the one-row-per-restaurant key and an upsert
+# inserted a second row — found running the suite on Postgres, 10/12/26).
+_REF = re.compile(r"\bREFERENCES\s+\"?\w+\"?\s*(\([^)]*\))?"
+                  r"(\s+ON\s+(DELETE|UPDATE)\s+(CASCADE|RESTRICT|NO\s+ACTION|SET\s+NULL|SET\s+DEFAULT))*"
+                  r"(\s+(NOT\s+)?DEFERRABLE(\s+INITIALLY\s+(DEFERRED|IMMEDIATE))?)?", re.I)
 
 
 def table_ddl(name, sql, partition_col=None) -> tuple:
@@ -99,7 +106,7 @@ def table_ddl(name, sql, partition_col=None) -> tuple:
         if m and not re.match(r"(CONSTRAINT|PRIMARY|UNIQUE|CHECK)\b", e, re.I):
             col = e.split()[0]
             fks.append(f"FOREIGN KEY ({col}) {m.group(0).strip()}")
-            e = e[:m.start()].rstrip()
+            e = (e[:m.start()].rstrip() + " " + e[m.end():].strip()).strip()
         keep.append(e)
     pre = []
     if partition_col:

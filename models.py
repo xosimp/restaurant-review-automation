@@ -1157,9 +1157,12 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     # scheduler audit 10/10/26 RM-13): the platform's own database only; an
     # explicit other path (a test's file, a restore, a script's copy) stays
     # SQLite. SQLite is the default and costs one env read here.
-    if db_path == DB_PATH and _db_backend() == "postgres":
+    pg_url = _pg_url_for(db_path)
+    if pg_url:
         import db_dialect
-        return db_dialect.connect()
+        conn = db_dialect.connect(pg_url)
+        _track_open(conn)
+        return conn
     if not _pool_enabled():
         conn = sqlite3.connect(db_path, timeout=30, factory=_TrackedConnection)
         conn.row_factory = sqlite3.Row
@@ -1167,6 +1170,14 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     else:
         raw, key = _checkout(db_path)
         conn = _ConnHandle(raw, key)
+    _track_open(conn)
+    return conn
+
+
+def _track_open(conn):
+    """Remember `conn` for close_thread_connections (a request's teardown
+    closes what it opened and did not) — the Postgres ones too, whose pool
+    slot a leak would otherwise hold."""
     bag = getattr(_open_conns, "bag", None)
     if bag is None:
         bag = _open_conns.bag = weakref.WeakSet()
@@ -1174,7 +1185,26 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
         bag.add(conn)
     except TypeError:
         pass
-    return conn
+
+
+# Database files served by a Postgres instead ({path: url}). Empty in the
+# app: DATABASE_URL routes the platform's own database (DB_PATH). The
+# suite's Postgres mode (CAVNAR_TEST_PG_URL, tests/conftest.py) routes each
+# test's database file to a database of its own, so the same tests run
+# against both.
+_PG_ROUTES = {}
+
+
+def _pg_url_for(db_path):
+    """The Postgres URL serving `db_path`, or None for SQLite."""
+    if _PG_ROUTES:
+        url = _PG_ROUTES.get(db_path)
+        if url:
+            return url
+    if db_path == DB_PATH and _db_backend() == "postgres":
+        import db_dialect
+        return db_dialect.database_url()
+    return None
 
 
 def boot_conn(db_path: str = DB_PATH):
@@ -1189,9 +1219,10 @@ def boot_conn(db_path: str = DB_PATH):
     10/11/26, SCALE-5/SCALE-10)."""
     if db_path is None:
         db_path = DB_PATH
-    if db_path == DB_PATH and _db_backend() == "postgres":
+    pg_url = _pg_url_for(db_path)
+    if pg_url:
         import db_dialect
-        return db_dialect.connect()
+        return db_dialect.connect(pg_url)
     return sqlite3.connect(db_path)
 
 
