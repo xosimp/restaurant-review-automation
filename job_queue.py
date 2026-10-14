@@ -84,6 +84,8 @@ import os
 import socket
 import threading
 import time
+
+import db_dialect
 import uuid
 
 log = logging.getLogger("job_queue")
@@ -447,7 +449,9 @@ def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempot
     now = time.time()
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # Enqueues of one kind serialise with each other (its idempotency
+        # keys), never with claims or other kinds (SCALE-12).
+        db_dialect.begin_write(conn, "jobs", "enqueue", kind)
         if idempotency_key:
             row = conn.execute("SELECT id FROM jobs WHERE idempotency_key=?", (str(idempotency_key),)).fetchone()
             if row:
@@ -486,7 +490,7 @@ def enqueue_many(kind, items, priority_class=None, wake=True, db_path=None) -> i
     created = 0
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        db_dialect.begin_write(conn, "jobs", "enqueue", kind)
         tenants = {}
         for it in items:
             rid = it.get("restaurant_id")
@@ -779,8 +783,13 @@ def claim(worker_id, groups=("generation", "bulk"), db_path=None):
     try:
         if not _maybe_claimable(conn, groups, now):
             return None
-        conn.execute("BEGIN IMMEDIATE")
+        # A group's bounds (its slots, its rows in flight, one running job a
+        # restaurant) are checked and taken under that group's lock: claims
+        # of other groups, enqueues and every other writer go on
+        # (SCALE-12; on SQLite, BEGIN IMMEDIATE as before).
+        db_dialect.begin_write(conn, lock_now=False)
         for grp in groups:
+            db_dialect.lock(conn, "jobs", "claim", grp)
             expired += _expire_overdue(conn, grp, now)
             dead = _dead_rows(conn, grp, now, expired)
             total, held, busy = _occupancy(conn, grp, now)
@@ -1009,7 +1018,7 @@ def _take_slot(job, db_path=None) -> bool:
     grp, klass, now = job.get("grp"), job.get("priority_class"), time.time()
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        db_dialect.begin_write(conn, "jobs", "claim", grp)     # a slot is the group's, as in claim
         mine = conn.execute("SELECT phase FROM jobs WHERE id=? AND lease_owner=? AND state='running'",
                             (int(job["id"]), job["worker_id"])).fetchone()
         if mine is None:

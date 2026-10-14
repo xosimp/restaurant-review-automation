@@ -1173,7 +1173,10 @@ def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_
     import json
     conn = _async_conn()
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # One restaurant's jobs of one kind serialise (check-then-insert),
+        # no one else's (SCALE-12).
+        import db_dialect
+        db_dialect.begin_write(conn, "async_jobs", kind, restaurant_id)
         row = conn.execute(
             "SELECT job_id, request_json FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
             + _YOUNG + " " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",

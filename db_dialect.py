@@ -1869,9 +1869,50 @@ def _forget_translations():
         _TRANSLATIONS.clear()
 
 
+# ── per-resource write locks (SCALE-12) ────────────────────────────────────
+#
+# `BEGIN IMMEDIATE` is SQLite's one writer; on Postgres the dialect layer
+# keeps that meaning with ONE advisory lock (WRITE_LOCK_KEY) — so every job
+# claim, enqueue, model-gateway reservation and rate check serialised
+# platform-wide, SQLite's ceiling kept exactly where Postgres should remove
+# it. The hot paths name what they serialise instead: begin_write(conn,
+# "jobs", grp) takes the lock of that resource only (SQLite: BEGIN
+# IMMEDIATE, as before). The other BEGIN IMMEDIATE sites keep the one lock.
+
+def resource_key(*resource) -> int:
+    """A stable signed 64-bit advisory-lock key for `resource` (the same in
+    every process: Python's hash() is salted per process)."""
+    text = "|".join(str(r) for r in resource)
+    return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "big", signed=True)
+
+
+def begin_write(conn, *resource, lock_now=True):
+    """Open a write transaction for `resource`. SQLite: BEGIN IMMEDIATE (the
+    whole database, as ever). Postgres: a transaction holding the advisory
+    lock of `resource` alone — or none yet with lock_now=False, the caller
+    then taking lock(conn, …) for each resource it touches (a claim, per
+    group)."""
+    if not is_postgres(conn):
+        conn.execute("BEGIN IMMEDIATE")
+        return
+    if not resource and lock_now:
+        raise ValueError("begin_write needs the resource it serialises")
+    conn.execute("BEGIN")
+    if lock_now:
+        lock(conn, *resource)
+
+
+def lock(conn, *resource) -> None:
+    """Inside an open write transaction: on Postgres, wait for and hold the
+    advisory lock of `resource` until the transaction ends; on SQLite a
+    no-op (BEGIN IMMEDIATE already holds the database)."""
+    if is_postgres(conn):
+        conn.execute_native("SELECT pg_advisory_xact_lock(%s)", (resource_key(*resource),))
+
+
 def is_postgres(conn) -> bool:
     """True for a db_dialect connection (the platform database on
-    Postgres), false for sqlite3's."""
+    Postgres), false for sqlite3's (or models' pooled handle of one)."""
     return isinstance(conn, PgConnection)
 
 
