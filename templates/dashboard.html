@@ -12591,6 +12591,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="sw-k" style="margin-top:18px">Labor target</div>
             <div class="sw-tgt"><input class="ac-input ac-num" type="number" id="sw-target" min="5" max="60" step="0.5" value="{{ _lt }}" aria-label="Labor target %"><span>% of sales</span><span class="ac-status" id="sw-target-status"></span></div>
             <div id="sw-par" class="sw-note">The draft keeps labor at or under this. It is a ceiling, not a quota.</div>
+            {% if labor.is_live %}{# The owner's words for this draft, once, on Basic (owner, 10/14/26: it sat under every tab). #}
+            <div class="sw-gen-ask" style="margin-top:18px"><label class="sw-lbl" for="sfw1-instr">Anything for this week? <small>optional</small></label>
+            <input type="text" class="ac-input" id="sfw1-instr" maxlength="500" placeholder="e.g. Homecoming Saturday — one more bartender after 8pm" autocomplete="off"></div>{% endif %}
           </section>
           <section class="sw-sec" data-ss-panel="forecast" hidden>
             <div class="sw-k">Forecast</div>
@@ -12658,8 +12661,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
              sent as `instruction`, at most 500 characters), and how fresh
              the sales the forecast stands on are - a stale read stops
              Generate, and says so before the press (D-33; cav-sfw1). #}
-          <div class="sw-gen-ask"><label class="sw-lbl" for="sfw1-instr">Anything for this week? <small>optional</small></label>
-            <input type="text" class="ac-input" id="sfw1-instr" maxlength="500" placeholder="e.g. Homecoming Saturday — one more bartender after 8pm" autocomplete="off"></div>
           <div id="sfw1-gen-fresh" class="sfw1-notes" style="padding:8px 0 0"></div>
           <div class="sw-gen"><button onclick="generateSchedule(this)" id="gen-sched-btn" class="cbtn cbtn-primary">Generate a draft schedule</button></div>{% endif %}
         </aside>
@@ -27622,12 +27623,10 @@ function ssForecastHtml(d) {
       + '<span class="s">' + sales + '</span><span class="tr"><i style="width:' + (x.closed ? 0 : pct) + '%"></i></span>'
       + '<span class="h">' + (x.closed || !hrs ? '—' : '<span class="hb-num">' + _schedHrs(hrs) + 'h</span>') + '</span></div>';
     if (x.effects && x.effects.length) h += '<div class="ssf-day" style="padding:0"><span></span><span class="ssf-ev">' + _escHtml(x.effects.join(' · ')) + '</span></div>';
-    // How far the date sits from a typical one and why (D-23, D-30), and
-    // why its hours moved off its weekday's (D-24).
-    var dmt = x.closed ? '' : sfw2DemandLine(x.demand ? {pct: x.demand.pct, reasons: x.demand.reasons, weekday: x.weekday} : null);
-    var tr = (d.daily_target_reasons || {})[x.date] || [];
-    if (dmt || tr.length) h += '<div class="ssf-day" style="padding:0"><span></span><span class="ssf-dm">' + (dmt ? '<span class="' + ((+x.demand.pct) > 0 ? 'up' : 'down') + '">' + _numText(dmt) + '</span>' : '')
-      + (tr.length && !dmt ? _numText('Hours moved: ' + tr.join('; ')) : '') + '</span></div>';
+    // How far the date sits from a typical one (x.demand.pct) and why its
+    // hours moved (d.daily_target_reasons) are not lined under every day
+    // (owner, 10/14/26): the bar and the hours carry it; sfw2DemandLine
+    // stays for the shift pane.
   }
   if (miss.length) h += '<div class="sw-note" style="margin-top:10px">No sales forecast for ' + miss.join(', ') + (why ? ' — ' + _escHtml(why) : '') + '.</div>';
   // How fresh the sales are (D-33): the read's own sentence; a stale one
@@ -27635,9 +27634,7 @@ function ssForecastHtml(d) {
   var ddt = d.demand_data_through;
   if (ddt && (ddt.message || ddt.line)) h += '<div class="sw-flag' + (ddt.blocked || ddt.blind ? ' bad' : '') + '">' + _numText(ddt.message || ddt.line) + '</div>';
   else if (ddt && ddt.blind) h += '<div class="sw-flag bad">' + (ddt.date ? 'No sales newer than <span class="hb-num">' + _escHtml(mdy(ddt.date)) + '</span>' : 'No sales on file') + ': the forecast cannot see recent weeks.</div>';
-  // The usual crew the draft staffs to, learned from the POS clock-ins, and
-  // what has moved and held (schedule_engine.learned_crew; owner, 10/9/26).
-  h += ssCrewHtml(d);
+  // The usual crew is on the Crew tab, not repeated here (owner, 10/14/26).
   return h;
 }
 document.addEventListener('change', function (ev) {

@@ -67,7 +67,8 @@ def test_the_forecast_tab_shows_the_usual_crew_and_what_moved(monkeypatch):
     assert out["crew_trends"][0]["since"] == "9/12/26"
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
-    assert "h += ssCrewHtml(d);" in src and "out.update(learned_crew(restaurant_id))" in \
+    assert "h += ssCrewHtml(d);" not in src, "the usual crew is on the Crew tab only (owner, 10/14/26)"
+    assert "out.update(learned_crew(restaurant_id))" in \
         (Path(__file__).resolve().parents[1] / "schedule_engine.py").read_text()
 
 

@@ -369,9 +369,10 @@ def test_the_calibration_shows_floors_and_bars_and_applies_them_in_one_tap(page)
 
 def test_the_forecast_tab_and_par_say_the_hourly_budget(page):
     fc = _fn(page, "ssForecastHtml")
-    for piece in ("d.budget_basis", "sfw2BudgetNote(", "sfw2SalaryNote(bb)", "bb.caveat", "x.demand", "x.demand.pct",
-                  "d.daily_target_reasons", "ddt.line", "ddt.message", "data-nav-go=\"account/restaurant\""):
+    for piece in ("d.budget_basis", "sfw2BudgetNote(", "sfw2SalaryNote(bb)", "bb.caveat",
+                  "ddt.line", "ddt.message", "data-nav-go=\"account/restaurant\""):
         assert piece in fc, piece
+    assert "sfw2DemandLine(" not in fc and "ssf-dm" not in fc, "no demand line under every day (owner, 10/14/26)"
     assert "'</div><div class=\"n\">at ' + tgt" not in fc, "never \"$X at 35%\""
     assert "Labor budget (<span class=\"hb-num\">" not in page
     par = page[page.index("var par = document.getElementById('sw-par')"):]
