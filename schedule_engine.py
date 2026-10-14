@@ -8306,8 +8306,10 @@ def shifts_stamp(restaurant_id):
     try:
         conn = _m_ss.get_conn()
         try:
-            row = conn.execute("SELECT updated_at, LENGTH(shifts_csv) FROM client_data WHERE restaurant_id=?",
-                               (restaurant_id,)).fetchone()
+            # The file's size either way it is stored (SCALE-14), and the
+            # stale mark a sync onto shift_facts leaves.
+            row = conn.execute("SELECT updated_at, COALESCE(LENGTH(shifts_csv), 0), COALESCE(LENGTH(shifts_csv_z), 0), "
+                               "shifts_stale FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
         finally:
             conn.close()
         return tuple(row) if row else ()

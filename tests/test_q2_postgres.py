@@ -449,15 +449,19 @@ with contextlib.redirect_stdout(io.StringIO()):
     webhooks.init_webhooks(); guest_marketing.init_guest_marketing(); push.init_push()
     sales_audits.init_sales_audits()
 c = models.get_conn()
+def fam(d):
+    d = (d or "").upper()
+    return ("bigint" if "INT" in d else "double precision" if any(k in d for k in ("REAL", "FLOA", "DOUB")) else
+            "bytea" if ("BLOB" in d or "BYTEA" in d) else "text" if ("TEXT" in d or "CHAR" in d or d == "") else d.lower())
 if models._db_backend() == "postgres":
-    rows = c.execute_native("SELECT table_name, column_name FROM information_schema.columns "
+    rows = c.execute_native("SELECT table_name, column_name, data_type FROM information_schema.columns "
                             "WHERE table_schema = current_schema()").fetchall()
     out = {}
-    for t, col in rows:
-        out.setdefault(t, []).append(col)
+    for t, col, dt in rows:
+        out.setdefault(t, []).append(f"{col}:{fam(dt)}")
     out.pop("sqlite_master", None)
 else:
-    out = {t: [r[1] for r in c.execute(f'PRAGMA table_info("{t}")')]
+    out = {t: [f"{r[1]}:{fam(r[2])}" for r in c.execute(f'PRAGMA table_info("{t}")')]
            for (t,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
 c.close()
 print("SCHEMA" + json.dumps(out))
@@ -493,7 +497,9 @@ def test_the_boot_runs_twice_on_postgres_and_builds_sqlites_schema(scratch_db, t
     lite = _boot(tmp_path)
     assert first == again
     assert set(first) == set(lite)
-    assert {t: cols - {"rowid"} for t, cols in first.items()} == lite
+    # Every column, and its type (a column added by ALTER once came out
+    # REAL as float4, INTEGER as int4, BLOB not at all).
+    assert {t: cols - {"rowid:bigint"} for t, cols in first.items()} == lite
     c = db_dialect.connect(scratch_db)
     try:
         trig = {r[0] for r in c.execute_native("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal").fetchall()}
@@ -529,6 +535,7 @@ def test_the_copy_then_the_boot_is_the_cutovers_step_4(scratch_db, tmp_path):
     # Step 4: DATABASE_URL set, the boot runs — twice (the next deploy).
     after = _boot(tmp_path, scratch_db)
     assert _boot(tmp_path, scratch_db) == after and "restaurants" in after
+    assert "shifts_csv_z:bytea" in after["client_data"]
     c = db_dialect.connect(scratch_db)
     try:
         assert c.execute("SELECT name FROM restaurants WHERE id=?", (rid,)).fetchone()[0] == "Copy Live"
@@ -737,3 +744,29 @@ def test_an_old_draft_is_compacted_and_its_detail_survives_collection(db_path, m
         assert models.history_review(conn, row)["unmet"] == rv["unmet"]
     finally:
         conn.close()
+
+
+def test_a_facts_restaurants_shift_file_is_kept_compressed(db_path, monkeypatch):     # SCALE-14
+    import ops
+    import time as _t
+    monkeypatch.setattr(models, "DB_PATH", db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Facts Co", owner_email="f@x.com"), db_path=db_path)
+    text = "date,day,employee,role,shift_start,shift_end,scheduled_hours\n" + "".join(
+        f"2026-09-{d:02d},Mon,Person {p},Server,16:00,22:00,6\n" for d in range(1, 29) for p in range(40))
+    conn = models.get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO client_data (restaurant_id, shifts_csv, shifts_store, shifts_stale) "
+                     "VALUES (?, ?, 'facts', 0)", (rid, text))                # as stored before 10/14/26
+        conn.commit()
+        assert ops._compact_shift_exports(conn, _t.monotonic() + 30) == 1
+        assert ops._compact_shift_exports(conn, _t.monotonic() + 30) == 0
+        row = conn.execute("SELECT shifts_csv, shifts_csv_z FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+        assert row["shifts_csv"] is None and len(bytes(row["shifts_csv_z"])) < len(text) / 10
+        assert models.shift_file_text(conn, rid) == text
+        assert conn.execute(f"SELECT {models.SHIFTS_PRESENT_SQL} FROM client_data WHERE restaurant_id=?",
+                            (rid,)).fetchone()[0]
+    finally:
+        conn.close()
+    got = models.get_client_data(rid, db_path=db_path)
+    assert got["shifts_csv"] == text and "shifts_csv_z" not in got and got["has_shifts"]
+    assert models.get_client_data(rid, db_path=db_path, with_shifts=False)["has_shifts"]

@@ -2381,6 +2381,11 @@ def init_db(db_path: str = DB_PATH):
         # and from then on shifts_csv is an export rebuilt on demand
         # (get_client_data) when a sync or upload left it stale.
         "ALTER TABLE client_data ADD COLUMN shifts_store TEXT",
+        # The shift file's export, compressed, for a restaurant whose
+        # record is shift_facts (blind re-audit 10/11/26 SCALE-14: the plain
+        # export duplicated the facts — 5.6 MB for two years of a 250-person
+        # restaurant). Read through shift_file_text / get_client_data.
+        "ALTER TABLE client_data ADD COLUMN shifts_csv_z BLOB",
         "ALTER TABLE client_data ADD COLUMN shifts_stale INTEGER NOT NULL DEFAULT 0",
         """CREATE TABLE IF NOT EXISTS labor_daily_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8549,7 +8554,8 @@ def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
         row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
         h.update(repr(tuple(row) if row else ()).encode())
         try:
-            cd = conn.execute("SELECT updated_at, shifts_source, LENGTH(shifts_csv) FROM client_data "
+            cd = conn.execute("SELECT updated_at, shifts_source, COALESCE(LENGTH(shifts_csv), 0), "
+                              "COALESCE(LENGTH(shifts_csv_z), 0), shifts_stale FROM client_data "
                               "WHERE restaurant_id=?", (restaurant_id,)).fetchone()
         except sqlite3.OperationalError:
             cd = None
@@ -10848,7 +10854,9 @@ def save_client_data(restaurant_id: int, data_type: str,
             # The file just written is current (SCALE-5); a restaurant on
             # shift_facts keeps reading its facts, which its callers keep
             # in step (shift_facts.ingest, rewrite_window_from_csv, replace_all).
+            # Stored as store_shift_file stores it (SCALE-14).
             conn.execute("UPDATE client_data SET shifts_stale=0 WHERE restaurant_id=?", (restaurant_id,))
+            store_shift_file(conn, restaurant_id, csv_content)
     else:
         conn.execute(f"""
             INSERT INTO client_data (restaurant_id, {data_type}_csv, {data_type}_source)
@@ -10903,13 +10911,20 @@ def get_client_data(restaurant_id: int,
     try:
         if with_shifts:
             row = conn.execute("SELECT * FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            if row is not None and not row["shifts_csv"] and _row_get(row, "shifts_csv_z"):
+                row = dict(row)
+                row["shifts_csv"] = shift_file_text(conn, restaurant_id)     # the compressed export
         else:
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(client_data)").fetchall() if r[1] != "shifts_csv"]
-            row = conn.execute(f"SELECT {', '.join(cols)}, (shifts_csv IS NOT NULL AND shifts_csv != '') "
-                               "AS has_shift_file FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(client_data)").fetchall()
+                    if r[1] not in ("shifts_csv", "shifts_csv_z")]
+            row = conn.execute(f"SELECT {', '.join(cols)}, ((shifts_csv IS NOT NULL AND shifts_csv != '') "
+                               "OR shifts_csv_z IS NOT NULL) AS has_shift_file FROM client_data WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
     finally:
         conn.close()
     out = dict(row) if row else None
+    if out is not None:
+        out.pop("shifts_csv_z", None)
     if out is not None and not with_shifts:
         out["has_shifts"] = bool(out.pop("has_shift_file", 0)) or out.get("shifts_store") == "facts"
     if out is not None and with_shifts and out.get("shifts_store") == "facts" and out.get("shifts_stale"):
@@ -10925,17 +10940,62 @@ def get_client_data(restaurant_id: int,
 
 def _refresh_shift_export(restaurant_id, db_path=DB_PATH) -> str:
     """The shift history export rebuilt from shift_facts and stored (SCALE-5):
-    only when something reads the whole file, never by a sync."""
+    only when something reads the whole file, never by a sync — compressed
+    (store_shift_file: the facts are the record, SCALE-14)."""
     import shift_facts as _sf_exp
     text = _sf_exp.export_csv(restaurant_id, db_path=None if db_path == DB_PATH else db_path)
     conn = get_conn(db_path)
     try:
-        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_stale=0 WHERE restaurant_id=?",
-                     (text, restaurant_id))
+        store_shift_file(conn, restaurant_id, text)
+        conn.execute("UPDATE client_data SET shifts_stale=0 WHERE restaurant_id=?", (restaurant_id,))
         conn.commit()
     finally:
         conn.close()
     return text
+
+
+# A restaurant holds a shift history: a stored file, or shift_facts as its
+# record (whose export may be compressed or not built yet). The test every
+# "has shifts" query uses (SCALE-14: `shifts_csv != ''` alone missed a
+# restaurant on facts once its export was compressed).
+SHIFTS_PRESENT_SQL = ("(COALESCE(shifts_csv, '') <> '' OR shifts_csv_z IS NOT NULL "
+                      "OR COALESCE(shifts_store, '') = 'facts')")
+
+
+def shift_file_text(conn, restaurant_id) -> str:
+    """The stored shift file's text on `conn`: plain, or the compressed
+    export of a restaurant on shift_facts. '' for none. (An export left
+    stale by a sync is rebuilt by get_client_data, the readers' path.)"""
+    import zlib
+    row = conn.execute("SELECT shifts_csv, shifts_csv_z FROM client_data WHERE restaurant_id=?",
+                       (restaurant_id,)).fetchone()
+    if not row:
+        return ""
+    if row["shifts_csv"]:
+        return row["shifts_csv"]
+    z = row["shifts_csv_z"]
+    if z:
+        try:
+            return zlib.decompress(bytes(z)).decode("utf-8")
+        except Exception as e:
+            print(f"[client_data] compressed shift file unreadable for {restaurant_id}: {e}")
+    return ""
+
+
+def store_shift_file(conn, restaurant_id, text) -> None:
+    """Write the shift file on `conn` (the caller commits): compressed when
+    shift_facts is the restaurant's record (the file is then only an
+    export of it), plain otherwise (the file is the record)."""
+    import zlib
+    row = conn.execute("SELECT shifts_store FROM client_data WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    if row is not None and (row["shifts_store"] or "") == "facts":
+        z = zlib.compress((text or "").encode("utf-8"), 6) if text else None
+        conn.execute("UPDATE client_data SET shifts_csv=NULL, shifts_csv_z=? WHERE restaurant_id=?",
+                     (z, restaurant_id))
+    else:
+        conn.execute("UPDATE client_data SET shifts_csv=?, shifts_csv_z=NULL WHERE restaurant_id=?",
+                     (text, restaurant_id))
+    _invalidate_shift_reads(restaurant_id)
 
 
 def reset_user_password(user_id: int, new_password: str,

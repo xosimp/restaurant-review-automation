@@ -842,7 +842,8 @@ def _load_with(conn):
     hook_success = ", last_success_at" if "last_success_at" in _columns(conn, "webhooks") else ""
     webhooks = per_rid("SELECT restaurant_id, url, is_active, consecutive_failures, last_status, last_fired_at, "
                        f"disabled_reason{hook_success} FROM webhooks", label="webhooks")
-    client_data = per_rid("SELECT restaurant_id, shifts_csv IS NOT NULL AND shifts_csv != '' AS has_shifts, "
+    import models as _m_cd
+    client_data = per_rid(f"SELECT restaurant_id, {_m_cd.SHIFTS_PRESENT_SQL} AS has_shifts, "
                           "inventory_csv IS NOT NULL AND inventory_csv != '' AS has_inventory, updated_at "
                           "FROM client_data", label="client_data")
     # last_count_at: the newest physical count (the column ordering reads).

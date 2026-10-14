@@ -3659,10 +3659,14 @@ def _thin_drafts(conn, deadline):
             moved = _compact_version_quality(conn, deadline)
             if moved:
                 out["schedule_versions_compacted"] = moved
-        if time.monotonic() < deadline:
-            moved = _compact_history_detail(conn, deadline)
-            if moved:
-                out["schedule_history_compacted"] = moved
+    if time.monotonic() < deadline:
+        moved = _compact_history_detail(conn, deadline)
+        if moved:
+            out["schedule_history_compacted"] = moved
+    if time.monotonic() < deadline:
+        moved = _compact_shift_exports(conn, deadline)
+        if moved:
+            out["shift_exports_compacted"] = moved
         if has_ref and time.monotonic() < deadline:
             gone = _gc_quality_blobs(conn, deadline)
             if gone:
@@ -3755,6 +3759,27 @@ def _gc_quality_blobs(conn, deadline) -> int:
 # (schedule_history.quality_ref / review_ref, SCALE-13) — is never collected.
 _HISTORY_UNREF = ("NOT EXISTS (SELECT 1 FROM schedule_history h WHERE h.quality_ref = quality_blobs.hash) "
                   "AND NOT EXISTS (SELECT 1 FROM schedule_history h2 WHERE h2.review_ref = quality_blobs.hash)")
+
+
+def _compact_shift_exports(conn, deadline) -> int:
+    """Restaurants on shift_facts whose shift file export is still stored
+    plain (written before 10/14/26): compressed (models.store_shift_file —
+    SCALE-14). Bounded; resumable (a compacted row no longer matches)."""
+    import models as _m_x
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(client_data)")}
+    if not {"shifts_store", "shifts_csv_z"} <= cols:
+        return 0
+    rids = [r[0] for r in conn.execute(
+        "SELECT restaurant_id FROM client_data WHERE shifts_store = 'facts' AND COALESCE(shifts_csv, '') <> '' "
+        "ORDER BY restaurant_id LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall()]
+    n = 0
+    for rid in rids:
+        if time.monotonic() > deadline:
+            break
+        _m_x.store_shift_file(conn, rid, _m_x.shift_file_text(conn, rid))
+        conn.commit()
+        n += 1
+    return n
 
 
 def _compact_history_detail(conn, deadline) -> int:
