@@ -11123,6 +11123,28 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings-setup .lb2-actions{flex-direction:row;flex-wrap:wrap;align-items:center}
 #ss-settings-setup .lb2-weekpick{flex-direction:row;width:auto}
 #ss-settings-setup .lb2-weekpick select,#ss-settings-setup .lb2-weekpick input{width:auto;min-width:200px}
+/* Basic's three controls are one family (owner, 10/15/26): the week, the
+   shifts upload and the labor target share a height, a radius and a face. */
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select,
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
+#ss-settings-setup [data-ss-panel="basic"] .lb2-actions .cbtn,
+#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{height:46px;min-height:46px;box-sizing:border-box;border-radius:12px;border:1px solid var(--cb-line);background-color:var(--cb-surface);font-size:15.5px;margin:0}
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select,
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
+#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{padding:0 14px;line-height:44px}
+/* The dark theme's input rule is !important; these three take the button's face. */
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select,
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
+#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{background-color:var(--cb-surface)!important;border-color:var(--cb-line)!important}
+#ss-settings-setup [data-ss-panel="basic"] .lb2-actions .cbtn{padding:0 18px}
+#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{width:96px}
+/* The week's PAR: two figures and one short line under them. */
+.sw-par-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:4px 0 0;max-width:520px}
+.sw-par-t{padding:12px 16px;border-radius:12px;background:var(--paper2)}
+.sw-par-t .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
+.sw-par-t .v{margin-top:4px;font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;letter-spacing:-.01em;color:var(--ink);font-variant-numeric:tabular-nums}
+.sw-par-n{margin-top:10px;font-size:14px;line-height:1.5;color:var(--ink3)}
+.sw-par-n.bad{color:var(--hb-bad)}
 #ss-settings-setup .sw-gen{padding:10px 0 20px}
 #ss-settings-setup .sw-gen .cbtn{height:48px;font-size:16px;border-radius:14px}
 /* The settings card reads at body size (owner, 9/26/26). */
@@ -26977,6 +26999,23 @@ function _swBar(label, val, max, target, cls, right) {
   var pct = max > 0 ? Math.min(100, Math.round(val / max * 100)) : 0, tk = (target && max > 0) ? Math.min(100, Math.round(target / max * 100)) : null;
   return '<div class="sw-bar' + (cls ? ' ' + cls : '') + '"><span class="l">' + label + '</span><span class="tr"><i style="width:' + pct + '%"></i>' + (tk !== null ? '<b style="left:calc(' + tk + '% - 1px)"></b>' : '') + '</span><span class="v">' + right + '</span></div>';
 }
+// The week's PAR as two figures and one line (owner, 10/15/26: the sentence
+// ran three lines). The basis's own sentence only when it says something the
+// figures don't: salaries past the target, or a wage that is assumed.
+function swParHtml(data) {
+  var b = data.budget_basis || {}, bits = [], warn = '';
+  var h = '<div class="sw-par-tiles"><div class="sw-par-t"><div class="k">PAR hours</div><div class="v">' + _schedHrs(data.hours_budget) + 'h</div></div>';
+  if (data.labor_budget_dollars) h += '<div class="sw-par-t"><div class="k">Hourly budget</div><div class="v">' + _schedMoney(data.labor_budget_dollars) + '</div></div>';
+  h += '</div>';
+  if (b.target_pct != null) bits.push('<span class="hb-num">' + _escHtml(String(b.target_pct)) + '%</span> of sales');
+  if (b.salaried_people) bits.push('less <span class="hb-num">' + b.salaried_people + '</span> salaried ' + (b.salaried_people === 1 ? 'person' : 'people'));
+  if (data.labor_target_label) bits.push(window.memNum ? memNum(data.labor_target_label) : _escHtml(data.labor_target_label));
+  if (b.salaries_exceed_target && b.text) warn = window.memNum ? memNum(b.text) : _escHtml(b.text);
+  else if (b.caveat) warn = window.memNum ? memNum(b.caveat) : _escHtml(b.caveat);
+  h += '<div class="sw-par-n">' + bits.join(' · ') + (bits.length ? '. ' : '') + 'A ceiling, not a quota.</div>';
+  if (warn) h += '<div class="sw-par-n bad">' + warn + '</div>';
+  return h;
+}
 function swFill(data) {
   _swData = data || null;
   _swHours = null;   // another week's split is not this one's (SQ-5)
@@ -26987,10 +27026,7 @@ function swFill(data) {
   var par = document.getElementById('sw-par');
   // The hourly crew's budget (D-1): "hourly budget $X", its basis in its
   // own words when the draft carries it — never "$X at 35%".
-  if (par && data && data.hours_budget) par.innerHTML = 'This week’s PAR: <span class="hb-num">' + _schedHrs(data.hours_budget) + 'h</span>' + (data.labor_budget_dollars ? ' · hourly budget <span class="hb-num">' + _schedMoney(data.labor_budget_dollars) + '</span>' + (data.budget_basis && data.budget_basis.text ? ' — ' + (window.memNum ? memNum(data.budget_basis.text) : _escHtml(data.budget_basis.text)) : '') : '')
-    // Whose target the budget was built against (M2 owner goals): "your goal
-    // of 26% by 12/31/26", "your target" or Cavnar AI's starting one.
-    + (data.labor_target_label ? ' — ' + (window.memNum ? memNum(data.labor_target_label) : _escHtml(data.labor_target_label)) : '') + '. A ceiling, not a quota.';
+  if (par && data && data.hours_budget) par.innerHTML = swParHtml(data);
   swLive();
   swActive();
 }
