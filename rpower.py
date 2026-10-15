@@ -41,7 +41,9 @@ open questions with RPOWER.
 """
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -55,16 +57,17 @@ BASE_URL = "https://rpowerpos.com/api/v1/coreapi"
 PAGE_SIZE = 1000
 
 # RPOWER's pagination description is self-contradictory (see module docstring).
-# Until it is confirmed against a real account with >1000 rows in one day,
-# _paged verifies by primary key rather than trusting the page arithmetic, and
-# this flag stays True so the verification cost is a deliberate, visible
-# choice rather than a forgotten one.
-# Still unconfirmed. RPOWER has not given us rate limits or the non-200
-# response shapes, and there is NO SANDBOX — confirmed 18 Sep 2026, access is
-# read-only against live stores. So the first real call is against Erik's
-# production data, and every defensive choice in this file stays until the
-# behaviour is observed rather than assumed.
-PAGINATION_UNVERIFIED = True
+# VERIFIED LIVE 10/10/26 against Simple EJ's (rid 5): 2,599 ticketsales lines
+# for 10/10 came back over 3 pages (page 2 = rows 1000-1999, so `pagenumber`
+# is 1-based and nothing is skipped), and the lines' sale total, 21,009.41,
+# matched RPOWER's own ticket summary (`type_sale`) to the cent; 10/4 and
+# 10/11 matched too (the DSR's source_checks; bar audit 10/14/26 RPW-16).
+# _paged keeps its primary-key overlap check all the same: it costs nothing
+# and is what would catch RPOWER changing the arithmetic. Still unknown:
+# RPOWER's rate limits and its non-200 response shapes, and there is NO
+# SANDBOX (18 Sep 2026: read-only against live stores).
+PAGINATION_UNVERIFIED = False
+PAGINATION_VERIFIED = "10/10/26: 2,599 lines over 3 pages, line total = ticket summary 21,009.41"
 
 # No rate limit is documented. Justin (RPOWER, 25 Sep 2026): "I'll check with
 # dev but I don't think so." Until dev confirms, these stay conservative
@@ -83,6 +86,69 @@ TIMEOUT_SECONDS = 45
 # week: both range fetches below chunk through _chunk_range, so a month's
 # backfill is five small requests rather than one at the ceiling.
 MAX_RANGE_DAYS = 7
+
+
+# ── bounded caches ──────────────────────────────────────────────────────────
+#
+# Every per-restaurant list this module keeps (sales types, menu, people, void
+# reasons, catalogs, closed days) lived in a plain dict that was never
+# evicted: a menu, its categories, tables and rooms run to 1-2 MB a store, so
+# a long-lived process serving RPOWER's ~1,500 stores would have held a few GB
+# (bar audit 10/14/26 RPW-10 / R2). Each is now least-recently-used and
+# bounded; an evicted entry is simply read again. Same interface as the dicts
+# they replace (get, [], clear, len), thread-safe.
+CACHE_MAX_RESTAURANTS = 64        # per-restaurant entries kept in each cache
+CACHE_MAX_KEYED = 1024            # caches keyed (restaurant, something): catalogs, closed days
+
+
+class _LRU:
+    def __init__(self, maxsize):
+        self.maxsize = int(maxsize)
+        self._d = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key, default=None):
+        with self._lock:
+            if key not in self._d:
+                return default
+            self._d.move_to_end(key)
+            return self._d[key]
+
+    def __getitem__(self, key):
+        with self._lock:
+            self._d.move_to_end(key)
+            return self._d[key]
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            self._d[key] = value
+            self._d.move_to_end(key)
+            while len(self._d) > self.maxsize:
+                self._d.popitem(last=False)
+
+    def __contains__(self, key):
+        with self._lock:
+            return key in self._d
+
+    def __len__(self):
+        with self._lock:
+            return len(self._d)
+
+    def __delitem__(self, key):
+        with self._lock:
+            del self._d[key]
+
+    def pop(self, key, default=None):
+        with self._lock:
+            return self._d.pop(key, default)
+
+    def clear(self):
+        with self._lock:
+            self._d.clear()
+
+    def keys(self):
+        with self._lock:
+            return list(self._d.keys())
 
 
 class RPowerError(Exception):
@@ -146,14 +212,116 @@ def has_token(restaurant_id: int) -> bool:
 
 # ── transport ───────────────────────────────────────────────────────────────
 
-_last_request_at = [0.0]
+# ── request rate: one budget per RPOWER token, shared by every thread and
+# every process (bar audit 10/14/26 RPW-10 / R2) ────────────────────────────
+#
+# The spacing used to be a process-global "last request at" with no lock: the
+# four pos_sync workers raced it, and the queue worker, the web process and
+# the scheduler each kept their own clock, so one store's token could be asked
+# four or five times as often as REQUEST_SPACING_SECONDS meant. The budget is
+# now a token bucket in the database (rpower_rate_bucket, one row per token,
+# keyed by a hash of it — never the token), taken with a compare-and-swap so
+# two processes cannot both spend the same slot; a thread lock serialises
+# this process's own threads in front of it. When the table can't be read
+# (a fresh test database, a locked file) the process-local spacing, under the
+# same lock, is the fallback — never no spacing.
+RATE_BURST = 1                    # requests a quiet token may make back to back
+RATE_MAX_WAIT_SECONDS = 60.0      # one request never waits longer than this for its slot
+_rate_lock = threading.Lock()     # guards the two dicts below
+_token_locks = {}                 # bucket -> the lock its own requests queue on
+_last_request_at = {}             # bucket -> monotonic time of its last request (the fallback)
 
 
-def _sleep_for_spacing():
-    gap = time.monotonic() - _last_request_at[0]
-    if gap < REQUEST_SPACING_SECONDS:
-        time.sleep(REQUEST_SPACING_SECONDS - gap)
-    _last_request_at[0] = time.monotonic()
+def init_rate_limit(db_path=None):
+    """The shared request budget's table (boot only, models.init_db)."""
+    import models
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS rpower_rate_bucket (
+            bucket      TEXT PRIMARY KEY,
+            tokens      REAL NOT NULL,
+            updated_at  REAL NOT NULL
+        )""")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _bucket_key(token: str) -> str:
+    import hashlib
+    return "rpower:" + hashlib.sha256(str(token or "").encode()).hexdigest()[:24]
+
+
+def _take_shared_slot(token: str, spacing: float):
+    """Seconds to wait before this request may go (0: go now, the slot is
+    taken), or None when the shared budget can't be reached."""
+    import models
+    key = _bucket_key(token)
+    try:
+        conn = models.get_conn()
+    except Exception:
+        return None
+    try:
+        for _ in range(8):                         # compare-and-swap retries
+            now = time.time()
+            row = conn.execute("SELECT tokens, updated_at FROM rpower_rate_bucket WHERE bucket=?",
+                               (key,)).fetchone()
+            if row is None:
+                cur = conn.execute("INSERT INTO rpower_rate_bucket (bucket, tokens, updated_at) VALUES (?,?,?) "
+                                   "ON CONFLICT(bucket) DO NOTHING", (key, float(RATE_BURST - 1), now))
+                conn.commit()
+                if cur.rowcount == 1:
+                    return 0.0
+                continue
+            tokens = min(float(RATE_BURST), float(row[0]) + max(0.0, now - float(row[1])) / spacing)
+            if tokens < 1.0:
+                return (1.0 - tokens) * spacing
+            cur = conn.execute("UPDATE rpower_rate_bucket SET tokens=?, updated_at=? WHERE bucket=? AND updated_at=?",
+                               (tokens - 1.0, now, key, float(row[1])))
+            conn.commit()
+            if cur.rowcount == 1:
+                return 0.0
+        return spacing                               # contended: wait one slot and ask again
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
+
+
+def _sleep_for_spacing(token: str = ""):
+    """Wait for this token's next request slot (see the note above)."""
+    spacing = float(REQUEST_SPACING_SECONDS or 0)
+    if spacing <= 0:
+        return
+    key = _bucket_key(token)
+    with _rate_lock:
+        lock = _token_locks.get(key)
+        if lock is None:
+            if len(_token_locks) > 4096:             # bounded: idle tokens' locks go
+                _token_locks.clear()
+            lock = _token_locks[key] = threading.Lock()
+    with lock:                                       # this token's requests, one at a time
+        waited = 0.0
+        while True:
+            wait = _take_shared_slot(token, spacing)
+            if wait is None:                         # the local fallback
+                gap = time.monotonic() - _last_request_at.get(key, 0.0)
+                if gap < spacing:
+                    time.sleep(spacing - gap)
+                break
+            if wait <= 0 or waited >= RATE_MAX_WAIT_SECONDS:
+                break
+            step = min(wait, 1.0)
+            time.sleep(step)
+            waited += step
+        with _rate_lock:
+            if len(_last_request_at) > 4096:
+                _last_request_at.clear()
+            _last_request_at[key] = time.monotonic()
 
 
 def _request(token: str, path: str, params: dict = None) -> object:
@@ -172,7 +340,7 @@ def _request(token: str, path: str, params: dict = None) -> object:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     last_error = None
     for attempt in range(MAX_RETRIES):
-        _sleep_for_spacing()
+        _sleep_for_spacing(token)
         try:
             resp = requests.get(url, headers=headers, params=params or {},
                                 timeout=TIMEOUT_SECONDS)
@@ -406,6 +574,12 @@ def bootstrap(restaurant_id: int, store_mid: str = None) -> dict:
         # weekday() — 0-based, also starting Monday. Off by one, nothing more,
         # but silently off by one is a payroll week that starts on the wrong
         # day and an overtime calculation that splits in the wrong place.
+        # UNCONFIRMED (bar audit 10/14/26 RPW-17 / R26): the collection does
+        # not define ot_dow at all, and its own `open_days` sample "NYYYYYN"
+        # reads Sunday-first. EJ's came through this path as week_start_day 2
+        # (Wednesday) from ot_dow 3 - to be checked against EJ's known payroll
+        # week and asked of RPOWER before the next store is bootstrapped; an
+        # operator's week_start_day always wins.
         try:
             fields["week_start_day"] = (int(chosen["ot_dow"]) - 1) % 7
         except (TypeError, ValueError):
@@ -449,7 +623,7 @@ def sales_types(restaurant_id: int) -> dict:
 # Read once per this many seconds: every sales read consults the list, and
 # the nightly jobs read several days in a row (9/29/26).
 SALES_TYPE_CACHE_SECONDS = 600
-_sales_type_cache = {}
+_sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS)
 
 
 def clear_caches():
@@ -531,7 +705,7 @@ def _loss_kind(row: dict, types: dict):
 
 
 VOID_REASON_CACHE_SECONDS = 600
-_void_reason_cache = {}
+_void_reason_cache = _LRU(CACHE_MAX_RESTAURANTS)
 
 
 def void_reasons(restaurant_id: int) -> dict:
@@ -675,7 +849,50 @@ def fetch_menu_items(restaurant_id: int) -> list:
         "sales_type_mid": r.get("slstype_mid"),
         "last_cost": r.get("last_cost"),
         "plu": r.get("plu") or None,
+        "upc": r.get("upc") or None,
+        "aqu_count": r.get("aqu_count"),
     } for r in rows if r.get("mid")]
+
+
+def fetch_sales_catalog(restaurant_id: int) -> dict:
+    """The store's sales categories (with their department) and menu items,
+    every bar-relevant field RPOWER documents for them (bar audit 10/14/26
+    RPW-9 / F5) — what pos_archive.sync_catalog keeps:
+
+      categories  salescategory/getbycg: name, slsdep_mid -> the
+                  department's name (salesdepartment/getbycg), is_bar,
+                  alt_qty_unit, alt_rpt_unit, aqu_in_aru (the alternate
+                  quantity: ounces poured, where a store configures it)
+      items       menuitem/getbycg: name, slscat_mid, is_mod, last_cost,
+                  plu, upc, aqu_count
+
+    Field names are the collection's (docs/integrations/
+    rpower_core_api.postman.json). Values are passed through as RPOWER sends
+    them; 0 / "" mean "not kept" (last_cost is commonly 0), which the
+    readers decide, never this."""
+    menu = _catalog(restaurant_id, "menuitem/getbycg")
+    cats = _catalog(restaurant_id, "salescategory/getbycg")
+    deps = _catalog(restaurant_id, "salesdepartment/getbycg")
+    categories = []
+    for mid, c in cats.items():
+        dep_id = _id(c.get("slsdep_mid"))
+        dep = (deps.get(dep_id or "") or {}).get("name")
+        categories.append({
+            "category_id": str(mid), "name": clean_item_name(c.get("name")) or None,
+            "department_id": dep_id, "department": (str(dep).strip() or None) if dep else None,
+            "is_bar": 1 if _num(c.get("is_bar")) else 0,
+            "alt_qty_unit": (str(c.get("alt_qty_unit") or "").strip() or None),
+            "alt_rpt_unit": (str(c.get("alt_rpt_unit") or "").strip() or None),
+            "aqu_in_aru": _num(c.get("aqu_in_aru"), None)})
+    items = []
+    for mid, m in menu.items():
+        items.append({
+            "item_id": str(mid), "name": clean_item_name(m.get("name")) or None,
+            "category_id": _id(m.get("slscat_mid")), "is_mod": 1 if _num(m.get("is_mod")) else 0,
+            "last_cost": _num(m.get("last_cost"), None),
+            "plu": (str(m.get("plu") or "").strip() or None), "upc": (str(m.get("upc") or "").strip() or None),
+            "aqu_count": _num(m.get("aqu_count"), None)})
+    return {"categories": categories, "items": items}
 
 
 # ── menu names: what a sale's menuitem_mid is called ────────────────────────
@@ -690,7 +907,7 @@ def fetch_menu_items(restaurant_id: int) -> list:
 # discount, gratuity, gift card, open-price or retail category is money, not
 # a menu item. Checked against EJ's live menu: all 373 sold ids resolved.
 MENU_CACHE_SECONDS = 600
-_menu_cache = {}
+_menu_cache = _LRU(CACHE_MAX_RESTAURANTS)
 _NOT_ITEM_CATEGORY_RE = re.compile(r"discount|gratuit|gift\s*card|\bopen\b|\bretail\b", re.I)
 
 
@@ -1275,7 +1492,7 @@ def fetch_people(restaurant_id: int) -> dict:
 # pos.fetch_clock_ins_today, which look these up by name, now reach RPOWER.
 
 PEOPLE_CACHE_SECONDS = 600
-_people_cache = {}
+_people_cache = _LRU(CACHE_MAX_RESTAURANTS)
 
 
 def employee_names(restaurant_id: int) -> dict:
@@ -1284,7 +1501,7 @@ def employee_names(restaurant_id: int) -> dict:
     return dict((_people_cached(restaurant_id) or {}).get("employees") or {})
 
 
-_job_cat_cache = {}
+_job_cat_cache = _LRU(CACHE_MAX_RESTAURANTS)
 
 
 def job_categories(restaurant_id: int) -> dict:
@@ -1795,7 +2012,7 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
 # date as provider-neutral rows; pos_archive writes them.
 
 CATALOG_CACHE_SECONDS = 600
-_catalog_cache = {}
+_catalog_cache = _LRU(CACHE_MAX_KEYED)
 
 
 def _catalog(restaurant_id: int, path: str, by_store: bool = False) -> dict:
@@ -1875,10 +2092,24 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     rooms = _catalog(restaurant_id, "room/getbystore", by_store=True)
     meals = _catalog(restaurant_id, "mealtime/getbycg")
     centers = _catalog(restaurant_id, "profitcenter/getbycg")
+    # Each line's department and sales category as RPOWER filed it the night
+    # it was archived (bar audit 10/14/26 F5): the Bar maps POS item
+    # categories to beer / liquor / wine, and a night read back from the
+    # archive needs them without asking RPOWER's catalog again.
+    menu_rows = _catalog(restaurant_id, "menuitem/getbycg")
+    cat_rows = _catalog(restaurant_id, "salescategory/getbycg")
+    dep_rows = _catalog(restaurant_id, "salesdepartment/getbycg")
 
     def _name(cat, mid):
         row = cat.get(mid) if mid else None
         return _tidy_name(row.get("name")) if row and row.get("name") else None
+
+    def _filed(item_mid):
+        cat_id = _id((menu_rows.get(item_mid or "") or {}).get("slscat_mid"))
+        cat = cat_rows.get(cat_id or "") or {}
+        dep = dep_rows.get(_id(cat.get("slsdep_mid")) or "") or {}
+        return (cat_id, (clean_item_name(cat.get("name")) or None),
+                ((dep.get("name") or "").strip() or (UNASSIGNED_DEPARTMENT if item_mid else None)))
 
     raw_lines = _paged(token, "ticketsales/getbybusinessdate",
                        {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
@@ -1898,7 +2129,19 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
         approver = _id(r.get("voidmgr_mid") if kind == "void" else r.get("mgr_mid"))
         reason = _id(r.get("voidrsn_mid"))
         stamps.append(str(r.get("time_stamp") or ""))
+        cat_id, cat_name, dep_name = _filed(item)
         lines.append({
+            # Bar-relevant ticketsales fields (F5), as the collection names
+            # them: `cost` (RPOWER's cost of the line, where kept), `discounted`
+            # (undocumented: kept to test whether it is RPOWER's own share of
+            # a check discount — bar.sales reads it only when a ticket's lines
+            # add up to its discount lines), `aqu_count` (alternate quantity,
+            # e.g. ounces), `fraction`, and `atom` (the line's id inside its
+            # ticket, which ticketitem's parent_atom points at).
+            "cost": round(_num(r.get("cost")), 4), "discounted": round(_num(r.get("discounted")), 2),
+            "aqu_count": _num(r.get("aqu_count"), None), "fraction": _num(r.get("fraction"), None),
+            "atom": _id(r.get("atom")), "category_id": cat_id, "sales_category": cat_name,
+            "department": dep_name,
             "line_id": str(r["rid"]), "ticket_id": tid, "business_date": iso,
             "item_id": item, "item_name": (menu.get(item) or {}).get("name") if item else None,
             "item_kind": (menu.get(item) or {}).get("kind") if item else None,
@@ -1916,6 +2159,7 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "sales_type_id": _raw(r.get("slstype_mid")), "voided": _num(r.get("voided")),
             "mgr_id": _raw(r.get("mgr_mid")), "void_mgr_id": _raw(r.get("voidmgr_mid")),
             "reason_id": _raw(r.get("voidrsn_mid")), "shift": _raw(r.get("shift"))})
+    _link_modifiers(token, base, iso, lines)
     tickets = []
     for t in raw_tickets:
         if _biz_date(t.get("date")) != iso or not t.get("rid"):
@@ -1991,7 +2235,12 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     cats = _catalog(restaurant_id, "payoutcategory/getbycg")
     payouts = []
     # RPOWER's own example spells this one `startDate` (and `enddate`), a
-    # single day asked as start == end.
+    # single day asked as start == end. UNPROVEN (bar audit 10/14/26 RPW-17
+    # / R26): that payout's enddate is inclusive — timeclock/getbydaterange
+    # treats its enddate as exclusive, and EJ's has one payout in 94 days (a
+    # $0.01 test, 8/29) to judge by. To probe once on a live store (the lead,
+    # read-only): ask a day with a known payout as start == end and as end =
+    # day + 1, and compare the rows.
     for p in _paged(token, "payout/getbydaterange", {**base, "startDate": iso, "enddate": iso, "sortorder": "date"}):
         if _biz_date(p.get("date")) != iso or not p.get("rid"):
             continue
@@ -2006,23 +2255,74 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None)}
 
 
+def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
+    """Set `parent_atom`, `mod_level` and `parent_line_id` on the night's
+    archived sale lines from ticketitem/getbybusinessdate — the only RPOWER
+    read that says which drink a "Double", "Rocks" or "(Liquor Add-Ons)" line
+    modifies (bar audit 10/14/26 RPW-9 / F5). RPOWER's own warning holds:
+    ticket items are NEVER summed for sales or quantities here — only their
+    parent links are copied onto the ticketsales lines, matched on (ticket,
+    atom). A failed read leaves the links empty and the night archived (the
+    links are an addition, not the record); returns the lines linked."""
+    try:
+        items = _paged(token, "ticketitem/getbybusinessdate",
+                       {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    except RPowerAuthError:
+        raise
+    except Exception as e:
+        log.warning("[rpower] ticketitem links unread for %s: %s", iso, e)
+        return 0
+    links = {}
+    for it in items:
+        if _biz_date(it.get("date")) != iso:
+            continue
+        tid, atom = _id(it.get("ticket_rid")), _id(it.get("atom"))
+        if tid and atom:
+            links[(tid, atom)] = (_id(it.get("parent_atom")), int(_num(it.get("mod_level"))))
+    by_atom = {(l["ticket_id"], l.get("atom")): l["line_id"] for l in lines if l.get("atom")}
+    linked = 0
+    for l in lines:
+        hit = links.get((l["ticket_id"], l.get("atom")))
+        if not hit:
+            continue
+        parent, level = hit
+        l["parent_atom"], l["mod_level"] = parent, level
+        l["parent_line_id"] = by_atom.get((l["ticket_id"], parent)) if parent else None
+        linked += 1
+    return linked
+
+
 def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
     """Business dates with a sale line written or rewritten in RPOWER's
     database between two UTC moments — ticketsales/getbytimestamp, which
     RPOWER documents as "when a record was last inserted or updated" (UTC).
     A store re-posting a closed day moves its time_stamp, so a date already
-    archived shows up here and is archived again."""
+    archived shows up here and is archived again.
+
+    Asked a week at a time (RPOWER's ask, MAX_RANGE_DAYS; bar audit 10/14/26
+    RPW-17 / R26): after an outage `changes_checked_to` can fall weeks
+    behind, and one request spanning all of it is exactly the oversized read
+    the vendor asked us not to make. Each request's end is the next one's
+    start (enddate is treated as possibly exclusive, as the single request
+    always did with until + 1 day), so no day falls between two requests."""
     token, base = _ctx(restaurant_id)
     lo = since_utc.strftime("%Y-%m-%d %H:%M:%S")
-    rows = _paged(token, "ticketsales/getbytimestamp", {
-        **base, "startdate": _d(since_utc), "enddate": _d(until_utc + timedelta(days=1)),
-        "sortorder": "time_stamp"})
+    first = date.fromisoformat(_d(since_utc))
+    last = date.fromisoformat(_d(until_utc + timedelta(days=1)))
     out = set()
-    for r in rows:
-        stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
-        day = _biz_date(r.get("date"))
-        if day and stamp and stamp > lo:
-            out.add(day)
+    cursor = first
+    while True:
+        end = min(cursor + timedelta(days=MAX_RANGE_DAYS), last)
+        rows = _paged(token, "ticketsales/getbytimestamp", {
+            **base, "startdate": _d(cursor), "enddate": _d(end), "sortorder": "time_stamp"})
+        for r in rows:
+            stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
+            day = _biz_date(r.get("date"))
+            if day and stamp and stamp > lo:
+                out.add(day)
+        if end >= last:
+            break
+        cursor = end
     return out
 
 
@@ -2106,7 +2406,7 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
 # RPOWER as before.
 
 CLOSED_CACHE_SECONDS = 600
-_closed_cache = {}
+_closed_cache = _LRU(CACHE_MAX_KEYED)
 
 
 def day_closed_cached(restaurant_id: int, business_date) -> bool:
