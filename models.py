@@ -5300,7 +5300,10 @@ def _check_numeric_fields(updates):
 # `target_change` event (update_restaurant), which rec_trust reads as a
 # change since a recommendation's data window (DH3-14).
 OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct", "monthly_revenue_target",
-                       "bar_cost_target", "beer_cost_target", "liquor_cost_target", "wine_cost_target")
+                       "bar_cost_target", "beer_cost_target", "liquor_cost_target", "wine_cost_target",
+                       # Comps & voids (10/15/26): logged as a target; Ask lists it for no
+                       # one (no thresholds.TARGET_MODULES entry — owner-only loss signal).
+                       "comp_void_target_pct")
 # The alcohol targets, by the Bar page category each judges (None = overall).
 BAR_TARGET_FIELDS = {None: "bar_cost_target", "beer": "beer_cost_target", "liquor": "liquor_cost_target",
                      "wine": "wine_cost_target"}

@@ -192,7 +192,7 @@ def test_a_complete_ninety_days_reads_bought_vs_sold_with_its_basis_chip(full):
     assert 'class="br-meter ctx"' in hero and "--hb-good" not in hero.split('class="br-meter')[1][:400]
     assert "Set an alcohol target in Account → Targets" in hero and 'data-br-targets="1"' in hero
     for piece in ("Bought vs sold, week by week", "Week by week, as a table", "Month by month, as a table",
-                  "What your distributors charge", "Where the money goes", "Which POS sales count as bar sales",
+                  "what your distributors charge", "Where the money goes", "Which POS sales count as bar sales",
                   "How every product is sorted", "Count the bar", 'data-br-series="total"'):
         assert piece in html, piece
     # Sales say their basis under the figures.
@@ -287,7 +287,8 @@ def test_spend_sections_state_their_period_and_the_hero_its_own(full):
     file — each says its dates — while the hero's "bought" is the window's."""
     inv = full["invoices"]
     html = _render(full)
-    assert f"Distributors · {inv['from_mdy']} – {inv['to_mdy']}" in _text(html)
+    dists = html[html.index('id="br-dists"'):]
+    assert f"Where the money goes{inv['from_mdy']} – {inv['to_mdy']}" in _text(dists[:dists.index("</header>")])
     hero = _text(html[html.index('class="br-card br-hero'):html.index('class="br-cats"')])
     w = full["pour_cost"]["window"]
     assert f"{w['from_mdy']} – {w['to_mdy']}" in hero and "bought from distributors" in hero
@@ -806,7 +807,7 @@ def test_an_unmatched_drink_comes_with_a_checked_suggestion():
     assert bv.suggest_pour("Blue Moon 22oz", "beer", c) == {}
     src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
     row = src[src.index("  function varUnmapped(u) {"):src.index("  function specRow(s) {")]
-    assert "sg && sg.product_key" in row and "check it, then Match" in row
+    assert "sg && sg.product_key" in row and '<span class="br-sug">Suggested</span>' in row
 
 
 def test_margins_suggest_only_drinks_with_the_same_beer_and_towers_at_100_oz():
@@ -823,8 +824,12 @@ def test_margins_suggest_only_drinks_with_the_same_beer_and_towers_at_100_oz():
     src = open(os.path.join(ROOT, "bar", "margins.py"), encoding="utf-8").read()
     assert "drink_items is not None and k not in drink_items" in src and '"pour_oz": stated_oz(' in src
     page = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
-    mg = page[page.index("  function margins(d) {"):page.index("  function reorder(d) {")]
-    assert "'What each drink costs'" in mg and "'Matches to confirm'" in mg and "data-oz=" in mg
+    # The drink costs are a table (eight rows, the rest folded); the name
+    # matches to confirm live in Matching with their ounces on Yes.
+    mg = page[page.index("  function drinkCost(d) {"):page.index("  function costPanel(d) {")]
+    assert "'What a drink costs to pour'" in mg and 'id="br-mg-rows"' in mg
+    nm = page[page.index("  function nameMatches(d) {"):page.index("  /* Recipe cards grouped by cocktail")]
+    assert "data-oz=" in nm and "Yes, that’s it" in nm
 
 
 def test_every_pours_from_list_is_grouped_by_category_and_strictly_a_to_z():
@@ -857,7 +862,7 @@ def test_bought_vs_rung_and_the_mapping_show_three_rows_and_fold_the_rest():
     # expandable and collapsable" — both lists.
     src = _src()
     assert "var SHOW_FIRST = 3;" in src and "data-br-varall" not in src and "ST.varAll" not in src
-    var = src[src.index("  function varSec(d) {"):src.index("  function specsBlock(v) {")]
+    var = src[src.index("  function costVar(d) {"):src.index("  function kegs(d) {")]
     assert 'id="br-varrest"' in var and "i < SHOW_FIRST" in var
     body = src[src.index("  function mapBody() {"):src.index("  /* ── how every product is sorted")]
     assert 'id="br-maprest"' in body and "nAct < SHOW_FIRST" in body
@@ -897,14 +902,17 @@ def test_keg_yield_shows_three_and_folds_the_rest_and_the_page_flows(full):
                                   for i in range(5)]}
     html = _render(p)
     keg = html[html.index('id="br-keg"'):]
-    keg = keg[:keg.index('id="br-waste"')] if 'id="br-waste"' in keg else keg
+    keg = keg[:keg.index('id="br-margins"')] if 'id="br-margins"' in keg else keg
     shown, folded = keg.split('id="br-kegrest"', 1)
     assert len(re.findall(r"<b>Keg \d", shown)) == 3 and len(re.findall(r"<b>Keg \d", folded)) == 2
     assert "2 more kegs" in _text(folded)
     assert "ssumes" not in _text(html)
-    order = [html.index(m) for m in ('class="br-card br-hero', 'What deserves a look', 'id="br-prices"' if 'id="br-prices"' in html
-                                     else 'Price watch', 'id="br-ops"', 'id="br-counts"' if 'id="br-counts"' in html
-                                     else 'Count the bar', 'id="br-waste"')]
+    # The figures, then the five views in their order (10/15/26 redesign).
+    marks = ('class="br-card br-hero', 'id="br-tabsw"', 'What deserves a look', 'id="br-var"', 'id="br-keg"',
+             'id="br-prices"', 'id="br-unm"', 'id="br-mapsec"', 'id="br-counts"', 'id="br-waste"')
+    for m in ('class="br-card br-hero', 'id="br-tabsw"', 'id="br-keg"', 'id="br-prices"', 'id="br-mapsec"', 'id="br-counts"', 'id="br-waste"'):
+        assert m in html, m
+    order = [html.index(m) for m in marks if m in html]
     assert order == sorted(order), order
 
 
@@ -912,3 +920,76 @@ def test_the_bar_header_has_no_edges_and_the_row_label_reads_in_the_body_face():
     src = open(DASHBOARD, encoding="utf-8").read()
     assert "#bar .dn-bar{border-bottom:0;background:transparent;" in src
     assert ".br-li .r>span:not(.hb-num){display:block;font-family:'Apfel Grotezk',sans-serif;" in src
+
+
+# ── the five views (owner, 10/15/26 redesign) ─────────────────────────────
+
+def test_below_the_figures_the_page_is_five_views_one_shown(full):
+    html = _render(full)
+    tabs = re.findall(r'<button type="button" class="cbtn br-tab" role="tab" id="br-t-(\w+)" data-br-tab="\w+" aria-controls="br-p-\w+" aria-selected="(\w+)"', html)
+    assert [t[0] for t in tabs] == ["overview", "cost", "buying", "match", "stock"]
+    assert [t[1] for t in tabs].count("true") == 1 and tabs[0][1] == "true"     # Overview opens first
+    panels = re.findall(r'<div class="br-panel" role="tabpanel" id="br-p-(\w+)" aria-labelledby="br-t-\w+" data-br-panel="\w+"( hidden)?>', html)
+    assert [p[0] for p in panels] == ["overview", "cost", "buying", "match", "stock"]
+    assert [bool(p[1]) for p in panels] == [False, True, True, True, True]
+    # Every view is in the page — hidden, not missing — so a "go to" lands and a save repaints in place.
+    for m in ('id="br-var"', 'id="br-prices"', 'id="br-counts"', 'id="br-waste"', 'id="br-mapsec"', 'id="br-prod"'):
+        assert m in html, m
+    src = _src()
+    go = src[src.index("  function goTo(id) {"):src.index("  /* The rest of the app is inert")]
+    assert "closest('[data-br-panel]')" in go and "setTab(pn.getAttribute('data-br-panel'), false, true)" in go
+    keys = src[src.index("t.getAttribute('data-br-tab') && (e.key === 'ArrowLeft'"):][:600]
+    assert "Home" in keys and "End" in keys and "setTab(TABS[ti].k, true)" in keys
+    assert "window.sessionStorage.getItem('br-tab')" in src and "window.sessionStorage.setItem('br-tab', k)" in src
+
+
+def test_every_workflow_control_survives_the_redesign(full):
+    """Nothing the owner could do before is gone: match a drink, confirm a
+    card, log waste, count the bar, change a product's category, filter prices."""
+    p = json.loads(json.dumps(full, default=str))
+    p["variance"]["unmapped"] = [{"provider": "rpower", "item_id": "9", "item": "Gin Fizz", "category": "liquor", "rung_units": 4, "sales_usd": 40,
+                                  "suggest": None, "spec_suggested": False}]
+    p["variance"]["unmapped_total"] = 1
+    p["variance"]["suggestions"] = [{"id": 7, "provider": "rpower", "item_name": "Gin Fizz", "item_id": "9", "ingredient": "Gin", "product_key": None,
+                                     "product": None, "oz": 2, "status": "suggested", "recipe": "Gin Fizz", "note": None}]
+    p["variance"]["suggestions_total"] = 1
+    p["margins"] = {"rows": [], "suggestions": [{"provider": "rpower", "item_id": "9", "item": "Gin Fizz", "product_key": "k", "product": "Gin 1L", "match": 0.4}]}
+    html = _render(p)
+    for ctl in ('data-br-vmap="9"', 'data-br-vmapto="9"', 'data-br-vmapoz="9"', 'data-br-specp="7"', 'data-br-spec="7" data-act="confirm"',
+                'data-br-dm="9"', 'data-br-wlog="1"', 'id="br-wprod"', 'data-br-cnt="beer"', 'id="br-cdate"', 'data-br-dir="up"',
+                'id="br-q"', 'id="br-fsort"', 'data-br-series="total"', 'data-br-lazy="mapping"', 'data-br-lazy="products"', 'data-br-lazy="counts"',
+                'id="br-mq"', 'data-br-go="br-unm"'):
+        assert ctl in html, ctl
+    assert "40%" in _text(html[html.index('id="br-namem"'):]) and "check it" in _text(html[html.index('id="br-namem"'):])
+
+
+def test_the_board_ranks_by_dollars_and_fills_its_grid(full):
+    p = json.loads(json.dumps(full, default=str))
+    pw = p.setdefault("price_watch", {})
+    pw["split_case"] = [{"name": "Fireball", "bottles_bought": 6, "paid_extra_usd": 19.74}]
+    pw["ladders"] = [{"proven": True, "save_90d_at_best": 84.0}]
+    p["variance"]["unmapped_total"] = 38
+    p["variance"]["unmapped_sales_usd"] = 10744.53
+    out = _run(p, "console.log(JSON.stringify(window._bar.sigList(%s).map(function (x) { return [x.go, x.usd]; })));"
+               "console.log(window._bar.signals(%s));" % (json.dumps(p, default=str), json.dumps(p, default=str)))
+    lines = out.strip().split("\n")
+    sig = json.loads(lines[-2])
+    usd = [u for _, u in sig]
+    assert sig[0][0] == "br-unm"
+    paid = [u for u in usd if u]
+    assert paid == sorted(paid, reverse=True) and usd == paid + [0] * (len(usd) - len(paid))   # dollars first, largest first
+    assert {"br-lads", "br-split"} <= {g for g, _ in sig}
+    n = len(re.findall(r'class="cbtn br-sig ', lines[-1]))
+    assert n in (len(sig) if len(sig) < 5 else (), 5, 9) and n <= len(sig)
+    assert lines[-1].count('class="cbtn br-sig t-') == n and ' lead ' in lines[-1]
+
+
+def test_recipe_cards_are_grouped_one_card_a_cocktail():
+    v = {"suggestions": [{"id": 1, "item_name": "Longisland", "recipe": "Long Island Iced Tea", "ingredient": "Vodka", "oz": 0.5, "status": "suggested", "product_key": "v"},
+                         {"id": 2, "item_name": "Longisland", "recipe": "Long Island Iced Tea", "ingredient": "Gin", "oz": 0.5, "status": "confirmed", "product_key": "g"},
+                         {"id": 3, "item_name": "Chocolate Martini", "recipe": "Chocolate Martini", "ingredient": "Vanilla vodka", "oz": 1.5, "status": "suggested", "product_key": None}],
+         "suggestions_total": 3}
+    out = _node(HARNESS + _bar_script() + "console.log(window._bar.recipes(%s));" % json.dumps(v))
+    cards = re.findall(r'<article class="br-rcp', out)
+    assert len(cards) == 2 and "1 of 2 confirmed" in _text(out) and "0 of 1 confirmed" in _text(out)
+    assert out.index("Longisland") < out.index("Chocolate Martini")
