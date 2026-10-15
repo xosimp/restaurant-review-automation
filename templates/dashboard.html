@@ -11120,12 +11120,20 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    which fall to 0 when it is taller than the window - it then scrolls from
    its top, never clipped. */
 .ss-stage[data-stage="setup"].on{display:flex;flex-direction:column;min-height:100%}
-.ss-stage[data-stage="setup"] .ss-setup{margin:auto;width:100%;box-sizing:border-box;padding:16px 24px 18px}
-.ss-stage[data-stage="setup"] h1{font-size:clamp(28px,2.6vw,36px);margin:6px 0 4px}
-.ss-stage[data-stage="setup"] .ss-hero p{font-size:16px;margin:0 0 14px}
-#ss-settings-setup #ss-settings{position:static;max-height:none;padding:8px 28px 0;border-radius:20px;box-shadow:var(--elev-hero)}
-#ss-settings-setup .ss-tabs{padding:10px 0 4px}
-#ss-settings-setup .sw-sec{padding:12px 0 8px;min-height:120px}
+.ss-stage[data-stage="setup"] .ss-setup{margin:auto;width:100%;box-sizing:border-box;padding:12px 24px 14px}
+.ss-stage[data-stage="setup"] h1{font-size:clamp(26px,2.3vw,32px);margin:4px 0 4px}
+.ss-stage[data-stage="setup"] .ss-hero p{font-size:15.5px;margin:0 0 12px}
+#ss-settings-setup #ss-settings{position:static;max-height:none;padding:6px 26px 0;border-radius:20px;box-shadow:var(--elev-hero)}
+#ss-settings-setup .ss-tabs{padding:8px 0 2px}
+#ss-settings-setup .sw-sec{padding:10px 0 4px;min-height:120px}
+/* Basic: the week and the labor target on one row (owner, 10/15/26: Setup
+   needed a scroll to reach Generate); they wrap on a narrow window. */
+.ss-basic-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 32px}
+.ss-basic-c{min-width:0}
+.ss-basic-c+.ss-basic-c{flex:1 1 220px}
+.ss-basic-c .sw-tgt{flex-wrap:wrap}
+.ss-basic-c .sw-k{margin-bottom:8px}
+.ss-basic-c .lb2-actions,.ss-basic-c .sw-tgt{margin:0}
 #ss-settings-setup .lb2-actions{flex-direction:row;flex-wrap:wrap;align-items:center}
 #ss-settings-setup .lb2-weekpick{flex-direction:row;width:auto}
 #ss-settings-setup .lb2-weekpick select,#ss-settings-setup .lb2-weekpick input{width:auto;min-width:200px}
@@ -11134,10 +11142,11 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select,
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
 #ss-settings-setup [data-ss-panel="basic"] .lb2-actions .cbtn,
-#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{height:46px;min-height:46px;box-sizing:border-box;border-radius:12px;border:1px solid var(--cb-line);background-color:var(--cb-surface);font-size:15.5px;margin:0}
+#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{height:42px;min-height:42px;box-sizing:border-box;border-radius:12px;border:1px solid var(--cb-line);background-color:var(--cb-surface);font-size:15px;margin:0}
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select,
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
-#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{padding:0 14px;line-height:44px}
+#ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{padding:0 14px;line-height:40px}
+#ss-settings-setup [data-ss-panel="basic"] #sfw1-instr{height:42px;box-sizing:border-box}
 /* The dark theme's input rule is !important; these three take the button's face. */
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select,
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
@@ -11149,14 +11158,14 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select{-webkit-appearance:none;appearance:none;padding-right:38px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")!important;background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px}
 #ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{width:96px}
 /* The week's PAR: two figures and one short line under them. */
-.sw-par-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:4px 0 0;max-width:520px}
-.sw-par-t{padding:12px 16px;border-radius:12px;background:var(--paper2)}
+.sw-par-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0 0;max-width:460px}
+.sw-par-t{padding:9px 14px;border-radius:12px;background:var(--paper2)}
 .sw-par-t .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
-.sw-par-t .v{margin-top:4px;font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;letter-spacing:-.01em;color:var(--ink);font-variant-numeric:tabular-nums}
-.sw-par-n{margin-top:10px;font-size:14px;line-height:1.5;color:var(--ink3)}
+.sw-par-t .v{margin-top:2px;font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;letter-spacing:-.01em;color:var(--ink);font-variant-numeric:tabular-nums}
+.sw-par-n{margin-top:6px;font-size:13.5px;line-height:1.5;color:var(--ink3)}
 .sw-par-n.bad{color:var(--hb-bad)}
-#ss-settings-setup .sw-gen{padding:10px 0 20px}
-#ss-settings-setup .sw-gen .cbtn{height:48px;font-size:16px;border-radius:14px}
+#ss-settings-setup .sw-gen{padding:8px 0 16px}
+#ss-settings-setup .sw-gen .cbtn{height:46px;font-size:16px;border-radius:14px}
 /* The settings card reads at body size (owner, 9/26/26). */
 #ss-settings .ss-tabs button{font-size:15px;padding:7px 14px}
 #ss-settings .sw-k{font-size:12.5px}
@@ -12637,6 +12646,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <button type="button" role="tab" data-ss-tab="advanced" aria-selected="false">Advanced</button>
           </div>
           <section class="sw-sec" data-ss-panel="basic">
+            {# Week and labor target side by side, so Setup fits the window with Generate in view (owner, 10/15/26). #}
+            <div class="ss-basic-row"><div class="ss-basic-c">
             <div class="sw-k">Week</div>
             <div class="lb2-actions">
               {% if labor.is_live %}<!-- Which week: next week by default, the week after, or any date
@@ -12646,11 +12657,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <label class="cbtn cbtn-secondary">{% if labor.is_live %}Update shifts CSV{% else %}Upload shifts CSV{% endif %}<input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)"></label>
           {% endif %}
             </div>
-            <div class="sw-k" style="margin-top:18px">Labor target</div>
+            </div><div class="ss-basic-c">
+            <div class="sw-k">Labor target</div>
             <div class="sw-tgt"><input class="ac-input ac-num" type="number" id="sw-target" min="5" max="60" step="0.5" value="{{ _lt }}" aria-label="Labor target %"><span>% of sales</span><span class="ac-status" id="sw-target-status"></span></div>
+            </div></div>
             <div id="sw-par" class="sw-note">The draft keeps labor at or under this. It is a ceiling, not a quota.</div>
             {% if labor.is_live %}{# The owner's words for this draft, once, on Basic (owner, 10/14/26: it sat under every tab). #}
-            <div class="sw-gen-ask" style="margin-top:18px"><label class="sw-lbl" for="sfw1-instr">Anything for this week? <small>optional</small></label>
+            <div class="sw-gen-ask" style="margin-top:14px"><label class="sw-lbl" for="sfw1-instr">Anything for this week? <small>optional</small></label>
             <input type="text" class="ac-input" id="sfw1-instr" maxlength="500" placeholder="e.g. Homecoming Saturday — one more bartender after 8pm" autocomplete="off"></div>{% endif %}
           </section>
           <section class="sw-sec" data-ss-panel="forecast" hidden>
