@@ -29167,6 +29167,10 @@ function fc2LoadBo(){
         h+='</tbody></table>';}
       if(vs.length){var vl=[];for(i=0;i<vs.length&&i<4;i++)vl.push(fc2BoEsc(vs[i].vendor)+' <span class="hb-num">'+fc2Money(vs[i].amount)+'</span>');
         h+='<div class="fc2-cfo-basis">Four weeks by supplier: '+vl.join(' · ')+'</div>';}
+      // By account: an invoice's lines (each its own GL) or an entry's account.
+      var bc=d.by_category||[],split=false,cl=[];for(i=0;i<bc.length;i++)if(bc[i].label!=='Not split yet')split=true;
+      if(split){for(i=0;i<bc.length&&i<8;i++)cl.push(fc2BoEsc(bc[i].label)+' <span class="hb-num">'+fc2Money(bc[i].amount)+'</span>');
+        h+='<div class="fc2-cfo-basis">Four weeks by account: '+cl.join(' · ')+'</div>';}
       var un=[];for(i=0;i<sup.length;i++)if(sup[i].category==='unknown')un.push(sup[i]);
       if(un.length){h+='<div class="fc2-cfo-basis">'+un.length+' supplier'+(un.length===1?'':'s')+' with invoices that name no account aren’t counted yet'+(d.can_change?' — sort them:':'.')+'</div>';
         if(d.can_change)for(i=0;i<un.length&&i<8;i++){var o='<option value="">Sort…</option>',k;for(k=0;k<FC2_BO_CATS.length;k++)o+='<option value="'+FC2_BO_CATS[k][0]+'">'+FC2_BO_CATS[k][1]+'</option>';

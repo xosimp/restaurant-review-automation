@@ -282,6 +282,8 @@ def test_an_invoice_with_its_lines_splits_by_account_and_paper_leaves_food(db):
     assert f["window"]["purchases"] == 1400.0 - 80.0, "the napkins leave food"
     names = {x["name"] for x in f["by_category"]}
     assert {"MEAT", "PRODUCE"} <= names
+    labels = {x["label"] for x in f["by_category"]}
+    assert {"Meat", "Produce"} <= labels, "the card's by-account line reads names, not GL numbers"
 
 
 def _invoice_page(number, day, lines, total, page_break_after=None):

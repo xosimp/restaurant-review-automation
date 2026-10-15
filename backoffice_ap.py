@@ -787,6 +787,13 @@ def _food_sales(restaurant_id, start, end, db_path=None) -> dict:
     return dict(out)
 
 
+def _account_label(name) -> str:
+    """'4030 MEAT' → 'Meat'; an amount no account split reads 'Not split yet'."""
+    if name == "Food (by vendor)":
+        return "Not split yet"
+    return re.sub(r"^\d+\s*", "", str(name or "")).strip().capitalize() or str(name)
+
+
 def food_bought_vs_sold(restaurant_id, today=None, db_path=None) -> dict:
     """Food Cost's purchase-based reading from Back Office: {available,
     basis, window {from, to, days, purchases, sales, pct, nights}, months:
@@ -839,7 +846,7 @@ def food_bought_vs_sold(restaurant_id, today=None, db_path=None) -> dict:
             "window": {"from": start, "to": end, "from_mdy": mdy(start), "to_mdy": mdy(end), "days": WINDOW_DAYS,
                        "purchases": p, "sales": s, "pct": pct, "nights": n},
             "months": months,
-            "by_category": [{"name": k, "amount": round(v, 2)} for k, v in by_c.most_common()],
+            "by_category": [{"name": k, "label": _account_label(k), "amount": round(v, 2)} for k, v in by_c.most_common()],
             "vendors": [{"vendor": k, "amount": round(v, 2)} for k, v in by_v.most_common()],
             "unknown_vendors": unknown,
             "note": ("Purchase-based: what Back Office shows you paid food suppliers, as a % of the POS's food "

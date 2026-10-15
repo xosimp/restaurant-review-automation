@@ -2131,7 +2131,7 @@ fine pointer.
 
 ### Food bought vs sold — Food Cost, from Back Office (10/15/26)
 
-`#fc2-bo` on the Food Cost page, under the CFO read, in the `.fc2-cfo` card frame (`fc2LoadBo`, `GET /api/food-cost/purchases`): an orange kicker "Food bought vs sold" with "from Back Office · M/D/YY – M/D/YY"; the four-week figure in the number face at 44px with "of food sales paid to food suppliers, last four weeks · bought $X · sold $Y"; the basis chip "Purchase-based · not a count" (ember2 outline); a month table (bought, sold, %, "(part)" for a partial month); the top four suppliers; suppliers whose invoices name no account, with a branded select for the account holder (saves on change, toast); the note in ink3. Never called food cost. Hidden until there is a reading.
+`#fc2-bo` on the Food Cost page, under the CFO read, in the `.fc2-cfo` card frame (`fc2LoadBo`, `GET /api/food-cost/purchases`): an orange kicker "Food bought vs sold" with "from Back Office · M/D/YY – M/D/YY"; the four-week figure in the number face at 44px with "of food sales paid to food suppliers, last four weeks · bought $X · sold $Y"; the basis chip "Purchase-based · not a count" (ember2 outline); a month table (bought, sold, %, "(part)" for a partial month); the top four suppliers; "Four weeks by account" (up to eight, "Meat $X · Dairy $Y", the GL name without its number; shown once any amount books to an account — an invoice's lines each carry their own; "Not split yet" for what no account splits); suppliers whose invoices name no account, with a branded select for the account holder (saves on change, toast); the note in ink3. Never called food cost. Hidden until there is a reading.
 
 ### Bar page — Food Cost → Bar (10/14/26; redesigned 10/14/26; bar fix round 10/15/26)
 
