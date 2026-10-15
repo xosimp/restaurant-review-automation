@@ -50,8 +50,9 @@ def set_drink_map(restaurant_id, provider, item_id, key, pour_oz=None, user_id=N
     """The owner's word that a POS item is one bought product at a pour
     (no pour: a bottle or can sold as it comes). An empty key clears it."""
     oz = float(pour_oz) if pour_oz not in (None, "") else None
-    if oz is not None and not 0.25 <= oz <= 40:
-        raise ValueError("A pour is between 0.25 and 40 oz.")
+    # 128 oz: a tower pours 100 (3 L, Will 10/15/26), a gallon pitcher 128.
+    if oz is not None and not 0.25 <= oz <= 128:
+        raise ValueError("A pour is between 0.25 and 128 oz.")
     conn = get_conn(db_path)
     try:
         if not key:

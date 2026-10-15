@@ -192,8 +192,10 @@ def load_recipe_cards(restaurant_id, path=None, provider="rpower", db_path=None,
     matches best (or none), on the POS button the card names. Idempotent: a
     row the account holder confirmed or changed is never touched; a
     suggestion is refreshed. {ok, suggested, kept, skipped [..], unresolved
-    [..]} — `unresolved` names buttons the POS doesn't list (item_id
-    empty until it does)."""
+    [..], retired [..]} — `unresolved` names buttons the POS doesn't list
+    yet (item_id empty; `compute` attaches the spec by name the night the
+    button first sells); `retired` names cards marked off the menu, whose
+    unconfirmed suggestions are cleared."""
     data = json.load(open(path or RECIPE_CARDS, encoding="utf-8"))
     if lines is None:
         from bar.purchases import _lines
@@ -202,7 +204,7 @@ def load_recipe_cards(restaurant_id, path=None, provider="rpower", db_path=None,
     for l in lines:
         if l.get("kind") == "item" and l.get("category") in ("liquor", "wine"):
             products.setdefault(l["product_key"], (display_name(l["description"]), _words(l["description"])))
-    out = {"ok": True, "suggested": 0, "kept": 0, "skipped": [], "unresolved": [], "rows": []}
+    out = {"ok": True, "suggested": 0, "kept": 0, "skipped": [], "unresolved": [], "retired": [], "rows": []}
     conn = get_conn(db_path)
     try:
         items = _pos_items(conn, restaurant_id)
@@ -212,6 +214,17 @@ def load_recipe_cards(restaurant_id, path=None, provider="rpower", db_path=None,
                         "WHERE restaurant_id=? AND provider=?", (int(restaurant_id), provider)).fetchall())}
         for rec in data.get("recipes") or []:
             if not rec.get("alcoholic") or not rec.get("rpower_item"):
+                continue
+            if rec.get("retired"):
+                # Off the menu (a seasonal drink replaced): its unconfirmed
+                # suggestions go; a confirmed spec stays for the nights it sold.
+                names = [rec["rpower_item"]] + [a["item"] for a in rec.get("rpower_also") or [] if a.get("item")]
+                out["retired"].append(rec.get("name"))
+                if apply:
+                    for b in names:
+                        conn.execute("DELETE FROM bar_drink_specs WHERE restaurant_id=? AND provider=? "
+                                     "AND lower(item_name)=? AND status!='confirmed' AND source='recipe_card'",
+                                     (int(restaurant_id), provider, str(b).lower()))
                 continue
             buttons = [(rec["rpower_item"], 1.0, None)]
             for also in rec.get("rpower_also") or []:
@@ -523,8 +536,13 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         targets[k].append((ck, mode, oz, basis, assume))
     specs = drink_specs(restaurant_id, db_path)
     _names = product_names(lines=lines)
+    # A card loaded before its button existed (a new seasonal drink) attaches
+    # by name the first night it sells — no reload of the cards needed.
+    by_name = {(k[0], " ".join(str(n or "").lower().split())): k[1] for k, n in item_names.items()}
     suggested = []
     for s in specs:
+        if not s["item_id"]:
+            s["item_id"] = by_name.get((s["provider"], " ".join(str(s["item_name"] or "").lower().split())))
         if s["status"] != "confirmed":
             suggested.append(s)
             continue

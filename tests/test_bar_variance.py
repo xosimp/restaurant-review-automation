@@ -324,6 +324,53 @@ def test_recipe_cards_load_as_suggestions_never_counted_until_confirmed(db, tmp_
     assert bv.drink_specs(rid, db_path=db)[0]["status"] == "confirmed"
 
 
+def test_a_card_loaded_before_its_button_attaches_by_name_the_night_it_sells(db, tmp_path):
+    # Will, 10/15/26: the Midwest Wrecker went live after its card was loaded.
+    rid = _rid(db)
+    _miller(db, rid)
+    _invoice(db, rid, "A3", _iso(1), [("4004", "KETEL ONE VODKA 750ML", "BO", 6, 22.0)])
+    cards = {"recipes": [{"name": "Midwest Wrecker", "alcoholic": True, "rpower_item": "Midwest Wrecker",
+                          "ingredients": [{"item": "Ketel One Vodka", "amount": 3.05, "unit": "oz"}]}]}
+    path = tmp_path / "cards.json"
+    path.write_text(json.dumps(cards))
+    got = bv.load_recipe_cards(rid, path=str(path), db_path=db)
+    assert got["unresolved"] == ["Midwest Wrecker"]
+    spec = bv.drink_specs(rid, db_path=db)[0]
+    assert spec["item_id"] is None
+    bv.set_drink_spec(rid, spec["id"], confirm=True, db_path=db)
+    for i in range(4):
+        _ring(db, rid, 10, "W1", "Midwest  Wrecker", "Liquor", "Cocktails", sales=14.0)
+    k = _item(bv.compute(rid, today=TODAY, db_path=db), "ketel")
+    assert k["rung_units"] == 12.2 and "recipe_card" in k["theoretical_basis"]
+
+
+def test_a_retired_card_clears_its_suggestions_and_keeps_a_confirmed_spec(db, tmp_path):
+    rid = _rid(db)
+    _miller(db, rid)
+    _invoice(db, rid, "A3", _iso(1), [("4004", "KETEL ONE VODKA 750ML", "BO", 6, 22.0)])
+    card = {"name": "Yum Yum Frose", "alcoholic": True, "rpower_item": "Yum Yum Frose",
+            "ingredients": [{"item": "Ketel One Vodka", "amount": 3.23, "unit": "oz"}]}
+    other = {"name": "Espresso Martini", "alcoholic": True, "rpower_item": "Espresso Martini",
+             "ingredients": [{"item": "Ketel One Vodka", "amount": 1.5, "unit": "oz"}]}
+    path = tmp_path / "cards.json"
+    path.write_text(json.dumps({"recipes": [card, other]}))
+    bv.load_recipe_cards(rid, path=str(path), db_path=db)
+    assert len(bv.drink_specs(rid, db_path=db)) == 2
+    em = next(s for s in bv.drink_specs(rid, db_path=db) if s["item_name"] == "Espresso Martini")
+    bv.set_drink_spec(rid, em["id"], confirm=True, db_path=db)
+    path.write_text(json.dumps({"recipes": [dict(card, retired="10/15/26"), dict(other, retired="10/15/26")]}))
+    got = bv.load_recipe_cards(rid, path=str(path), db_path=db)
+    assert got["retired"] == ["Yum Yum Frose", "Espresso Martini"] and got["suggested"] == 0
+    left = bv.drink_specs(rid, db_path=db)
+    assert [(s["item_name"], s["status"]) for s in left] == [("Espresso Martini", "confirmed")]
+
+
+def test_ejs_yum_yum_frose_is_retired_and_both_seasonal():
+    data = {r["name"]: r for r in json.load(open(bv.RECIPE_CARDS, encoding="utf-8"))["recipes"]}
+    assert data["Yum Yum Frose"].get("retired") and not data["Midwest Wrecker"].get("retired")
+    assert data["Yum Yum Frose"]["seasonal"] is True and data["Midwest Wrecker"]["seasonal"] is True
+
+
 def test_ejs_recipe_cards_parse():
     data = json.load(open(bv.RECIPE_CARDS, encoding="utf-8"))
     assert any(r.get("rpower_item") == "Perfect Game" for r in data["recipes"])

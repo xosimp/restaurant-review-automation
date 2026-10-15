@@ -592,8 +592,10 @@
       "garnish": null,
       "flavor": null,
       "flags": [
-        "No 'Yum Yum Frose' button on RPOWER yet (10/15/26): the card attaches when one is rung under that name."
-      ]
+        "Seasonal. Off the menu 10/15/26, replaced by the Midwest Wrecker (Will): never rung on RPOWER, so the card loads no spec. Remove 'retired' to bring it back."
+      ],
+      "seasonal": true,
+      "retired": "10/15/26"
     },
     {
       "name": "Midwest Wrecker",
@@ -663,8 +665,9 @@
       "garnish": "whipped cream (1-1.5 oz)",
       "flavor": null,
       "flags": [
-        "No 'Midwest Wrecker' button on RPOWER yet (10/15/26): the card attaches when one is rung under that name."
-      ]
+        "Seasonal. Live 10/15/26 in place of the Yum Yum Frose (Will). The card attaches to the 'Midwest Wrecker' RPOWER button the first night it sells; tell us if the button carries another name."
+      ],
+      "seasonal": true
     }
   ],
   "_answers_1013": [
