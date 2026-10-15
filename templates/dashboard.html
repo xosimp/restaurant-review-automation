@@ -46015,6 +46015,12 @@ function sfw2RuleCheck(chk) {
       for (i = 0; i < hf.length; i++) li += '<li><b>' + esc2(hf[i].distributor) + '</b> #' + esc2(hf[i].invoice_number) + ' · dated ' + hn(hf[i].date_mdy) + '</li>';
       out.push('<div class="br-warn info"><b>' + hn(hf.length) + ' ' + plural(hf.length, 'invoice is', 'invoices are') + ' dated after today</b> and held for a date check — they count once the date arrives or is corrected.<ul>' + li + '</ul></div>');
     }
+    var ho = d.held_old || [];
+    if (ho.length) {
+      var lo = '';
+      for (i = 0; i < Math.min(ho.length, 8); i++) lo += '<li><b>' + esc2(ho[i].distributor) + '</b> #' + esc2(ho[i].invoice_number) + ' · dated ' + hn(ho[i].date_mdy) + '</li>';
+      out.push('<div class="br-warn info"><b>' + hn(ho.length) + ' ' + plural(ho.length, 'invoice is', 'invoices are') + ' dated more than two years before you joined Cavnar AI</b> and held for a date check — a mis-typed year would otherwise stretch the month table and the price history.<ul>' + lo + '</ul></div>');
+    }
     var gs = pc.gaps || [];
     if (gs.length) {
       var gl = '';

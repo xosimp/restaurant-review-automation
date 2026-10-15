@@ -37,6 +37,21 @@ def _feed_status(restaurant_id, db_path, today):
     return _feed.feed_status(restaurant_id, db_path=db_path, today=today)
 
 
+# An invoice dated this long before the restaurant joined is held (V35).
+OLDEST_BEFORE_JOINING_DAYS = 730
+
+
+def oldest_believable(restaurant):
+    """The earliest invoice date believed without a check (ISO): two years
+    before the restaurant joined Cavnar AI (its row's created_at), or None
+    when that isn't known."""
+    try:
+        joined = date.fromisoformat(str(getattr(restaurant, "created_at", "") or "")[:10])
+    except ValueError:
+        return None
+    return (joined - timedelta(days=OLDEST_BEFORE_JOINING_DAYS)).isoformat()
+
+
 def build(restaurant_id, db_path=None, today=None) -> dict:
     """The Bar page's payload."""
     today = today or date.today()
@@ -45,25 +60,35 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
         return {"ok": True, "available": False,
                 "why_not": "No distributor invoices yet. Once Fintech's daily file reaches Cavnar AI, "
                            "the bar's prices and what it buys against what it sells fill in here."}
-    # An invoice dated after today is a typo or a mis-read: held for a date
-    # check, never the page's "as of" or the latest price (V35).
+    # An invoice dated after today, or more than two years before the
+    # restaurant joined Cavnar AI, is a typo or a mis-read: held for a date
+    # check, never the page's "as of", the latest price, or a month row
+    # stretching back a decade (V35).
     today_iso = today.isoformat()
+    restaurant = _restaurant(restaurant_id, db_path)
+    floor = oldest_believable(restaurant) or ""
     # One index over the lines and one over the sales serve every window the
     # page reads (bar.ledger, V17).
-    lines = Lines(l for l in all_lines if str(l["invoice_date"])[:10] <= today_iso)
-    held = sorted({(l["distributor"], l["invoice_number"], str(l["invoice_date"])[:10])
-                   for l in all_lines if str(l["invoice_date"])[:10] > today_iso})
-    held_rows = [{"distributor": d, "invoice_number": n, "date": x, "date_mdy": _mdy(x)} for d, n, x in held]
+    lines = Lines(l for l in all_lines if floor <= str(l["invoice_date"])[:10] <= today_iso)
+
+    def held_of(keep):
+        rows = sorted({(l["distributor"], l["invoice_number"], str(l["invoice_date"])[:10])
+                       for l in all_lines if keep(str(l["invoice_date"])[:10])})
+        return [{"distributor": d, "invoice_number": n, "date": x, "date_mdy": _mdy(x)} for d, n, x in rows]
+    held_rows = held_of(lambda d: d > today_iso)
+    held_old = held_of(lambda d: d < floor)
     if not lines:
-        return {"ok": True, "available": False, "held_future": held_rows,
-                "why_not": "Every invoice on file is dated after today — they're held for a date check."}
+        return {"ok": True, "available": False, "held_future": held_rows, "held_old": held_old,
+                "why_not": ("Every invoice on file is dated after today — they're held for a date check."
+                            if not held_old else
+                            "Every invoice on file is held for a date check — dated after today, or years "
+                            "before the restaurant joined Cavnar AI.")}
     # POS drink sales after comps and check discounts, under the bar mapping
     # as it stands (bar.sales); a night with a sales gap is left out of the
     # per-day figures and keeps the window from being judged (V5).
     sales_detail = bar_sales(restaurant_id, db_path)
     sales = Sales({k: v for k, v in sales_detail["by_category"].items() if k in ("beer", "liquor", "wine")})
     sales_gaps = sorted(d for d, n in (sales_detail.get("nights") or {}).items() if n.get("gap"))
-    restaurant = _restaurant(restaurant_id, db_path)
     feed = _feed_status(restaurant_id, db_path, today)
     inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines})
     products = _products(lines)
@@ -105,6 +130,7 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
                          "count": len({(l["distributor"], l["invoice_number"]) for l in lines})},
             "held_future": held_rows,
+            "held_old": held_old,
             "feed": feed or {"invoices_through": fresh.get("invoices_through"),
                              "invoices_through_mdy": fresh.get("invoices_through_mdy"),
                              "sales_through_mdy": fresh.get("sales_through_mdy"),

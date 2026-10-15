@@ -289,6 +289,18 @@ def test_a_stale_feed_says_how_far_behind_the_invoices_are(db_path):
     assert "Invoices are " in html and "behind." in html and "Fintech" in html
 
 
+def test_held_invoices_are_named_future_and_years_old(full):
+    """V35: both holds are listed with the invoice and its date."""
+    p = json.loads(json.dumps(full))
+    p["held_future"] = [{"distributor": "Breakthru", "invoice_number": "TYPO", "date": "2027-10-02",
+                         "date_mdy": "10/2/27"}]
+    p["held_old"] = [{"distributor": "Southern Glazer's", "invoice_number": "OLD", "date": "2016-10-06",
+                      "date_mdy": "10/6/16"}]
+    html = _text(_render(p))
+    assert "dated after today" in html and "#TYPO" in html and "10/2/27" in html
+    assert "two years before you joined Cavnar AI" in html and "#OLD" in html and "10/6/16" in html
+
+
 def test_a_sales_gap_night_is_named_with_the_way_to_fix_it(db_path):
     p = _build(db_path, sales_gap=True)
     assert p["pour_cost"].get("sales_gaps"), p["sales_basis"]

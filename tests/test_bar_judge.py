@@ -838,6 +838,30 @@ def test_a_future_dated_invoice_is_held_for_a_check(db_path):
     assert not any(r.get("to") == 350.0 for r in out["price_watch"]["increases"])
 
 
+def test_an_invoice_years_before_joining_is_held_for_a_check(db_path):
+    """V35's other half: an invoice dated more than two years before the
+    restaurant joined (a mis-typed year: 10/6/16 for 10/6/26) is held like a
+    future date — never a month row, a price or the "from" of the invoices."""
+    import bar.build as bb
+    rid = _rid(db_path, created_at="2026-05-01T09:00:00")
+    _liquor_db(db_path, rid, start=date(2026, 9, 1), weeks=6)
+    fi.ingest_file(rid, "typo.csv", (HEAD + _row("Breakthru Beverage", "OLD", date(2016, 10, 6), "9031",
+                                                  "TITOS VDK 1L", "CA", 1, 99.0)).encode(), db_path=db_path)
+    _sales_db(db_path, rid, date(2026, 9, 1), 40, Liquor=200)
+    out = bc.build(rid, db_path=db_path, today=T)
+    assert [r["invoice_number"] for r in out["held_old"]] == ["OLD"]
+    assert out["held_old"][0]["date_mdy"] == "10/6/16" and out["held_future"] == []
+    assert out["invoices"]["from_mdy"] == "9/1/26"
+    assert out["pour_cost"]["months"] and all(m["from"] >= "2026" for m in out["pour_cost"]["months"])
+    events = out["price_watch"]["events"]
+    assert not any(e.get("from") == 99.0 or e.get("to") == 99.0 for e in events)
+    # The rule, not the fixture: the floor is two years before created_at,
+    # and a restaurant whose joining day isn't known holds nothing for age.
+    r = models.get_restaurant(rid, db_path=db_path)
+    assert bb.oldest_believable(r) == (date(2026, 5, 1) - timedelta(days=bb.OLDEST_BEFORE_JOINING_DAYS)).isoformat()
+    assert bb.oldest_believable(None) is None
+
+
 def test_a_years_old_invoice_does_not_stretch_the_month_table():
     lines, sales = steady()
     lines.append(L("Breakthru", "2016-10-03", "liquor", 300))
