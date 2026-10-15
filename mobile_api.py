@@ -2617,6 +2617,108 @@ def mobile_food_cost_cogs(current_user):
         return jsonify(ok=False, pct=None, error=_safe_err(e)), 500
 
 
+# ── the bar's shelf counts (bar.counts — counted pour cost, F1) ─────────────
+# The one body for web and phone (client_api's twins call these). Entered by
+# the account holder and by FOOD_COST_ENTER logins (whoever counts the bar,
+# as the food count sheet: permissions.FOOD_COST_ENTER_PATHS); every value
+# and every pour cost is withheld from a login without FOOD_COST_VIEW.
+
+def _bar_count_sees_dollars(user):
+    from permissions import has_permission, FOOD_COST_VIEW
+    return bool(user.get("is_admin")) or has_permission(user, FOOD_COST_VIEW)
+
+
+def _bar_count_enters(user):
+    from permissions import has_permission, FOOD_COST_ENTER
+    return _bar_count_sees_dollars(user) or has_permission(user, FOOD_COST_ENTER)
+
+
+def _bar_count_today(rid):
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(rid, naive=True).date()
+
+
+@mobile_bp.route("/food-cost/bar/counts", methods=["GET"])
+@mobile_login_required
+def mobile_bar_counts(current_user):
+    """The bar's counts, newest first, with the counted pour cost they make
+    (bar.counts.counted) — values and pour cost only for FOOD_COST_VIEW; a
+    counts-only login sees which categories were counted on which date."""
+    import bar.counts as _bcn
+    if not _bar_count_enters(current_user):
+        return jsonify(ok=False, error="Only someone who can count stock can see the bar counts."), 403
+    rid = current_user["restaurant_id"]
+    try:
+        dollars = _bar_count_sees_dollars(current_user)
+        today = _bar_count_today(rid)
+        rows = _bcn.history(rid, dollars=dollars)
+        last = rows[0]["count_date"] if rows else None
+        out = {"ok": True, "counts": rows, "dollars": dollars, "categories": list(_bcn.COUNT_CATEGORIES),
+               "last_count_mdy": rows[0]["count_date_mdy"] if rows else None,
+               "next_due_mdy": _bcn._mdy(_bcn.next_due(last, today)),
+               "hint": "Count after close. Value each category at what you paid; a full keg without its deposit."}
+        if dollars:
+            out["counted"] = _bcn.counted(rid, today=today)
+        return jsonify(**out)
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/food-cost/bar/counts", methods=["POST"])
+@mobile_login_required
+def mobile_bar_count_save(current_user):
+    """{count_date: YYYY-MM-DD, values: {beer, liquor, wine}, note} — saves
+    each value given, one at a time; a category left out or blank is left as
+    it is. The answer names what was saved, never a dollar figure for a
+    login without FOOD_COST_VIEW."""
+    import bar.counts as _bcn
+    if not _bar_count_enters(current_user):
+        return jsonify(ok=False, error="Only someone who can count stock can count the bar."), 403
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    try:
+        res = _bcn.save_count(rid, b.get("count_date"), b.get("values"), note=b.get("note"),
+                              user_id=current_user.get("id"), source="owner", method="category_value",
+                              today=_bar_count_today(rid))
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That count didn't save.")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    names = ", ".join(_bcn.LABELS[c].lower() for c in res["saved"])
+    _log_account_event(rid, "bar_counted", current_user, detail=f"{res['count_date_mdy']}: {names}")
+    out = {"ok": True, "count_date": res["count_date"], "count_date_mdy": res["count_date_mdy"],
+           "saved": res["saved"]}
+    if _bar_count_sees_dollars(current_user):
+        try:
+            out["counted"] = _bcn.counted(rid, today=_bar_count_today(rid))
+        except Exception:
+            pass
+    return jsonify(**out)
+
+
+@mobile_bp.route("/food-cost/bar/counts/<count_date>", methods=["DELETE"])
+@mobile_login_required
+def mobile_bar_count_delete(current_user, count_date):
+    """Remove a count date's values (or one category's, ?category=).
+    The account holder's alone."""
+    import bar.counts as _bcn
+    from permissions import principal_only
+    refused = principal_only(current_user, "the bar counts")
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    category = request.args.get("category") or None
+    try:
+        res = _bcn.delete_count(rid, count_date, category=category)
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "Pick the count date from the calendar.")), 400
+    if not res["deleted"]:
+        return jsonify(ok=False, error="No bar count on that date."), 404
+    _log_account_event(rid, "bar_count_removed", current_user,
+                       detail=res["count_date_mdy"] + (f": {_bcn.LABELS[category].lower()}" if category else ""))
+    return jsonify(**res)
+
+
 def food_target_labelled(payload, rid):
     """The food cost payload with where its target came from, in the
     server's words (Benchmarking #10): `food_cost_target_label` ("your

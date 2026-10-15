@@ -67,6 +67,15 @@ The seam is in place; only the HTTP calls are missing.
 - Recipes are in the contract too (9/26/26): `recipes: [{dish, ref, sell_price, lines: [{ref|name, qty}]}]` - each dish upserted into `menu_items` (by `external_ref`, then name) and its `recipe_ingredients` replaced; the web's Recipes block lists them once synced (the menu-paste and recipe-card drafting are off the web).
 - Still to write with the docs: the calls in `fetch_inventory`, an admin save + verify route for the key (the `rpower_routes.py` shape), and invoice lines in the contract.
 
+## Built 10/15/26: the bar's inventory valuation by email — UNVERIFIED
+
+`email_intake` kind **`backoffice_valuation`** → `bar.counts.read_valuation_file`: an emailed Back Office "inventory valuation by category" report becomes a bar count (`bar_counts`, `source` backoffice, `method` import) for the counted pour cost on the Bar page. **Built without a sample** — the format below is our assumption, not Back Office's documented one; confirm it against Erik's first real report before relying on it.
+- A CSV (or TSV) or XLSX. Within its first 15 rows, a header row naming a **category** column (a header containing category, class, group, GL, account, type or department) and a **value** column (a header containing value or valuation; failing that extended, total, amount or cost — never a unit, each, per, qty, count, par, price or % column).
+- Rows are summed into beer (beer, draft, keg, seltzer, cider, ale, lager, IPA), liquor (liquor, spirits, vodka, whiskey, bourbon, tequila, mezcal, rum, gin, scotch, cordials, liqueur, brandy, cognac) and wine (wine, champagne, sparkling, prosecco); total, non-alcoholic, mixer, food and supply rows are ignored and listed.
+- The count date: a date column (one date across the rows), else one date in the rows above the header ("Inventory Date: 10/31/2026"; a period "10/1/2026 - 10/31/2026" is read at its end, and the result says so), else one date in the file's name.
+- Never guessed: no date, two different dates, a row that reads as two categories ("Beer & Wine"), a negative value, no beer/liquor/wine row, a PDF or anything else is `unrecognized` with the reason, and nothing is saved. A value the owner typed for that date is kept (`kept_owner`).
+- To turn it on for a restaurant: `email_intake.new_route(rid, "backoffice_valuation", domain)` and Back Office's scheduled email sent to that address.
+
 ## What we need from Erik to start (1)
 
 - One export each of: item list, a recent inventory count, one recipe, and
@@ -79,6 +88,6 @@ The seam is in place; only the HTTP calls are missing.
 
 ## Not yet known, and must not be assumed
 
-- Column names and units in any Back Office export.
+- Column names and units in any Back Office export (the bar valuation reader above assumes a category and a value column — unverified).
 - Whether counts export as on-hand quantity, value, or both.
 - Whether the API exists for members at all, or only for partners.

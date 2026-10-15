@@ -4730,6 +4730,9 @@ def init_db(db_path: str = DB_PATH):
     init_fintech_invoices(db_path)
     from bar_cost import init_bar_cost
     init_bar_cost(db_path)
+    # The bar's shelf counts by category (bar.counts — counted pour cost, F1).
+    from bar.counts import init_bar_counts
+    init_bar_counts(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
@@ -15145,6 +15148,8 @@ NON_ALERT_TYPES = (
     "issue", "issue_escalated", "coverage", "demand_opportunity", "event_ahead",
     "while_away", "connection_lost", "schedule_publish_pending", "order_send_pending",
     "order_send_voided",
+    # The month-end bar count (bar.counts): a briefing, under the budget.
+    "bar_count_due",
     # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
     # request and what became of it, and the 9am "waiting on you in Labor".
     "shift_request", "labor_reminder",
@@ -15680,6 +15685,9 @@ ACCOUNT_EVENT_LABELS = {
     "time_off_decided": "Time-off request answered",
     "covers_imported": "Cover counts entered",
     "inventory_counted": "Inventory counted",
+    # `detail` carries the count date and the categories, never a dollar.
+    "bar_counted": "Bar counted",
+    "bar_count_removed": "Bar count removed",
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
     "auto_draft_changed": "Automatic schedule drafting changed",

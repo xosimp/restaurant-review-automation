@@ -223,6 +223,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `auto_draft_schedule` | hourly → 6am *local* on the owner's draft day (Thu by default), AI lane | `run_auto_draft_schedules(now=)` — the tick's instant decides whose day it is |
 | `refresh_tokens` | 7am | `refresh_expiring_tokens` |
 | `outcome_wins`, `milestones` | hourly | `run_outcome_wins`, `run_milestones` — each restaurant at its own 9am local (`strategy_jobs.WIN_HOUR`), bounded and resumable; pushes inside quiet hours arrive silently |
+| `bar_count_reminders` | hourly → 2pm *local* on the restaurant's last day of the month | `bar.counts.run_count_reminders` — "Count the bar tonight" (`bar_count_due`) for restaurants with distributor invoices that have not counted all three categories that day, through `strategy_jobs._reach` (briefing budget, Food Cost audience, quiet hours); claimed once a day, bounded and resumable (`bar_count_reminders_cursor`), refused off the production scheduler |
 | `weekly_plan` | Mon, hourly → 7am *local*, AI lane | `run_weekly_plan` |
 | `recipe_drafts` | Tue, hourly → 5am *local*, AI lane | `run_recipe_drafts` — the dishes through Message Batches where they may (`recipes.draft_missing(batch=True)`, AI cost audit 10/7/26 #60): one batch a restaurant, stored by `recipes.on_draft_batch`; a dish not answered in 6 hours is drafted synchronously |
 | `trusted_orders` | hourly → 8am *local* on the owner's order day (Mon by default) | `run_trusted_orders` |

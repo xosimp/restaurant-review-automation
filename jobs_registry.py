@@ -381,6 +381,14 @@ JOBS = {
         cadence="hourly (9am local)", sla_minutes=_H, sends=True, runnable=True,
         label="Labor reminders", description="What is waiting on each manager before the next shifts",
         target=("strategy_jobs", "run_labor_reminders"), max_minutes=20),
+    # The month-end bar count (bar.counts, audit 10/14/26 F1): counted pour
+    # cost needs a shelf count at each month's end.
+    "bar_count_reminders": dict(
+        cadence="hourly (2pm local on each restaurant's last day of the month)", sla_minutes=_H, sends=True,
+        runnable=True, label="Bar count reminder",
+        description="On the last day of the month, tell each restaurant with distributor invoices to count the bar "
+                    "tonight (once a day; bounded, resumable)",
+        target=("bar.counts", "run_count_reminders"), max_minutes=10),
     "open_shift_watch": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
         label="Open shifts",

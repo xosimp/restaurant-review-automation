@@ -4,6 +4,7 @@ bar/build.py — the Bar page's payload, assembled from the package's reads.
 from datetime import date
 
 from bar.common import LABELS, _mdy
+from bar.counts import counted as _counted
 from bar.insights import _insights
 from bar.pour_cost import _pour_cost
 from bar.prices import _price_watch
@@ -33,6 +34,9 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
                          "count": len({(l["distributor"], l["invoice_number"]) for l in lines})},
             "pour_cost": pour,
+            # Counted pour cost from the bar's shelf counts (bar.counts, F1):
+            # withheld with `missing` until two counts bracket a span.
+            "counted": _counted(restaurant_id, today=today, db_path=db_path, lines=lines, sales=sales),
             "price_watch": prices,
             "insights": _insights(pour, prices, to_check),
             "distributors": _distributors(lines),

@@ -69,6 +69,8 @@ _ALERT_NAV = {
     "food_waste": "inventory", "price_spike": "inventory/invoices", "critical_low": "inventory/order",
     "order_send_pending": "inventory/order", "order_send_held": "inventory/order",
     "order_send_voided": "inventory/order",
+    # The month-end bar count opens the Bar page (cavNavRegister('bar')).
+    "bar_count_due": "bar",
     "ai_visibility_drop": "intel", "competitor_move": "intel",
     # A quiet night opens Marketing's opportunity feed, where its Fill card
     # is (the web's data-nav="marketing/opportunities"); its push adds the

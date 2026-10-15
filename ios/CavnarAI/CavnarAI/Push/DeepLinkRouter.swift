@@ -542,7 +542,7 @@ final class DeepLinkRouter {
             // ("messages/<id>"); without one, Home under the sheet.
             return "home"
         case "food_waste", "critical_low", "price_spike", "order_send_pending",
-             "order_send_held", "order_send_voided":
+             "order_send_held", "order_send_voided", "bar_count_due":
             return "inventory"
         case "ai_visibility_drop", "competitor_move":
             return "competitor"

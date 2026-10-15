@@ -65,6 +65,10 @@ struct ModuleRoute: Hashable {
             return route("labor", section: isTimeOff ? "timeoff" : "requests", item: id)
         case "inventory", "food":
             return route("inventory", section: nav.target, item: sectionItem)
+        case "bar":
+            // The Bar page (web `/bar`; the month-end "Count the bar
+            // tonight", bar_count_due): Food Cost, where the Bar lives.
+            return route("inventory", section: "bar")
         case "invoice":
             return route("inventory", section: "invoices", item: nav.target)
         case "order":

@@ -5759,6 +5759,13 @@ def scheduler_loop():
                 from strategy_jobs import run_labor_reminders
                 _ops.run_job("labor_reminders", run_labor_reminders)
 
+            # Hourly — on each restaurant's own last day of the month, from
+            # 2pm local, "Count the bar tonight" (bar.counts, F1): the counts
+            # that make the Bar's pour cost a measurement.
+            if _ops.claim_period("bar_count_reminders", f"{today}-{now.hour}"):
+                from bar.counts import run_count_reminders
+                _ops.run_job("bar_count_reminders", run_count_reminders)
+
             # Hourly — shift requests whose shift has passed expire (a swap
             # for last Tuesday no longer executes), and an open shift still
             # unclaimed 12 hours before it starts goes back to the deciders

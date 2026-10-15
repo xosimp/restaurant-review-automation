@@ -778,6 +778,7 @@ ALERT_TAB = {
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory", "order_send_pending": "inventory",
     "order_send_held": "inventory",
     "order_send_voided": "inventory",
+    "bar_count_due": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
     "review_request_nudge": "reviews",
     "login": "account", "staff_signin": "account", "connection_lost": "account",
@@ -820,7 +821,9 @@ BRIEFING_ALWAYS = frozenset({"morning_brief", "outcome_achieved", "milestone", "
                              # before service: unheard, staff read the
                              # plain lines and the draft goes to waste.
                              "lineup_brief_waiting"})
-BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending"}
+# The month-end bar count (bar.counts): once a month, before service.
+BRIEFING_CALM = BRIEFING_ALWAYS | {"closing_summary", "schedule_drafted", "schedule_publish_pending", "order_send_pending",
+                                   "bar_count_due"}
 BRIEFING_NORMAL_PER_DAY = 4
 
 # Sent by their own rules, never refused by the budget, and so never counted

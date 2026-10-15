@@ -26,6 +26,9 @@ module has one owner in a fix round):
 - prices     _price_watch
 - spend      _distributors, _products
 - insights   _insights
+- counts     bar_counts (init_bar_counts), save/delete/history, true_pour_cost,
+             counted, latest_counted, the Back Office valuation reader, the
+             month-end count reminder (10/15/26, F1; not on the facade)
 - build      build: the page's payload
 
 `bar_cost.py` stays as the facade every caller imports (`client_api`,

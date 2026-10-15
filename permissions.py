@@ -116,6 +116,11 @@ FOOD_COST_ENTER_PATHS = (
     ("GET", r"^/(mobile/)?api/food-cost/purchase-orders$"),
     ("POST", r"^/(mobile/)?api/food-cost/purchase-orders/\d+/received$"),
     ("POST", r"^/(mobile/)?api/food-cost/waste$"),
+    # The bar's shelf count (bar.counts, F1): entered by whoever counts;
+    # the route withholds every value and every pour cost without
+    # FOOD_COST_VIEW. Deleting a count is the account holder's.
+    ("GET", r"^/(mobile/)?api/food-cost/bar/counts$"),
+    ("POST", r"^/(mobile/)?api/food-cost/bar/counts$"),
 )
 
 

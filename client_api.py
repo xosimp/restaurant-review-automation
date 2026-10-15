@@ -9783,6 +9783,7 @@ _NOTIFICATION_LABELS = {
     "order_send_pending": "Supplier order going out",
     "order_send_held":  "Supplier order held",
     "order_send_voided": "Supplier order not sent",
+    "bar_count_due":    "Count the bar tonight",
     # Their own types now (re-audit A-6, A-18): each used to borrow a label
     # that described something else, or none at all.
     "shift_request":    "A staff request needs you",
@@ -11877,6 +11878,27 @@ def food_cost_bar_category(current_user):
         # set_category's own owner-facing sentence (which categories exist),
         # never an exception's text (a provider error can carry its URL).
         return jsonify(ok=False, error=(e.args[0] if e.args else "That category isn't one of the five.")), 400
+
+
+@client_bp.route("/api/food-cost/bar/counts", methods=["GET"])
+@login_required
+def food_cost_bar_counts(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_counts."""
+    return _m("mobile_bar_counts")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/counts", methods=["POST"])
+@login_required
+def food_cost_bar_count_save(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_count_save."""
+    return _m("mobile_bar_count_save")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/counts/<count_date>", methods=["DELETE"])
+@login_required
+def food_cost_bar_count_delete(current_user, count_date):
+    """Web twin — the one body is mobile_api.mobile_bar_count_delete."""
+    return _m("mobile_bar_count_delete")(current_user, count_date)
 
 
 @client_bp.route("/api/food-cost/cfo")

@@ -39,6 +39,10 @@ MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
 # intake_id) and returning {"status", "detail", ...}. Reached by name.
 READERS = {
     "fintech": "fintech_invoices:ingest_file",
+    # Back Office's "inventory valuation by category" report into bar_counts
+    # (source 'backoffice'). UNVERIFIED: built without a sample — the expected
+    # headers are in bar.counts and docs/plans/BACK_OFFICE_INTEGRATION.md.
+    "backoffice_valuation": "bar.counts:read_valuation_file",
 }
 
 
