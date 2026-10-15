@@ -411,6 +411,15 @@ def test_sales_copy_says_bar_tracking_is_partly_live_and_no_more():
     assert "no pour-cost" not in note and "pour cost only from the bar's own counts" in note
     reg = open(os.path.join(ROOT, "models.py"), encoding="utf-8").read()
     assert "live INSIDE Food Cost" in reg and "partly" in reg
+    # The printed one-sheet (its builder and the HTML it writes) agrees:
+    # bar purchases and prices under Food Cost, bar pour cost and variance
+    # arriving — never the whole Bar "coming soon".
+    for name in ("build_one_sheet.py", "cavnar-one-sheet.html"):
+        sheet = open(os.path.join(ROOT, "brand", "print", name), encoding="utf-8").read()
+        soon = sheet.split("<b>Coming soon</b>")[1].split("</span>")[0] if "<b>Coming soon</b>" in sheet else ""
+        assert "Bar" not in soon, name
+        assert "<b>Arriving</b>Bar pour cost &amp; variance" in sheet, name
+        assert "bar purchases and price changes" in sheet, name
 
 
 # ── found on the way: the price card's "from a usual" ───────────────────────
