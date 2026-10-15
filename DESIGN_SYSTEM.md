@@ -2129,6 +2129,10 @@ fine pointer.
 - Reduce Motion: no float, lean, motes or running lights; the reveal and
   the loading state stay.
 
+### Food bought vs sold — Food Cost, from Back Office (10/15/26)
+
+`#fc2-bo` on the Food Cost page, under the CFO read, in the `.fc2-cfo` card frame (`fc2LoadBo`, `GET /api/food-cost/purchases`): an orange kicker "Food bought vs sold" with "from Back Office · M/D/YY – M/D/YY"; the four-week figure in the number face at 44px with "of food sales paid to food suppliers, last four weeks · bought $X · sold $Y"; the basis chip "Purchase-based · not a count" (ember2 outline); a month table (bought, sold, %, "(part)" for a partial month); the top four suppliers; suppliers whose invoices name no account, with a branded select for the account holder (saves on change, toast); the note in ink3. Never called food cost. Hidden until there is a reading.
+
 ### Bar page — Food Cost → Bar (10/14/26; redesigned 10/14/26; bar fix round 10/15/26)
 
 Food Cost's heading carries **Food | Bar** (`nav.br-fsw`): Food is where you are (`aria-current="page"`), Bar is a link (`<a href="/bar" data-bar-open>`) — not tabs, since it opens a page (V48). Bar opens its own page over the dashboard at `/bar` in Restaurant DNA's shell (`.dn`, `.dn-bar` with ← Back and "invoices through M/D/YY · sales through M/D/YY", `.dn-scroll`, `.dn-wrap`, `dn-k` kicker, `dn-h2`), prefix `br-`. While it is open every other child of `<body>` is `inert` (the toast stays live), so Tab never walks into the dashboard behind it. Data `GET /api/food-cost/bar` (API_REFERENCE); search and Show all page through `GET .../bar/prices` and `.../bar/products` (≈150 ms debounce), falling back to the payload's rows. Owner's brief: "Apple Finance + Linear + Stripe" — more intelligence, less text.

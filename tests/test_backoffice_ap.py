@@ -210,3 +210,14 @@ def test_the_food_purchases_route_and_the_owner_sorting_a_supplier(db, monkeypat
                    json={"vendor": "GORDON FOOD SERVICE", "category": "not_cogs"}).status_code == 403
     assert cl.post("/mobile/api/food-cost/purchases/vendor", headers=MOBILE,
                    json={"vendor": "GORDON FOOD SERVICE", "category": "not_cogs"}).status_code == 403
+
+
+def test_the_food_cost_card_says_bought_vs_sold_and_loads_beside_the_cfo_read():
+    import os
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html"),
+               encoding="utf-8").read()
+    fn = src[src.index("function fc2LoadBo(){"):src.index("function fc2LoadCfo(){")]
+    assert "Food bought vs sold" in fn and "Purchase-based · not a count" in fn
+    assert "food cost" not in fn.lower().replace("/api/food-cost", ""), "a purchase ratio is never called food cost"
+    assert '<div id="fc2-bo" class="fc2-cfo" hidden></div>' in src
+    assert src.count("fc2LoadBo();") >= 2, "loads where the CFO read loads"

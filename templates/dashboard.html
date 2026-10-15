@@ -13861,6 +13861,15 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
    ranking and a root cause are a different KIND of claim from a measured
    percentage, and giving them the same treatment would say they carry the
    same weight. */
+.fc2-bo-fig{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.fc2-bo-fig b{font-family:'Space Grotesk',sans-serif;font-size:44px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
+.fc2-bo-fig span{font-size:15px;color:var(--ink2)}
+.fc2-bo-chip{display:inline-block;font-size:12.5px;color:var(--ember2);border:1px solid color-mix(in srgb,var(--ember) 40%,transparent);border-radius:999px;padding:3px 10px}
+.fc2-bo-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.fc2-bo-tbl td{padding:6px 0;border-top:1px solid var(--hb-line2);color:var(--ink2)}
+.fc2-bo-tbl td.n{text-align:right;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.fc2-bo-sup{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--ink2)}
+.fc2-bo-sup select{min-height:40px}
 .fc2-cfo{margin-top:18px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
 .fc2-cfo-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--hb-line2)}
 .fc2-cfo-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
@@ -14039,6 +14048,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      Filled by /api/food-cost/cfo; renders nothing when no driver clears
      the dollar floor. #}
   <div id="fc2-cfo" hidden></div>
+  {# Food bought vs sold from Back Office (backoffice_ap, 10/15/26): what the
+     food suppliers were paid as a % of the POS's food sales, purchase-based.
+     Filled by /api/food-cost/purchases; hidden until there is a reading. #}
+  <div id="fc2-bo" class="fc2-cfo" hidden></div>
   <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
@@ -29065,6 +29078,7 @@ function loadInvInsight(){
   fc2LoadRecipeCoverage();
   fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();
   fc2LoadCfo();
+  fc2LoadBo();
   if(window.memLoadPars)memLoadPars();
   var fiveMin=5*60*1000;
   try{
@@ -29132,6 +29146,45 @@ function wtRangeLabel(r){return r==='all'?'all history':('last '+parseInt(r,10)+
 // root cause with its alternative and its confidence, and the month-end
 // prime-cost projection. Renders nothing when no driver clears the floor.
 function fc2Money(v){return '$'+Math.round(Number(v)||0).toLocaleString();}
+// ── Food bought vs sold, from Back Office ───────────────────────────────────
+// What the food suppliers were paid (Back Office's Invoices By Vendor) as a %
+// of the POS's food sales - purchase-based, never "food cost": a delivery or
+// a stock-up moves it, and a food cost % needs two counts.
+var FC2_BO_CATS=[['food','Food'],['na_beverage','Non-alcoholic drinks'],['beer','Beer'],['wine','Wine'],['liquor','Liquor'],['bar_consumables','Bar mixers'],['other_purchase','Paper and other'],['not_cogs','Not food or drink']];
+function fc2BoEsc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fc2LoadBo(){
+  var host=document.getElementById('fc2-bo');if(!host)return;
+  fetch('/api/food-cost/purchases',{headers:{'Accept':'application/json'}})
+    .then(apiJson)
+    .then(function(d){
+      if(!d||!d.ok||!d.available){host.hidden=true;return;}
+      var w=d.window||{},h='',i,ms=d.months||[],vs=d.vendors||[],sup=d.suppliers||[];
+      h+='<div class="fc2-cfo-hd"><span class="t">Food bought vs sold</span><span class="m">from Back Office · <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
+      h+='<div class="fc2-bo-fig"><b>'+(w.pct==null?'—':fc2BoEsc(w.pct)+'%')+'</b><span>of food sales paid to food suppliers, last four weeks · bought <span class="hb-num">'+fc2Money(w.purchases)+'</span> · sold <span class="hb-num">'+fc2Money(w.sales)+'</span></span></div>';
+      h+='<div><span class="fc2-bo-chip">Purchase-based · not a count</span></div>';
+      if(ms.length){h+='<table class="fc2-bo-tbl"><tbody>';
+        for(i=0;i<ms.length;i++){var m=ms[i];h+='<tr><td>'+fc2BoEsc(m.label)+(m.partial?' (part)':'')+'</td><td class="n">'+fc2Money(m.purchases)+'</td><td class="n">'+fc2Money(m.sales)+'</td><td class="n">'+(m.pct==null?'—':fc2BoEsc(m.pct)+'%')+'</td></tr>';}
+        h+='</tbody></table>';}
+      if(vs.length){var vl=[];for(i=0;i<vs.length&&i<4;i++)vl.push(fc2BoEsc(vs[i].vendor)+' <span class="hb-num">'+fc2Money(vs[i].amount)+'</span>');
+        h+='<div class="fc2-cfo-basis">Four weeks by supplier: '+vl.join(' · ')+'</div>';}
+      var un=[];for(i=0;i<sup.length;i++)if(sup[i].category==='unknown')un.push(sup[i]);
+      if(un.length){h+='<div class="fc2-cfo-basis">'+un.length+' supplier'+(un.length===1?'':'s')+' with invoices that name no account aren’t counted yet'+(d.can_change?' — sort them:':'.')+'</div>';
+        if(d.can_change)for(i=0;i<un.length&&i<8;i++){var o='<option value="">Sort…</option>',k;for(k=0;k<FC2_BO_CATS.length;k++)o+='<option value="'+FC2_BO_CATS[k][0]+'">'+FC2_BO_CATS[k][1]+'</option>';
+          h+='<label class="fc2-bo-sup">'+fc2BoEsc(un[i].vendor)+'<select class="fc2-ctl" data-fc2-bo-sort="'+fc2BoEsc(un[i].vendor)+'" aria-label="What '+fc2BoEsc(un[i].vendor)+' sells">'+o+'</select></label>';}}
+      h+='<div class="fc2-cfo-basis">'+fc2BoEsc(d.note||'')+'</div></div>';
+      host.innerHTML=h;host.hidden=false;
+    })['catch'](function(){host.hidden=true;});
+}
+document.addEventListener('change',function(ev){
+  var t=ev.target;if(!t||!t.getAttribute||!t.getAttribute('data-fc2-bo-sort')||!t.value)return;
+  fetch('/api/food-cost/purchases/vendor',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},
+    body:JSON.stringify({vendor:t.getAttribute('data-fc2-bo-sort'),category:t.value})})
+    .then(function(r){return r.json();})
+    .then(function(r){
+      if(r&&r.ok){toast('Saved — the supplier is sorted');fc2LoadBo();}
+      else toast((r&&r.error)||'That couldn’t be saved just now.','error');
+    })['catch'](function(){toast('That couldn’t be saved just now.','error');});
+});
 function fc2LoadCfo(){
   var host=document.getElementById('fc2-cfo');if(!host)return;
   fetch('/api/food-cost/cfo',{headers:{'Accept':'application/json'}})
@@ -29610,6 +29663,7 @@ function fc2ApplyWaste(w){
   if(w.items){window._wasteDonutData=w.items;if(typeof _wasteDonutData!=='undefined')_wasteDonutData=w.items;if(window.fc2InvalidateStaticCards)fc2InvalidateStaticCards();}
   if(typeof loadWasteTrend==='function')loadWasteTrend(true);
   if(typeof fc2LoadCfo==='function')fc2LoadCfo();
+  if(typeof fc2LoadBo==='function')fc2LoadBo();
 }
 function fc2LogWaste(btn){
   var ing=(document.getElementById('fc2-waste-ing')||{}).value,q=parseFloat((document.getElementById('fc2-waste-qty')||{}).value),why=(document.getElementById('fc2-waste-why')||{}).value;
