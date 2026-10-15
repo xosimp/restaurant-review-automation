@@ -701,6 +701,217 @@
    "price": 14.75,
    "source_note": "Back Office Unit Recipe (Simple EJs #7101), read 10/15/26: ideal cost $2.20, 14.9% at $14.75; PLU not set there.",
    "flags": []
+  },
+  {
+   "name": "Hugo Spritz",
+   "alcoholic": true,
+   "rpower_item": "Hugo Spiritz",
+   "ingredients": [
+    {
+     "item": "St Germain elderflower liqueur",
+     "amount": 1.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Sintesi prosecco",
+     "amount": 4,
+     "unit": "oz"
+    },
+    {
+     "item": "Club soda",
+     "amount": 1,
+     "unit": "oz"
+    },
+    {
+     "item": "Fresh lime juice",
+     "amount": 0.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Fresh mint leaves",
+     "amount": 5,
+     "unit": "leaf"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Moscow Mule",
+   "alcoholic": true,
+   "rpower_item": "Moscow Mule",
+   "ingredients": [
+    {
+     "item": "Titos vodka",
+     "amount": 2,
+     "unit": "oz"
+    },
+    {
+     "item": "Fresh lime juice",
+     "amount": 0.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Ginger beer",
+     "amount": 4,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "4th Quarter Shot",
+   "alcoholic": true,
+   "rpower_item": "4th Quarter Shot",
+   "ingredients": [
+    {
+     "item": "Ketel One vodka",
+     "amount": 1,
+     "unit": "oz"
+    },
+    {
+     "item": "Orange juice",
+     "amount": 0.75,
+     "unit": "oz"
+    },
+    {
+     "item": "Triple sec",
+     "amount": 0.25,
+     "unit": "oz"
+    },
+    {
+     "item": "Red Bull",
+     "amount": null,
+     "unit": "top"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Bear Down Bomb",
+   "alcoholic": true,
+   "rpower_item": "Bear Down Bomb",
+   "ingredients": [
+    {
+     "item": "Ketel One vodka",
+     "amount": 1,
+     "unit": "oz"
+    },
+    {
+     "item": "Orange juice",
+     "amount": 0.75,
+     "unit": "oz"
+    },
+    {
+     "item": "Triple sec",
+     "amount": 0.25,
+     "unit": "oz"
+    },
+    {
+     "item": "Red Bull",
+     "amount": null,
+     "unit": "top"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Wycliff Mimosa Glass",
+   "alcoholic": true,
+   "rpower_item": "Wycliff Mimosa Glass",
+   "ingredients": [
+    {
+     "item": "William Wycliff Brut Champagne",
+     "amount": 6,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Wycliff Bottomless",
+   "alcoholic": true,
+   "rpower_item": "Wycliff Bottomless",
+   "ingredients": [
+    {
+     "item": "William Wycliff Brut Champagne",
+     "amount": 6,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Wycliff Refill",
+   "alcoholic": true,
+   "rpower_item": "Wycliff Refill",
+   "ingredients": [
+    {
+     "item": "William Wycliff Brut Champagne",
+     "amount": 6,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Sintosa Mimosa Glass",
+   "alcoholic": true,
+   "rpower_item": "Sintosa Mimosa Glass",
+   "ingredients": [
+    {
+     "item": "Sintesi prosecco",
+     "amount": 6,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Sintesi Bottomless",
+   "alcoholic": true,
+   "rpower_item": "Sintesi Bottomless",
+   "ingredients": [
+    {
+     "item": "Sintesi prosecco",
+     "amount": 6,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Sintesi Refill",
+   "alcoholic": true,
+   "rpower_item": "Sintesi Refill",
+   "ingredients": [
+    {
+     "item": "Sintesi prosecco",
+     "amount": 6,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26; loaded and confirmed in production 10/15/26. Mimosa glasses, bottomless and refills: 6 oz pours (Anthony)."
+  },
+  {
+   "name": "Affogato",
+   "alcoholic": true,
+   "rpower_item": "Affogato",
+   "ingredients": [
+    {
+     "item": "Vanilla gelato",
+     "amount": 1,
+     "unit": "scoop"
+    },
+    {
+     "item": "Salted caramel espresso (Ketel One espresso machine)",
+     "amount": 4.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony 10/15/26. NOT LOADED: the vodka inside the machine's 4-5 oz pour is unknown - ask how many oz of Ketel One per pour.",
+   "flags": [
+    "vodka oz per pour unknown"
+   ]
   }
  ],
  "_answers_1013": [
