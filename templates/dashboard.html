@@ -10912,7 +10912,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .sw-notes{width:100%;box-sizing:border-box;resize:vertical;min-height:72px;font-size:13.5px;line-height:1.45}
 .sw-gen{position:sticky;bottom:0;padding:12px 0 16px;margin-top:4px;background:var(--surface)}
 .sw-gen .cbtn{width:100%;justify-content:center}
-.sw-gen.two{display:flex;flex-direction:column;gap:8px}
+.sw-gen.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+/* Side by side, so a week with a draft is no taller than one without
+   (owner, 10/15/26: Setup grew past the window as the draft loaded). */
+.sw-gen.two #ss-draft-when{grid-column:1/-1;margin:-2px 0 0;font-size:13px;color:var(--ink3);text-align:center}
 .sw-gen #sched-week{display:none}
 .sw-bar{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12.5px;color:var(--ink2);padding:3px 0}
 .sw-bar .tr{height:7px;border-radius:99px;background:var(--sf-recess);position:relative}
@@ -27047,7 +27050,8 @@ function swParHtml(data) {
   var h = '<div class="sw-par-tiles"><div class="sw-par-t"><div class="k">PAR hours</div><div class="v">' + _schedHrs(data.hours_budget) + 'h</div></div>';
   if (data.labor_budget_dollars) h += '<div class="sw-par-t"><div class="k">Hourly budget</div><div class="v">' + _schedMoney(data.labor_budget_dollars) + '</div></div>';
   h += '</div>';
-  if (b.target_pct != null) bits.push('<span class="hb-num">' + _escHtml(String(b.target_pct)) + '%</span> of sales');
+  var tp = b.target_pct != null ? b.target_pct : data.labor_target;
+  if (tp != null && tp !== '') bits.push('<span class="hb-num">' + _escHtml(String(+tp)) + '%</span> of sales');
   if (b.salaried_people) bits.push('less <span class="hb-num">' + b.salaried_people + '</span> salaried ' + (b.salaried_people === 1 ? 'person' : 'people'));
   if (data.labor_target_label) bits.push(window.memNum ? memNum(data.labor_target_label) : _escHtml(data.labor_target_label));
   if (b.salaries_exceed_target && b.text) warn = window.memNum ? memNum(b.text) : _escHtml(b.text);
