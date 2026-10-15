@@ -6601,7 +6601,18 @@ def _do_dsr_get(u, day):
     report = store.get_report(_rid(u), d, version=version)
     if not report:
         return {"ok": False, "error": "There's no report for that night yet."}, 404
-    payload = access.render(report, u, restaurant=get_restaurant(_rid(u)), versions=store.versions(_rid(u), d))
+    _r_dsr = get_restaurant(_rid(u))
+    payload = access.render(report, u, restaurant=_r_dsr, versions=store.versions(_rid(u), d))
+    # Comps and voids against the owner's target, read now (a target set
+    # today judges last night too): only where the loss detail was shown.
+    try:
+        _svc = (((payload.get("facts") or {}).get("blocks") or {}).get("service") or {})
+        if ((_svc.get("detail") or {}).get("loss")):
+            from dsr.block_service import comp_void
+            _svc["detail"]["loss"]["comp_void"] = comp_void(payload.get("facts"),
+                                                            getattr(_r_dsr, "comp_void_target_pct", None))
+    except Exception as _cvx:
+        print(f"[dsr] comps & voids figure failed rid={_rid(u)}: {_cvx!r}")
     # `?peek=1`: a card or widget drawing the night's figures is not someone
     # reading the report, so its actions are not presented (D3-8 / F3-6).
     if request.args.get("peek") != "1":
@@ -7554,10 +7565,12 @@ _TARGET_BOUNDS = {"labor_target_pct": (5.0, 80.0), "food_cost_target": (5.0, 80.
                   "weekly_revenue_target": (0.0, 20000000.0), "hourly_rate": (2.0, 250.0),
                   # The alcohol targets (Bar page): % of that category's sales.
                   "bar_cost_target": (5.0, 60.0), "beer_cost_target": (5.0, 60.0),
-                  "liquor_cost_target": (5.0, 60.0), "wine_cost_target": (5.0, 60.0)}
+                  "liquor_cost_target": (5.0, 60.0), "wine_cost_target": (5.0, 60.0),
+                  # Comps and voids, % of gross item sales (the most accepted).
+                  "comp_void_target_pct": (0.1, 25.0)}
 # Targets a blank clears back to "not set" (the default or industry range applies).
 _TARGET_CLEARABLE = ("waste_target_pct", "bar_cost_target", "beer_cost_target", "liquor_cost_target",
-                     "wine_cost_target")
+                     "wine_cost_target", "comp_void_target_pct")
 # Money targets; every other bounded target is a percent.
 _TARGET_DOLLARS = ("monthly_revenue_target", "weekly_revenue_target", "hourly_rate")
 
@@ -7664,6 +7677,8 @@ def _targets_payload(rid):
             # page uses the industry range).
             "bar_cost_target": r.bar_cost_target, "beer_cost_target": r.beer_cost_target,
             "liquor_cost_target": r.liquor_cost_target, "wine_cost_target": r.wine_cost_target,
+            # Comps and voids as % of gross item sales (None = not set).
+            "comp_void_target_pct": getattr(r, "comp_void_target_pct", None),
             # The same target by the week (models.weekly_revenue_target):
             # owners who plan by the week set this one; the monthly follows.
             "weekly_revenue_target": weekly_revenue_target(r),
@@ -7749,6 +7764,9 @@ def _do_targets_get(u):
         # Wages are the owner's and the schedule sender's (F2-20).
         t["role_rates"], t["hourly_rate"], t["people_by_role"], t["role_pay"] = {}, None, {}, {}
         t["sources"].pop("hourly_rate", None)
+    if not _loss_viewer(u):
+        # A comps and voids figure is LOSS_VIEW's, its target too.
+        t["comp_void_target_pct"] = None
     if not _principal(u):
         # Salaries are named people's pay: the owner's alone.
         t["salaried"], t["salaried_names"], t["salaried_roles"] = [], [], []

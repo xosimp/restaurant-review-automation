@@ -101,6 +101,10 @@ struct AccountTargetsView: View {
             numberRow("Wine target", key: TargetsPayload.Field.wine, suffix: "%",
                       placeholder: "Not set", caption: TargetsPayload.alcoholCaption(TargetsPayload.Field.wine),
                       note: p.noteFor(TargetsPayload.Field.wine))
+            numberRow("Comps & voids target", key: TargetsPayload.Field.compVoid, suffix: "%",
+                      placeholder: "Not set",
+                      caption: "The most comps and voided lines may be, as a % of gross sales. Discounts aren\u{2019}t counted.",
+                      note: p.noteFor(TargetsPayload.Field.compVoid))
             AccountKVRow(label: "Payroll week starts", showsDivider: false) {
                 Picker("Payroll week starts", selection: Binding(
                     get: { model.payload?.weekStartDay ?? 0 },
@@ -390,6 +394,8 @@ struct TargetsPayload: Decodable {
     var beerCostTarget: Double?
     var liquorCostTarget: Double?
     var wineCostTarget: Double?
+    /// Comps and voids as a % of gross sales, the most accepted (10/15/26).
+    var compVoidTargetPct: Double?
     var monthlyRevenueTarget: Double?
     var weeklyRevenueTarget: Double?
     var hourlyRate: Double?
@@ -420,8 +426,9 @@ struct TargetsPayload: Decodable {
         static let beer = "beer_cost_target"
         static let liquor = "liquor_cost_target"
         static let wine = "wine_cost_target"
+        static let compVoid = "comp_void_target_pct"
         /// Targets a blank clears back to "not set".
-        static let clearable: Set<String> = [waste, bar, beer, liquor, wine]
+        static let clearable: Set<String> = [waste, bar, beer, liquor, wine, compVoid]
         static let monthly = "monthly_revenue_target"
         static let weekly = "weekly_revenue_target"
         static let hourly = "hourly_rate"
@@ -476,6 +483,7 @@ struct TargetsPayload: Decodable {
         case beerCostTarget = "beer_cost_target"
         case liquorCostTarget = "liquor_cost_target"
         case wineCostTarget = "wine_cost_target"
+        case compVoidTargetPct = "comp_void_target_pct"
         case monthlyRevenueTarget = "monthly_revenue_target"
         case weeklyRevenueTarget = "weekly_revenue_target"
         case hourlyRate = "hourly_rate"
@@ -505,6 +513,7 @@ struct TargetsPayload: Decodable {
         beerCostTarget = c.setupDouble(.beerCostTarget)
         liquorCostTarget = c.setupDouble(.liquorCostTarget)
         wineCostTarget = c.setupDouble(.wineCostTarget)
+        compVoidTargetPct = c.setupDouble(.compVoidTargetPct)
         monthlyRevenueTarget = c.setupDouble(.monthlyRevenueTarget)
         weeklyRevenueTarget = c.setupDouble(.weeklyRevenueTarget)
         hourlyRate = c.setupDouble(.hourlyRate)
@@ -547,6 +556,7 @@ struct TargetsPayload: Decodable {
         case Field.beer: return n(beerCostTarget)
         case Field.liquor: return n(liquorCostTarget)
         case Field.wine: return n(wineCostTarget)
+        case Field.compVoid: return n(compVoidTargetPct)
         case Field.monthly: return (monthlyRevenueTarget ?? 0) > 0 ? String(Int(monthlyRevenueTarget!.rounded())) : ""
         case Field.weekly: return (weeklyRevenueTarget ?? 0) > 0 ? n((weeklyRevenueTarget! * 100).rounded() / 100) : ""
         case Field.hourly: return n(hourlyRate)

@@ -7412,6 +7412,11 @@ svg:hover .hb-xh{opacity:1}
 .dr-loss-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:12px}
 .dr-loss-top .v{font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:600;letter-spacing:-.02em;color:var(--ink);line-height:1}
 .dr-loss-top .s{font-size:14px;color:var(--ink2)}
+.dr-loss-cv{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--paper2);font-size:14.5px;color:var(--ink2)}
+.dr-loss-cv b{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--ink)}
+.dr-loss-cv.good b{color:var(--green)}
+.dr-loss-cv.bad b{color:var(--red)}
+.dr-loss-cv small{color:var(--ink3);font-size:13px}
 .dr-loss-r{display:flex;align-items:baseline;gap:12px;padding:10px 0;border-top:1px solid var(--hb-line2);font-size:14.5px}
 .dr-loss-r:first-of-type{border-top:0}
 .dr-loss-r .n{color:var(--ink);min-width:0}
@@ -7703,7 +7708,10 @@ svg:hover .hb-xh{opacity:1}
 .dr-grid td.n{font-family:'Space Grotesk',sans-serif}
 .dr-grid td.n.strong{color:var(--ink);font-weight:600}
 .dr-grid td.n small{display:block;font-size:11px;color:var(--ink3);font-weight:400}
-.dr-grid td.tx{white-space:normal;min-width:130px;max-width:260px;text-align:left;font-size:13px;line-height:1.4}
+.dr-grid td.tx{min-width:130px;max-width:260px;text-align:left;font-size:13px;line-height:1.4}
+/* One line a night, whatever the day carries (owner, 10/15/26: a night with two games and the weather
+   stood five lines tall beside nights with none); the whole text on hover. */
+.dr-grid td.tx .tx1{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dr-grid th.l,.dr-grid td.l{text-align:left}
 .dr-grid .day{position:sticky;left:0;z-index:1;background:var(--surface);text-align:left;border-right:1px solid var(--hb-line2)}
 .dr-grid .day .cbtn-text{color:var(--ink);font-weight:600}.dr-grid .day .cbtn-text:hover{color:var(--ember)}
@@ -8932,6 +8940,13 @@ svg:hover .hb-xh{opacity:1}
     if(L&&L.given){var g=L.given,v=L.voids||{};
       h+='<section class="hb-card dr-loss" aria-label="Comps, discounts and voids"><div class="hb-kicker">Given away</div>'
         +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(g.total))+'</div><div class="s">in comps, discounts and refunds'+(isNum(g.pct_of_gross)?' · '+hn(pct(g.pct_of_gross))+' of gross':'')+'</div></div>';
+      // Comps and voids on their own, against the owner's target (Account →
+      // Targets): discounts are prices, never in it (owner, 10/15/26).
+      var cv=L.comp_void;
+      if(cv&&isNum(cv.pct_of_gross)){var tg=isNum(cv.target)?cv.target:null;
+        h+='<div class="dr-loss-cv'+(tg===null?'':(cv.over?' bad':' good'))+'"><span>Comps &amp; voids</span><b class="hb-num">'+esc(pct(cv.pct_of_gross))+'</b>'
+          +'<span>'+hn(money(cv.total))+' of '+hn(money(cv.gross))+' gross</span>'
+          +(tg!==null?'<small>'+(cv.over?'over':'under')+' your '+hn(pct(tg))+' target</small>':'<small>no target set &mdash; Account &rarr; Targets</small>')+'</div>';}
       var rs=g.by_reason||[];
       if(rs.length){h+='<div class="dr-loss-g"><h3>By reason</h3>';for(i=0;i<rs.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(cap(rs[i].kind))+' · '+esc(rs[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(rs[i].lines))+'</span><span class="a hb-num">'+esc(money(rs[i].amount))+'</span></div>';h+='</div>';}
       var ap=g.by_approver||[];
@@ -9471,6 +9486,7 @@ svg:hover .hb-xh{opacity:1}
     var bs=document.querySelectorAll('[data-dr="bud-open"]');
     for(var i=0;i<bs.length;i++){bs[i].textContent=open?'Hide budget':'Edit budget';bs[i].setAttribute('aria-expanded',open?'true':'false');}
   }
+  function txCell(s){return '<td class="tx">'+(s?'<span class="tx1" title="'+esc(s)+'">'+esc(s)+'</span>':'<span class="dr-dim">—</span>')+'</td>';}
   function weekHtml(g,view){
     var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),days=g.days||[],t=g.totals||{};
     var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+'</h1>'
@@ -9488,7 +9504,7 @@ svg:hover .hb-xh{opacity:1}
       var st2=d.status?(TERMINAL[d.status]?d.status:'running'):'';
       h+='<tr><td class="day l" data-sort-key="'+esc(d.date)+'"><span class="dot '+st2+'"></span>'+(d.status?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(d.date)+'">'+lbl+'</button>':'<span class="dr-dim">'+lbl+'</span>')+'</td>';
       for(var c=0;c<cols.length;c++)h+=cell(d,cols[c]);
-      h+='<td class="tx">'+(d.weather?esc(d.weather):'<span class="dr-dim">—</span>')+'</td><td class="tx">'+(d.event?esc(d.event):'<span class="dr-dim">—</span>')+'</td><td class="tx">'+(d.influence?esc(d.influence):'<span class="dr-dim">—</span>')+'</td></tr>';}
+      h+=txCell(d.weather)+txCell(d.event)+txCell(d.influence)+'</tr>';}
     h+='</tbody><tfoot>'+totalRow('Week',hn(t.days_measured||0)+' of '+hn(days.length)+' measured',t,cols,3);
     var p=g.period_to_date;if(p)h+=totalRow('Period to date',hn(esc(md(p.start)))+' – '+hn(esc(md(p.end))),p,cols,3);
     h+='</tfoot></table></div>';
@@ -16137,6 +16153,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-liquor_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Liquor cost target %" data-tg="liquor_cost_target"></div></div>
           <div class="ac-row"><div class="l"><b>Wine target</b><span>Blank shows the published 30&ndash;40% for counted pour cost as context.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-wine_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Wine cost target %" data-tg="wine_cost_target"></div></div>
+          <div class="ac-row"><div class="l"><b>Comps &amp; voids target</b><span>The most comps and voided lines may be, as a % of gross sales. Discounts aren&rsquo;t counted &mdash; they&rsquo;re prices. Blank means no target.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-comp_void_target_pct" min="0.1" max="25" step="0.1" style="width:96px" placeholder="Not set" aria-label="Comps and voids target %" data-tg="comp_void_target_pct"></div></div>
           <div class="ac-row"><div class="l"><b>Monthly revenue target</b><span>Your weekly target &times; 4.33 (52 weeks over 12 months). Blank or 0 means no target.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target" data-tg-pair="weekly_revenue_target"></div></div>
           <div class="ac-row"><div class="l"><b>Weekly revenue target</b><span>In dollars. Type either one and the other fills in &mdash; it&rsquo;s one target.</span></div>
@@ -41027,7 +41045,7 @@ window.cavPalette = cavPalette;
   function tgRender() {
     var card = $id('as-tg-card'); if (!card || !_tg) return;
     var t = _tg.targets || {}, ro = !_tg.can_edit, k;
-    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate', 'week_start_day'];
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'comp_void_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate', 'week_start_day'];
     for (k = 0; k < ids.length; k++) {
       var el = $id('as-tg-' + ids[k]); if (!el) continue;
       var v = t[ids[k]];
@@ -41108,7 +41126,7 @@ window.cavPalette = cavPalette;
   function tgRate(v) { var n = +v; return '$' + (n % 1 ? n.toFixed(2) : String(n)); }
   function tgNotes(t) {
     var notes = t.set_notes || {}, goals = {labor_target_pct: (t.labor || {}).goal, food_cost_target: (t.food || {}).goal};
-    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'comp_void_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
     for (i = 0; i < ids.length; i++) {
       var inp = $id('as-tg-' + ids[i]), row = inp && inp.closest ? inp.closest('.ac-row') : null, l = row ? row.querySelector('.l') : null;
       if (!l) continue;
@@ -41198,7 +41216,7 @@ window.cavPalette = cavPalette;
     if (!f && role === null) return;
     var rev = f === 'monthly_revenue_target' || f === 'weekly_revenue_target';
     // A blank clears the waste and alcohol targets back to "not set".
-    var clearable = {waste_target_pct: 1, bar_cost_target: 1, beer_cost_target: 1, liquor_cost_target: 1, wine_cost_target: 1};
+    var clearable = {waste_target_pct: 1, bar_cost_target: 1, beer_cost_target: 1, liquor_cost_target: 1, wine_cost_target: 1, comp_void_target_pct: 1};
     if (f) body[f] = t.value === '' ? (clearable[f] ? null : (rev ? 0 : '')) : +t.value;
     else {
       // Only this role changes: a role whose box isn't on screen (its

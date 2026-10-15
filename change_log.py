@@ -572,6 +572,7 @@ FIELD_LABELS = {
     **dict(zip(_models.OWNER_TARGET_FIELDS, ("Labor target", "Food cost target", "Waste target",
                                             "Monthly revenue target", "Alcohol cost target",
                                             "Beer & seltzer cost target", "Liquor cost target", "Wine cost target"))),
+    "comp_void_target_pct": "Comps & voids target",
     "never_say": "Never-say list", "voice_notes": "Brand voice",
     "hourly_rate": "Blended hourly rate", "role_rates_json": "Pay rates by role", "salaried_staff_json": "Salaried staff",
     "daypart_boundary": "Lunch/dinner boundary", "open_times_json": "Opening times", "close_times_json": "Closing times", "hours_notes": "Hours notes",

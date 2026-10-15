@@ -202,6 +202,36 @@ def _loss(lines, names, sales_metrics):
                       "reached the guest's bill")}
 
 
+def comp_void(facts, target=None):
+    """{comps, voids, total, gross, pct_of_gross, target, over} for a
+    report's facts — comps (the check lines' comp kind) and voided lines
+    against gross item sales, the measure the owner's comps & voids target
+    judges (restaurants.comp_void_target_pct; Simple EJ's 2%, 10/15/26).
+    Discounts are NOT in it: a happy-hour or staff discount is a price, and
+    at EJ's they were $3,674 of the 6.4% the "given away" line showed while
+    comps and voids ran 1.4%. None when the night has no gross."""
+    blocks = (facts or {}).get("blocks") or {}
+    loss = ((blocks.get("service") or {}).get("detail") or {}).get("loss") or {}
+    sales = (blocks.get("sales") or {}).get("metrics") or {}
+    gross = sales.get("gross_items")
+    if not isinstance(gross, (int, float)) or gross <= 0 or not loss:
+        return None
+    comps = sales.get("comps")
+    if not isinstance(comps, (int, float)):
+        comps = sum(float(r.get("amount") or 0) for r in (loss.get("given") or {}).get("by_reason") or []
+                    if r.get("kind") == "comp")
+    voids = float((loss.get("voids") or {}).get("total") or 0)
+    total = round(abs(float(comps)) + voids, 2)
+    pct = round(total / float(gross) * 100.0, 1)
+    try:
+        tgt = float(target) if target not in (None, "") else None
+    except (TypeError, ValueError):
+        tgt = None
+    return {"comps": round(abs(float(comps)), 2), "voids": round(voids, 2), "total": total,
+            "gross": round(float(gross), 2), "pct_of_gross": pct, "target": tgt,
+            "over": (pct > tgt) if tgt is not None else None}
+
+
 def _edits(punches, names):
     out = []
     for p in punches:
