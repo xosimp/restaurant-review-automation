@@ -102,6 +102,12 @@ PORT=5050 python3 hosted_dashboard.py     # http://localhost:5050
   `gunicorn --workers 1 --threads 4`, the scheduler thread inside the web
   process). Don't raise `--workers`, and don't split the scheduler into its
   own service. `docs/ops/RAILWAY_SCHEDULER_SPLIT.md` explains why.
+- **Build time.** Nixpacks builds the image. `nixpacks.toml` gives the
+  install phase `requirements.txt` alone, so the Python environment layer is
+  reused until the lock changes (it was rebuilt on every push, ~2.5 minutes).
+  `.dockerignore` keeps `brand/`, `ios/` and `tests/` out of the image. A push
+  that changes `requirements.txt`, or any Railway variable (Nixpacks passes
+  them all in as build arguments), rebuilds the environment once.
 - **`/health`** answers 200 for a degraded platform on purpose. A failing
   health check blocks the deploy that would fix it.
 - **The marketing site** (`cavnar.ai`) is a separate Cloudflare Worker

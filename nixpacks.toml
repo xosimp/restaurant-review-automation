@@ -1,0 +1,8 @@
+# Build speed (10/15/26). Nixpacks copied the whole repo in before the
+# install phase, so every code change rebuilt the Python environment —
+# about 2.5 of a deploy's ~8 minutes reinstalling ortools, numpy, pandas.
+# The install phase now sees requirements.txt alone: its layer is reused
+# until the lock changes, and the code is copied in after it (the build's
+# own final `COPY . /app`). Same builder, same Python, same /opt/venv.
+[phases.install]
+onlyIncludeFiles = ["requirements.txt"]

@@ -1,0 +1,14 @@
+# Not needed at runtime, kept out of the deploy image (10/15/26): the brand
+# source files (videos, the social kit — the app serves static/brand), the
+# iOS project and the test suite. docs/ and scripts/ stay: production reads
+# docs/clients and runs scripts/ by hand.
+.git
+brand/
+ios/
+tests/
+.claude/
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
