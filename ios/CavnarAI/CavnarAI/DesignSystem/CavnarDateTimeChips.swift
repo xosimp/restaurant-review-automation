@@ -10,6 +10,9 @@ struct CavnarDateChip: View {
     @Binding var iso: String
     /// The earliest day that may be picked (nil: any).
     var earliest: Date? = nil
+    /// The latest day that may be picked (nil: any) — today, for a count
+    /// that can't be dated in the future.
+    var latest: Date? = nil
     var accessibilityName: String = "Date"
     var disabled: Bool = false
 
@@ -65,7 +68,13 @@ struct CavnarDateChip: View {
     @ViewBuilder
     private var calendar: some View {
         let binding = Binding<Date>(get: { date }, set: { iso = CavnarDate.isoDay($0) })
-        if let earliest {
+        if let earliest, let latest {
+            DatePicker("", selection: binding,
+                       in: Calendar.current.startOfDay(for: earliest)...max(latest, earliest),
+                       displayedComponents: .date)
+        } else if let latest {
+            DatePicker("", selection: binding, in: ...latest, displayedComponents: .date)
+        } else if let earliest {
             DatePicker("", selection: binding, in: Calendar.current.startOfDay(for: earliest)..., displayedComponents: .date)
         } else {
             DatePicker("", selection: binding, displayedComponents: .date)

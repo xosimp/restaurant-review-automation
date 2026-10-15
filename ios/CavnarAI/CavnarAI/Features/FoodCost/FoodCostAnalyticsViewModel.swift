@@ -50,6 +50,9 @@ final class FoodCostAnalyticsViewModel {
     var parDismissed: Set<Int> = []
     var parBusy: Set<Int> = []
     var parErrors: [Int: String] = [:]
+    /// The Bar card (UIX-10): the bar's four-week figure, its top insight,
+    /// the price rises and Count the bar. Best-effort like the CFO read.
+    let bar: BarCardViewModel
     var isLoading = false
     /// Why the last load failed, when it did. `try?` used to swallow the
     /// error and assign nil over previously good data, so a server failure
@@ -76,6 +79,7 @@ final class FoodCostAnalyticsViewModel {
 
     init(client: APIClient = .shared) {
         self.client = client
+        self.bar = BarCardViewModel(client: client)
     }
 
     func configureCaching(restaurantId: Int) {
@@ -152,6 +156,7 @@ final class FoodCostAnalyticsViewModel {
             "/mobile/api/food-cost/par-suggestions", hapticOnError: false)
         async let scorecardResult: DishScorecard? = try? client.send(
             "/mobile/api/food-cost/dish-scorecard", hapticOnError: false)
+        async let barLoad: Void = bar.load()
         var freshBody: Data?
         do {
             let fresh: (value: FoodCostAnalytics, body: Data) = try await client.sendKeepingBody(
@@ -213,6 +218,7 @@ final class FoodCostAnalyticsViewModel {
         }
         // Asked to show the pars and there are none: nothing to scroll to.
         if parSuggestions.isEmpty { scrollToPars = false }
+        await barLoad
     }
 
     private func adoptTrend(_ t: FoodCostWasteTrend) {

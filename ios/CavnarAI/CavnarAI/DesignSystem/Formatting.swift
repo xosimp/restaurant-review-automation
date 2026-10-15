@@ -160,4 +160,26 @@ extension NumberFormatter {
         f.locale = .current
         return f
     }()
+
+    /// A number the owner typed, read for `locale`: "18,5" is 18.5 on a
+    /// comma-decimal phone (never 185), "1,000" is 1000 on a US one. A "$",
+    /// "€" or "%" around it is ignored. On a comma-decimal phone a lone
+    /// point decimal ("18.5", from a hardware keyboard) still reads 18.5.
+    /// Nil for anything that is not a number — letters, two decimal marks —
+    /// so the caller can say so rather than save a guess.
+    static func cavnarParse(_ text: String, locale: Locale = .current) -> Double? {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for mark in ["$", "%", "\u{20AC}", "\u{00A3}"] { t = t.replacingOccurrences(of: mark, with: "") }
+        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !t.contains(where: { $0.isLetter }) else { return nil }
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.locale = locale
+        if let n = f.number(from: t)?.doubleValue, n.isFinite { return n }
+        if f.decimalSeparator != ".", !t.contains(","), t.filter({ $0 == "." }).count == 1,
+           let d = Double(t), d.isFinite {
+            return d
+        }
+        return nil
+    }
 }

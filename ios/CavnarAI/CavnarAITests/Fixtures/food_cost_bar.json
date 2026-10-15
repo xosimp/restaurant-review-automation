@@ -1,0 +1,186 @@
+{
+ "ok": true,
+ "available": true,
+ "as_of": "2026-10-09",
+ "as_of_mdy": "10/9/26",
+ "feed": {
+  "invoices_through": "2026-10-09",
+  "invoices_through_mdy": "10/9/26",
+  "sales_through": "2026-10-14",
+  "sales_through_mdy": "10/14/26",
+  "last_file": "2026-10-15",
+  "last_file_mdy": "10/15/26",
+  "stale_days": null
+ },
+ "counted": {
+  "available": false,
+  "periods": [],
+  "last_count": null,
+  "last_count_mdy": null,
+  "next_due_mdy": "10/31/26",
+  "missing": [
+   {
+    "component": "two counts",
+    "why": "no bar count yet"
+   }
+  ]
+ },
+ "insights": [
+  {
+   "key": "over:liquor",
+   "tone": "info",
+   "headline": "Liquor bought vs sold is above the range for counted pour cost",
+   "metric": "21.0% against 14–20% · $240 more bought than the range's top in four weeks",
+   "action": "A delivery or a stock-up moves this; count the shelf to know. If you didn't stock up, check liquor pours, comps and waste.",
+   "basis": "purchases",
+   "confidence": {
+    "evidence_pct": 100,
+    "freshness_pct": 75
+   }
+  },
+  {
+   "key": "price:breakthru beverage|9031",
+   "tone": "warn",
+   "headline": "Titos VDK 1L is up 10% and has held",
+   "metric": "$330 a case since 9/10/26, from a usual $330 · about +$522 a month at your usual buying",
+   "action": "It has held at the new price — worth raising with Breakthru Beverage at the next order.",
+   "basis": "prices",
+   "confidence": {
+    "evidence_pct": 100,
+    "freshness_pct": 75
+   }
+  },
+  {
+   "key": "low:wine",
+   "tone": "info",
+   "headline": "Wine bought vs sold reads below the range for counted pour cost",
+   "metric": "25.7% against 30–40%",
+   "action": "Often bottles bought earlier are pouring now — count the shelf before reading it as a win.",
+   "basis": "purchases",
+   "confidence": {
+    "evidence_pct": 100,
+    "freshness_pct": 75
+   }
+  }
+ ],
+ "pour_cost": {
+  "basis": "purchases",
+  "label": "Bought vs sold",
+  "sub": "what you bought from distributors as a % of what the POS sold",
+  "available": true,
+  "window": {
+   "from": "2026-09-12",
+   "to": "2026-10-09",
+   "from_mdy": "9/12/26",
+   "to_mdy": "10/9/26",
+   "days": 28,
+   "open_days": 28,
+   "invoices": 12,
+   "coverage_pct": 100,
+   "min_days": 28
+  },
+  "judged": true,
+  "not_judged": null,
+  "total": {
+   "purchases": 10384.0,
+   "sales": 47600.0,
+   "pct": 21.8,
+   "partial": false,
+   "excluded": [],
+   "included": [
+    "beer",
+    "liquor",
+    "wine"
+   ],
+   "range": [
+    18.0,
+    24.5
+   ],
+   "range_source": {
+    "label": "Range for your mix, for counted pour cost — from each category's range",
+    "definition": "counted_pour_cost",
+    "parts": {
+     "beer": "Cavnar AI's starting range",
+     "liquor": "Range for counted pour cost — Provi bar-cost guide, 2021 — vendor guidance, directional",
+     "wine": "Range for counted pour cost — Backbar liquor-cost guide, 2019 — vendor guidance, directional"
+    }
+   },
+   "spark": [
+    20.8,
+    21.1,
+    21.3,
+    21.6,
+    21.8,
+    21.8
+   ],
+   "target": null,
+   "target_source": "industry",
+   "target_label": null,
+   "over_target_usd": null,
+   "top_over": null,
+   "range_tone": "inside",
+   "tone": null,
+   "prev_pct": 21.1,
+   "prev_end_mdy": "9/11/26",
+   "judged": true,
+   "not_judged": null,
+   "reasons": [],
+   "not_judged_text": null
+  },
+  "freshness": {
+   "invoices_through": "2026-10-09",
+   "invoices_through_mdy": "10/9/26",
+   "sales_through": "2026-10-14",
+   "sales_through_mdy": "10/14/26",
+   "last_file_mdy": "10/15/26",
+   "lag_days": 5,
+   "grace_days": 7,
+   "stale": false,
+   "stale_days": null
+  },
+  "gaps": []
+ },
+ "price_watch": {
+  "increases": [
+   {
+    "product_key": "breakthru beverage|9031",
+    "canonical_key": "breakthru beverage|9031",
+    "product": "TITOS VDK 1L",
+    "name": "Titos VDK 1L",
+    "distributor": "Breakthru Beverage",
+    "uom": "CA",
+    "unit": "case",
+    "category": "liquor",
+    "category_label": "Liquor",
+    "kind": "increase",
+    "persistent": true,
+    "tier": null,
+    "monthly_posting": false,
+    "since": "2026-09-10",
+    "was_since": "2026-08-06",
+    "was_until": "2026-09-03",
+    "was_since_mdy": "8/6/26",
+    "was_until_mdy": "9/3/26",
+    "confidence": "high",
+    "basis": "repeat",
+    "from": 300.0,
+    "to": 330.0,
+    "change": 30.0,
+    "pct": 10.0,
+    "since_mdy": "9/10/26",
+    "forward_monthly_usd": 521.83,
+    "already_paid_usd": 600.0,
+    "bought_90d": 40.0,
+    "tier_bought_90d": 40.0,
+    "main_tier_label": null,
+    "impact_90d": 1565.49,
+    "not_bought_lately": false,
+    "listed": true,
+    "headline": true,
+    "purchases": 10,
+    "last_bought_mdy": "10/8/26",
+    "explain": "$330 a case since 9/10/26, after $300 from 8/6/26 to 9/3/26"
+   }
+  ]
+ }
+}

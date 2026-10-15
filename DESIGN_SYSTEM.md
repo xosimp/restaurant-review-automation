@@ -2143,6 +2143,21 @@ Food Cost's heading carries a `lb2-range` segmented switch, **Food | Bar** (`rol
 - **Motion:** cards rise in a short stagger, figures count up through `cavCount`, lines sweep in and areas fade, the latest point pings slowly, meters ease to their value, rows expand smoothly; a shimmer skeleton (`.br-sk`) shaped like the page while it loads. All of it is off under `prefers-reduced-motion`.
 - **Type:** nothing an owner reads is under 13px; body and row text 15–16.5px, secondary 14–14.5px.
 
+### iOS Bar card — Food Cost and Home (10/15/26, UIX-10 / F6)
+
+"Web explains. iPhone decides." The phone has no Bar page; it has one card, `FoodCostBarCard` (`Features/FoodCost/FoodCostBarCard.swift`, model `Models/BarCost.swift`), from `GET /mobile/api/food-cost/bar` (the web page's payload). It sits on Food Cost → Analytics above "More analysis", and on Home after Last night's report **only when the top insight's tone is `bad` or `warn`** (and the login has Food Cost's analytics), under a `HomeSectionHeader` "Bar". In order, inside one `.cavnarCard()`:
+
+- **The figure**: `pour_cost.total.pct` in `figureL` (one decimal, Space Grotesk), toned by `total.tone` only when judged; beside it a neutral `TonePill` reading **exactly `pour_cost.label`** ("Bought vs sold" on a purchases basis, the counted name only when the shelf was counted) — the app never names the figure itself (`BarCardTests` checks every literal). Under it, Caption: the payload's `sub` and the window (`9/12/26 – 10/9/26`). Not judged (`pour_cost.judged` or `total.judged` false): no tone, and `total.not_judged_text` (else "Not judged yet — the figures are what's on file so far.") in Secondary. No figure: "—", never 0.
+- **The amber line** (`.cavnarAmber`, warning glyph, Secondary): "Invoices from {distributor} aren't on file for {from}–{to}" per `pour_cost.gaps` row, then "No invoices since {invoices_through_mdy}" when `freshness.stale` or `feed.stale_days` is set.
+- **The top insight**: the web's toned kicker (Needs attention · Worth a look · Going well · Good to know) over a `CavnarAnswerCard` with no surface of its own — headline, `metric` as the summary, `action` with an ember2 arrow in the action slot — and "Evidence 100% · Freshness 75%" in Caption when measured.
+- **Prices that went up**: at most three `price_watch.increases` rows with `headline: true`, in the server's order — name (Label), distributor (Caption), "+$522 a month" (`forward_monthly_usd`) in `.cavnarRedText`.
+- **Count the bar** (secondary button) with "Last counted … · next count due …" under it; then `CavnarWebLinkRow` "See all · Open on the web" to nav `bar`.
+- No charts, no tables, no category editing. `available: false` shows the card with `why_not` alone in one muted Secondary line (Food Cost only — Home never shows it); a failed or refused read shows no card, as Food Cost's other side reads.
+
+**Count the bar** (`FoodCostBarCountSheet`, Account Sheet Kit): hero, the line "Count after close. Value each category at what you paid; a full keg without its deposit.", three `AccountField` value boxes (beer & seltzer, liquor, wine) parsed with the phone's locale (`NumberFormatter.cavnarParse`: "1.234,50" on a German phone), a `CavnarDateChip` ("Counted on", today by default, `latest:` today so no future day can be picked), an optional note, and one primary "Save the count". Only typed categories are sent (a blank is never 0); a box that isn't a number says so under it; the server's 400 sentence shows above Save. Saved: the sheet closes, the card re-reads and shows `CavnarInlinePosted` "Bar count saved for 10/15/26".
+
+**Alcohol targets** (Account → Targets, V47 / UIX-18): the four rows' placeholders read "Not set", each with a caption — overall "Beer, liquor and wine bought as a % of their sales, on the Bar page. Blank uses each category's range."; beer & seltzer 20–26% (Cavnar AI's starting range), liquor 14–20% (Provi, 2021), wine 30–40% (Backbar, 2019). A box is read for the phone's locale ("18,5" is 18.5, never 185); one that isn't a number shows "Enter a number" under its row, and a server refusal ("Alcohol cost target must be between 5% and 60%.") shows there too, the typed value kept.
+
 ### Restaurant DNA — the restaurant's personality, revealed (10/8/26)
 
 A signature screen, not a table (owner, 10/8/26: "make it feel like an AI is

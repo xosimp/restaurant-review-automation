@@ -87,15 +87,20 @@ struct AccountTargetsView: View {
                       note: p.noteFor(TargetsPayload.Field.food))
             numberRow("Waste target", key: TargetsPayload.Field.waste, suffix: "%",
                       placeholder: "Not set", note: p.noteFor(TargetsPayload.Field.waste))
-            // The alcohol targets (Bar page): blank uses the industry range.
+            // The alcohol targets (Bar page): blank uses each category's
+            // range — the ranges the server judges with (benchmark_registry).
             numberRow("Alcohol cost target", key: TargetsPayload.Field.bar, suffix: "%",
-                      placeholder: "Industry range", note: p.noteFor(TargetsPayload.Field.bar))
+                      placeholder: "Not set", caption: TargetsPayload.alcoholCaption(TargetsPayload.Field.bar),
+                      note: p.noteFor(TargetsPayload.Field.bar))
             numberRow("Beer & seltzer target", key: TargetsPayload.Field.beer, suffix: "%",
-                      placeholder: "20\u{2013}26", note: p.noteFor(TargetsPayload.Field.beer))
+                      placeholder: "Not set", caption: TargetsPayload.alcoholCaption(TargetsPayload.Field.beer),
+                      note: p.noteFor(TargetsPayload.Field.beer))
             numberRow("Liquor target", key: TargetsPayload.Field.liquor, suffix: "%",
-                      placeholder: "16\u{2013}22", note: p.noteFor(TargetsPayload.Field.liquor))
+                      placeholder: "Not set", caption: TargetsPayload.alcoholCaption(TargetsPayload.Field.liquor),
+                      note: p.noteFor(TargetsPayload.Field.liquor))
             numberRow("Wine target", key: TargetsPayload.Field.wine, suffix: "%",
-                      placeholder: "30\u{2013}40", note: p.noteFor(TargetsPayload.Field.wine))
+                      placeholder: "Not set", caption: TargetsPayload.alcoholCaption(TargetsPayload.Field.wine),
+                      note: p.noteFor(TargetsPayload.Field.wine))
             AccountKVRow(label: "Payroll week starts", showsDivider: false) {
                 Picker("Payroll week starts", selection: Binding(
                     get: { model.payload?.weekStartDay ?? 0 },
@@ -319,7 +324,7 @@ struct AccountTargetsView: View {
     // MARK: Fields
 
     private func numberRow(_ label: String, key: String, prefix: String? = nil, suffix: String? = nil,
-                           placeholder: String = "", note: String? = nil) -> some View {
+                           placeholder: String = "", caption: String? = nil, note: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 10) {
                 Text(label).font(.cavnarBody(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
@@ -337,9 +342,20 @@ struct AccountTargetsView: View {
                 if let suffix { Text(suffix).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk3) }
                 if model.busy == key { CavnarShimmerLine().frame(width: 22) }
             }
+            if let caption {
+                HomeMixedText.make(caption, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let note {
                 HomeMixedText.make(note, size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // What is wrong with this box — "Enter a number", or the
+            // server's own sentence — under it; the typed value stays.
+            if let fieldError = model.fieldErrors[key] {
+                HomeMixedText.make(fieldError, size: CavnarType.secondary, weight: 500, color: .cavnarRedText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("\(label): \(fieldError)")
             }
             AccountRowDivider()
         }
@@ -509,11 +525,19 @@ struct TargetsPayload: Decodable {
         foodGoal = ((try? c.decodeIfPresent(GoalBox.self, forKey: .food)) ?? nil)?.goal?.label
     }
 
-    /// What a field reads as typed: "30", "28.5", "" when it isn't set.
-    func text(for key: String) -> String {
+    /// What a field reads as typed: "30", "28.50" ("28,50" on a
+    /// comma-decimal phone), "" when it isn't set.
+    func text(for key: String, locale: Locale = .current) -> String {
         func n(_ v: Double?) -> String {
             guard let v else { return "" }
-            return v == v.rounded() ? String(Int(v)) : String(format: "%.2f", v)
+            if v == v.rounded() { return String(Int(v)) }
+            let f = NumberFormatter()
+            f.locale = locale
+            f.numberStyle = .decimal
+            f.usesGroupingSeparator = false
+            f.minimumFractionDigits = 2
+            f.maximumFractionDigits = 2
+            return f.string(from: NSNumber(value: v)) ?? String(format: "%.2f", v)
         }
         switch key {
         case Field.labor: return n(laborTargetPct)
@@ -546,6 +570,25 @@ struct TargetsPayload: Decodable {
         if key == Field.food, let g = foodGoal { parts.append(g + " applies") }
         if let set = setNotes[key] { parts.append(set) }
         return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// The caption under each alcohol target row: what the figure is, and
+    /// what a blank falls back to — the ranges the server judges with
+    /// (benchmark_registry: beer & seltzer 20–26, Cavnar AI's starting
+    /// range; liquor 14–20, Provi 2021; wine 30–40, Backbar 2019).
+    static func alcoholCaption(_ key: String) -> String? {
+        switch key {
+        case Field.bar:
+            return "Beer, liquor and wine bought as a % of their sales, on the Bar page. Blank uses each category\u{2019}s range."
+        case Field.beer:
+            return "Bought as a % of their sales. Blank uses 20\u{2013}26%, Cavnar AI\u{2019}s starting range."
+        case Field.liquor:
+            return "Bought as a % of their sales. Blank uses the industry 14\u{2013}20% (Provi, 2021)."
+        case Field.wine:
+            return "Bought as a % of their sales. Blank uses the industry 30\u{2013}40% (Backbar, 2019)."
+        default:
+            return nil
+        }
     }
 
     static func money(_ v: Double) -> String {
@@ -615,35 +658,69 @@ struct TargetsBody: Encodable, Equatable {
         if let salariedRemove { try c.encode(salariedRemove, forKey: Key("salaried_remove")) }
     }
 
-    /// The body that saves `key` as typed — nil when there's nothing to send
-    /// (an unchanged or unreadable value). Pure, so a test pins it.
-    static func forField(_ key: String, typed: String, current: TargetsPayload) -> TargetsBody? {
-        let t = typed.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")
-            .replacingOccurrences(of: "$", with: "").replacingOccurrences(of: "%", with: "")
-        let value = Double(t)
-        if t == current.text(for: key) { return nil }
+    /// What a box holds, read for the phone's locale (V47 / UIX-18): blank,
+    /// a number ("18,5" is 18.5 on a comma-decimal phone, never 185), or
+    /// something that isn't a number — which is said under the row, never
+    /// dropped silently.
+    enum Draft: Equatable {
+        case blank
+        case value(Double)
+        case invalid
+
+        static let invalidMessage = "Enter a number"
+    }
+
+    static func parse(_ typed: String, locale: Locale = .current) -> Draft {
+        let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return .blank }
+        guard let v = NumberFormatter.cavnarParse(t, locale: locale) else { return .invalid }
+        return .value(v)
+    }
+
+    /// What leaving a box does: nothing (unchanged, or nothing to clear),
+    /// a save, or the sentence to show under it.
+    enum Commit: Equatable {
+        case nothing
+        case save(TargetsBody)
+        case error(String)
+    }
+
+    /// Pure, so a test pins it.
+    static func commit(_ key: String, typed: String, current: TargetsPayload,
+                       locale: Locale = .current) -> Commit {
+        let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t == current.text(for: key, locale: locale) { return .nothing }
+        let draft = parse(t, locale: locale)
+        if draft == .invalid { return .error(Draft.invalidMessage) }
+        var value: Double?
+        if case .value(let v) = draft { value = v }
         if key.hasPrefix("person:") {
-            if !t.isEmpty && value == nil { return nil }
-            return TargetsBody(personRate: PersonRate(name: String(key.dropFirst(7)), rate: value))
+            return .save(TargetsBody(personRate: PersonRate(name: String(key.dropFirst(7)), rate: value)))
         }
         if key.hasPrefix("role:") {
             let role = String(key.dropFirst(5))
-            if !t.isEmpty && value == nil { return nil }
             // Only this role changes; every other role keeps its rate.
             var rates = current.roleRates.filter { $0.key.lowercased() != role.lowercased() }
             if let value { rates[role] = value }
-            return TargetsBody(roleRates: rates)
+            return .save(TargetsBody(roleRates: rates))
         }
-        if t.isEmpty {
-            if key == TargetsPayload.Field.waste { return TargetsBody(clearWaste: true) }
-            if TargetsPayload.Field.clearable.contains(key) { return TargetsBody(clearKeys: [key]) }
+        guard let value else {
+            if key == TargetsPayload.Field.waste { return .save(TargetsBody(clearWaste: true)) }
+            if TargetsPayload.Field.clearable.contains(key) { return .save(TargetsBody(clearKeys: [key])) }
             if key == TargetsPayload.Field.monthly || key == TargetsPayload.Field.weekly {
-                return TargetsBody(number: [key: 0])
+                return .save(TargetsBody(number: [key: 0]))
             }
-            return nil
+            return .nothing
         }
-        guard let value else { return nil }
-        return TargetsBody(number: [key: value])
+        return .save(TargetsBody(number: [key: value]))
+    }
+
+    /// The body that saves `key` as typed — nil when there's nothing to
+    /// send (unchanged) or the box isn't a number (`commit` says which).
+    static func forField(_ key: String, typed: String, current: TargetsPayload,
+                         locale: Locale = .current) -> TargetsBody? {
+        if case .save(let body) = commit(key, typed: typed, current: current, locale: locale) { return body }
+        return nil
     }
 }
 
@@ -662,6 +739,10 @@ final class AccountTargetsModel {
     var busy: String?
     /// What each field reads as typed, keyed like TargetsPayload.Field.
     var drafts: [String: String] = [:]
+    /// What is wrong with a box, shown under its row — "Enter a number",
+    /// or the server's refusal ("Alcohol cost target must be between 5%
+    /// and 60%."). The typed value stays in the box beside it.
+    var fieldErrors: [String: String] = [:]
 
     private struct Response: Decodable {
         let ok: Bool
@@ -684,7 +765,8 @@ final class AccountTargetsModel {
     /// typed in is saved.
     private func typed(_ key: String, _ value: String) {
         drafts[key] = value
-        let v = Double(value.replacingOccurrences(of: ",", with: ""))
+        fieldErrors[key] = nil
+        let v = NumberFormatter.cavnarParse(value)
         if key == TargetsPayload.Field.monthly {
             drafts[TargetsPayload.Field.weekly] = v.map { $0 > 0 ? String(format: "%.0f", $0 / TargetsPayload.weeksPerMonth) : "" } ?? ""
         } else if key == TargetsPayload.Field.weekly {
@@ -702,6 +784,7 @@ final class AccountTargetsModel {
             canEdit = r.canEdit ?? false
             seesPay = r.seesPay ?? false
             drafts = [:]
+            fieldErrors = [:]
             error = nil
         } catch let e as APIClient.APIError {
             error = e.message
@@ -716,10 +799,21 @@ final class AccountTargetsModel {
     /// refused or failed save cleared the draft, and the figure vanished
     /// back to the old one with only the error to say why).
     func commit(_ key: String) async {
-        guard canEdit, let p = payload, let typed = drafts[key],
-              let body = TargetsBody.forField(key, typed: typed, current: p) else { return }
-        guard await save(body, busyKey: key, done: "Saved") else { return }
+        guard canEdit, let p = payload, let typed = drafts[key] else { return }
+        let body: TargetsBody
+        switch TargetsBody.commit(key, typed: typed, current: p) {
+        case .nothing:
+            return
+        case .error(let message):
+            fieldErrors[key] = message
+            Haptic.error()
+            return
+        case .save(let b):
+            body = b
+        }
+        guard await save(body, busyKey: key, done: "Saved", fieldKey: key) else { return }
         drafts[key] = nil
+        fieldErrors[key] = nil
         // The revenue pair: the box not typed in follows the server's answer.
         if key == TargetsPayload.Field.monthly { drafts[TargetsPayload.Field.weekly] = nil }
         if key == TargetsPayload.Field.weekly { drafts[TargetsPayload.Field.monthly] = nil }
@@ -734,7 +828,7 @@ final class AccountTargetsModel {
     func addSalaried(name: String, annual: String) async -> Bool {
         let n = name.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty else { error = "Add a name."; return false }
-        guard let a = Double(annual.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")), a > 0 else {
+        guard let a = NumberFormatter.cavnarParse(annual), a > 0 else {
             error = "Add the annual salary."
             return false
         }
@@ -753,28 +847,30 @@ final class AccountTargetsModel {
                    busyKey: entry.name, done: "Linked to \(name)")
     }
 
+    /// `fieldKey`: the box this save is for — a refusal is shown under that
+    /// row rather than at the foot of the sheet.
     @discardableResult
-    private func save(_ body: TargetsBody, busyKey: String, done: String) async -> Bool {
+    private func save(_ body: TargetsBody, busyKey: String, done: String, fieldKey: String? = nil) async -> Bool {
         busy = busyKey
         error = nil
         defer { busy = nil }
+        let message: String
         do {
             let r: Response = try await client.send("/mobile/api/account/targets", method: .post, body: body,
                                                     hapticOnError: false, retryTransient: false)
-            guard r.ok, let t = r.targets else {
-                error = r.error ?? "Couldn\u{2019}t save that."
-                Haptic.error()
-                return false
+            if r.ok, let t = r.targets {
+                payload = t
+                Haptic.success()
+                posted = done
+                return true
             }
-            payload = t
-            Haptic.success()
-            posted = done
-            return true
+            message = r.error ?? "Couldn\u{2019}t save that."
         } catch let e as APIClient.APIError {
-            error = e.message
+            message = e.message
         } catch {
-            self.error = "Couldn\u{2019}t save that."
+            message = "Couldn\u{2019}t save that."
         }
+        if let fieldKey { fieldErrors[fieldKey] = message } else { self.error = message }
         Haptic.error()
         return false
     }

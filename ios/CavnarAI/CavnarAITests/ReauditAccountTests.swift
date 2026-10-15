@@ -82,7 +82,9 @@ final class ReauditAccountTests: XCTestCase {
         XCTAssertTrue(model.canEdit)
         model.binding(TargetsPayload.Field.monthly).wrappedValue = "150000"
         await model.commit(TargetsPayload.Field.monthly)
-        XCTAssertEqual(model.error, "That's above 100%.")
+        // Under the row it belongs to (V47 / UIX-18), not at the foot.
+        XCTAssertEqual(model.fieldErrors[TargetsPayload.Field.monthly], "That's above 100%.")
+        XCTAssertNil(model.error)
         XCTAssertEqual(model.drafts[TargetsPayload.Field.monthly], "150000", "the typed figure stays")
         XCTAssertNotNil(model.drafts[TargetsPayload.Field.weekly], "its pair stays with it")
     }

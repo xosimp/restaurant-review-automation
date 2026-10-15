@@ -22,6 +22,9 @@ struct HomeView: View {
     @State private var day = HomeDayViewModel()
     /// Last night's report — one read feeds its card and the glance row.
     @State private var lastNight = HomeLastNightViewModel()
+    /// The Bar card — on Home only when the bar's top insight is a warning
+    /// or a problem (UIX-10); otherwise it lives on Food Cost alone.
+    @State private var bar = BarCardViewModel()
     /// The recommendation record, with the kinds on hold and the quieter
     /// kinds (moved off Home, #96).
     @State private var showingRecord = false
@@ -276,6 +279,18 @@ struct HomeView: View {
                                     .padding(.top, 30)
                                     .belowFold(heroAppeared, delay: 0.3)
                             }
+                            // The bar, only when its top insight needs the
+                            // owner (tone warn or bad) — the same card as
+                            // Food Cost's.
+                            if Self.barCardShows(summary), bar.payload?.wantsHome == true {
+                                VStack(alignment: .leading, spacing: 14) {
+                                    HomeSectionHeader(kicker: "Bar", title: "Bar")
+                                    FoodCostBarCard(viewModel: bar, showsTitle: false)
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.top, 30)
+                                .belowFold(heroAppeared, delay: 0.31)
+                            }
                             // The brief's reads; its actions are Needs you
                             // rows, and it leaves out what the page already
                             // says (web `hbShownKeys`, parity #3).
@@ -330,7 +345,8 @@ struct HomeView: View {
                         async let d: Void = day.load()
                         async let n: Void = lastNight.load()
                         async let a: Void = aiActivity.load()
-                        _ = await (ft, d, n, a)
+                        async let b: Void = loadBarIfFoodCost()
+                        _ = await (ft, d, n, a, b)
                     }
                 }
                 // A pull rebuilds the brief (fresh=1) instead of the
@@ -1201,6 +1217,17 @@ struct HomeView: View {
     /// The confirm card lists every reply that would post (parity #2):
     /// read it while the card shows its shimmer; with no proposal (an older
     /// server) the card falls back to the count.
+    /// Food Cost with its analytics for this login: the module is on the
+    /// plan and not counts-only. Anything else never asks for the bar.
+    static func barCardShows(_ summary: HomeSummary) -> Bool {
+        summary.modules.contains { $0.key == "inventory" && $0.isAvailable && $0.mode != "counts" }
+    }
+
+    private func loadBarIfFoodCost() async {
+        guard let summary = viewModel.summary, Self.barCardShows(summary) else { return }
+        await bar.load()
+    }
+
     private func loadPublishProposal() {
         publishProposal = nil
         publishProposalLoading = true

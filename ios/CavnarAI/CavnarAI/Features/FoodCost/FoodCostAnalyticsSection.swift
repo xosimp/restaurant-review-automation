@@ -91,6 +91,10 @@ struct FoodCostAnalyticsSection: View {
                         parSection(viewModel.parSuggestions)
                             .id("pars")
                     }
+                    // The bar, in one card — the figure, the one insight,
+                    // the price rises and Count the bar (UIX-10). Nothing
+                    // renders when the bar read failed or was refused.
+                    FoodCostBarCard(viewModel: viewModel.bar)
                     moreAnalysis(analytics)
                 } else if viewModel.isLoading || !viewModel.hasRequestedFirstLoad {
                     // The first load starts as the tab appears — the
