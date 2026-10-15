@@ -36,6 +36,12 @@ WASTE_NEAR_PTS = 1.0
 WASTE_WELL_OVER_MULTIPLE = 2.0
 
 
+def _is_bar_item(category, name) -> bool:
+    """Alcohol is the Bar's, never food stock (cogs.is_bar_item, R8)."""
+    import cogs
+    return cogs.is_bar_item(category, name)
+
+
 def _valid_waste_target(pct):
     """The owner's waste target % when it is a usable one (0 < pct <= 100),
     else None — the same rule waste_trend.get_waste_target_pct applies."""
@@ -467,6 +473,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
 
     total_waste_cost  = 0.0
     total_stock_value = 0.0
+    # The food side only (cogs.is_bar_item out): the COGS anchor (R8).
+    food_stock_value = 0.0
     total_recoverable_week = 0.0
 
     for item in items:
@@ -501,6 +509,8 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
 
         total_waste_cost  += waste_cost
         total_stock_value += stock_value
+        if not _is_bar_item(item.get("category"), item.get("name")):
+            food_stock_value += stock_value
 
         item["days_remaining"] = round(days_remaining, 1)
         item["waste_cost"]     = round(waste_cost, 2)
@@ -786,6 +796,9 @@ def analyse_inventory(items: list[dict], delivery_days: str = None,
         # What the label reads against: {pct, kind: "yours"|"starting", basis}.
         "waste_target":             waste_target,
         "total_stock_value":     round(total_stock_value, 2),
+        # Stock value without alcohol (the Bar's): what inventory_history.inv_value
+        # keeps for the food COGS window (Bar audit R8).
+        "food_stock_value":      round(food_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
         # Totals over EVERY flagged item. The two lists above are display
@@ -1287,7 +1300,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                     "UPDATE inventory_history SET waste_json=?, items_json=?, "
                     "inv_value=COALESCE(inv_value, ?), saved_at=datetime('now') WHERE id=?",
                     (_json_inv2.dumps(snapshot), _items_json_str,
-                     analysis.get("total_stock_value"), existing["id"])
+                     analysis.get("food_stock_value", analysis.get("total_stock_value")), existing["id"])
                 )
             else:
                 _conn_inv.execute(
@@ -1295,7 +1308,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                     "(restaurant_id, waste_json, week_end, items_json, inv_value, source) "
                     "VALUES (?,?,?,?,?,'render')",
                     (restaurant_id, _json_inv2.dumps(snapshot), _week_end_str,
-                     _items_json_str, analysis.get("total_stock_value"))
+                     _items_json_str, analysis.get("food_stock_value", analysis.get("total_stock_value")))
                 )
             _conn_inv.commit()
             _conn_inv.close()

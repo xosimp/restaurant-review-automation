@@ -6543,9 +6543,13 @@ _MODULE_REGISTRY = [
     {"key": "marketing", "label": "Marketing",   "column": "module_marketing"},
     # No DB column — derived, exactly per is_full_tier()'s docstring above.
     {"key": "intel",     "label": "Intel",       "derived": lambda r: bool(getattr(r, "google_place_id", None)) and is_full_tier(r)},
-    # Sold on pricing.html, not implemented anywhere yet — reserved so the
-    # mobile "coming soon" placeholder mechanism has somewhere to point once
-    # a module_waitlist/module_bar column and real feature exist.
+    # Sold on pricing.html — reserved so the mobile "coming soon"
+    # placeholder mechanism has somewhere to point once a module_waitlist /
+    # module_bar column exists. Waitlist is not built. The Bar is partly
+    # live INSIDE Food Cost (barfix Decision 6, 10/15/26): bar purchase and
+    # price tracking ships under FOOD_COST_VIEW with no module of its own and
+    # no pricing change; counted pour cost and variance are arriving.
+    # `module_bar` is read nowhere until the gating is decided.
     {"key": "waitlist",  "label": "Waitlist",      "column": "module_waitlist",  "status": "coming_soon"},
     {"key": "bar",       "label": "Bar & Alcohol", "column": "module_bar",       "status": "coming_soon"},
 ]
@@ -15226,6 +15230,9 @@ NON_ALERT_TYPES = (
     "order_send_voided",
     # The month-end bar count (bar.counts): a briefing, under the budget.
     "bar_count_due",
+    # A bar price increase that held (bar_signals.push_increase): a briefing
+    # through strategy_jobs._reach, under the budget, never an alert.
+    "bar_price",
     # A manager's task notices (re-audit A-6): a staff drop/swap/time-off
     # request and what became of it, and the 9am "waiting on you in Labor".
     "shift_request", "labor_reminder",

@@ -569,7 +569,7 @@ function renderRecommendation(){
   let h = `<div class="sh"><div class="k">Internal preview</div><h1>Cavnar AI recommendation</h1><p>Findings mapped to what the product actually does today. Upcoming modules are marked and never implied to be available.</p></div>`;
   h += `<h2 class="sub">Recommended focus</h2><div class="mods">`;
   (r.recommended_modules||[]).forEach((m,i) => { h += `<div class="mod"><h4><span class="num" style="color:var(--ember2)">${i+1}</span>${esc(m.label)}</h4><p>${esc(m.does)}</p></div>`; });
-  (r.upcoming_modules||[]).forEach(m => { h += `<div class="mod" style="opacity:.75"><h4>${esc(m.label)} <span class="upc">upcoming</span></h4><p>${esc(m.does)}</p></div>`; });
+  (r.upcoming_modules||[]).forEach(m => { h += `<div class="mod" style="opacity:.75"><h4>${esc(m.label)} <span class="upc">${esc(m.badge||'upcoming')}</span></h4><p>${esc(m.does)}</p></div>`; });
   if(!(r.recommended_modules||[]).length) h += `<div class="mod wide"><p>No module stands out yet — enter labor, food, review or marketing data first.</p></div>`;
   h += `</div><h2 class="sub">Investment</h2><div class="plan">${[['auto','Auto ('+(p.plan==='full'?'Full System':'Starter')+')'],['starter:1','1 module'],['starter:2','2 modules'],['full','Full System']].map(([v,l])=>`<button class="btn ${ov===v?'primary':''}" onclick="setPlan('${v}')">${l}</button>`).join('')}</div>
   <div class="tot"><div class="b"><div class="k">${esc(p.label)}</div><div class="v">${money(p.annual)}<small style="font-size:12px;color:var(--ink4)"> / yr</small></div><div class="sub">${esc(p.note)}</div></div>

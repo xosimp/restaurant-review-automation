@@ -126,7 +126,10 @@ def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
             unit_cost = _f(it.get("unit_cost"))
             waste_cost = _f(it.get("waste_last_week")) * unit_cost
             purchased += _f(it.get("last_order_qty")) * unit_cost
-            inv_value += _f(it.get("current_stock")) * unit_cost
+            # Alcohol is the Bar's, never the food COGS anchor (R8).
+            import cogs as _cogs
+            if not _cogs.is_bar_item(it.get("category"), it.get("name") or it.get("item")):
+                inv_value += _f(it.get("current_stock")) * unit_cost
             cat = (it.get("category") or "other").strip().lower() or "other"
             cats[cat] = cats.get(cat, 0.0) + waste_cost
             if waste_cost > 0 and it.get("item"):
