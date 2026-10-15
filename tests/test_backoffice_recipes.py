@@ -129,6 +129,22 @@ def test_plates_cost_each_dish_and_a_dish_with_an_unpriced_ingredient_is_only_a_
     assert out["prices"] == {"invoice": 1, "back_office": 2, "unpriced": 2}
 
 
+def test_a_plate_far_below_its_price_is_flagged_as_a_recipe_missing_its_main_item(db):
+    rid = _rid(db)
+    b = json.loads(json.dumps(BOOK))
+    b["recipes"].append({"name": "TOMAHAWK PORK CHOP", "group": "MENU ITEM>PLATES", "batch_yield": {},
+                         "ingredients": [{"name": "BUN BRIOCHE", "qty": "1.00", "unit": "Each", "item": 3}]})
+    b["pos_names"]["TOMAHAWK PORK CHOP"] = ["Pork Chop"]
+    br.load(rid, b, db_path=db)
+    _sold(db, rid, "Pork Chop", 5, 54.99)
+    _sold(db, rid, "Brisket Sammy", 20, 18.0)
+    out = br.plates(rid, today=TODAY, db_path=db)
+    chop = next(p for p in out["plates"] if p["name"] == "TOMAHAWK PORK CHOP")
+    assert chop["complete"] and "missing its main item" in chop["suspect"]
+    sammy = next(p for p in out["plates"] if p["name"] == "MELTY BRISKET SAMMY")
+    assert out["summary"]["cost_pct"] == sammy["cost_pct"] and out["summary"]["suspect"] == 1
+
+
 def test_the_plates_route_web_and_mobile(db, monkeypatch):
     rid = _rid(db)
     br.load(rid, BOOK, db_path=db)

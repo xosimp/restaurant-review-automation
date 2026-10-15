@@ -13886,7 +13886,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-lines{padding:2px 0 12px 12px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink3)}
 .fc2-pl-lines .l{display:flex;gap:10px;justify-content:space-between}
 .fc2-pl-lines .l .n{font-family:'Space Grotesk',sans-serif;color:var(--ink2);white-space:nowrap}
-.fc2-pl-lines .miss{color:var(--ember2)}
+.fc2-pl-lines .miss,.fc2-pl-row>summary .miss{color:var(--ember2)}
 .fc2-pl-more>summary{cursor:pointer;font-size:13.5px;color:var(--ember2);padding:10px 0;list-style:none}
 @media (max-width:560px){.fc2-pl-row>summary,.fc2-pl-head{grid-template-columns:minmax(0,1fr) repeat(2,minmax(56px,auto))}.fc2-pl-row>summary .x,.fc2-pl-head .x{display:none}}
 .fc2-cfo{margin-top:18px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
@@ -29225,6 +29225,7 @@ function fc2PlRow(p){
   if(p.units)sub.push('<span class="hb-num">'+Math.round(p.units).toLocaleString()+'</span> sold');
   if(!p.complete)sub.push(p.missing.length+' ingredient'+(p.missing.length===1?'':'s')+' not priced');
   if(!p.pos_names.length)sub.push('not matched to the POS');
+  if(p.suspect)sub.push('<span class="miss">'+e(p.suspect)+'</span>');
   h+='<details class="fc2-pl-row"><summary><span class="d">'+e(p.name)+(sub.length?'<small>'+sub.join(' · ')+'</small>':'')+'</span>';
   h+='<span class="n p">'+(p.price==null?'—':fc2PlMoney(p.price))+'</span><span class="n">'+cost+'</span>';
   h+='<span class="n x">'+(p.cost_pct==null?'—':e(p.cost_pct)+'%')+'</span><span class="n x">'+(p.margin==null?'—':fc2PlMoney(p.margin))+'</span></summary><div class="fc2-pl-lines">';

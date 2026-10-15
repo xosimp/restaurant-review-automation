@@ -43,6 +43,11 @@ MAX_PER_POUND = 30.0
 MIN_PER_POUND_PROTEIN = 1.5
 MAX_PER_GALLON = 60.0
 STALE_DAYS = 120
+# A fully priced plate under this share of its price is a recipe missing its
+# main item, not a cheap dish (EJ's Tomahawk Pork Chop, 10/15/26: sprouts,
+# seasoning, oil and rosemary — no chop — 2% of $54.99; the Pretzel without
+# the pretzel, 10%). Flagged, and kept out of the headline figure.
+SUSPECT_PCT = 12.0
 WINDOW_DAYS = 28
 
 
@@ -364,11 +369,15 @@ def plates(restaurant_id, today=None, db_path=None) -> dict:
              "units": round(units), "sales": round(sales, 2), "price": round(price, 2) if price else None,
              "cost_pct": round(100 * res["cost"] / price, 1) if (price and complete) else None,
              "margin": round(price - res["cost"], 2) if (price and complete) else None}
+        if p["cost_pct"] is not None and p["cost_pct"] < SUSPECT_PCT:
+            p["suspect"] = (f"the recipe costs {p['cost_pct']}% of the price — Back Office's recipe may be missing "
+                            "its main item")
         out.append(p)
     out.sort(key=lambda p: (-p["sales"], p["name"]))
-    priced = [p for p in out if p["complete"] and p["units"] > 0]
+    priced = [p for p in out if p["complete"] and p["units"] > 0 and not p.get("suspect")]
     sold_total = sum(p["sales"] for p in out)
-    summary = {"dishes": len(out), "complete": sum(1 for p in out if p["complete"]), "mapped": sum(1 for p in out if p["pos_names"]),
+    summary = {"dishes": len(out), "complete": sum(1 for p in out if p["complete"]),
+               "suspect": sum(1 for p in out if p.get("suspect")), "mapped": sum(1 for p in out if p["pos_names"]),
                "covered_sales": round(sum(p["sales"] for p in priced), 2), "mapped_sales": round(sold_total, 2),
                "cost_pct": (round(100 * sum(p["cost"] * p["units"] for p in priced) / sum(p["sales"] for p in priced), 1)
                             if priced and sum(p["sales"] for p in priced) > 0 else None)}
