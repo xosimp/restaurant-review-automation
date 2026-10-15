@@ -46471,12 +46471,13 @@ function sfw2RuleCheck(chk) {
   }
   function prodCat(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; key && i < ps.length; i++) if (ps[i].product_key === key) return ps[i].category; return null; }
   function prodName(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; i < ps.length; i++) if (ps[i].product_key === key) return ps[i].product; return key; }
+  var SHOW_FIRST = 3;
   function varSec(d) {
     var v = d.variance;
     if (!v) return '';
     var label = v.label || (v.basis === 'variance' ? 'Variance' : 'Bought vs rung'), h = '', i;
     if (!v.available) return '<section class="br-sec" id="br-var"><div class="br-sh"><div><div class="dn-k">' + esc2(label) + '</div><h2 class="dn-h2">What was bought against what the POS rang</h2></div></div><div class="br-empty">' + numify(v.why || 'Not enough on file yet.') + '</div>' + specsBlock(v) + '</section>';
-    var sp = v.span || {}, tt = v.totals || {}, items = v.items || [], show = ST.varAll ? items.length : Math.min(8, items.length);
+    var sp = v.span || {}, tt = v.totals || {}, items = v.items || [];
     if (v.basis === 'variance' && v.categories) {
       var cs = '';
       for (var k in LABELS) {
@@ -46487,9 +46488,16 @@ function sfw2RuleCheck(chk) {
       }
       h += '<div class="br-sum" style="grid-template-columns:repeat(3,minmax(0,1fr))">' + cs + '</div>' + (v.item_note ? '<p class="br-note">' + numify(v.item_note) + '</p>' : '');
     }
-    for (i = 0; i < show; i++) h += (i ? '' : '<div class="br-list" style="margin-top:14px">') + varItem(items[i]);
-    if (show) h += '</div>';
-    if (items.length > 8) h += '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-varall="1">' + (ST.varAll ? 'Show the first 8' : 'Show all ' + hn(v.items_total || items.length)) + '</button></div>';
+    // The three largest gaps show; the rest fold (owner, 10/15/26: "only
+    // show 3 of these rows and have the rest expandable and collapsable").
+    var rest = '';
+    for (i = 0; i < items.length; i++) {
+      if (i < SHOW_FIRST) h += (i ? '' : '<div class="br-list" style="margin-top:14px">') + varItem(items[i]) + (i === Math.min(SHOW_FIRST, items.length) - 1 ? '</div>' : '');
+      else rest += varItem(items[i]);
+    }
+    var more = (v.items_total || items.length) - SHOW_FIRST;
+    if (rest) h += '<details class="br-more" id="br-varrest"' + (ST.det['br-varrest'] ? ' open' : '') + '><summary>' + hn(more) + ' more ' + plural(more, 'product') + '</summary>'
+      + '<div class="br-list">' + rest + '</div>' + ((v.items_total || 0) > items.length ? '<p class="br-note">The ' + hn(items.length) + ' largest gaps of ' + hn(v.items_total) + ' are shown.</p>' : '') + '</details>';
     var un = v.unmapped || [], uh = '';
     for (i = 0; i < un.length; i++) uh += varUnmapped(un[i]);
     return '<section class="br-sec" id="br-var"><div class="br-sh"><div><div class="dn-k">' + esc2(label) + ' · ' + hn(sp.from_mdy) + ' – ' + hn(sp.to_mdy) + '</div><h2 class="dn-h2">What was bought against what the POS rang</h2>'
@@ -46955,13 +46963,15 @@ function sfw2RuleCheck(chk) {
     if (ST.mapErr) return '<div class="br-empty">' + esc2(ST.mapErr) + '</div>';
     var m = ST.map;
     if (!m) return pulse('Loading the bar mapping');
-    var es = m.entries || [], opts = m.options || [], can = m.can_change !== false && OWNER, act = '', idle = '', na = 0, nAct = 0, i;
+    var es = m.entries || [], opts = m.options || [], can = m.can_change !== false && OWNER, act = '', actRest = '', idle = '', na = 0, nAct = 0, i;
     for (i = 0; i < es.length; i++) {
-      if (es[i].sales_28d > 0) { act += mapRow(es[i], opts, can); nAct++; }
+      if (es[i].sales_28d > 0) { if (nAct < SHOW_FIRST) act += mapRow(es[i], opts, can); else actRest += mapRow(es[i], opts, can); nAct++; }
       else { idle += mapRow(es[i], opts, can); na++; }
     }
     if (!es.length) return '<div class="br-empty">No POS sales categories on file yet — they come in with the nightly report.</div>';
+    // The three biggest categories show; the rest fold (owner, 10/15/26).
     return '<div class="br-map">' + act + '</div>'
+      + (actRest ? '<details class="br-more" id="br-maprest"' + (ST.det['br-maprest'] ? ' open' : '') + '><summary>' + hn(nAct - SHOW_FIRST) + ' more ' + plural(nAct - SHOW_FIRST, 'category', 'categories') + ' with sales</summary><div class="br-map">' + actRest + '</div></details>' : '')
       + (na ? '<details class="br-more" id="br-mapidle"' + (ST.det['br-mapidle'] ? ' open' : '') + '><summary>' + hn(na) + ' ' + plural(na, 'category', 'categories') + ' with no sales in 28 days</summary><div class="br-map">' + idle + '</div></details>' : '')
       + '<div class="br-mapft">' + (can
           ? '<button type="button" class="cbtn cbtn-primary" data-br-mapconfirm="1">' + (m.mapping_needed ? 'Confirm these ' + hn(nAct) + ' ' + plural(nAct, 'category', 'categories') : 'Confirmed — confirm again') + '</button><span class="br-note" style="margin:0">A change saves on its own; Confirm says the rest are right as they stand.</span>'
@@ -47079,7 +47089,7 @@ function sfw2RuleCheck(chk) {
   /* Focus survives a re-render (V30): the focused control's own key, found again. */
   var FKEYS = ['data-br-cat', 'data-br-map', 'data-br-cnt', 'data-br-row', 'data-br-dir', 'data-br-series', 'data-br-more', 'data-br-mixers',
                'data-br-cdel', 'data-br-pack', 'data-br-link', 'data-br-exp', 'data-br-dm', 'data-br-pmore', 'data-br-why', 'data-br-mapconfirm',
-               'data-br-wlog', 'data-br-vmap', 'data-br-varall', 'data-br-specall', 'data-br-ladall', 'data-br-credall'];
+               'data-br-wlog', 'data-br-vmap', 'data-br-specall', 'data-br-ladall', 'data-br-credall'];
   function focusKey(el) {
     if (!el || !el.getAttribute) return null;
     if (el.id) return '#' + el.id;
@@ -47354,7 +47364,7 @@ function sfw2RuleCheck(chk) {
       } else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-spec],[data-br-varall],[data-br-specall]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-spec],[data-br-specall]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-row') != null) {
@@ -47438,8 +47448,7 @@ function sfw2RuleCheck(chk) {
         } else sb.remove = true;
         ST.specs = null;
         ownerWrite('/api/food-cost/bar/drink-spec', sb, act === 'confirm' ? 'Confirmed — the recipe card counts now' : 'Set aside — it won’t be suggested again', t);
-      } else if (a('data-br-varall') != null) { ST.varAll = !ST.varAll; rerender(DATA); }
-      else if (a('data-br-specall') != null) {
+      } else if (a('data-br-specall') != null) {
         t.disabled = true;
         fetch('/api/food-cost/bar/drink-specs', {credentials: 'same-origin'}).then(jsonOf).then(function (d) {
           if (d && d.ok) { ST.specs = d; rerender(DATA); } else { t.disabled = false; say(refusal(d, 'The recipe cards couldn’t be read just now.'), 'error'); }

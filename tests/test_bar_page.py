@@ -768,7 +768,7 @@ def test_every_unconfirmed_recipe_card_can_pick_its_product_and_names_it():
     src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
     body = src[src.index("  function specRow(s) {"):src.index("  function prodName(key)")]
     assert 'data-br-specp="' in body and 'data-act="confirm">Confirm' in body and "Pick the product" in body
-    handler = src[src.index("a('data-br-spec') != null"):src.index("a('data-br-varall')")]
+    handler = src[src.index("a('data-br-spec') != null"):src.index("a('data-br-specall')")]
     assert "sb.product_key = spk" in handler and "Pick the product it pours first." in handler
 
 
@@ -849,3 +849,14 @@ def test_every_pours_from_list_is_grouped_by_category_and_strictly_a_to_z():
     src = _src()
     body = src[src.index("  function specRow(s) {"):src.index("  function prodName(key)")]
     assert "prodOptions(" in body and "<option" not in body              # the recipe card uses the same picker
+
+
+def test_bought_vs_rung_and_the_mapping_show_three_rows_and_fold_the_rest():
+    # Will, 10/15/26: "only show 3 of these rows and have the rest
+    # expandable and collapsable" — both lists.
+    src = _src()
+    assert "var SHOW_FIRST = 3;" in src and "data-br-varall" not in src and "ST.varAll" not in src
+    var = src[src.index("  function varSec(d) {"):src.index("  function specsBlock(v) {")]
+    assert 'id="br-varrest"' in var and "i < SHOW_FIRST" in var
+    body = src[src.index("  function mapBody() {"):src.index("  /* ── how every product is sorted")]
+    assert 'id="br-maprest"' in body and "nAct < SHOW_FIRST" in body
