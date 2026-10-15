@@ -53,6 +53,10 @@ _BAR_SERVICE = ("bar_led", "full_service")
 # superseded by the next one; a rule of thumb is re-checked every few years.
 _ANNUAL_ABSTRACT_MAX_AGE = 3
 _RULE_OF_THUMB_MAX_AGE = 5
+# A vendor guide restating a long-standing operator range (the bar's pour
+# cost by category): quoted for this many years after it was published,
+# then the Bar page falls back to Cavnar AI's starting range, said as such.
+_VENDOR_GUIDE_MAX_AGE = 8
 
 # What the NRA food figure (and every band derived from it) measures.
 _NRA_FOOD_DEFINITION = "food_nonalc_bev_cost_pct_sales"
@@ -159,6 +163,44 @@ ENTRIES = (
      "short": "bar-industry vendor guides", "source_kind": "vendor", "year": 2025, "data_year": None,
      "applies_to": (ALL,), "note": "Mix matters — a wine-heavy list legitimately runs higher."},
 
+    # ── pour cost by category (Bar fix round 10/15/26, R6) ──────────────
+    # The ranges the Bar page holds each category to, from vendor guides
+    # read 10/15/26, each quoted as the guide states it. They describe
+    # COUNTED pour cost (cost of what was poured ÷ its sales); the Bar's
+    # purchase ratio ("Bought vs sold") is context against them, never a
+    # like-for-like comparison. The blended "beer & seltzer" category has no
+    # published figure (draft and package are published apart): the Bar
+    # page calls its beer range Cavnar AI's starting range (bar.pour_cost),
+    # and it is not here — see ABSENT.
+    {"metric": "pour_cost_liquor_pct", "category": "bar_program", "label": "liquor in bar programs",
+     "low": 14.0, "high": 20.0, "unit": "%",
+     "definition": "counted_pour_cost", "max_age_years": _VENDOR_GUIDE_MAX_AGE,
+     "source": "Provi, 'Understanding Bar and Beverage Costs' (11/3/21): liquor 14–20 percent. Backbar, "
+               "'What is the average liquor cost for bars and restaurants?' (10/4/19): spirits average 15%.",
+     "short": "Provi bar-cost guide, 2021", "source_kind": "vendor", "year": 2021, "data_year": None,
+     "applies_to": (ALL,), "note": "Premium and super-premium lists run lower; well-heavy lists higher."},
+    {"metric": "pour_cost_wine_pct", "category": "bar_program", "label": "wine in bar programs",
+     "low": 30.0, "high": 40.0, "unit": "%",
+     "definition": "counted_pour_cost", "max_age_years": _VENDOR_GUIDE_MAX_AGE,
+     "source": "Backbar, 'What is the average liquor cost for bars and restaurants?' (10/4/19): wine "
+               "between 30%-40%. Provi (11/3/21) gives a wider 22–45 percent.",
+     "short": "Backbar liquor-cost guide, 2019", "source_kind": "vendor", "year": 2019, "data_year": None,
+     "applies_to": (ALL,), "note": "Pour size moves this most; by-the-bottle sales run lower."},
+    {"metric": "pour_cost_draft_beer_pct", "category": "bar_program", "label": "draft beer in bar programs",
+     "low": 15.0, "high": 18.0, "unit": "%",
+     "definition": "counted_pour_cost", "max_age_years": _VENDOR_GUIDE_MAX_AGE,
+     "source": "Provi, 'Understanding Bar and Beverage Costs' (11/3/21): draft beer 15–18 percent. Backbar "
+               "(10/4/19): draft beers average 20%.",
+     "short": "Provi bar-cost guide, 2021", "source_kind": "vendor", "year": 2021, "data_year": None,
+     "applies_to": (ALL,), "note": "Craft and import kegs run higher."},
+    {"metric": "pour_cost_package_beer_pct", "category": "bar_program", "label": "bottled and canned beer in bar programs",
+     "low": 24.0, "high": 28.0, "unit": "%",
+     "definition": "counted_pour_cost", "max_age_years": _VENDOR_GUIDE_MAX_AGE,
+     "source": "Provi, 'Understanding Bar and Beverage Costs' (11/3/21): bottled beer 24–28 percent. Backbar "
+               "(10/4/19): bottled beer averages 25%.",
+     "short": "Provi bar-cost guide, 2021", "source_kind": "vendor", "year": 2021, "data_year": None,
+     "applies_to": (ALL,), "note": "Seltzers and cans sit with bottles."},
+
     # ── revenue per rating star — independents only ────────────────────
     {"metric": "revenue_per_star_pct", "category": "independent", "label": "independent restaurants",
      "low": 5.0, "high": 9.0, "unit": "%",
@@ -182,6 +224,10 @@ ABSENT = {
                                "used; it is Cavnar AI's starting target, not an industry figure."),
     "blended_hourly_rate": ("No sourced, regional figure for a blended hourly rate; the $22–28/hr "
                             "'industry average' had none."),
+    "pour_cost_beer_pct": ("No published pour-cost range covers draft, package and seltzer as one beer "
+                           "category; the Bar page's beer range is Cavnar AI's starting range, set between "
+                           "the published draft (pour_cost_draft_beer_pct) and package "
+                           "(pour_cost_package_beer_pct) figures."),
 }
 
 # Owner-facing words for where a type came from.

@@ -2135,11 +2135,14 @@ def _read_target_history(restaurant_id, as_of=None, _viewer=None):
     from models import get_restaurant
     import change_log
     denied = _denied(_viewer)
-    # The module each owner target belongs to, in models.OWNER_TARGET_FIELDS'
-    # order (labor, food cost, waste, revenue) — named by position, so this
-    # map reads no target column (tests/test_targets_published_figures).
-    need = dict(zip(change_log._models.OWNER_TARGET_FIELDS, ("labor", "inventory", "inventory", None)))
-    fields = [f for f in change_log._models.OWNER_TARGET_FIELDS if need.get(f) not in denied]
+    # The module each owner target belongs to, mapped BY NAME
+    # (thresholds.TARGET_MODULES): a positional zip stopped at four and
+    # handed the four alcohol targets to logins without Food Cost (Bar audit
+    # V20). A field with no entry is withheld, never shown to everyone.
+    import thresholds as _thr
+    need = _thr.TARGET_MODULES
+    fields = [f for f in change_log._models.OWNER_TARGET_FIELDS
+              if f in need and need[f] not in denied]
     if not fields:
         return {"error": "This login can't see any of the restaurant's targets."}
     r = get_restaurant(restaurant_id)

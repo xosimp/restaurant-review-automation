@@ -469,3 +469,74 @@ def setter_phrase(restaurant, kind, value) -> str:
         return f"the {v} target a manager set"
     return f"your {v} target"
 
+
+# ── the owner's alcohol cost targets (Bar fix round 10/15/26, R9) ─────────
+# Four kinds beside labor and food: the overall alcohol target ("bar") and
+# one per Bar category. Unlike labor and food they have no default and no
+# seeded value — unset is unset — so there is no `*_source` column: a target
+# is "set" when it holds a number and "unset" otherwise. Who set it comes
+# from target_setters_json (models.update_restaurant records it for these
+# four as it does for labor and food), so an admin's view-as save never reads
+# as "your target". Goals (goal_target) do not cover them yet: a goal on a
+# pour-cost metric waits for a COUNTED pour cost (a purchase ratio is not a
+# figure to set a goal on).
+BAR_TARGET_KINDS = {"bar": "bar_cost_target", "beer": "beer_cost_target", "liquor": "liquor_cost_target",
+                    "wine": "wine_cost_target"}
+# The module whose permission a target needs (Ask's target history and any
+# surface listing targets): mapped by NAME, never by position — a positional
+# zip silently handed the four alcohol targets to every login (V20).
+TARGET_MODULES = {_TARGET_FIELDS["labor"][0]: "labor", _TARGET_FIELDS["food"][0]: "inventory",
+                  "waste_target_pct": "inventory", "monthly_revenue_target": None,
+                  **{f: "inventory" for f in BAR_TARGET_KINDS.values()}}
+
+
+def bar_target_value(raw):
+    """A stored alcohol target as a number, or None: unset, not a number,
+    or outside (0, 100) — a 0 or negative target is unset, never "everything
+    is over" (V18)."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v <= 0 or v >= 100:
+        return None
+    return v
+
+
+def bar_target_for(restaurant, kind) -> dict:
+    """The ONE read of an alcohol target ("bar" overall, "beer", "liquor",
+    "wine"): {kind, field, pct, source ("set" | "unset"), setter (principal
+    | delegate | admin | None), label, phrase}. label is "your target" only
+    when an account holder set it (or nobody was recorded), else "the target
+    Cavnar AI set" / "the target a manager set"; phrase puts the figure in:
+    "your 18% target", "the 18% target Cavnar AI set"."""
+    field = BAR_TARGET_KINDS[kind]
+
+    def g(k):
+        if restaurant is None:
+            return None
+        return restaurant.get(k) if isinstance(restaurant, dict) else getattr(restaurant, k, None)
+    pct = bar_target_value(g(field))
+    who = None
+    if pct is not None:
+        raw = g("target_setters_json")
+        try:
+            import json as _json
+            who = (_json.loads(raw) if isinstance(raw, str) else (raw or {})).get(field)
+        except (TypeError, ValueError, AttributeError):
+            who = None
+        who = who if who in ("principal", "delegate", "admin") else None
+    label = SETTER_TARGET_LABELS.get(who, "your target")
+    if pct is None:
+        phrase = None
+    elif who == "admin":
+        phrase = f"the {pct:g}% target Cavnar AI set"
+    elif who == "delegate":
+        phrase = f"the {pct:g}% target a manager set"
+    else:
+        phrase = f"your {pct:g}% target"
+    return {"kind": kind, "field": field, "pct": pct, "source": "set" if pct is not None else "unset",
+            "setter": who, "label": label, "phrase": phrase}
+

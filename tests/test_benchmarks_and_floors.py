@@ -105,7 +105,11 @@ def test_every_entry_carries_its_source_year_and_applicability():
         assert e["low"] < e["high"] and e["mid"] == round((e["low"] + e["high"]) / 2, 2)
     # "general" only where the source is about every restaurant.
     gen = [e for e in br.entries() if br.ALL in e["applies_to"]]
-    assert {e["metric"] for e in gen} == {"prime_cost_pct", "pour_cost_pct", "revenue_per_star_pct"}
+    # The bar program's pour-cost ranges (blended, and by category since the
+    # Bar fix round 10/15/26) are about the bar, whatever the restaurant.
+    assert {e["metric"] for e in gen} == {"prime_cost_pct", "pour_cost_pct", "revenue_per_star_pct",
+                                          "pour_cost_liquor_pct", "pour_cost_wine_pct", "pour_cost_draft_beer_pct",
+                                          "pour_cost_package_beer_pct"}
 
 
 def test_the_registry_is_seeded_from_the_sales_audit_bands():
