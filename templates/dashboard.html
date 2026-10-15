@@ -11143,6 +11143,10 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 #ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-input,
 #ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{background-color:var(--cb-surface)!important;border-color:var(--cb-line)!important}
 #ss-settings-setup [data-ss-panel="basic"] .lb2-actions .cbtn{padding:0 18px}
+/* Safari draws its own rounded native select and ignores border-radius:
+   the week picker drops the native face and takes the app's chevron (the
+   Labor and Account selects' pattern), so its corners match the button's. */
+#ss-settings-setup [data-ss-panel="basic"] .lb2-weekpick .ac-select{-webkit-appearance:none;appearance:none;padding-right:38px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")!important;background-repeat:no-repeat;background-position:right 14px center;background-size:12px 8px}
 #ss-settings-setup [data-ss-panel="basic"] .sw-tgt .ac-input{width:96px}
 /* The week's PAR: two figures and one short line under them. */
 .sw-par-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:4px 0 0;max-width:520px}
