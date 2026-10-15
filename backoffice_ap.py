@@ -105,6 +105,25 @@ def init_backoffice_ap(db_path=None):
             updated_at TEXT NOT NULL,
             UNIQUE(restaurant_id, vendor_key, entry_key))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bo_invoices_date ON bo_invoices(restaurant_id, invoice_date)")
+        # An invoice's own lines (Back Office's invoice page: each line its
+        # item, GL account, purchase unit, quantity and price), when on file.
+        conn.execute("""CREATE TABLE IF NOT EXISTS bo_invoice_lines (
+            restaurant_id INTEGER NOT NULL,
+            vendor_key TEXT NOT NULL,
+            invoice_key TEXT NOT NULL,
+            line_no INTEGER NOT NULL,
+            item_code TEXT,
+            description TEXT,
+            gl TEXT,
+            purchase_unit TEXT,
+            qty REAL,
+            unit_amount REAL,
+            ext_amount REAL NOT NULL,
+            invoice_date TEXT,
+            file_id INTEGER,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (restaurant_id, vendor_key, invoice_key, line_no))""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bo_invoice_lines_item ON bo_invoice_lines(restaurant_id, item_code)")
         conn.execute("""CREATE TABLE IF NOT EXISTS bo_vendor_categories (
             restaurant_id INTEGER NOT NULL,
             vendor_key TEXT NOT NULL,
@@ -458,10 +477,54 @@ def set_vendor_category(restaurant_id, vendor, category, user_id=None, db_path=N
     return {"ok": True, "vendor_key": vk, "category": category}
 
 
+def save_lines(restaurant_id, vendor, invoice_number, lines, invoice_date=None, file_id=None, db_path=None) -> int:
+    """One invoice's lines, replacing any on file for it: [{item_code,
+    description, gl, purchase_unit, qty, unit_amount, ext_amount}]."""
+    vk = distributor_key(vendor) or str(vendor).lower()
+    ik = invoice_key(invoice_number)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM bo_invoice_lines WHERE restaurant_id=? AND vendor_key=? AND invoice_key=?",
+                     (int(restaurant_id), vk, ik))
+        for i, l in enumerate(lines, 1):
+            conn.execute("INSERT INTO bo_invoice_lines (restaurant_id, vendor_key, invoice_key, line_no, item_code, "
+                         "description, gl, purchase_unit, qty, unit_amount, ext_amount, invoice_date, file_id, updated_at) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (int(restaurant_id), vk, ik, i, l.get("item_code"), l.get("description"),
+                          str(l["gl"]) if l.get("gl") else None, l.get("purchase_unit"), l.get("qty"),
+                          l.get("unit_amount"), float(l["ext_amount"]), invoice_date, file_id, _now()))
+        conn.commit()
+    finally:
+        conn.close()
+    _invalidate(restaurant_id)
+    return len(lines)
+
+
+def _line_groups(restaurant_id, db_path=None) -> dict:
+    """{(vendor_key, invoice_key): [(gl, amount)]} — each invoice's lines on
+    file summed by GL account."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT vendor_key, invoice_key, gl, SUM(ext_amount) AS amt FROM bo_invoice_lines "
+                            "WHERE restaurant_id=? GROUP BY vendor_key, invoice_key, gl", (int(restaurant_id),)).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    out = defaultdict(list)
+    for r in rows:
+        out[(r["vendor_key"], r["invoice_key"])].append((r["gl"], float(r["amt"] or 0)))
+    return out
+
+
 def entries(restaurant_id, start=None, end=None, db_path=None) -> list:
     """Every Back Office entry with its category and why: [{vendor,
     vendor_key, invoice_number, entry_kind, itemized, date, amount, gl,
-    gl_name, category, category_source}]."""
+    gl_name, category, category_source}]. An invoice whose lines are on file
+    (bo_invoice_lines) is one row per GL account its lines book to
+    (category_source 'line'), and what its lines leave of its total (tax, a
+    fee) one more row on the vendor's category — so a supplier's paper and
+    chemical lines leave food, and food splits into meat, dairy, produce."""
     conn = get_conn(db_path)
     try:
         q = ("SELECT vendor, vendor_key, invoice_number, entry_kind, itemized, invoice_date AS date, amount, gl "
@@ -478,14 +541,29 @@ def entries(restaurant_id, start=None, end=None, db_path=None) -> list:
         conn.close()
     gls = gl_map(restaurant_id, db_path)
     vc = vendor_categories(restaurant_id, rows=rows, db_path=db_path)
+    groups = _line_groups(restaurant_id, db_path)
+    out = []
     for r in rows:
+        lg = groups.get((r["vendor_key"], invoice_key(r["invoice_number"]))) if r["entry_kind"] == "invoice" else None
+        v = vc.get(r["vendor_key"]) or {"category": "unknown", "source": "unknown"}
+        if lg:
+            rest = float(r["amount"])
+            for gl, amt in lg:
+                g = gls.get(gl) if gl else None
+                out.append(dict(r, amount=round(amt, 2), gl=gl, gl_name=(g or {}).get("name"),
+                                category=(g or {}).get("category") or v["category"], category_source="line"))
+                rest -= amt
+            if abs(rest) >= 0.01:
+                out.append(dict(r, amount=round(rest, 2), gl=None, gl_name=None, category=v["category"],
+                                category_source="invoice_rest"))
+            continue
         g = gls.get(r["gl"]) if r.get("gl") else None
         if g:
             r["category"], r["category_source"], r["gl_name"] = g["category"], "gl", g["name"]
         else:
-            v = vc.get(r["vendor_key"]) or {"category": "unknown", "source": "unknown"}
             r["category"], r["category_source"], r["gl_name"] = v["category"], v["source"], None
-    return rows
+        out.append(r)
+    return out
 
 
 # ── the Bar: alcohol bought outside Fintech ───────────────────────────────

@@ -250,3 +250,35 @@ def test_a_month_compares_only_the_days_both_sides_cover():
     import inspect
     src = inspect.getsource(bo.food_bought_vs_sold)
     assert "sales_from" in src and "MONTH_MIN_NIGHTS" in src and bo.MONTH_MIN_NIGHTS >= 14
+
+
+def test_an_invoice_with_its_lines_splits_by_account_and_paper_leaves_food(db):
+    """Back Office's invoice page carries each line's GL account (EJ's GFS
+    invoice 9041200735, 10/12/26: brisket 4030 MEAT, buttermilk 4020 DAIRY,
+    chicken 4060 POULTRY). With the lines on file the invoice splits by
+    account; a paper line books to 4934 and leaves food."""
+    rid = _rid(db)
+    bo.read_file(rid, "coa.csv", COA.encode(), db_path=db)
+    bo.read_file(rid, "ibv.txt", _printout().encode(), db_path=db)
+    c = _conn(db)
+    for d in range(1, 30):
+        c.execute("INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source) "
+                  "VALUES (?,?,?,?, 'ready', 'rpower')", (rid, (TODAY - timedelta(days=d)).isoformat(), "sales.cat:Food", 200.0))
+    c.commit()
+    c.close()
+    bo.save_lines(rid, "GORDON FOOD SERVICE", "9041200735", [
+        {"item_code": "197761", "description": "BEEF BRISKET", "gl": "4030", "purchase_unit": "Case", "qty": 50,
+         "unit_amount": 10.0, "ext_amount": 500.0},
+        {"item_code": "245570", "description": "DAIRY BUTTERMILK", "gl": "4010", "purchase_unit": "Case", "qty": 1,
+         "unit_amount": 300.0, "ext_amount": 300.0},
+        {"item_code": "900001", "description": "NAPKIN DINNER 2PLY", "gl": "4934", "purchase_unit": "Case", "qty": 1,
+         "unit_amount": 80.0, "ext_amount": 80.0}], db_path=db)
+    rows = [e for e in bo.entries(rid, db_path=db) if e["invoice_number"] == "9041200735"]
+    got = sorted((e["gl"], e["category"], e["amount"], e["category_source"]) for e in rows if e["gl"])
+    assert got == [("4010", "food", 300.0, "line"), ("4030", "food", 500.0, "line"), ("4934", "other_purchase", 80.0, "line")]
+    rest = [e for e in rows if e["category_source"] == "invoice_rest"]
+    assert len(rest) == 1 and rest[0]["amount"] == 20.0 and rest[0]["category"] == "food", "the $20 the lines don't carry"
+    f = bo.food_bought_vs_sold(rid, today=TODAY, db_path=db)
+    assert f["window"]["purchases"] == 1400.0 - 80.0, "the napkins leave food"
+    names = {x["name"] for x in f["by_category"]}
+    assert {"MEAT", "PRODUCE"} <= names
