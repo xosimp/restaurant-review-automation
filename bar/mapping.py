@@ -217,7 +217,31 @@ class Mapping:
         # {report category lower: [departments mapped to it]} — the nightly
         # report's own category map (dsr_category_map), for report_category keys.
         self.report_map = report_map if report_map is not None else _report_map(restaurant_id, db_path)
+        # {POS name lower: the report category the owner filed it under} —
+        # the owner's own words for a department ("Beverage" -> "NA
+        # Beverage"), a hint when the POS name itself says nothing.
+        self.report_of = _report_of(restaurant_id, db_path)
         self._memo = {}
+
+    def suggestion(self, kind, pos_name) -> dict:
+        """{kind, why}: suggest() for the name, then — when it can't tell —
+        the report category the owner filed the name (or its department)
+        under, read for its words."""
+        if kind == "report_category":
+            return suggest(report_category=pos_name)
+        dep, sub = split_key(pos_name) if kind == "item_category" else (str(pos_name or "").strip(), None)
+        info = self.catalog.get((dep.lower(), (sub or "").lower())) or {}
+        s = suggest(dep, sub, info.get("is_bar") if info else None)
+        if s["kind"] is not None:
+            return s
+        for name in ([str(pos_name or "").strip().lower()] if sub else []) + [dep.lower()]:
+            cat = self.report_of.get(name)
+            if not cat:
+                continue
+            k, _why = _words(cat)
+            if k is not None:
+                return {"kind": k, "why": f"your report files it under {cat}"}
+        return s
 
     def _row_choice(self, kind, name):
         row = self.rows.get((kind, str(name or "").strip().lower()))
@@ -241,9 +265,7 @@ class Mapping:
             return {"kind": row["bar_category"], "confirmed": bool(row.get("confirmed_at")), "source": "owner",
                     "why": "your choice"}
         if kind == "item_category":
-            dep, sub = split_key(pos_name)
-            info = self.catalog.get((dep.lower(), (sub or "").lower())) or {}
-            s = suggest(dep, sub, info.get("is_bar") if info else None)
+            s = self.suggestion(kind, pos_name)
             return {"kind": s["kind"], "confirmed": False, "source": "suggested", "why": s["why"]}
         if kind == "department":
             # A department with no choice of its own follows the item
@@ -259,7 +281,7 @@ class Mapping:
                 k = kinds.pop()
                 return {"kind": k, "confirmed": False, "source": "derived",
                         "why": "every item category inside it maps there"}
-            s = suggest(pos_name, None, None)
+            s = self.suggestion(kind, pos_name)
             return {"kind": s["kind"], "confirmed": False, "source": "suggested", "why": s["why"]}
         # report_category: through the report's own category map when every
         # department filed under it maps the same way.
@@ -273,6 +295,21 @@ class Mapping:
 
     def confirmed_any(self) -> bool:
         return any(r.get("confirmed_at") for r in self.rows.values())
+
+
+def _report_of(restaurant_id, db_path=None) -> dict:
+    """{POS name lower ("Beverage", "Other › Darts"): report category as the
+    owner spelled it} — the owner's report map (dsr_category_map)."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT pos_name, category FROM dsr_category_map WHERE restaurant_id=?",
+                            (int(restaurant_id),)).fetchall()
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+    return {str(r["pos_name"]).strip().lower(): str(r["category"]).strip() for r in rows
+            if r["category"] and r["pos_name"]}
 
 
 def _report_map(restaurant_id, db_path=None) -> dict:
@@ -323,12 +360,7 @@ def mapping_payload(restaurant_id, db_path=None, today=None) -> dict:
         res = m.resolve(kind, e["key"])
         dep, sub = split_key(e["key"]) if kind == "item_category" else (e["key"], None)
         info = m.catalog.get((dep.lower(), (sub or "").lower())) or {}
-        if kind == "item_category":
-            sug = suggest(dep, sub, info.get("is_bar") if info else None)
-        elif kind == "department":
-            sug = suggest(dep, None, None)
-        else:
-            sug = suggest(report_category=e["key"])
+        sug = m.suggestion(kind, e["key"])
         row = m.rows.get((kind, low)) or {}
         out.append({"key": e["key"], "kind": kind, "department": dep if kind != "report_category" else None,
                     "item_category": sub, "label": e["key"],
@@ -376,14 +408,7 @@ def save_mapping(restaurant_id, entries, confirm=False, user_id=None, db_path=No
     try:
         for kind, key, cat in clean:
             before = m.resolve(kind, key)["kind"]
-            if kind == "item_category":
-                dep, sub = split_key(key)
-                info = m.catalog.get((dep.lower(), (sub or "").lower())) or {}
-                sug = suggest(dep, sub, info.get("is_bar") if info else None)
-            elif kind == "department":
-                sug = suggest(key, None, None)
-            else:
-                sug = suggest(report_category=key)
+            sug = m.suggestion(kind, key)
             if cat is None:
                 conn.execute("DELETE FROM bar_sales_map WHERE restaurant_id=? AND kind=? AND lower(pos_name)=?",
                              (rid, kind, key.lower()))

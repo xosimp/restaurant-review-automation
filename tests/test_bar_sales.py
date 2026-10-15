@@ -283,6 +283,18 @@ def test_report_category_nights_map_through_the_reports_own_map(db):
     assert d["by_category"]["beer"]["2026-08-01"] == 250.0
 
 
+def test_a_name_that_says_nothing_takes_the_owners_report_category_as_its_suggestion(db):
+    from dsr import store
+    rid = _rid(db)
+    store.set_category(rid, "Beverage", "NA Beverage", db_path=db)     # Simple EJ's own report map
+    store.set_category(rid, "Other", "Darts", db_path=db)
+    m = bmap.Mapping(rid, db)
+    assert m.resolve("department", "Beverage")["kind"] == "na"
+    assert m.resolve("item_category", f"Beverage{SEP}20. Beverages")["kind"] == "na"
+    assert m.resolve("department", "Other") == {"kind": "not_bar", "confirmed": False, "source": "suggested",
+                                                "why": "your report files it under Darts"}
+
+
 def test_unmapped_sales_in_the_window_are_named(db):
     rid = _rid(db)
     day = "2026-10-05"
