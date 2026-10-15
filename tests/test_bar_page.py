@@ -869,3 +869,17 @@ def test_the_category_charts_never_wear_the_app_wide_green_sp_class():
     cat = src[src.index("chart(sp, "):src.index("chart(sp, ") + 400]
     assert "chart(sp, 'br-spk'," in cat and 'class="sp"' not in cat
     assert ".br-cat .br-chart.br-spk{" in src and ".br-cat .br-chart.sp{" not in src
+
+
+def test_the_three_card_charts_share_one_scale_so_a_range_is_one_height():
+    # Will, 10/15/26: the range bands were thin and a different height card to card.
+    out = _node(HARNESS + _bar_script() + """
+      var cs = [{spark: [20, 22, 21], range: [20, 26]}, {spark: [19, 18, 12.5], range: [14, 20]}, {spark: [25, 33], range: [30, 40]}];
+      var sp = window._bar.sparkSpan(cs), out = [];
+      for (var i = 0; i < cs.length; i++) { var d = window._bar.sparkDomain(cs[i].spark, cs[i].range, sp); out.push([d.min, d.max]); }
+      console.log(JSON.stringify([sp, out]));
+    """)
+    span, doms = json.loads(out.strip().split("\n")[-1])
+    assert span == 17 and all(round(hi - lo, 6) == 17 for lo, hi in doms)
+    for (lo, hi), c in zip(doms, [(20, 26), (12.5, 20), (25, 40)]):
+        assert lo <= c[0] and hi >= c[1]
