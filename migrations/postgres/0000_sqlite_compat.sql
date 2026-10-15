@@ -1,5 +1,5 @@
 -- 0000 — what the app's SQLite-era SQL reads, on Postgres (scheduler audit
--- 10/10/26 RM-13; db_dialect). Applied first by scripts/pg_copy.py.
+-- 10/10/26 RM-13; db_dialect). Applied first by scripts/run_pg_copy.py.
 --
 -- sqlite_master: retention's "does this table exist", the scrub plan, the
 -- reference schema and delete_restaurant's table walk read it (17 sites);

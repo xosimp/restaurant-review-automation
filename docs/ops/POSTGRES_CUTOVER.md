@@ -11,7 +11,7 @@ What exists:
 | Piece | Where | Off until |
 |---|---|---|
 | Postgres behind `models.get_conn` (every statement translated; sqlite3's connection surface) | `db_dialect.py` | `DATABASE_URL` names a Postgres |
-| The copy, its verification, the Postgres → SQLite export | `pg_copy.py`, `scripts/pg_copy.py` | run by hand |
+| The copy, its verification, the Postgres → SQLite export | `pg_copy.py`, `scripts/run_pg_copy.py` | run by hand |
 | What still needs a hand port | `scripts/pg_sql_audit.py` (`--database-url` PREPAREs every static statement on a real Postgres) | — (10/14/26: 4,813 statements read, 0 untranslatable, 0 SQLite-only; 3,901 PREPAREd on Postgres 16, 0 failed; 2 built at run time) |
 | The boot on Postgres | `models.boot_conn`, `db_dialect.install_compat` / `install_triggers` | automatic: the boot builds or upgrades the Postgres schema itself |
 | A bounded connection pool | `db_dialect._Pool` (`PG_POOL_*`, ENVIRONMENT.md) | automatic |
@@ -111,7 +111,7 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
 2. Copy it into a scratch Postgres (a second Railway Postgres, or one on a
    laptop — with NO production keys in that shell):
    ```
-   python scripts/pg_copy.py --sqlite snapshot.db --database-url "$SCRATCH_PG_URL" --report rehearsal.json
+   python scripts/run_pg_copy.py --sqlite snapshot.db --database-url "$SCRATCH_PG_URL" --report rehearsal.json
    ```
    Exit 0 means every table verified (row counts, and the integer key's min,
    max and sum on both sides). Read `rehearsal.json`: `coerced` lists the
@@ -130,7 +130,7 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
 ## 3. The shadow (weeks before the switch)
 
 1. Apply the schedule model to the production Postgres:
-   `python scripts/pg_copy.py --sqlite snapshot.db --plan > plan.sql` and run
+   `python scripts/run_pg_copy.py --sqlite snapshot.db --plan > plan.sql` and run
    the `sched` part (`migrations/postgres/0001_schedule_model.sql`) with
    `psql "$PG_URL" -f migrations/postgres/0001_schedule_model.sql`.
 2. On the web service: `SHADOW_DATABASE_URL=<private URL>`, `PG_SHADOW_WRITE=1`.
@@ -158,7 +158,7 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
    `cp $RAILWAY_VOLUME_MOUNT_PATH/reviews.db $RAILWAY_VOLUME_MOUNT_PATH/cutover.db`.
 3. **Copy and verify** (from the same shell; the private URL resolves there):
    ```
-   python scripts/pg_copy.py --sqlite $RAILWAY_VOLUME_MOUNT_PATH/cutover.db \
+   python scripts/run_pg_copy.py --sqlite $RAILWAY_VOLUME_MOUNT_PATH/cutover.db \
        --database-url "$PG_PRIVATE_URL" --report $RAILWAY_VOLUME_MOUNT_PATH/cutover.json
    ```
    (Into an empty database, or one holding only the shadow's `sched`
@@ -187,7 +187,7 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
   made on Postgres since are lost — so decide within minutes.
 - **After the switch, keep what Postgres took:** freeze again
   (`MAINTENANCE_READ_ONLY=1`), export Postgres to SQLite on the volume —
-  `python scripts/pg_copy.py --export $RAILWAY_VOLUME_MOUNT_PATH/from_pg.db --database-url "$PG_PRIVATE_URL"` —
+  `python scripts/run_pg_copy.py --export $RAILWAY_VOLUME_MOUNT_PATH/from_pg.db --database-url "$PG_PRIVATE_URL"` —
   then restore it as the database the documented way (`RESTORE_FROM`,
   docs/ops/RECOVERY.md → *Database recovery*), set `DB_BACKEND=sqlite`,
   unfreeze.

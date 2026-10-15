@@ -122,7 +122,7 @@ restaurant 5; restaurant 4 is Will's demo copy.
     keep the ceilings or use Sonnet 5.5 for trial and unpaid accounts.
     `ai_utils._CACHE_READ_MULTIPLIER` is 0.10 for every model; check it
     against Opus 5.5's cache-read price before trusting the ledger's cost.
-  - **Replay:** `python3 scripts/schedule_eval.py --restaurant 5` (and 4)
+  - **Replay:** `python3 scripts/run_schedule_eval.py --restaurant 5` (and 4)
     after the merge, as `MODULE_OVERVIEW.md` asks of any scoring change.
   - **External:** a live reservation feed needs Cavnar AI admitted to a
     provider's partner program (OpenTable, Resy, Tock); until then the

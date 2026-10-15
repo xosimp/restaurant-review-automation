@@ -196,7 +196,7 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `CAVNAR_TEST_PG_URL` | — | Tests only: a SCRATCH Postgres server (never production's). The suite's database runs there — every test's database its own, from a template (tests/conftest.py); `tests/test_q2_postgres.py`'s live half runs. CI's `postgres` job sets it. | tests/conftest.py, tests/test_q2_postgres.py |
 | `QUEUE_WAIT_ALERT_SECONDS` | `"120"` | The platform check warns when owners' generations wait longer than this to start (the queue's interactive p95 over the last hour, five samples at least). | ops.py |
 | `MAINTENANCE_READ_ONLY` | — | `1`: the cutover's write freeze — every write request answers 503 with a sentence, the scheduler and its sends stop (`scheduler.scheduling_allowed`); reads and `/health` still answer. | http_layer.py, scheduler.py |
-| `TARGET_DATABASE_URL` | — | `scripts/pg_copy.py`'s target when `--database-url` is not given. | scripts/pg_copy.py |
+| `TARGET_DATABASE_URL` | — | `scripts/run_pg_copy.py`'s target when `--database-url` is not given. | scripts/run_pg_copy.py |
 | `PG_COPY_BATCH_ROWS` | `"2000"` | Rows a batch in the copy and the export. | pg_copy.py |
 | `BLOB_STORE` | `"db"` | Where model-call and quality blobs live: `db` (inline, as before), `s3` (the `BLOB_S3_*` bucket), `local` (`BLOB_STORE_DIR`; development only — the SQLite backup does not carry it). | blob_store.py |
 | `BLOB_S3_ENDPOINT`, `BLOB_S3_BUCKET`, `BLOB_S3_ACCESS_KEY_ID`, `BLOB_S3_SECRET_ACCESS_KEY`, `BLOB_S3_REGION`, `BLOB_S3_PREFIX` | —, —, —, —, `"auto"`, `"cavnar-blobs/"` | The blob bucket (https only; never the backup bucket, whose lifecycle rule expires objects). Give `model-calls/` a lifecycle rule of ~100 days. | blob_store.py |

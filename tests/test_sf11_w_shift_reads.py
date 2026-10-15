@@ -308,7 +308,7 @@ STILL_ON_TEXT = {
     "schedule_benchmark.py::saved_rows": (1, "the benchmark harness"),
     "studio_bench.py::_history": (1, "the Studio bench harness"),
     "crew_matrix.py::_draft": (1, "the Crew stage's raw read"),
-    "scripts/schedule_eval.py::evaluate": (1, "an offline script"),
+    "scripts/run_schedule_eval.py::evaluate": (1, "an offline script"),
     "scripts/schedule_model_eval.py::_rerender": (1, "an offline script; a result's text"),
 }
 

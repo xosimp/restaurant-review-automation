@@ -6,10 +6,11 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# Appended, never first: scripts/ holds modules named like the root ones
-# (scripts/schedule_benchmark.py beside schedule_benchmark.py), and a
-# scripts/ entry at the front of sys.path shadowed the root module for every
-# test collected after this file in the same process.
+# Appended, never first: a scripts/ entry at the front of sys.path can shadow
+# a root module of the same name for every test collected after this file in
+# the same process (scripts/ once held a schedule_benchmark.py; it is
+# run_schedule_benchmark.py now, and test_scripts_never_shadow_a_root_module
+# keeps any script from taking a root module's name).
 sys.path.append(os.path.join(ROOT, "scripts"))
 
 
@@ -25,3 +26,13 @@ def test_every_variable_the_code_reads_is_in_the_environment_doc():
 def test_the_doc_says_how_to_regenerate_it():
     doc = open(os.path.join(ROOT, "docs", "ops", "ENVIRONMENT.md"), encoding="utf-8").read()
     assert "repo_inventory.py --env" in doc and "test_environment_doc.py" in doc
+
+
+def test_scripts_never_shadow_a_root_module():
+    # Several test files put scripts/ on sys.path; a script named like a root
+    # module (scripts/schedule_benchmark.py beside schedule_benchmark.py)
+    # made `import schedule_benchmark` load the command-line script for every
+    # test collected after them in the same worker.
+    root = {f for f in os.listdir(ROOT) if f.endswith(".py")}
+    scripts = {f for f in os.listdir(os.path.join(ROOT, "scripts")) if f.endswith(".py")}
+    assert not (root & scripts), sorted(root & scripts)

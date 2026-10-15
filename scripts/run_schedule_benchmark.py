@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-scripts/schedule_benchmark.py — every archetype restaurant through the real
+scripts/run_schedule_benchmark.py — every archetype restaurant through the real
 generation job on both code-only draft sources, and the comparison table
 (schedule_benchmark; blind re-audit 10/11/26 ARCH-22, AI-28; contract #7).
 
-    python3 scripts/schedule_benchmark.py                      # every archetype but mega_500, both arms, 3 runs
-    python3 scripts/schedule_benchmark.py --only cafe_6 bistro_22 --runs 1
-    python3 scripts/schedule_benchmark.py --heavy              # mega_500 too (needs ~8 GB)
-    python3 scripts/schedule_benchmark.py --json out.json      # the raw results as well
+    python3 scripts/run_schedule_benchmark.py                      # every archetype but mega_500, both arms, 3 runs
+    python3 scripts/run_schedule_benchmark.py --only cafe_6 bistro_22 --runs 1
+    python3 scripts/run_schedule_benchmark.py --heavy              # mega_500 too (needs ~8 GB)
+    python3 scripts/run_schedule_benchmark.py --json out.json      # the raw results as well
 
 Each (archetype, arm) runs in its own child process with its own throwaway
 database (a fresh RAILWAY_VOLUME_MOUNT_PATH), no provider key in its

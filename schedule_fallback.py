@@ -41,7 +41,7 @@ THE SOURCES (draft_source; DRAFT_SOURCES):
   the engine drafts every asked date in code, and the job never sends the
   gate's rewrite or a redo to the model.
 
-  The switch was gated on scripts/schedule_benchmark.py (14 archetype
+  The switch was gated on scripts/run_schedule_benchmark.py (14 archetype
   restaurants, contract #7): the solver arm holds every invariant the
   carry_forward arm holds (MODULE_OVERVIEW.md has the table).
 

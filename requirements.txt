@@ -20,7 +20,7 @@
 # immutabledict, numpy, pandas, protobuf, python-dateutil, six); every
 # existing pin held.
 # 10/10/26: psycopg[binary] 3.2.3 added (with psycopg-binary) for the Postgres
-# readiness work (db_dialect, scripts/pg_copy.py); every existing pin held.
+# readiness work (db_dialect, scripts/run_pg_copy.py); every existing pin held.
 absl-py==2.5.1
     # via ortools
 annotated-types==0.8.0

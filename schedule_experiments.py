@@ -163,7 +163,7 @@ EXPERIMENTS = (
     # like any arm, on acceptance and outcomes. Since the CONTROL is the
     # solver-first draft ("code_shaped"): it holds every invariant of the
     # schedule benchmark the carried week holds, in seconds
-    # (scripts/schedule_benchmark.py; MODULE_OVERVIEW.md has the table), and
+    # (scripts/run_schedule_benchmark.py; MODULE_OVERVIEW.md has the table), and
     # the model's draft paid 15-40 minutes and 48-56k thinking tokens for
     # work the solver re-did. Every week takes the solver's draft until the
     # experiment can conclude (until_powered) — the model's draft is an arm,

@@ -1,12 +1,12 @@
 """
-scripts/pg_copy.py — copy the SQLite database into Postgres and prove it
+scripts/run_pg_copy.py — copy the SQLite database into Postgres and prove it
 (scheduler audit 10/10/26 RM-14; docs/ops/POSTGRES_CUTOVER.md is the
 runbook this is a step of). Run by the operator, never by the app.
 
-    python scripts/pg_copy.py --sqlite /data/reviews.db --database-url "$PG_URL" --report copy.json
-    python scripts/pg_copy.py --sqlite snapshot.db --plan          # the schema it would build, no database
-    python scripts/pg_copy.py --sqlite /data/reviews.db --database-url "$PG_URL" --verify-only
-    python scripts/pg_copy.py --export out.db --database-url "$PG_URL"   # Postgres -> SQLite (rollback)
+    python scripts/run_pg_copy.py --sqlite /data/reviews.db --database-url "$PG_URL" --report copy.json
+    python scripts/run_pg_copy.py --sqlite snapshot.db --plan          # the schema it would build, no database
+    python scripts/run_pg_copy.py --sqlite /data/reviews.db --database-url "$PG_URL" --verify-only
+    python scripts/run_pg_copy.py --export out.db --database-url "$PG_URL"   # Postgres -> SQLite (rollback)
 
 Copy a SNAPSHOT, never the live file: the nightly backup's newest local
 snapshot (gunzipped), or `models.checkpoint()` then a copy, taken while

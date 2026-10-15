@@ -23,7 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _script():
     spec = importlib.util.spec_from_file_location("schedule_benchmark_script",
-                                                  os.path.join(ROOT, "scripts", "schedule_benchmark.py"))
+                                                  os.path.join(ROOT, "scripts", "run_schedule_benchmark.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

@@ -69,7 +69,7 @@ hours the restaurant never works, usual days kept >= 70%, nobody starved, no
 open day with a needed role at zero people. tests/test_schedule_benchmark.py
 holds the fast subset to them — the ones that fail today as strict
 xfails naming the finding that fixes them, so a fix flips them and the gate
-ratchets. scripts/schedule_benchmark.py runs every archetype and both arms
+ratchets. scripts/run_schedule_benchmark.py runs every archetype and both arms
 and prints the comparison table.
 
 The golden set (schedule_eval) is the replay half: real published weeks,
@@ -90,7 +90,7 @@ ARMS = ("solver", "carry_forward")
 RUNS = 3
 # The fast subset tests/test_schedule_benchmark.py runs in one process
 # (about a minute): [archetype, arms, runs, scale]. Every archetype and both
-# arms at full size are the script's (scripts/schedule_benchmark.py).
+# arms at full size are the script's (scripts/run_schedule_benchmark.py).
 FAST_PLAN = (("cafe_6", ARMS, 3, 1.0), ("daypart_limited", ARMS, 2, 0.5), ("qsr_teens", ARMS, 1, 0.5),
              ("single_manager", ARMS, 1, 1.0))
 # Opt-in in the script (--heavy): one generation needs gigabytes.

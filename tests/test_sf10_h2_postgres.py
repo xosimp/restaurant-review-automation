@@ -317,7 +317,7 @@ def test_the_copy_script_plans_without_a_database(source, capsys):
     import importlib
     script = importlib.import_module("pg_copy") if False else None
     import runpy
-    path = os.path.join(os.path.dirname(__file__), "..", "scripts", "pg_copy.py")
+    path = os.path.join(os.path.dirname(__file__), "..", "scripts", "run_pg_copy.py")
     mod = runpy.run_path(path, run_name="pg_copy_script")
     assert mod["main"](["--sqlite", source[0], "--plan"]) == 0
     out = capsys.readouterr().out

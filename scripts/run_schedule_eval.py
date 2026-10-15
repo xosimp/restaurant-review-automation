@@ -6,10 +6,10 @@ real weeks, before anyone reads a number it produced. For each saved week
 this prints the score it was stored with, the score today's code gives the
 same rows, and (with --optimize) what the repair loop makes of it.
 
-    python3 scripts/schedule_eval.py --restaurant 2
-    python3 scripts/schedule_eval.py --ids 6953,6952 --optimize --detail
-    python3 scripts/schedule_eval.py --restaurant 2 --solve      # the assignment solver (#47)
-    python3 scripts/schedule_eval.py --ids 7012 --calls           # the model calls behind the week
+    python3 scripts/run_schedule_eval.py --restaurant 2
+    python3 scripts/run_schedule_eval.py --ids 6953,6952 --optimize --detail
+    python3 scripts/run_schedule_eval.py --restaurant 2 --solve      # the assignment solver (#47)
+    python3 scripts/run_schedule_eval.py --ids 7012 --calls           # the model calls behind the week
 
 --calls lists each stored model call the week was generated with
 (schedule_model_calls: model, effort, contract, stop reason, tokens,

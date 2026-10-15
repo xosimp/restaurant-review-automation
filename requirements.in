@@ -37,7 +37,7 @@ pillow==12.3.0
 webauthn==3.0.1
 # Postgres readiness (scheduler audit 10/10/26 RM-13/RM-14, workstream H2):
 # the driver db_dialect.PgConnection uses behind models.get_conn when
-# DATABASE_URL names a Postgres database, and scripts/pg_copy.py's. Imported
+# DATABASE_URL names a Postgres database, and scripts/run_pg_copy.py's. Imported
 # only then — SQLite stays the default and never loads it.
 psycopg[binary]==3.2.3
 # Schedule solver (scheduler audit 10/10/26 LOGIC-24, RM-8, RM-11): Google
