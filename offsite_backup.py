@@ -543,6 +543,7 @@ def _scrub_rows(conn):
 # that matches CREDENTIAL_NAME must be added to SCRUB_COLUMNS or here —
 # tests/test_fix_d_backup.py fails until it is.
 KEEP_COLUMNS = {
+    ("rpower_rate_bucket", "tokens"): "a request-budget count (a token bucket), no credential; its key is a hash",
     ("users", "password_hash"): "a salted hash; dropping it locks every user out of a restored copy",
     ("users", "password_changed_at"): "a date",
     ("users", "password_strength"): "a label",

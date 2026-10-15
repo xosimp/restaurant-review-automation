@@ -62,7 +62,11 @@ def test_the_heaviest_weekday_is_a_red_spike_on_the_radar():
 
 def test_ready_button_has_no_ember_glow_and_the_rule_above_every_day_is_gone():
     s = _src()
-    assert "_schedBtn.style.boxShadow = 'none';" in s
+    # The green "Schedule ready" and its glow are gone altogether (owner,
+    # 10/14/26): Setup's button says Open the draft / Generate a new draft
+    # (ssGenState), which clears any inline background, colour and glow.
+    assert "Schedule ready ✓" not in s and "_schedBtn.style.background = 'var(--green)'" not in s
+    assert "gen.style.background = ''; gen.style.color = ''; gen.style.boxShadow = '';" in s
     assert "#lb2-money-all{border-top:none}" in s
 
 

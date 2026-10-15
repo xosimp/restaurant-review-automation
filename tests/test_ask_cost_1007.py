@@ -212,7 +212,11 @@ def test_no_tool_definition_carries_its_own_breakpoint():
 # CONVENTIONS already cover, dates and times included), they sit near their
 # floor: the property lists the handlers read are ~1,600 characters alone, so
 # the old 770 of headroom could not hold them without removing a tool.
-TOOL_SCHEMA_CEILING_CHARS = 28000
+# Raised to 28,200 by the Bar fix round (10/15/26): read_bar joined (the
+# bar's one read — bought vs sold or counted pour cost, judgement, missing
+# invoices, held price changes), trimmed to a ~300-character spec; 128
+# characters of headroom could not hold a tool's name and empty schema.
+TOOL_SCHEMA_CEILING_CHARS = 28200
 
 
 def test_the_tool_schemas_stay_under_their_ceiling_with_every_tool_offered():

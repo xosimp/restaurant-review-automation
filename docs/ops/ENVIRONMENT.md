@@ -184,6 +184,8 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `GATEWAY_OUTPUT_RESERVE_CAP` | `"16000"` | The most output tokens a call reserves before its answer says. | model_gateway.py |
 | `GATEWAY_GENERATION_STREAM_OTPM` | `"7200"` | Output tokens a minute one streaming generation spends, for the generation concurrency cap. | model_gateway.py |
 | `AI_BREAKER_SYNC_SECONDS` | `"5"` | How often a process reads the shared provider breaker (`ai_breakers`). | ai_utils.py |
+| `BAR_CACHE_TTL_SECONDS` | `"600"` | The Bar page's kept payload is rebuilt at least this often even when its data stamp is unchanged (a safety net; every Bar write and data change already rebuilds it). | bar/cache.py |
+| `BAR_CACHE_ENTRIES` | `"16"` | How many restaurants' Bar payloads one process keeps (LRU). | bar/cache.py |
 | `DATABASE_URL` | — | A `postgres://` URL makes Postgres the database behind `models.get_conn` (db_dialect). **Set only at the cutover** (POSTGRES_CUTOVER.md). | models.py, db_dialect.py |
 | `DB_BACKEND` | — | `sqlite` pins SQLite even with `DATABASE_URL` set (the rollback). | models.py, db_dialect.py |
 | `SHADOW_DATABASE_URL` | — | The Postgres the shadow writes the normalized schedule model to while SQLite is primary. | pg_shadow.py |

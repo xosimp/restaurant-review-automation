@@ -76,6 +76,8 @@ def init_bar_mapping(db_path=None):
             computed_at     TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, business_date, department, sales_category)
         )""")
+        # Retention deletes by business_date across restaurants (ops._RETENTION_DAYS).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bar_sales_nights_date ON bar_sales_nights(business_date)")
         conn.commit()
     finally:
         conn.close()
@@ -271,7 +273,7 @@ class Mapping:
             # A department with no choice of its own follows the item
             # categories inside it when they all agree (the owner's choices
             # first), else its own name.
-            inside = [c for (d, _c) in self.catalog if d == str(pos_name or "").strip().lower()]
+            inside = [_c for (d, _c) in self.catalog if d == str(pos_name or "").strip().lower()]
             kinds = set()
             for (d, c), info in self.catalog.items():
                 if d != str(pos_name or "").strip().lower():

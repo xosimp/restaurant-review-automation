@@ -2948,10 +2948,8 @@ TOOLS = [
         "spec": {
             "name": "read_bar",
             "description": (
-                "The bar: beer, liquor and wine bought from distributors against what the POS sold (bought vs "
-                "sold — an estimate, not pour cost) or counted pour cost once the bar is counted, whether each "
-                "is judged, missing invoices, and bar price changes that held. For liquor cost, pour cost, "
-                "beer or wine cost, distributors and what went up."),
+                "Bar cost: bought vs sold (an estimate) or counted pour cost, whether judged, missing "
+                "invoices, bar price changes that held. Liquor/beer/wine cost, distributors."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },

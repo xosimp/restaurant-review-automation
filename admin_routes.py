@@ -6799,7 +6799,7 @@ def admin_api_intake_create(restaurant_id, current_user):
     except ValueError as e:
         _audit_admin_action(current_user, "intake.route_created", restaurant_id=restaurant_id,
                             target=f"restaurant:{restaurant_id}", result="refused", summary=str(e)[:300])
-        return jsonify(ok=False, error=str(e)), (409 if "already" in str(e) else 400)
+        return jsonify(ok=False, error=_safe_err(e)), (409 if "already" in str(e) else 400)
     _audit_admin_action(current_user, "intake.route_created", restaurant_id=restaurant_id,
                         target=f"intake:{out['address']}", before=out["before"], after=out["after"])
     return jsonify(ok=True, address=out["address"], message=f"New intake address: {out['address']}")
@@ -6824,7 +6824,7 @@ def admin_api_intake_rotate(restaurant_id, current_user):
     except ValueError as e:
         _audit_admin_action(current_user, "intake.route_rotated", restaurant_id=restaurant_id,
                             target=f"restaurant:{restaurant_id}", result="refused", summary=str(e)[:300])
-        return jsonify(ok=False, error=str(e)), 409
+        return jsonify(ok=False, error=_safe_err(e)), 409
     _audit_admin_action(current_user, "intake.route_rotated", restaurant_id=restaurant_id,
                         target=f"intake:{out['address']}", before=out["before"], after=out["after"])
     return jsonify(ok=True, address=out["address"], retired=out["old"],
@@ -6845,7 +6845,7 @@ def admin_api_intake_senders(restaurant_id, current_user):
     try:
         out = email_intake.set_allowed_senders(restaurant_id, address, data.get("allowed_senders"))
     except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     _audit_admin_action(current_user, "intake.senders_set", restaurant_id=restaurant_id,
                         target=f"intake:{address}", before={"allowed_senders": out["before"]},
                         after={"allowed_senders": out["after"]})
@@ -6865,7 +6865,7 @@ def admin_api_intake_release(restaurant_id, current_user):
     try:
         out = email_intake.release(restaurant_id, email_id, released_by=current_user.get("username"))
     except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     _audit_admin_action(current_user, "intake.email_released", restaurant_id=restaurant_id,
                         target=f"email_intake:{email_id}", before=out["before"], after=out["after"])
     return jsonify(ok=True, message="Released — it is read in the next minute or two")
@@ -6990,7 +6990,7 @@ def admin_api_intake_store(restaurant_id, current_user):
         out = fintech_invoices.set_location(restaurant_id, data.get("location_id"), target,
                                             set_by=current_user.get("username"))
     except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_safe_err(e)), 400
     _audit_admin_action(current_user, "intake.store_mapped", restaurant_id=restaurant_id,
                         target=f"fintech_store:{out['location_key']}",
                         before={"restaurant_id": before.get(out["location_key"])},

@@ -51,7 +51,7 @@ def test_a_target_box_saves_once_it_settles_not_on_every_spinner_step():
     studio = studio[:studio.index("\n  }") + 4]
     assert "cavSettled(t, function () {" in studio and "_swSave({labor_target_pct: v}" in studio
     assert "your labor target is now" in studio and "everywhere" in studio, "it says the target is the restaurant's"
-    acct = SRC[_at("if (f && body[f] === '') { status('as-tg-status', 'Enter a number', true); return; }"):]
+    acct = SRC[_at("if (f && body[f] === '') { tgFieldErr(t, 'Enter a number');"):]
     assert acct.index("cavSettled(t, function () {") < acct.index("postJ('/api/account/targets', body")
 
 
