@@ -305,7 +305,35 @@ def _gaps(lines, start, end) -> list:
     return out
 
 
-def _pour_cost(lines, sales, today) -> dict:
+def owner_targets(restaurant_id, db_path=None) -> dict:
+    """{None: overall, "beer": .., "liquor": .., "wine": ..} — the owner's own
+    alcohol cost targets (models.BAR_TARGET_FIELDS), each None when unset."""
+    try:
+        r = _models.get_restaurant(restaurant_id, db_path=db_path) if db_path else _models.get_restaurant(restaurant_id)
+    except Exception:
+        r = None
+    out = {}
+    for cat, field in _models.BAR_TARGET_FIELDS.items():
+        v = getattr(r, field, None) if r is not None else None
+        try:
+            out[cat] = float(v) if v is not None else None
+        except (TypeError, ValueError):
+            out[cat] = None
+    return out
+
+
+def _judge(x, target):
+    """The owner's target, when they set one, is what a reading is judged
+    against: at or under it is good, over it is a warning. Without one the
+    rule-of-thumb range judges (good inside, warn above, low below)."""
+    x["target"] = target
+    x["target_source"] = "owner" if target is not None else "industry"
+    if target is None or x.get("pct") is None or x.get("incomplete"):
+        return
+    x["tone"] = "good" if x["pct"] <= target else "warn"
+
+
+def _pour_cost(lines, sales, today, targets=None) -> dict:
     inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines})
     sale_dates = sorted({d for c in sales.values() for d in c})
     if not inv_dates or not sale_dates:
@@ -346,6 +374,7 @@ def _pour_cost(lines, sales, today) -> dict:
     trend = _trend(lines, sales, lo, hi)
     # Four weeks before the latest weekly point, when the trend reaches back that far.
     earlier = trend[-5] if len(trend) >= 5 else None
+    targets = targets or {}
     for c in POUR_CATEGORIES:
         x = cur[c]
         lo_r, hi_r = x["range"]
@@ -356,11 +385,18 @@ def _pour_cost(lines, sales, today) -> dict:
         # What the reading is above the rule of thumb's top, in dollars at
         # this window's sales: the range's arithmetic, never money "lost".
         x["over_range_usd"] = round((x["pct"] - hi_r) / 100 * x["sales"], 2) if judged and x["pct"] > hi_r else None
+        _judge(x, targets.get(c))
+        # Above the owner's own target, in dollars at this window's sales.
+        x["over_target_usd"] = (round((x["pct"] - x["target"]) / 100 * x["sales"], 2)
+                                if judged and x["target"] is not None and x["pct"] > x["target"] else None)
     weights = {c: cur[c]["sales"] for c in POUR_CATEGORIES if cur[c]["sales"] > 0}
     wsum = sum(weights.values())
     mix_range = ([round(sum(RULE_OF_THUMB[c][0] * v for c, v in weights.items()) / wsum, 1),
                   round(sum(RULE_OF_THUMB[c][1] * v for c, v in weights.items()) / wsum, 1)] if wsum else None)
     total_pct = round(bought / sold * 100, 1) if sold > 0 and bought > 0 else None
+    total_target = targets.get(None)
+    total_over = (round((total_pct - total_target) / 100 * sold, 2)
+                  if total_pct is not None and total_target is not None and total_pct > total_target and not gaps else None)
     return {"available": True, "window": {"from": start, "to": end, "from_mdy": _mdy(start), "to_mdy": _mdy(end),
                                           "days": (date.fromisoformat(end) - date.fromisoformat(start)).days + 1},
             "categories": [cur[c] for c in POUR_CATEGORIES],
@@ -369,6 +405,9 @@ def _pour_cost(lines, sales, today) -> dict:
                       # category's range weighted by its share of the sales.
                       "range": mix_range,
                       "spark": [p["total"] for p in trend],
+                      # The owner's own overall alcohol target, when set.
+                      "target": total_target, "target_source": "owner" if total_target is not None else "industry",
+                      "over_target_usd": total_over,
                       "prev_pct": earlier["total"] if earlier else None,
                       "prev_end_mdy": earlier["end_mdy"] if earlier else None},
             "trend": trend,
@@ -527,7 +566,21 @@ def _insights(pc, pw, to_check) -> list:
                         "metric": f"Nothing between {g['from_mdy']} and {g['to_mdy']}",
                         "action": "Forward Fintech's invoice detail for those dates — what they supply reads low until then"})
         cats = pc.get("categories") or []
+        tot = pc.get("total") or {}
+        if tot.get("over_target_usd"):
+            out.append({"key": "over_target:total", "tone": "bad",
+                        "headline": f"The bar is over your {tot['target']:g}% alcohol cost target",
+                        "metric": f"{tot['pct']}% · {_money(tot['over_target_usd'])} over your target in four weeks",
+                        "action": "Start with the category furthest over its target below"})
         for c in cats:
+            if c.get("target") is not None and c.get("over_target_usd"):
+                out.append({"key": "over_target:" + c["key"], "tone": "bad",
+                            "headline": f"{c['label']} is over your {c['target']:g}% target",
+                            "metric": f"{c['pct']}% · {_money(c['over_target_usd'])} over your target in four weeks",
+                            "action": f"Check {c['label'].lower()} pours, comps and the latest prices"})
+        for c in cats:
+            if c.get("target") is not None:
+                continue
             if c.get("tone") == "warn" and c.get("over_range_usd"):
                 lo, hi = c["range"]
                 out.append({"key": "over:" + c["key"], "tone": "bad",
@@ -565,7 +618,7 @@ def _insights(pc, pw, to_check) -> list:
                         "action": ("Keep doing what changed" if better
                                    else "Look at what moved: prices, pours or comps")})
         for c in pc.get("categories") or []:
-            if c.get("tone") == "low":
+            if c.get("tone") == "low" and c.get("target") is None:
                 lo, hi = c["range"]
                 out.append({"key": "low:" + c["key"], "tone": "info",
                             "headline": f"{c['label']} reads below its usual range",
@@ -592,7 +645,7 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines})
     products = _products(lines)
     other_spend = round(sum(p["spend"] for p in products if p["category"] == "other"), 2)
-    pour = _pour_cost(lines, sales, today)
+    pour = _pour_cost(lines, sales, today, targets=owner_targets(restaurant_id, db_path))
     prices = _price_watch(lines, today)
     to_check = sum(1 for p in products if not (p["sure"] or p["owner_set"]))
     return {"ok": True, "available": True,

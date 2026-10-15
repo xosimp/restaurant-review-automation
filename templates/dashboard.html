@@ -16124,6 +16124,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-food_cost_target" min="5" max="80" step="0.5" style="width:96px" aria-label="Food cost target %" data-tg="food_cost_target"></div></div>
           <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar AI&rsquo;s starting 4.5%.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-waste_target_pct" min="0" max="50" step="0.5" style="width:96px" aria-label="Waste target %" data-tg="waste_target_pct"></div></div>
+          <div class="ac-row"><div class="l"><b>Alcohol cost target</b><span>Beer, liquor and wine bought as a % of their sales, on the Bar page. Blank uses the industry range for your mix.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-bar_cost_target" min="5" max="60" step="0.5" style="width:96px" aria-label="Alcohol cost target %" data-tg="bar_cost_target"></div></div>
+          <div class="ac-row"><div class="l"><b>Beer &amp; seltzer target</b><span>Blank uses the industry 20&ndash;26%.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-beer_cost_target" min="5" max="60" step="0.5" style="width:96px" aria-label="Beer and seltzer cost target %" data-tg="beer_cost_target"></div></div>
+          <div class="ac-row"><div class="l"><b>Liquor target</b><span>Blank uses the industry 16&ndash;22%.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-liquor_cost_target" min="5" max="60" step="0.5" style="width:96px" aria-label="Liquor cost target %" data-tg="liquor_cost_target"></div></div>
+          <div class="ac-row"><div class="l"><b>Wine target</b><span>Blank uses the industry 30&ndash;40%.</span></div>
+            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-wine_cost_target" min="5" max="60" step="0.5" style="width:96px" aria-label="Wine cost target %" data-tg="wine_cost_target"></div></div>
           <div class="ac-row"><div class="l"><b>Monthly revenue target</b><span>Your weekly target &times; 4.33 (52 weeks over 12 months). Blank or 0 means no target.</span></div>
             <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target" data-tg-pair="weekly_revenue_target"></div></div>
           <div class="ac-row"><div class="l"><b>Weekly revenue target</b><span>In dollars. Type either one and the other fills in &mdash; it&rsquo;s one target.</span></div>
@@ -41014,7 +41022,7 @@ window.cavPalette = cavPalette;
   function tgRender() {
     var card = $id('as-tg-card'); if (!card || !_tg) return;
     var t = _tg.targets || {}, ro = !_tg.can_edit, k;
-    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate', 'week_start_day'];
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate', 'week_start_day'];
     for (k = 0; k < ids.length; k++) {
       var el = $id('as-tg-' + ids[k]); if (!el) continue;
       var v = t[ids[k]];
@@ -41080,7 +41088,7 @@ window.cavPalette = cavPalette;
   function tgRate(v) { var n = +v; return '$' + (n % 1 ? n.toFixed(2) : String(n)); }
   function tgNotes(t) {
     var notes = t.set_notes || {}, goals = {labor_target_pct: (t.labor || {}).goal, food_cost_target: (t.food || {}).goal};
-    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
     for (i = 0; i < ids.length; i++) {
       var inp = $id('as-tg-' + ids[i]), row = inp && inp.closest ? inp.closest('.ac-row') : null, l = row ? row.querySelector('.l') : null;
       if (!l) continue;
@@ -41169,7 +41177,9 @@ window.cavPalette = cavPalette;
     var f = t.getAttribute('data-tg'), role = t.getAttribute('data-tg-role'), body = {};
     if (!f && role === null) return;
     var rev = f === 'monthly_revenue_target' || f === 'weekly_revenue_target';
-    if (f) body[f] = t.value === '' ? (f === 'waste_target_pct' ? null : (rev ? 0 : '')) : +t.value;
+    // A blank clears the waste and alcohol targets back to "not set".
+    var clearable = {waste_target_pct: 1, bar_cost_target: 1, beer_cost_target: 1, liquor_cost_target: 1, wine_cost_target: 1};
+    if (f) body[f] = t.value === '' ? (clearable[f] ? null : (rev ? 0 : '')) : +t.value;
     else {
       // Only this role changes: a role whose box isn't on screen (its
       // people all have rates) keeps the rate it has.
@@ -45409,10 +45419,13 @@ function sfw2RuleCheck(chk) {
 .br-figs{display:flex;gap:16px 34px;margin-top:22px;flex-wrap:wrap}
 .br-fig .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
 .br-fig .l{font-size:14px;color:var(--ink3);margin-top:2px}
-.br-meter{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);margin:16px 0 26px}
+.br-meter{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);margin:30px 0 26px}
 .br-meter .band{position:absolute;top:-1px;bottom:-1px;border-radius:999px;background:color-mix(in srgb,var(--hb-good) 26%,transparent);border:1px solid color-mix(in srgb,var(--hb-good) 48%,transparent)}
 .br-meter .mk{position:absolute;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:var(--c,var(--ink));box-shadow:0 0 0 3px var(--surface),0 0 16px color-mix(in srgb,var(--c,var(--ink)) 65%,transparent);transition:left 1s var(--br-ease)}
 .br-meter .pv{position:absolute;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;border:2px solid var(--ink3);background:var(--surface)}
+.br-meter .tg{position:absolute;top:-6px;bottom:-6px;width:2px;margin-left:-1px;border-radius:2px;background:var(--ink)}
+.br-meter .tgl{position:absolute;top:-24px;transform:translateX(-50%);font-size:12.5px;color:var(--ink2);white-space:nowrap}
+.br-tgset{font-size:13.5px;color:var(--ink3);margin-top:10px}
 .br-meter .lb{position:absolute;top:16px;transform:translateX(-50%);font-size:12.5px;color:var(--ink3);white-space:nowrap}
 .br-chart{position:relative;width:100%}
 .br-chart svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
@@ -45578,6 +45591,7 @@ function sfw2RuleCheck(chk) {
   function tone(c) {
     if (c.incomplete) return {c: 'var(--hb-warn)', t: 'Invoices missing'};
     if (c.pct == null) return {c: 'var(--ink3)', t: 'Not measured'};
+    if (c.target != null) return c.pct <= c.target ? {c: 'var(--hb-good)', t: 'Under your target'} : {c: 'var(--hb-bad)', t: 'Over your target'};
     if (c.tone === 'good') return {c: 'var(--hb-good)', t: 'Inside range'};
     if (c.tone === 'warn') return {c: 'var(--hb-bad)', t: 'Above range'};
     if (c.tone === 'low') return {c: 'var(--ink3)', t: 'Below range'};
@@ -45648,21 +45662,26 @@ function sfw2RuleCheck(chk) {
     return {min: lo, max: hi, ticks: ticks};
   }
   /* The rule-of-thumb range as a track: the band, today's marker, and four weeks earlier. */
-  function meter(pct, range, prev, c) {
+  function meter(pct, range, prev, c, target) {
     if (!range) return '';
-    var top = Math.max(range[1] * 1.45, (pct || 0) * 1.12, (prev || 0) * 1.12);
+    var top = Math.max(range[1] * 1.45, (pct || 0) * 1.12, (prev || 0) * 1.12, (target || 0) * 1.2);
     top = Math.ceil(top / 5) * 5;
     var pos = function (v) { return Math.max(0, Math.min(100, v / top * 100)); };
     return '<div class="br-meter" role="img" aria-label="' + (pct == null ? 'Not measured' : pct + '% against a range of ' + range[0] + ' to ' + range[1] + '%') + '">'
       + '<span class="band" style="left:' + pos(range[0]) + '%;width:' + (pos(range[1]) - pos(range[0])) + '%"></span>'
       + (prev != null ? '<span class="pv" title="Four weeks earlier: ' + prev + '%" style="left:' + pos(prev) + '%"></span>' : '')
+      + (target != null ? '<span class="tg" title="Your target: ' + target + '%" style="left:' + pos(target) + '%"></span><span class="tgl" style="left:' + pos(target) + '%">target ' + hn(target + '%') + '</span>' : '')
       + (pct != null ? '<span class="mk" style="--c:' + c + ';left:' + pos(pct) + '%"></span>' : '')
       + '<span class="lb" style="left:' + pos(range[0]) + '%">' + hn(range[0] + '%') + '</span><span class="lb" style="left:' + pos(range[1]) + '%">' + hn(range[1] + '%') + '</span></div>';
   }
   /* ── sections ───────────────────────────────────────────────────────── */
   function hero(d, pc) {
-    var t = pc.total || {}, rng = t.range, c = 'var(--ink)', pill = '';
-    if (t.pct != null && rng) {
+    var t = pc.total || {}, rng = t.range, c = 'var(--ink)', pill = '', pillTail = rng ? ' · ' + hn(rng[0] + '–' + rng[1] + '%') : '';
+    if (t.pct != null && t.target != null && pc.complete !== false) {
+      c = t.pct <= t.target ? 'var(--hb-good)' : 'var(--hb-bad)';
+      pill = t.pct <= t.target ? 'Under your target' : 'Over your target';
+      pillTail = ' · ' + hn(t.target + '%');
+    } else if (t.pct != null && rng) {
       if (pc.complete === false) { c = 'var(--hb-warn)'; pill = 'So far — some invoices aren’t on file'; }
       else if (t.pct > rng[1]) { c = 'var(--hb-bad)'; pill = 'Above your mix’s range'; }
       else if (t.pct < rng[0]) { c = 'var(--ink3)'; pill = 'Below your mix’s range'; }
@@ -45679,8 +45698,10 @@ function sfw2RuleCheck(chk) {
       + '<div><div class="dn-k">Bar · ' + hn(pc.window.from_mdy) + ' – ' + hn(pc.window.to_mdy) + '</div>'
       + '<div class="br-big">' + (t.pct == null ? '—' : cnt(t.pct, 1) + '<small>%</small>') + '</div>'
       + '<div class="br-cap">pour cost over the last four weeks' + (delta != null ? ' · ' + '<span class="br-delta ' + (delta < 0 ? 'good' : 'bad') + '">' + hn((delta > 0 ? '+' : '−') + Math.abs(delta).toFixed(1) + ' pts') + '</span> vs four weeks earlier' : '') + '</div>'
-      + (pill ? '<span class="br-pill" style="--c:' + c + '"><i></i>' + esc2(pill) + (rng ? ' · ' + hn(rng[0] + '–' + rng[1] + '%') : '') + '</span>' : '')
-      + meter(t.pct, rng, t.prev_pct, c)
+      + (pill ? '<span class="br-pill" style="--c:' + c + '"><i></i>' + esc2(pill) + pillTail + '</span>' : '')
+      + (t.target == null && t.pct != null ? '<div class="br-tgset">Industry range for your mix. Set your own alcohol targets in Account → Targets.</div>' : '')
+      + meter(t.pct, rng, t.prev_pct, c, t.target)
+      + (t.over_target_usd ? '<div class="br-cat" style="padding:0"><div class="ov">' + hn(money(t.over_target_usd)) + ' over your target in four weeks</div></div>' : '')
       + '<div class="br-figs"><div class="br-fig"><div class="v">' + cnt(t.purchases, 0, '$') + '</div><div class="l">bought from distributors</div></div>'
       + '<div class="br-fig"><div class="v">' + cnt(t.sales, 0, '$') + '</div><div class="l">beer, liquor &amp; wine sales</div></div></div></div>'
       + '<div>' + right + '</div></section>';
@@ -45700,9 +45721,10 @@ function sfw2RuleCheck(chk) {
       h += '<div class="row"><span class="v">' + cnt(c.pct, 1) + '<small>%</small></span>'
         + (delta != null && Math.abs(delta) >= 0.1 ? '<span class="br-delta ' + (delta < 0 ? 'good' : 'bad') + '">' + (delta < 0 ? '▼ ' : '▲ ') + hn(Math.abs(delta).toFixed(1) + ' pts') + '</span>' : '') + '</div>'
         + (sp.length >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, band: c.range}) : '<div class="sp"></div>')
-        + meter(c.pct, c.range, c.incomplete ? null : c.prev_pct, tn.c)
+        + meter(c.pct, c.range, c.incomplete ? null : c.prev_pct, tn.c, c.target)
         + '<div class="ft"><span>Bought <b>' + esc2(money(c.purchases)) + '</b></span><span>Sold <b>' + esc2(money(c.sales)) + '</b></span></div>'
-        + (c.over_range_usd ? '<div class="ov">' + hn(money(c.over_range_usd)) + ' over the range’s top in four weeks</div>' : '')
+        + (c.over_target_usd ? '<div class="ov">' + hn(money(c.over_target_usd)) + ' over your target in four weeks</div>'
+           : (c.target == null && c.over_range_usd ? '<div class="ov">' + hn(money(c.over_range_usd)) + ' over the range’s top in four weeks</div>' : ''))
         + '</article>';
     }
     return '<div class="br-cats">' + h + '</div>';

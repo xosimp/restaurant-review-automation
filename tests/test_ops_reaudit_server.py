@@ -660,6 +660,27 @@ def test_confirming_a_seeded_target_marks_it_set(db):
     assert status == 200 and out["targets"]["sources"]["labor_target_pct"] == "set"
 
 
+def test_the_owner_sets_and_clears_the_alcohol_targets(db):
+    """Account -> Targets (10/14/26): the alcohol cost targets sit beside the
+    others; a blank clears one back to the industry range; out of range is
+    refused; a teammate cannot set them."""
+    import strategy_routes
+    rid = _restaurant(db)
+    out, status = _call(strategy_routes._do_targets_set, _user(rid),
+                        body={"bar_cost_target": 20, "liquor_cost_target": 18.5})
+    assert status == 200
+    assert out["targets"]["bar_cost_target"] == 20.0 and out["targets"]["liquor_cost_target"] == 18.5
+    assert out["targets"]["beer_cost_target"] is None and out["targets"]["wine_cost_target"] is None
+    r = models.get_restaurant(rid)
+    assert (r.bar_cost_target, r.liquor_cost_target) == (20.0, 18.5)
+    out, status = _call(strategy_routes._do_targets_set, _user(rid), body={"liquor_cost_target": ""})
+    assert status == 200 and out["targets"]["liquor_cost_target"] is None
+    _out, status = _call(strategy_routes._do_targets_set, _user(rid), body={"wine_cost_target": 95})
+    assert status == 400
+    _out, status = _call(strategy_routes._do_targets_set, _user(rid, role="member"), body={"bar_cost_target": 25})
+    assert status == 403 and models.get_restaurant(rid).bar_cost_target == 20.0
+
+
 def test_a_teammate_login_does_not_see_pay_rates(db):
     import strategy_routes
     rid = _restaurant(db)

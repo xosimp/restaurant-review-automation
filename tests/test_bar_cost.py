@@ -190,3 +190,27 @@ def test_the_insights_say_only_what_was_measured(db):
     s = out["price_watch"]["summary"]
     assert s["up_n"] == 4 and s["up_impact_90d"] == round(sum(r["impact_90d"] for r in out["price_watch"]["increases"]), 2)
     assert bc.display_name("KETEL ONE VDK 1L") == "Ketel ONE VDK 1L"
+
+
+def test_the_owners_own_targets_judge_the_bar_when_set(db):
+    """Account -> Targets (10/14/26): with a target of their own a category is
+    judged against it — over it is a warning with the dollars over — and the
+    industry range stays as context; without one the range judges."""
+    rid = _rid(db)
+    csv = HEAD + _row("Chicago Beverage", "A1", "10/01/2026", "458.00", "13682", "DAISY CUTTER K 1/2BB", "KE", 2, "229.00") \
+        + _row("Breakthru Beverage", "B1", "10/02/2026", "300.00", "9031", "TITOS VDK 1L", "CA", 1, "300.00")
+    fi.ingest_file(rid, "x.csv", csv.encode(), db_path=db)
+    for d in ("2026-10-01", "2026-10-02"):
+        _sales(db, rid, d, beer=1100, liquor=750, wine=100)
+    models.update_restaurant(rid, {"liquor_cost_target": 18.0, "bar_cost_target": 25.0}, db_path=db)
+    out = bc.build(rid, db_path=db, today=date(2026, 10, 4))
+    pc = out["pour_cost"]
+    cats = {c["key"]: c for c in pc["categories"]}
+    liq = cats["liquor"]
+    assert liq["pct"] == 20.0 and liq["target"] == 18.0 and liq["target_source"] == "owner"
+    assert liq["tone"] == "warn", "20% is inside the industry range but over the owner's 18%"
+    assert liq["over_target_usd"] == round((20.0 - 18.0) / 100 * 1500, 2)
+    assert cats["beer"]["target"] is None and cats["beer"]["target_source"] == "industry"
+    assert pc["total"]["target"] == 25.0
+    keys = [i["key"] for i in out["insights"]]
+    assert "over_target:liquor" in keys

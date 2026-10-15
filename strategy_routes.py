@@ -7551,7 +7551,13 @@ def _do_publish_check(u):
 
 _TARGET_BOUNDS = {"labor_target_pct": (5.0, 80.0), "food_cost_target": (5.0, 80.0),
                   "waste_target_pct": (0.0, 50.0), "monthly_revenue_target": (0.0, 100000000.0),
-                  "weekly_revenue_target": (0.0, 20000000.0), "hourly_rate": (2.0, 250.0)}
+                  "weekly_revenue_target": (0.0, 20000000.0), "hourly_rate": (2.0, 250.0),
+                  # The alcohol targets (Bar page): % of that category's sales.
+                  "bar_cost_target": (5.0, 60.0), "beer_cost_target": (5.0, 60.0),
+                  "liquor_cost_target": (5.0, 60.0), "wine_cost_target": (5.0, 60.0)}
+# Targets a blank clears back to "not set" (the default or industry range applies).
+_TARGET_CLEARABLE = ("waste_target_pct", "bar_cost_target", "beer_cost_target", "liquor_cost_target",
+                     "wine_cost_target")
 
 
 def _targets_payload(rid):
@@ -7635,6 +7641,10 @@ def _targets_payload(rid):
                                             else "typical" if fallback else "blended")}
     return {"labor_target_pct": r.labor_target_pct, "food_cost_target": r.food_cost_target,
             "waste_target_pct": r.waste_target_pct, "monthly_revenue_target": r.monthly_revenue_target,
+            # The owner's alcohol targets (None = none of their own: the Bar
+            # page uses the industry range).
+            "bar_cost_target": r.bar_cost_target, "beer_cost_target": r.beer_cost_target,
+            "liquor_cost_target": r.liquor_cost_target, "wine_cost_target": r.wine_cost_target,
             # The same target by the week (models.weekly_revenue_target):
             # owners who plan by the week set this one; the monthly follows.
             "weekly_revenue_target": weekly_revenue_target(r),
@@ -7741,7 +7751,7 @@ def _do_targets_set(u):
         if k not in b:
             continue
         v = b.get(k)
-        if v in (None, "") and k == "waste_target_pct":
+        if v in (None, "") and k in _TARGET_CLEARABLE:
             upd[k] = None
             continue
         try:

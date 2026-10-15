@@ -568,9 +568,10 @@ SOURCE_LABELS = {"owner": "the owner", "manager": "a manager", "admin": "Cavnar 
 # The words an owner reads for the fields most often changed; any other
 # field is its column name in plain words.
 FIELD_LABELS = {
-    # models.OWNER_TARGET_FIELDS, in its order (labor, food cost, waste, revenue).
+    # models.OWNER_TARGET_FIELDS, in its order (labor, food cost, waste, revenue, the alcohol targets).
     **dict(zip(_models.OWNER_TARGET_FIELDS, ("Labor target", "Food cost target", "Waste target",
-                                            "Monthly revenue target"))),
+                                            "Monthly revenue target", "Alcohol cost target",
+                                            "Beer & seltzer cost target", "Liquor cost target", "Wine cost target"))),
     "never_say": "Never-say list", "voice_notes": "Brand voice",
     "hourly_rate": "Blended hourly rate", "role_rates_json": "Pay rates by role", "salaried_staff_json": "Salaried staff",
     "daypart_boundary": "Lunch/dinner boundary", "open_times_json": "Opening times", "close_times_json": "Closing times", "hours_notes": "Hours notes",

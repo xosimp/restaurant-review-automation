@@ -175,6 +175,21 @@ final class AccountParityTests: XCTestCase {
 
     // MARK: #27 Targets
 
+    func testTheAlcoholTargetsReadAndSaveLikeTheOthers() throws {
+        let p = try decode(TargetsPayload.self, """
+        {"labor_target_pct": 30, "food_cost_target": 28, "bar_cost_target": 20, "beer_cost_target": null,
+         "liquor_cost_target": 18.5, "wine_cost_target": null}
+        """)
+        XCTAssertEqual(p.text(for: TargetsPayload.Field.bar), "20")
+        XCTAssertEqual(p.text(for: TargetsPayload.Field.liquor), "18.50")
+        XCTAssertEqual(p.text(for: TargetsPayload.Field.beer), "", "not set reads blank, never 0")
+        XCTAssertEqual(try json(TargetsBody.forField("wine_cost_target", typed: "32", current: p)!) as NSDictionary,
+                       ["wine_cost_target": 32] as NSDictionary)
+        let cleared = try json(TargetsBody.forField("bar_cost_target", typed: "", current: p)!)
+        XCTAssertTrue(cleared["bar_cost_target"] is NSNull, "a blank goes back to the industry range")
+        XCTAssertEqual(Set(cleared.keys), ["bar_cost_target"])
+    }
+
     func testTargetsBodySavesOneFieldAndOneRoleAtATime() throws {
         let p = try decode(TargetsPayload.self, """
         {"labor_target_pct": 30, "food_cost_target": 28, "waste_target_pct": 4, "monthly_revenue_target": 120000,

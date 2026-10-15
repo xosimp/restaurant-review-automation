@@ -327,7 +327,11 @@ def _kind(key):
 _TARGET_SOURCES = {"labor_target_pct": ("labor", "your labor target"),
                    "food_cost_target": ("inventory", "your food cost target"),
                    "waste_target_pct": ("inventory", "your waste target"),
-                   "monthly_revenue_target": ("sales", "your revenue target")}
+                   "monthly_revenue_target": ("sales", "your revenue target"),
+                   "bar_cost_target": ("inventory", "your alcohol cost target"),
+                   "beer_cost_target": ("inventory", "your beer cost target"),
+                   "liquor_cost_target": ("inventory", "your liquor cost target"),
+                   "wine_cost_target": ("inventory", "your wine cost target")}
 
 
 def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS) -> list:
