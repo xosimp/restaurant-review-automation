@@ -88,7 +88,10 @@ def _price_cards(pw, pc) -> list:
     out = []
     rows = [r for r in (pw.get("increases") or []) + (pw.get("decreases") or [])
             if r.get("persistent") is True and r.get("kind") in ("increase", "decrease")
-            and abs(float(r.get("forward_monthly_usd") or 0)) >= PRICE_CARD_MONTHLY_USD]
+            and abs(float(r.get("forward_monthly_usd") or 0)) >= PRICE_CARD_MONTHLY_USD
+            # Low confidence (the old price seen once — EJ's Ketel One, 10/15/26)
+            # stays in the list, never a card.
+            and r.get("confidence") != "low" and r.get("headline", True) is not False]
     rows.sort(key=lambda r: -abs(float(r.get("forward_monthly_usd") or 0)))
     for r in rows[:1]:
         up = r["kind"] == "increase"

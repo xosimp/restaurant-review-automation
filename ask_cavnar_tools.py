@@ -2948,7 +2948,7 @@ TOOLS = [
         "spec": {
             "name": "read_bar",
             "description": (
-                "Bar cost: bought vs sold (an estimate) or counted pour cost, whether judged, missing "
+                "Bar cost: bought vs sold (an estimate, not pour cost) or counted pour cost, whether judged, missing "
                 "invoices, bar price changes that held. Liquor/beer/wine cost, distributors."),
             "input_schema": {"type": "object", "properties": {}},
         },

@@ -983,3 +983,42 @@ def test_a_night_whose_drink_sales_were_not_sorted_keeps_the_window_unjudged():
         assert cat(pc, c)["tone"] is None
     assert pc["total"]["judged"] is False
     assert pc_of(lines, sales)["total"]["judged"] is True
+
+
+def test_a_small_house_order_never_holds_back_a_reading_inside_its_range():
+    """EJ's, 10/15/26: a $630 High Noon order from Breakthru (3x that house's
+    small beer weeks) held back a 21% beer reading inside its 20-26% range,
+    and a low liquor draw-down was blamed on a stock-up. A stock-up explains
+    only a HIGH reading, and only when it is a real part of the window."""
+    import bar.judge as j
+    start, end = "2026-09-16", "2026-10-13"
+    lines = []
+    for k in range(12):          # Chicago: the beer house, ~$3,300 a week
+        d = (date(2026, 7, 1) + timedelta(days=7 * k)).isoformat()
+        lines.append(L("Chicago", d, "beer", 3300.0))
+    for k in range(12):          # Breakthru: small seltzer weeks
+        d = (date(2026, 7, 2) + timedelta(days=7 * k)).isoformat()
+        lines.append(L("Breakthru", d, "beer", 200.0))
+    lines.append(L("Breakthru", "2026-09-29", "beer", 630.0))
+    assert j.stock_up(lines, "beer", start, end, 21.0, 26.0) is None, "inside the range: nothing to excuse"
+    assert j.stock_up(lines, "beer", start, end, 12.0, 26.0) is None, "below the range: a draw-down, not a stock-up"
+    # High, but the order is a sliver of four weeks' beer: still not the reason.
+    assert j.stock_up(lines, "beer", start, end, 28.0, 26.0) is None
+    lines.append(L("Breakthru", "2026-10-06", "beer", 9000.0))
+    s = j.stock_up(lines, "beer", start, end, 40.0, 26.0)
+    assert s and s["date"] == "2026-10-06" and s["amount_text"].startswith("$")
+    assert "$9,000" in j.reason_text("stock_up", **dict(s, days=28, open_days=28, have=28, last_mdy="10/13/26"))
+
+
+def test_a_low_confidence_price_change_is_listed_but_never_a_card():
+    """EJ's Ketel One (10/15/26): $385 seen once in May, then $309 that held —
+    a persistent decrease W5 marks low confidence and not a headline; it led
+    the insights anyway."""
+    row = {"product_key": "b|1", "name": "Ketel One 1L", "distributor": "Breakthru", "kind": "decrease",
+           "persistent": True, "forward_monthly_usd": -80.0, "from": 385.0, "to": 309.05, "pct": -19.7,
+           "regime": {"reference": 309.05, "since_mdy": "9/10/26"}, "confidence": "low", "headline": False,
+           "unit": "case", "since_mdy": "9/10/26", "purchases": 3}
+    assert not bi._price_cards({"increases": [], "decreases": [row]}, {})
+    row.update(confidence="high", headline=True)
+    cards = bi._price_cards({"increases": [], "decreases": [row]}, {})
+    assert cards and cards[0]["key"] == "price:b|1"

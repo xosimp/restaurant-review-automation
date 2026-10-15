@@ -49,6 +49,11 @@ STOCK_UP_MIN_WEEKS = 3
 # A reading over this multiple of the range's top is a stock-up whatever
 # the house's history.
 STOCK_UP_RANGE_MULTIPLE = 2.0
+# A delivery explains a high reading only when it is a real part of what the
+# category bought in the window (EJ's, 10/15/26: a $630 High Noon order from
+# Breakthru, 3x that house's small beer weeks, held back a 21% beer reading
+# inside its range, though beer buys ~$13,000 in four weeks).
+STOCK_UP_MIN_SHARE = 0.25
 # How far back a house's rhythm and median week are read.
 HISTORY_DAYS = 91
 
@@ -72,7 +77,7 @@ _REASON_TEXT = {
                  "isn't judged until that night is repaired.",
     "incomplete": "Some invoices for this category aren't on file, so it reads low until they are.",
     "unbalanced": "An invoice for this category didn't add up to its total, so it isn't judged until it's re-read.",
-    "stock_up": "A large delivery on {date_mdy} — {amount} from {distributor} — makes this window read high; it "
+    "stock_up": "A large delivery on {date_mdy} — {amount_text} from {distributor} — makes this window read high; it "
                 "evens out as it pours. Count the shelf to know.",
 }
 
@@ -200,7 +205,9 @@ def _week(iso):
 
 
 def stock_up(lines, cat, start, end, pct=None, range_hi=None):
-    """The delivery that makes [start, end] read high for `cat`, or None:
+    """The delivery that makes [start, end] read high for `cat`, or None —
+    only ever for a reading above its range's top (a stock-up makes a window
+    read high; it never explains a reading inside or below the range):
     {date, date_mdy, distributor, amount, amount_text, why}. A delivery is a
     stock-up when it is over STOCK_UP_WEEK_MULTIPLE x its house's median week
     of `cat` (weeks with a delivery, in the HISTORY_DAYS to `end`, the
@@ -218,6 +225,9 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
             weeks[l["distributor"]][(_week(d), d)] += l["net"]
     if not deliveries:
         return None
+    if pct is None or not range_hi or pct <= range_hi:
+        return None
+    bought = sum(v for v in deliveries.values() if v > 0)
     best = None
     usual = set()
     for (dist, d), amt in deliveries.items():
@@ -231,12 +241,12 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
         if len(base) < STOCK_UP_MIN_WEEKS:
             continue
         median = base[len(base) // 2]
-        if amt > STOCK_UP_WEEK_MULTIPLE * median:
+        if amt > STOCK_UP_WEEK_MULTIPLE * median and amt >= STOCK_UP_MIN_SHARE * bought:
             if best is None or amt > best[2]:
                 best = (dist, d, amt, "house_week", median)
         else:
             usual.add((dist, d))
-    if best is None and pct is not None and range_hi and pct > STOCK_UP_RANGE_MULTIPLE * range_hi:
+    if best is None and pct > STOCK_UP_RANGE_MULTIPLE * range_hi:
         # The window's largest delivery, unless its own house's history
         # shows it is an ordinary week: a bar that buys this much every
         # week is read as it is, not excused as a stock-up.
