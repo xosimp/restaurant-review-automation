@@ -2060,7 +2060,7 @@ def _held_base(cand: Candidate) -> Base:
 
 # What a pass says about the whole week, beside its rows.
 _WEEK_FACT_KEYS = ("week_dates", "draft_source", "unwritten_dates", "unstaffable_dates", "stage_failures",
-                   "empty_accepted", "closed_dates", "open_unwritten", "generation_notes")
+                   "empty_accepted", "closed_dates", "open_unwritten", "generation_notes", "trimmed")
 
 
 def _week_facts(result: dict) -> dict:
@@ -2143,6 +2143,12 @@ def _inherit_week_facts(result: dict, facts: dict, gate_dates) -> None:
     seen = {(f.get("stage"), f.get("line")) for f in own_fail}
     result["stage_failures"] = own_fail + [dict(f, from_first_pass=True) for f in facts.get("stage_failures") or []
                                            if (f.get("stage"), f.get("line")) not in seen]
+    # What the first pass trimmed to the budget on the days this pass keeps:
+    # the gate's fill starts from that trimmed week, so its own repair finds
+    # nothing to cut and its review said nothing was — EJ's 10/21/26 week
+    # lost 206 trimmed hours from its review that way (10/15/26). The repair
+    # adds this pass's own trims to it (schedule_engine, result["trimmed"]).
+    result["inherited_trimmed"] = _on(facts.get("trimmed"), kept)
     # The week's lead lines rebuilt from the merged facts, in the order the
     # generation writes them; then the first pass's other lines (a first week
     # with no history), then what this pass said of its own days (a gate day

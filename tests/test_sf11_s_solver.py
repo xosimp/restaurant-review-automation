@@ -139,6 +139,37 @@ def test_the_firm_part_is_kept_past_the_budget():                          # LOG
     assert _on(got["rows"], WEEK[0], 1110) == 1               # never without a server at dinner
 
 
+def test_a_budget_the_trim_holds_is_held_by_the_solve_itself():
+    # EJ's week of 10/21/26 (10/15/26): at 3x a $9 hour past the budget cost
+    # $36, under the $45 a half-staffed hour is worth, so the solve drafted
+    # $2,539 over and the trim cut 206 hours by its own order. With the trim
+    # on, the solve prices the budget as the trim will hold it.
+    names = [f"S{i}" for i in range(6)]
+    roles = {n: "Server" for n in names}
+    o, cl = _hours(("11:00am", "10:00pm"))
+    c = cons(names, roles, open_times=o, close_times=cl)
+    curve = {t: 2 for t in range(660, 1020, 30)}
+    curve.update({t: 4 for t in range(1020, 1320, 30)})
+    reqs = _req(WEEK[:3], "Server", curve)
+    budget = 400.0
+
+    def spend(rows):
+        return sum((sr._span(r)[1] - sr._span(r)[0]) / 60.0 * 9.0 for r in rows)
+    held_ctx = so.ObjectiveContext.build(None, WEEK[:3], budget=budget, requirements=reqs, rates={"server": 9.0},
+                                         constraints=c, budget_held=True)
+    soft_ctx = so.ObjectiveContext.build(None, WEEK[:3], budget=budget, requirements=reqs, rates={"server": 9.0},
+                                         constraints=c)
+    assert held_ctx.budget_over_factor == so.BUDGET_HELD_FACTOR and soft_ctx.budget_over_factor == so.BUDGET_OVER_FACTOR
+    soft = shp.shape_week(WEEK[:3], c, reqs, roster_roles=roles, rates={"server": 9.0}, budget_dollars=budget,
+                          objective=soft_ctx, max_seconds=4)
+    held = shp.shape_week(WEEK[:3], c, reqs, roster_roles=roles, rates={"server": 9.0}, budget_dollars=budget,
+                          objective=held_ctx, max_seconds=4)
+    assert spend(soft["rows"]) > budget                       # coverage worth more than 3x: drafted past it
+    assert spend(held["rows"]) <= budget * 1.02               # held: the solve keeps inside it
+    # No budget, nothing held.
+    assert so.ObjectiveContext.build(None, WEEK, budget_held=True).budget_over_factor == so.BUDGET_OVER_FACTOR
+
+
 # ── Stage 1: person-aware capacity ────────────────────────────────────────
 
 def _lunch_dinner(names_lunch, names_dinner, role="Server"):

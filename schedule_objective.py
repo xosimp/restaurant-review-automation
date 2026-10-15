@@ -50,6 +50,17 @@ SHORT_PERSON_HOUR_USD = 45.0
 # A dollar past the hourly labor budget costs this many dollars on top of
 # the wage itself (schedule_cpsat's BUDGET_OVER_FACTOR — one number).
 BUDGET_OVER_FACTOR = 3.0
+# A budget the trim holds (the owner's trim to budget on, the budget priced
+# on wages that are known — RepairContext.trim_ok): the trim cuts the week
+# back to it after the solve whatever the solve paid for, so the solve
+# prices a dollar past it above any half hour of coverage can buy (45 x a
+# peak demand weight x the highest criticality, over a $9 wage) and chooses
+# itself which hours stay. At 3x it drafted EJ's week of 10/21/26 $2,539
+# over, a $9 host or server hour being worth more than its $36; the trim
+# then cut 206 hours by its own order (owner, 10/15/26). The requirement,
+# floor, closer, manager and minimum tiers sit far above every dollar, so
+# those still go past the budget, as the trim lets them.
+BUDGET_HELD_FACTOR = 50.0
 # One more shift: a handover, a clock-in, a trip in for somebody.
 SHIFT_OVERHEAD_USD = 12.0
 # A day in beyond somebody's usual days a week (their history, else
@@ -394,6 +405,9 @@ class ObjectiveContext:
         self.families = None
         self.key = _low
         self.value_per_hour = SHORT_PERSON_HOUR_USD
+        # What a dollar past the budget costs on top of the wage: the
+        # held price when the trim will hold the budget (BUDGET_HELD_FACTOR).
+        self.budget_over_factor = BUDGET_OVER_FACTOR
         self.presence = {}                 # (family, weekday, minute) -> share of those weekdays on
 
     # ── building ──
@@ -401,7 +415,7 @@ class ObjectiveContext:
     def build(cls, restaurant_id, week_dates, *, budget=None, last_week_rows=None, usual=None,
               requirements=None, demand_curve=None, history_rows=None, criticality=None, rates=None,
               person_rates=None, blended_rate=None, ot_line=None, salaried=None, families=None,
-              constraints=None, value_per_hour=None, key=None, need=None):
+              constraints=None, value_per_hour=None, key=None, need=None, budget_held=False):
         """The week's pricing context. `requirements` (schedule_requirements
         rows, their `half_need` and `factor`) give the need and — with
         `demand_curve` ({weekday: {hour: share}}) when there is one — the
@@ -417,6 +431,7 @@ class ObjectiveContext:
             x.budget = float(budget) if budget else None
         except (TypeError, ValueError):
             x.budget = None
+        x.budget_over_factor = BUDGET_HELD_FACTOR if (budget_held and x.budget) else BUDGET_OVER_FACTOR
         x.last_week_rows = list(last_week_rows or [])
         x.families = families if families is not None else (getattr(c, "role_families", None) if c is not None else None)
         x.key = key or (c.key if c is not None and hasattr(c, "key") else _low)
@@ -876,7 +891,7 @@ class WeekPricer:
         if ctx.budget:
             over = labor + overtime - ctx.budget
             if over > 0:
-                budget_over = over * BUDGET_OVER_FACTOR
+                budget_over = over * ctx.budget_over_factor
         stability = 0.0
         if ctx.last_week_rows:
             stability = max(0, (self.named if named is None else named) - (self.kept if kept is None else kept)) \
@@ -984,7 +999,8 @@ def stated_rates(ctx=None) -> dict:
     """Every rate the objective prices with, as stated (the owner can be
     shown each)."""
     return {"short_person_hour_usd": (ctx.value_per_hour if ctx is not None else SHORT_PERSON_HOUR_USD),
-            "budget_over_factor": BUDGET_OVER_FACTOR, "shift_overhead_usd": SHIFT_OVERHEAD_USD,
+            "budget_over_factor": (getattr(ctx, "budget_over_factor", None) or BUDGET_OVER_FACTOR),
+            "shift_overhead_usd": SHIFT_OVERHEAD_USD,
             "extra_day_usd": EXTRA_DAY_USD, "short_shift_usd_per_hour": SHORT_SHIFT_USD, "long_shift_usd_per_hour_sq": LONG_SHIFT_USD, "double_usd": DOUBLE_USD,
             "usual_slot_usd": USUAL_SLOT_USD, "off_usual_day_usd": OFF_USUAL_DAY_USD,
             "usual_hours_usd": USUAL_HOURS_USD, "starved_hours_usd": STARVED_HOURS_USD,

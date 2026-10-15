@@ -1592,7 +1592,7 @@ _INPUT_WORDS = {
     "forecast_preview learned crew": "the usual crew learned from your clock-ins",
     "forecast_preview date demand": "each day's demand", "hours split": "the hourly and salaried split of the hours",
     "learned prompt block": "the habits learned from your edits", "measured row cost": "each shift's measured cost",
-    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "standby prices": "what a standby is worth against what it costs", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
+    "measured call cost": "what a schedule call has cost before", "fleet call cost": "what schedule calls have cost across Cavnar AI", "week inputs": "the week's budget and requirements", "code draft": "the draft built without the AI model", "solver-first draft": "the draft solved from your usual crew and rules", "standby prices": "what a standby is worth against what it costs", "concurrent baseline": "how many of each role are usually on at once", "last published week": "your last published week", "overtime inputs": "the pay rates overtime is priced at", "trim to budget setting": "whether the week is trimmed to your budget", "notice window": "your notice rule for changes to a sent week", "roster": "your roster", "owner words": "your notes and instruction read as rules",
     "owner weights": "your lighter and heavier days", "note": "Cavnar AI's note on the week",
     "availability table": "who can work each day, by role", "usual shifts": "your usual shifts by role and day",
     "cache read rate": "the AI model's cache price",
@@ -4027,13 +4027,32 @@ def _solver_first_rows(rid, dates, facts, c, base, hist, plan, signals, weights,
                                 profiles=facts.get("shift_profiles") or None, roster_roles=roles or None,
                                 budget_dollars=facts.get("labor_budget_dollars") or None, max_seconds=budget,
                                 wall_cap=wall_cap, demand_curve=sig.get("demand_curve") or facts.get("demand_curve"),
-                                manager_slots=manager_slots or None)
+                                manager_slots=manager_slots or None, budget_held=_budget_held(rid, facts))
         if got.get("rows") and rid is not None:
             _solver_standby(rid, dates, got, plan, facts, c, sig, weights)
         return got
     except Exception as e:
         _soft_fail("solver-first draft", e, rid)
         return None
+
+
+def _budget_held(rid, facts) -> bool:
+    """Whether the repair loop's trim will hold this week to its hourly
+    budget (RepairContext.trim_on and trim_ok): the owner's trim to budget on
+    and the budget priced on wages that are known — the solve then prices a
+    dollar past it as the trim will treat it (schedule_objective.
+    BUDGET_HELD_FACTOR) instead of drafting past it for the trim to cut."""
+    if not (facts or {}).get("labor_budget_dollars"):
+        return False
+    if ((facts or {}).get("budget_basis") or {}).get("trim_ok") is False:
+        return False
+    try:
+        from models import get_restaurant
+        r = get_restaurant(rid) if rid is not None else None
+        return bool(int(getattr(r, "trim_to_budget", 1) or 0)) if r is not None else True
+    except Exception as e:
+        _soft_fail("trim to budget setting", e, rid)
+        return False
 
 
 def _standby_prices(rid, dates, c, sig) -> tuple:
@@ -9662,7 +9681,7 @@ def objective_need_text(result) -> dict:
 
 
 def objective_context(restaurant_id, week_dates, c, signals, requirements, budget_dollars=None, blended=None,
-                      history_rows=None, need_text=None):
+                      history_rows=None, need_text=None, budget_held=False):
     """The ONE objective's context for a generation's week (schedule_
     objective.ObjectiveContext, contract #1): the role and person rates and
     the overtime line from the quality signals' overtime inputs, the hourly
@@ -9699,7 +9718,7 @@ def objective_context(restaurant_id, week_dates, c, signals, requirements, budge
             history_rows=list(history_rows or []) + list(sig.get("last_published_rows") or []),
             rates=rates, person_rates=ot.get("person_rates"),
             blended_rate=ot.get("default_rate") or (ot.get("rates") or {}).get("_default") or blended,
-            ot_line=ot.get("line"), constraints=c)
+            ot_line=ot.get("line"), constraints=c, budget_held=budget_held)
         # The need, read as Stage 1 reads its demand — the requirement rows'
         # curves, and on the dates the solver drafted the demand it shaped to
         # (the demand weights stay the requirement rows', as the solver's).
@@ -9873,7 +9892,8 @@ class RepairContext:
             self._objective = objective_context(self.rid, self.week_dates, self.c, self.signals,
                                                 self.requirements, budget_dollars=self.budget_dollars or None,
                                                 blended=self.result.get("blended_rate"),
-                                                need_text=self.result.get("objective_need")) or False
+                                                need_text=self.result.get("objective_need"),
+                                                budget_held=bool(self.trim_on and self.trim_ok)) or False
         return self._objective
 
     def objective(self, rows):
@@ -10972,8 +10992,12 @@ def _apply_repair_reports(result, loop) -> None:
     result["end_overruns"] = {"padded": n("pad_overruns", "padded"),
                               "left": (rep.get("pad_overruns") or {}).get("left") or []}
     result["cap_floor_conflicts"] = (rep.get("section_cap") or {}).get("conflicts") or []
-    result["trimmed"] = list(loop.get("trimmed") or [])
-    result["hours_trimmed"] = float(loop.get("hours_trimmed") or 0.0)
+    # A gate pass's own trims, after the first pass's on the days it kept.
+    _inherited = [dict({k: v for k, v in t.items() if k != "index"}, from_first_pass=True)
+                  for t in result.pop("inherited_trimmed", None) or []]
+    result["trimmed"] = _inherited + list(loop.get("trimmed") or [])
+    result["hours_trimmed"] = round(float(loop.get("hours_trimmed") or 0.0)
+                                    + sum(float(t.get("hours") or 0) for t in _inherited), 1)
     result["budget_conflict"] = (loop.get("budget") or {}).get("conflict")
     result["staggered"] = list(loop.get("staggered") or [])
     result["solver"] = _merge_search("solver", (loop.get("searches") or {}).get("solver") or [])

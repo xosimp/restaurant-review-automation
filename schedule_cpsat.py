@@ -1113,7 +1113,8 @@ class _Model:
             spend = H * self.total_cents + (sum(prem) if prem else 0)
             over = m.new_int_var(0, 10 ** 9, "over_budget")
             m.add(100 * H * over >= spend - int(round(self.budget * 100 * H)))
-            book.add("budget", over, max(1.0, 100 * per_cent * BUDGET_OVER_FACTOR), {})
+            factor = getattr(self.ctx, "budget_over_factor", None) or BUDGET_OVER_FACTOR
+            book.add("budget", over, max(1.0, 100 * per_cent * factor), {})
 
     def _days(self):
         """A day in past somebody's usual days a week (their history, else
@@ -2355,7 +2356,7 @@ def summary(result: dict) -> dict:
 def solver_draft(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                  last_week_rows=None, signals=None, weights=None, profiles=None, roster_roles=None,
                  budget_dollars=None, max_seconds=None, seed=SEED, standby_slots=None, wall_cap=None,
-                 demand_curve=None, objective=None, manager_slots=None) -> dict:
+                 demand_curve=None, objective=None, manager_slots=None, budget_held=False) -> dict:
     """The week drafted with no model call: schedule_shapes (Stage 1) picks
     each role's shifts — and a first person for each — to cover its
     people-on-at-once demand, floors, the section cap and the closers, with
@@ -2407,7 +2408,8 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                                           demand_curve=demand_curve or sig.get("demand_curve"),
                                           history_rows=hist_all, rates=rates,
                                           person_rates=ot.get("person_rates"), blended_rate=blended,
-                                          ot_line=ot.get("line"), constraints=constraints)
+                                          ot_line=ot.get("line"), constraints=constraints,
+                                          budget_held=budget_held)
     read = {_low(n) for n in (sig.get("notes_read") or ())}
     exclude = sorted(n for n, note in (sig.get("constraints") or {}).items()
                      if n and str(note or "").strip() and _low(n) not in read)

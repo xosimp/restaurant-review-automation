@@ -53,6 +53,9 @@ STAGES = {
         "crew_answers": dict, "learned_headcount": dict, "chunked": int, "departments": list, "slices": list,
         "unwritten_dates": list, "generation_notes": list, "draft_source": dict, "objective_need": dict,
         "closed_dates": list, "open_unwritten": list, "empty_accepted": list, "planned_calls": list,
+        # A gate pass's share of the first pass's budget trim (the days it
+        # keeps), folded into "trimmed" by the repair stage.
+        "inherited_trimmed": list,
         "draft_fallback": dict, "call_kind": str, "tier": str, "readiness": dict,
         # A hand-built result's own flag (the test fixtures carry it); no stage reads it.
         "ok": bool,

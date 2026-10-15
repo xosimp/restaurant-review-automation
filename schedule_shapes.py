@@ -1388,7 +1388,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
                 fixed_cents += _cents(_rules.row_hours(r) * blended)
         over = m.new_int_var(0, 10 ** 10, "over_budget")
         m.add(over >= sum(dollars) + fixed_cents - _cents(float(budget_dollars)))
-        obj.append((max(1, int(round(_obj.BUDGET_OVER_FACTOR))), over))
+        obj.append((max(1, int(round(getattr(ctx, "budget_over_factor", None) or _obj.BUDGET_OVER_FACTOR))), over))
     m.minimize(sum(int(w) * v for w, v in obj if int(w)))
     _usual_hint(m, z, z_by_pd, people, pats, hist_rows, c, family)
     # The deterministic budget scaled to the model (schedule_cpsat.work_budget

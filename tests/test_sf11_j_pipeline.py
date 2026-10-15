@@ -176,6 +176,23 @@ def test_a_gate_day_the_first_pass_drafted_in_code_drops_out_of_the_line():
     assert result["generation_notes"] == [ds["line"], "No history line"]
 
 
+def test_a_winning_gate_pass_keeps_the_first_passs_budget_trim():
+    # EJ's 10/21/26 week: the first pass trimmed 206h to the budget, the
+    # gate's fill won, and the saved review said nothing was trimmed.
+    trims = [{"date": WEEK[0], "employee": "Ana", "role": "Server", "hours": 3.0, "kind": "removed", "index": 4},
+             {"date": WEEK[5], "employee": "Bo", "role": "Server", "hours": 2.0, "kind": "cut", "index": 9}]
+    facts = {"week_dates": WEEK, "draft_source": {}, "trimmed": trims}
+    result = {"week_dates": WEEK, "draft_source": {}}
+    sj._inherit_week_facts(result, facts, [WEEK[5]])
+    assert [t["employee"] for t in result["inherited_trimmed"]] == ["Ana"]     # the gate redid Saturday
+    assert "trimmed" in sj._WEEK_FACT_KEYS
+    # The repair stage folds them in beside the pass's own trims, the first
+    # pass's row index dropped (it pointed into that pass's week).
+    src = open(se.__file__).read()
+    body = src[src.index('_inherited = [dict('):src.index('result["budget_conflict"]')]
+    assert 'result.pop("inherited_trimmed"' in body and '"index"' in body and "hours_trimmed" in body
+
+
 # ── BUGSGEN-11: resume never buries a newer draft; Stop is honoured ───────
 
 def _save(db_path, rid, who):
